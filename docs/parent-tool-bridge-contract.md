@@ -121,6 +121,28 @@ Failure statuses are stable:
 Failure results include `error.code`, `error.message`, and `error.retryable`.
 The sandbox must not silently fall back to local execution for parent tools.
 
+## Host Delegation Validation
+
+Browser task phases can request generic host-side work with
+`wp-codebox/host-delegation-request/v1`. The request/result schema ids are stable:
+
+- `wp-codebox/host-delegation-request/v1`
+- `wp-codebox/host-delegation-result/v1`
+- `wp-codebox/host-delegation-event/v1`
+
+WP Codebox validates the Codebox-owned envelope before and after the product host
+adapter runs. A request must include a non-empty `goal` or `task`, object-valued
+DTO fields such as `target`, `context`, `execution`, `orchestrator`, and
+`metadata`, array-valued `expected_artifacts` when present, and a 64-character
+SHA-256 `source_digest` when present.
+
+Host adapter results must return `accepted`, `completed`, `failed`, or
+`unavailable`. When a result includes `request_id`, `sandbox_session_id` /
+`session_id`, or `source_digest`, those values must match the request. Malformed
+provider payloads, stale source digests, and session-scope mismatches return a
+structured `wp-codebox/host-delegation-result/v1` failure with no result payload
+and no sandbox-local fallback execution.
+
 ## Adapter Hooks
 
 Minimal integration points:

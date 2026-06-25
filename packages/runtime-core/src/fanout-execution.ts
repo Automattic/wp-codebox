@@ -37,6 +37,7 @@ export interface FanoutExecutionWorkerResultLike extends RunPlanWorkerResultLike
 
 export interface FanoutExecutionPlan<TWorker extends RunPlanWorkerContract = FanoutRequestContract["workers"][number]> {
   schema: typeof FANOUT_PLAN_SCHEMA
+  fanout_id: string
   session_id: string
   concurrency: number
   orchestrator: Record<string, unknown>
@@ -52,6 +53,7 @@ export interface FanoutExecutionPlan<TWorker extends RunPlanWorkerContract = Fan
 }
 
 export interface FanoutExecutionLifecycleSnapshot<TWorker extends RunPlanWorkerContract = FanoutRequestContract["workers"][number]> {
+  fanoutId: string
   sessionId: string
   concurrency: number
   workers: Array<RunPlanWorkerDescriptor<TWorker>>
@@ -67,6 +69,7 @@ export interface FanoutExecutionResult<TWorker extends RunPlanWorkerContract = F
   schema: typeof FANOUT_RESULT_SCHEMA
   success: boolean
   status: "completed" | "failed"
+  fanout_id: string
   sessionId: string
   concurrency: number
   plan: FanoutExecutionPlan<TWorker>
@@ -83,12 +86,13 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
   }
 
   const sessionId = options.sessionId || stringValue(request.session_id) || stringValue(objectValue(request.orchestrator)?.session_id) || stringValue(objectValue(request.orchestrator)?.request_id) || `fanout-${Date.now()}`
+  const fanoutId = sessionId
   const maxConcurrency = options.maxConcurrency ?? Number.MAX_SAFE_INTEGER
   const concurrency = normalizeRunPlanConcurrency(request.concurrency, { ...options, maxConcurrency })
   const workers = normalizeRunPlanWorkerDescriptors(request.workers, { ...options, defaultAgent: options.defaultAgent ?? stringValue(request.agent) })
   const plan = fanoutExecutionPlan(sessionId, concurrency, objectValue(request.orchestrator) ?? {}, workers)
 
-  await options.onFanoutStarted?.({ sessionId, concurrency, workers, plan })
+  await options.onFanoutStarted?.({ fanoutId, sessionId, concurrency, workers, plan })
 
   const execution = await executeRunPlan({ workers: request.workers, concurrency }, {
     ...options,
@@ -103,11 +107,11 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
   })
 
   const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRef(result, workers[index]))
-  await options.onAggregationStarted?.({ sessionId, concurrency, workers, plan, execution, workerResultRefs })
+  await options.onAggregationStarted?.({ fanoutId, sessionId, concurrency, workers, plan, execution, workerResultRefs })
 
   const aggregation = optionalObjectValue(request.aggregation) ?? options.aggregation
   const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
-    plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
+    plan: { id: fanoutId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
     policy: options.aggregationPolicy ?? (stringValue(aggregation?.policy) || "fail"),
     aggregator: aggregation,
     workerResultRefs,
@@ -123,6 +127,7 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
     schema: FANOUT_RESULT_SCHEMA,
     success,
     status: success ? "completed" : "failed",
+    fanout_id: fanoutId,
     sessionId,
     concurrency,
     plan,
@@ -139,6 +144,7 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
 export function fanoutExecutionPlan<TWorker extends RunPlanWorkerContract>(sessionId: string, concurrency: number, orchestrator: Record<string, unknown>, workers: Array<RunPlanWorkerDescriptor<TWorker>>): FanoutExecutionPlan<TWorker> {
   return {
     schema: FANOUT_PLAN_SCHEMA,
+    fanout_id: sessionId,
     session_id: sessionId,
     concurrency,
     orchestrator,

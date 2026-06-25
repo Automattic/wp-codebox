@@ -315,6 +315,7 @@ expect( true === $reuse_decision['prepared_runtime_recoverable'], 'Expected reco
 
 $open_or_create = WP_Codebox_Abilities::open_or_create_browser_contained_site(
 	array(
+		'mode'          => 'open-or-create',
 		'cache_key'     => 'studio-native-preview',
 		'source_digest' => $source_digest,
 		'playground'    => array(
@@ -334,6 +335,40 @@ expect( false === $open_or_create['reload_required'], 'Expected opened reusable 
 expect( 'hydrate-ref' === $open_or_create['decision']['action'], 'Expected open-or-create decision to hydrate ref.' );
 expect( isset( $open_or_create['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected open-or-create preview boot hydration endpoint.' );
 expect( 'wp-codebox/preview-lease/v1' === $open_or_create['preview_lease']['schema'], 'Expected open-or-create preview lease DTO.' );
+
+$snapshot = WP_Codebox_Abilities::snapshot_browser_contained_site(
+	array(
+		'contained_site' => $open['contained_site'],
+		'source_digest'  => $source_digest,
+	)
+);
+expect( ! is_wp_error( $snapshot ), 'Expected contained-site snapshot contract.' );
+expect( true === $snapshot['success'], 'Expected snapshot contract success=true.' );
+expect( 'wp-codebox/browser-contained-site-snapshot/v1' === $snapshot['schema'], 'Expected snapshot contract schema.' );
+expect( 'wp-codebox/wordpress-runtime-snapshot/v1' === $snapshot['snapshot']['schema'], 'Expected runtime snapshot primitive schema.' );
+
+$export = WP_Codebox_Abilities::export_browser_contained_site( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $export ), 'Expected contained-site export contract.' );
+expect( true === $export['success'], 'Expected export contract success=true.' );
+expect( 'wp-codebox/browser-contained-site-export/v1' === $export['schema'], 'Expected export contract schema.' );
+expect( 'wp-codebox/replayable-wordpress-site/v1' === $export['export']['schema'], 'Expected replay export primitive schema.' );
+
+$apply_plan = WP_Codebox_Abilities::plan_browser_contained_site_apply( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $apply_plan ), 'Expected contained-site apply plan.' );
+expect( true === $apply_plan['success'], 'Expected apply plan success=true.' );
+expect( 'wp-codebox/browser-contained-site-apply-plan/v1' === $apply_plan['schema'], 'Expected apply plan schema.' );
+expect( false === $apply_plan['host_mutation'], 'Expected apply plan to default to no host mutation.' );
+expect( true === $apply_plan['plan']['preview_only'], 'Expected apply plan to default to preview-only.' );
+
+$stale_snapshot = WP_Codebox_Abilities::snapshot_browser_contained_site(
+	array(
+		'contained_site' => $open['contained_site'],
+		'source_digest'  => str_repeat( 'd', 64 ),
+	)
+);
+expect( ! is_wp_error( $stale_snapshot ), 'Expected stale snapshot to return a structured envelope.' );
+expect( false === $stale_snapshot['success'], 'Expected stale snapshot success=false.' );
+expect( 'wp_codebox_browser_contained_site_stale_digest' === $stale_snapshot['error']['code'], 'Expected stale digest error code.' );
 
 $boot = WP_Codebox_Abilities::boot_browser_contained_site_session(
 	array(
