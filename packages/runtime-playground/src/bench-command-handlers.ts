@@ -36,6 +36,15 @@ $wp_cli_bridge_token = ${JSON.stringify(options.wpCliBridge?.token ?? null)};
 
 wp_codebox_bench_apply_env($bench_env);
 
+if (!getenv('WP_CODEBOX_BENCH_SHARED_STATE')) {
+    $wp_codebox_bench_shared_state = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'wp-codebox-bench-shared-state-' . getmypid();
+    if (!is_dir($wp_codebox_bench_shared_state) && !mkdir($wp_codebox_bench_shared_state, 0777, true) && !is_dir($wp_codebox_bench_shared_state)) {
+        throw new RuntimeException('wordpress.bench could not create shared state directory.');
+    }
+    putenv('WP_CODEBOX_BENCH_SHARED_STATE=' . $wp_codebox_bench_shared_state);
+    $_ENV['WP_CODEBOX_BENCH_SHARED_STATE'] = $wp_codebox_bench_shared_state;
+}
+
 function wp_codebox_bench_percentile(array $samples, float $percentile): float {
     if (empty($samples)) {
         return 0.0;
@@ -645,6 +654,60 @@ function wp_codebox_bench_rest_db_query_profile_filter_query($query, array &$cap
     return $query;
 }
 
+function wp_codebox_bench_rest_request_cases_from_source(array $source): array {
+    $type = isset($source['type']) && is_string($source['type']) ? $source['type'] : '';
+    if ($type !== 'artifact') {
+        throw new RuntimeException('rest_request_cases_source only supports artifact sources.');
+    }
+
+    $root = getenv('WP_CODEBOX_BENCH_SHARED_STATE');
+    if (!is_string($root) || $root === '' || !is_dir($root)) {
+        throw new RuntimeException('rest_request_cases_source artifact root is unavailable.');
+    }
+
+    $artifact_globs = isset($source['artifact_globs']) && is_array($source['artifact_globs']) ? $source['artifact_globs'] : array();
+    $max_route_cases = isset($source['maxRouteCases']) && is_numeric($source['maxRouteCases']) ? max(0, (int) $source['maxRouteCases']) : 100;
+    $max_artifact_bytes = isset($source['maxArtifactBytes']) && is_numeric($source['maxArtifactBytes']) ? max(0, (int) $source['maxArtifactBytes']) : 1048576;
+    $expected_schema = isset($source['schema']) && is_string($source['schema']) ? $source['schema'] : '';
+    $cases = array();
+    if ($max_route_cases === 0) {
+        return $cases;
+    }
+
+    foreach ($artifact_globs as $artifact_glob) {
+        if (!is_string($artifact_glob) || $artifact_glob === '' || str_starts_with($artifact_glob, '/') || str_contains($artifact_glob, '..')) {
+            throw new RuntimeException('rest_request_cases_source artifact_globs must be safe relative glob paths.');
+        }
+        foreach (glob(rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $artifact_glob) ?: array() as $artifact_path) {
+            if (!is_file($artifact_path)) {
+                continue;
+            }
+            $bytes = filesize($artifact_path);
+            if ($bytes === false || $bytes > $max_artifact_bytes) {
+                throw new RuntimeException('rest_request_cases_source artifact exceeds maxArtifactBytes.');
+            }
+            $artifact = json_decode((string) file_get_contents($artifact_path), true);
+            if (!is_array($artifact)) {
+                throw new RuntimeException('rest_request_cases_source artifact is not valid JSON.');
+            }
+            if ($expected_schema !== '' && isset($artifact['schema']) && $artifact['schema'] !== $expected_schema) {
+                continue;
+            }
+            foreach (isset($artifact['cases']) && is_array($artifact['cases']) ? $artifact['cases'] : array() as $request_case) {
+                if (!is_array($request_case)) {
+                    continue;
+                }
+                $cases[] = $request_case;
+                if (count($cases) >= $max_route_cases) {
+                    return $cases;
+                }
+            }
+        }
+    }
+
+    return $cases;
+}
+
 function wp_codebox_bench_run_rest_db_query_profiler_step(array $step): array {
     global $wpdb;
 
@@ -664,6 +727,12 @@ function wp_codebox_bench_run_rest_db_query_profiler_step(array $step): array {
     $request_cases = isset($step['rest_request_cases']) && is_array($step['rest_request_cases']) ? $step['rest_request_cases'] : array();
     if (empty($request_cases) && isset($step['request_cases']) && is_array($step['request_cases'])) {
         $request_cases = $step['request_cases'];
+    }
+    if (empty($request_cases) && isset($step['rest_request_cases_source']) && is_array($step['rest_request_cases_source'])) {
+        $request_cases = wp_codebox_bench_rest_request_cases_from_source($step['rest_request_cases_source']);
+        if (empty($request_cases)) {
+            throw new RuntimeException('rest_request_cases_source did not resolve any request cases.');
+        }
     }
     if (empty($request_cases)) {
         $request_cases = array($step);
