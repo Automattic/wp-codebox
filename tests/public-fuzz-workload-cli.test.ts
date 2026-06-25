@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -17,6 +17,10 @@ assert.match(help, /--input-file/)
 
 const directory = await mkdtemp(join(tmpdir(), "wp-codebox-public-cli-test-"))
 try {
+  const samplePluginSource = join(directory, "sample-plugin")
+  await mkdir(samplePluginSource)
+  await writeFile(join(samplePluginSource, "sample-plugin.php"), "<?php\n/* Plugin Name: Sample Plugin */\n", "utf8")
+
   const fuzzInput = join(directory, "fuzz.json")
   await writeFile(fuzzInput, JSON.stringify({
     schema: "wp-codebox/fuzz-suite/v1",
@@ -29,6 +33,37 @@ try {
   const fuzzJson = JSON.parse(fuzzOutput)
   assert.equal(fuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(fuzzJson.metadata.public_cli_command, "run-fuzz-suite")
+
+  const runtimeFuzzInput = join(directory, "runtime-fuzz.json")
+  await writeFile(runtimeFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-runtime-suite",
+    metadata: {
+      runtime_requirements: {
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, loadAs: "plugin", activate: true }],
+        component_contracts: [{ slug: "sample-plugin", path: samplePluginSource, loadAs: "plugin" }],
+        runtime_env: { SAMPLE_ENV: "1" },
+      },
+    },
+    cases: [{
+      id: "workload",
+      target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+      input: {
+        schema: "wp-codebox/wordpress-workload-run/v1",
+        steps: [{ command: "wordpress.run-php", args: ["code=<?php echo 'ok';"] }],
+      },
+    }],
+  }), "utf8")
+  const runtimeFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", runtimeFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const runtimeFuzzJson = JSON.parse(runtimeFuzzOutput)
+  assert.equal(runtimeFuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(runtimeFuzzJson.status, "passed")
+  assert.equal(runtimeFuzzJson.cases[0].status, "passed")
+  assert.notEqual(runtimeFuzzJson.cases[0].skipReason, "fuzz_suite_executor_unavailable")
+  assert.equal(runtimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
+  assert.equal(runtimeFuzzJson.metadata.runnerCapabilities.mode, "runtime-backed")
 
   const workloadInput = join(directory, "workload.json")
   await writeFile(workloadInput, JSON.stringify({

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { parseCommandJson, parseCommandOptions, runFuzzSuite, wordpressWorkloadRunRecipe, type FuzzSuiteContract, type WordPressWorkloadRunRecipeOptions } from "@automattic/wp-codebox-core"
+import { parseCommandJson, parseCommandOptions, runFuzzSuite, wordpressWorkloadRunRecipe, type ExecutionResult, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -25,6 +25,7 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
 
   const options = await parsePublicRuntimeCommandOptions(args)
   const result = await runFuzzSuite(options.input as unknown as FuzzSuiteContract, {
+    runtimeWorkloadExecutor: (input) => runWordPressWorkloadFuzzCase(input, options),
     metadata: {
       public_cli_command: "run-fuzz-suite",
       dry_run: options.dryRun || undefined,
@@ -60,6 +61,91 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
+}
+
+async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecutionInput, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
+  const startedAt = new Date().toISOString()
+  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(input.workload)) as WorkspaceRecipe
+  applyFuzzSuiteRuntimeRequirements(recipe, options.input)
+  const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-workload-"))
+  try {
+    const recipePath = join(tempDir, "recipe.json")
+    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8")
+    const recipeArgs = ["--recipe", recipePath, "--json"]
+    if (options.dryRun) recipeArgs.push("--dry-run")
+    if (options.artifactsDirectory) recipeArgs.push("--artifacts", options.artifactsDirectory)
+    if (options.runRegistryDirectory) recipeArgs.push("--run-registry", options.runRegistryDirectory)
+    if (options.timeout) recipeArgs.push("--timeout", options.timeout)
+    const { result: exitCode, logs } = await captureStdout(() => runRecipeRunCommand(recipeArgs))
+    const stdout = logs.join("")
+    const recipeResult = parseRecipeRunOutput(stdout)
+    return {
+      id: `wordpress-run-workload-${input.case.id}`,
+      command: "wordpress.run-workload",
+      args: [`steps=${Array.isArray(input.workload.steps) ? input.workload.steps.length : 0}`],
+      exitCode,
+      stdout,
+      stderr: recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : "",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      artifactRefs: recipeArtifactRefs(recipeResult),
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, suiteInput: Record<string, unknown>): void {
+  const requirements = objectOption(objectOption(suiteInput.metadata)?.runtime_requirements)
+  if (!requirements) return
+  const inputs = recipe.inputs ?? {}
+  const runtime = recipe.runtime ?? {}
+  recipe.inputs = {
+    ...inputs,
+    extra_plugins: runtimeRequirementExtraPlugins(requirements, inputs.extra_plugins),
+    runtimeEnv: runtimeRequirementEnv(inputs.runtimeEnv, requirements.runtime_env),
+  }
+  recipe.runtime = {
+    ...runtime,
+    stack: arrayOption(requirements.runtime_mounts).length > 0 ? { ...(runtime.stack ?? {}), mounts: arrayOption(requirements.runtime_mounts) as WorkspaceRecipeMount[] } : runtime.stack,
+  }
+  recipe.metadata = {
+    ...(recipe.metadata ?? {}),
+    runtime_requirements: requirements,
+  }
+}
+
+function runtimeRequirementExtraPlugins(requirements: Record<string, unknown>, fallback: WorkspaceRecipeExtraPlugin[] | undefined): WorkspaceRecipeExtraPlugin[] | undefined {
+  const extraPlugins = arrayOption(requirements.extra_plugins)
+  if (extraPlugins.length > 0) {
+    return extraPlugins as WorkspaceRecipeExtraPlugin[]
+  }
+  const componentContracts = arrayOption(requirements.component_contracts)
+  return componentContracts.length > 0 ? componentContracts as WorkspaceRecipeExtraPlugin[] : fallback
+}
+
+function runtimeRequirementEnv(base: Record<string, string> | undefined, extra: unknown): Record<string, string> | undefined {
+  const merged: Record<string, string> = { ...(base ?? {}) }
+  for (const [key, value] of Object.entries(objectOption(extra) ?? {})) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      merged[key] = String(value)
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+function parseRecipeRunOutput(stdout: string): Record<string, unknown> | undefined {
+  try {
+    return objectOption(JSON.parse(stdout.trim() || "{}"))
+  } catch (_error) {
+    return undefined
+  }
+}
+
+function recipeArtifactRefs(output: Record<string, unknown> | undefined): ExecutionResult["artifactRefs"] {
+  const artifacts = objectOption(output?.artifacts)
+  const refs = arrayOption(artifacts?.refs ?? artifacts?.files ?? output?.artifactRefs ?? output?.artifact_refs)
+  return refs.flatMap((ref) => objectOption(ref) ? [ref as NonNullable<ExecutionResult["artifactRefs"]>[number]] : [])
 }
 
 async function parsePublicRuntimeCommandOptions(args: string[]): Promise<PublicRuntimeCommandOptions> {
