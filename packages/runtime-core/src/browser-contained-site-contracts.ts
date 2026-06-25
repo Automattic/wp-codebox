@@ -2,6 +2,10 @@ export const BROWSER_CONTAINED_SITE_SCHEMA = "wp-codebox/browser-contained-site/
 export const BROWSER_CONTAINED_SITE_SESSION_SCHEMA = "wp-codebox/browser-contained-site-session/v1" as const
 export const BROWSER_CONTAINED_SITE_BOOT_SCHEMA = "wp-codebox/browser-contained-site-boot/v1" as const
 export const BROWSER_CONTAINED_SITE_DESTROY_SCHEMA = "wp-codebox/browser-contained-site-destroy/v1" as const
+export const BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA = "wp-codebox/browser-contained-site-snapshot/v1" as const
+export const BROWSER_CONTAINED_SITE_EXPORT_SCHEMA = "wp-codebox/browser-contained-site-export/v1" as const
+export const BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA = "wp-codebox/browser-contained-site-apply-plan/v1" as const
+export const BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA = "wp-codebox/browser-contained-site-apply-result/v1" as const
 export const BROWSER_CONTAINED_SITE_PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
 export const STARTUP_DIAGNOSTICS_SCHEMA = "wp-codebox/browser-contained-site-startup-diagnostics/v1" as const
 
@@ -94,6 +98,56 @@ export interface DestroyBrowserContainedSiteSessionResult {
   contained_site?: BrowserContainedSite
   preview_lease?: BrowserPreviewLease
   startup_diagnostics?: BrowserContainedSiteStartupDiagnostics
+}
+
+export interface BrowserContainedSiteValidationError {
+  code: "wp_codebox_browser_contained_site_ref_invalid" | "wp_codebox_browser_contained_site_stale_digest" | "wp_codebox_browser_contained_site_scope_mismatch" | "wp_codebox_browser_contained_site_session_mismatch" | string
+  message: string
+  expected?: Record<string, unknown>
+  actual?: Record<string, unknown>
+}
+
+export interface BrowserContainedSiteSnapshotContract {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA
+  contained_site?: BrowserContainedSite
+  source_digest?: BrowserDigestRef
+  session?: Record<string, unknown>
+  snapshot?: Record<string, unknown>
+  status?: Record<string, unknown>
+  error?: BrowserContainedSiteValidationError
+}
+
+export interface BrowserContainedSiteExportContract {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_EXPORT_SCHEMA
+  contained_site?: BrowserContainedSite
+  source_digest?: BrowserDigestRef
+  export?: Record<string, unknown>
+  snapshot?: BrowserContainedSiteSnapshotContract
+  error?: BrowserContainedSiteValidationError
+}
+
+export interface BrowserContainedSiteApplyPlanContract {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA
+  mode: "preview" | "apply" | string
+  host_mutation: boolean
+  contained_site?: BrowserContainedSite
+  source_digest?: BrowserDigestRef
+  plan?: Record<string, unknown>
+  error?: BrowserContainedSiteValidationError
+}
+
+export interface BrowserContainedSiteApplyResultContract {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA
+  mode: "preview" | "apply" | string
+  host_mutation: boolean
+  contained_site?: BrowserContainedSite
+  source_digest?: BrowserDigestRef
+  result?: Record<string, unknown>
+  error?: BrowserContainedSiteValidationError
 }
 
 export function browserContainedSiteRecoveryInput(site: BrowserContainedSite): Record<string, unknown> {

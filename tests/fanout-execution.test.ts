@@ -35,6 +35,9 @@ const success = await executeFanoutRequest({
 assert.equal(success.schema, "wp-codebox/agent-fanout-result/v1")
 assert.equal(success.success, true)
 assert.equal(success.status, "completed")
+assert.equal(success.fanout_id, "generic-success")
+assert.equal(success.plan.fanout_id, "generic-success")
+assert.equal(success.aggregate.plan.id, "generic-success")
 assert.equal(success.concurrency, 2)
 assert.deepEqual(success.counts, { total: 2, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
 assert.deepEqual(success.workerResultRefs.map((worker) => worker.workerId), ["alpha", "beta"])
@@ -81,8 +84,27 @@ assert.equal(failure.status, "failed")
 assert.deepEqual(failure.counts, { total: 2, completed: 0, failed: 1, skipped: 1, cancelled: 0, timed_out: 0 })
 assert.deepEqual(events, ["run:failed", "skip:dependent"])
 assert.deepEqual(failure.workerResultRefs.map((worker) => worker.status), ["failed", "skipped"])
+assert.deepEqual(failure.workers.map((worker) => worker.workerId), ["failed", "dependent"])
+assert.deepEqual(failure.workers[1].error, { code: "dependency-skipped", message: "dependent skipped after failed" })
 assert.deepEqual(failure.aggregate.rawWorkerArtifactRefs.map((ref) => ref.path), ["workers/failed/failure.json"])
 assert.deepEqual(failure.aggregate.finalArtifactRefs, [])
 assert.deepEqual(failure.aggregate.conflicts.map((conflict) => conflict.type), ["failed-worker", "failed-worker", "failed-worker-dependency"])
+
+await assert.rejects(() => executeFanoutRequest({
+  schema: FANOUT_REQUEST_SCHEMA,
+  concurrency: 1,
+  workers: [
+    { id: "duplicate", goal: "One" },
+    { id: "duplicate", goal: "Two" },
+  ],
+}, { adapter: successfulAdapter, requireGoal: true }), /worker ids must be unique/)
+
+await assert.rejects(() => executeFanoutRequest({
+  schema: FANOUT_REQUEST_SCHEMA,
+  concurrency: 1,
+  workers: [
+    { id: "child", goal: "Child", dependsOn: ["missing"] },
+  ],
+}, { adapter: successfulAdapter, requireGoal: true }), /depends on unknown worker/)
 
 console.log("fanout execution ok")

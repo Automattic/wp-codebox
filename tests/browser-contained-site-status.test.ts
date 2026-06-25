@@ -124,8 +124,36 @@ $open_unbootable = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browse
 		'recovery' => array( 'input' => array( 'cache_key' => $cache_key, 'input_hash' => $input_hash ) ),
 	),
 ) );
+$contained_site_for_snapshot = array(
+	'schema' => 'wp-codebox/browser-contained-site/v1',
+	'site_id' => $cache_key,
+	'preview_id' => 'preview-proof',
+	'session_id' => 'session-proof',
+	'source_digest' => array( 'algorithm' => 'sha256', 'value' => $input_hash ),
+	'preview' => array( 'scope' => 'session-proof' ),
+);
+$snapshot = WP_Codebox_Test_Browser_Contained_Site_Abilities::snapshot_browser_contained_site( array(
+	'contained_site' => $contained_site_for_snapshot,
+	'source_digest' => array( 'algorithm' => 'sha256', 'value' => $input_hash ),
+	'session_id' => 'session-proof',
+	'scope' => 'session-proof',
+) );
+$export = WP_Codebox_Test_Browser_Contained_Site_Abilities::export_browser_contained_site( array( 'contained_site' => $contained_site_for_snapshot ) );
+$apply_plan = WP_Codebox_Test_Browser_Contained_Site_Abilities::plan_browser_contained_site_apply( array(
+	'contained_site' => $contained_site_for_snapshot,
+	'changes' => array( array( 'path' => 'wp-content/themes/example/style.css', 'action' => 'update' ) ),
+) );
+$apply_result = WP_Codebox_Test_Browser_Contained_Site_Abilities::apply_browser_contained_site_plan( array( 'plan' => $apply_plan ) );
+$stale_snapshot = WP_Codebox_Test_Browser_Contained_Site_Abilities::snapshot_browser_contained_site( array(
+	'contained_site' => $contained_site_for_snapshot,
+	'source_digest' => str_repeat( 'd', 64 ),
+) );
+$scope_mismatch_plan = WP_Codebox_Test_Browser_Contained_Site_Abilities::plan_browser_contained_site_apply( array(
+	'contained_site' => $contained_site_for_snapshot,
+	'scope' => 'other-scope',
+) );
 
-echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_or_create_missing_mode' => $open_or_create_missing_mode, 'open_or_create_invalid_mode' => $open_or_create_invalid_mode, 'open_unbootable' => $open_unbootable ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_or_create_missing_mode' => $open_or_create_missing_mode, 'open_or_create_invalid_mode' => $open_or_create_invalid_mode, 'open_unbootable' => $open_unbootable, 'snapshot' => $snapshot, 'export' => $export, 'apply_plan' => $apply_plan, 'apply_result' => $apply_result, 'stale_snapshot' => $stale_snapshot, 'scope_mismatch_plan' => $scope_mismatch_plan ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.hit.schema, "wp-codebox/browser-contained-site-status/v1")
@@ -240,5 +268,31 @@ assert.equal(result.open_unbootable.requires_materialization, true)
 assert.equal(result.open_unbootable.contained_site.status, "unusable")
 assert.equal(result.open_unbootable.preview_boot.blueprint_ref, `prepared:browser-site-proof:${"c".repeat(64)}`)
 assert.equal(result.open_unbootable.preview_boot.blueprint_ref_dto, undefined)
+assert.equal(result.snapshot.schema, "wp-codebox/browser-contained-site-snapshot/v1")
+assert.equal(result.snapshot.success, true)
+assert.equal(result.snapshot.snapshot.schema, "wp-codebox/wordpress-runtime-snapshot/v1")
+assert.equal(result.snapshot.snapshot.status, "preview-contract")
+assert.equal(result.snapshot.source_digest.value, "c".repeat(64))
+assert.equal(result.export.schema, "wp-codebox/browser-contained-site-export/v1")
+assert.equal(result.export.success, true)
+assert.equal(result.export.export.schema, "wp-codebox/replayable-wordpress-site/v1")
+assert.equal(result.export.export.blueprint.schema, "wp-codebox/replay-export-blueprint/v1")
+assert.equal(result.apply_plan.schema, "wp-codebox/browser-contained-site-apply-plan/v1")
+assert.equal(result.apply_plan.success, true)
+assert.equal(result.apply_plan.mode, "preview")
+assert.equal(result.apply_plan.host_mutation, false)
+assert.equal(result.apply_plan.plan.preview_only, true)
+assert.equal(result.apply_plan.plan.operation_count, 1)
+assert.equal(result.apply_result.schema, "wp-codebox/browser-contained-site-apply-result/v1")
+assert.equal(result.apply_result.success, true)
+assert.equal(result.apply_result.mode, "preview")
+assert.equal(result.apply_result.host_mutation, false)
+assert.equal(result.apply_result.result.status, "previewed")
+assert.equal(result.stale_snapshot.schema, "wp-codebox/browser-contained-site-snapshot/v1")
+assert.equal(result.stale_snapshot.success, false)
+assert.equal(result.stale_snapshot.error.code, "wp_codebox_browser_contained_site_stale_digest")
+assert.equal(result.scope_mismatch_plan.schema, "wp-codebox/browser-contained-site-apply-plan/v1")
+assert.equal(result.scope_mismatch_plan.success, false)
+assert.equal(result.scope_mismatch_plan.error.code, "wp_codebox_browser_contained_site_scope_mismatch")
 
 console.log("browser contained site status ok")
