@@ -1049,6 +1049,9 @@ export function effectivePolicyCommands(command: string, definitions: readonly C
     const definition = byId.get(id)
     const requirements = definition?.requiresPolicyCommands
     if (requirements) {
+      if (definition?.handler.kind === "playground" && !commands.includes(id)) {
+        commands.push(id)
+      }
       for (const requiredCommand of requirements) {
         collect(requiredCommand)
       }

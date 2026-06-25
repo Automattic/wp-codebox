@@ -217,6 +217,7 @@ assert.deepEqual(wordpressBench.requiresPolicyCommands, [
 
 assert.deepEqual(effectivePolicyCommands("wp-codebox.agent-sandbox-run"), ["wordpress.run-php", "wordpress.wp-cli"])
 assert.deepEqual(effectivePolicyCommands("wordpress.bench"), [
+  "wordpress.bench",
   "wordpress.run-php",
   "wordpress.wp-cli",
   "wordpress.ability",
