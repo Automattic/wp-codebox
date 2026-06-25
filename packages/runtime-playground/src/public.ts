@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto"
+
 import {
+  WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
   executeFuzzSuite,
@@ -13,6 +16,7 @@ import {
   runWordPressPhp,
   runWordPressWpCli,
   visitWordPressPage,
+  wordpressHotspotsArtifact,
   type ArtifactBundle,
   type ArtifactSpec,
   type ExecutionResult,
@@ -27,12 +31,15 @@ import {
   type FuzzSuiteRuntimeWorkloadExecutor,
   type FuzzSuiteRunOptions,
   type ObservationSpec,
+  type PerformanceObservation,
   type Runtime,
+  type RuntimeActionObservation,
   type RuntimeCreateSpec,
   type RuntimeEpisode,
   type RuntimeEpisodeActionSpec,
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
+  type WordPressHotspotObservationInput,
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
@@ -240,7 +247,15 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       }
       const failed = executions.find((execution) => execution.exitCode !== 0)
       const last = executions[executions.length - 1]
-      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0 }
+      const observations = executions.flatMap((execution) => {
+        const nested = performanceObservationsFromWorkloadExecution(execution)
+        if (nested.length > 0) {
+          return nested
+        }
+        const observation = performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution)
+        return observation ? [observation] : []
+      })
+      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0, observations: observations.length > 0 ? observations : undefined }
       return {
         id: `wordpress-run-workload-${fuzzCase.id}`,
         command: "wordpress.run-workload",
@@ -316,11 +331,35 @@ export function executeWordPressFuzzSuite(
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
 ): Promise<FuzzSuiteResultEnvelope> {
+  const hotspotObservations: WordPressHotspotObservationInput[] = []
+  const commandExecutor = createWordPressFuzzSuiteCommandExecutor(episode)
+  const runtimeActionExecutor = createWordPressFuzzSuiteRuntimeActionExecutor(episode)
+  const runtimeWorkloadExecutor = createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode)
+
   return executeFuzzSuite(suite, {
     ...options,
-    executor: createWordPressFuzzSuiteCommandExecutor(episode),
-    runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(episode),
-    runtimeWorkloadExecutor: createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode),
+    executor: async (spec) => {
+      const execution = await commandExecutor.execute(spec)
+      pushHotspotObservation(hotspotObservations, performanceObservationFromExecution(spec, execution), executionArtifactRefs(execution))
+      return execution
+    },
+    runtimeActionExecutor: async (input) => {
+      const observation = await runtimeActionExecutor.executeRuntimeAction(input)
+      pushHotspotObservation(hotspotObservations, performanceObservationFromRuntimeAction(observation), runtimeActionArtifactRefs(observation))
+      return observation
+    },
+    runtimeWorkloadExecutor: async (input) => {
+      const execution = await runtimeWorkloadExecutor.executeRuntimeWorkload(input)
+      const observations = performanceObservationsFromWorkloadExecution(execution)
+      if (observations.length === 0) {
+        pushHotspotObservation(hotspotObservations, performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution), executionArtifactRefs(execution))
+      } else {
+        for (const observation of observations) {
+          pushHotspotObservation(hotspotObservations, observation, executionArtifactRefs(execution))
+        }
+      }
+      return execution
+    },
     resetExecutor: createWordPressFuzzSuiteResetExecutor(episode),
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     metadata: {
@@ -328,7 +367,186 @@ export function executeWordPressFuzzSuite(
       runnerMode: "runtime-backed",
       runtimeBackend: "wordpress-playground",
     },
+  }).then((result) => resultWithWordPressHotspotsArtifact(result, hotspotObservations))
+}
+
+function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): FuzzSuiteResultEnvelope {
+  const artifact = wordpressHotspotsArtifact({
+    generatedAt: new Date().toISOString(),
+    source: "executeWordPressFuzzSuite",
+    observations,
+    fuzzResult: result,
+    artifactRefs: result.artifactRefs,
+    metadata: { suiteId: result.suite.id, runnerMode: result.metadata?.runnerMode },
   })
+  const content = `${JSON.stringify(artifact, null, 2)}\n`
+  const ref: FuzzSuiteArtifactRef = {
+    path: "files/wordpress-hotspots.json",
+    kind: "wordpress-hotspots",
+    contentType: "application/json",
+    sha256: createHash("sha256").update(content).digest("hex"),
+    bytes: Buffer.byteLength(content),
+    name: "wordpress-hotspots",
+    metadata: { schema: WORDPRESS_HOTSPOTS_SCHEMA, source: "executeWordPressFuzzSuite" },
+  }
+
+  return {
+    ...result,
+    artifactRefs: dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref]),
+    metadata: {
+      ...result.metadata,
+      artifacts: {
+        ...(recordValue(result.metadata?.artifacts) ?? {}),
+        wordpressHotspots: artifact,
+      },
+    },
+  }
+}
+
+function pushHotspotObservation(out: WordPressHotspotObservationInput[], observation: PerformanceObservation | undefined, artifactRefs: FuzzSuiteArtifactRef[] = []): void {
+  if (!observation) return
+  out.push({
+    observation,
+    artifactRefs: artifactRefs.map((ref) => ({ path: ref.path, kind: ref.kind, contentType: ref.contentType, sha256: ref.sha256, bytes: ref.bytes, name: ref.name, metadata: ref.metadata })),
+  })
+}
+
+function performanceObservationFromRuntimeAction(observation: RuntimeActionObservation): PerformanceObservation | undefined {
+  if (observation.performance) {
+    const command = observation.performance.command ?? observation.step?.execution.command
+    return {
+      ...observation.performance,
+      command,
+      source: observation.performance.source ?? observationSource(command),
+      kind: observation.performance.kind ?? observationKind(command, observation.performance.target),
+    }
+  }
+  return performanceObservationFromExecution({ command: observation.step?.execution.command, args: observation.step?.execution.args }, observation.step?.execution, observation.action.type)
+}
+
+function performanceObservationFromExecution(spec: Partial<ExecutionSpec>, execution: ExecutionResult | undefined, source?: string): PerformanceObservation | undefined {
+  if (!execution) return undefined
+  const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
+  const performance = recordValue(json?.performance)
+  const timing = recordValue(performance?.timing) ?? recordValue(json?.timing)
+  const startedMs = Date.parse(execution.startedAt)
+  const finishedMs = Date.parse(execution.finishedAt)
+  const durationMs = numberValue(timing?.durationMs ?? timing?.duration_ms ?? json?.durationMs ?? json?.duration_ms) ?? (Number.isFinite(startedMs) && Number.isFinite(finishedMs) ? Math.max(0, finishedMs - startedMs) : undefined)
+  const database = normalizeObservationDatabase(recordValue(performance?.database) ?? recordValue(json?.database) ?? recordValue(json?.metrics))
+  const browser = normalizeObservationBrowser(recordValue(performance?.browser) ?? recordValue(json?.browser) ?? recordValue(json?.metrics))
+  const network = recordValue(performance?.network) as PerformanceObservation["network"] | undefined
+  const specRecord = spec as Record<string, unknown>
+  const target = stringValue(json?.path ?? json?.route ?? json?.url ?? specRecord.path ?? execution.command)
+  const command = stringValue(spec.command ?? execution.command)
+  const observation: PerformanceObservation = {
+    schema: "wp-codebox/performance-observation/v1",
+    command,
+    target,
+    source: source ?? observationSource(command),
+    kind: observationKind(command, target),
+    timing: durationMs !== undefined ? { startedAt: execution.startedAt, finishedAt: execution.finishedAt, durationMs } : undefined,
+    database,
+    browser,
+    network,
+    artifactRefs: executionArtifactRefs(execution).map((ref) => ({ path: ref.path, kind: ref.kind, digest: ref.sha256 ? { algorithm: "sha256", value: ref.sha256 } : undefined })),
+    metadata: { executionId: execution.id },
+  }
+  return hasObservationMetrics(observation) ? observation : undefined
+}
+
+function performanceObservationsFromWorkloadExecution(execution: ExecutionResult): PerformanceObservation[] {
+  const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
+  const raw = arrayValue(json?.observations ?? json?.performanceObservations ?? json?.performance_observations)
+  return raw.flatMap((item) => isPerformanceObservation(item) ? [item] : [])
+}
+
+function normalizeObservationDatabase(input: Record<string, unknown> | undefined): PerformanceObservation["database"] | undefined {
+  if (!input) return undefined
+  const queryCount = numberValue(input.queryCount ?? input.query_count ?? input.queries)
+  const totalTimeMs = numberValue(input.totalTimeMs ?? input.total_time_ms ?? input.queryTimeMs ?? input.query_time_ms)
+  return queryCount !== undefined || totalTimeMs !== undefined ? { queryCount, totalTimeMs } : input as PerformanceObservation["database"]
+}
+
+function normalizeObservationBrowser(input: Record<string, unknown> | undefined): PerformanceObservation["browser"] | undefined {
+  if (!input) return undefined
+  const metrics = numericRecord(recordValue(input.metrics) ?? input)
+  return metrics && Object.keys(metrics).length > 0 ? { metrics } : undefined
+}
+
+function executionArtifactRefs(execution: ExecutionResult): FuzzSuiteArtifactRef[] {
+  return (execution.artifactRefs ?? []).flatMap((ref) => {
+    const path = ref.path ?? ref.artifactId ?? ref.id
+    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
+  })
+}
+
+function runtimeActionArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] {
+  return (observation.artifactRefs ?? []).flatMap((ref) => {
+    const path = ref.path ?? ref.artifactId ?? ref.id
+    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
+  })
+}
+
+function observationSource(command: string | undefined): PerformanceObservation["source"] | undefined {
+  if (command?.includes("browser")) return "browser"
+  if (command?.includes("rest")) return "server-http"
+  return "in-process"
+}
+
+function observationKind(command: string | undefined, target: string | undefined): PerformanceObservation["kind"] | undefined {
+  if (command?.includes("rest")) return "rest-request"
+  if (command?.includes("browser") || target?.startsWith("http")) return "browser-page-load"
+  if (command?.includes("page-load")) return "server-page-load"
+  return undefined
+}
+
+function hasObservationMetrics(observation: PerformanceObservation): boolean {
+  return Boolean(observation.timing?.durationMs || observation.database?.queryCount || observation.database?.totalTimeMs || observation.network?.failures || Object.keys(observation.browser?.metrics ?? {}).length > 0)
+}
+
+function isPerformanceObservation(value: unknown): value is PerformanceObservation {
+  return recordValue(value)?.schema === "wp-codebox/performance-observation/v1"
+}
+
+function dedupeFuzzSuiteArtifactRefs(refs: readonly FuzzSuiteArtifactRef[]): FuzzSuiteArtifactRef[] {
+  const seen = new Set<string>()
+  const out: FuzzSuiteArtifactRef[] = []
+  for (const ref of refs) {
+    if (!ref.path || seen.has(ref.path)) continue
+    seen.add(ref.path)
+    out.push(ref)
+  }
+  return out
+}
+
+function parseJsonRecord(text: string | undefined): Record<string, unknown> | undefined {
+  if (!text) return undefined
+  try {
+    return recordValue(JSON.parse(text))
+  } catch (_error) {
+    return undefined
+  }
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function numericRecord(value: Record<string, unknown>): Record<string, number> | undefined {
+  const entries = Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
 function workloadSteps(value: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
