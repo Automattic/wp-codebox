@@ -41,6 +41,12 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   assert.equal(result.workers[0].artifact_refs[0].path, "fanout/workers/one/artifacts/result.json")
   assert.equal((result.workers[0].artifact_refs[0].metadata as Record<string, unknown>).private instanceof Object, true)
   assert.equal(result.diagnostics?.private instanceof Object, true)
+  assert.equal(result.progress.schema, "wp-codebox/live-progress-event/v1")
+  assert.equal(result.progress.phase, "fanout.completed")
+  assert.equal(result.progress.status, "succeeded")
+  assert.equal(result.progress.session_id, "fanout-test")
+  assert.equal(result.progress.run_id, "fanout-test")
+  assert.deepEqual(result.progress.progress, { total: 2, active: 0, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
 
   const events = (await readFile(join(root, "fanout", "events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
   const plan = JSON.parse(await readFile(join(root, "fanout", "plan.json"), "utf8"))
@@ -72,6 +78,12 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
     ["fanout.completed", 2, 0, 2, 0, 0],
   ])
   assert.deepEqual([...new Set(events.map((event) => event.time))], ["2026-01-02T03:04:05.000Z"])
+  assert.deepEqual(events.map((event) => [event.phase, event.timestamp, event.session_id, event.run_id]), events.map((event) => [event.event, "2026-01-02T03:04:05.000Z", "fanout-test", "fanout-test"]))
+  assert.equal(events[0].normalized_progress.schema, "wp-codebox/live-progress-event/v1")
+  assert.equal(events[0].normalized_progress.label, "Fanout started")
+  assert.deepEqual(events[0].normalized_progress.progress, { total: 2, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
+  assert.equal(events.at(-1).normalized_progress.phase, "fanout.completed")
+  assert.equal(events.at(-1).normalized_progress.status, "succeeded")
 })
 
 await withTempDir("wp-codebox-agent-fanout-dag-", async (root) => {

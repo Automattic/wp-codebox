@@ -2,7 +2,7 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import { previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
+import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
@@ -43,14 +43,15 @@ export interface PlaygroundCliStartupOptions {
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
   const startedAt = Date.now()
   const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
-    void Promise.resolve(options.onProgress?.({
+    const event = {
       schema: "wp-codebox/browser-startup-progress/v1",
       phase,
       status,
       label,
       elapsed_ms: Date.now() - startedAt,
       ...(detail ? { detail } : {}),
-    })).catch(() => undefined)
+    } as BrowserStartupProgressEvent
+    void Promise.resolve(options.onProgress?.({ ...event, normalized_progress: normalizeLiveProgressEvent(event) } as BrowserStartupProgressEvent)).catch(() => undefined)
   }
 
   emitProgress("preview:start", "running", "Preparing your site", {
