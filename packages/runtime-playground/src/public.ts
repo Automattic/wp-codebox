@@ -24,6 +24,7 @@ import {
   type FuzzSuiteResetExecutor,
   type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
+  type FuzzSuiteRuntimeWorkloadExecutor,
   type FuzzSuiteRunOptions,
   type ObservationSpec,
   type Runtime,
@@ -116,7 +117,7 @@ export interface WordPressPageLoadActionOptions {
   captureDiagnostics?: string[]
 }
 
-export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "resetExecutor" | "runnerCapabilities">
+export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities">
 
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
@@ -218,6 +219,36 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
   }
 }
 
+export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteRuntimeWorkloadExecutor {
+  return {
+    async executeRuntimeWorkload({ workload, case: fuzzCase }) {
+      const steps = [...workloadSteps(workload.before), ...workloadSteps(workload.steps), ...workloadSteps(workload.after)]
+      const startedAt = new Date().toISOString()
+      const executions: ExecutionResult[] = []
+      for (const step of steps) {
+        const result = await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs }, { type: "command-result" })
+        executions.push(result.execution)
+        if (result.execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
+          break
+        }
+      }
+      const failed = executions.find((execution) => execution.exitCode !== 0)
+      const last = executions[executions.length - 1]
+      return {
+        id: `wordpress-run-workload-${fuzzCase.id}`,
+        command: "wordpress.run-workload",
+        args: [`steps=${steps.length}`],
+        exitCode: failed ? failed.exitCode : 0,
+        stdout: JSON.stringify({ schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0 }),
+        stderr: failed?.stderr ?? "",
+        startedAt,
+        finishedAt: last?.finishedAt ?? new Date().toISOString(),
+        artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+      }
+    },
+  }
+}
+
 export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpisode, "reset" | "step">): FuzzSuiteResetExecutor {
   let checkpointCreated = false
   return {
@@ -281,6 +312,7 @@ export function executeWordPressFuzzSuite(
     ...options,
     executor: createWordPressFuzzSuiteCommandExecutor(episode),
     runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(episode),
+    runtimeWorkloadExecutor: createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode),
     resetExecutor: createWordPressFuzzSuiteResetExecutor(episode),
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     metadata: {
@@ -288,6 +320,28 @@ export function executeWordPressFuzzSuite(
       runnerMode: "runtime-backed",
       runtimeBackend: "wordpress-playground",
     },
+  })
+}
+
+function workloadSteps(value: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap((step) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      return []
+    }
+    const record = step as Record<string, unknown>
+    if (typeof record.command !== "string" || record.command.trim() === "") {
+      return []
+    }
+    return [{
+      command: record.command,
+      args: Array.isArray(record.args) ? record.args.map(String) : undefined,
+      timeoutMs: typeof record.timeoutMs === "number" ? record.timeoutMs : typeof record.timeout_ms === "number" ? record.timeout_ms : undefined,
+      allowFailure: record.allowFailure === true || record.allow_failure === true,
+      advisory: record.advisory === true,
+    }]
   })
 }
 

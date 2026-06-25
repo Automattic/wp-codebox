@@ -12,6 +12,7 @@ export interface FuzzSuiteCommandExecutor {
 export interface FuzzSuiteRunOptions {
   executor?: FuzzSuiteCommandExecutor | ((spec: ExecutionSpec) => Promise<ExecutionResult>)
   runtimeActionExecutor?: FuzzSuiteRuntimeActionExecutor | ((input: FuzzSuiteRuntimeActionExecutionInput) => Promise<RuntimeActionObservation>)
+  runtimeWorkloadExecutor?: FuzzSuiteRuntimeWorkloadExecutor | ((input: FuzzSuiteRuntimeWorkloadExecutionInput) => Promise<ExecutionResult>)
   resetExecutor?: FuzzSuiteResetExecutor | ((input: FuzzSuiteResetExecutionInput) => Promise<FuzzSuiteCaseResetResult>)
   targetAdapters?: FuzzSuiteTargetAdapterRegistry | readonly FuzzSuiteTargetAdapter[]
   supportedTargetKinds?: readonly string[]
@@ -41,6 +42,18 @@ export interface FuzzSuiteRuntimeActionExecutionInput {
 
 export interface FuzzSuiteRuntimeActionExecutor {
   executeRuntimeAction(input: FuzzSuiteRuntimeActionExecutionInput): Promise<RuntimeActionObservation>
+}
+
+export interface FuzzSuiteRuntimeWorkloadExecutionInput {
+  suite: FuzzSuiteContract
+  case: FuzzSuiteCase
+  caseIndex: number
+  target: FuzzSuiteTargetRef
+  workload: Record<string, unknown>
+}
+
+export interface FuzzSuiteRuntimeWorkloadExecutor {
+  executeRuntimeWorkload(input: FuzzSuiteRuntimeWorkloadExecutionInput): Promise<ExecutionResult>
 }
 
 export type FuzzSuiteTargetAdapterStatus = "supported" | "unsupported"
@@ -99,6 +112,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
   const diagnostics: FuzzSuiteDiagnostic[] = []
   const execute = normalizeFuzzSuiteExecutor(options.executor)
   const executeRuntimeAction = normalizeFuzzSuiteRuntimeActionExecutor(options.runtimeActionExecutor)
+  const executeRuntimeWorkload = normalizeFuzzSuiteRuntimeWorkloadExecutor(options.runtimeWorkloadExecutor)
   const executeReset = normalizeFuzzSuiteResetExecutor(options.resetExecutor)
   const adapterRegistry = normalizeFuzzSuiteTargetAdapterRegistry(options.targetAdapters)
   const runnerCapabilities = normalizeFuzzSuiteRunnerCapabilities(options.runnerCapabilities)
@@ -219,6 +233,70 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           reset,
           diagnostics: [diagnostic],
           metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" } }),
+        })
+      }
+      continue
+    }
+
+    const runtimeWorkload = target && isWordPressWorkloadRunTarget(target) ? fuzzSuiteRuntimeWorkloadInput(fuzzCase.input) : undefined
+    if (runtimeWorkload?.status === "invalid") {
+      const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, runtimeWorkload.message, { adapterKind: "runtime-workload" }).diagnostics?.[0] : undefined
+      if (diagnostic) {
+        diagnostics.push(diagnostic)
+        cases.push({
+          id: fuzzCase.id,
+          status: "skipped",
+          success: false,
+          target,
+          reset,
+          skipReason: diagnostic.code,
+          diagnostics: [diagnostic],
+          metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-workload" } }),
+        })
+        continue
+      }
+    }
+
+    if (runtimeWorkload?.status === "valid" && executeRuntimeWorkload && target) {
+      try {
+        const execution = await executeRuntimeWorkload({ suite, case: fuzzCase, caseIndex: index, target, workload: runtimeWorkload.workload })
+        const status = execution.exitCode === 0 ? "passed" : "failed"
+        const caseDiagnostics = status === "passed" ? [] : [{ severity: "error" as const, code: "fuzz_suite_command_failed", caseId: fuzzCase.id, target, message: `${target.entrypoint ?? target.id} exited with ${execution.exitCode}`, metadata: stripUndefined({ executionId: execution.id, stderr: execution.stderr }) }]
+        diagnostics.push(...caseDiagnostics)
+        cases.push({
+          id: fuzzCase.id,
+          status,
+          success: status === "passed",
+          target,
+          reset,
+          diagnostics: caseDiagnostics,
+          artifactRefs: fuzzSuiteExecutionArtifactRefs(execution),
+          metadata: stripUndefined({
+            input: fuzzCase.input,
+            description: fuzzCase.description,
+            caseMetadata: fuzzCase.metadata,
+            adapter: { adapterKind: "runtime-workload", executorKind: "episode" },
+            replay: { ...replayMetadata, workload: runtimeWorkload.workload },
+            execution: { id: execution.id, command: execution.command, exitCode: execution.exitCode, startedAt: execution.startedAt, finishedAt: execution.finishedAt },
+          }),
+        })
+      } catch (error) {
+        const diagnostic: FuzzSuiteDiagnostic = {
+          severity: "error",
+          code: "fuzz_suite_runtime_workload_execution_error",
+          caseId: fuzzCase.id,
+          target,
+          message: error instanceof Error ? error.message : String(error),
+        }
+        diagnostics.push(diagnostic)
+        cases.push({
+          id: fuzzCase.id,
+          status: "error",
+          success: false,
+          target,
+          reset,
+          diagnostics: [diagnostic],
+          metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-workload", executorKind: "episode" } }),
         })
       }
       continue
@@ -411,6 +489,16 @@ function normalizeFuzzSuiteRuntimeActionExecutor(executor: FuzzSuiteRunOptions["
   return (input) => executor.executeRuntimeAction(input)
 }
 
+function normalizeFuzzSuiteRuntimeWorkloadExecutor(executor: FuzzSuiteRunOptions["runtimeWorkloadExecutor"]): ((input: FuzzSuiteRuntimeWorkloadExecutionInput) => Promise<ExecutionResult>) | undefined {
+  if (!executor) {
+    return undefined
+  }
+  if (typeof executor === "function") {
+    return executor
+  }
+  return (input) => executor.executeRuntimeWorkload(input)
+}
+
 export function createFuzzSuiteTargetAdapterRegistry(adapters: readonly FuzzSuiteTargetAdapter[] = defaultFuzzSuiteTargetAdapters()): FuzzSuiteTargetAdapterRegistry {
   const byKind = new Map(adapters.map((adapter) => [adapter.kind, adapter]))
   return {
@@ -453,6 +541,13 @@ function commandFuzzSuiteTargetAdapter(kind: "command" | "runtime"): FuzzSuiteTa
       const input = normalizeFuzzSuiteCaseExecutionInput(fuzzCase.input)
       if (!command) {
         return unsupportedTargetAdapterResolution(fuzzCase, target, `Fuzz suite target ${target.kind} is missing an id or entrypoint.`, { adapterKind: kind })
+      }
+      if (kind === "runtime" && command === "wordpress.run-workload") {
+        const workload = fuzzSuiteRuntimeWorkloadInput(fuzzCase.input)
+        if (workload.status === "invalid") {
+          return unsupportedInputAdapterResolution(fuzzCase, target, workload.message, { adapterKind: "runtime-workload" })
+        }
+        return { status: "supported", spec: { command, args: [`workload-json=${JSON.stringify(workload.workload)}`] } as ExecutionSpec, metadata: { adapterKind: "runtime-workload" } }
       }
       if (!input.valid) {
         return unsupportedInputAdapterResolution(fuzzCase, target, "Expected an args array or an object with args, cwd, timeoutMs, and diagnostics.", { adapterKind: kind })
@@ -736,6 +831,22 @@ function fuzzSuiteTargetCommand(target: FuzzSuiteTargetRef | undefined): string 
     return undefined
   }
   return target.entrypoint ?? target.id
+}
+
+function isWordPressWorkloadRunTarget(target: FuzzSuiteTargetRef): boolean {
+  return target.kind === "runtime" && fuzzSuiteTargetCommand(target) === "wordpress.run-workload"
+}
+
+function fuzzSuiteRuntimeWorkloadInput(input: unknown): { status: "valid"; workload: Record<string, unknown> } | { status: "invalid"; message: string } {
+  const payload = fuzzSuiteCaseRecordInput(input)
+  if (payload.invalid || !isRecord(payload.payload)) {
+    return { status: "invalid", message: "Expected wordpress.run-workload input object." }
+  }
+  const workload = payload.payload.schema === "wp-codebox/wordpress-workload-run/v1" ? payload.payload : isRecord(payload.payload.workload) ? payload.payload.workload : payload.payload
+  if (!isRecord(workload) || !Array.isArray(workload.steps)) {
+    return { status: "invalid", message: "Expected wordpress.run-workload input with a steps array." }
+  }
+  return { status: "valid", workload }
 }
 
 function fuzzSuiteUnsupportedDiagnostic(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef | undefined): FuzzSuiteDiagnostic {

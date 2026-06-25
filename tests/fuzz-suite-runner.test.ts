@@ -92,6 +92,30 @@ assert.equal(plannedEditor.status, "supported")
 assert.deepEqual(plannedEditor.spec, { command: "wordpress.editor-open", args: ["target=site"] })
 assert.equal(plannedEditor.replayMetadata.caseId, "editor")
 
+const workloadExecutions: Record<string, unknown>[] = []
+const runtimeWorkloadResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-runtime-workload",
+  cases: [{
+    id: "rest-db-query-profile:default",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      enableQueryCapture: true,
+      steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }],
+    },
+  }],
+}), {
+  runtimeWorkloadExecutor: async ({ workload }) => {
+    workloadExecutions.push(workload)
+    return { id: "workload-exec-1", command: "wordpress.run-workload", args: ["steps=1"], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z", artifactRefs: [{ kind: "workload", id: "workload-artifact", path: "files/workload.json" }] }
+  },
+})
+assert.equal(runtimeWorkloadResult.status, "passed")
+assert.equal(runtimeWorkloadResult.cases[0]?.status, "passed")
+assert.equal(runtimeWorkloadResult.cases[0]?.diagnostics[0]?.code, undefined)
+assert.equal(runtimeWorkloadResult.cases[0]?.artifactRefs?.[0]?.path, "files/workload.json")
+assert.deepEqual((workloadExecutions[0]?.steps as Array<{ command: string; args: string[] }> | undefined)?.[0], { command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] })
+
 const noExecutor = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-002",
   target: { kind: "command", id: "inspect-mounted-inputs" },
