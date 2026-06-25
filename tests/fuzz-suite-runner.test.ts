@@ -107,13 +107,14 @@ const runtimeWorkloadResult = await runFuzzSuite(fuzzSuiteContract({
 }), {
   runtimeWorkloadExecutor: async ({ workload }) => {
     workloadExecutions.push(workload)
-    return { id: "workload-exec-1", command: "wordpress.run-workload", args: ["steps=1"], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z", artifactRefs: [{ kind: "workload", id: "workload-artifact", path: "files/workload.json" }] }
+    return { id: "workload-exec-1", command: "wordpress.run-workload", args: ["steps=1"], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z", artifactRefs: [{ kind: "workload", id: "workload-artifact", path: "files/workload.json" }], result: { schema: "wp-codebox/runtime-command-result/v1", status: "ok", json: { metrics: { query_count: 7 }, artifacts: { profile: { schema: "example/profile" } } } } }
   },
 })
 assert.equal(runtimeWorkloadResult.status, "passed")
 assert.equal(runtimeWorkloadResult.cases[0]?.status, "passed")
 assert.equal(runtimeWorkloadResult.cases[0]?.diagnostics[0]?.code, undefined)
 assert.equal(runtimeWorkloadResult.cases[0]?.artifactRefs?.[0]?.path, "files/workload.json")
+assert.deepEqual(((runtimeWorkloadResult.cases[0]?.metadata?.execution as { result?: { json?: { metrics?: { query_count?: number } } } } | undefined)?.result?.json?.metrics?.query_count), 7)
 assert.deepEqual((workloadExecutions[0]?.steps as Array<{ command: string; args: string[] }> | undefined)?.[0], { command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] })
 
 const noExecutor = await runFuzzSuite(fuzzSuiteContract({

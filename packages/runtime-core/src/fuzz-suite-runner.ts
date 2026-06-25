@@ -277,7 +277,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
             caseMetadata: fuzzCase.metadata,
             adapter: { adapterKind: "runtime-workload", executorKind: "episode" },
             replay: { ...replayMetadata, workload: runtimeWorkload.workload },
-            execution: { id: execution.id, command: execution.command, exitCode: execution.exitCode, startedAt: execution.startedAt, finishedAt: execution.finishedAt },
+            execution: { id: execution.id, command: execution.command, exitCode: execution.exitCode, startedAt: execution.startedAt, finishedAt: execution.finishedAt, result: execution.result },
           }),
         })
       } catch (error) {
