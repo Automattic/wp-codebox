@@ -21,6 +21,7 @@ export interface AgentFanoutExecutionOptions {
 
 export interface AgentFanoutExecutionResult {
   schema: typeof FANOUT_RESULT_SCHEMA
+  fanout_id: string
   status: "completed" | "failed"
   success: boolean
   session: {
@@ -64,6 +65,8 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
 
   const clock = fanoutClock(request, options.clock)
   const sessionId = options.sessionId || stringValue(request.session_id) || stringValue(request.orchestrator?.session_id) || stringValue(request.orchestrator?.request_id) || `fanout-${Date.now()}`
+  const fanoutId = sessionId
+  const progressCounts = createFanoutProgressCounts()
   const concurrency = Math.max(1, Math.min(MAX_FANOUT_CONCURRENCY, Math.floor(Number(request.concurrency) || 1)))
   const fanoutRoot = join(options.artifactRoot, "fanout")
   const workersRoot = join(fanoutRoot, "workers")
@@ -85,21 +88,21 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
     onFanoutStarted: async ({ workers, plan }) => {
       await writeJson(planPath, plan)
-      await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 }, clock)
+      await emitEvent(eventsPath, { event: "fanout.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 }, clock)
     },
-    onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", worker_id: worker.id }, clock),
-    onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", worker_id: worker.id, status: result.status }, clock),
-    onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", worker_id: worker.id, status: result.status }, clock),
+    onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", fanout_id: fanoutId, worker_id: worker.id, ...progressCounts.start(request.workers.length) }, clock),
+    onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, ...progressCounts.complete(request.workers.length, result.status) }, clock),
+    onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, ...progressCounts.complete(request.workers.length, result.status) }, clock),
     onWorkerSkipped: async (worker, result) => {
       await writeJson(join(workersRoot, worker.id, "result.json"), result)
-      await emitEvent(eventsPath, { event: "worker.skipped", worker_id: worker.id, status: result.status }, clock)
+      await emitEvent(eventsPath, { event: "worker.skipped", fanout_id: fanoutId, worker_id: worker.id, status: result.status, ...progressCounts.skip(request.workers.length) }, clock)
     },
     createSkippedResult: (worker, dependencies) => agentTaskSkippedFanoutWorkerResult(worker, sessionId, dependencies),
-    onAggregationStarted: ({ workers, workerResultRefs }) => emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResultRefs.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResultRefs.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResultRefs.filter((worker) => worker.status === "skipped").length }, clock),
+    onAggregationStarted: ({ workers, workerResultRefs }) => emitEvent(eventsPath, { event: "aggregation.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: workerResultRefs.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResultRefs.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResultRefs.filter((worker) => worker.status === "skipped").length, cancelled: workerResultRefs.filter((worker) => worker.status === "cancelled").length, timed_out: workerResultRefs.filter((worker) => worker.status === "timed_out" || worker.status === "timeout").length }, clock),
     onAggregationCompleted: async (aggregate) => {
       await writeJson(join(aggregateRoot, "result.json"), aggregate)
       await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
-      await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status }, clock)
+      await emitEvent(eventsPath, { event: "aggregation.completed", fanout_id: fanoutId, status: aggregate.status, ...progressCounts.snapshot(request.workers.length, 0) }, clock)
     },
   })
   const workerResults: AgentFanoutWorkerResult[] = fanout.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
@@ -108,6 +111,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   const success = fanout.success
   const result: AgentFanoutExecutionResult = {
     schema: FANOUT_RESULT_SCHEMA,
+    fanout_id: fanoutId,
     status: success ? "completed" : "failed",
     success,
     session: {
@@ -149,7 +153,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     },
   }
   await writeJson(resultPath, result)
-  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", total: counts.total, completed: counts.completed, failed: counts.failed, skipped: counts.skipped, cancelled: counts.cancelled, timed_out: counts.timed_out }, clock)
+  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", fanout_id: fanoutId, total: counts.total, active: 0, completed: counts.completed, failed: counts.failed, skipped: counts.skipped, cancelled: counts.cancelled, timed_out: counts.timed_out }, clock)
   return result
 }
 
@@ -218,6 +222,36 @@ function agentTaskFanoutWorkerAdapter(request: FanoutRequestContract, options: A
         await writeJson(join(options.workersRoot, descriptor.id, "result.json"), workerResult)
         return workerResult
       }
+    },
+  }
+}
+
+function createFanoutProgressCounts() {
+  let active = 0
+  let completed = 0
+  let failed = 0
+  let skipped = 0
+  let cancelled = 0
+  let timedOut = 0
+  const snapshot = (total: number, activeOverride?: number) => ({ total, active: activeOverride ?? active, completed, failed, skipped, cancelled, timed_out: timedOut })
+
+  return {
+    snapshot,
+    start(total: number) {
+      active++
+      return snapshot(total)
+    },
+    complete(total: number, status: string) {
+      active = Math.max(0, active - 1)
+      if (agentTaskStatusSucceeded(status)) completed++
+      else if (status === "cancelled") cancelled++
+      else if (status === "timed_out" || status === "timeout") timedOut++
+      else failed++
+      return snapshot(total)
+    },
+    skip(total: number) {
+      skipped++
+      return snapshot(total)
     },
   }
 }

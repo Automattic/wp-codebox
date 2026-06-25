@@ -63,6 +63,11 @@ safe path segment policy used by the runner. A worker may override task policy,
 allowed tools, context, expected artifacts, agent, and timeout while inheriting
 the parent runtime stack and mounts.
 
+Every persisted parent plan, result, and lifecycle event includes a stable
+`fanout_id`. In v1 this is the parent session ID selected from `session_id`,
+`orchestrator.session_id`, `orchestrator.request_id`, or the runtime-generated
+fallback. Worker result arrays preserve request order, including skipped workers.
+
 ## Execution Strategy
 
 The v1 execution strategy is `bounded-concurrent-isolated-sandboxes`.
@@ -103,6 +108,12 @@ Browser hosts do not need a product-specific progress API. The generic polling
 contract is the parent artifact envelope: read `fanout/events.jsonl` for live
 progress snapshots, then read `fanout/result.json` and referenced worker or
 aggregate artifacts for durable status and review decisions.
+
+Lifecycle events include stable progress counts (`total`, `active`, `completed`,
+`failed`, `skipped`, `cancelled`, `timed_out`) when the count is known. Workers
+skipped because a dependency did not complete successfully emit structured
+worker results with `status: "skipped"`, `error.code: "dependency-skipped"`, and
+dependency status details.
 
 ## Artifact Layout
 

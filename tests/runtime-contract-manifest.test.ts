@@ -7,7 +7,11 @@ import {
   ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
   BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
+  BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA,
+  BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA,
+  BROWSER_CONTAINED_SITE_EXPORT_SCHEMA,
   BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+  BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA,
   BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
   BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
@@ -75,6 +79,10 @@ assert.equal(manifest.schemas.browserSession.productDto, BROWSER_SESSION_PRODUCT
 assert.equal(manifest.schemas.browserSession.containedSiteStatus, BROWSER_CONTAINED_SITE_STATUS_SCHEMA)
 assert.equal(manifest.schemas.browserSession.containedSiteOpen, BROWSER_CONTAINED_SITE_OPEN_SCHEMA)
 assert.equal(manifest.schemas.browserSession.previewBootConfig, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteSnapshot, BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteExport, BROWSER_CONTAINED_SITE_EXPORT_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteApplyPlan, BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteApplyResult, BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA)
 assert.equal(manifest.schemas.preview.lease, PREVIEW_LEASE_SCHEMA)
 assert.equal(manifest.schemas.preview.reviewerAccess, "wp-codebox/preview-reviewer-access/v1")
 assert.equal(manifest.schemas.artifact.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)

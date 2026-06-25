@@ -31,6 +31,7 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   })
 
   assert.equal(result.success, true)
+  assert.equal(result.fanout_id, "fanout-test")
   assert.equal(result.concurrency, 3)
   assert.deepEqual(result.counts, { total: 2, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
   assert.deepEqual(result.session.children.map((child) => child.id), ["fanout-test:one", "fanout-test:two"])
@@ -42,6 +43,9 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   assert.equal(result.diagnostics?.private instanceof Object, true)
 
   const events = (await readFile(join(root, "fanout", "events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+  const plan = JSON.parse(await readFile(join(root, "fanout", "plan.json"), "utf8"))
+  assert.equal(plan.fanout_id, "fanout-test")
+  assert.deepEqual([...new Set(events.map((event) => event.fanout_id))], ["fanout-test"])
   assert.deepEqual(events.map((event) => event.event), [
     "fanout.started",
     "worker.started",
@@ -51,6 +55,21 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
     "aggregation.started",
     "aggregation.completed",
     "fanout.completed",
+  ])
+  const eventCounts = events.map((event) => [event.event, event.total, event.active, event.completed, event.failed, event.skipped])
+  assert.deepEqual(eventCounts.slice(0, 3), [
+    ["fanout.started", 2, 0, 0, 0, 0],
+    ["worker.started", 2, 1, 0, 0, 0],
+    ["worker.started", 2, 2, 0, 0, 0],
+  ])
+  assert.deepEqual(eventCounts.slice(3, 5).sort((a, b) => Number(a[3]) - Number(b[3])), [
+    ["worker.completed", 2, 1, 1, 0, 0],
+    ["worker.completed", 2, 0, 2, 0, 0],
+  ])
+  assert.deepEqual(eventCounts.slice(5), [
+    ["aggregation.started", 2, 0, 2, 0, 0],
+    ["aggregation.completed", 2, 0, 2, 0, 0],
+    ["fanout.completed", 2, 0, 2, 0, 0],
   ])
   assert.deepEqual([...new Set(events.map((event) => event.time))], ["2026-01-02T03:04:05.000Z"])
 })
@@ -86,6 +105,7 @@ await withTempDir("wp-codebox-agent-fanout-dag-", async (root) => {
   })
 
   assert.equal(result.success, false)
+  assert.equal(result.fanout_id, "fanout-dag")
   assert.deepEqual(result.counts, { total: 5, completed: 2, failed: 1, skipped: 2, cancelled: 0, timed_out: 0 })
   assert.deepEqual(result.workers.map((worker) => [worker.worker_id, worker.status]), [
     ["setup", "succeeded"],
@@ -101,6 +121,7 @@ await withTempDir("wp-codebox-agent-fanout-dag-", async (root) => {
 
   const skipped = JSON.parse(await readFile(join(root, "fanout", "workers", "after-failing", "result.json"), "utf8"))
   assert.equal(skipped.status, "skipped")
+  assert.equal(skipped.error.code, "dependency-skipped")
   assert.deepEqual(skipped.output.dependencies, [{ worker_id: "failing", status: "failed", success: false }])
 
   const events = (await readFile(join(root, "fanout", "events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))

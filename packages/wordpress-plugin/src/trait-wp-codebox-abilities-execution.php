@@ -2453,6 +2453,131 @@ public static function destroy_browser_contained_site_session( array $input ): a
 	);
 }
 
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function snapshot_browser_contained_site( array $input ): array|WP_Error {
+	$validation = self::validate_browser_contained_site_source( $input, 'wp-codebox/browser-contained-site-snapshot/v1' );
+	if ( false === ( $validation['success'] ?? false ) ) {
+		return $validation;
+	}
+
+	$contained_site = is_array( $validation['contained_site'] ?? null ) ? $validation['contained_site'] : array();
+	$source_digest  = is_array( $validation['source_digest'] ?? null ) ? $validation['source_digest'] : array();
+	$status         = is_array( $validation['status'] ?? null ) ? $validation['status'] : array();
+
+	return array_filter(
+		array(
+			'success'        => true,
+			'schema'         => 'wp-codebox/browser-contained-site-snapshot/v1',
+			'contained_site' => $contained_site,
+			'source_digest'  => $source_digest,
+			'session'        => is_array( $validation['session'] ?? null ) ? $validation['session'] : array(),
+			'status'         => $status,
+			'snapshot'       => array(
+				'schema'        => 'wp-codebox/wordpress-runtime-snapshot/v1',
+				'status'        => 'preview-contract',
+				'capture'       => 'browser-contained-site',
+				'site_id'       => (string) ( $contained_site['site_id'] ?? '' ),
+				'source_digest' => $source_digest,
+				'capabilities'  => array( 'runtime-snapshot-export', 'replay-export-package' ),
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function export_browser_contained_site( array $input ): array|WP_Error {
+	$snapshot = self::snapshot_browser_contained_site( $input );
+	if ( is_wp_error( $snapshot ) ) {
+		return $snapshot;
+	}
+	if ( false === ( $snapshot['success'] ?? false ) ) {
+		return array_merge( $snapshot, array( 'schema' => 'wp-codebox/browser-contained-site-export/v1' ) );
+	}
+
+	return array_filter(
+		array(
+			'success'        => true,
+			'schema'         => 'wp-codebox/browser-contained-site-export/v1',
+			'contained_site' => is_array( $snapshot['contained_site'] ?? null ) ? $snapshot['contained_site'] : array(),
+			'source_digest'  => is_array( $snapshot['source_digest'] ?? null ) ? $snapshot['source_digest'] : array(),
+			'snapshot'       => $snapshot,
+			'export'         => array(
+				'schema'        => 'wp-codebox/replayable-wordpress-site/v1',
+				'status'        => 'preview-contract',
+				'package_kind'  => 'replay-export-package',
+				'snapshot_path' => 'files/runtime-snapshot.json',
+				'blueprint'     => array( 'schema' => 'wp-codebox/replay-export-blueprint/v1' ),
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function plan_browser_contained_site_apply( array $input ): array|WP_Error {
+	$validation = self::validate_browser_contained_site_source( $input, 'wp-codebox/browser-contained-site-apply-plan/v1' );
+	if ( false === ( $validation['success'] ?? false ) ) {
+		return $validation;
+	}
+
+	$mode          = true === ( $input['apply'] ?? false ) ? 'apply' : 'preview';
+	$host_mutation = 'apply' === $mode && true === ( $input['allow_host_mutation'] ?? false );
+	$changes       = array_values( is_array( $input['changes'] ?? null ) ? $input['changes'] : array() );
+
+	return array_filter(
+		array(
+			'success'        => true,
+			'schema'         => 'wp-codebox/browser-contained-site-apply-plan/v1',
+			'mode'           => $mode,
+			'host_mutation'  => $host_mutation,
+			'contained_site' => is_array( $validation['contained_site'] ?? null ) ? $validation['contained_site'] : array(),
+			'source_digest'  => is_array( $validation['source_digest'] ?? null ) ? $validation['source_digest'] : array(),
+			'plan'           => array(
+				'schema'            => 'wp-codebox/browser-contained-site-apply-plan/v1',
+				'status'            => $host_mutation ? 'ready-for-host-apply' : 'preview-only',
+				'preview_only'      => ! $host_mutation,
+				'host_mutation'     => $host_mutation,
+				'operation_count'   => count( $changes ),
+				'operations'        => $changes,
+				'requires_approval' => true,
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function apply_browser_contained_site_plan( array $input ): array|WP_Error {
+	$plan = is_array( $input['plan'] ?? null ) ? $input['plan'] : self::plan_browser_contained_site_apply( $input );
+	if ( is_wp_error( $plan ) ) {
+		return $plan;
+	}
+	if ( false === ( $plan['success'] ?? false ) ) {
+		return array_merge( $plan, array( 'schema' => 'wp-codebox/browser-contained-site-apply-result/v1' ) );
+	}
+
+	$host_mutation = true === ( $plan['host_mutation'] ?? false ) && true === ( $input['allow_host_mutation'] ?? false );
+	return array_filter(
+		array(
+			'success'        => true,
+			'schema'         => 'wp-codebox/browser-contained-site-apply-result/v1',
+			'mode'           => $host_mutation ? 'apply' : 'preview',
+			'host_mutation'  => $host_mutation,
+			'contained_site' => is_array( $plan['contained_site'] ?? null ) ? $plan['contained_site'] : array(),
+			'source_digest'  => is_array( $plan['source_digest'] ?? null ) ? $plan['source_digest'] : array(),
+			'result'         => array(
+				'schema'        => 'wp-codebox/browser-contained-site-apply-result/v1',
+				'status'        => $host_mutation ? 'not-applied' : 'previewed',
+				'preview_only'  => ! $host_mutation,
+				'host_mutation' => $host_mutation,
+				'message'       => $host_mutation ? 'Host apply requires an approved apply adapter.' : 'Preview apply result produced without host mutation.',
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
 /** @param array<string,mixed> $input Blueprint ref input. @return array<string,mixed>|WP_Error */
 public static function hydrate_browser_blueprint_ref( array $input ): array|WP_Error {
 	return WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( $input );
@@ -3092,6 +3217,12 @@ private static function execute_host_delegation_request( array $request ): array
 	$request['request_id'] = $request_id;
 	$started_at            = microtime( true );
 	$events                = array( self::host_delegation_event( 'host-delegation.requested', $request_id ) );
+	$request_error         = self::host_delegation_request_validation_error( $request );
+	if ( null !== $request_error ) {
+		$ended_at = microtime( true );
+		$events[] = self::host_delegation_event( 'host-delegation.failed', $request_id, 'failed' );
+		return self::host_delegation_result( false, 'failed', $request, null, $request_error, $events, $started_at, $ended_at );
+	}
 
 	/**
 	 * Lets products satisfy an explicit host-delegation request.
@@ -3120,6 +3251,12 @@ private static function execute_host_delegation_request( array $request ): array
 		return self::host_delegation_result( false, 'failed', $request, null, array( 'code' => 'wp_codebox_host_delegation_provider_result_invalid', 'message' => 'Host delegation providers must return an array, WP_Error, or null.', 'data' => array( 'type' => get_debug_type( $provider_result ) ) ), $events, $started_at, $ended_at );
 	}
 
+	$provider_error = self::host_delegation_provider_result_validation_error( $request, $provider_result );
+	if ( null !== $provider_error ) {
+		$events[] = self::host_delegation_event( 'host-delegation.failed', $request_id, 'failed', (string) ( $provider_result['provider'] ?? '' ) );
+		return self::host_delegation_result( false, 'failed', $request, null, $provider_error, $events, $started_at, $ended_at );
+	}
+
 	$has_success = array_key_exists( 'success', $provider_result );
 	$has_status  = array_key_exists( 'status', $provider_result );
 	$status      = self::safe_key( (string) ( $provider_result['status'] ?? ( $has_success && false === $provider_result['success'] ? 'failed' : 'completed' ) ) );
@@ -3127,9 +3264,6 @@ private static function execute_host_delegation_request( array $request ): array
 	if ( ! $has_status && ! $has_success && isset( $provider_result['error'] ) ) {
 		$status  = 'failed';
 		$success = false;
-	}
-	if ( ! in_array( $status, array( 'accepted', 'completed', 'failed', 'unavailable' ), true ) ) {
-		$status = $success ? 'completed' : 'failed';
 	}
 
 	$events[] = self::host_delegation_event( $success ? ( 'accepted' === $status ? 'host-delegation.accepted' : 'host-delegation.completed' ) : ( 'unavailable' === $status ? 'host-delegation.unavailable' : 'host-delegation.failed' ), $request_id, $status, (string) ( $provider_result['provider'] ?? '' ) );
@@ -3144,6 +3278,74 @@ private static function execute_host_delegation_request( array $request ): array
 	}
 
 	return $envelope;
+}
+
+/** @param array<string,mixed> $request Host delegation request. @return array<string,mixed>|null */
+private static function host_delegation_request_validation_error( array $request ): ?array {
+	if ( '' === trim( (string) ( $request['goal'] ?? $request['task'] ?? '' ) ) ) {
+		return array( 'code' => 'wp_codebox_host_delegation_request_invalid', 'message' => 'Host delegation requests require a non-empty goal or task.', 'data' => array( 'field' => 'goal' ) );
+	}
+
+	foreach ( array( 'target', 'context', 'execution', 'orchestrator', 'metadata' ) as $field ) {
+		if ( isset( $request[ $field ] ) && ! is_array( $request[ $field ] ) ) {
+			return array( 'code' => 'wp_codebox_host_delegation_request_invalid', 'message' => 'Host delegation request object fields must be arrays.', 'data' => array( 'field' => $field ) );
+		}
+	}
+
+	if ( isset( $request['expected_artifacts'] ) && ! is_array( $request['expected_artifacts'] ) ) {
+		return array( 'code' => 'wp_codebox_host_delegation_request_invalid', 'message' => 'Host delegation expected_artifacts must be an array.', 'data' => array( 'field' => 'expected_artifacts' ) );
+	}
+
+	if ( isset( $request['source_digest'] ) && '' === self::host_delegation_digest_value( $request['source_digest'] ) ) {
+		return array( 'code' => 'wp_codebox_host_delegation_source_digest_invalid', 'message' => 'Host delegation source_digest must be a 64-character sha256 digest.', 'data' => array( 'field' => 'source_digest' ) );
+	}
+
+	return null;
+}
+
+/** @param array<string,mixed> $request Host delegation request. @param array<string,mixed> $provider_result Provider result. @return array<string,mixed>|null */
+private static function host_delegation_provider_result_validation_error( array $request, array $provider_result ): ?array {
+	if ( isset( $provider_result['schema'] ) && 'wp-codebox/host-delegation-result/v1' !== (string) $provider_result['schema'] ) {
+		return array( 'code' => 'wp_codebox_host_delegation_provider_result_schema_invalid', 'message' => 'Host delegation provider results must use wp-codebox/host-delegation-result/v1 when a schema is present.', 'data' => array( 'schema' => (string) $provider_result['schema'] ) );
+	}
+
+	$status = self::safe_key( (string) ( $provider_result['status'] ?? ( array_key_exists( 'success', $provider_result ) && false === $provider_result['success'] ? 'failed' : 'completed' ) ) );
+	if ( ! in_array( $status, array( 'accepted', 'completed', 'failed', 'unavailable' ), true ) ) {
+		return array( 'code' => 'wp_codebox_host_delegation_provider_status_invalid', 'message' => 'Host delegation provider status must be accepted, completed, failed, or unavailable.', 'data' => array( 'status' => $status ) );
+	}
+
+	if ( isset( $provider_result['result'] ) && null !== $provider_result['result'] && ! is_array( $provider_result['result'] ) ) {
+		return array( 'code' => 'wp_codebox_host_delegation_provider_result_invalid', 'message' => 'Host delegation provider result must be an object when present.', 'data' => array( 'field' => 'result', 'type' => get_debug_type( $provider_result['result'] ) ) );
+	}
+
+	$provider_request_id = self::safe_key( (string) ( $provider_result['request_id'] ?? '' ) );
+	if ( '' !== $provider_request_id && $provider_request_id !== (string) $request['request_id'] ) {
+		return array( 'code' => 'wp_codebox_host_delegation_request_id_mismatch', 'message' => 'Host delegation provider result request_id does not match the request.', 'data' => array( 'expected' => (string) $request['request_id'], 'actual' => $provider_request_id ) );
+	}
+
+	$request_session = trim( (string) ( $request['sandbox_session_id'] ?? $request['session_id'] ?? '' ) );
+	$result_session  = trim( (string) ( $provider_result['sandbox_session_id'] ?? $provider_result['session_id'] ?? '' ) );
+	$result          = is_array( $provider_result['result'] ?? null ) ? $provider_result['result'] : array();
+	if ( '' === $result_session ) {
+		$result_session = trim( (string) ( $result['sandbox_session_id'] ?? $result['session_id'] ?? '' ) );
+	}
+	if ( '' !== $request_session && '' !== $result_session && $request_session !== $result_session ) {
+		return array( 'code' => 'wp_codebox_host_delegation_scope_mismatch', 'message' => 'Host delegation provider result session scope does not match the request.', 'data' => array( 'expected' => $request_session, 'actual' => $result_session ) );
+	}
+
+	$request_digest = self::host_delegation_digest_value( $request['source_digest'] ?? null );
+	$result_digest  = self::host_delegation_digest_value( $provider_result['source_digest'] ?? $result['source_digest'] ?? null );
+	if ( '' !== $request_digest && '' !== $result_digest && $request_digest !== $result_digest ) {
+		return array( 'code' => 'wp_codebox_host_delegation_source_digest_mismatch', 'message' => 'Host delegation provider result source digest does not match the request.', 'data' => array( 'expected' => $request_digest, 'actual' => $result_digest ) );
+	}
+
+	return null;
+}
+
+private static function host_delegation_digest_value( mixed $value ): string {
+	$digest = is_array( $value ) ? (string) ( $value['value'] ?? $value['sha256'] ?? $value['hash'] ?? '' ) : (string) $value;
+	$digest = strtolower( trim( $digest ) );
+	return preg_match( '/^[a-f0-9]{64}$/', $digest ) ? $digest : '';
 }
 
 private static function host_delegation_event( string $event, string $request_id, string $status = '', string $provider = '' ): array {
@@ -3713,6 +3915,80 @@ private static function browser_contained_site_startup_diagnostics( array $resul
 			'preview_lease_status' => WP_Codebox_Browser_Task_Builder::preview_lease_status( $preview_lease ),
 			'boot_contract'        => $boot_contract,
 			'recovery_handle'      => (string) ( $result['recovery_handle'] ?? $contained_site['recovery_handle'] ?? '' ),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return array<string,mixed> */
+private static function validate_browser_contained_site_source( array $input, string $schema ): array {
+	$contained_site = self::browser_contained_site_public_input( is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array() );
+	$site_id        = self::safe_key( (string) ( $input['site_id'] ?? $contained_site['site_id'] ?? '' ) );
+	$input_digest   = self::browser_contained_site_digest_ref( $input['source_digest'] ?? $input['input_hash'] ?? '' );
+	$site_digest    = self::browser_contained_site_digest_ref( $contained_site['source_digest'] ?? '' );
+	$source_digest  = ! empty( $input_digest ) ? $input_digest : $site_digest;
+
+	if ( '' === $site_id || empty( $source_digest ) ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_ref_invalid', 'Browser contained site contracts require a contained site handle/site_id and a 64-character source digest.', array( 'site_id' => $site_id ), array( 'source_digest' => $input['source_digest'] ?? $input['input_hash'] ?? $contained_site['source_digest'] ?? null ) );
+	}
+
+	if ( ! empty( $site_digest ) && ! empty( $input_digest ) && (string) $site_digest['value'] !== (string) $input_digest['value'] ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_stale_digest', 'Browser contained site source digest does not match the requested source digest.', $site_digest, $input_digest );
+	}
+
+	$session_id       = trim( (string) ( $input['session_id'] ?? $input['sandbox_session_id'] ?? '' ) );
+	$site_session_id  = trim( (string) ( $contained_site['session_id'] ?? '' ) );
+	if ( '' !== $session_id && '' !== $site_session_id && $session_id !== $site_session_id ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_session_mismatch', 'Browser contained site session does not match the requested session.', array( 'session_id' => $site_session_id ), array( 'session_id' => $session_id ) );
+	}
+
+	$scope      = trim( (string) ( $input['scope'] ?? '' ) );
+	$site_scope = trim( (string) ( $contained_site['preview']['scope'] ?? $contained_site['session']['scope'] ?? '' ) );
+	if ( '' !== $scope && '' !== $site_scope && $scope !== $site_scope ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_scope_mismatch', 'Browser contained site scope does not match the requested scope.', array( 'scope' => $site_scope ), array( 'scope' => $scope ) );
+	}
+
+	$status = self::get_browser_contained_site_status(
+		array(
+			'site_id'       => $site_id,
+			'source_digest' => $source_digest,
+		)
+	);
+	if ( is_wp_error( $status ) ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_ref_invalid', 'Browser contained site status could not be resolved.', array( 'site_id' => $site_id, 'source_digest' => $source_digest ), array() );
+	}
+	if ( 'incompatible' === (string) ( $status['status'] ?? '' ) ) {
+		return self::browser_contained_site_contract_error( $schema, 'wp_codebox_browser_contained_site_stale_digest', 'Browser contained site source digest is stale for the prepared runtime.', array( 'source_digest' => $source_digest ), array( 'status' => $status ) );
+	}
+
+	return array_filter(
+		array(
+			'success'        => true,
+			'schema'         => $schema,
+			'contained_site' => array_filter( array_merge( $contained_site, array( 'schema' => 'wp-codebox/browser-contained-site/v1', 'site_id' => $site_id, 'source_digest' => $source_digest ) ), static fn( mixed $value ): bool => array() !== $value && '' !== $value ),
+			'source_digest'  => $source_digest,
+			'session'        => self::browser_contained_site_session_identity( '' !== $site_session_id ? $site_session_id : $session_id, (string) ( $contained_site['preview_id'] ?? '' ), '' !== $site_scope ? $site_scope : $scope ),
+			'status'         => $status,
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_contract_error( string $schema, string $code, string $message, array $expected, array $actual ): array {
+	return array_filter(
+		array(
+			'success' => false,
+			'schema'  => $schema,
+			'error'   => array_filter(
+				array(
+					'code'     => $code,
+					'message'  => $message,
+					'expected' => $expected,
+					'actual'   => $actual,
+				),
+				static fn( mixed $value ): bool => array() !== $value && null !== $value
+			),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);

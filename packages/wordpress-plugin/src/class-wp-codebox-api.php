@@ -30,6 +30,10 @@ final class WP_Codebox_API {
 		'wp-codebox/preview-reuse-decision'                 => 'preview_reuse_decision',
 		'wp-codebox/open-browser-contained-site'            => 'open_browser_session',
 		'wp-codebox/open-or-create-browser-contained-site'  => 'open_or_create_browser_contained_site',
+		'wp-codebox/snapshot-browser-contained-site'        => 'snapshot_browser_contained_site',
+		'wp-codebox/export-browser-contained-site'          => 'export_browser_contained_site',
+		'wp-codebox/plan-browser-contained-site-apply'      => 'plan_browser_contained_site_apply',
+		'wp-codebox/apply-browser-contained-site-plan'      => 'apply_browser_contained_site_plan',
 		'wp-codebox/request-host-delegation'                => 'request_host_delegation',
 		'wp-codebox/list-artifacts'                         => 'list_artifacts',
 		'wp-codebox/get-artifact'                           => 'get_artifact',
@@ -153,6 +157,26 @@ final class WP_Codebox_API {
 	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
 	public static function open_or_create_browser_contained_site( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::open_or_create_browser_contained_site( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
+	public static function snapshot_browser_contained_site( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::snapshot_browser_contained_site( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
+	public static function export_browser_contained_site( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::export_browser_contained_site( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
+	public static function plan_browser_contained_site_apply( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::plan_browser_contained_site_apply( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
+	public static function apply_browser_contained_site_plan( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::apply_browser_contained_site_plan( $input );
 	}
 
 	/** @param array<string,mixed> $input Host delegation input. @return array<string,mixed>|WP_Error */
