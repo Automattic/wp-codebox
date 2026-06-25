@@ -50,7 +50,8 @@ try {
       target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
       input: {
         schema: "wp-codebox/wordpress-workload-run/v1",
-        steps: [{ command: "wordpress.run-php", args: ["code=<?php echo 'ok';"] }],
+        id: "typed-workload",
+        steps: [{ type: "php", code: "return array('ok' => true);" }],
       },
     }],
   }), "utf8")

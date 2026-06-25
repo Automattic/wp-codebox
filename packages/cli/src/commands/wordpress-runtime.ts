@@ -65,8 +65,9 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
 
 async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecutionInput, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
   const startedAt = new Date().toISOString()
-  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(input.workload)) as WorkspaceRecipe
-  applyFuzzSuiteRuntimeRequirements(recipe, options.input)
+  const requirements = fuzzSuiteRuntimeRequirements(options.input)
+  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(input.workload, requirements)) as WorkspaceRecipe
+  applyFuzzSuiteRuntimeRequirements(recipe, requirements)
   const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-workload-"))
   try {
     const recipePath = join(tempDir, "recipe.json")
@@ -95,8 +96,7 @@ async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecu
   }
 }
 
-function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, suiteInput: Record<string, unknown>): void {
-  const requirements = objectOption(objectOption(suiteInput.metadata)?.runtime_requirements)
+function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, requirements: Record<string, unknown> | undefined): void {
   if (!requirements) return
   const inputs = recipe.inputs ?? {}
   const runtime = recipe.runtime ?? {}
@@ -113,6 +113,10 @@ function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, suiteInput: 
     ...(recipe.metadata ?? {}),
     runtime_requirements: requirements,
   }
+}
+
+function fuzzSuiteRuntimeRequirements(suiteInput: Record<string, unknown>): Record<string, unknown> | undefined {
+  return objectOption(objectOption(suiteInput.metadata)?.runtime_requirements)
 }
 
 function runtimeRequirementExtraPlugins(requirements: Record<string, unknown>, fallback: WorkspaceRecipeExtraPlugin[] | undefined): WorkspaceRecipeExtraPlugin[] | undefined {
@@ -187,8 +191,8 @@ async function readInput(options: Map<string, string | true>): Promise<Record<st
   throw new Error("Missing required option: --input-file")
 }
 
-function workloadRecipeOptions(input: Record<string, unknown>): WordPressWorkloadRunRecipeOptions {
-  const steps = arrayOption(input.steps)
+function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): WordPressWorkloadRunRecipeOptions {
+  const steps = workloadRecipeSteps(input, runtimeRequirements)
   return {
     wordpressVersion: stringValue(input.wordpressVersion ?? input.wordpress_version ?? input.wp),
     blueprint: input.blueprint,
@@ -205,6 +209,37 @@ function workloadRecipeOptions(input: Record<string, unknown>): WordPressWorkloa
     capture: objectOption(input.capture) as WordPressWorkloadRunRecipeOptions["capture"],
     enableQueryCapture: typeof input.enableQueryCapture === "boolean" ? input.enableQueryCapture : typeof input.enable_query_capture === "boolean" ? input.enable_query_capture : undefined,
   }
+}
+
+function workloadRecipeSteps(input: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): unknown[] {
+  const steps = arrayOption(input.steps)
+  if (!steps.some((step) => objectOption(step)?.command === undefined && typeof objectOption(step)?.type === "string")) {
+    return steps
+  }
+  const workload = {
+    id: stringValue(input.id) ?? "wordpress-workload",
+    run: steps,
+    metadata: objectOption(input.metadata),
+  }
+  return [{
+    command: "wordpress.bench",
+    args: [
+      `plugin-slug=${runtimeRequirementPluginSlug(runtimeRequirements) ?? "wordpress"}`,
+      `workloads-json=${JSON.stringify([workload])}`,
+    ],
+  }]
+}
+
+function runtimeRequirementPluginSlug(requirements: Record<string, unknown> | undefined): string | undefined {
+  for (const plugin of arrayOption(requirements?.extra_plugins)) {
+    const slug = objectOption(plugin)?.slug
+    if (typeof slug === "string" && slug.trim()) return slug
+  }
+  for (const plugin of arrayOption(requirements?.component_contracts)) {
+    const slug = objectOption(plugin)?.slug
+    if (typeof slug === "string" && slug.trim()) return slug
+  }
+  return undefined
 }
 
 function objectInput(value: unknown, label: string): Record<string, unknown> {
