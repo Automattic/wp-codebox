@@ -6,6 +6,13 @@ provide the worker list and review the resulting parent artifact envelope; WP
 Codebox owns bounded execution, lifecycle events, and parent/child artifact
 layout.
 
+The canonical Codebox/Studio Native product-facing orchestration path runs
+through Homeboy's durable scheduler and Homeboy Extensions' Codebox executor
+adapter. This contract remains the lower-level sandbox-native primitive: typed
+workers, lifecycle events, artifact refs, aggregation inputs/outputs, and worker
+result envelopes. WP Codebox does not own durable queue state, retry policy,
+review/PR state, or product placement policy.
+
 Host delegation is a separate generic runtime primitive for an explicit phase
 that asks the product host to run work outside the browser Playground. WP
 Codebox owns only the request/result/event envelopes and provider seam; product

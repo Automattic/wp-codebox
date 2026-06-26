@@ -6,6 +6,7 @@ export const LIVE_PROGRESS_EVENT_SCHEMA = "wp-codebox/live-progress-event/v1" as
 export type LiveProgressStatus = "queued" | "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "timed_out"
 
 export interface LiveProgressCounts {
+  current?: number
   total?: number
   active?: number
   completed?: number
@@ -13,6 +14,8 @@ export interface LiveProgressCounts {
   skipped?: number
   cancelled?: number
   timed_out?: number
+  percent?: number
+  unit?: string
 }
 
 export interface LiveProgressEvent {
@@ -81,15 +84,26 @@ function liveProgressStatus(input: Partial<FanoutLifecycleEvent> | BrowserStartu
 }
 
 function liveProgressCounts(input: Partial<FanoutLifecycleEvent>): LiveProgressCounts {
+  const current = numberValue((input as Record<string, unknown>).current) ?? numberValue(input.completed)
+  const total = numberValue(input.total)
   return stripUndefined({
-    total: numberValue(input.total),
+    current,
+    total,
     active: numberValue(input.active),
     completed: numberValue(input.completed),
     failed: numberValue(input.failed),
     skipped: numberValue(input.skipped),
     cancelled: numberValue(input.cancelled),
     timed_out: numberValue(input.timed_out),
+    percent: normalizePercent(numberValue((input as Record<string, unknown>).percent) ?? (current !== undefined && total ? (current / total) * 100 : undefined)),
+    unit: stringValue((input as Record<string, unknown>).unit) || undefined,
   })
+}
+
+function normalizePercent(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const percent = value > 0 && value <= 1 ? value * 100 : value
+  return Math.max(0, Math.min(100, percent))
 }
 
 function liveProgressLabel(phase: string, status: LiveProgressStatus): string {
