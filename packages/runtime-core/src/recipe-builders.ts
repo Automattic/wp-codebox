@@ -14,6 +14,7 @@ export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   blueprint?: unknown
   mounts?: WorkspaceRecipeMount[]
+  extra_plugins?: WorkspaceRecipeExtraPlugin[]
   pluginSource?: string
   pluginSlug: string
   cwd?: string
@@ -69,6 +70,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       blueprint: options.blueprint ?? { steps: [] },
     },
     inputs: {
+      extra_plugins: normalizeExtraPlugins(options.extra_plugins),
       mounts: normalizeRecipeMounts([
         ...(options.pluginSource ? [{ source: options.pluginSource, target: pluginTarget } satisfies WorkspaceRecipeMount] : []),
         ...(options.mounts ?? []),

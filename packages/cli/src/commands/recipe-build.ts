@@ -11,6 +11,7 @@ interface WordPressPhpunitBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   mounts?: WorkspaceRecipeMount[]
+  extra_plugins?: WorkspaceRecipeExtraPlugin[]
   pluginSource?: string
   pluginSlug: string
   cwd?: string
@@ -72,6 +73,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: phpunitOptions.blueprint,
         wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
         mounts: Array.isArray(phpunitOptions.mounts) ? phpunitOptions.mounts : [],
+        extra_plugins: Array.isArray(phpunitOptions.extra_plugins) ? phpunitOptions.extra_plugins : [],
         pluginSource: stringOrUndefined(phpunitOptions.pluginSource),
         pluginSlug: requiredString(phpunitOptions.pluginSlug, "pluginSlug"),
         cwd: stringOrUndefined(phpunitOptions.cwd),

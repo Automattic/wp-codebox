@@ -1379,7 +1379,7 @@ export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugi
 
 function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraPlugin, sourceRoot: string, recipeDirectory: string): boolean {
   const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
-  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute(relativePath)
+  return !relativePath.startsWith("..") && !isAbsolute(relativePath)
 }
 
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {

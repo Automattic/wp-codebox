@@ -2,15 +2,37 @@ import assert from "node:assert/strict"
 
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
 import { phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
+import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
+import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
 
 const recipe = buildWordPressPhpunitRecipe({
   pluginSlug: "woocommerce",
+  extra_plugins: [{
+    source: "/workspace/woocommerce",
+    sourceRoot: "/workspace/woocommerce",
+    sourceSubpath: "plugins/woocommerce",
+    slug: "woocommerce",
+    pluginFile: "woocommerce/woocommerce.php",
+    activate: false,
+  }],
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   projectAutoloadFile: woocommerceAutoload,
 })
+
+assert.deepEqual(recipe.inputs.extra_plugins, [{
+  source: "/workspace/woocommerce",
+  sourceRoot: "/workspace/woocommerce",
+  sourceSubpath: "plugins/woocommerce",
+  slug: "woocommerce",
+  pluginFile: "woocommerce/woocommerce.php",
+  activate: false,
+}])
+
+assert.equal(recipeExtraPluginSourceSubpath(recipe.inputs.extra_plugins[0], "/tmp"), "plugins/woocommerce")
+assert.equal(recipePolicy(recipe).commands.includes("wordpress.run-php"), true)
 
 assert.deepEqual(recipe.workflow.steps[0].args.filter((arg) => arg.includes("autoload-file=")), [
   "autoload-file=/wp-codebox-vendor/autoload.php",

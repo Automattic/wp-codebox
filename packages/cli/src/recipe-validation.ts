@@ -831,7 +831,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
     commands.unshift("wordpress.wp-cli")
   }
-  if (recipeExtraPlugins(recipe).some((plugin) => plugin.activate !== false)) {
+  if (recipeExtraPlugins(recipe).length > 0) {
     commands.unshift("wordpress.run-php")
   }
   if ((recipe.inputs?.siteSeeds ?? []).some((siteSeed) => siteSeed.type === "fixture")) {
