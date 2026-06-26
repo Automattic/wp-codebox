@@ -4,6 +4,7 @@ export interface PhpunitRunCodeOptions {
   pluginSlug: string
   cwd: string
   autoloadFile: string
+  projectAutoloadFile?: string
   testsDir: string
   phpunitXml: string
   selectedTestFile: string
@@ -289,6 +290,7 @@ $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE
 $current_stage = 'preboot';
 $pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
+$project_autoload_file = ${JSON.stringify(options.projectAutoloadFile ?? "")};
 $tests_dir = ${JSON.stringify(options.testsDir)};
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
@@ -493,8 +495,10 @@ function pg_fire_runtime_abilities_ready(): void {
     }
 }
 
-function pg_preload_wp_cli_namespaced_functions(): void {
-    global $autoload_file;
+function pg_preload_wp_cli_namespaced_functions(string $autoload_file): void {
+    if ($autoload_file === '') {
+        return;
+    }
     $vendor_dir = dirname($autoload_file);
     $wp_cli_root = $vendor_dir . '/wp-cli/wp-cli';
     if (!defined('WP_CLI_ROOT')) {
@@ -524,6 +528,8 @@ function pg_run_boot_stage(array $cfg = []): ?string {
     global $autoload_file;
     pg_stage_begin('boot');
     try {
+        $harness_autoload = trim((string) ($cfg['autoload_file'] ?? $autoload_file));
+        $autoload_required = !empty($cfg['autoload_required']);
         $extra_defines = $cfg['extra_defines'] ?? array();
         $table_prefix = isset($cfg['table_prefix']) && is_string($cfg['table_prefix']) && $cfg['table_prefix'] !== '' ? $cfg['table_prefix'] : 'wptests_';
         $config_path = '/tmp/wp-tests-config.php';
@@ -546,8 +552,14 @@ define('FS_CHMOD_DIR', 0755);
 define('FS_METHOD', 'direct');
 CONFIG;
         file_put_contents($config_path, $config);
-        pg_preload_wp_cli_namespaced_functions();
-        require_once $autoload_file;
+        if ($harness_autoload !== '' && is_readable($harness_autoload)) {
+            pg_preload_wp_cli_namespaced_functions($harness_autoload);
+            require_once $harness_autoload;
+        } elseif ($autoload_required) {
+            throw new RuntimeException('configured PHPUnit harness autoload file is not readable: ' . $harness_autoload . '; mount the WP Codebox PHPUnit harness or use bootstrap-mode=project with a project bootstrap that loads PHPUnit.');
+        } else {
+            pg_log('NOTICE:project bootstrap mode continuing without readable PHPUnit harness autoload: ' . $harness_autoload);
+        }
         pg_stage_ok('boot');
         return $config_path;
     } catch (Throwable $e) {
@@ -704,6 +716,26 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
     } catch (Throwable $e) {
         $pg_stage_output_buffering = false;
         pg_stage_fail('project_bootstrap', $e);
+        exit(1);
+    }
+}
+
+function pg_run_project_autoload_stage(string $project_autoload_file): void {
+    $project_autoload_file = trim(str_replace('\\\\', '/', $project_autoload_file));
+    if ($project_autoload_file === '') {
+        return;
+    }
+    pg_stage_begin('project_autoload');
+    try {
+        $real = realpath($project_autoload_file);
+        if ($real === false || !is_file($real) || !is_readable($real)) {
+            throw new RuntimeException('project autoload file is not readable: ' . $project_autoload_file);
+        }
+        pg_log('PROJECT_AUTOLOAD:' . $project_autoload_file);
+        require_once $real;
+        pg_stage_ok('project_autoload');
+    } catch (Throwable $e) {
+        pg_stage_fail('project_autoload', $e);
         exit(1);
     }
 }
@@ -886,11 +918,18 @@ if ($multisite) {
     $_ENV['WP_MULTISITE'] = '1';
 }
 
-$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_'));
+$legacy_project_autoload_file = '';
+if ($bootstrap_mode === 'project' && $project_autoload_file === '' && $autoload_file !== '' && $autoload_file !== '/wp-codebox-vendor/autoload.php') {
+    $legacy_project_autoload_file = $autoload_file;
+}
+$harness_autoload_file = $legacy_project_autoload_file !== '' ? '/wp-codebox-vendor/autoload.php' : $autoload_file;
+
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project'));
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
     pg_skip_project_bootstrap_shell_install();
     pg_run_project_bootstrap_stage(array('project_bootstrap' => $project_bootstrap, 'phpunit_xml' => ${JSON.stringify(options.phpunitXml)}));
+    pg_run_project_autoload_stage($project_autoload_file !== '' ? $project_autoload_file : $legacy_project_autoload_file);
 } else {
     if ($bootstrap_mode !== 'managed') {
         pg_log('NOTICE:unknown bootstrap-mode ' . var_export($bootstrap_mode, true) . '; using managed');
