@@ -106,7 +106,7 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
     createSkippedResult: options.createSkippedResult,
   })
 
-  const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRef(result, workers[index]))
+  const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRefWithDependencyRefs(result, workers[index], execution.workers, workers))
   await options.onAggregationStarted?.({ fanoutId, sessionId, concurrency, workers, plan, execution, workerResultRefs })
 
   const aggregation = optionalObjectValue(request.aggregation) ?? options.aggregation
@@ -170,6 +170,33 @@ export function fanoutWorkerResultRef<TResult extends FanoutExecutionWorkerResul
     artifactRefs: Array.isArray(artifactRefs) ? artifactRefs as FanoutArtifactRef[] : [],
     error: fanoutWorkerError(result.error),
     metadata: result.metadata,
+  }
+}
+
+function fanoutWorkerResultRefWithDependencyRefs<TResult extends FanoutExecutionWorkerResultLike, TWorker extends RunPlanWorkerContract>(result: TResult, descriptor: RunPlanWorkerDescriptor<TWorker> | undefined, results: TResult[], descriptors: Array<RunPlanWorkerDescriptor<TWorker>>): FanoutWorkerResultRef {
+  const ref = fanoutWorkerResultRef(result, descriptor)
+  if (ref.artifactRefs.length > 0 || ref.status !== "skipped" || !descriptor || descriptor.dependsOn.length === 0) {
+    return ref
+  }
+
+  const dependencyRefs = descriptors
+    .map((candidate, index) => ({ descriptor: candidate, result: results[index] }))
+    .filter((candidate) => descriptor.dependsOn.includes(candidate.descriptor.id))
+    .flatMap((candidate) => fanoutWorkerResultRef(candidate.result, candidate.descriptor).artifactRefs)
+
+  return {
+    ...ref,
+    artifactRefs: dependencyRefs.map((artifactRef) => {
+      const { finalPath, ...preservedRef } = artifactRef
+      return {
+        ...preservedRef,
+        metadata: {
+          ...(artifactRef.metadata ?? {}),
+          preserved_for_skipped_worker: descriptor.id,
+          preserved_from_final_path: finalPath,
+        },
+      }
+    }),
   }
 }
 
