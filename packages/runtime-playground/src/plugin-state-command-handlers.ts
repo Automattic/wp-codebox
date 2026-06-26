@@ -6,16 +6,16 @@ export interface PluginStateCommandInput {
   network: boolean
 }
 
-export function pluginStateInputFromArgs(args: string[]): PluginStateCommandInput {
-  const rawAction = argValue(args, "action")?.trim() || "report"
+export function pluginStateInputFromArgs(args: string[], defaultAction: PluginStateCommandInput["action"] = "report", commandName = "wordpress.plugin-state"): PluginStateCommandInput {
+  const rawAction = argValue(args, "action")?.trim() || defaultAction
   const action = rawAction === "status" ? "report" : rawAction
   if (action !== "report" && action !== "activate" && action !== "deactivate") {
-    throw new Error("wordpress.plugin-state action must be report, status, activate, or deactivate")
+    throw new Error(`${commandName} action must be report, status, activate, or deactivate`)
   }
 
   const target = (argValue(args, "plugin") ?? argValue(args, "slug") ?? argValue(args, "file") ?? argValue(args, "path") ?? "").trim()
   if (!target) {
-    throw new Error("wordpress.plugin-state requires plugin=<slug-or-file-or-path>, slug=<slug>, file=<plugin-file>, or path=<path>")
+    throw new Error(`${commandName} requires plugin=<slug-or-file-or-path>, slug=<slug>, file=<plugin-file>, or path=<path>`)
   }
 
   return {

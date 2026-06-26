@@ -437,7 +437,7 @@ export async function runPluginStateCommand({
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<string> {
-  const input = pluginStateInputFromArgs(spec.args ?? [])
+  const input = pluginStateInputFromArgs(spec.args ?? [], spec.command === "wordpress.ensure-plugin-active" ? "activate" : "report", spec.command)
   const response = await runPlaygroundCommand("wordpress.plugin-state", server, { code: bootstrapPhpCode(runtimeSpec, pluginStatePhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.plugin-state", response)
   return response.text
