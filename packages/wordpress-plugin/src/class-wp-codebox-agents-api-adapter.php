@@ -33,7 +33,6 @@ final class WP_Codebox_Agents_API_Adapter {
 	private const HOST_TARGET            = 'wp-codebox/host-playground';
 	private const IMPORT_RUNTIME_BUNDLES_FUNCTION = 'wp_agent_import_runtime_bundles';
 	private const RUNTIME_BUNDLE_IMPORT_FILTER = 'wp_agent_runtime_import_bundle';
-	private const LEGACY_RESOLVED_TOOLS_FILTER = 'agents_api_resolved_tools';
 	private const RUNTIME_RESOLVED_TOOLS_FILTER = 'wp_agent_runtime_resolved_tools';
 	private const CHAT_RUNTIME_PRINCIPAL_PERMISSION_FILTER = 'agents_chat_runtime_principal_permission';
 
@@ -99,10 +98,6 @@ final class WP_Codebox_Agents_API_Adapter {
 		return self::RUNTIME_RESOLVED_TOOLS_FILTER;
 	}
 
-	public static function legacy_resolved_tools_filter(): string {
-		return self::LEGACY_RESOLVED_TOOLS_FILTER;
-	}
-
 	public static function chat_runtime_principal_permission_filter(): string {
 		return self::CHAT_RUNTIME_PRINCIPAL_PERMISSION_FILTER;
 	}
@@ -149,7 +144,6 @@ final class WP_Codebox_Agents_API_Adapter {
 		add_filter( 'wp_codebox_browser_runtime_invocation_input', array( self::class, 'browser_runtime_invocation_input' ), 10, 4 );
 		add_filter( 'wp_codebox_browser_runtime_principal_permission', array( self::class, 'browser_runtime_principal_permission' ), 10, 4 );
 		add_filter( 'wp_codebox_browser_runtime_executor_target', array( self::class, 'browser_executor_target_id' ) );
-		add_filter( 'wp_codebox_browser_runtime_legacy_resolved_tools_filter', array( self::class, 'legacy_resolved_tools_filter' ) );
 		add_filter( 'wp_codebox_browser_runtime_resolved_tools_filter', array( self::class, 'runtime_resolved_tools_filter' ) );
 	}
 

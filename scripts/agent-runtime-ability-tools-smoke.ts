@@ -10,7 +10,7 @@ const source = [
 const requiredSnippets = [
   "function wp_codebox_browser_runtime_ability_tool_declarations",
   "function wp_codebox_browser_runtime_resolve_ability_tools",
-  "WP_Codebox_Agents_API_Adapter::legacy_resolved_tools_filter()",
+  "wp_codebox_browser_runtime_resolved_tools_filter",
   "apply_filters( \\'wp_codebox_browser_runtime_ability_tools\\'",
   "$task_input[\\'ability_tools\\']",
   "array_merge( $sandbox_tool_ids, $ability_tool_ids )",
@@ -26,6 +26,10 @@ for (const snippet of requiredSnippets) {
 
 if (source.includes("datamachine_ability_tools")) {
   throw new Error("Browser runner must not hard-code Data Machine runtime tool hooks")
+}
+
+if (source.includes("legacy_resolved_tools_filter") || source.includes("agents_api_resolved_tools")) {
+  throw new Error("Browser runner must use the canonical runtime resolved-tools filter")
 }
 
 const preludeStart = source.indexOf("function wp_codebox_browser_runtime_ability_tool_declarations")

@@ -1131,14 +1131,6 @@ $tool_def = is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] 
 return $handler->handle_tool_call( $parameters, $tool_def );
 }
 
-$legacy_resolved_tools_filter = function_exists( "apply_filters" ) ? (string) apply_filters( "wp_codebox_browser_runtime_legacy_resolved_tools_filter", "" ) : "";
-if ( "" !== $legacy_resolved_tools_filter ) {
-add_filter( $legacy_resolved_tools_filter, function ( array $tools, $mode, array $context ) {
-	unset( $context );
-	return wp_codebox_browser_runtime_merge_ability_tools( $tools, $mode );
-}, 20, 3 );
-}
-
 $runtime_resolved_tools_filter = function_exists( "apply_filters" ) ? (string) apply_filters( "wp_codebox_browser_runtime_resolved_tools_filter", "" ) : "";
 if ( "" !== $runtime_resolved_tools_filter ) {
 add_filter( $runtime_resolved_tools_filter, function ( array $tools, $mode, array $args ) {
