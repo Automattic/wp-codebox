@@ -33,6 +33,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:normalize-result",
     "browser-runtime:normalize-browser-run-result",
     "browser-preview:start",
+    "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
     "browser-runtime:aggregate-fanout-outputs",
@@ -57,6 +58,7 @@ assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
+assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
 assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
@@ -101,6 +103,52 @@ assert.deepEqual(plain(browserRun.artifactRefs), [
   { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
 ])
 assert.equal(api.v1.browserArtifactPersistenceRef(browserRun.result).schema, "wp-codebox/browser-artifact-persistence/ref/v1")
+
+const previousFetch = (sandbox as any).fetch
+const requestedRoutes: Array<{ route: string, method: string, body?: string }> = []
+;(sandbox as any).fetch = async (route: string, request: { method?: string, body?: string } = {}) => {
+  requestedRoutes.push({ route, method: request.method || "GET", body: request.body })
+  const payloadByRoute: Record<string, unknown> = {
+    "/playground-site-sync/v1/manifest": { schema: "playground-site-sync/manifest/v1" },
+    "/playground-site-sync/v1/resources": { schema: "playground-site-sync/resources/v1" },
+    "/playground-site-sync/v1/export": {
+      schema: "playground-site-sync/playground-package/v1",
+      descriptor: { bootable: true },
+      blueprint: { steps: [] },
+      base_snapshot: "snapshot-1",
+    },
+    "/playground-site-sync/v1/apply-plan/generate": { schema: "playground-site-sync/apply-plan/v1", apply_plan: { steps: [] } },
+    "/playground-site-sync/v1/apply-plan/validate": { schema: "playground-site-sync/validation/v1", validation_hash: "validation-1" },
+  }
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payloadByRoute[route],
+  }
+}
+const syncConsumption = await api.v1.consumeContainedSiteSync(null, {
+  schema: "wp-codebox/browser-contained-site-sync-delegation/v1",
+  routes: {
+    manifest: "/playground-site-sync/v1/manifest",
+    resources: "/playground-site-sync/v1/resources",
+    export: "/playground-site-sync/v1/export",
+    apply_plan_generate: "/playground-site-sync/v1/apply-plan/generate",
+    apply_plan_validate: "/playground-site-sync/v1/apply-plan/validate",
+  },
+}, { projectId: 123 })
+assert.equal(syncConsumption.schema, "wp-codebox/browser-contained-site-sync-consumption/v1")
+assert.equal(syncConsumption.status, "success")
+assert.equal(syncConsumption.project_id, 123)
+assert.equal(syncConsumption.hydration.status, "ready")
+assert.equal(syncConsumption.validation_hash, "validation-1")
+assert.deepEqual(requestedRoutes.map(({ route, method }) => `${method} ${route}`), [
+  "GET /playground-site-sync/v1/manifest",
+  "GET /playground-site-sync/v1/resources",
+  "POST /playground-site-sync/v1/export",
+  "POST /playground-site-sync/v1/apply-plan/generate",
+  "POST /playground-site-sync/v1/apply-plan/validate",
+])
+;(sandbox as any).fetch = previousFetch
 
 const runtimeSession = {
   runtime: {

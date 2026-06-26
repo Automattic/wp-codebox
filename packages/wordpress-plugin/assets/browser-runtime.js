@@ -12,6 +12,7 @@
 		'browser-runtime:normalize-result',
 		'browser-runtime:normalize-browser-run-result',
 		'browser-preview:start',
+		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
 		'browser-runtime:aggregate-fanout-outputs',
@@ -334,6 +335,113 @@
 		},
 	} );
 
+	const containedSiteSyncRoute = ( delegation, name ) => {
+		const route = String( delegation?.routes?.[ name ] || '' );
+		if ( ! route.startsWith( '/' ) || route.startsWith( '//' ) ) {
+			throw runtimeError( 'browser_contained_site_sync_consume', 'browser_contained_site_sync_route_invalid', `Contained-site sync route is missing or invalid: ${ name }` );
+		}
+
+		return route;
+	};
+
+	const fetchContainedSiteSyncRoute = async ( route, method = 'GET', body = null ) => {
+		if ( typeof fetch !== 'function' ) {
+			throw runtimeError( 'browser_contained_site_sync_consume', 'browser_contained_site_sync_fetch_unavailable', 'Browser fetch is required to consume contained-site sync DTOs.' );
+		}
+
+		const response = await fetch( route, {
+			method,
+			credentials: 'same-origin',
+			headers: body ? { 'Content-Type': 'application/json' } : {},
+			body: body ? JSON.stringify( body ) : undefined,
+		} );
+		const data = await response.json().catch( () => null );
+		if ( ! response.ok ) {
+			throw runtimeError( 'browser_contained_site_sync_consume', 'browser_contained_site_sync_request_failed', data?.message || `Contained-site sync ${ method } ${ route } failed.`, { status: response.status, route } );
+		}
+
+		return data;
+	};
+
+	const consumeContainedSiteSync = async ( client, delegation, options = {} ) => {
+		void client;
+		const projectId = Number( options.projectId || options.project_id || 0 );
+		const schema = String( delegation?.schema || '' );
+		if ( schema !== 'wp-codebox/browser-contained-site-sync-delegation/v1' && schema !== 'studio-native/codebox-contained-site-sync-delegation/v1' ) {
+			return {
+				schema: 'wp-codebox/browser-contained-site-sync-consumption/v1',
+				status: 'unavailable',
+				project_id: projectId,
+				manifest: null,
+				resources: null,
+				package: null,
+				apply_plan: null,
+				validation: null,
+				validation_hash: '',
+				hydration: {
+					status: 'not_attempted',
+					reason: 'No contained-site sync delegation descriptor was provided.',
+				},
+			};
+		}
+
+		const evidence = {
+			schema: 'wp-codebox/browser-contained-site-sync-consumption/v1',
+			status: 'running',
+			project_id: projectId,
+			manifest: delegation.manifest || null,
+			resources: null,
+			package: null,
+			apply_plan: null,
+			validation: null,
+			validation_hash: '',
+			hydration: { status: 'not_attempted' },
+		};
+
+		try {
+			const manifestRoute = containedSiteSyncRoute( delegation, 'manifest' );
+			const resourcesRoute = containedSiteSyncRoute( delegation, 'resources' );
+			const exportRoute = containedSiteSyncRoute( delegation, 'export' );
+			evidence.manifest = await fetchContainedSiteSyncRoute( manifestRoute );
+			evidence.resources = await fetchContainedSiteSyncRoute( resourcesRoute );
+			evidence.package = await fetchContainedSiteSyncRoute( exportRoute, 'POST', {} );
+
+			if ( delegation.routes?.apply_plan_generate && delegation.routes?.apply_plan_validate ) {
+				try {
+					evidence.apply_plan = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_generate' ), 'POST', {
+						mode: 'content_only',
+						package: evidence.package,
+						resources: evidence.resources,
+					} );
+					evidence.validation = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_validate' ), 'POST', {
+						mode: 'content_only',
+						apply_plan: evidence.apply_plan?.apply_plan || evidence.apply_plan,
+						base_snapshot: evidence.package?.base_snapshot || null,
+					} );
+					evidence.validation_hash = evidence.validation?.validation_hash || evidence.validation?.hash || '';
+				} catch ( error ) {
+					evidence.validation = {
+						status: 'unavailable',
+						reason: error?.message || 'Contained-site sync apply-plan validation is unavailable.',
+					};
+				}
+			}
+
+			evidence.hydration = evidence.package?.schema === 'playground-site-sync/playground-package/v1' && evidence.package?.descriptor?.bootable === true && evidence.package?.blueprint && typeof evidence.package.blueprint === 'object'
+				? { status: 'ready', mode: 'blueprint_descriptor', base_snapshot: evidence.package.base_snapshot || null, descriptor: evidence.package.descriptor || null }
+				: { status: 'unsupported', reason: 'Contained-site sync export did not include a bootable package descriptor.' };
+			evidence.status = evidence.hydration.status === 'ready' ? 'success' : 'unsupported';
+		} catch ( error ) {
+			evidence.status = 'failed';
+			evidence.hydration = {
+				status: 'failed',
+				reason: error?.message || 'Contained-site sync consumption failed.',
+			};
+		}
+
+		return evidence;
+	};
+
 	const browserPreviewBootConfig = ( input ) => {
 		const boot = input?.schema === 'wp-codebox/browser-preview-boot-config/v1'
 			? input
@@ -463,6 +571,7 @@
 		normalizeError: normalizeBrowserSdkError,
 		normalizeBrowserRunResult,
 		browserArtifactPersistenceRef,
+		consumeContainedSiteSync: ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ),
 		startBrowserPreview: ( input, options = {} ) => api.startBrowserPreview( input, options ),
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
@@ -477,6 +586,7 @@
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,
+			consumeContainedSiteSync: api.consumeContainedSiteSync,
 			startBrowserPreview: api.startBrowserPreview,
 			bootExecutableBrowserSession: api.bootExecutableBrowserSession,
 			createParentToolRequest: api.createParentToolRequest,
@@ -2371,6 +2481,7 @@ echo wp_json_encode( array(
 		aggregateFanoutOutputs,
 		browserSessionRecipe,
 		bootExecutableBrowserSession,
+		consumeContainedSiteSync,
 		createParentToolRequest,
 		dispatchParentTool,
 		ensureDirectory,
