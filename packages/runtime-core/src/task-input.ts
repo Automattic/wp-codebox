@@ -16,6 +16,7 @@ export const TASK_INPUT_ABILITY_ALIAS_FIELDS = [
   "sandbox_tool_policy",
   "expected_artifacts",
   "structured_artifacts",
+  "staged_files",
   "policy",
   "context",
 ] as const
@@ -60,6 +61,7 @@ export interface TaskInput {
   allowed_tools: string[]
   expected_artifacts: string[]
   structured_artifacts: StructuredArtifactPayload[]
+  staged_files: Record<string, unknown>[]
   agent_bundles: TaskInputAgentBundle[]
   tool_bridge: ToolBridgeContract | Record<string, never>
   parent_tool_bridge: ParentToolBridgeContract | Record<string, never>
@@ -116,6 +118,11 @@ export const TASK_INPUT_JSON_SCHEMA = {
           provenance: { type: "object" },
         },
       },
+    },
+    staged_files: {
+      type: "array",
+      description: "Host-resolved files to stage into the disposable runtime before task invocation.",
+      items: { type: "object" },
     },
     agent_bundles: {
       type: "array",
@@ -178,6 +185,7 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     allowed_tools: stringList(input.allowed_tools),
     expected_artifacts: stringList(input.expected_artifacts),
     structured_artifacts: normalizeStructuredArtifacts(input.structured_artifacts, "input"),
+    staged_files: objectArray(input.staged_files),
     agent_bundles: normalizeAgentBundles(input.agent_bundles),
     tool_bridge: isPlainObject(input.tool_bridge) ? input.tool_bridge as unknown as ToolBridgeContract : {},
     parent_tool_bridge: isPlainObject(input.parent_tool_bridge) ? input.parent_tool_bridge as unknown as ParentToolBridgeContract : {},
@@ -185,6 +193,11 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     policy: isPlainObject(input.policy) ? input.policy : {},
     context: isPlainObject(input.context) ? input.context : {},
   }
+}
+
+function objectArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isPlainObject)
 }
 
 export function normalizeAgentBundles(value: unknown): TaskInputAgentBundle[] {

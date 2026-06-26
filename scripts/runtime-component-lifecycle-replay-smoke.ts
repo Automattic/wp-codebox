@@ -28,13 +28,13 @@ const runtimeSpec = {
 const bootstrap = bootstrapPhpCode(runtimeSpec, "echo 'ok';", [])
 
 assert.match(bootstrap, /wp-codebox\/runtime-component-lifecycle-replay\/v1/, "late include bootstrap should expose lifecycle replay diagnostics")
-assert.match(bootstrap, /wp_codebox_runtime_abilities_ready/, "late include bootstrap should replay the post-abilities contract hook")
+assert.match(bootstrap, /contained_runtime_abilities_ready/, "late include bootstrap should replay the post-abilities contract hook")
 assert.ok(
-  bootstrap.indexOf("$lifecycle = wp_codebox_run_php_component_lifecycle_replay_prepare();") < bootstrap.indexOf("require_once $absolute_plugin_file;"),
+  bootstrap.indexOf("component_lifecycle_replay_prepare();") < bootstrap.indexOf("require_once $absolute_plugin_file;"),
   "late include bootstrap should reopen lifecycle before including plugin code",
 )
 assert.ok(
-  bootstrap.indexOf("wp_codebox_run_php_component_lifecycle_replay_complete($lifecycle);") > bootstrap.indexOf("require_once $absolute_plugin_file;"),
+  bootstrap.indexOf("component_lifecycle_replay_complete($lifecycle);") > bootstrap.indexOf("require_once $absolute_plugin_file;"),
   "late include bootstrap should replay newly registered callbacks after including plugin code",
 )
 
@@ -42,9 +42,9 @@ const recipeRuntimeSetupSource = readFileSync(join(process.cwd(), "packages/cli/
 const activateFunction = recipeRuntimeSetupSource.slice(recipeRuntimeSetupSource.indexOf("function activateExtraPluginCode"), recipeRuntimeSetupSource.length)
 const activationReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")
 
-assert.match(activateFunction, /phpRuntimeComponentLifecycleReplayFunction\("wp_codebox_activate_plugin"\)/, "activation setup should use the shared lifecycle replay snippet")
+assert.match(activateFunction, /wp_codebox_activate_plugin_component_lifecycle_replay_prepare\(\)/, "activation setup should use the shared lifecycle replay snippet")
 assert.match(activationReplaySnippet, /wp-codebox\/runtime-component-lifecycle-replay\/v1/, "activation setup should expose lifecycle replay diagnostics")
-assert.match(activationReplaySnippet, /wp_codebox_runtime_abilities_ready/, "activation setup should replay the post-abilities contract hook")
+assert.match(activationReplaySnippet, /contained_runtime_abilities_ready/, "activation setup should replay the post-abilities contract hook")
 assert.ok(
   activateFunction.indexOf("$lifecycle = wp_codebox_activate_plugin_component_lifecycle_replay_prepare();") < activateFunction.indexOf("activate_plugin($plugin_file"),
   "activation setup should reopen lifecycle before activate_plugin loads plugin code",

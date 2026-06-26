@@ -1,0 +1,72 @@
+{
+  "schema": "wp-codebox/agent-task-workflow-request/v1",
+  "runner_recipe": "Automattic/example-runner@abc123:ci/runner-recipe.json",
+  "agent_bundle": "bundles/example-agent",
+  "workload": {
+    "id": "example-maintenance",
+    "label": "Run example maintenance",
+    "component_id": "example-ci-driver"
+  },
+  "target_repo": "Automattic/example-target",
+  "prompt": "Update the configured surface.",
+  "writable_paths": "README.md,docs/**",
+  "model": {
+    "provider": "openai",
+    "name": "gpt-5.5"
+  },
+  "runner_workspace": {
+    "enabled": true,
+    "repo": "Automattic/example-target"
+  },
+  "validation_dependencies": "",
+  "context_repositories": [],
+  "verification_commands": [
+    {
+      "command": "npm test",
+      "description": "Run checks"
+    }
+  ],
+  "drift_checks": [],
+  "workspace_contract_checks": {},
+  "actions_artifact_downloads": [],
+  "success": {
+    "requires_pr": false,
+    "completion_outcomes": []
+  },
+  "access": {
+    "access_token_repos": "Automattic/example-target",
+    "require_access_token": true,
+    "allowed_repos": [
+      "Automattic/example-target"
+    ]
+  },
+  "limits": {
+    "max_turns": 12,
+    "step_budget": 16,
+    "time_budget_ms": 600000
+  },
+  "artifacts": {
+    "expected": [
+      "agent_transcript"
+    ],
+    "declarations": [
+      {
+        "schema": "wp-codebox/artifact-declaration/v1",
+        "name": "agent_transcript"
+      }
+    ],
+    "transcript_name": "agent-transcript",
+    "replay_bundle_name": "agent-replay"
+  },
+  "outputs": {
+    "tool_results_key": "tool_results",
+    "projections": {
+      "pr_url": "metadata.runner_workspace_publication.url"
+    }
+  },
+  "callback_data": {
+    "workload": "example-maintenance"
+  },
+  "run_agent": false,
+  "dry_run": true
+}

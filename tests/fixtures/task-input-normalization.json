@@ -26,6 +26,7 @@
           "payload": {}
         }
       ],
+      "staged_files": [],
       "agent_bundles": [
         {
           "source": "/tmp/sample-agent.json",
@@ -92,6 +93,7 @@
           }
         }
       ],
+      "staged_files": [],
       "agent_bundles": [
         {
           "source": "/tmp/sample-agent.json",

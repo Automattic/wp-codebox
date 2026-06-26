@@ -21,9 +21,7 @@ assert.match(workflow, /verification_commands:/)
 assert.match(workflow, /drift_checks:/)
 assert.match(workflow, /access_token_repos:/)
 assert.match(workflow, /require_access_token:/)
-assert.doesNotMatch(publicWorkflowSurface, /homeboy|require_app_token|require_homeboy_app_token|REQUIRE_HOMEBOY_APP_TOKEN/i)
-assert.match(workflow, /Extra-Chill\/homeboy-action@v2/)
-assert.match(workflow, /agent-task run-plan/)
+assert.doesNotMatch(workflow, /homeboy|require_app_token|require_homeboy_app_token|REQUIRE_HOMEBOY_APP_TOKEN|Extra-Chill\/homeboy-action|agent-task run-plan/i)
 assert.doesNotMatch(workflow, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref/i)
 assert.doesNotMatch(workflow, /datamachine-agent-ci|runtime-agent-full-run|Extra-Chill\/homeboy-extensions/)
 assert.doesNotMatch(publicWorkflowSurface, /datamachine|data machine|data-machine|agents api/i)
@@ -43,7 +41,7 @@ assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|r
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
 const outputPath = join(tmp, "github-output.txt")
 const requestPath = join(tmp, ".codebox", "agent-task-request.json")
-const homeboyPlanPath = join(tmp, ".codebox", "homeboy-agent-task-plan.json")
+const resultPath = join(tmp, ".codebox", "agent-task-workflow-result.json")
 
 await writeFile(outputPath, "")
 
@@ -90,33 +88,21 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
 })
 
 const request = JSON.parse(await readFile(requestPath, "utf8"))
+const expectedRequest = JSON.parse(await readFile(new URL("../contracts/agent-task-workflow-request.fixture.json", import.meta.url), "utf8"))
 assert.equal(request.schema, "wp-codebox/agent-task-workflow-request/v1")
-assert.equal(request.runner_recipe, "Automattic/example-runner@abc123:ci/runner-recipe.json")
-assert.equal(request.agent_bundle, "bundles/example-agent")
-assert.equal(request.target_repo, "Automattic/example-target")
-assert.deepEqual(request.verification_commands, [{ command: "npm test", description: "Run checks" }])
-assert.deepEqual(request.access, {
-  access_token_repos: "Automattic/example-target",
-  require_access_token: true,
-  allowed_repos: ["Automattic/example-target"],
-})
-assert.deepEqual(request.outputs.projections, { pr_url: "metadata.runner_workspace_publication.url" })
-assert.deepEqual(request.artifacts.declarations, [{ schema: "wp-codebox/artifact-declaration/v1", name: "agent_transcript" }])
+assert.deepEqual(request, expectedRequest)
 assert.doesNotMatch(JSON.stringify(request), /homeboy|require_app_token|app_token_repos/i)
 
-const homeboyPlan = JSON.parse(await readFile(homeboyPlanPath, "utf8"))
-assert.equal(homeboyPlan.schema, "homeboy/agent-task-plan/v1")
-assert.equal(homeboyPlan.tasks[0].schema, "homeboy/agent-task-request/v1")
-assert.equal(homeboyPlan.tasks[0].executor.backend, "codebox")
-assert.equal(homeboyPlan.tasks[0].executor.config.execution_kind, "agent_bundle")
-assert.equal(homeboyPlan.tasks[0].executor.config.bundle_repo, "https://github.com/Automattic/example-runner.git")
-assert.equal(homeboyPlan.tasks[0].executor.config.bundle_ref, "abc123")
-assert.equal(homeboyPlan.tasks[0].executor.config.bundle_path_in_repo, "bundles/example-agent")
-assert.equal(homeboyPlan.tasks[0].executor.config.runner_recipe, "Automattic/example-runner@abc123:ci/runner-recipe.json")
+const result = JSON.parse(await readFile(resultPath, "utf8"))
+const expectedResult = JSON.parse(await readFile(new URL("../contracts/agent-task-workflow-result.fixture.json", import.meta.url), "utf8"))
+assert.equal(result.schema, "wp-codebox/agent-task-workflow-result/v1")
+assert.deepEqual(result, expectedResult)
+assert.doesNotMatch(JSON.stringify(result), /homeboy|agent-task-plan|run-plan/i)
 
 const outputs = await readFile(outputPath, "utf8")
 assert.match(outputs, /job_status<<__WP_CODEBOX_OUTPUT__\nskipped\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\napp-token\n__WP_CODEBOX_OUTPUT__/)
-assert.match(outputs, /homeboy_plan_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/homeboy-agent-task-plan\.json\n__WP_CODEBOX_OUTPUT__/)
+assert.match(outputs, /request_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-request\.json\n__WP_CODEBOX_OUTPUT__/)
+assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-workflow-result\.json\n__WP_CODEBOX_OUTPUT__/)
 
 console.log("agent task reusable workflow ok")

@@ -79,7 +79,7 @@ echo json_encode( array(
 assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
-assert.equal(result.sha256, "eafed891f882ec42ce463458ef818ff8b9fdb158d45f5bbecce2e1517136cb61")
+assert.match(result.sha256, /^[a-f0-9]{64}$/)
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,

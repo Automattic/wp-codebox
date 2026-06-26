@@ -35,7 +35,7 @@ try {
   assert.ok(sandboxExecution, "agent sandbox execution should be present")
   const sandboxPayload = JSON.parse(String(sandboxExecution.stdout ?? "{}")) as { output?: string; stack?: { signals?: { runtime_lifecycle?: Record<string, number> } } }
   const lifecycle = sandboxPayload.stack?.signals?.runtime_lifecycle ?? {}
-  assert.equal(lifecycle.wp_codebox_runtime_abilities_ready, 1, JSON.stringify(sandboxPayload).slice(0, 1000))
+  assert.equal(lifecycle.contained_runtime_abilities_ready, 1, JSON.stringify(sandboxPayload).slice(0, 1000))
 
   const probe = JSON.parse(String(sandboxPayload.output ?? "{}")) as {
     hasProbeTool?: boolean
@@ -43,7 +43,7 @@ try {
     readyCount?: number
     readySawAbilityInit?: number
   }
-  assert.equal(probe.hasProbeTool, true, "tool projection registered on wp_codebox_runtime_abilities_ready should be visible")
+  assert.equal(probe.hasProbeTool, true, "tool projection registered on contained_runtime_abilities_ready should be visible")
   assert.ok((probe.abilityInitCount ?? 0) >= 1)
   assert.equal(probe.readyCount, 1)
   assert.equal(probe.readySawAbilityInit, probe.abilityInitCount)
@@ -72,8 +72,8 @@ add_action( 'wp_abilities_api_init', static function (): void {
     $GLOBALS['wp_codebox_ability_lifecycle_probe']['ability_init_count'] = did_action( 'wp_abilities_api_init' );
 } );
 
-add_action( 'wp_codebox_runtime_abilities_ready', static function (): void {
-    $GLOBALS['wp_codebox_ability_lifecycle_probe']['ready_count'] = did_action( 'wp_codebox_runtime_abilities_ready' );
+add_action( 'contained_runtime_abilities_ready', static function (): void {
+    $GLOBALS['wp_codebox_ability_lifecycle_probe']['ready_count'] = did_action( 'contained_runtime_abilities_ready' );
     $GLOBALS['wp_codebox_ability_lifecycle_probe']['ready_saw_ability_init'] = did_action( 'wp_abilities_api_init' );
     add_filter( 'wp_agent_runtime_resolved_tools', static function ( array $tools ): array {
         $tools['probe-tool'] = array(

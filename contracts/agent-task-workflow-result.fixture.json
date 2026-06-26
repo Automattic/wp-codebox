@@ -1,0 +1,30 @@
+{
+  "schema": "wp-codebox/agent-task-workflow-result/v1",
+  "run_id": "example-maintenance-local",
+  "status": "skipped",
+  "request_path": ".codebox/agent-task-request.json",
+  "transcript": {
+    "artifact_name": "agent-transcript"
+  },
+  "artifacts": {
+    "declarations": [
+      {
+        "schema": "wp-codebox/artifact-declaration/v1",
+        "name": "agent_transcript"
+      }
+    ],
+    "expected": [
+      "agent_transcript"
+    ],
+    "replay_bundle_name": "agent-replay"
+  },
+  "outputs": {
+    "engine_data": {},
+    "projections": {
+      "pr_url": "metadata.runner_workspace_publication.url"
+    }
+  },
+  "access": {
+    "credential_mode": "app-token"
+  }
+}

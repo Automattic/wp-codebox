@@ -71,6 +71,7 @@ top-level fields:
 - `fuzzRun`
 - `artifacts`
 - `probes`
+- `metadata`
 
 `inputs` accepts these fields:
 
