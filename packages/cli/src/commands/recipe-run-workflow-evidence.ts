@@ -230,7 +230,7 @@ async function fuzzSuiteFromRecipeCommandArgs(args: string[], recipeDirectory: s
   if (inline) {
     return parseCommandJson(inline, "input-json") as FuzzSuiteContract
   }
-  const file = commandArgValue(args, "input-file") ?? commandArgValue(args, "suite-file")
+  const file = commandArgValue(args, "input-file") ?? commandArgValue(args, "suite-file") ?? commandArgValue(args, "suite")
   if (file) {
     return parseCommandJson(await readFile(resolve(recipeDirectory, file), "utf8"), file) as FuzzSuiteContract
   }

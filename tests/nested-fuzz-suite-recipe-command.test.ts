@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdtemp, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 
 import { assertWorkspaceRecipeJsonSchema, fuzzSuiteContract, type ExecutionResult, type ExecutionSpec, type Runtime, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
 import { executeRecipeWorkflowStep } from "../packages/cli/src/commands/recipe-run-workflow-evidence.js"
@@ -49,5 +52,22 @@ assert.equal(execution.exitCode, 0)
 assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.status, "passed")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
+const suiteAliasDir = await mkdtemp(join(tmpdir(), "wp-codebox-nested-fuzz-suite-alias-"))
+await writeFile(join(suiteAliasDir, "suite.json"), JSON.stringify(suite), "utf8")
+const suiteAliasRecipe: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [{ command: "wp-codebox/run-fuzz-suite", args: ["suite=suite.json"] }],
+  },
+}
+assertWorkspaceRecipeJsonSchema(suiteAliasRecipe, { recipeCommandIds: ["wp-codebox/run-fuzz-suite", "wordpress.run-php"] })
+const aliasExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: suiteAliasRecipe.workflow.steps[0]! }, suiteAliasDir)
+const aliasResult = JSON.parse(aliasExecution.stdout)
+
+assert.equal(aliasExecution.command, "wp-codebox/run-fuzz-suite")
+assert.equal(aliasExecution.exitCode, 0)
+assert.equal(aliasResult.schema, "wp-codebox/fuzz-suite-result/v1")
+assert.equal(aliasResult.status, "passed")
 
 console.log("nested fuzz suite recipe command ok")
