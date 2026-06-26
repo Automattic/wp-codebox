@@ -46,8 +46,7 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exi
 }
 
 function naturalExit(code: number): never {
-  process.exitCode = code
-  return undefined as never
+  process.exit(code)
 }
 
 function exitAfterOutputDrains(code: number, exit: CliExit): void {

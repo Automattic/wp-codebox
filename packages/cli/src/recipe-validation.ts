@@ -825,6 +825,9 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
   ]
+  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench")) {
+    commands.unshift("wordpress.run-php")
+  }
   if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
     commands.unshift("wordpress.wp-cli")
   }

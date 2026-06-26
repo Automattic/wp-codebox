@@ -6,7 +6,7 @@ import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
@@ -174,6 +174,103 @@ const compatRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer:
 assert.deepEqual(compatRuntimeWorkload.outputs, { answer: "legacy" })
 assert.equal(compatRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
 
+const typedArtifactMapRefs = typedArtifactRefs({}, {
+  typed_artifacts: {
+    concept_packet: {
+      output_key: "concept_packet",
+      schema: "wp-site-generator/ConceptPacket/v1",
+      artifact: "ConceptPacket",
+      payload: { title: "Repair Bench Supply" },
+    },
+  },
+})
+assert.equal(typedArtifactMapRefs[0]?.name, "concept_packet")
+assert.equal(typedArtifactMapRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(typedArtifactMapRefs[0]?.payload, { title: "Repair Bench Supply" })
+
+const runtimeOutputsTypedArtifactRefs = agentTaskRunTypedArtifacts({}, {}, {
+  outputs: {
+    typed_artifacts: {
+      concept_packet: {
+        output_key: "concept_packet",
+        schema: "wp-site-generator/ConceptPacket/v1",
+        artifact: "ConceptPacket",
+        payload: { title: "Second Shift Supper Club" },
+      },
+    },
+  },
+})
+assert.equal(runtimeOutputsTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(runtimeOutputsTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(runtimeOutputsTypedArtifactRefs[0]?.payload, { title: "Second Shift Supper Club" })
+
+const rawRuntimeTypedArtifactRefs = typedArtifactRefs({
+  raw: {
+    agent_runtime: {
+      result: {
+        outputs: {
+          typed_artifacts: {
+            concept_packet: {
+              output_key: "concept_packet",
+              schema: "wp-site-generator/ConceptPacket/v1",
+              artifact: "ConceptPacket",
+              payload: { title: "Kiln Shelf" },
+            },
+          },
+        },
+      },
+    },
+  },
+})
+assert.equal(rawRuntimeTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(rawRuntimeTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(rawRuntimeTypedArtifactRefs[0]?.payload, { title: "Kiln Shelf" })
+
+const resultEngineDataTypedArtifactRefs = typedArtifactRefs({
+  result: {
+    engine_data: {
+      outputs: {
+        typed_artifacts: {
+          concept_packet: {
+            output_key: "concept_packet",
+            schema: "wp-site-generator/ConceptPacket/v1",
+            artifact: "ConceptPacket",
+            payload: { title: "Hearth Ledger" },
+          },
+        },
+      },
+    },
+  },
+})
+assert.equal(resultEngineDataTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(resultEngineDataTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(resultEngineDataTypedArtifactRefs[0]?.payload, { title: "Hearth Ledger" })
+
+const snakeCaseAgentTaskResult = agentTaskResultFromRun({
+  agent_task_result: {
+    outputs: {
+      result: {
+        engine_data: {
+          outputs: {
+            typed_artifacts: {
+              concept_packet: {
+                output_key: "concept_packet",
+                schema: "wp-site-generator/ConceptPacket/v1",
+                artifact: "ConceptPacket",
+                payload: { title: "The Repair Drawer" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+})
+const snakeCaseAgentTaskTypedArtifactRefs = typedArtifactRefs(snakeCaseAgentTaskResult)
+assert.equal(snakeCaseAgentTaskTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(snakeCaseAgentTaskTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(snakeCaseAgentTaskTypedArtifactRefs[0]?.payload, { title: "The Repair Drawer" })
+
 const normalizedWithArtifactEnvelope = normalizeAgentTaskRunResult({
   success: true,
   run: { artifactRefs: [{ id: "bundle-1", kind: "artifact-bundle", directory: "artifacts/run-1" }] },
@@ -261,6 +358,17 @@ const agentRecipePolicy = recipePolicy({
 assert.equal(agentRecipePolicy.commands.includes("wordpress.run-php"), true)
 assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
+
+const benchRecipePolicy = recipePolicy({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      { command: "wordpress.bench", args: ["plugin-slug=sample-plugin"] },
+    ],
+  },
+} as never)
+assert.equal(benchRecipePolicy.commands.includes("wordpress.bench"), true)
+assert.equal(benchRecipePolicy.commands.includes("wordpress.run-php"), true)
 
 const generatedAgentSandboxPhp = agentSandboxRunCode("Verify registry adapter", "echo 'ok';", [], [])
 assert.doesNotMatch(generatedAgentSandboxPhp, /DataMachine\\Core\\Database\\Agents\\Agents|data_machine_agent_create_failed|agents-api\/agents-api\.php/)
