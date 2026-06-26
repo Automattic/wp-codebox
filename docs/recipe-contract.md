@@ -278,6 +278,10 @@ the requested action, resolved target identity, before/after active plugin
 lists, network-active plugin lists where multisite is available, multisite
 support notes, diagnostics, errors, and `artifactRefs`.
 
+Recipes and runtime-backed fuzz workloads may use `wordpress.ensure-plugin-active`
+as the public ensure-active form. It accepts the same plugin target arguments and
+executes the `wordpress.plugin-state` activation contract.
+
 Use `wordpress.theme-setup` for bounded theme installation, switching, and
 inventory in a contained runtime:
 

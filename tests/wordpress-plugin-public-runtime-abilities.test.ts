@@ -45,6 +45,8 @@ assert.match(executionPhp, /executeWordPressFuzzSuite/)
 assert.match(abilitiesPhp, /'supported_runner_capabilities'\s*=>\s*self::fuzz_suite_supported_runner_capabilities\(\)/)
 assert.match(abilitiesPhp, /'runtime_backed_execution'\s*=>\s*self::fuzz_suite_runtime_backed_execution_contract\(\)/)
 assert.match(executionPhp, /wordpress\.ensure-plugin-active/)
+assert.match(executionPhp, /'commands'[\s\S]{0,900}wordpress\.ensure-plugin-active/)
+assert.match(executionPhp, /'commands'[\s\S]{0,900}wordpress\.plugin-state/)
 assert.match(executionPhp, /WP_CODEBOX_FUZZ_WORKLOAD_ROOT/)
 assert.doesNotMatch(executionPhp, /wp_codebox_fuzz_suite_runner_unavailable/)
 

@@ -3,10 +3,16 @@ import { commandRegistry } from "../packages/runtime-core/src/command-registry.j
 import { pluginStateInputFromArgs, pluginStatePhpCode } from "../packages/runtime-playground/src/plugin-state-command-handlers.js"
 
 const command = commandRegistry.find((definition) => definition.id === "wordpress.plugin-state")
+const ensureCommand = commandRegistry.find((definition) => definition.id === "wordpress.ensure-plugin-active")
 assert.ok(command, "wordpress.plugin-state is registered")
+assert.ok(ensureCommand, "wordpress.ensure-plugin-active is registered")
 assert.equal(command?.handler.kind, "playground")
 assert.equal(command?.handler.kind === "playground" ? command.handler.method : "", "runPluginState")
+assert.equal(ensureCommand?.handler.kind, "playground")
+assert.equal(ensureCommand?.handler.kind === "playground" ? ensureCommand.handler.method : "", "runPluginState")
+assert.deepEqual(ensureCommand?.requiresPolicyCommands, ["wordpress.plugin-state"])
 assert.equal(command?.outputSchema?.id, "wp-codebox/wordpress-plugin-state/v1")
+assert.equal(ensureCommand?.outputSchema?.id, "wp-codebox/wordpress-plugin-state/v1")
 assert.ok(command?.acceptedArgs.some((arg) => arg.name === "action"), "plugin-state accepts action")
 assert.ok(command?.acceptedArgs.some((arg) => arg.name === "plugin"), "plugin-state accepts plugin")
 assert.ok(command?.acceptedArgs.some((arg) => arg.name === "slug"), "plugin-state accepts slug")
@@ -14,6 +20,7 @@ assert.ok(command?.acceptedArgs.some((arg) => arg.name === "file"), "plugin-stat
 assert.ok(command?.acceptedArgs.some((arg) => arg.name === "path"), "plugin-state accepts path")
 
 assert.deepEqual(pluginStateInputFromArgs(["plugin=akismet"]), { action: "report", target: "akismet", network: false })
+assert.deepEqual(pluginStateInputFromArgs(["plugin=akismet"], "activate", "wordpress.ensure-plugin-active"), { action: "activate", target: "akismet", network: false })
 assert.deepEqual(pluginStateInputFromArgs(["action=status", "file=demo/demo.php", "network=true"]), { action: "report", target: "demo/demo.php", network: true })
 assert.deepEqual(pluginStateInputFromArgs(["action=activate", "path=/wordpress/wp-content/plugins/demo/demo.php"]), { action: "activate", target: "/wordpress/wp-content/plugins/demo/demo.php", network: false })
 assert.throws(() => pluginStateInputFromArgs(["action=delete", "plugin=akismet"]), /action must be/)
