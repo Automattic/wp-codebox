@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import vm from "node:vm"
 
-import { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts } from "../packages/runtime-core/src/index.js"
+import { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, validateFanoutAggregationOutput } from "../packages/runtime-core/src/index.js"
 import { executeAgentFanoutRequest } from "../packages/cli/src/agent-fanout.js"
 import { FANOUT_REQUEST_SCHEMA } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -12,7 +12,10 @@ const fixture = JSON.parse(await readFile(new URL("fixtures/fanout-aggregation-c
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const runtimeOutput = plain(aggregateFanoutOutputs(fixture.input))
+assert.deepEqual(plain(validateFanoutAggregationOutput(runtimeOutput)), fixture.expectedOutput, "canonical fanout output fixture must validate")
 assert.deepEqual(runtimeOutput, fixture.expectedOutput, "runtime-core aggregation output must match the canonical fixture")
+assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, workerResultRefs: undefined }), /workerResultRefs/, "canonical fanout output requires worker result refs")
+assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, rawWorkerArtifactRefs: [{ kind: "worker-report" }] }), /requires path/, "canonical fanout output requires artifact ref paths")
 
 const normalizedFromArtifacts = plain(fanoutAggregationInputFromWorkerArtifacts({
   plan: fixture.input.plan,

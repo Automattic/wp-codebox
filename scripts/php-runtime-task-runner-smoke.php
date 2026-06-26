@@ -76,6 +76,16 @@ $missing_task = $runner->run( array( 'schema' => 'wp-codebox/runtime-task-reques
 assert_same_contract( true, is_wp_error( $missing_task ), 'missing task returns error' );
 assert_same_contract( 'wp-codebox/runtime-task-error/v1', $missing_task->get_error_data()['schema'] ?? null, 'missing task error schema' );
 
+$missing_target = $runner->run( array( 'schema' => 'wp-codebox/runtime-task-request/v1', 'task' => 'No target' ) );
+assert_same_contract( true, is_wp_error( $missing_target ), 'missing target returns error' );
+assert_same_contract( 'wp_codebox_runtime_task_target_required', $missing_target->get_error_code(), 'missing target error code' );
+assert_same_contract( 'target_id_required', $missing_target->get_error_data()['reason'] ?? null, 'missing target reason' );
+
+$unsupported_target = $runner->run( array( 'schema' => 'wp-codebox/runtime-task-request/v1', 'task' => 'Bad target', 'target_id' => 'example/unsupported' ) );
+assert_same_contract( true, is_wp_error( $unsupported_target ), 'unsupported target returns error' );
+assert_same_contract( 'wp_codebox_runtime_task_unsupported_target', $unsupported_target->get_error_code(), 'unsupported target error code' );
+assert_same_contract( 'unsupported-target', $unsupported_target->get_error_data()['reason'] ?? null, 'unsupported target reason' );
+
 add_filter(
 	'wp_codebox_runtime_task_providers',
 	static function ( array $providers ): array {
@@ -156,8 +166,9 @@ add_filter(
 );
 $failed = $runner->run(
 	array(
-		'schema' => 'wp-codebox/runtime-task-request/v1',
-		'task'   => 'Fail safely',
+		'schema'    => 'wp-codebox/runtime-task-request/v1',
+		'task'      => 'Fail safely',
+		'target_id' => 'example-runtime',
 	)
 );
 assert_same_contract( true, is_wp_error( $failed ), 'provider failure is public error' );

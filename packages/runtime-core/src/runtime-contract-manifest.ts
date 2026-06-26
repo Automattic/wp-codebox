@@ -2,7 +2,7 @@ import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTa
 import { HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA } from "./headless-agent-task-contracts.js"
 import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
-import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
+import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, validateFanoutAggregationOutput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
 import { FUZZ_COVERAGE_PLAN_SCHEMA } from "./fuzz-coverage-plan-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA } from "./fuzz-suite-contracts.js"
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
@@ -205,6 +205,7 @@ export const RUNTIME_CONTRACT_NORMALIZERS = {
   artifactResultEnvelope: normalizeArtifactResultEnvelope,
   fanoutAggregationInput: normalizeFanoutAggregationInput,
   fanoutAggregationOutput: aggregateFanoutOutputs,
+  fanoutAggregationOutputEnvelope: validateFanoutAggregationOutput,
   runtimeProfile: normalizeRuntimeProfile,
   runtimeAccess: normalizeRuntimeAccess,
   previewReviewerAccess: normalizePreviewReviewerAccess,
@@ -215,6 +216,7 @@ export const RUNTIME_CONTRACT_NORMALIZERS = {
   artifactResultEnvelope: (input: unknown) => ArtifactResultEnvelope
   fanoutAggregationInput: (input: FanoutAggregationInputRequest) => FanoutAggregationInput
   fanoutAggregationOutput: (input: FanoutAggregationInputRequest) => FanoutAggregationOutput
+  fanoutAggregationOutputEnvelope: (input: unknown) => FanoutAggregationOutput
   runtimeProfile: (input: unknown) => RuntimeProfile
   runtimeAccess: (input: unknown) => RuntimeAccess
   previewReviewerAccess: typeof normalizePreviewReviewerAccess

@@ -19,6 +19,10 @@ assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/wordpress-workload-run-res
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/fuzz-suite\/v1'/)
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/fuzz-suite-result\/v1'/)
 assert.match(schemasPhp, /'kind'\s*=>\s*array\( 'type' => 'string', 'enum' => array\( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' \) \)/)
+assert.doesNotMatch(schemasPhp, /include_raw_browser_session/, "public browser session input schema must not expose raw browser session escape hatches")
+assert.match(schemasPhp, /'required'\s*=>\s*array\( 'task', 'target_id' \)/, "runtime task requests must require explicit target_id")
+const runtimeTaskSchema = schemasPhp.slice(schemasPhp.indexOf("private static function runtime_task_request_schema"), schemasPhp.indexOf("private static function runtime_task_result_schema"))
+assert.doesNotMatch(runtimeTaskSchema, /'executor_id'\s*=>|\s'executor'\s*=>|\s'target'\s*=>/, "runtime task public schema must not advertise implicit target aliases")
 
 assert.match(executionPhp, /function run_wordpress_workload\( array \$input \)/)
 assert.match(executionPhp, /function run_fuzz_suite\( array \$input \)/)

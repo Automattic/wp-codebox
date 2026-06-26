@@ -203,6 +203,32 @@ export function aggregateFanoutOutputs(input: FanoutAggregationInputRequest, opt
   }
 }
 
+export function validateFanoutAggregationOutput(input: unknown): FanoutAggregationOutput {
+  const output = input && typeof input === "object" && !Array.isArray(input) ? input as Partial<FanoutAggregationOutput> : undefined
+  if (output?.schema !== FANOUT_AGGREGATION_OUTPUT_SCHEMA) {
+    throw new Error("Fanout aggregation output must use wp-codebox/agent-fanout-aggregation-output/v1.")
+  }
+  if (!Array.isArray(output.workerResultRefs)) {
+    throw new Error("Fanout aggregation output requires workerResultRefs.")
+  }
+  if (!Array.isArray(output.rawWorkerArtifactRefs)) {
+    throw new Error("Fanout aggregation output requires rawWorkerArtifactRefs.")
+  }
+  if (!Array.isArray(output.finalArtifactRefs)) {
+    throw new Error("Fanout aggregation output requires finalArtifactRefs.")
+  }
+
+  for (const worker of output.workerResultRefs) {
+    if (!worker.workerId) throw new Error("Fanout worker result refs require workerId.")
+    if (!Array.isArray(worker.artifactRefs)) throw new Error(`Fanout worker ${worker.workerId} requires artifactRefs.`)
+    for (const artifact of worker.artifactRefs) validateFanoutArtifactRef(artifact, `Fanout worker ${worker.workerId}`)
+  }
+  for (const artifact of output.rawWorkerArtifactRefs) validateFanoutArtifactRef(artifact, "Fanout raw worker artifact")
+  for (const artifact of output.finalArtifactRefs) validateFanoutArtifactRef(artifact, "Fanout final artifact")
+
+  return output as FanoutAggregationOutput
+}
+
 export function defaultFanoutAggregationOutputPath(input: FanoutAggregationInputRequest, outputNamespace?: string): string {
   const normalized = normalizeFanoutAggregationInput(input)
   return `${normalizeOutputNamespace(outputNamespace ?? normalized.aggregator?.outputNamespace)}/result.json`
@@ -292,6 +318,11 @@ function resolveAggregationStatus(policy: FanoutAggregationPolicy, conflicts: Fa
   if (policy === "repair") return "repair_required"
   if (policy === "caller-review-required") return "caller_review_required"
   return "failed"
+}
+
+function validateFanoutArtifactRef(artifact: FanoutArtifactRef, label: string): void {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) throw new Error(`${label} ref must be an object.`)
+  if (!artifact.path) throw new Error(`${label} ref requires path.`)
 }
 
 function normalizePlan(plan: FanoutAggregationInputRequest["plan"]): FanoutPlan {

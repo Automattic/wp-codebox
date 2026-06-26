@@ -2586,7 +2586,7 @@ public static function hydrate_browser_blueprint_ref( array $input ): array|WP_E
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
 	$return_raw = self::include_raw_browser_contract( $input, 'materializer' );
-	$input['include_raw_browser_session'] = true;
+	$input['include_internal_browser_session'] = true;
 	$session = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $session ) ) {
 		return $session;
@@ -2662,28 +2662,17 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 
 /** @param array<string,mixed> $input Ability input. */
 private static function include_raw_browser_contract( array $input, string $contract ): bool {
-	if ( true === ( $input['include_internal_browser_contract'] ?? false ) || true === ( $input['include_raw_browser_contract'] ?? false ) ) {
-		return true;
+	$include = true === ( $input['include_internal_browser_contract'] ?? false );
+	if ( function_exists( 'apply_filters' ) ) {
+		$include = (bool) apply_filters( 'wp_codebox_include_internal_browser_contract', $include, $input, $contract );
 	}
 
-	if ( 'materializer' === $contract && true === ( $input['include_raw_browser_materializer_contract'] ?? false ) ) {
-		return true;
-	}
-
-	if ( 'task' === $contract && true === ( $input['include_raw_browser_task_contract'] ?? false ) ) {
-		return true;
-	}
-
-	$debug = is_array( $input['debug'] ?? null ) ? $input['debug'] : array();
-	return true === ( $debug['include_internal_browser_contract'] ?? false )
-		|| true === ( $debug['include_raw_browser_contract'] ?? false )
-		|| ( 'materializer' === $contract && true === ( $debug['include_raw_browser_materializer_contract'] ?? false ) )
-		|| ( 'task' === $contract && true === ( $debug['include_raw_browser_task_contract'] ?? false ) );
+	return $include;
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 private static function prepare_browser_task_contract( array $input ): array|WP_Error {
-	$input['include_raw_browser_session'] = true;
+	$input['include_internal_browser_session'] = true;
 	$primary = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $primary ) ) {
 		return $primary;
@@ -3485,7 +3474,7 @@ private static function browser_session_response_for_input( array $session, arra
 	if ( ! empty( $evidence_ref ) ) {
 		$product_dto['evidence_ref'] = $evidence_ref;
 	}
-	if ( self::include_raw_browser_session_contract( $input ) ) {
+	if ( self::include_raw_browser_session_contract( $input, $session, $product_dto ) ) {
 		$session['product'] = $product_dto;
 		return $session;
 	}
@@ -3531,14 +3520,14 @@ private static function browser_session_evidence_store( array $product_dto, arra
 	);
 }
 
-/** @param array<string,mixed> $input Ability input. */
-private static function include_raw_browser_session_contract( array $input ): bool {
-	if ( true === ( $input['include_raw_browser_session'] ?? false ) || true === ( $input['include_internal_browser_session'] ?? false ) ) {
-		return true;
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $session Raw browser session contract. @param array<string,mixed> $product_dto Product DTO. */
+private static function include_raw_browser_session_contract( array $input, array $session, array $product_dto ): bool {
+	$include = true === ( $input['include_internal_browser_session'] ?? false );
+	if ( function_exists( 'apply_filters' ) ) {
+		$include = (bool) apply_filters( 'wp_codebox_include_internal_browser_session_contract', $include, $input, $session, $product_dto );
 	}
 
-	$debug = is_array( $input['debug'] ?? null ) ? $input['debug'] : array();
-	return true === ( $debug['include_raw_browser_session'] ?? false );
+	return $include;
 }
 
 /** @return array<string,mixed> */
