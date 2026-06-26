@@ -56,6 +56,8 @@ assert.deepEqual(plain(api.v1.info()), {
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
+assert.equal(api.v1.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
+assert.equal(api.v1.methods.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")

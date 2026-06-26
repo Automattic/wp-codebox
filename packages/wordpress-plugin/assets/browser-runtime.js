@@ -583,6 +583,7 @@
 		createParentToolRequest: api.createParentToolRequest,
 		dispatchParentTool: api.dispatchParentTool,
 		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
+		setFrontendAdminBarVisible: api.setFrontendAdminBarVisible,
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,
