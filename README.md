@@ -21,6 +21,46 @@ Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
   -> review, replay, apply, export, or discard outside the sandbox
 ```
 
+## Start Here: A Headless WordPress, On Demand
+
+At its core, WP Codebox gives you a **real, headless WordPress instance backed by [WordPress Playground](https://wordpress.github.io/wordpress-playground/)** that boots in seconds, runs your code, hands back results, and disappears. No Docker, no local LAMP stack, no database to provision, no production site to put at risk. You mount the code you care about, run a command against it, and collect the output.
+
+That one primitive — *a disposable WordPress you can drive from the command line* — unlocks a surprisingly wide range of everyday work. The rest of this README is long because it documents every contract in detail; this section is the short version of **what you'd actually reach for it to do.**
+
+One command boots WordPress, mounts a local plugin, runs PHP against it, and tears the runtime down:
+
+```bash
+npm run wp-codebox -- run \
+  --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin \
+  --command wordpress.run-php \
+  --arg code-file=./examples/simple-plugin/probe.php \
+  --artifacts ./artifacts \
+  --json
+```
+
+You get back a structured artifact bundle — what changed, what the code returned, and (optionally) a live preview URL — that you can read, replay, or throw away.
+
+### For Developers — everyday use
+
+You don't need to be building a product on top of WP Codebox to get value from it. It's a genuinely useful daily driver:
+
+- **Run a plugin's tests without a local stack.** Mount your plugin, run its PHPUnit suite (`wordpress.phpunit`) or a WP-CLI command (`wordpress.wp-cli`) inside a clean WordPress, and read the results — without installing PHP, MySQL, or WordPress on your machine.
+- **Reproduce and debug a bug deterministically.** Boot a known WordPress version with exactly the plugins/themes/content involved, run the failing path, and capture `$wpdb` query fingerprints and command diagnostics. Ship the recipe alongside a bug report so anyone can replay the exact same broken state in a clean instance.
+- **Profile and prove performance fixes — at scale.** Capture real before/after evidence for a caching or query change instead of hand-waving. This workflow is battle-tested against WooCommerce-scale performance work: validate a transient-deletion coalesce, a cache-growth bound, or a cache-invalidation fix in a disposable runtime before it ever reaches a real store. WP Codebox can throttle CPU/network to a deterministic low-end-mobile profile and assert web-performance budgets (`lcp_ms`, `fcp_ms`, `ttfb_ms`) against a real page load, so the same harness scales from a one-off check to a repeatable performance gate.
+- **Try something risky first.** Detonate an untrusted plugin, theme, or community patch in isolation. Test a WordPress core update or a sketchy plugin against your stack *before* it ever touches a real site.
+- **Drive and prove the UI actually works.** The browser runtime (Playwright-backed `wordpress.browser-actions`) can click, fill, drag, and assert against the real admin or frontend — so you can prove a block editor or settings screen still *works* under interaction, not just that it renders, and capture screenshots and console/network logs as evidence.
+- **Spin up realistic scratch environments.** The cookbook recipes boot a seeded WooCommerce store, a multisite network, a theme/block-editor surface, or seeded content in one command — handy for reproducing an issue, demoing a change, or experimenting against a realistic site shape.
+
+Everything WP Codebox produces is a reviewable artifact bundle outside the sandbox: diffs, patches, test results, performance/browser evidence, and an optional live preview URL. Nothing it does can reach the machine that launched it except through explicitly declared mounts.
+
+### For Agents — natural-language tasks in a safe runtime
+
+WP Codebox is also a safe execution boundary for AI coding agents. Give it a natural-language task and an agent stack, and it runs the agent **inside** the disposable WordPress, edits the mounted workspace, and returns a patch + preview for review — without the agent ever touching your host. See [`agent-sandbox-run`](#agent-sandbox-run) and [`agent-sandbox-batch`](#agent-sandbox-batch) for one task or many fanned out in parallel, one isolated sandbox each.
+
+### For Builders — a runtime primitive to build products on
+
+If you're building a product, WP Codebox is the runtime boundary you embed: a contained WordPress that any host (CLI, CI job, mobile app, Node service, WordPress plugin, GitHub Action) can drive without risking the caller. The sections below — **Product Use Cases**, **Runtime Capabilities**, and the contract docs — are written for that audience.
+
 ## Product Use Cases
 
 What you can build on top of WP Codebox:
