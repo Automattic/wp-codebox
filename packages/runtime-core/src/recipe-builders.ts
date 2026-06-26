@@ -22,6 +22,7 @@ export interface WordPressPhpunitRecipeOptions {
   env?: JsonObject
   wpConfigDefines?: JsonObject
   autoloadFile?: string
+  projectAutoloadFile?: string
   testsDir?: string
   dependencyMounts?: string[]
   bootstrapFiles?: string[]
@@ -85,6 +86,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandJsonArg("env-json", options.env ?? {}),
           commandJsonArg("wp-config-defines-json", options.wpConfigDefines ?? {}),
           commandArg("autoload-file", options.autoloadFile ?? "/wp-codebox-vendor/autoload.php"),
+          commandArg("project-autoload-file", options.projectAutoloadFile ?? ""),
           commandArg("tests-dir", options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),

@@ -849,6 +849,7 @@ export async function runPhpunitCommand({
     pluginSlug,
     cwd: argValue(args, "cwd")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}`,
     autoloadFile: argValue(args, "autoload-file")?.trim() || "/wp-codebox-vendor/autoload.php",
+    projectAutoloadFile: argValue(args, "project-autoload-file")?.trim() || "",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
     phpunitXml: argValue(args, "phpunit-xml")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
