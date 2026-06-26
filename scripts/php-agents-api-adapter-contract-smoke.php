@@ -146,8 +146,21 @@ $package_with_workspace_source = $adapter->run_runtime_package(
 	)
 );
 assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $package_with_workspace_source['received']['package'] );
-assert( array( 'topic' => 'coffee' ) === $package_with_workspace_source['received']['input'] );
+assert( true === $package_with_workspace_source['received']['input']['wait_for_completion'] );
+assert( 'coffee' === $package_with_workspace_source['received']['input']['topic'] );
 assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true ) === $package_with_workspace_source['received']['options'] );
+
+$package_with_options_only_controls = $adapter->run_runtime_package(
+	array(
+		'runtime_package' => 'example-agent',
+		'input'           => array( 'topic' => 'tea' ),
+		'options'         => array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000 ),
+	)
+);
+assert( 'tea' === $package_with_options_only_controls['received']['input']['topic'] );
+assert( true === $package_with_options_only_controls['received']['input']['wait_for_completion'] );
+assert( 1200000 === $package_with_options_only_controls['received']['input']['time_budget_ms'] );
+assert( array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000 ) === $package_with_options_only_controls['received']['options'] );
 
 $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
 	array(

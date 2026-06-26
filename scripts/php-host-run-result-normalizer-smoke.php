@@ -131,4 +131,43 @@ smoke_assert( 'ssi/concept-packet/v1' === $success['artifact_result']['result'][
 smoke_assert( 'Stabilized public envelope' === $success['artifact_result']['result']['typed_artifacts'][0]['payload']['title'], 'typed artifact preserves runtime output payload' );
 smoke_assert( ! isset( $success['artifact_result']['metadata']['agent_runtime'] ), 'artifact result metadata does not expose private agent runtime internals' );
 
+$datamachine_success = $normalizer->normalize(
+	$prepared,
+	array(
+		'exit_code' => 0,
+		'output'    => json_encode(
+			array(
+				'agentResult'     => array(
+					'artifacts' => array( 'directory' => '/tmp/wp-codebox-artifacts' ),
+					'summary'   => 'Runtime package completed',
+				),
+				'agentTaskResult' => array(
+					'status'  => 'completed',
+					'outputs' => array(
+						'result' => array(
+							'engine_data' => array(
+								'outputs' => array(
+									'typed_artifacts' => array(
+										'concept_packet' => array(
+											'output_key' => 'concept_packet',
+											'schema'     => 'wp-site-generator/ConceptPacket/v1',
+											'artifact'   => 'ConceptPacket',
+											'payload'    => array( 'title' => 'Kiln Shelf Supply' ),
+										),
+									),
+								),
+							),
+						),
+					),
+				),
+			)
+		),
+	),
+	$adapters
+);
+smoke_assert( is_array( $datamachine_success ) && ! is_wp_error( $datamachine_success ), 'Data Machine runtime package success returns result envelope' );
+smoke_assert( 'concept_packet' === $datamachine_success['artifact_result']['result']['typed_artifacts'][0]['name'], 'Data Machine engine typed artifact is exposed by name' );
+smoke_assert( 'wp-site-generator/ConceptPacket/v1' === $datamachine_success['artifact_result']['result']['typed_artifacts'][0]['artifact_schema'], 'Data Machine engine typed artifact schema is exposed' );
+smoke_assert( 'Kiln Shelf Supply' === $datamachine_success['artifact_result']['result']['typed_artifacts'][0]['payload']['title'], 'Data Machine engine typed artifact payload is exposed' );
+
 echo "host run result normalizer smoke passed\n";

@@ -631,9 +631,11 @@ final class WP_Codebox_Agents_API_Adapter {
 			if ( array_key_exists( $field, $input ) && ! array_key_exists( $field, $options ) ) {
 				$options[ $field ] = $input[ $field ];
 			}
+			if ( array_key_exists( $field, $options ) && ! array_key_exists( $field, $workflow_input ) ) {
+				$workflow_input[ $field ] = $options[ $field ];
+			}
 			if ( array_key_exists( $field, $workflow_input ) && ! array_key_exists( $field, $options ) ) {
 				$options[ $field ] = $workflow_input[ $field ];
-				unset( $workflow_input[ $field ] );
 			}
 		}
 

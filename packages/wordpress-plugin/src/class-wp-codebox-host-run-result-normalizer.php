@@ -414,7 +414,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 		$from_outputs   = is_array( $outputs['typed_artifacts'] ?? null ) ? $outputs['typed_artifacts'] : array();
 		$runtime_outputs = $this->runtime_outputs( $agent_task_result );
 		$engine_outputs = is_array( $task_input['agent_bundle']['engine_data_outputs'] ?? null ) ? $task_input['agent_bundle']['engine_data_outputs'] : array();
-		$typed          = array_values( array_filter( array_merge( $direct, $from_outputs ), 'is_array' ) );
+		$typed          = array_values( array_filter( array_merge( $direct, $from_outputs, $this->datamachine_typed_artifacts( $agent_task_result ) ), 'is_array' ) );
 
 		foreach ( $runtime_outputs as $name => $payload ) {
 			if ( 'typed_artifacts' === $name || 'structured_artifacts' === $name ) {
@@ -434,6 +434,44 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 		}
 
 		return $this->dedupe_records( $typed );
+	}
+
+	/** @param array<string,mixed> $agent_task_result @return array<int,array<string,mixed>> */
+	private function datamachine_typed_artifacts( array $agent_task_result ): array {
+		$sources = array(
+			$agent_task_result['outputs']['result']['engine_data']['outputs']['typed_artifacts'] ?? null,
+			$agent_task_result['result']['engine_data']['outputs']['typed_artifacts'] ?? null,
+			$agent_task_result['raw']['agent_runtime']['result']['result']['engine_data']['outputs']['typed_artifacts'] ?? null,
+		);
+
+		$typed = array();
+		foreach ( $sources as $source ) {
+			if ( ! is_array( $source ) ) {
+				continue;
+			}
+			foreach ( $source as $key => $entry ) {
+				if ( ! is_array( $entry ) || ! array_key_exists( 'payload', $entry ) ) {
+					continue;
+				}
+
+				$name = (string) ( $entry['name'] ?? $entry['output_key'] ?? ( is_string( $key ) ? $key : '' ) );
+				if ( '' === $name ) {
+					continue;
+				}
+
+				$typed[] = array_filter(
+					array(
+						'name'            => $name,
+						'artifact_schema' => (string) ( $entry['artifact_schema'] ?? $entry['schema'] ?? '' ),
+						'artifact'        => (string) ( $entry['artifact'] ?? '' ),
+						'payload'         => $entry['payload'],
+					),
+					static fn( mixed $value ): bool => '' !== $value
+				);
+			}
+		}
+
+		return $typed;
 	}
 
 	/** @param array<string,mixed> $agent_task_result @return array<string,mixed> */
