@@ -437,11 +437,27 @@ final class WP_Codebox_Agents_API_Adapter {
 		if ( is_array( $input['package'] ?? null ) ) {
 			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
 		}
+		$input = self::runtime_package_workflow_for_agents_api( $input );
 		$input = self::stage_runtime_package_wordpress_workload_files( $input );
 
 		$input = self::runtime_package_options_for_agents_api( $input );
 
 		return $this->execute( self::RUN_RUNTIME_PACKAGE, $input );
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
+	private static function runtime_package_workflow_for_agents_api( array $input ): array {
+		if ( is_array( $input['workflow'] ?? null ) && ( isset( $input['workflow']['id'] ) || isset( $input['workflow']['spec'] ) ) ) {
+			return $input;
+		}
+
+		$package = is_array( $input['package'] ?? null ) ? $input['package'] : array();
+		$id      = self::string_value( $input['workflow_id'] ?? $input['workflowId'] ?? $package['workflow'] ?? $package['slug'] ?? $package['id'] ?? $input['runtime_package'] ?? '' );
+		if ( '' !== $id ) {
+			$input['workflow'] = array( 'id' => $id );
+		}
+
+		return $input;
 	}
 
 	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
@@ -635,6 +651,10 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	private static function is_absolute_package_source( string $source ): bool {
 		return str_starts_with( $source, '/' ) || 1 === preg_match( '#^[a-z][a-z0-9+.-]*://#i', $source ) || 1 === preg_match( '#^[A-Za-z]:[\\/]#', $source );
+	}
+
+	private static function string_value( mixed $value ): string {
+		return is_scalar( $value ) ? trim( (string) $value ) : '';
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

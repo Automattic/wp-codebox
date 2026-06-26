@@ -89,6 +89,7 @@ assert( 'wp-codebox/agent-chat-result/v1' === $chat['schema'] );
 assert( 'wp-codebox/agent-task-result/v1' === $task['schema'] );
 assert( 'wp-codebox/runtime-package-result/v1' === $package['schema'] );
 assert( array( 'slug' => 'example-agent' ) === $package['received']['package'] );
+assert( array( 'id' => 'example-agent' ) === $package['received']['workflow'] );
 
 $package_with_descriptor = $adapter->run_runtime_package(
 	array(
@@ -97,6 +98,15 @@ $package_with_descriptor = $adapter->run_runtime_package(
 	)
 );
 assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) === $package_with_descriptor['received']['package'] );
+assert( array( 'id' => 'example-agent' ) === $package_with_descriptor['received']['workflow'] );
+
+$package_with_explicit_workflow = $adapter->run_runtime_package(
+	array(
+		'runtime_package' => 'example-agent',
+		'workflow'        => array( 'id' => 'custom-workflow' ),
+	)
+);
+assert( array( 'id' => 'custom-workflow' ) === $package_with_explicit_workflow['received']['workflow'] );
 
 $workspace_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . getmypid();
 mkdir( $workspace_root . '/bundles/example-agent', 0777, true );
