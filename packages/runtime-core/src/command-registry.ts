@@ -4,6 +4,7 @@ import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./w
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -312,6 +313,27 @@ export const commandRegistry = [
     policyRequirement: "Host-side recipe helper; supported runtime backends list same-run checkpoints, unsupported backends fail closed with structured diagnostics.",
     recipe: true,
     handler: { kind: "recipe-alias", command: "wp-codebox.checkpoint-list" },
+  },
+  {
+    id: "wp-codebox/run-fuzz-suite",
+    description: "Recipe-only public runtime helper that runs a wp-codebox/fuzz-suite/v1 payload against the active WordPress runtime.",
+    acceptedArgs: [
+      { name: "input-json", description: "Inline wp-codebox/fuzz-suite/v1 payload.", format: "JSON object" },
+      { name: "input-file", description: "Recipe-relative path to a wp-codebox/fuzz-suite/v1 payload.", format: "path" },
+      { name: "suite-json", description: "Alias for input-json.", format: "JSON object" },
+      { name: "suite-file", description: "Alias for input-file.", format: "path" },
+    ],
+    outputShape: "wp-codebox/fuzz-suite-result/v1 JSON produced by the public fuzz-suite runner.",
+    outputSchema: objectEnvelopeSchema(FUZZ_SUITE_RESULT_SCHEMA, {
+      suite: { type: "object" },
+      cases: { type: "array" },
+      status: { type: "string" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Host-side recipe helper; it executes declared fuzz-suite cases through the active runtime and requires the runtime-backed fuzz-suite command set.",
+    requiresPolicyCommands: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands,
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox/run-fuzz-suite" },
   },
   {
     id: "wordpress.ability",

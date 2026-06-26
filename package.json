@@ -157,6 +157,7 @@
     "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
     "test:fuzz-suite-runner": "tsx tests/fuzz-suite-runner.test.ts",
     "test:playground-fuzz-suite-public": "tsx tests/playground-fuzz-suite-public.test.ts",
+    "test:nested-fuzz-suite-recipe-command": "tsx tests/nested-fuzz-suite-recipe-command.test.ts",
     "test:wordpress-fuzz-suite-builders": "tsx tests/wordpress-fuzz-suite-builders.test.ts",
     "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:preview-options": "tsx tests/preview-options.test.ts",

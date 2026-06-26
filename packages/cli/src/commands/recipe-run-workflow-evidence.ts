@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { commandArgValue, parseCommandJsonObject, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
+import { commandArgValue, parseCommandJson, parseCommandJsonObject, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type FuzzSuiteContract, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
@@ -159,6 +159,9 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
     if (isRuntimeCheckpointRecipeCommand(workflowStep.step.command)) {
       return withRecipeExecutionPhase(await executeRuntimeCheckpointRecipeCommand(runtime, workflowStep.step.command, workflowStep.step.args ?? []), workflowStep.phase, workflowStep.index, workflowStep.step.command)
     }
+    if (workflowStep.step.command === "wp-codebox/run-fuzz-suite") {
+      return withRecipeExecutionPhase(await executeRunFuzzSuiteRecipeCommand(runtime, workflowStep.step.args ?? [], recipeDirectory, sandboxWorkspace), workflowStep.phase, workflowStep.index, workflowStep.step.command)
+    }
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
     return {
       ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command),
@@ -170,6 +173,88 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
+  }
+}
+
+async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>): Promise<ExecutionResult> {
+  const startedAt = new Date().toISOString()
+  const suite = await fuzzSuiteFromRecipeCommandArgs(args, recipeDirectory)
+  const result = await runFuzzSuite(suite, {
+    runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+    executor: async (spec) => runtime.execute(await recipeExecutionSpec(workflowStepFromExecutionSpec(spec), recipeDirectory, sandboxWorkspace)),
+    runtimeWorkloadExecutor: async ({ workload, case: fuzzCase }) => {
+      const steps = [...workflowStepsFromWorkloadPhase(workload.before), ...workflowStepsFromWorkloadPhase(workload.steps), ...workflowStepsFromWorkloadPhase(workload.after)]
+      const workloadStartedAt = new Date().toISOString()
+      const executions: ExecutionResult[] = []
+      for (const step of steps) {
+        const execution = await runtime.execute(await recipeExecutionSpec(step, recipeDirectory, sandboxWorkspace))
+        executions.push(execution)
+        if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
+          break
+        }
+      }
+      const failed = executions.find((execution) => execution.exitCode !== 0)
+      const payload = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed?.exitCode ?? 0 }
+      return {
+        id: `wordpress-run-workload-${fuzzCase.id}`,
+        command: "wordpress.run-workload",
+        args: [`steps=${steps.length}`],
+        exitCode: failed?.exitCode ?? 0,
+        stdout: `${JSON.stringify(payload)}\n`,
+        stderr: failed?.stderr ?? "",
+        result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: payload },
+        startedAt: workloadStartedAt,
+        finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
+        artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+      }
+    },
+    metadata: { public_recipe_command: "wp-codebox/run-fuzz-suite" },
+  })
+  const stdout = `${JSON.stringify(result, null, 2)}\n`
+  const failed = result.status === "failed" || result.status === "error"
+  return {
+    id: `wp-codebox-run-fuzz-suite:${startedAt}`,
+    command: "wp-codebox/run-fuzz-suite",
+    args,
+    exitCode: failed ? 1 : 0,
+    stdout,
+    stderr: failed ? result.diagnostics.map((diagnostic) => diagnostic.message).filter(Boolean).join("\n") : "",
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    artifactRefs: result.artifactRefs?.map((ref) => ({ id: ref.path, path: ref.path, kind: ref.kind, digest: ref.sha256 ? { algorithm: "sha256", value: ref.sha256 } : undefined, metadata: ref.metadata })) ?? [],
+  }
+}
+
+async function fuzzSuiteFromRecipeCommandArgs(args: string[], recipeDirectory: string): Promise<FuzzSuiteContract> {
+  const inline = commandArgValue(args, "input-json") ?? commandArgValue(args, "suite-json")
+  if (inline) {
+    return parseCommandJson(inline, "input-json") as FuzzSuiteContract
+  }
+  const file = commandArgValue(args, "input-file") ?? commandArgValue(args, "suite-file")
+  if (file) {
+    return parseCommandJson(await readFile(resolve(recipeDirectory, file), "utf8"), file) as FuzzSuiteContract
+  }
+  throw new Error("wp-codebox/run-fuzz-suite requires input-json=<suite> or input-file=<path>")
+}
+
+function workflowStepsFromWorkloadPhase(value: unknown): WorkspaceRecipe["workflow"]["steps"] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap((step) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      return []
+    }
+    const command = (step as { command?: unknown }).command
+    return typeof command === "string" && command.trim() !== "" ? [step as WorkspaceRecipe["workflow"]["steps"][number]] : []
+  })
+}
+
+function workflowStepFromExecutionSpec(spec: { command: string; args?: string[]; diagnostics?: WorkspaceRecipe["workflow"]["steps"][number]["diagnostics"] }): WorkspaceRecipe["workflow"]["steps"][number] {
+  return {
+    command: spec.command,
+    args: spec.args,
+    diagnostics: spec.diagnostics,
   }
 }
 
