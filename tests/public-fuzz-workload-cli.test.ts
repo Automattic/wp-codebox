@@ -81,6 +81,28 @@ return static function ( array $input, array $args ): array {
   assert.equal(runtimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
   assert.equal(runtimeFuzzJson.metadata.runnerCapabilities.mode, "runtime-backed")
 
+  const runtimeCommandFuzzInput = join(directory, "runtime-command-fuzz.json")
+  await writeFile(runtimeCommandFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-runtime-command-suite",
+    cases: [{
+      id: "rest-route-inventory",
+      target: { kind: "runtime", id: "wordpress.inventory-rest-routes", entrypoint: "wordpress.inventory-rest-routes" },
+      input: { args: [] },
+    }],
+  }), "utf8")
+  const runtimeCommandFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", runtimeCommandFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const runtimeCommandFuzzJson = JSON.parse(runtimeCommandFuzzOutput)
+  assert.equal(runtimeCommandFuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(runtimeCommandFuzzJson.status, "passed")
+  assert.equal(runtimeCommandFuzzJson.cases[0].status, "passed")
+  assert.notEqual(runtimeCommandFuzzJson.cases[0].skipReason, "fuzz_suite_executor_unavailable")
+  assert.equal(runtimeCommandFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime")
+  assert.equal(runtimeCommandFuzzJson.cases[0].metadata.execution.result.json.schema, "wp-codebox/recipe-run-dry-run/v1")
+  assert.equal(runtimeCommandFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.inventory-rest-routes")
+
   const phpRuntimeFuzzInput = join(directory, "runtime-php-workload-fuzz.json")
   await writeFile(phpRuntimeFuzzInput, JSON.stringify({
     schema: "wp-codebox/fuzz-suite/v1",

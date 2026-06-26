@@ -359,6 +359,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
             exitCode: execution.exitCode,
             startedAt: execution.startedAt,
             finishedAt: execution.finishedAt,
+            result: execution.result,
           },
         }),
       })
