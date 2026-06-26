@@ -18,6 +18,11 @@ final class WP_Codebox_Runtime_Task_Runner {
 			return $this->public_error( 'wp_codebox_runtime_task_request_invalid', 'Runtime task requests require a task.', 400 );
 		}
 
+		$target_id = $this->target_id( $input );
+		if ( '' === $target_id ) {
+			return $this->public_error( 'wp_codebox_runtime_task_target_required', 'Runtime task requests require an explicit target_id.', 400, array( 'reason' => 'target_id_required' ) );
+		}
+
 		foreach ( $this->runtime_task_providers( $input ) as $provider ) {
 			if ( ! $this->provider_matches( $provider, $input ) ) {
 				continue;
@@ -31,7 +36,7 @@ final class WP_Codebox_Runtime_Task_Runner {
 			return $this->result_envelope( $input, $result, $this->provider_id( $provider ) );
 		}
 
-		return $this->public_error( 'wp_codebox_runtime_task_unavailable', 'Runtime task execution is unavailable.', 501 );
+		return $this->public_error( 'wp_codebox_runtime_task_unsupported_target', 'Runtime task target is not supported.', 422, array( 'reason' => 'unsupported-target', 'target_id' => $target_id ) );
 	}
 
 	/** @param array<string,mixed> $input Runtime task request. @return array<string,mixed>|WP_Error */
@@ -50,8 +55,9 @@ final class WP_Codebox_Runtime_Task_Runner {
 	private function runtime_task_providers( array $input ): array {
 		$providers = array(
 			array(
-				'id'       => 'wp-codebox-runtime',
-				'callback' => fn( array $request ): array|WP_Error => $this->execute_codebox_runtime_task( $request ),
+				'id'         => 'wp-codebox-runtime',
+				'target_ids' => array( 'wp-codebox/host-playground', 'wp-codebox/browser-playground' ),
+				'callback'   => fn( array $request ): array|WP_Error => $this->execute_codebox_runtime_task( $request ),
 			),
 		);
 
@@ -71,6 +77,11 @@ final class WP_Codebox_Runtime_Task_Runner {
 		$matches = $provider['matches'] ?? null;
 		if ( is_callable( $matches ) ) {
 			return true === $matches( $input );
+		}
+
+		$target_ids = $provider['target_ids'] ?? array();
+		if ( is_array( $target_ids ) && ! empty( $target_ids ) ) {
+			return in_array( $this->target_id( $input ), array_values( array_filter( $target_ids, 'is_string' ) ), true );
 		}
 
 		return true;
@@ -120,20 +131,12 @@ final class WP_Codebox_Runtime_Task_Runner {
 
 	/** @param array<string,mixed> $input Runtime task request. */
 	private function target_id( array $input ): string {
-		foreach ( array( 'target_id', 'executor_id', 'target', 'executor' ) as $field ) {
-			$value = $input[ $field ] ?? null;
-			if ( is_string( $value ) && '' !== trim( $value ) ) {
-				return trim( $value );
-			}
-			if ( is_array( $value ) ) {
-				$id = trim( (string) ( $value['id'] ?? $value['target'] ?? '' ) );
-				if ( '' !== $id ) {
-					return $id;
-				}
-			}
+		$value = $input['target_id'] ?? null;
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			return trim( $value );
 		}
 
-		return 'wp-codebox/host-playground';
+		return '';
 	}
 
 	/** @param array<string,mixed> $input Runtime task request. @param array<string,mixed> $result Runtime result. @return array<string,mixed> */
@@ -172,13 +175,19 @@ final class WP_Codebox_Runtime_Task_Runner {
 	}
 
 	/** @return WP_Error */
-	private function public_error( string $code, string $message, int $status ): WP_Error {
+	private function public_error( string $code, string $message, int $status, array $extra = array() ): WP_Error {
 		return new WP_Error(
 			$code,
 			$message,
-			array(
-				'status' => $status,
-				'schema' => 'wp-codebox/runtime-task-error/v1',
+			array_filter(
+				array_merge(
+					$extra,
+					array(
+						'status' => $status,
+						'schema' => 'wp-codebox/runtime-task-error/v1',
+					)
+				),
+				static fn( mixed $value ): bool => null !== $value && '' !== $value
 			)
 		);
 	}

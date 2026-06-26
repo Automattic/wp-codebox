@@ -67,27 +67,42 @@ $input = array(
 );
 
 $public = WP_Codebox_Abilities::create_browser_playground_session( $input );
-$raw = WP_Codebox_Abilities::create_browser_playground_session( $input + array( 'include_raw_browser_session' => true ) );
+$raw_requested_public = WP_Codebox_Abilities::create_browser_playground_session( $input + array( 'include_raw_browser_session' => true ) );
+$raw_internal = WP_Codebox_Abilities::create_browser_playground_session( $input + array( 'include_internal_browser_session' => true ) );
 $materializer = WP_Codebox_Abilities::create_browser_materializer_contract( $input );
-$raw_materializer = WP_Codebox_Abilities::create_browser_materializer_contract( $input + array( 'include_raw_browser_materializer_contract' => true ) );
+$raw_materializer_requested_public = WP_Codebox_Abilities::create_browser_materializer_contract( $input + array( 'include_raw_browser_materializer_contract' => true ) );
+$raw_materializer = WP_Codebox_Abilities::create_browser_materializer_contract( $input + array( 'include_internal_browser_contract' => true ) );
 $task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input );
-$raw_task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_raw_browser_task_contract' => true ) );
+$raw_task_contract_requested_public = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_raw_browser_task_contract' => true ) );
+$raw_task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_internal_browser_contract' => true ) );
 
 echo json_encode( array(
 	'public' => $public,
-	'raw' => array(
-		'schema' => $raw['schema'] ?? null,
-		'product' => $raw['product'] ?? null,
-		'playground_blueprint_steps_is_array' => is_array( $raw['playground']['blueprint']['steps'] ?? null ),
-		'recipe_runtime_backend' => $raw['recipe']['runtime']['backend'] ?? null,
+	'raw_requested_public' => array(
+		'schema' => $raw_requested_public['schema'] ?? null,
+		'has_playground' => isset( $raw_requested_public['playground'] ),
+	),
+	'raw_internal' => array(
+		'schema' => $raw_internal['schema'] ?? null,
+		'product' => $raw_internal['product'] ?? null,
+		'playground_blueprint_steps_is_array' => is_array( $raw_internal['playground']['blueprint']['steps'] ?? null ),
+		'recipe_runtime_backend' => $raw_internal['recipe']['runtime']['backend'] ?? null,
 	),
 	'materializer' => $materializer,
+	'raw_materializer_requested_public' => array(
+		'schema' => $raw_materializer_requested_public['schema'] ?? null,
+		'has_playground' => isset( $raw_materializer_requested_public['playground'] ),
+	),
 	'raw_materializer' => array(
 		'schema' => $raw_materializer['schema'] ?? null,
 		'compact' => $raw_materializer['compact'] ?? null,
 		'playground_blueprint_steps_is_array' => is_array( $raw_materializer['playground']['blueprint']['steps'] ?? null ),
 	),
 	'task_contract' => $task_contract,
+	'raw_task_contract_requested_public' => array(
+		'schema' => $raw_task_contract_requested_public['schema'] ?? null,
+		'has_primary' => isset( $raw_task_contract_requested_public['primary'] ),
+	),
 	'raw_task_contract' => array(
 		'schema' => $raw_task_contract['schema'] ?? null,
 		'compact' => $raw_task_contract['compact'] ?? null,
@@ -157,10 +172,12 @@ assert.equal(result.public.preview_boot.runtime_access.preview_url, "/preview/in
 assertPublicDtoDoesNotExposeInternals(result.public)
 assertPublicDtoDoesNotExposeInternals(result.public.executable_session)
 
-assert.equal(result.raw.schema, "wp-codebox/browser-playground-session/v1")
-assert.equal(result.raw.product.schema, "wp-codebox/browser-session-product-dto/v1")
-assert.equal(result.raw.playground_blueprint_steps_is_array, true)
-assert.equal(result.raw.recipe_runtime_backend, "wordpress-playground")
+assert.equal(result.raw_requested_public.schema, "wp-codebox/browser-session-product-dto/v1")
+assert.equal(result.raw_requested_public.has_playground, false)
+assert.equal(result.raw_internal.schema, "wp-codebox/browser-playground-session/v1")
+assert.equal(result.raw_internal.product.schema, "wp-codebox/browser-session-product-dto/v1")
+assert.equal(result.raw_internal.playground_blueprint_steps_is_array, true)
+assert.equal(result.raw_internal.recipe_runtime_backend, "wordpress-playground")
 
 assert.equal(result.materializer.schema, "wp-codebox/browser-materializer-product-dto/v1")
 assert.equal(result.materializer.source_schema, "wp-codebox/browser-materializer-contract/v1")
@@ -168,6 +185,8 @@ assert.equal(result.materializer.preview_ref.schema, "wp-codebox/browser-preview
 assert.deepEqual(result.materializer.artifact_refs, result.public.artifact_refs)
 assertPublicDtoDoesNotExposeInternals(result.materializer)
 
+assert.equal(result.raw_materializer_requested_public.schema, "wp-codebox/browser-materializer-product-dto/v1")
+assert.equal(result.raw_materializer_requested_public.has_playground, false)
 assert.equal(result.raw_materializer.schema, "wp-codebox/browser-materializer-contract/v1")
 assert.equal(result.raw_materializer.playground_blueprint_steps_is_array, true)
 assert.equal(result.raw_materializer.compact.schema, "wp-codebox/browser-materializer-product-dto/v1")
@@ -176,6 +195,8 @@ assert.equal(result.task_contract.schema, "wp-codebox/browser-task-product-dto/v
 assert.equal(result.task_contract.primary.schema, "wp-codebox/browser-session-product-dto/v1")
 assertPublicDtoDoesNotExposeInternals(result.task_contract)
 
+assert.equal(result.raw_task_contract_requested_public.schema, "wp-codebox/browser-task-product-dto/v1")
+assert.equal(result.raw_task_contract_requested_public.has_primary, true)
 assert.equal(result.raw_task_contract.schema, "wp-codebox/browser-task-contract/v1")
 assert.equal(result.raw_task_contract.compact.schema, "wp-codebox/browser-task-product-dto/v1")
 assert.equal(result.raw_task_contract.primary_playground_blueprint_steps_is_array, true)

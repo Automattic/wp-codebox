@@ -154,6 +154,7 @@ assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifact({ name: "report", type: 
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifactIndex({ artifacts: [{ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) }] }).artifacts.length, 1)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationInput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
+assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutputEnvelope(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } })).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 
 assert.doesNotMatch(JSON.stringify(manifest), /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 assert.doesNotMatch(JSON.stringify(manifest), /agents\/run-runtime-package|wp_codebox_runner_workspace_backend|workspace_worktree_add/i)

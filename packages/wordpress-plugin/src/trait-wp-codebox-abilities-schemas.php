@@ -653,16 +653,16 @@ private static function artifact_apply_input_properties( string $approved_files_
 private static function runtime_task_request_schema(): array {
 	return array(
 		'type'       => 'object',
-		'required'   => array( 'task' ),
+		'required'   => array( 'task', 'target_id' ),
 		'properties' => array(
 			'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-task-request/v1' ),
 			'task'               => array( 'type' => array( 'string', 'object' ) ),
 			'input'              => array( 'type' => 'object' ),
 			'task_input'         => self::task_input_schema(),
-			'executor'           => array( 'type' => array( 'string', 'object' ) ),
-			'target'             => array( 'type' => array( 'string', 'object' ) ),
-			'target_id'          => array( 'type' => 'string' ),
-			'executor_id'        => array( 'type' => 'string' ),
+			'target_id'          => array(
+				'type'        => 'string',
+				'description' => 'Explicit runtime target id. Built-in targets are wp-codebox/host-playground and wp-codebox/browser-playground; extension providers may register additional target ids.',
+			),
 			'mode'               => self::string_property_schema(),
 			'agent'              => self::string_property_schema(),
 			'provider'           => self::string_property_schema(),
@@ -993,14 +993,9 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'blueprint'               => self::object_property_schema( $detailed ? 'Optional WordPress Playground blueprint for the browser to compile and run.' : '' ),
 		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),
 		'artifact_files'          => $detailed ? self::artifact_files_input_schema() : array( 'type' => 'array' ),
-		'include_raw_browser_session' => array(
-			'type'        => 'boolean',
-			'description' => 'Internal/debug escape hatch for materializers that need the raw browser Playground contract. Public callers should use the default product DTO.',
-			'default'     => false,
-		),
 		'debug'                   => array(
 			'type'        => 'object',
-			'description' => 'Optional debug flags. Set debug.include_raw_browser_session only for internal materializer/debug tooling that needs the raw Playground contract.',
+			'description' => 'Optional debug fields for diagnostics. Public callers receive the stable product DTO envelope.',
 		),
 	);
 }
