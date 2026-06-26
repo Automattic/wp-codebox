@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto"
+import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
 import { createServer as createHttpServer } from "node:http"
 import { cleanWpCliOutput, shellArgv } from "./commands.js"
 import { closeHttpServer, listenLocalHttpServer, readBridgeJson, writeBridgeJson, type PlaygroundServerRunResponse } from "./preview-server.js"
@@ -13,6 +15,13 @@ interface RuntimeWpCliCommandResult {
   exitCode: number
   stdout: string
   stderr: string
+}
+
+interface RuntimeHostNodeCommandResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+  error: string
 }
 
 type RuntimeWpCliRunner = (argv: string[]) => Promise<PlaygroundServerRunResponse>
@@ -34,6 +43,28 @@ export async function createRuntimeWpCliBridge(runWpCliCommand: RuntimeWpCliRunn
       const action = await readBridgeJson(request)
       const type = typeof action.type === "string" ? action.type.trim() : ""
       const command = typeof action.command === "string" ? action.command.trim() : ""
+      if (type === "host_node") {
+        const started = Date.now()
+        const args = Array.isArray(action.args) ? action.args.filter((arg): arg is string => typeof arg === "string") : []
+        const env = action.env && typeof action.env === "object" && !Array.isArray(action.env) ? normalizeHostNodeEnv(action.env as Record<string, unknown>) : {}
+        const cwd = typeof action.cwd === "string" && action.cwd.trim() !== "" ? action.cwd.trim() : undefined
+        const result = await runRuntimeHostNodeBridgeCommand(args, env, cwd)
+        const exitCode = result.exitCode
+        writeBridgeJson(response, 200, {
+          type,
+          command: "node",
+          args,
+          exitCode,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          success: exitCode === 0,
+          timedOut: false,
+          durationMs: Date.now() - started,
+          error: exitCode === 0 ? "" : (result.error || result.stderr.trim() || result.stdout.trim() || "host node command failed"),
+        })
+        return
+      }
+
       if (type !== "wp_cli" || command === "") {
         writeBridgeJson(response, 400, { success: false, error: "wp_cli command is required" })
         return
@@ -64,6 +95,51 @@ export async function createRuntimeWpCliBridge(runWpCliCommand: RuntimeWpCliRunn
     token,
     close: () => closeHttpServer(bridge),
   }
+}
+
+async function runRuntimeHostNodeBridgeCommand(args: string[], env: Record<string, string>, cwd?: string): Promise<RuntimeHostNodeCommandResult> {
+  if (args.length === 0) {
+    throw new Error("host_node args are required")
+  }
+
+  return new Promise((resolve) => {
+    let stdout = ""
+    let stderr = ""
+    const execPath = process.execPath
+    const nodeCommand = existsSync(execPath) ? execPath : "node"
+    const child = spawn(nodeCommand, args, {
+      cwd,
+      env: { ...process.env, ...env },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8")
+    })
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8")
+    })
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      const diagnostic = nodeCommand === "node"
+        ? `Host Node executable was unavailable: process.execPath (${execPath}) does not exist and node was not found on PATH. Update the WP Codebox runner PATH or restart the runner with a valid Node installation. ${error.message}`
+        : `Host Node executable could not be started from process.execPath (${nodeCommand}). Restart the WP Codebox runner with a valid Node installation. ${error.message}`
+      resolve({ exitCode: 127, stdout, stderr, error: diagnostic })
+    })
+    child.on("close", (exitCode) => {
+      resolve({ exitCode: exitCode ?? 1, stdout, stderr, error: "" })
+    })
+  })
+}
+
+function normalizeHostNodeEnv(env: Record<string, unknown>): Record<string, string> {
+  const normalized: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      normalized[name] = typeof value === "string" ? value : String(value)
+    }
+  }
+  return normalized
 }
 
 async function runRuntimeWpCliBridgeCommand(runWpCliCommand: RuntimeWpCliRunner, command: string): Promise<RuntimeWpCliCommandResult> {

@@ -41,6 +41,7 @@ assert.match(runExternalHttpGuardrailStep, /wp-codebox\/wordpress-external-http-
 assert.match(runExternalHttpGuardrailStep, /wp_codebox_bench_install_external_http_guardrail/)
 assert.match(runArtifactPostprocessStep, /artifact-postprocess workload steps only support the node command/)
 assert.match(runArtifactPostprocessStep, /WP_CODEBOX_ARTIFACT_INPUT_ROOT/)
+assert.match(benchRunner, /'type' => 'host_node'/)
 assert.match(commandStepRecord, /'schema' => 'wp-codebox\/bench-command-step\/v1'/)
 assert.doesNotMatch(runCommandStep, /\$type === 'ability'/)
 assert.ok(
@@ -81,6 +82,8 @@ const artifactPostprocessHelpers = [
   "wp_codebox_bench_artifact_postprocess_scan_input",
   "wp_codebox_bench_artifact_postprocess_expand_value",
   "wp_codebox_bench_artifact_postprocess_content_type",
+  "wp_codebox_bench_host_node_bridge_failure_detail",
+  "wp_codebox_bench_run_host_node_command",
   "wp_codebox_bench_run_artifact_postprocess_step",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
@@ -179,6 +182,21 @@ const artifactPostprocessPayload = await withTempDir("wp-codebox-artifact-postpr
     phpTestFile,
     `<?php
 ${artifactPostprocessHelpers}
+$wp_cli_bridge_url = 'http://wp-codebox-bridge.test';
+$wp_cli_bridge_token = 'test-token';
+function wp_json_encode($value, $flags = 0) { return json_encode($value, $flags); }
+function is_wp_error($value) { return false; }
+function wp_remote_retrieve_body($response) { return $response['body']; }
+function wp_remote_post($url, $options) {
+    $action = json_decode($options['body'], true);
+    $pipes = array();
+    $env = array_merge(getenv(), is_array($action['env'] ?? null) ? $action['env'] : array());
+    $process = proc_open(array_merge(array(PHP_BINARY), array('-r', 'passthru("node " . implode(" ", array_map("escapeshellarg", array_slice($argv, 1))), $exitCode); exit($exitCode);'), $action['args']), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes, $action['cwd'], $env);
+    $stdout = stream_get_contents($pipes[1]); fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]); fclose($pipes[2]);
+    $exit_code = proc_close($process);
+    return array('body' => json_encode(array('success' => $exit_code === 0, 'exitCode' => $exit_code, 'stdout' => $stdout, 'stderr' => $stderr)));
+}
 $plugin_path = ${JSON.stringify(pluginDirectory)};
 $payload = wp_codebox_bench_run_artifact_postprocess_step(array(
     'type' => 'artifact-postprocess',
@@ -229,6 +247,14 @@ const artifactPostprocessFailures = await withTempDir("wp-codebox-artifact-postp
     phpTestFile,
     `<?php
 ${artifactPostprocessHelpers}
+$wp_cli_bridge_url = 'http://wp-codebox-bridge.test';
+$wp_cli_bridge_token = 'test-token';
+function wp_json_encode($value, $flags = 0) { return json_encode($value, $flags); }
+function is_wp_error($value) { return false; }
+function wp_remote_retrieve_body($response) { return $response['body']; }
+function wp_remote_post($url, $options) {
+    return array('body' => json_encode($GLOBALS['wp_codebox_bridge_response'] ?? array('success' => true, 'exitCode' => 0, 'stdout' => '', 'stderr' => '')));
+}
 $plugin_path = ${JSON.stringify(pluginDirectory)};
 $artifact_root = ${JSON.stringify(artifactDirectory)};
 $messages = array();
@@ -245,6 +271,13 @@ foreach (array(
         $messages[] = $e->getMessage();
     }
 }
+$GLOBALS['wp_codebox_bridge_response'] = array('success' => false, 'exitCode' => 1, 'error' => 'bridge error', 'stdout' => 'bridge stdout', 'stderr' => 'bridge stderr');
+try {
+    wp_codebox_bench_run_artifact_postprocess_step(array('type' => 'artifact-postprocess', 'helperPath' => 'helpers/noop.mjs', 'inputArtifactRoot' => $artifact_root, 'outputArtifactPath' => 'out.json'), $plugin_path);
+    $messages[] = 'ok';
+} catch (Throwable $e) {
+    $messages[] = $e->getMessage();
+}
 echo json_encode($messages, JSON_UNESCAPED_SLASHES);
 `,
   )
@@ -254,6 +287,9 @@ assert.match(artifactPostprocessFailures[0], /parent traversal/)
 assert.match(artifactPostprocessFailures[1], /relative path/)
 assert.match(artifactPostprocessFailures[2], /did not create the expected output artifact/)
 assert.match(artifactPostprocessFailures[3], /only support the node command/)
+assert.match(artifactPostprocessFailures[4], /error: bridge error/)
+assert.match(artifactPostprocessFailures[4], /stdout: bridge stdout/)
+assert.match(artifactPostprocessFailures[4], /stderr: bridge stderr/)
 
 const restDbQueryProfilerPayload = await withTempDir("wp-codebox-rest-db-query-profiler-", async (directory) => {
   const phpTestFile = join(directory, "rest-db-query-profiler.php")

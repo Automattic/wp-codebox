@@ -946,7 +946,7 @@ function benchWorkloadsUseWpCli(value: unknown): boolean {
   }
 
   const record = value as { type?: unknown; run?: unknown }
-  return record.type === "wp-cli" || benchWorkloadsUseWpCli(record.run)
+  return record.type === "wp-cli" || record.type === "artifact-postprocess" || benchWorkloadsUseWpCli(record.run)
 }
 
 async function themeCheckPluginInstalled(runPlaygroundCommand: RunPlaygroundCommand, server: PlaygroundCliServer): Promise<boolean> {

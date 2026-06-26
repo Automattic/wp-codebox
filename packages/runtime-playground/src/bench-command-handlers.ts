@@ -236,6 +236,53 @@ function wp_codebox_bench_run_wp_cli_step(array $step) {
     return $stdout;
 }
 
+function wp_codebox_bench_host_node_bridge_failure_detail(array $result): string {
+    $parts = array();
+    foreach (array('error', 'stdout', 'stderr') as $field) {
+        $value = isset($result[$field]) ? trim((string) $result[$field]) : '';
+        if ($value !== '') {
+            $parts[] = $field . ': ' . $value;
+        }
+    }
+    return implode(' ', $parts);
+}
+
+function wp_codebox_bench_run_host_node_command(array $args, array $env, string $cwd): array {
+    global $wp_cli_bridge_url, $wp_cli_bridge_token;
+    if (!is_string($wp_cli_bridge_url) || $wp_cli_bridge_url === '' || !is_string($wp_cli_bridge_token) || $wp_cli_bridge_token === '') {
+        throw new RuntimeException('artifact-postprocess workload steps require the host command bridge.');
+    }
+
+    $response = wp_remote_post($wp_cli_bridge_url . '/execute', array(
+        'headers' => array(
+            'authorization' => 'Bearer ' . $wp_cli_bridge_token,
+            'content-type' => 'application/json',
+        ),
+        'body' => wp_json_encode(array('type' => 'host_node', 'args' => array_values($args), 'env' => $env, 'cwd' => $cwd), JSON_UNESCAPED_SLASHES),
+        'timeout' => 300,
+    ));
+    if (is_wp_error($response)) {
+        throw new RuntimeException('artifact-postprocess host command bridge request failed: ' . $response->get_error_message());
+    }
+    $body = wp_remote_retrieve_body($response);
+    $result = json_decode($body, true);
+    if (!is_array($result)) {
+        throw new RuntimeException('artifact-postprocess host command bridge returned invalid JSON.');
+    }
+    $bridge_detail = wp_codebox_bench_host_node_bridge_failure_detail($result);
+    $bridge_error = isset($result['error']) && is_string($result['error']) ? trim($result['error']) : '';
+    if (!isset($result['exitCode']) && $bridge_detail !== '') {
+        throw new RuntimeException('artifact-postprocess host command bridge failed: ' . $bridge_detail);
+    }
+    return array(
+        'stdout' => isset($result['stdout']) ? (string) $result['stdout'] : '',
+        'stderr' => isset($result['stderr']) ? (string) $result['stderr'] : '',
+        'exit_code' => isset($result['exitCode']) && is_numeric($result['exitCode']) ? (int) $result['exitCode'] : 1,
+        'error' => $bridge_error,
+        'detail' => $bridge_detail,
+    );
+}
+
 function wp_codebox_bench_metric_prefix(array $step, string $fallback): string {
     $prefix = isset($step['metric-prefix']) && is_string($step['metric-prefix']) ? $step['metric-prefix'] : $fallback;
     $prefix = preg_replace('/[^A-Za-z0-9_]+/', '_', trim($prefix));
@@ -482,19 +529,23 @@ function wp_codebox_bench_run_artifact_postprocess_step(array $step, string $plu
         }
     }
 
-    $execution = wp_codebox_bench_run_command_step($step, 'artifact-postprocess', static function () use ($command, $expanded_args, $env): array {
-        $pipes = array();
-        $process = proc_open(array_merge(array($command), $expanded_args), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes, null, $env);
-        if (!is_resource($process)) {
-            throw new RuntimeException('artifact-postprocess helper process could not be started.');
-        }
-        $stdout = stream_get_contents($pipes[1]);
-        fclose($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
-        fclose($pipes[2]);
-        $exit_code = proc_close($process);
+    $execution = wp_codebox_bench_run_command_step($step, 'artifact-postprocess', static function () use ($command, $expanded_args, $env, $helper_path): array {
+        $result = wp_codebox_bench_run_host_node_command($expanded_args, $env, dirname($helper_path));
+        $stdout = $result['stdout'];
+        $stderr = $result['stderr'];
+        $exit_code = $result['exit_code'];
         if ($exit_code !== 0) {
-            throw new RuntimeException('artifact-postprocess helper failed with exit code ' . $exit_code . ': ' . trim((string) $stderr));
+            $detail = isset($result['detail']) && is_string($result['detail']) ? trim($result['detail']) : '';
+            if ($detail === '') {
+                $detail = trim((string) $stderr);
+            }
+            if ($detail === '') {
+                $detail = trim((string) $stdout);
+            }
+            if ($detail === '' && isset($result['error']) && is_string($result['error'])) {
+                $detail = trim($result['error']);
+            }
+            throw new RuntimeException('artifact-postprocess helper failed with exit code ' . $exit_code . ': ' . $detail);
         }
         return array('stdout' => (string) $stdout, 'stderr' => (string) $stderr, 'exit_code' => $exit_code);
     });
