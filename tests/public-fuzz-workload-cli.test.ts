@@ -110,6 +110,10 @@ return static function ( array $input, array $args ): array {
     metadata: {
       runtime_package_descriptor: { source: samplePluginSource },
       requiredRunnerCapabilities: { targetKinds: ["runtime"], commands: ["wordpress.run-workload"] },
+      runtime_requirements: {
+        bench_env: { WC_REST_BATCH_IMPORT_ITEMS: "2" },
+        settings: { fixtureMode: "small" },
+      },
     },
     cases: [{
       id: "php-workload",
@@ -131,7 +135,11 @@ return static function ( array $input, array $args ): array {
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.schema, "wp-codebox/recipe-run-dry-run/v1")
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.run-php")
-  assert.match(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].args[0], /^code=/)
+  const nestedPhpCode = phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].args[0]
+  assert.match(nestedPhpCode, /^code=/)
+  const nestedPhpInput = decodeFirstWrapperJson(nestedPhpCode)
+  assert.deepEqual(nestedPhpInput.bench_env, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
+  assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].target.includes("/tmp/wp-codebox-workloads/"), true)
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].source.endsWith("bench/rest-product-batch-import.php"), true)
 
@@ -156,6 +164,12 @@ return static function ( array $input, array $args ): array {
 }
 
 console.log("public fuzz/workload CLI contract passed")
+
+function decodeFirstWrapperJson(codeArg: string): Record<string, unknown> {
+  const match = codeArg.match(/base64_decode\('([^']+)'\)/)
+  assert.ok(match)
+  return JSON.parse(Buffer.from(match[1], "base64").toString("utf8"))
+}
 
 async function captureStdout(callback: () => Promise<void>): Promise<string> {
   const originalWrite = process.stdout.write.bind(process.stdout)

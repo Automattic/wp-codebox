@@ -586,9 +586,20 @@ function stepArgMap(args: string[] | undefined): Record<string, string> {
 function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
   const normalizedArgs: Record<string, string> = { ...args, path }
   delete normalizedArgs.file
-  const encodedInput = Buffer.from(JSON.stringify(workload), "utf8").toString("base64")
+  const encodedInput = Buffer.from(JSON.stringify(wordpressWorkloadPhpWrapperInput(workload)), "utf8").toString("base64")
   const encodedArgs = Buffer.from(JSON.stringify(normalizedArgs), "utf8").toString("base64")
   return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function wordpressWorkloadPhpWrapperInput(workload: Record<string, unknown>): Record<string, unknown> {
+  const input: Record<string, unknown> = { ...workload }
+  if (input.runtimeEnv === undefined && recordValue(input.runtime_env)) {
+    input.runtimeEnv = input.runtime_env
+  }
+  if (input.runtime_env === undefined && recordValue(input.runtimeEnv)) {
+    input.runtime_env = input.runtimeEnv
+  }
+  return input
 }
 
 function workloadResultArtifactRefs(execution: ExecutionResult): NonNullable<ExecutionResult["artifactRefs"]> {

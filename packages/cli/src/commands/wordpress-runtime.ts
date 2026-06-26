@@ -106,7 +106,7 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
 async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecutionInput, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
   const startedAt = new Date().toISOString()
   const requirements = fuzzSuiteRuntimeRequirements(options.input)
-  const workload = normalizeWordPressWorkloadRequest(input.workload, options.input)
+  const workload = normalizeWordPressWorkloadRequest(input.workload, options.input, requirements)
   const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(workload, requirements)) as WorkspaceRecipe
   applyFuzzSuiteRuntimeRequirements(recipe, requirements)
   const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-workload-"))
@@ -145,7 +145,7 @@ function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, requirements
   recipe.inputs = {
     ...inputs,
     extra_plugins: runtimeRequirementExtraPlugins(requirements, inputs.extra_plugins),
-    runtimeEnv: runtimeRequirementEnv(inputs.runtimeEnv, requirements.runtime_env),
+    runtimeEnv: runtimeRequirementEnv(inputs.runtimeEnv, requirements.runtime_env, requirements.bench_env),
   }
   recipe.runtime = {
     ...runtime,
@@ -191,11 +191,13 @@ function normalizeRuntimeRequirementExtraPlugins(value: unknown[], fallback: Wor
   return plugins.length > 0 ? plugins : fallback
 }
 
-function runtimeRequirementEnv(base: Record<string, string> | undefined, extra: unknown): Record<string, string> | undefined {
+function runtimeRequirementEnv(base: Record<string, string> | undefined, ...extras: unknown[]): Record<string, string> | undefined {
   const merged: Record<string, string> = { ...(base ?? {}) }
-  for (const [key, value] of Object.entries(objectOption(extra) ?? {})) {
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      merged[key] = String(value)
+  for (const extra of extras) {
+    for (const [key, value] of Object.entries(objectOption(extra) ?? {})) {
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        merged[key] = String(value)
+      }
     }
   }
   return Object.keys(merged).length > 0 ? merged : undefined
@@ -274,16 +276,17 @@ function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequiremen
   }
 }
 
-function normalizeWordPressWorkloadRequest(input: Record<string, unknown>, suiteInput?: Record<string, unknown>): Record<string, unknown> {
+function normalizeWordPressWorkloadRequest(input: Record<string, unknown>, suiteInput?: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): Record<string, unknown> {
   const stagedFiles = arrayOption(input.stagedFiles ?? input.staged_files)
   let changed = false
-  const normalized: Record<string, unknown> = { ...input }
+  const normalized: Record<string, unknown> = workloadWithRuntimeRequirementSettings(input, runtimeRequirements)
+  changed = normalized !== input
   const packageRoot = workloadPackageRoot(input, suiteInput)
 
   for (const phase of ["before", "steps", "after"] as const) {
     const steps = arrayOption(input[phase])
     const nextSteps = steps.map((step) => {
-      const normalizedStep = normalizeWordPressWorkloadStep(step, input, packageRoot, stagedFiles)
+      const normalizedStep = normalizeWordPressWorkloadStep(step, normalized, packageRoot, stagedFiles)
       if (normalizedStep !== step) changed = true
       return normalizedStep
     })
@@ -360,9 +363,34 @@ function workloadPackageRoot(input: Record<string, unknown>, suiteInput?: Record
 }
 
 function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
-  const encodedInput = Buffer.from(JSON.stringify(workload), "utf8").toString("base64")
+  const encodedInput = Buffer.from(JSON.stringify(wordpressWorkloadPhpWrapperInput(workload)), "utf8").toString("base64")
   const encodedArgs = Buffer.from(JSON.stringify(args), "utf8").toString("base64")
   return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function workloadWithRuntimeRequirementSettings(workload: Record<string, unknown>, runtimeRequirements: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!runtimeRequirements) return workload
+  const next: Record<string, unknown> = { ...workload }
+  let changed = false
+  for (const [sourceKey, targetKey] of [["runtime_env", "runtime_env"], ["bench_env", "bench_env"], ["settings", "settings"]] as const) {
+    const value = runtimeRequirements[sourceKey]
+    if (objectOption(value) && next[targetKey] === undefined) {
+      next[targetKey] = value
+      changed = true
+    }
+  }
+  return changed ? next : workload
+}
+
+function wordpressWorkloadPhpWrapperInput(workload: Record<string, unknown>): Record<string, unknown> {
+  const input: Record<string, unknown> = { ...workload }
+  if (input.runtimeEnv === undefined && objectOption(input.runtime_env)) {
+    input.runtimeEnv = input.runtime_env
+  }
+  if (input.runtime_env === undefined && objectOption(input.runtimeEnv)) {
+    input.runtime_env = input.runtimeEnv
+  }
+  return input
 }
 
 function parseStepArgs(args: unknown[]): Record<string, string> {

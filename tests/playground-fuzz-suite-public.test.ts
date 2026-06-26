@@ -69,7 +69,7 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     { id: "browser", target: { kind: "runtime-action" }, input: { type: "browser", operation: "navigate", url: "/" } },
     { id: "db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
     { id: "workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }] } },
-    { id: "php-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/wp-codebox-workloads/rest-product-batch-import.php"] }] } },
+    { id: "php-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", runtime_env: { WC_REST_BATCH_IMPORT_ITEMS: "2" }, settings: { fixtureMode: "small" }, steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/wp-codebox-workloads/rest-product-batch-import.php"] }] } },
   ],
 }), { requireCoverage: true })
 
@@ -91,6 +91,10 @@ assert.equal(JSON.parse(steps[7]?.args?.[0]?.replace("operation-json=", "") ?? "
 assert.deepEqual(steps[9]?.args, ["path=/wp/v2/types", "capture-queries=1"])
 assert.equal(steps[11]?.command, "wordpress.run-php")
 assert.match(steps[11]?.args?.[0] ?? "", /^code=/)
+const nestedPhpInput = decodeFirstWrapperJson(steps[11]?.args?.[0] ?? "")
+assert.deepEqual(nestedPhpInput.runtimeEnv, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
+assert.deepEqual(nestedPhpInput.runtime_env, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
+assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
 assert.equal(result.cases[4]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
 const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-hotspots")
 assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
@@ -104,3 +108,9 @@ assert.equal((hotspots?.summary?.surfaces?.browser ?? 0) >= 1, true)
 assert.equal(hotspots?.hotspots?.some((hotspot) => hotspot.identifier.route === "/wp/v2/types" && hotspot.metrics.some((metric) => metric.kind === "query-count" && metric.value === 7)), true)
 
 console.log("playground fuzz suite public ok")
+
+function decodeFirstWrapperJson(codeArg: string): Record<string, unknown> {
+  const match = codeArg.match(/base64_decode\('([^']+)'\)/)
+  assert.ok(match)
+  return JSON.parse(Buffer.from(match[1], "base64").toString("utf8"))
+}
