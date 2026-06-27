@@ -32,6 +32,7 @@ const runtime = {
   async info() { return { id: "runtime", backend: "wordpress-playground", environment: { kind: "wordpress" }, createdAt: new Date().toISOString(), status: "running" } },
   async mount(spec) { calls.push(`mount:${spec.target}`) },
   async materializeStagedInputs(mounts) {
+    assert.equal(this, runtime, "setup calls staged input materializer with runtime binding")
     calls.push(`materialize:${mounts.map((mount) => mount.target).join(",")}`)
     assert.deepEqual(mounts, [{
       type: "directory",
