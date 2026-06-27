@@ -2850,6 +2850,132 @@ public static function apply_browser_contained_site_plan( array $input ): array|
 	);
 }
 
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_delegation( array $input ): array|WP_Error {
+	$base = '/wp-codebox/v1/browser-contained-site-sync';
+	$delegation = array_filter(
+		array(
+			'success'        => true,
+			'schema'         => 'wp-codebox/browser-contained-site-sync-delegation/v1',
+			'status'         => self::browser_contained_site_sync_backend_available() ? 'available' : 'unavailable',
+			'backend'        => array(
+				'status' => self::browser_contained_site_sync_backend_available() ? 'available' : 'unavailable',
+			),
+			'contained_site' => is_array( $input['contained_site'] ?? null ) ? self::browser_contained_site_public_input( $input['contained_site'] ) : array(),
+			'source_digest'  => self::browser_contained_site_digest_ref( $input['source_digest'] ?? $input['input_hash'] ?? '' ),
+			'routes'         => array(
+				'source_connect'      => $base . '/source-connect',
+				'manifest'            => $base . '/manifest',
+				'export'              => $base . '/export',
+				'apply_plan_generate' => $base . '/apply-plan/generate',
+				'apply_plan_validate' => $base . '/apply-plan/validate',
+				'apply'               => $base . '/apply',
+			),
+			'abilities'      => array(
+				'source_connect'      => 'wp-codebox/browser-contained-site-sync-source-connect',
+				'manifest'            => 'wp-codebox/browser-contained-site-sync-manifest',
+				'export'              => 'wp-codebox/browser-contained-site-sync-export',
+				'apply_plan_generate' => 'wp-codebox/browser-contained-site-sync-apply-plan-generate',
+				'apply_plan_validate' => 'wp-codebox/browser-contained-site-sync-apply-plan-validate',
+				'apply'               => 'wp-codebox/browser-contained-site-sync-apply',
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+
+	$backend = self::browser_contained_site_sync_backend_response( 'delegation', $input, $delegation );
+	return is_array( $backend ) ? array_merge( $delegation, $backend, array( 'schema' => 'wp-codebox/browser-contained-site-sync-delegation/v1' ) ) : $delegation;
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_source_connect( array $input ): array|WP_Error {
+	return self::browser_contained_site_sync_envelope( 'source_connect', 'wp-codebox/browser-contained-site-sync-source/v1', $input, array( 'source' => null ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_manifest( array $input ): array|WP_Error {
+	return self::browser_contained_site_sync_envelope( 'manifest', 'wp-codebox/browser-contained-site-sync-manifest/v1', $input, array( 'manifest' => null ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_export( array $input ): array|WP_Error {
+	return self::browser_contained_site_sync_envelope( 'export', 'wp-codebox/browser-contained-site-sync-export/v1', $input, array( 'package' => null ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_apply_plan_generate( array $input ): array|WP_Error {
+	$plan = self::plan_browser_contained_site_apply( $input );
+	if ( is_wp_error( $plan ) ) {
+		return $plan;
+	}
+
+	return self::browser_contained_site_sync_envelope( 'apply_plan_generate', 'wp-codebox/browser-contained-site-sync-apply-plan/v1', $input, array( 'apply_plan' => $plan ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_apply_plan_validate( array $input ): array|WP_Error {
+	$plan = is_array( $input['apply_plan'] ?? null ) ? $input['apply_plan'] : array();
+	$fallback = array(
+		'validation'      => array(
+			'schema'          => 'wp-codebox/browser-contained-site-sync-validation/v1',
+			'status'          => 'preview-only',
+			'host_mutation'   => false,
+			'validation_hash' => hash( 'sha256', 'wp-codebox/browser-contained-site-sync-validation/v1' . "\n" . self::stable_json( $plan ) ),
+		),
+		'validation_hash' => hash( 'sha256', 'wp-codebox/browser-contained-site-sync-validation/v1' . "\n" . self::stable_json( $plan ) ),
+	);
+
+	return self::browser_contained_site_sync_envelope( 'apply_plan_validate', 'wp-codebox/browser-contained-site-sync-validation/v1', $input, $fallback );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function browser_contained_site_sync_apply( array $input ): array|WP_Error {
+	$result = self::apply_browser_contained_site_plan( $input );
+	if ( is_wp_error( $result ) ) {
+		return $result;
+	}
+
+	return self::browser_contained_site_sync_envelope( 'apply', 'wp-codebox/browser-contained-site-sync-apply-result/v1', $input, array( 'result' => $result ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $fallback Fallback payload. @return array<string,mixed>|WP_Error */
+private static function browser_contained_site_sync_envelope( string $operation, string $schema, array $input, array $fallback = array() ): array|WP_Error {
+	$backend = self::browser_contained_site_sync_backend_response( $operation, $input, null );
+	if ( is_wp_error( $backend ) ) {
+		return $backend;
+	}
+
+	$payload = is_array( $backend ) ? $backend : $fallback;
+	return array_merge(
+		array(
+			'success'   => is_array( $backend ),
+			'schema'    => $schema,
+			'status'    => is_array( $backend ) ? 'available' : 'unavailable',
+			'operation' => $operation,
+		),
+		$payload,
+		array( 'schema' => $schema )
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed>|null $delegation Delegation DTO. @return array<string,mixed>|WP_Error|null */
+private static function browser_contained_site_sync_backend_response( string $operation, array $input, ?array $delegation ): array|WP_Error|null {
+	if ( ! function_exists( 'apply_filters' ) ) {
+		return null;
+	}
+
+	$response = apply_filters( 'wp_codebox_browser_contained_site_sync_request', null, $operation, $input, $delegation );
+	return is_array( $response ) || is_wp_error( $response ) ? $response : null;
+}
+
+private static function browser_contained_site_sync_backend_available(): bool {
+	if ( ! function_exists( 'apply_filters' ) ) {
+		return false;
+	}
+
+	return (bool) apply_filters( 'wp_codebox_browser_contained_site_sync_backend_available', false );
+}
+
 /** @param array<string,mixed> $input Blueprint ref input. @return array<string,mixed>|WP_Error */
 public static function hydrate_browser_blueprint_ref( array $input ): array|WP_Error {
 	return WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( $input );

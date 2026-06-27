@@ -114,6 +114,15 @@ final class WP_Codebox_Abilities {
 				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
 			)
 		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-contained-site-sync/(?P<operation>[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_-]*)*)',
+			array(
+				'methods'             => array( 'GET', 'POST' ),
+				'callback'            => array( self::class, 'rest_browser_contained_site_sync' ),
+				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+			)
+		);
 	}
 
 	public static function can_hydrate_browser_blueprint_ref( mixed $request = null ): bool {
@@ -170,6 +179,24 @@ final class WP_Codebox_Abilities {
 		}
 
 		return self::preview_boot_ref( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_browser_contained_site_sync( WP_REST_Request $request ): array|WP_Error {
+		$operation = str_replace( '-', '_', trim( (string) $request->get_param( 'operation' ), '/' ) );
+		$operation = str_replace( '/', '_', $operation );
+		$input     = 'GET' === strtoupper( (string) $request->get_method() ) ? $request->get_params() : $request->get_json_params();
+		$input     = is_array( $input ) ? $input : array();
+
+		return match ( $operation ) {
+			'source_connect'      => self::browser_contained_site_sync_source_connect( $input ),
+			'manifest'            => self::browser_contained_site_sync_manifest( $input ),
+			'export'              => self::browser_contained_site_sync_export( $input ),
+			'apply_plan_generate' => self::browser_contained_site_sync_apply_plan_generate( $input ),
+			'apply_plan_validate' => self::browser_contained_site_sync_apply_plan_validate( $input ),
+			'apply'               => self::browser_contained_site_sync_apply( $input ),
+			default               => new WP_Error( 'wp_codebox_browser_contained_site_sync_operation_invalid', 'Unsupported browser contained-site sync operation.', array( 'status' => 400, 'operation' => $operation ) ),
+		};
 	}
 
 	/**

@@ -367,7 +367,7 @@
 		void client;
 		const projectId = Number( options.projectId || options.project_id || 0 );
 		const schema = String( delegation?.schema || '' );
-		if ( schema !== 'wp-codebox/browser-contained-site-sync-delegation/v1' && schema !== 'studio-native/codebox-contained-site-sync-delegation/v1' ) {
+		if ( schema !== 'wp-codebox/browser-contained-site-sync-delegation/v1' ) {
 			return {
 				schema: 'wp-codebox/browser-contained-site-sync-consumption/v1',
 				status: 'unavailable',
@@ -399,24 +399,31 @@
 		};
 
 		try {
+			if ( delegation.routes?.source_connect ) {
+				evidence.source = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'source_connect' ), 'POST', {
+					project_id: projectId,
+				} );
+			}
 			const manifestRoute = containedSiteSyncRoute( delegation, 'manifest' );
-			const resourcesRoute = containedSiteSyncRoute( delegation, 'resources' );
 			const exportRoute = containedSiteSyncRoute( delegation, 'export' );
 			evidence.manifest = await fetchContainedSiteSyncRoute( manifestRoute );
-			evidence.resources = await fetchContainedSiteSyncRoute( resourcesRoute );
+			if ( delegation.routes?.resources ) {
+				evidence.resources = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'resources' ) );
+			}
 			evidence.package = await fetchContainedSiteSyncRoute( exportRoute, 'POST', {} );
+			const syncPackage = evidence.package?.package && typeof evidence.package.package === 'object' ? evidence.package.package : evidence.package;
 
 			if ( delegation.routes?.apply_plan_generate && delegation.routes?.apply_plan_validate ) {
 				try {
 					evidence.apply_plan = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_generate' ), 'POST', {
 						mode: 'content_only',
-						package: evidence.package,
+						package: syncPackage,
 						resources: evidence.resources,
 					} );
 					evidence.validation = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_validate' ), 'POST', {
 						mode: 'content_only',
 						apply_plan: evidence.apply_plan?.apply_plan || evidence.apply_plan,
-						base_snapshot: evidence.package?.base_snapshot || null,
+						base_snapshot: syncPackage?.base_snapshot || null,
 					} );
 					evidence.validation_hash = evidence.validation?.validation_hash || evidence.validation?.hash || '';
 				} catch ( error ) {
@@ -427,8 +434,8 @@
 				}
 			}
 
-			evidence.hydration = evidence.package?.schema === 'playground-site-sync/playground-package/v1' && evidence.package?.descriptor?.bootable === true && evidence.package?.blueprint && typeof evidence.package.blueprint === 'object'
-				? { status: 'ready', mode: 'blueprint_descriptor', base_snapshot: evidence.package.base_snapshot || null, descriptor: evidence.package.descriptor || null }
+			evidence.hydration = syncPackage?.descriptor?.bootable === true && syncPackage?.blueprint && typeof syncPackage.blueprint === 'object'
+				? { status: 'ready', mode: 'blueprint_descriptor', base_snapshot: syncPackage.base_snapshot || null, descriptor: syncPackage.descriptor || null }
 				: { status: 'unsupported', reason: 'Contained-site sync export did not include a bootable package descriptor.' };
 			evidence.status = evidence.hydration.status === 'ready' ? 'success' : 'unsupported';
 		} catch ( error ) {

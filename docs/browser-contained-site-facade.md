@@ -12,6 +12,8 @@ The contained-site facade is the product-facing browser lane for WordPress previ
 - `wp-codebox/export-browser-contained-site` returns `wp-codebox/browser-contained-site-export/v1`, a validated replay export contract over the snapshot DTO.
 - `wp-codebox/plan-browser-contained-site-apply` returns `wp-codebox/browser-contained-site-apply-plan/v1`; default mode is preview-only with `host_mutation=false`.
 - `wp-codebox/apply-browser-contained-site-plan` returns `wp-codebox/browser-contained-site-apply-result/v1`; without explicit approved host mutation it only reports a preview result.
+- `wp-codebox/browser-contained-site-sync-delegation` returns `wp-codebox/browser-contained-site-sync-delegation/v1`, the public sync descriptor with Codebox-owned routes and ability ids.
+- `wp-codebox/browser-contained-site-sync-source-connect`, `wp-codebox/browser-contained-site-sync-manifest`, `wp-codebox/browser-contained-site-sync-export`, `wp-codebox/browser-contained-site-sync-apply-plan-generate`, `wp-codebox/browser-contained-site-sync-apply-plan-validate`, and `wp-codebox/browser-contained-site-sync-apply` are the public source connect, manifest, export, apply-plan, validation, and apply DTO operations.
 
 ## Boundary
 
@@ -22,3 +24,23 @@ Consumers use `boot` as the public descriptor. It exposes Codebox session identi
 Every facade response includes `startup_diagnostics` with the status, reuse mode, preview lease status, boot-contract validity, and recovery handle. Clients use these diagnostics to distinguish a reusable prepared runtime from a miss or unusable boot contract.
 
 Snapshot/export/apply contracts validate the contained-site `site_id`, `session_id`, preview `scope`, and `source_digest` before returning a usable DTO. Stale source digests, session mismatches, and scope mismatches return structured `success=false` envelopes with `error.code` rather than falling through to host mutation.
+
+## Contained-Site Sync
+
+Consumers request sync through Codebox routes from `wp-codebox/browser-contained-site-sync-delegation`:
+
+```json
+{
+  "schema": "wp-codebox/browser-contained-site-sync-delegation/v1",
+  "routes": {
+    "source_connect": "/wp-codebox/v1/browser-contained-site-sync/source-connect",
+    "manifest": "/wp-codebox/v1/browser-contained-site-sync/manifest",
+    "export": "/wp-codebox/v1/browser-contained-site-sync/export",
+    "apply_plan_generate": "/wp-codebox/v1/browser-contained-site-sync/apply-plan/generate",
+    "apply_plan_validate": "/wp-codebox/v1/browser-contained-site-sync/apply-plan/validate",
+    "apply": "/wp-codebox/v1/browser-contained-site-sync/apply"
+  }
+}
+```
+
+The backend sync implementation remains an internal adapter behind Codebox filters. When no backend is installed, these operations return stable Codebox DTOs with `status: "unavailable"`; apply-plan generation still falls back to the preview-only Codebox apply-plan contract.

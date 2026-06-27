@@ -34,6 +34,13 @@ final class WP_Codebox_API {
 		'wp-codebox/export-browser-contained-site'          => 'export_browser_contained_site',
 		'wp-codebox/plan-browser-contained-site-apply'      => 'plan_browser_contained_site_apply',
 		'wp-codebox/apply-browser-contained-site-plan'      => 'apply_browser_contained_site_plan',
+		'wp-codebox/browser-contained-site-sync-delegation' => 'browser_contained_site_sync_delegation',
+		'wp-codebox/browser-contained-site-sync-source-connect' => 'browser_contained_site_sync_source_connect',
+		'wp-codebox/browser-contained-site-sync-manifest'   => 'browser_contained_site_sync_manifest',
+		'wp-codebox/browser-contained-site-sync-export'     => 'browser_contained_site_sync_export',
+		'wp-codebox/browser-contained-site-sync-apply-plan-generate' => 'browser_contained_site_sync_apply_plan_generate',
+		'wp-codebox/browser-contained-site-sync-apply-plan-validate' => 'browser_contained_site_sync_apply_plan_validate',
+		'wp-codebox/browser-contained-site-sync-apply'      => 'browser_contained_site_sync_apply',
 		'wp-codebox/request-host-delegation'                => 'request_host_delegation',
 		'wp-codebox/list-artifacts'                         => 'list_artifacts',
 		'wp-codebox/get-artifact'                           => 'get_artifact',
@@ -177,6 +184,41 @@ final class WP_Codebox_API {
 	/** @param array<string,mixed> $input Browser contained-site input. @return array<string,mixed>|WP_Error */
 	public static function apply_browser_contained_site_plan( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::apply_browser_contained_site_plan( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_delegation( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_delegation( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_source_connect( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_source_connect( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_manifest( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_manifest( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_export( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_export( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply_plan_generate( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_generate( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply_plan_validate( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_validate( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply( $input );
 	}
 
 	/** @param array<string,mixed> $input Host delegation input. @return array<string,mixed>|WP_Error */
