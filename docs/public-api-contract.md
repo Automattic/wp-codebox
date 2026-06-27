@@ -90,6 +90,10 @@ the public handoff/fanout boundary:
 - `wp-codebox/persist-browser-artifact` stores browser-produced files as a
   canonical WP Codebox artifact bundle and returns artifact bundle references for
   review, replay, import, or apply-back.
+- `wp-codebox/inspect-artifact` reads a stored artifact bundle and returns the
+  Codebox-owned bundle DTO plus verification payload. Consumers should use this
+  ability, `WP_Codebox_API::inspect_artifact()`, or `wp codebox artifacts inspect`
+  instead of reading the artifact directory layout directly.
 - `wp-codebox/import-artifact-bundle` and
   `wp-codebox/reimport-artifact-bundle` are the durable ingress path for an
   existing bundle. They verify bundle identity/digest and return
@@ -175,8 +179,9 @@ ability names, schemas, and facades to callers.
 WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `wp codebox ...` wrappers for these public operations, including
 `runtime descriptor`, `run-runtime-task`, `run-wordpress-workload`,
-`run-runtime-package`, `resolve-runtime-requirements`, and `run-fuzz-suite`. The WP-CLI wrappers parse
-JSON payloads from `--input-json` or `--input-file` and delegate through
+`run-runtime-package`, `resolve-runtime-requirements`, `run-fuzz-suite`, and
+artifact inspection/apply commands. The WP-CLI wrappers parse JSON payloads from
+`--input-json` or `--input-file` and delegate through
 `WP_Codebox_API` rather than backend internals.
 
 The workspace package mirrors the core entrypoints as `./core`,
@@ -226,6 +231,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
   starts a Codebox browser preview from the boot DTO and returns
   `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
+  `createRuntimeTaskRequest()` builds the public
+  `wp-codebox/runtime-task-request/v1` envelope with an explicit `target_id`;
+  `runRuntimeTask()` posts that envelope to Codebox's public
+  `/wp-json/wp-codebox/v1/runtime-task` route, or calls a supplied
+  `executeAbility('wp-codebox/run-runtime-task', request)` adapter, and returns
+  `wp-codebox/runtime-task-result/v1`;
   `methods` exposes stable references to the existing browser runtime helpers for
   callers that need legacy raw results internally. TypeScript consumers outside
   the browser can use the matching DTO helpers exported from

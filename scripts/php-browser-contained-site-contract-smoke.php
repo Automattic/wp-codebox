@@ -360,6 +360,40 @@ expect( 'wp-codebox/browser-contained-site-apply-plan/v1' === $apply_plan['schem
 expect( false === $apply_plan['host_mutation'], 'Expected apply plan to default to no host mutation.' );
 expect( true === $apply_plan['plan']['preview_only'], 'Expected apply plan to default to preview-only.' );
 
+$sync_delegation = WP_Codebox_Abilities::browser_contained_site_sync_delegation( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $sync_delegation ), 'Expected contained-site sync delegation.' );
+expect( 'wp-codebox/browser-contained-site-sync-delegation/v1' === $sync_delegation['schema'], 'Expected sync delegation schema.' );
+expect( '/wp-codebox/v1/browser-contained-site-sync/manifest' === $sync_delegation['routes']['manifest'], 'Expected Codebox-owned sync manifest route.' );
+expect( '/wp-codebox/v1/browser-contained-site-sync/export' === $sync_delegation['routes']['export'], 'Expected Codebox-owned sync export route.' );
+expect( false === str_contains( wp_json_encode( $sync_delegation['routes'] ), 'playground-site-sync' ), 'Sync delegation routes must not expose backend route names.' );
+
+$sync_source = WP_Codebox_Abilities::browser_contained_site_sync_source_connect( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $sync_source ), 'Expected contained-site sync source connect envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-source/v1' === $sync_source['schema'], 'Expected sync source schema.' );
+expect( false === $sync_source['success'], 'Expected sync source fallback success=false without backend.' );
+
+$sync_manifest = WP_Codebox_Abilities::browser_contained_site_sync_manifest( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $sync_manifest ), 'Expected contained-site sync manifest envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-manifest/v1' === $sync_manifest['schema'], 'Expected sync manifest schema.' );
+
+$sync_export = WP_Codebox_Abilities::browser_contained_site_sync_export( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $sync_export ), 'Expected contained-site sync export envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-export/v1' === $sync_export['schema'], 'Expected sync export schema.' );
+
+$sync_apply_plan = WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_generate( array( 'contained_site' => $open['contained_site'] ) );
+expect( ! is_wp_error( $sync_apply_plan ), 'Expected contained-site sync apply-plan envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-apply-plan/v1' === $sync_apply_plan['schema'], 'Expected sync apply-plan schema.' );
+expect( 'wp-codebox/browser-contained-site-apply-plan/v1' === $sync_apply_plan['apply_plan']['schema'], 'Expected sync apply-plan fallback to wrap Codebox apply plan.' );
+
+$sync_validation = WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_validate( array( 'apply_plan' => $sync_apply_plan['apply_plan'] ) );
+expect( ! is_wp_error( $sync_validation ), 'Expected contained-site sync validation envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-validation/v1' === $sync_validation['schema'], 'Expected sync validation schema.' );
+expect( isset( $sync_validation['validation_hash'] ) && 64 === strlen( $sync_validation['validation_hash'] ), 'Expected stable sync validation hash.' );
+
+$sync_apply = WP_Codebox_Abilities::browser_contained_site_sync_apply( array( 'plan' => $apply_plan ) );
+expect( ! is_wp_error( $sync_apply ), 'Expected contained-site sync apply envelope.' );
+expect( 'wp-codebox/browser-contained-site-sync-apply-result/v1' === $sync_apply['schema'], 'Expected sync apply result schema.' );
+
 $stale_snapshot = WP_Codebox_Abilities::snapshot_browser_contained_site(
 	array(
 		'contained_site' => $open['contained_site'],

@@ -11,6 +11,8 @@
 		'browser-runtime:normalize-error',
 		'browser-runtime:normalize-result',
 		'browser-runtime:normalize-browser-run-result',
+		'runtime-task:create-request',
+		'runtime-task:run',
 		'browser-preview:start',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
@@ -335,6 +337,80 @@
 		},
 	} );
 
+	const runtimeTaskRestEndpoint = () => {
+		const root = window.wpApiSettings?.root || window.wp?.apiFetch?.root;
+		if ( typeof root === 'string' && root ) {
+			return new URL( 'wp-codebox/v1/runtime-task', root ).toString();
+		}
+
+		return new URL( '/wp-json/wp-codebox/v1/runtime-task', window.location.origin ).toString();
+	};
+
+	const codeboxRestHeaders = () => {
+		const nonce = window.wpApiSettings?.nonce;
+		return {
+			'Content-Type': 'application/json',
+			...( typeof nonce === 'string' && nonce ? { 'X-WP-Nonce': nonce } : {} ),
+		};
+	};
+
+	const createRuntimeTaskRequest = ( input = {}, defaults = {} ) => {
+		const source = isPlainObject( input ) ? input : { task: input };
+		const fallback = isPlainObject( defaults ) ? defaults : {};
+		const targetId = source.target_id || source.targetId || fallback.target_id || fallback.targetId;
+		const task = source.task ?? fallback.task;
+		if ( typeof targetId !== 'string' || ! targetId.trim() ) {
+			throw runtimeError( 'runtime_task_request', 'runtime_task_target_id_required', 'Runtime task requests require an explicit target_id.' );
+		}
+		if ( ! isPlainObject( task ) && ( typeof task !== 'string' || ! task.trim() ) ) {
+			throw runtimeError( 'runtime_task_request', 'runtime_task_required', 'Runtime task requests require a task string or object.' );
+		}
+
+		const request = {
+			...( isPlainObject( fallback ) ? fallback : {} ),
+			...source,
+			schema: 'wp-codebox/runtime-task-request/v1',
+			target_id: targetId.trim(),
+			task,
+		};
+		delete request.targetId;
+
+		return request;
+	};
+
+	const runRuntimeTask = async ( input = {}, options = {} ) => {
+		const request = input?.schema === 'wp-codebox/runtime-task-request/v1' ? input : createRuntimeTaskRequest( input, options.defaults || {} );
+		if ( typeof options.executeRuntimeTask === 'function' ) {
+			return options.executeRuntimeTask( request );
+		}
+		if ( typeof options.executeAbility === 'function' ) {
+			return options.executeAbility( 'wp-codebox/run-runtime-task', request );
+		}
+		if ( window.wp?.apiFetch ) {
+			return window.wp.apiFetch( {
+				path: '/wp-codebox/v1/runtime-task',
+				method: 'POST',
+				data: request,
+			} );
+		}
+		if ( typeof fetch !== 'function' ) {
+			throw runtimeError( 'runtime_task_run', 'runtime_task_fetch_unavailable', 'Browser fetch or wp.apiFetch is required to run runtime tasks.' );
+		}
+
+		const response = await fetch( runtimeTaskRestEndpoint(), {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: codeboxRestHeaders(),
+			body: JSON.stringify( request ),
+		} );
+		const data = await response.json().catch( () => null );
+		if ( ! response.ok ) {
+			throw runtimeError( 'runtime_task_run', data?.code || 'runtime_task_request_failed', data?.message || 'Runtime task request failed.', { status: response.status, response: data } );
+		}
+
+		return data;
+	};
+
 	const containedSiteSyncRoute = ( delegation, name ) => {
 		const route = String( delegation?.routes?.[ name ] || '' );
 		if ( ! route.startsWith( '/' ) || route.startsWith( '//' ) ) {
@@ -367,7 +443,7 @@
 		void client;
 		const projectId = Number( options.projectId || options.project_id || 0 );
 		const schema = String( delegation?.schema || '' );
-		if ( schema !== 'wp-codebox/browser-contained-site-sync-delegation/v1' && schema !== 'studio-native/codebox-contained-site-sync-delegation/v1' ) {
+		if ( schema !== 'wp-codebox/browser-contained-site-sync-delegation/v1' ) {
 			return {
 				schema: 'wp-codebox/browser-contained-site-sync-consumption/v1',
 				status: 'unavailable',
@@ -399,24 +475,31 @@
 		};
 
 		try {
+			if ( delegation.routes?.source_connect ) {
+				evidence.source = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'source_connect' ), 'POST', {
+					project_id: projectId,
+				} );
+			}
 			const manifestRoute = containedSiteSyncRoute( delegation, 'manifest' );
-			const resourcesRoute = containedSiteSyncRoute( delegation, 'resources' );
 			const exportRoute = containedSiteSyncRoute( delegation, 'export' );
 			evidence.manifest = await fetchContainedSiteSyncRoute( manifestRoute );
-			evidence.resources = await fetchContainedSiteSyncRoute( resourcesRoute );
+			if ( delegation.routes?.resources ) {
+				evidence.resources = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'resources' ) );
+			}
 			evidence.package = await fetchContainedSiteSyncRoute( exportRoute, 'POST', {} );
+			const syncPackage = evidence.package?.package && typeof evidence.package.package === 'object' ? evidence.package.package : evidence.package;
 
 			if ( delegation.routes?.apply_plan_generate && delegation.routes?.apply_plan_validate ) {
 				try {
 					evidence.apply_plan = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_generate' ), 'POST', {
 						mode: 'content_only',
-						package: evidence.package,
+						package: syncPackage,
 						resources: evidence.resources,
 					} );
 					evidence.validation = await fetchContainedSiteSyncRoute( containedSiteSyncRoute( delegation, 'apply_plan_validate' ), 'POST', {
 						mode: 'content_only',
 						apply_plan: evidence.apply_plan?.apply_plan || evidence.apply_plan,
-						base_snapshot: evidence.package?.base_snapshot || null,
+						base_snapshot: syncPackage?.base_snapshot || null,
 					} );
 					evidence.validation_hash = evidence.validation?.validation_hash || evidence.validation?.hash || '';
 				} catch ( error ) {
@@ -427,8 +510,8 @@
 				}
 			}
 
-			evidence.hydration = evidence.package?.schema === 'playground-site-sync/playground-package/v1' && evidence.package?.descriptor?.bootable === true && evidence.package?.blueprint && typeof evidence.package.blueprint === 'object'
-				? { status: 'ready', mode: 'blueprint_descriptor', base_snapshot: evidence.package.base_snapshot || null, descriptor: evidence.package.descriptor || null }
+			evidence.hydration = syncPackage?.descriptor?.bootable === true && syncPackage?.blueprint && typeof syncPackage.blueprint === 'object'
+				? { status: 'ready', mode: 'blueprint_descriptor', base_snapshot: syncPackage.base_snapshot || null, descriptor: syncPackage.descriptor || null }
 				: { status: 'unsupported', reason: 'Contained-site sync export did not include a bootable package descriptor.' };
 			evidence.status = evidence.hydration.status === 'ready' ? 'success' : 'unsupported';
 		} catch ( error ) {
@@ -571,6 +654,8 @@
 		normalizeError: normalizeBrowserSdkError,
 		normalizeBrowserRunResult,
 		browserArtifactPersistenceRef,
+		createRuntimeTaskRequest,
+		runRuntimeTask,
 		consumeContainedSiteSync: ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ),
 		startBrowserPreview: ( input, options = {} ) => api.startBrowserPreview( input, options ),
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),

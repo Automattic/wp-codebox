@@ -24,6 +24,8 @@ import {
   wordpressRestMatrixContract,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
+  ARTIFACT_APPLY_PAYLOAD_SCHEMA,
+  ARTIFACT_APPLY_PREFLIGHT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
@@ -102,6 +104,8 @@ assert.deepEqual(exportKeys(corePackage), [
 ])
 assert.equal(exportKeys(rootPackage).some((key) => key.includes("internals")), false, "workspace package must not mirror internal package entrypoints")
 assert.equal(exportKeys(corePackage).filter((key) => key.includes("internals")).length, 1, "core package internals entrypoint must stay quarantined to the package split")
+assert.equal(ARTIFACT_APPLY_PREFLIGHT_SCHEMA, "wp-codebox/artifact-apply-preflight/v1")
+assert.equal(ARTIFACT_APPLY_PAYLOAD_SCHEMA, "wp-codebox/artifact-apply-payload/v1")
 
 assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
@@ -119,6 +123,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-task-run-result.js",
   "./headless-agent-task-contracts.js",
   "./agent-terminal-result.js",
+  "./artifact-apply-adapter.js",
   "./artifact-capture-policy.js",
   "./artifact-diagnostics.js",
   "./artifact-export-links.js",
