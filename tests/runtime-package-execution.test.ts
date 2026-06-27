@@ -72,6 +72,16 @@ assert.deepEqual(task.workflow, { id: "example-agent" })
 assert.deepEqual(task.required_artifacts, ["report"])
 assert.deepEqual(validateRuntimePackageTask(task), { valid: true, task, diagnostics: [] })
 
+const missingPublicFields = validateRuntimePackageTask({ schema: RUNTIME_PACKAGE_TASK_SCHEMA, package: { slug: "example-agent" } })
+assert.equal(missingPublicFields.valid, false)
+assert.deepEqual(missingPublicFields.diagnostics.map((diagnostic) => diagnostic.code), [
+  "missing_package_source",
+  "missing_workflow_id",
+  "missing_input",
+  "missing_artifact_declarations",
+  "missing_required_artifacts",
+])
+
 const unnormalizedTask = { ...task, package: { slug: "example-agent", source: "bundles/example-agent" } }
 const unnormalizedValidation = validateRuntimePackageTask(unnormalizedTask)
 assert.equal(unnormalizedValidation.valid, false)

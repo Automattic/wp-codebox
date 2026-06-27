@@ -697,6 +697,56 @@ private static function runtime_task_result_schema(): array {
 }
 
 /** @return array<string,mixed> */
+private static function runtime_package_task_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'package', 'workflow', 'input', 'artifact_declarations', 'required_artifacts' ),
+		'properties' => array(
+			'schema'                => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-package-task/v1' ),
+			'package'               => array(
+				'type'       => 'object',
+				'required'   => array( 'slug', 'source' ),
+				'properties' => array(
+					'slug'   => array( 'type' => 'string', 'minLength' => 1, 'description' => 'Runtime package identity.' ),
+					'source' => array( 'type' => 'string', 'minLength' => 1, 'description' => 'Runtime package import path, normalized against an explicit workspace root before execution when workspace-relative.' ),
+				),
+			),
+			'workflow'              => array(
+				'type'       => 'object',
+				'required'   => array( 'id' ),
+				'properties' => array(
+					'id'   => array( 'type' => 'string', 'minLength' => 1 ),
+					'spec' => array( 'type' => 'object' ),
+				),
+			),
+			'input'                 => array( 'type' => 'object' ),
+			'artifact_declarations' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'output_projections'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'required_artifacts'    => array( 'type' => 'array', 'items' => array( 'type' => 'string', 'minLength' => 1 ) ),
+			'metadata'              => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function runtime_package_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'status', 'success', 'outputs', 'artifacts', 'diagnostics', 'metadata' ),
+		'properties' => array(
+			'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-package-result/v1' ),
+			'status'      => array( 'type' => 'string', 'enum' => array( 'success', 'failed' ) ),
+			'success'     => array( 'type' => 'boolean' ),
+			'package'     => array( 'type' => 'object' ),
+			'outputs'     => array( 'type' => 'object' ),
+			'artifacts'   => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'diagnostics' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'metadata'    => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
 private static function wordpress_workload_run_request_schema(): array {
 	return array(
 		'type'       => 'object',

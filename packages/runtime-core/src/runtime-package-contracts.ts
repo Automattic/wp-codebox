@@ -10,7 +10,7 @@ export type RuntimePackageResultStatus = "success" | "failed"
 
 export interface RuntimePackageDescriptor {
   slug: string
-  source?: string
+  source: string
 }
 
 export interface RuntimePackageWorkflowDescriptor {
@@ -110,28 +110,36 @@ export function validateRuntimePackageTask(value: unknown): RuntimePackageTaskVa
     return { valid: false, diagnostics: [runtimePackageDiagnostic("invalid_task", "Runtime package task must be an object.")] }
   }
 
-  let task: RuntimePackageTask | undefined
-  try {
-    task = normalizeRuntimePackageTask({
-      package: value.package,
-      workflow: value.workflow,
-      input: value.input,
-      artifact_declarations: value.artifact_declarations,
-      output_projections: value.output_projections,
-      required_artifacts: value.required_artifacts,
-      metadata: value.metadata,
-    })
-  } catch (error) {
-    diagnostics.push(runtimePackageDiagnostic("invalid_package", error instanceof Error ? error.message : String(error), { path: "package.slug" }))
-  }
-
   if (value.schema !== RUNTIME_PACKAGE_TASK_SCHEMA) {
     diagnostics.push(runtimePackageDiagnostic("invalid_schema", `Runtime package task schema must be ${RUNTIME_PACKAGE_TASK_SCHEMA}.`, { path: "schema" }))
+  }
+  if (!isPlainObject(value.package)) {
+    diagnostics.push(runtimePackageDiagnostic("missing_package", "Runtime package task requires package.", { path: "package" }))
+  } else {
+    if (!stringValue(value.package.slug)) {
+      diagnostics.push(runtimePackageDiagnostic("missing_package_slug", "Runtime package task requires package.slug.", { path: "package.slug" }))
+    }
+    if (!stringValue(value.package.source)) {
+      diagnostics.push(runtimePackageDiagnostic("missing_package_source", "Runtime package task requires package.source.", { path: "package.source" }))
+    }
+  }
+  if (!isPlainObject(value.workflow) || !stringValue(value.workflow.id)) {
+    diagnostics.push(runtimePackageDiagnostic("missing_workflow_id", "Runtime package task requires workflow.id.", { path: "workflow.id" }))
+  }
+  if (!isPlainObject(value.input)) {
+    diagnostics.push(runtimePackageDiagnostic("missing_input", "Runtime package task requires input object.", { path: "input" }))
+  }
+  if (!Array.isArray(value.artifact_declarations)) {
+    diagnostics.push(runtimePackageDiagnostic("missing_artifact_declarations", "Runtime package task requires artifact_declarations array.", { path: "artifact_declarations" }))
+  }
+  if (!Array.isArray(value.required_artifacts)) {
+    diagnostics.push(runtimePackageDiagnostic("missing_required_artifacts", "Runtime package task requires required_artifacts array.", { path: "required_artifacts" }))
   }
   if (isPlainObject(value.package) && stringValue(value.package.source) && isWorkspaceRelativePackageSource(stringValue(value.package.source))) {
     diagnostics.push(runtimePackageDiagnostic("workspace_root_required", "Workspace-relative package.source requires explicit workspace root normalization before execution.", { path: "package.source" }))
   }
 
+  const task = diagnostics.length === 0 ? value as unknown as RuntimePackageTask : undefined
   return { valid: diagnostics.length === 0, task, diagnostics }
 }
 
@@ -164,12 +172,12 @@ function runtimePackageDescriptor(value: unknown, runtimePackage?: string, metad
   const metadataDescriptor = isPlainObject(metadata.runtime_package_descriptor) ? metadata.runtime_package_descriptor : undefined
   const record = isPlainObject(value) ? value : metadataDescriptor
   if (record) {
-    return stripUndefined({ slug: stringValue(record.slug ?? record.id), source: stringValue(record.source) || undefined })
+    return { slug: stringValue(record.slug ?? record.id), source: stringValue(record.source) }
   }
   const packageName = stringValue(runtimePackage)
-  if (!packageName) return { slug: "" }
+  if (!packageName) return { slug: "", source: "" }
   if (isPathLikePackageSource(packageName)) return { slug: runtimePackageSlug(packageName), source: packageName }
-  return { slug: packageName }
+  return { slug: packageName, source: "" }
 }
 
 function runtimePackageWorkflow(value: unknown, fallbackId: string): RuntimePackageWorkflowDescriptor | undefined {
@@ -259,10 +267,12 @@ function runtimePackageDiagnostic(code: string, message: string, options: { seve
 export const RUNTIME_PACKAGE_TASK_JSON_SCHEMA = {
   $id: RUNTIME_PACKAGE_TASK_SCHEMA,
   type: "object",
-  required: ["schema", "package", "input", "artifact_declarations", "required_artifacts"],
+  required: ["schema", "package", "workflow", "input", "artifact_declarations", "required_artifacts"],
   properties: {
     schema: { const: RUNTIME_PACKAGE_TASK_SCHEMA },
-    package: { type: "object", required: ["slug"], properties: { slug: { type: "string", minLength: 1 }, source: { type: "string" } } },
+    package: { type: "object", required: ["slug", "source"], properties: { slug: { type: "string", minLength: 1 }, source: { type: "string", minLength: 1 } } },
+    workflow: { type: "object", required: ["id"], properties: { id: { type: "string", minLength: 1 }, spec: { type: "object" } } },
+    input: { type: "object" },
     artifact_declarations: { type: "array", items: { $ref: RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA } },
     required_artifacts: { type: "array", items: { type: "string", minLength: 1 } },
   },

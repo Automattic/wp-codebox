@@ -5,7 +5,7 @@ const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-code
 const schemasPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-schemas.php", "utf8")
 const executionPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php", "utf8")
 
-for (const ability of ["wp-codebox/run-wordpress-workload", "wp-codebox/run-fuzz-suite"]) {
+for (const ability of ["wp-codebox/run-wordpress-workload", "wp-codebox/run-fuzz-suite", "wp-codebox/run-runtime-package"]) {
   assert.match(abilitiesPhp, new RegExp(`wp_register_ability\\(\\s*'${ability}'`), `${ability} must be registered`)
   assert.match(abilitiesPhp, new RegExp(`'canonical_ability'\\s*=>\\s*'${ability}'`), `${ability} must mark its canonical id`)
 }
@@ -18,6 +18,15 @@ assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/wordpress-workload-run\/v1
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/wordpress-workload-run-result\/v1'/)
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/fuzz-suite\/v1'/)
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/fuzz-suite-result\/v1'/)
+assert.match(schemasPhp, /private static function runtime_package_task_schema/)
+assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/runtime-package-task\/v1'/)
+assert.match(schemasPhp, /'required'\s*=>\s*array\( 'schema', 'package', 'workflow', 'input', 'artifact_declarations', 'required_artifacts' \)/)
+assert.match(schemasPhp, /'required'\s*=>\s*array\( 'slug', 'source' \)/)
+assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/runtime-package-result\/v1'/)
+const runtimePackageRegistration = abilitiesPhp.slice(abilitiesPhp.indexOf("'wp-codebox/run-runtime-package'"), abilitiesPhp.indexOf("'wp-codebox/request-host-delegation'"))
+assert.match(runtimePackageRegistration, /'input_schema'\s*=>\s*self::runtime_package_task_schema\(\)/)
+assert.match(runtimePackageRegistration, /'output_schema'\s*=>\s*self::runtime_package_result_schema\(\)/)
+assert.doesNotMatch(runtimePackageRegistration, /'runtime_package'\s*=>|'runtime-package-execution-input\/v1'/, "runtime package ability must advertise the canonical task contract, not legacy fields")
 assert.match(schemasPhp, /'kind'\s*=>\s*array\( 'type' => 'string', 'enum' => array\( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' \) \)/)
 assert.doesNotMatch(schemasPhp, /include_raw_browser_session/, "public browser session input schema must not expose raw browser session escape hatches")
 assert.match(schemasPhp, /'required'\s*=>\s*array\( 'task', 'target_id' \)/, "runtime task requests must require explicit target_id")
@@ -26,6 +35,9 @@ assert.doesNotMatch(runtimeTaskSchema, /'executor_id'\s*=>|\s'executor'\s*=>|\s'
 
 assert.match(executionPhp, /function run_wordpress_workload\( array \$input \)/)
 assert.match(executionPhp, /function run_fuzz_suite\( array \$input \)/)
+assert.match(executionPhp, /function normalize_runtime_package_task_input\( array \$input \)/)
+assert.match(executionPhp, /function legacy_runtime_package_task_input\( array \$input \)/)
+assert.match(executionPhp, /function normalize_runtime_package_result\( array \$result, array \$task \)/)
 assert.match(executionPhp, /unsafe_execution_fields/)
 assert.match(executionPhp, /collect_unsafe_execution_fields/)
 assert.match(executionPhp, /'code', 'php', 'php_code', 'raw_code', 'eval', 'shell'/)

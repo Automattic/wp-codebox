@@ -316,9 +316,8 @@ to a public barrel only because they are convenient for one in-repo caller.
 
 Runtime package callers use `wp-codebox/run-runtime-package` or
 `buildRuntimePackageRunRecipe()`. The public request schema is
-`wp-codebox/runtime-package-task/v1`, with legacy recipe execution input carried
-as `wp-codebox/runtime-package-execution-input/v1`. Typed artifact declarations
-use `wp-codebox/runtime-package-artifact-declaration/v1`; output projections use
+`wp-codebox/runtime-package-task/v1`. Typed artifact declarations use
+`wp-codebox/runtime-package-artifact-declaration/v1`; output projections use
 `wp-codebox/runtime-package-output-projection/v1`; results use
 `wp-codebox/runtime-package-result/v1`. `package.slug` is package identity;
 `package.source` is the import path. Workspace-relative sources must be

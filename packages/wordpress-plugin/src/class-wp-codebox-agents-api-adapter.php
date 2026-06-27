@@ -844,11 +844,113 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	/** @param array<string,mixed> $result Upstream result. @return array<string,mixed> */
 	private static function public_response( string $ability_name, array $result ): array {
+		if ( self::RUN_RUNTIME_PACKAGE === $ability_name ) {
+			return self::runtime_package_result_for_public( $result );
+		}
+
 		if ( isset( self::RESPONSE_SCHEMAS[ $ability_name ] ) ) {
 			$result['schema'] = self::RESPONSE_SCHEMAS[ $ability_name ];
 		}
 
 		return self::sanitize_public_value( $result );
+	}
+
+	/** @param array<string,mixed> $result Upstream runtime package result. @return array<string,mixed> */
+	private static function runtime_package_result_for_public( array $result ): array {
+		$diagnostics = array();
+		foreach ( is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array() as $diagnostic ) {
+			if ( ! is_array( $diagnostic ) ) {
+				continue;
+			}
+			$diagnostics[] = self::runtime_package_diagnostic_for_public(
+				self::string_value( $diagnostic['code'] ?? 'runtime_package_diagnostic' ),
+				self::string_value( $diagnostic['message'] ?? 'Runtime package diagnostic.' ),
+				self::string_value( $diagnostic['path'] ?? '' ),
+				in_array( (string) ( $diagnostic['severity'] ?? '' ), array( 'info', 'warning', 'error' ), true ) ? (string) $diagnostic['severity'] : 'error',
+				is_array( $diagnostic['details'] ?? null ) ? $diagnostic['details'] : array()
+			);
+		}
+
+		$failed   = false === ( $result['success'] ?? true ) || 'failed' === (string) ( $result['status'] ?? '' ) || self::runtime_package_has_error_diagnostic_for_public( $diagnostics );
+		$metadata = is_array( $result['metadata'] ?? null ) ? $result['metadata'] : array();
+		foreach ( array( 'received', 'projections' ) as $field ) {
+			if ( array_key_exists( $field, $result ) && ! array_key_exists( $field, $metadata ) ) {
+				$metadata[ $field ] = $result[ $field ];
+			}
+		}
+
+		$received = is_array( $result['received'] ?? null ) ? $result['received'] : array();
+		$package  = is_array( $result['package'] ?? null ) ? $result['package'] : ( is_array( $received['package'] ?? null ) ? $received['package'] : array() );
+
+		return self::sanitize_public_value(
+			array(
+				'schema'      => self::RESPONSE_SCHEMAS[ self::RUN_RUNTIME_PACKAGE ],
+				'status'      => $failed ? 'failed' : 'success',
+				'success'     => ! $failed,
+				'package'     => ! empty( $package ) ? self::package_descriptor_for_runtime( $package, $result ) : null,
+				'outputs'     => is_array( $result['outputs'] ?? null ) ? $result['outputs'] : self::runtime_package_semantic_outputs_for_public( $result ),
+				'artifacts'   => self::runtime_package_artifacts_for_public( $result['artifacts'] ?? array() ),
+				'diagnostics' => $diagnostics,
+				'metadata'    => $metadata,
+			)
+		);
+	}
+
+	/** @param mixed $artifacts Artifacts. @return array<int,array<string,mixed>> */
+	private static function runtime_package_artifacts_for_public( mixed $artifacts ): array {
+		if ( ! is_array( $artifacts ) ) {
+			return array();
+		}
+
+		$out = array();
+		foreach ( $artifacts as $artifact ) {
+			if ( is_array( $artifact ) && '' !== self::string_value( $artifact['name'] ?? '' ) ) {
+				$out[] = $artifact;
+			}
+		}
+
+		return $out;
+	}
+
+	/** @param array<string,mixed> $result Upstream result. @return array<string,mixed> */
+	private static function runtime_package_semantic_outputs_for_public( array $result ): array {
+		$outputs = array();
+		foreach ( array( 'result', 'summary', 'data', 'semantic_outputs', 'structured_outputs' ) as $field ) {
+			if ( array_key_exists( $field, $result ) ) {
+				$outputs[ $field ] = $result[ $field ];
+			}
+		}
+
+		return $outputs;
+	}
+
+	/** @param array<int,array<string,mixed>> $diagnostics Diagnostics. */
+	private static function runtime_package_has_error_diagnostic_for_public( array $diagnostics ): bool {
+		foreach ( $diagnostics as $diagnostic ) {
+			if ( 'error' === (string) ( $diagnostic['severity'] ?? '' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** @param array<string,mixed> $details Diagnostic details. @return array<string,mixed> */
+	private static function runtime_package_diagnostic_for_public( string $code, string $message, string $path = '', string $severity = 'error', array $details = array() ): array {
+		$diagnostic = array(
+			'schema'   => 'wp-codebox/runtime-package-diagnostic/v1',
+			'code'     => $code,
+			'message'  => $message,
+			'severity' => $severity,
+		);
+		if ( '' !== $path ) {
+			$diagnostic['path'] = $path;
+		}
+		if ( ! empty( $details ) ) {
+			$diagnostic['details'] = $details;
+		}
+
+		return $diagnostic;
 	}
 
 	/** @param array<string,mixed> $value Public response value. @return array<string,mixed> */
