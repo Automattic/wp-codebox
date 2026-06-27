@@ -4,6 +4,7 @@ import { performanceObservation } from "../packages/runtime-core/src/performance
 import { runHttpRequest } from "../packages/runtime-playground/src/http-request-command-handlers.js"
 import { pageLoadPhpCode } from "../packages/runtime-playground/src/page-load-command-handlers.js"
 import { restPerformanceObservationInputFromArgs, restPerformanceObservationPhpCode } from "../packages/runtime-playground/src/performance-observation-command-handlers.js"
+import { wordpressQueryRecorderPhp } from "../packages/runtime-playground/src/query-recorder.js"
 import { restRequestPhpCode } from "../packages/runtime-playground/src/rest-request-command-handlers.js"
 import { runPhpJson } from "../scripts/test-kit.js"
 
@@ -113,6 +114,32 @@ assert.equal(capturedRest.performance.database.queryCount, 2)
 assert.equal(capturedRest.performance.database.fingerprints[0].fingerprint, "select * from wp_posts where id = ?")
 assert.equal(capturedRest.performance.database.fingerprints[0].count, 2)
 assert.equal(capturedRest.performance.database.repeatedQueries[0].count, 2)
+assert.equal(capturedRest.performance.database.totalTimeMs, null)
+assert.equal(capturedRest.performance.database.timingStatus, "unavailable")
+assert.equal(capturedRest.performance.database.timingReason, "wpdb_save_queries_unavailable")
+
+const timedQueries = await runPhpJson<any>(`
+class WP_Codebox_Test_WPDB { public $save_queries = false; public $queries = array(); }
+$GLOBALS['wpdb'] = new WP_Codebox_Test_WPDB();
+$GLOBALS['wp_codebox_test_filters'] = array();
+function add_filter( $hook, $callback, $priority = 10, $accepted_args = 1 ) { $GLOBALS['wp_codebox_test_filters'][ $hook ][] = $callback; }
+function remove_filter( $hook, $callback, $priority = 10 ) { $GLOBALS['wp_codebox_test_filters'][ $hook ] = array_values( array_filter( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array(), static fn( $item ) => $item !== $callback ) ); }
+${wordpressQueryRecorderPhp()}
+$start = wp_codebox_query_recorder_start( 'timed', 50, 500 );
+$GLOBALS['wpdb']->queries[] = array( 'SELECT * FROM wp_posts WHERE ID = 123', 0.00125, 'WP_Query' );
+$GLOBALS['wpdb']->queries[] = array( 'SELECT * FROM wp_posts WHERE ID = 456', 0.00275, 'WP_Query' );
+$report = wp_codebox_query_recorder_report( 'timed' );
+echo json_encode( array( 'start' => $start, 'report' => $report, 'saveQueriesRestored' => $GLOBALS['wpdb']->save_queries ) );
+`)
+assert.equal(timedQueries.start.timingStatus, "captured")
+assert.equal(timedQueries.report.queryCount, 2)
+assert.equal(timedQueries.report.totalTimeMs, 4)
+assert.equal(timedQueries.report.timingStatus, "captured")
+assert.equal(timedQueries.report.fingerprints[0].fingerprint, "select * from wp_posts where id = ?")
+assert.equal(timedQueries.report.fingerprints[0].count, 2)
+assert.equal(timedQueries.report.fingerprints[0].totalTimeMs, 4)
+assert.equal(timedQueries.report.fingerprints[0].sampleMs, 1.25)
+assert.equal(timedQueries.saveQueriesRestored, false)
 
 const unavailableObservationCode = restPerformanceObservationPhpCode(restPerformanceObservationInputFromArgs(["path=/wp/v2/posts", "capture-queries=true"]))
 const unavailableObservation = await runPhpJson<any>(`

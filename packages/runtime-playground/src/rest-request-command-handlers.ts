@@ -90,11 +90,13 @@ $wp_codebox_data = $wp_codebox_server->response_to_data( $wp_codebox_response, f
 $wp_codebox_finished_at = microtime( true );
 $wp_codebox_observation_finished_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
 $wp_codebox_end_memory = memory_get_usage( true );
-$wp_codebox_query_report = $wp_codebox_capture_queries_requested && ( $wp_codebox_query_recorder_start['status'] ?? null ) === 'captured' ? wp_codebox_query_recorder_report( 'rest-request' ) : array( 'status' => (string) ( $wp_codebox_query_recorder_start['status'] ?? 'unavailable' ), 'reason' => $wp_codebox_query_recorder_start['reason'] ?? 'query_recorder_unavailable', 'queryCount' => 0, 'totalTimeMs' => 0, 'fingerprints' => array(), 'repeatedQueries' => array() );
+$wp_codebox_query_report = $wp_codebox_capture_queries_requested && ( $wp_codebox_query_recorder_start['status'] ?? null ) === 'captured' ? wp_codebox_query_recorder_report( 'rest-request' ) : array( 'status' => (string) ( $wp_codebox_query_recorder_start['status'] ?? 'unavailable' ), 'reason' => $wp_codebox_query_recorder_start['reason'] ?? 'query_recorder_unavailable', 'queryCount' => 0, 'totalTimeMs' => null, 'timingStatus' => 'unavailable', 'timingReason' => $wp_codebox_query_recorder_start['reason'] ?? 'query_recorder_unavailable', 'fingerprints' => array(), 'repeatedQueries' => array() );
 $wp_codebox_query_capture_status = (string) ( $wp_codebox_query_report['status'] ?? 'unavailable' );
 $wp_codebox_query_capture_reason = $wp_codebox_query_report['reason'] ?? null;
+$wp_codebox_query_timing_status = (string) ( $wp_codebox_query_report['timingStatus'] ?? 'unavailable' );
+$wp_codebox_query_timing_reason = $wp_codebox_query_report['timingReason'] ?? null;
 $wp_codebox_query_count = (int) ( $wp_codebox_query_report['queryCount'] ?? 0 );
-$wp_codebox_query_total_ms = (float) ( $wp_codebox_query_report['totalTimeMs'] ?? 0 );
+$wp_codebox_query_total_ms = isset( $wp_codebox_query_report['totalTimeMs'] ) ? (float) $wp_codebox_query_report['totalTimeMs'] : null;
 $wp_codebox_fingerprints = is_array( $wp_codebox_query_report['fingerprints'] ?? null ) ? $wp_codebox_query_report['fingerprints'] : array();
 $wp_codebox_repeated_queries = is_array( $wp_codebox_query_report['repeatedQueries'] ?? null ) ? $wp_codebox_query_report['repeatedQueries'] : array();
 $wp_codebox_performance = array(
@@ -120,7 +122,9 @@ $wp_codebox_performance = array(
         'status' => $wp_codebox_query_capture_status,
         'reason' => $wp_codebox_query_capture_reason,
         'queryCount' => $wp_codebox_query_count,
-        'totalTimeMs' => round( $wp_codebox_query_total_ms, 3 ),
+        'totalTimeMs' => null === $wp_codebox_query_total_ms ? null : round( $wp_codebox_query_total_ms, 3 ),
+        'timingStatus' => $wp_codebox_query_timing_status,
+        'timingReason' => $wp_codebox_query_timing_reason,
         'fingerprints' => $wp_codebox_fingerprints,
         'repeatedQueries' => $wp_codebox_repeated_queries,
     ),

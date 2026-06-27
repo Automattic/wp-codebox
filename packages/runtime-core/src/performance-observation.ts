@@ -53,7 +53,9 @@ export interface PerformanceObservationDatabase {
   status?: "captured" | "uncaptured" | "unavailable" | "partial" | "unsupported" | (string & {})
   reason?: string
   queryCount?: number
-  totalTimeMs?: number
+  totalTimeMs?: number | null
+  timingStatus?: "captured" | "unavailable" | "unsupported" | (string & {})
+  timingReason?: string
   fingerprints?: PerformanceObservationQueryFingerprint[]
   repeatedQueries?: PerformanceObservationRepeatedQuerySummary[]
 }

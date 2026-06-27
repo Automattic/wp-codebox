@@ -534,8 +534,11 @@ function performanceObservationsFromWorkloadExecution(execution: ExecutionResult
 function normalizeObservationDatabase(input: Record<string, unknown> | undefined): PerformanceObservation["database"] | undefined {
   if (!input) return undefined
   const queryCount = numberValue(input.queryCount ?? input.query_count ?? input.queries)
-  const totalTimeMs = numberValue(input.totalTimeMs ?? input.total_time_ms ?? input.queryTimeMs ?? input.query_time_ms)
-  return queryCount !== undefined || totalTimeMs !== undefined ? { queryCount, totalTimeMs } : input as PerformanceObservation["database"]
+  const rawTotalTimeMs = input.totalTimeMs ?? input.total_time_ms ?? input.queryTimeMs ?? input.query_time_ms
+  const totalTimeMs = rawTotalTimeMs === null ? null : numberValue(rawTotalTimeMs)
+  const timingStatus = stringValue(input.timingStatus ?? input.timing_status)
+  const timingReason = stringValue(input.timingReason ?? input.timing_reason)
+  return queryCount !== undefined || totalTimeMs !== undefined || timingStatus !== undefined ? { queryCount, totalTimeMs, timingStatus, timingReason } : input as PerformanceObservation["database"]
 }
 
 function normalizeObservationBrowser(input: Record<string, unknown> | undefined): PerformanceObservation["browser"] | undefined {
