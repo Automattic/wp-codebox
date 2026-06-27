@@ -169,8 +169,6 @@ export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: Vfs
       present.add(file.relativePath)
       writableFiles.push(file)
     }
-    const existing = await hostFileHashes(mount.source)
-
     for (const file of writableFiles) {
       if (file.contentsBase64 === undefined) {
         continue
@@ -185,17 +183,20 @@ export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: Vfs
       result.materialized++
     }
 
-    for (const relativePath of Object.keys(existing)) {
-      if (present.has(relativePath)) {
-        continue
+    if (mount.metadata && typeof mount.metadata === "object" && !Array.isArray(mount.metadata) && (mount.metadata as { materializeDeletes?: unknown }).materializeDeletes === true) {
+      const existing = await hostFileHashes(mount.source)
+      for (const relativePath of Object.keys(existing)) {
+        if (present.has(relativePath)) {
+          continue
+        }
+        const hostPath = containedHostPath(mount.source, relativePath)
+        if (!hostPath) {
+          result.skipped++
+          continue
+        }
+        await rm(hostPath, { force: true })
+        result.deleted++
       }
-      const hostPath = containedHostPath(mount.source, relativePath)
-      if (!hostPath) {
-        result.skipped++
-        continue
-      }
-      await rm(hostPath, { force: true })
-      result.deleted++
     }
   }
 
