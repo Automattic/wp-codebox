@@ -32,6 +32,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:normalize-error",
     "browser-runtime:normalize-result",
     "browser-runtime:normalize-browser-run-result",
+    "runtime-task:create-request",
+    "runtime-task:run",
     "browser-preview:start",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
@@ -64,6 +66,8 @@ assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
 assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
+assert.equal(typeof api.v1.createRuntimeTaskRequest, "function")
+assert.equal(typeof api.v1.runRuntimeTask, "function")
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
   code: "demo_error",
@@ -233,6 +237,38 @@ assert.deepEqual(plain(canonicalBrowserRun.diagnostics), [
 ])
 assert.equal(canonicalBrowserRun.error.schema, "wp-codebox/browser-sdk-error/v1")
 assert.equal(canonicalBrowserRun.error.code, "canonical-failed")
+
+const runtimeTaskRequest = api.v1.createRuntimeTaskRequest({
+  targetId: "wp-codebox/browser-playground",
+  task: "Run the browser task",
+  input: { goal: "Run the browser task" },
+})
+assert.deepEqual(plain(runtimeTaskRequest), {
+  schema: "wp-codebox/runtime-task-request/v1",
+  target_id: "wp-codebox/browser-playground",
+  task: "Run the browser task",
+  input: { goal: "Run the browser task" },
+})
+assert.throws(
+  () => api.v1.createRuntimeTaskRequest({ task: "missing target" }),
+  (error: any) => {
+    assert.equal(error.code, "runtime_task_target_id_required")
+    return true
+  },
+)
+
+const previousWp = (sandbox.window as any).wp
+const runtimeTaskCalls: any[] = []
+;(sandbox.window as any).wp = {
+  apiFetch: async (request: any) => {
+    runtimeTaskCalls.push(request)
+    return { schema: "wp-codebox/runtime-task-result/v1", success: true, status: "completed", result: { ok: true } }
+  },
+}
+const runtimeTaskResult = await api.v1.runRuntimeTask(runtimeTaskRequest)
+assert.equal(runtimeTaskResult.schema, "wp-codebox/runtime-task-result/v1")
+assert.deepEqual(plain(runtimeTaskCalls), [{ path: "/wp-codebox/v1/runtime-task", method: "POST", data: plain(runtimeTaskRequest) }])
+;(sandbox.window as any).wp = previousWp
 
 assert.deepEqual(plain(api.v1.browserArtifactPersistenceRef({
   schema: "wp-codebox/browser-artifact-persistence/ref/v1",

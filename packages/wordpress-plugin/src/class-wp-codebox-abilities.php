@@ -82,6 +82,15 @@ final class WP_Codebox_Abilities {
 		);
 		register_rest_route(
 			'wp-codebox/v1',
+			'/runtime-task',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_runtime_task' ),
+				'permission_callback' => array( self::class, 'can_run_agent_task' ),
+			)
+		);
+		register_rest_route(
+			'wp-codebox/v1',
 			'/browser-callback/(?P<capability>[A-Za-z0-9][A-Za-z0-9_-]*)',
 			array(
 				'methods'             => 'POST',
@@ -144,6 +153,16 @@ final class WP_Codebox_Abilities {
 		}
 
 		return self::execute_browser_provider_request( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_runtime_task( WP_REST_Request $request ): array|WP_Error {
+		$input = $request->get_json_params();
+		if ( ! is_array( $input ) ) {
+			return new WP_Error( 'wp_codebox_runtime_task_rest_payload_invalid', 'Runtime task requests must send a JSON object.', array( 'status' => 400 ) );
+		}
+
+		return WP_Codebox_API::run_runtime_task( $input );
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */

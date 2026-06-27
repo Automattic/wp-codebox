@@ -213,6 +213,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
   starts a Codebox browser preview from the boot DTO and returns
   `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
+  `createRuntimeTaskRequest()` builds the public
+  `wp-codebox/runtime-task-request/v1` envelope with an explicit `target_id`;
+  `runRuntimeTask()` posts that envelope to Codebox's public
+  `/wp-json/wp-codebox/v1/runtime-task` route, or calls a supplied
+  `executeAbility('wp-codebox/run-runtime-task', request)` adapter, and returns
+  `wp-codebox/runtime-task-result/v1`;
   `methods` exposes stable references to the existing browser runtime helpers for
   callers that need legacy raw results internally. TypeScript consumers outside
   the browser can use the matching DTO helpers exported from

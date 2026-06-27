@@ -11,6 +11,9 @@ for (const ability of ["wp-codebox/run-wordpress-workload", "wp-codebox/run-fuzz
 }
 
 assert.match(abilitiesPhp, /'wp-codebox\/run-wordpress-workload'[\s\S]{0,700}'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_wordpress_workload'\s*\)/, "WordPress workload is implemented by the public ability")
+assert.match(abilitiesPhp, /register_rest_route\(\s*'wp-codebox\/v1',\s*'\/runtime-task'[\s\S]{0,300}'callback'\s*=>\s*array\(\s*self::class,\s*'rest_runtime_task'\s*\)/, "Runtime task REST route must be Codebox-owned")
+assert.match(abilitiesPhp, /function rest_runtime_task\( WP_REST_Request \$request \)/, "Runtime task REST route callback must be present")
+assert.match(abilitiesPhp, /WP_Codebox_API::run_runtime_task\( \$input \)/, "Runtime task REST route must delegate through the public PHP facade")
 assert.doesNotMatch(abilitiesPhp, /'wp-codebox\/run-wordpress-workload'[\s\S]{0,700}'safe_stub'\s*=>\s*true/, "WordPress workload is implemented and must not be marked as a safe stub")
 assert.doesNotMatch(abilitiesPhp, /'wp-codebox\/run-fuzz-suite'[\s\S]{0,700}'safe_stub'\s*=>\s*true/, "Fuzz suite is implemented and must not be marked as a safe stub")
 
