@@ -3,7 +3,8 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { parseCommandJson, parseCommandOptions, runFuzzSuite, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { parseCommandJson, parseCommandOptions, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { createWordPressEpisode, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -17,6 +18,7 @@ interface PublicRuntimeCommandOptions {
   artifactsDirectory?: string
   runRegistryDirectory?: string
   timeout?: string
+  runnerMode?: "simple" | "runtime-backed"
 }
 
 export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
@@ -26,6 +28,11 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   }
 
   const options = await parsePublicRuntimeCommandOptions(args)
+  if (options.runnerMode === "runtime-backed" && !options.dryRun) {
+    await runRuntimeBackedFuzzSuiteCommand(options)
+    return 0
+  }
+
   const result = await runFuzzSuite(options.input as unknown as FuzzSuiteContract, {
     executor: (spec) => runWordPressFuzzCommand(spec, options),
     runtimeWorkloadExecutor: (input) => runWordPressWorkloadFuzzCase(input, options),
@@ -38,6 +45,64 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   const { schema: _schema, ...resultFields } = result
   writeJson({ schema: FUZZ_SUITE_RESULT_SCHEMA, ...resultFields })
   return 0
+}
+
+async function runRuntimeBackedFuzzSuiteCommand(options: PublicRuntimeCommandOptions): Promise<void> {
+  const suite = options.input as unknown as FuzzSuiteContract
+  const requirements = fuzzSuiteRuntimeRequirements(options.input)
+  const episode = await createWordPressEpisode({
+    runtime: {
+      environment: {
+        kind: "wordpress",
+        name: "WordPress",
+        version: stringValue(options.input.wordpressVersion ?? options.input.wordpress_version ?? options.input.wp),
+        blueprint: objectOption(requirements?.blueprint) ?? { steps: [] },
+      },
+      policy: runtimeBackedFuzzSuitePolicy(suite),
+      runtimeEnv: runtimeRequirementEnv(undefined, requirements?.runtime_env, requirements?.bench_env),
+      artifactsDirectory: options.artifactsDirectory,
+      metadata: {
+        public_cli_command: "run-fuzz-suite",
+        runner_mode: "runtime-backed",
+      },
+    },
+  })
+  try {
+    const result = await executeWordPressFuzzSuite(episode, suite, {
+      metadata: {
+        public_cli_command: "run-fuzz-suite",
+      },
+    })
+    const { schema: _schema, ...resultFields } = result
+    writeJson({ schema: FUZZ_SUITE_RESULT_SCHEMA, ...resultFields })
+  } finally {
+    await episode.close()
+  }
+}
+
+function runtimeBackedFuzzSuitePolicy(suite: FuzzSuiteContract): RuntimePolicy {
+  return {
+    network: "allow",
+    filesystem: "sandbox",
+    commands: runtimeBackedFuzzSuiteCommands(suite),
+    secrets: "none",
+    approvals: "never",
+  }
+}
+
+function runtimeBackedFuzzSuiteCommands(suite: FuzzSuiteContract): string[] {
+  const commands = new Set(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands ?? [])
+  const addTargetCommand = (target: unknown): void => {
+    const record = objectOption(target)
+    const command = stringValue(record?.entrypoint) ?? stringValue(record?.id)
+    if (command) commands.add(command)
+  }
+  addTargetCommand(suite.target)
+  for (const fuzzCase of arrayOption(suite.cases)) {
+    const record = objectOption(fuzzCase)
+    addTargetCommand(record?.target)
+  }
+  return [...commands].sort()
 }
 
 async function runWordPressFuzzCommand(spec: ExecutionSpec, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
@@ -224,10 +289,16 @@ async function parsePublicRuntimeCommandOptions(args: string[]): Promise<PublicR
   }
 
   for (const name of options.keys()) {
-    if (!["--input-file", "--input-json", "--format", "--json", "--dry-run", "--artifacts", "--run-registry", "--timeout"].includes(name)) {
+    if (!["--input-file", "--input-json", "--format", "--json", "--dry-run", "--artifacts", "--run-registry", "--timeout", "--runner-mode"].includes(name)) {
       throw new Error(`Unknown option: ${name}`)
     }
   }
+
+  const rawRunnerMode = stringOption(options, "--runner-mode")
+  if (rawRunnerMode && rawRunnerMode !== "simple" && rawRunnerMode !== "runtime-backed") {
+    throw new Error(`Invalid --runner-mode: ${rawRunnerMode}`)
+  }
+  const runnerMode = rawRunnerMode as PublicRuntimeCommandOptions["runnerMode"]
 
   const input = await readInput(options)
   return {
@@ -237,6 +308,7 @@ async function parsePublicRuntimeCommandOptions(args: string[]): Promise<PublicR
     artifactsDirectory: stringOption(options, "--artifacts"),
     runRegistryDirectory: stringOption(options, "--run-registry"),
     timeout: stringOption(options, "--timeout"),
+    runnerMode,
   }
 }
 
@@ -466,7 +538,7 @@ function writeJson(value: unknown): void {
 }
 
 function printFuzzSuiteHelp(): void {
-  process.stdout.write(`Usage: wp-codebox run-fuzz-suite --input-file <path> [--format=json] [--dry-run]\n\nRuns a wp-codebox/fuzz-suite/v1 JSON payload through the public fuzz-suite runner.\n`)
+  process.stdout.write(`Usage: wp-codebox run-fuzz-suite --input-file <path> [--format=json] [--dry-run] [--runner-mode=simple|runtime-backed]\n\nRuns a wp-codebox/fuzz-suite/v1 JSON payload through the public fuzz-suite runner.\n`)
 }
 
 function printWordPressWorkloadHelp(): void {

@@ -14,6 +14,7 @@ const help = await captureStdout(async () => {
 assert.match(help, /run-fuzz-suite/)
 assert.match(help, /run-wordpress-workload/)
 assert.match(help, /--input-file/)
+assert.match(help, /--runner-mode=simple\|runtime-backed/)
 
 const directory = await mkdtemp(join(tmpdir(), "wp-codebox-public-cli-test-"))
 try {

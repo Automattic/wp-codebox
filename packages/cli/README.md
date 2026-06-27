@@ -83,6 +83,20 @@ recipes can use either stable surface:
 These are the supported recipe-builder entrypoints. Callers should not resolve
 `packages/runtime-core/dist/index.js` or other internal build paths.
 
+## Fuzz Suites
+
+Hosts that need a process boundary for public fuzz-suite execution can call the
+CLI directly:
+
+```bash
+wp-codebox run-fuzz-suite --runner-mode=runtime-backed --input-file suite.json --json
+```
+
+`--runner-mode=runtime-backed` boots a public WordPress Playground episode and
+runs the suite through the public Playground facade. The default mode preserves
+the existing recipe-backed path, and `--dry-run` still emits the dry-run recipe
+plan without booting a runtime.
+
 ## Recipe Planning
 
 - `wp-codebox validate-blueprint --blueprint <json|file> [--json]` boots a raw contained-runtime blueprint through WP Codebox and captures the normal artifact bundle.
