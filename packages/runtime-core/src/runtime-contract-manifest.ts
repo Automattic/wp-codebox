@@ -39,6 +39,19 @@ export const CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY = "wp-codebox/run-agent-task-b
 export const CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY = "wp-codebox/run-agent-task-fanout" as const
 export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-workload" as const
 export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
+export const CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY = "wp-codebox/resolve-runtime-requirements" as const
+export const RUNTIME_DESCRIPTOR_SCHEMA = "wp-codebox/runtime-descriptor/v1" as const
+
+export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
+  "agent-task:run",
+  "agent-task:batch",
+  "agent-task:fanout",
+  "runtime-package:run",
+  "runtime-requirements:resolve",
+  "wordpress-runtime:workload",
+  "wordpress-runtime:fuzz-suite",
+  "contract-manifest:read",
+] as const
 
 export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   agentTask: {
@@ -48,6 +61,9 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   },
   runtimePackage: {
     run: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
+  },
+  runtimeRequirements: {
+    resolve: CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY,
   },
   wordpressRuntime: {
     runWorkload: CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
@@ -190,6 +206,23 @@ export interface RuntimeContractManifest {
   providerRuntime: ReturnType<typeof providerRuntimeInvocationContract>
 }
 
+export interface RuntimeDescriptor {
+  schema: typeof RUNTIME_DESCRIPTOR_SCHEMA
+  version: 1
+  runtime: {
+    id: "wp-codebox"
+    name: "WP Codebox"
+  }
+  readiness: {
+    status: "available"
+    publicApi: true
+    contractManifest: true
+  }
+  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
+  abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  contractManifest: RuntimeContractManifest
+}
+
 export function runtimeContractManifest(): RuntimeContractManifest {
   return {
     schema: RUNTIME_CONTRACT_MANIFEST_SCHEMA,
@@ -197,6 +230,25 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     schemas: RUNTIME_CONTRACT_SCHEMAS,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
     providerRuntime: providerRuntimeInvocationContract(),
+  }
+}
+
+export function runtimeDescriptor(): RuntimeDescriptor {
+  return {
+    schema: RUNTIME_DESCRIPTOR_SCHEMA,
+    version: 1,
+    runtime: {
+      id: "wp-codebox",
+      name: "WP Codebox",
+    },
+    readiness: {
+      status: "available",
+      publicApi: true,
+      contractManifest: true,
+    },
+    capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    contractManifest: runtimeContractManifest(),
   }
 }
 

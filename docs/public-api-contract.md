@@ -20,7 +20,8 @@ Use these package entrypoints from external integrations:
   contract metadata used by CLI and orchestrator consumers. This entrypoint also
   exposes generic WordPress runtime discovery, CRUD/DB, REST matrix, fuzz-suite
   builder, page-load, and performance observation contracts for external fuzzing
-  orchestrators. Use `runtimeContractManifest()` when a consumer needs
+  orchestrators. Use `runtimeDescriptor()` for public readiness/capability probing
+  and `runtimeContractManifest()` when a consumer needs
   Codebox-owned ability names and schema identifiers without importing backend
   adapter bindings.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
@@ -60,6 +61,17 @@ not import Playground's raw `startPlaygroundWeb` directly.
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
 should call directly.
+
+External consumers that need to probe runtime readiness should use a Codebox-owned
+descriptor instead of resolving package paths, `packages/runtime-core/dist`, sibling
+worktrees, cache directories, or source/build layout. The descriptor is available
+as `runtimeDescriptor()` from `@automattic/wp-codebox-core/public`,
+`@automattic/wp-codebox-core/contracts`, and the root compatibility barrel; as
+`wp-codebox runtime descriptor --json`; and in WordPress through
+`WP_Codebox_API::runtime_descriptor()` or `wp codebox runtime descriptor`. The
+descriptor returns `wp-codebox/runtime-descriptor/v1` with readiness status,
+capability strings, public `wp-codebox/*` ability names, and the nested
+`wp-codebox/runtime-contract-manifest/v1` contract manifest.
 
 ## Public Handoff Abilities
 
@@ -103,6 +115,7 @@ the public handoff/fanout boundary:
 The public runtime contract manifest currently publishes these Codebox-owned
 ability identifiers:
 
+- `wp-codebox/resolve-runtime-requirements`
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
 - `wp-codebox/run-agent-task-fanout`
@@ -165,10 +178,10 @@ ability names, schemas, and facades to callers.
 
 WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `wp codebox ...` wrappers for these public operations, including
-`run-runtime-task`, `run-wordpress-workload`, `run-runtime-package`,
-`resolve-runtime-requirements`, `run-fuzz-suite`, and artifact inspection/apply
-commands. The WP-CLI wrappers parse
-JSON payloads from `--input-json` or `--input-file` and delegate through
+`runtime descriptor`, `run-runtime-task`, `run-wordpress-workload`,
+`run-runtime-package`, `resolve-runtime-requirements`, `run-fuzz-suite`, and
+artifact inspection/apply commands. The WP-CLI wrappers parse JSON payloads from
+`--input-json` or `--input-file` and delegate through
 `WP_Codebox_API` rather than backend internals.
 
 The workspace package mirrors the core entrypoints as `./core`,

@@ -148,6 +148,8 @@ function expect( bool $condition, string $message ): void {
 
 $expected_methods = array(
 	'execute_ability',
+	'runtime_descriptor',
+	'runtime_contract_manifest',
 	'run_agent_task',
 	'run_agent_task_batch',
 	'run_agent_task_fanout',
@@ -215,6 +217,18 @@ foreach ( array( 'agents/run-runtime-package', 'datamachine/jobs-list', 'playgro
 	$blocked = WP_Codebox_API::execute_ability( $raw_ability, array() );
 	expect( $blocked instanceof WP_Error, 'Expected raw backend ability name to be rejected: ' . $raw_ability );
 }
+
+$descriptor = WP_Codebox_API::runtime_descriptor();
+expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor['schema'], 'Expected public runtime descriptor schema.' );
+expect( 'available' === $descriptor['readiness']['status'], 'Expected descriptor readiness status.' );
+expect( in_array( 'runtime-requirements:resolve', $descriptor['capabilities'], true ), 'Expected runtime requirements capability.' );
+expect( 'wp-codebox/resolve-runtime-requirements' === $descriptor['abilities']['runtimeRequirements']['resolve'], 'Expected runtime requirements ability in descriptor.' );
+expect( 'wp-codebox/runtime-contract-manifest/v1' === $descriptor['contractManifest']['schema'], 'Expected nested runtime contract manifest.' );
+
+$descriptor_ability = WP_Codebox_API::execute_ability( 'wp-codebox/runtime-descriptor', array( 'ignored' => true ) );
+expect( is_array( $descriptor_ability ), 'Expected descriptor ability facade result.' );
+expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor_ability['schema'], 'Expected descriptor ability schema.' );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Descriptor must not dispatch through runtime backend internals.' );
 
 $runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-prepare' => array( 'method' => 'prepare_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-prepare-result/v1' ),

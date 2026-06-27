@@ -15,7 +15,9 @@ import {
   BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
   BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
+  CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+  CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY,
   CODEBOX_RUN_AGENT_TASK_ABILITY,
   CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
   CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
@@ -47,6 +49,7 @@ import {
   RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
+  RUNTIME_DESCRIPTOR_SCHEMA,
   RUNTIME_RUN_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
@@ -61,9 +64,11 @@ import {
   normalizeRuntimeContractSchema,
   runtimeContractManifest,
   runtimeContractSchemaValues,
+  runtimeDescriptor,
 } from "../packages/runtime-core/src/index.js"
 
 const manifest = runtimeContractManifest()
+const descriptor = runtimeDescriptor()
 
 assert.equal(manifest.schema, RUNTIME_CONTRACT_MANIFEST_SCHEMA)
 assert.equal(manifest.version, 1)
@@ -135,6 +140,7 @@ assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_AB
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)
 assert.equal("aliases" in manifest.abilities.agentTask, false)
 assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY)
+assert.equal(manifest.abilities.runtimeRequirements.resolve, CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
 assert.equal(manifest.providerRuntime.schema, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
@@ -158,7 +164,17 @@ assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationInput({ plan: { worke
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutputEnvelope(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } })).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 
+assert.equal(descriptor.schema, RUNTIME_DESCRIPTOR_SCHEMA)
+assert.equal(descriptor.readiness.status, "available")
+assert.equal(descriptor.readiness.publicApi, true)
+assert.equal(descriptor.readiness.contractManifest, true)
+assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
+assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
+assert.deepEqual(descriptor.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
+assert.deepEqual(descriptor.contractManifest, manifest)
+
 assert.doesNotMatch(JSON.stringify(manifest), /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 assert.doesNotMatch(JSON.stringify(manifest), /agents\/run-runtime-package|wp_codebox_runner_workspace_backend|workspace_worktree_add/i)
+assert.doesNotMatch(JSON.stringify(descriptor), /packages\/runtime-core\/dist|package-lock|node_modules|worktree|cache layout/i)
 
 console.log("runtime contract manifest ok")

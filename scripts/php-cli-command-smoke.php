@@ -101,6 +101,7 @@ $expected_commands = array(
 	'codebox artifacts preflight-apply',
 	'codebox artifacts stage-apply',
 	'codebox artifacts apply',
+	'codebox runtime descriptor',
 	'codebox browser-session create',
 	'codebox run-agent-task',
 	'codebox run-agent-task-batch',
@@ -115,6 +116,15 @@ $expected_commands = array(
 foreach ( $expected_commands as $command ) {
 	expect( isset( WP_CLI::$commands[ $command ] ), 'Missing WP-CLI command: ' . $command );
 }
+
+WP_CLI::$lines = array();
+WP_Codebox_Abilities::$calls = array();
+WP_CLI::$commands['codebox runtime descriptor']( array(), array() );
+$descriptor_output = json_decode( WP_CLI::$lines[0] ?? '', true );
+expect( is_array( $descriptor_output ), 'Expected JSON output for runtime descriptor command.' );
+expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor_output['schema'], 'Runtime descriptor command must emit descriptor schema.' );
+expect( in_array( 'contract-manifest:read', $descriptor_output['capabilities'], true ), 'Runtime descriptor command must include contract manifest capability.' );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Runtime descriptor command must not dispatch through backend abilities.' );
 
 function run_cli_command( string $command, array $args = array(), array $assoc_args = array() ): array {
 	WP_CLI::$lines = array();

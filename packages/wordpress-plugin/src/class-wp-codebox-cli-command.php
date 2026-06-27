@@ -19,6 +19,7 @@ final class WP_Codebox_CLI_Command {
 		\WP_CLI::add_command( 'codebox artifacts preflight-apply', array( $command, 'artifacts_preflight_apply' ) );
 		\WP_CLI::add_command( 'codebox artifacts stage-apply', array( $command, 'artifacts_stage_apply' ) );
 		\WP_CLI::add_command( 'codebox artifacts apply', array( $command, 'artifacts_apply' ) );
+		\WP_CLI::add_command( 'codebox runtime descriptor', array( $command, 'runtime_descriptor' ) );
 		\WP_CLI::add_command( 'codebox browser-session create', array( $command, 'browser_session_create' ) );
 		\WP_CLI::add_command( 'codebox run-agent-task', array( $command, 'run_agent_task' ) );
 		\WP_CLI::add_command( 'codebox run-agent-task-batch', array( $command, 'run_agent_task_batch' ) );
@@ -89,6 +90,17 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function artifacts_apply( array $args, array $assoc_args ): void {
 		$this->emit( WP_Codebox_API::apply_approved_artifact( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Print public runtime readiness, capabilities, ability names, and contract manifest.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function runtime_descriptor( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::runtime_descriptor(), $assoc_args );
 	}
 
 	/**
