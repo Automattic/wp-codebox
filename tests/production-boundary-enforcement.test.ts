@@ -16,16 +16,19 @@ const publicDocPaths = [
   "examples/recipes/cookbook/README.md",
 ]
 const forbiddenPublicSurfaceTerms = [
-  /datamachine/i,
-  /data machine/i,
-  /data-machine/i,
-  /data-machine-code/i,
   /homeboy/i,
   /\bwpsg\b/i,
   /wp-site-generator/i,
   /wp site generator/i,
-  /agents api/i,
-  /data machine code/i,
+]
+const forbiddenPublicConsumerGuidance = [
+  /studio\s+wp\s+datamachine/i,
+  /wp\s+datamachine/i,
+  /agents-api\/[a-z0-9._/-]+/i,
+  /datamachine\/[a-z0-9._/-]+/i,
+  /data-machine-code\/[a-z0-9._/-]+/i,
+  /call\s+(?:the\s+)?(?:Data Machine|Agents API|Data Machine Code)\b/i,
+  /use\s+(?:the\s+)?(?:Data Machine|Agents API|Data Machine Code)\s+(?:ability|api|endpoint)\b/i,
 ]
 const forbiddenPublicExportTargets = [
   /preview-server\.js$/,
@@ -54,6 +57,11 @@ for (const rel of publicDocPaths) {
   for (const term of forbiddenPublicSurfaceTerms) {
     if (term.test(source)) {
       violations.push(`${rel} exposes ${term} in public documentation`)
+    }
+  }
+  for (const guidance of forbiddenPublicConsumerGuidance) {
+    if (guidance.test(source)) {
+      violations.push(`${rel} tells public consumers to call internal substrate ${guidance}`)
     }
   }
 }
@@ -102,7 +110,7 @@ for (const rel of publicContractFiles) {
 assert.deepEqual(
   violations,
   [],
-  "Public package exports, dependencies, docs, and contract names must stay on Codebox-owned API vocabulary.",
+  "Public package exports, dependencies, docs, and contract names must stay on Codebox-owned consumer API vocabulary.",
 )
 
 console.log("production boundary enforcement passed")
