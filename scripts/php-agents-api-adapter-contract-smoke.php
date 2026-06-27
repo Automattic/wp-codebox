@@ -73,8 +73,8 @@ $runtime_task_invocation = WP_Codebox_Agents_API_Adapter::browser_runtime_defaul
 			'kind'    => 'bundle',
 			'ability' => 'runtime-package/run',
 			'input'   => array(
-				'package'  => array( 'slug' => 'store-idea-agent' ),
-				'workflow' => array( 'id' => 'store-idea-artifact-flow' ),
+				'package'  => array( 'slug' => 'example-agent' ),
+				'workflow' => array( 'id' => 'example-artifact-flow' ),
 			),
 		),
 	)
@@ -112,6 +112,10 @@ assert( 'wp-codebox/runtime-package-result/v1' === $package['schema'] );
 assert( array( 'slug' => 'example-agent' ) === $package['received']['package'] );
 assert( array( 'id' => 'example-agent' ) === $package['received']['workflow'] );
 
+$package_with_absolute_runtime_package = $adapter->run_runtime_package( array( 'runtime_package' => '/workspace/example-project/bundles/example-generator' ) );
+assert( array( 'slug' => 'example-generator', 'source' => '/workspace/example-project/bundles/example-generator' ) === $package_with_absolute_runtime_package['received']['package'] );
+assert( array( 'id' => 'example-generator' ) === $package_with_absolute_runtime_package['received']['workflow'] );
+
 $package_with_descriptor = $adapter->run_runtime_package(
 	array(
 		'runtime_package' => 'example-agent',
@@ -131,6 +135,7 @@ assert( array( 'id' => 'custom-workflow' ) === $package_with_explicit_workflow['
 
 $workspace_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . getmypid();
 mkdir( $workspace_root . '/bundles/example-agent', 0777, true );
+mkdir( $workspace_root . '/bundles/example-generator', 0777, true );
 $package_with_workspace_source = $adapter->run_runtime_package(
 	array(
 		'runtime_package' => 'example-agent',
@@ -164,20 +169,20 @@ assert( array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000 ) === 
 
 $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
 	array(
-		'agent'          => 'store-idea-agent',
+		'agent'          => 'example-agent',
 		'provider'       => 'codex',
 		'model'          => 'gpt-5.5',
 		'client_context' => array(),
 	),
 	array(
-		'agent'      => 'store-idea-agent',
+		'agent'      => 'example-agent',
 		'task_input' => array(
 			'runtime_task' => array(
 				'kind'    => 'bundle',
 				'ability' => 'runtime-package/run',
 				'input'   => array(
-					'package'  => array( 'slug' => 'store-idea-agent', 'source' => 'bundles/store-idea-agent' ),
-					'workflow' => array( 'id' => 'store-idea-artifact-flow' ),
+					'package'  => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ),
+					'workflow' => array( 'id' => 'example-artifact-flow' ),
 					'input'    => array( 'wait_for_completion' => true ),
 				),
 			),
@@ -186,10 +191,23 @@ $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_
 	array( 'type' => 'ability', 'name' => 'agents/run-runtime-package' ),
 	'codebox-session'
 );
-assert( array( 'slug' => 'store-idea-agent', 'source' => 'bundles/store-idea-agent' ) === $runtime_package_browser_input['package'] );
-assert( array( 'id' => 'store-idea-artifact-flow' ) === $runtime_package_browser_input['workflow'] );
+assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) === $runtime_package_browser_input['package'] );
+assert( array( 'id' => 'example-artifact-flow' ) === $runtime_package_browser_input['workflow'] );
 assert( array( 'wait_for_completion' => true ) === $runtime_package_browser_input['input'] );
 assert( 'runtime' === $runtime_package_browser_input['principal']['auth_source'] );
+
+$package_with_workspace_relative_runtime_package = $adapter->run_runtime_package(
+	array(
+		'runtime_package' => 'bundles/example-generator',
+		'task_input'      => array(
+			'client_context' => array(
+				'default_workspace' => array( 'target' => $workspace_root ),
+			),
+		),
+	)
+);
+assert( array( 'slug' => 'example-generator', 'source' => $workspace_root . '/bundles/example-generator' ) === $package_with_workspace_relative_runtime_package['received']['package'] );
+assert( array( 'id' => 'example-generator' ) === $package_with_workspace_relative_runtime_package['received']['workflow'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
 assert_no_agents_api_schema_leaks( $chat, 'chat' );

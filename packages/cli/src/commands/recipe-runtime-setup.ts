@@ -54,6 +54,7 @@ export async function applyRecipeRuntimeSetup(args: {
   const executions: RecipeExecutionResult[] = []
   const phaseTracker = phaseExecutor.tracker
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs?: number): Promise<T> => phaseExecutor.operation(operation, promiseOrFactory, timeoutMs)
+  const overlayCopies: Array<{ source: string; target: string }> = []
 
   for (const [index, mount] of (recipe.runtime?.stack?.mounts ?? []).entries()) {
     const source = resolve(recipeDirectory, mount.source)
@@ -93,14 +94,18 @@ export async function applyRecipeRuntimeSetup(args: {
     phaseTracker.complete("apply_distribution", distributionRuntimeData(recipe))
   }
 
-  for (const overlay of overlays) {
+  for (const [index, overlay] of overlays.entries()) {
+    const mountedTarget = runtimeOverlayMountTarget(overlay, index)
     await awaitRecipe(`runtime.overlay.mount:${overlay.target}`, runtime.mount({
       type: overlay.type,
       source: overlay.source,
-      target: overlay.target,
+      target: mountedTarget,
       mode: overlay.mode,
       metadata: overlay.metadata,
     }))
+    if (mountedTarget !== overlay.target) {
+      overlayCopies.push({ source: mountedTarget, target: overlay.target })
+    }
     interruption?.throwIfInterrupted()
   }
 
@@ -131,6 +136,11 @@ export async function applyRecipeRuntimeSetup(args: {
       interruption?.throwIfInterrupted()
     }
   })
+
+  for (const overlay of overlayCopies) {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(copyRuntimeOverlayCode(overlay.source, overlay.target)) }), "setup", -3, `runtime.overlay.copy:${overlay.target}`))
+    interruption?.throwIfInterrupted()
+  }
 
   for (const overlay of dependencyOverlays) {
     await awaitRecipe(`dependency-overlay.mount:${overlay.package}`, runtime.mount({
@@ -298,6 +308,47 @@ async function activePlugins(runtime: Runtime): Promise<string[]> {
 
 function setupPhpArgs(code: string): string[] {
   return ["recipe-active-plugins=none", `code=${code}`]
+}
+
+function runtimeOverlayMountTarget(overlay: PreparedRuntimeOverlay, index: number): string {
+  const metadata = overlay.metadata ?? {}
+  if (metadata.library === "php-ai-client" && overlay.target === "/wordpress/wp-includes/php-ai-client") {
+    return `/tmp/wp-codebox-runtime-overlays/${index}/php-ai-client`
+  }
+  return overlay.target
+}
+
+function copyRuntimeOverlayCode(source: string, target: string): string {
+  return `$source = ${JSON.stringify(source)};
+$target = ${JSON.stringify(target)};
+if (!is_dir($source)) {
+    throw new RuntimeException('Runtime overlay source is not mounted: ' . $source);
+}
+if (!is_dir($target) && !wp_mkdir_p($target)) {
+    throw new RuntimeException('Runtime overlay target could not be created: ' . $target);
+}
+$iterator = new RecursiveIteratorIterator(
+    new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+    RecursiveIteratorIterator::SELF_FIRST
+);
+foreach ($iterator as $item) {
+    $relative = substr($item->getPathname(), strlen($source) + 1);
+    $destination = $target . '/' . $relative;
+    if ($item->isDir()) {
+        if (!is_dir($destination) && !wp_mkdir_p($destination)) {
+            throw new RuntimeException('Runtime overlay directory could not be created: ' . $destination);
+        }
+        continue;
+    }
+    $parent = dirname($destination);
+    if (!is_dir($parent) && !wp_mkdir_p($parent)) {
+        throw new RuntimeException('Runtime overlay parent directory could not be created: ' . $parent);
+    }
+    if (!copy($item->getPathname(), $destination)) {
+        throw new RuntimeException('Runtime overlay file could not be copied: ' . $destination);
+    }
+}
+echo wp_json_encode(array('source' => $source, 'target' => $target, 'copied' => true));`;
 }
 
 function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<string, unknown> {

@@ -492,7 +492,7 @@ final class WP_Codebox_Agents_API_Adapter {
 		if ( ! isset( $input['package'] ) && isset( $input['runtime_package'] ) ) {
 			$metadata         = is_array( $input['metadata'] ?? null ) ? $input['metadata'] : array();
 			$descriptor       = is_array( $metadata['runtime_package_descriptor'] ?? null ) ? $metadata['runtime_package_descriptor'] : array();
-			$input['package'] = ! empty( $descriptor ) ? $descriptor : array( 'slug' => (string) $input['runtime_package'] );
+			$input['package'] = ! empty( $descriptor ) ? $descriptor : self::package_descriptor_from_runtime_package( (string) $input['runtime_package'] );
 		}
 		if ( is_array( $input['package'] ?? null ) ) {
 			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
@@ -512,7 +512,7 @@ final class WP_Codebox_Agents_API_Adapter {
 		}
 
 		$package = is_array( $input['package'] ?? null ) ? $input['package'] : array();
-		$id      = self::string_value( $input['workflow_id'] ?? $input['workflowId'] ?? $package['workflow'] ?? $package['slug'] ?? $package['id'] ?? $input['runtime_package'] ?? '' );
+		$id      = self::string_value( $input['workflow_id'] ?? $input['workflowId'] ?? $package['workflow'] ?? $package['slug'] ?? $package['id'] ?? self::runtime_package_id( (string) ( $input['runtime_package'] ?? '' ) ) );
 		if ( '' !== $id ) {
 			$input['workflow'] = array( 'id' => $id );
 		}
@@ -684,6 +684,38 @@ final class WP_Codebox_Agents_API_Adapter {
 		}
 
 		return $package;
+	}
+
+	/** @return array<string,string> */
+	private static function package_descriptor_from_runtime_package( string $runtime_package ): array {
+		$runtime_package = trim( $runtime_package );
+		if ( '' === $runtime_package ) {
+			return array( 'slug' => '' );
+		}
+
+		if ( self::is_path_like_runtime_package( $runtime_package ) ) {
+			return array(
+				'slug'   => self::runtime_package_id( $runtime_package ),
+				'source' => $runtime_package,
+			);
+		}
+
+		return array( 'slug' => $runtime_package );
+	}
+
+	private static function runtime_package_id( string $runtime_package ): string {
+		$runtime_package = trim( $runtime_package );
+		if ( '' === $runtime_package ) {
+			return '';
+		}
+
+		$normalized = str_replace( '\\', '/', rtrim( $runtime_package, '/\\' ) );
+		$basename   = basename( $normalized );
+		return '' !== $basename ? $basename : $runtime_package;
+	}
+
+	private static function is_path_like_runtime_package( string $runtime_package ): bool {
+		return self::is_absolute_package_source( $runtime_package ) || str_contains( $runtime_package, '/' ) || str_contains( $runtime_package, '\\' );
 	}
 
 	/** @param array<string,mixed> $input Runtime input. @return array<int,string> */

@@ -338,7 +338,7 @@ function workloadFromScenarioWorkload(record: Record<string, unknown>, options: 
 }
 
 function workloadFromSingleResult(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft {
-  const outputs = objectValue(record.outputs) ?? objectValue(record.output) ?? {}
+  const outputs = objectValue(record.outputs) ?? objectValue(record.output) ?? semanticOutputs(record)
   const scenario = stripUndefined({
     id: workloadId(options),
     success: typeof record.success === "boolean" ? record.success : undefined,
@@ -590,7 +590,15 @@ function isLegacyAgentBundleRun(record: Record<string, unknown>): boolean {
 }
 
 function isSingleResultWorkload(record: Record<string, unknown>): boolean {
-  return Boolean(objectValue(record.outputs) || objectValue(record.output) || Array.isArray(record.diagnostics) || stringValue(record.summary))
+  return Boolean(objectValue(record.outputs) || objectValue(record.output) || Array.isArray(record.diagnostics) || stringValue(record.summary) || isResultEnvelope(record) && Object.keys(semanticOutputs(record)).length > 0)
+}
+
+function isResultEnvelope(record: Record<string, unknown>): boolean {
+  return typeof record.success === "boolean" || Boolean(stringValue(record.status)) || Boolean(stringValue(record.schema))
+}
+
+function semanticOutputs(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !["schema", "success", "status", "summary", "message", "diagnostics", "artifacts", "metadata", "raw", "error"].includes(key)))
 }
 
 function hasSemanticWorkload(workload: WorkloadDraft | undefined): workload is WorkloadDraft {

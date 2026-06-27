@@ -63,6 +63,20 @@ assert.equal(adaptedScenarioShape.success, true)
 assert.equal(adaptedScenarioShape.scenarios[0]?.id, "legacy-scenario")
 assert.equal(adaptedScenarioShape.outputs.report_path, "runtime/report.json")
 
+const adaptedSingleResultShape = normalizeAgentRuntimeWorkload({
+  schema: "example/runtime-package-result/v1",
+  success: true,
+  concept_packet: { title: "Generated concept" },
+  typed_artifacts: [{ name: "concept_packet", artifact_schema: "example/concept-packet/v1", payload: { title: "Generated concept" } }],
+  structured_artifacts: [{ name: "concept_packet", schema: "example/concept-packet/v1", payload: { title: "Generated concept" } }],
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters })
+assert.equal(adaptedSingleResultShape.success, true)
+assert.deepEqual(adaptedSingleResultShape.outputs.concept_packet, { title: "Generated concept" })
+assert.equal(Array.isArray(adaptedSingleResultShape.outputs.typed_artifacts), true)
+assert.equal(Array.isArray(adaptedSingleResultShape.outputs.structured_artifacts), true)
+assert.equal(adaptedSingleResultShape.scenarios[0]?.outputs?.concept_packet, adaptedSingleResultShape.outputs.concept_packet)
+assert.equal(adaptedSingleResultShape.diagnostics.some((diagnostic) => diagnostic.data?.adapter === "runtime-workload-single-result-shape"), true)
+
 const executionStdout = {
   executions: [{
     stdout: JSON.stringify({

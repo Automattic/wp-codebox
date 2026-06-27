@@ -196,7 +196,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const agentTaskRunResult = success ? normalizedRunResult : withFailureEvidence(normalizedRunResult, failureEvidence, outputDiagnostics)
     const headlessAgentTaskResult = maybeHeadlessAgentTaskResult(input, agentTaskRunResult)
     const session = sandboxSession(input, run, artifacts, success ? "completed" : "failed")
-    const structuredArtifacts = structuredArtifactRefs(agentTaskResult)
+    const structuredArtifacts = structuredArtifactRefs(agentTaskResult, workload.outputs)
     const outputs = stripUndefined({ ...workload.outputs })
     const typedArtifacts = agentTaskRunTypedArtifacts(agentTaskResult, outputs, run)
     const evidence = evidenceRefs(run, artifacts, failureEvidence)
@@ -614,14 +614,15 @@ function failureEvidenceSummary(failureEvidence: Record<string, unknown>): Recor
   })
 }
 
-function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array<Record<string, unknown>> {
+function structuredArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
   const direct = Array.isArray(agentTaskResult.structured_artifacts) ? agentTaskResult.structured_artifacts : []
   if (direct.length > 0) {
     return direct.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
   }
   const outputs = objectValue(agentTaskResult.outputs) || {}
   const fromOutputs = Array.isArray(outputs.structured_artifacts) ? outputs.structured_artifacts : []
-  return fromOutputs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
+  const fromWorkloadOutputs = Array.isArray(workloadOutputs.structured_artifacts) ? workloadOutputs.structured_artifacts : []
+  return dedupeRecords([...fromOutputs, ...fromWorkloadOutputs].filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))))
 }
 
 export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {

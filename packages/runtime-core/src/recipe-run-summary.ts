@@ -66,7 +66,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
   const agentTask = normalizeAgentTaskRunResult(result, { exitStatus: options.exitStatus })
   const success = result.success === true || agentTask.success
   const failedPhase = failedPhaseFromRecipeRun(result)
-  const diagnostics = arrayObjects(result.diagnostics)
+  const diagnostics = [...validationDiagnosticsFromRecipeRun(result), ...arrayObjects(result.diagnostics)]
   const artifacts = normalizeRecipeRunArtifacts(result, agentTask.artifacts)
   const commands = recipeRunCommandSummaries(result)
   const preview = recipeRunPreviewSummary(result)
@@ -144,6 +144,16 @@ function failureSummary(result: Record<string, unknown>, diagnostics: Array<Reco
   const error = objectValue(result.error)
   const message = stringValue(error.message) || stringValue(result.message) || diagnosticMessage || "WP Codebox recipe run failed."
   return failedPhase ? `${failedPhase}: ${message}` : message
+}
+
+function validationDiagnosticsFromRecipeRun(result: Record<string, unknown>): Array<Record<string, unknown>> {
+  return arrayObjects(objectValue(result.validation).issues).map((issue) => stripUndefined({
+    source: "recipe-validation",
+    severity: "error",
+    code: stringValue(issue.code) || "recipe-validation-error",
+    path: stringValue(issue.path),
+    message: stringValue(issue.message) || "Recipe validation issue.",
+  }))
 }
 
 function normalizeRecipeRunArtifacts(result: Record<string, unknown>, agentTaskArtifacts: AgentTaskRunArtifactRef[]): AgentTaskRunArtifactRef[] {
