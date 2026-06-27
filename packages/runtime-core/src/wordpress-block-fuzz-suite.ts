@@ -13,7 +13,6 @@ export interface WordPressBlockFuzzSuiteOptions {
 }
 
 const DEFAULT_BLOCK_FUZZ_SUITE_ID = "wordpress-block-discovery"
-const DEFAULT_EDITOR_CAPTURE = ["editor-state", "editor-validity", "errors"] as const
 const BLOCK_SERVER_RENDER_CAPABILITIES = ["target:runtime", "runtime"] as const
 const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime", "runtime", "runtime-action:editor_open"] as const
 const BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
@@ -34,7 +33,7 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
     }
 
     if (includeEditorInsert && editorPostType && block.supportsInserter) {
-      cases.push(editorInsertCase(block, editorPostType, options.capture ?? DEFAULT_EDITOR_CAPTURE))
+      cases.push(editorInsertCase(block, editorPostType))
     }
   }
 
@@ -61,8 +60,8 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
         targetKinds: ["runtime"],
         runtimeActionTypes: includeEditorInsert ? ["editor_open"] : undefined,
         commands: [
-          includeServerRender ? "wordpress.run-php" : undefined,
-          includeEditorInsert ? "wordpress.editor-open" : undefined,
+          includeServerRender ? "wordpress.block-render" : undefined,
+          includeEditorInsert ? "wordpress.block-exercise" : undefined,
         ].filter((command): command is string => Boolean(command)),
       }),
     }),
@@ -73,7 +72,7 @@ export function wordpressBlockDiscoveryToCoveragePlan(discovery: WordPressBlockE
   const includeServerRender = options.includeServerRender ?? true
   const includeEditorInsert = options.includeEditorInsert ?? true
   const editorPostType = selectEditorPostType(discovery.editorPostTypes, options.editorPostType)
-  const discovered = discovery.blocks.flatMap((block) => blockCoveragePlanItems(block, includeServerRender, includeEditorInsert, editorPostType, options.capture ?? DEFAULT_EDITOR_CAPTURE))
+  const discovered = discovery.blocks.flatMap((block) => blockCoveragePlanItems(block, includeServerRender, includeEditorInsert, editorPostType))
   const executable = discovered.filter((item) => item.input !== undefined && !item.reason)
   const untested = discovered.filter((item) => item.reason)
 
@@ -101,11 +100,12 @@ function serverRenderCase(block: WordPressBlockTypeDescriptor): FuzzSuiteCase {
 
   return {
     id: `block-${caseIdPart(block.name)}-server-render-${sampleKind}`,
-    target: { kind: "runtime", entrypoint: "wordpress.run-php" },
+    target: { kind: "runtime", entrypoint: "wordpress.block-render" },
     input: {
       args: [
-        `code=${serverRenderPhp(block.name, attributes)}`,
-        "bootstrap=wordpress",
+        `block-name=${block.name}`,
+        `attrs-json=${JSON.stringify(attributes)}`,
+        "source=wordpress-block-fuzz-suite",
       ],
     },
     description: `Render ${block.name} through render_block with ${sampleKind.replace("-", " ")}.`,
@@ -113,19 +113,19 @@ function serverRenderCase(block: WordPressBlockTypeDescriptor): FuzzSuiteCase {
   }
 }
 
-function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor, capture: readonly string[]): FuzzSuiteCase {
+function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor): FuzzSuiteCase {
   const attributes = blockAttributeSamples(block)
   const sampleKind = Object.keys(attributes).length ? "sample-attributes" : "empty-attributes"
 
   return {
     id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-${sampleKind}`,
-    target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
+    target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
     input: {
       args: [
-        "target=post-new",
-        `post-type=${postType.name}`,
-        `steps-json=${JSON.stringify([{ kind: "insertBlock", name: block.name, attributes }, { kind: "inspectState" }])}`,
-        `capture=${capture.join(",")}`,
+        `block-name=${block.name}`,
+        `attrs-json=${JSON.stringify(attributes)}`,
+        "mode=editor-insert-save",
+        "source=wordpress-block-fuzz-suite",
       ],
     },
     description: `Insert ${block.name} into a new ${postType.name} editor canvas with ${sampleKind.replace("-", " ")}.`,
@@ -133,10 +133,10 @@ function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPre
   }
 }
 
-function blockCoveragePlanItems(block: WordPressBlockTypeDescriptor, includeServerRender: boolean, includeEditorInsert: boolean, editorPostType: WordPressEditorPostTypeDescriptor | undefined, capture: readonly string[]): FuzzCoveragePlanItem[] {
+function blockCoveragePlanItems(block: WordPressBlockTypeDescriptor, includeServerRender: boolean, includeEditorInsert: boolean, editorPostType: WordPressEditorPostTypeDescriptor | undefined): FuzzCoveragePlanItem[] {
   return [
     includeServerRender ? serverRenderCoveragePlanItem(block) : undefined,
-    includeEditorInsert ? editorInsertCoveragePlanItem(block, editorPostType, capture) : undefined,
+    includeEditorInsert ? editorInsertCoveragePlanItem(block, editorPostType) : undefined,
   ].filter((item): item is FuzzCoveragePlanItem => Boolean(item))
 }
 
@@ -145,11 +145,11 @@ function serverRenderCoveragePlanItem(block: WordPressBlockTypeDescriptor): Fuzz
   return stripUndefined({ ...fuzzCase, parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
 }
 
-function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor | undefined, capture: readonly string[]): FuzzCoveragePlanItem {
+function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor | undefined): FuzzCoveragePlanItem {
   if (!postType) {
     return stripUndefined({
       id: `block-${caseIdPart(block.name)}-editor-insert-untested`,
-      target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
+      target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
       description: `Insert ${block.name} into an editor canvas with empty attributes.`,
       reason: { code: "block_editor_post_type_unavailable", message: "No discovered editor post type is available for editor-insert fuzz coverage.", data: { unsupportedCapabilities: ["runtime-action:editor_open"] } },
       parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
@@ -159,14 +159,14 @@ function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postT
   if (!block.supportsInserter) {
     return stripUndefined({
       id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-empty-attributes`,
-      target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
+      target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
       description: `Insert ${block.name} into a new ${postType.name} editor canvas with empty attributes.`,
       reason: { code: "block_inserter_unsupported", message: "The block does not support inserter-based editor coverage.", data: { unsupportedCapabilities: ["block:inserter"] } },
       parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
       metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {}, editorPostType: postType.name }),
     })
   }
-  return stripUndefined({ ...editorInsertCase(block, postType, capture), parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
+  return stripUndefined({ ...editorInsertCase(block, postType), parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
 }
 
 function blockCaseMetadata(block: WordPressBlockTypeDescriptor, operation: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -227,10 +227,6 @@ function blockAttributeSample(attribute: WordPressBlockAttributeDescriptor, exam
   }
 
   return undefined
-}
-
-function serverRenderPhp(blockName: string, attributes: Record<string, unknown>): string {
-  return `$attributes = json_decode(${JSON.stringify(JSON.stringify(attributes))}, true); if (!is_array($attributes)) { exit(1); } $block = array('blockName' => ${JSON.stringify(blockName)}, 'attrs' => $attributes, 'innerBlocks' => array(), 'innerHTML' => '', 'innerContent' => array()); $rendered = render_block($block); if (!is_string($rendered)) { exit(1); }`
 }
 
 function caseIdPart(value: string): string {

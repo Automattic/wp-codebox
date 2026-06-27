@@ -22,7 +22,8 @@ Use these package entrypoints from external integrations:
   contract metadata used by CLI and orchestrator consumers. This entrypoint also
   exposes generic WordPress runtime discovery, CRUD/DB, REST matrix, fuzz-suite
   builder, page-load, and performance observation contracts for external fuzzing
-  orchestrators. Use `runtimeContractManifest()` when a consumer needs
+  orchestrators. Use `runtimeDescriptor()` for public readiness/capability probing
+  and `runtimeContractManifest()` when a consumer needs
   Codebox-owned ability names and schema identifiers without importing backend
   adapter bindings.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
@@ -63,6 +64,17 @@ Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
 should call directly.
 
+External consumers that need to probe runtime readiness should use a Codebox-owned
+descriptor instead of resolving package paths, `packages/runtime-core/dist`, sibling
+worktrees, cache directories, or source/build layout. The descriptor is available
+as `runtimeDescriptor()` from `@automattic/wp-codebox-core/public`,
+`@automattic/wp-codebox-core/contracts`, and the root compatibility barrel; as
+`wp-codebox runtime descriptor --json`; and in WordPress through
+`WP_Codebox_API::runtime_descriptor()` or `wp codebox runtime descriptor`. The
+descriptor returns `wp-codebox/runtime-descriptor/v1` with readiness status,
+capability strings, public `wp-codebox/*` ability names, and the nested
+`wp-codebox/runtime-contract-manifest/v1` contract manifest.
+
 ## Public Handoff Abilities
 
 Native hosts and other external orchestrators should treat these abilities as
@@ -80,6 +92,10 @@ the public handoff/fanout boundary:
 - `wp-codebox/persist-browser-artifact` stores browser-produced files as a
   canonical WP Codebox artifact bundle and returns artifact bundle references for
   review, replay, import, or apply-back.
+- `wp-codebox/inspect-artifact` reads a stored artifact bundle and returns the
+  Codebox-owned bundle DTO plus verification payload. Consumers should use this
+  ability, `WP_Codebox_API::inspect_artifact()`, or `wp codebox artifacts inspect`
+  instead of reading the artifact directory layout directly.
 - `wp-codebox/import-artifact-bundle` and
   `wp-codebox/reimport-artifact-bundle` are the durable ingress path for an
   existing bundle. They verify bundle identity/digest and return
@@ -101,6 +117,7 @@ the public handoff/fanout boundary:
 The public runtime contract manifest currently publishes these Codebox-owned
 ability identifiers:
 
+- `wp-codebox/resolve-runtime-requirements`
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
 - `wp-codebox/run-agent-task-fanout`
@@ -167,9 +184,10 @@ redacted credential primitives.
 
 WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `wp codebox ...` wrappers for these public operations, including
-`run-runtime-task`, `run-wordpress-workload`, `run-runtime-package`,
-`resolve-runtime-requirements`, and `run-fuzz-suite`. The WP-CLI wrappers parse
-JSON payloads from `--input-json` or `--input-file` and delegate through
+`runtime descriptor`, `run-runtime-task`, `run-wordpress-workload`,
+`run-runtime-package`, `resolve-runtime-requirements`, `run-fuzz-suite`, and
+artifact inspection/apply commands. The WP-CLI wrappers parse JSON payloads from
+`--input-json` or `--input-file` and delegate through
 `WP_Codebox_API` rather than backend internals.
 
 The workspace package mirrors the core entrypoints as `./core`,
@@ -224,6 +242,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
   starts a Codebox browser preview from the boot DTO and returns
   `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
+  `createRuntimeTaskRequest()` builds the public
+  `wp-codebox/runtime-task-request/v1` envelope with an explicit `target_id`;
+  `runRuntimeTask()` posts that envelope to Codebox's public
+  `/wp-json/wp-codebox/v1/runtime-task` route, or calls a supplied
+  `executeAbility('wp-codebox/run-runtime-task', request)` adapter, and returns
+  `wp-codebox/runtime-task-result/v1`;
   `methods` exposes stable references to the existing browser runtime helpers for
   callers that need legacy raw results internally. TypeScript consumers outside
   the browser can use the matching DTO helpers exported from

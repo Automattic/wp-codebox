@@ -2,6 +2,7 @@ import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROB
 import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA } from "./wordpress-page-load-contracts.js"
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
+import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
@@ -623,6 +624,39 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed for writes unless options.allowWrites=true or options.dryRun=true.",
     recipe: true,
     handler: { kind: "playground", method: "runCrudOperation" },
+  },
+  {
+    id: "wordpress.block-render",
+    description: "Render a registered WordPress block in-process through core block parsing/rendering APIs and return bounded output, diagnostics, errors, and performance observations for fuzz coverage.",
+    acceptedArgs: [
+      { name: "block-name", description: "Registered block name such as core/paragraph.", required: true, format: "block slug" },
+      { name: "attrs-json", description: "Optional block attributes JSON object.", format: "JSON object" },
+      { name: "content", description: "Optional inner block content used when markup is not supplied.", format: "string" },
+      { name: "markup", description: "Optional full serialized block markup to parse/render instead of generating markup from block-name, attrs-json, and content.", format: "string" },
+      { name: "source", description: "Optional caller source tag recorded in the result.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-block-exercise-result/v1 JSON with block name, attrs, render status, errors/notices, output excerpt/hash, mode/source, artifacts, artifactRefs, and performance observation fields.",
+    outputSchema: { id: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA, jsonSchema: WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA },
+    policyRequirement: "Runtime policy commands must include wordpress.block-render.",
+    recipe: true,
+    handler: { kind: "playground", method: "runBlockRender" },
+  },
+  {
+    id: "wordpress.block-exercise",
+    description: "Exercise a registered WordPress block using product-neutral modes for server render, serialize/parse validation, or a capability-gated editor insert/save path.",
+    acceptedArgs: [
+      { name: "block-name", description: "Registered block name such as core/paragraph.", required: true, format: "block slug" },
+      { name: "attrs-json", description: "Optional block attributes JSON object.", format: "JSON object" },
+      { name: "content", description: "Optional inner block content used when markup is not supplied.", format: "string" },
+      { name: "markup", description: "Optional full serialized block markup to parse/render instead of generating markup from block-name, attrs-json, and content.", format: "string" },
+      { name: "mode", description: "Exercise mode. Defaults to render; supports render, serialize-parse, and editor-insert-save.", format: "render|serialize-parse|editor-insert-save" },
+      { name: "source", description: "Optional caller source tag recorded in the result.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-block-exercise-result/v1 JSON with block name, attrs/input, render or validation status, errors/notices, output excerpt/hash, mode/source, artifacts, artifactRefs, and performance observation fields where available. Editor insert/save returns status=unsupported unless a browser/editor backend implements it.",
+    outputSchema: { id: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA, jsonSchema: WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA },
+    policyRequirement: "Runtime policy commands must include wordpress.block-exercise. Editor insert/save mode also requires browser/editor runtime capability.",
+    recipe: true,
+    handler: { kind: "playground", method: "runBlockExercise" },
   },
   {
     id: "wordpress.db-operation",

@@ -2,7 +2,7 @@ import { routeCliCommand } from "./command-router.js"
 import { runArtifactsApplyPreflightCommand, runArtifactsBenchmarkCommand, runArtifactsBrowserMetricsCommand, runArtifactsDiagnosticsCommand, runArtifactsDiscoverPartialCommand, runArtifactsExportLinksCommand, runArtifactsTransferProbesCommand, runArtifactsTransferVerifyCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runAgentTaskRunCommand } from "./commands/agent-task-run.js"
 import { runArtifactsBenchCompareCommand, runArtifactsBenchResultsCommand, runBenchCompareCommand, runBenchMatrixCommand, runBenchSummarizeCommand } from "./commands/benchmark.js"
-import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
+import { runCommandsCommand, runRecipeSchemaCommand, runRuntimeDescriptorCommand } from "./commands/discovery.js"
 import { runCleanupCommand, runDoctorCommand } from "./commands/doctor.js"
 import { runRecipeBuildCommand } from "./commands/recipe-build.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
@@ -50,6 +50,7 @@ export async function runCli(args: string[]): Promise<number> {
     previewLeaseRelease: runPreviewLeaseReleaseCommand,
     targetProvision: runTargetProvisionCommand,
     mcpRenderClientConfigs: runMcpRenderClientConfigsCommand,
+    runtimeDescriptor: runRuntimeDescriptorCommand,
     commands: runCommandsCommand,
     recipeSchema: runRecipeSchemaCommand,
     doctor: runDoctorCommand,

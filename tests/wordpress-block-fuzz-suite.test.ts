@@ -41,23 +41,21 @@ assert.deepEqual(suite.metadata?.requiredRunnerCapabilities, {
   capabilities: ["target:runtime", "runtime", "runtime-action:editor_open"],
   targetKinds: ["runtime"],
   runtimeActionTypes: ["editor_open"],
-  commands: ["wordpress.run-php", "wordpress.editor-open"],
+  commands: ["wordpress.block-render", "wordpress.block-exercise"],
 })
 
 const renderCase = suite.cases[0]
-assert.deepEqual(renderCase?.target, { kind: "runtime", entrypoint: "wordpress.run-php" })
-assert.deepEqual((renderCase?.input as { args: string[] }).args[1], "bootstrap=wordpress")
-assert.match((renderCase?.input as { args: string[] }).args[0] ?? "", /render_block/)
-assert.match((renderCase?.input as { args: string[] }).args[0] ?? "", /Hello/)
+assert.deepEqual(renderCase?.target, { kind: "runtime", entrypoint: "wordpress.block-render" })
+assert.deepEqual((renderCase?.input as { args: string[] }).args, ["block-name=core/paragraph", 'attrs-json={"content":"Hello","dropCap":true,"align":"wide"}', "source=wordpress-block-fuzz-suite"])
 assert.deepEqual(renderCase?.metadata?.samples, { attributes: { content: "Hello", dropCap: true, align: "wide" } })
 
 const editorCase = suite.cases[1]
-assert.deepEqual(editorCase?.target, { kind: "runtime", entrypoint: "wordpress.editor-actions" })
+assert.deepEqual(editorCase?.target, { kind: "runtime", entrypoint: "wordpress.block-exercise" })
 assert.deepEqual((editorCase?.input as { args: string[] }).args, [
-  "target=post-new",
-  "post-type=page",
-  'steps-json=[{"kind":"insertBlock","name":"core/paragraph","attributes":{"content":"Hello","dropCap":true,"align":"wide"}},{"kind":"inspectState"}]',
-  "capture=editor-state,editor-validity,errors",
+  "block-name=core/paragraph",
+  'attrs-json={"content":"Hello","dropCap":true,"align":"wide"}',
+  "mode=editor-insert-save",
+  "source=wordpress-block-fuzz-suite",
 ])
 assert.deepEqual(editorCase?.metadata?.samples, { attributes: { content: "Hello", dropCap: true, align: "wide" }, editorPostType: "page" })
 
@@ -72,7 +70,7 @@ assert.deepEqual(renderOnly.cases.map((fuzzCase) => fuzzCase.id), [
 assert.deepEqual(renderOnly.metadata?.requiredRunnerCapabilities, {
   capabilities: ["target:runtime", "runtime"],
   targetKinds: ["runtime"],
-  commands: ["wordpress.run-php"],
+  commands: ["wordpress.block-render"],
 })
 
 const noEditorTargets = wordpressBlockDiscoveryToFuzzSuite({ ...discovery, editorPostTypes: [] })

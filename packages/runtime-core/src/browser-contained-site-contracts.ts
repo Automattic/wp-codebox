@@ -6,6 +6,13 @@ export const BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA = "wp-codebox/browser-contai
 export const BROWSER_CONTAINED_SITE_EXPORT_SCHEMA = "wp-codebox/browser-contained-site-export/v1" as const
 export const BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA = "wp-codebox/browser-contained-site-apply-plan/v1" as const
 export const BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA = "wp-codebox/browser-contained-site-apply-result/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA = "wp-codebox/browser-contained-site-sync-delegation/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_SOURCE_SCHEMA = "wp-codebox/browser-contained-site-sync-source/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_MANIFEST_SCHEMA = "wp-codebox/browser-contained-site-sync-manifest/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA = "wp-codebox/browser-contained-site-sync-export/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_APPLY_PLAN_SCHEMA = "wp-codebox/browser-contained-site-sync-apply-plan/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_VALIDATION_SCHEMA = "wp-codebox/browser-contained-site-sync-validation/v1" as const
+export const BROWSER_CONTAINED_SITE_SYNC_APPLY_RESULT_SCHEMA = "wp-codebox/browser-contained-site-sync-apply-result/v1" as const
 export const BROWSER_CONTAINED_SITE_PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
 export const STARTUP_DIAGNOSTICS_SCHEMA = "wp-codebox/browser-contained-site-startup-diagnostics/v1" as const
 
@@ -148,6 +155,38 @@ export interface BrowserContainedSiteApplyResultContract {
   source_digest?: BrowserDigestRef
   result?: Record<string, unknown>
   error?: BrowserContainedSiteValidationError
+}
+
+export interface BrowserContainedSiteSyncDelegationContract {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA
+  status: "available" | "unavailable" | string
+  backend?: Record<string, unknown>
+  contained_site?: BrowserContainedSite
+  source_digest?: BrowserDigestRef
+  routes: {
+    source_connect?: string
+    manifest: string
+    export: string
+    apply_plan_generate?: string
+    apply_plan_validate?: string
+    apply?: string
+  }
+  abilities?: Record<string, string>
+}
+
+export interface BrowserContainedSiteSyncEnvelope {
+  success: boolean
+  schema: typeof BROWSER_CONTAINED_SITE_SYNC_SOURCE_SCHEMA | typeof BROWSER_CONTAINED_SITE_SYNC_MANIFEST_SCHEMA | typeof BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA | typeof BROWSER_CONTAINED_SITE_SYNC_APPLY_PLAN_SCHEMA | typeof BROWSER_CONTAINED_SITE_SYNC_VALIDATION_SCHEMA | typeof BROWSER_CONTAINED_SITE_SYNC_APPLY_RESULT_SCHEMA
+  status: "available" | "unavailable" | string
+  operation: "source_connect" | "manifest" | "export" | "apply_plan_generate" | "apply_plan_validate" | "apply" | string
+  source?: Record<string, unknown> | null
+  manifest?: Record<string, unknown> | null
+  package?: Record<string, unknown> | null
+  apply_plan?: Record<string, unknown> | null
+  validation?: Record<string, unknown> | null
+  validation_hash?: string
+  result?: Record<string, unknown> | null
 }
 
 export function browserContainedSiteRecoveryInput(site: BrowserContainedSite): Record<string, unknown> {

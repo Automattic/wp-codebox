@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_ACCESS_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, normalizeRuntimeAccess, normalizeRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_ACCESS_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, normalizeRuntimeAccess, normalizeRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
@@ -129,6 +129,35 @@ const publicRuntimeAccess = normalizeRuntimeAccess({
 assert.equal(publicRuntimeAccess.preview_url, "https://review.example.test/")
 assert.equal(publicRuntimeAccess.local_url, "http://127.0.0.1:9400/")
 
+const containedSiteSyncDelegation = {
+  success: true,
+  schema: BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA,
+  status: "available",
+  routes: {
+    source_connect: "/wp-codebox/v1/browser-contained-site-sync/source-connect",
+    manifest: "/wp-codebox/v1/browser-contained-site-sync/manifest",
+    export: "/wp-codebox/v1/browser-contained-site-sync/export",
+    apply_plan_generate: "/wp-codebox/v1/browser-contained-site-sync/apply-plan/generate",
+    apply_plan_validate: "/wp-codebox/v1/browser-contained-site-sync/apply-plan/validate",
+    apply: "/wp-codebox/v1/browser-contained-site-sync/apply",
+  },
+  abilities: {
+    manifest: "wp-codebox/browser-contained-site-sync-manifest",
+    export: "wp-codebox/browser-contained-site-sync-export",
+  },
+}
+assert.equal(containedSiteSyncDelegation.schema, "wp-codebox/browser-contained-site-sync-delegation/v1")
+assert.equal(containedSiteSyncDelegation.routes.export, "/wp-codebox/v1/browser-contained-site-sync/export")
+
+const containedSiteSyncExport = {
+  success: true,
+  schema: BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA,
+  status: "available",
+  operation: "export",
+  package: { schema: "backend-package/v1", descriptor: { bootable: true } },
+}
+assert.equal(containedSiteSyncExport.schema, "wp-codebox/browser-contained-site-sync-export/v1")
+
 const containedSiteStatus = browserContainedSiteStatus({
   schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
   success: true,
@@ -168,7 +197,7 @@ assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components:
 assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /public_url/)
 assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable_prepared_runtime", source_digest: { value: "bad" } }), /source_digest/)
 
-const publicContractEnvelopes = [profile, lease, runtimeAccess, containedSiteStatus, containedSiteOpen]
+const publicContractEnvelopes = [profile, lease, runtimeAccess, containedSiteStatus, containedSiteOpen, containedSiteSyncDelegation, containedSiteSyncExport]
 const forbiddenPublicContractTerms = [
   /data[-_ ]?machine/i,
   /datamachine/i,

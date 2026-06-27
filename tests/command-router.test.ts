@@ -38,6 +38,10 @@ const router = {
   runsCancel: async () => 0,
   targetProvision: async () => 0,
   mcpRenderClientConfigs: async () => 0,
+  runtimeDescriptor: async (args: string[]) => {
+    calls.push(`runtimeDescriptor:${args.join(" ")}`)
+    return 3
+  },
   commands: async () => 0,
   recipeSchema: async () => 0,
   doctor: async () => 0,
@@ -49,5 +53,10 @@ const exitCode = await routeCliCommand(["run-agent-task", "--input-file", "task.
 
 assert.equal(exitCode, 7)
 assert.deepEqual(calls, ["agentTaskRun:--input-file task.json --json"])
+
+const runtimeDescriptorExitCode = await routeCliCommand(["runtime", "descriptor", "--json"], router)
+
+assert.equal(runtimeDescriptorExitCode, 3)
+assert.deepEqual(calls, ["agentTaskRun:--input-file task.json --json", "runtimeDescriptor:--json"])
 
 console.log("command-router contract passed")

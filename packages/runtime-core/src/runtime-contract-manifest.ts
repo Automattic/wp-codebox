@@ -27,8 +27,9 @@ import {
 } from "./runner-workspace-publication.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
+import { WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
-import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA } from "./browser-contained-site-contracts.js"
+import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_MANIFEST_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_SOURCE_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_VALIDATION_SCHEMA } from "./browser-contained-site-contracts.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/v1" as const
@@ -38,6 +39,19 @@ export const CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY = "wp-codebox/run-agent-task-b
 export const CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY = "wp-codebox/run-agent-task-fanout" as const
 export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-workload" as const
 export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
+export const CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY = "wp-codebox/resolve-runtime-requirements" as const
+export const RUNTIME_DESCRIPTOR_SCHEMA = "wp-codebox/runtime-descriptor/v1" as const
+
+export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
+  "agent-task:run",
+  "agent-task:batch",
+  "agent-task:fanout",
+  "runtime-package:run",
+  "runtime-requirements:resolve",
+  "wordpress-runtime:workload",
+  "wordpress-runtime:fuzz-suite",
+  "contract-manifest:read",
+] as const
 
 export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   agentTask: {
@@ -47,6 +61,9 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   },
   runtimePackage: {
     run: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
+  },
+  runtimeRequirements: {
+    resolve: CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY,
   },
   wordpressRuntime: {
     runWorkload: CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
@@ -80,6 +97,13 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     containedSiteExport: BROWSER_CONTAINED_SITE_EXPORT_SCHEMA,
     containedSiteApplyPlan: BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA,
     containedSiteApplyResult: BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA,
+    containedSiteSyncDelegation: BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA,
+    containedSiteSyncSource: BROWSER_CONTAINED_SITE_SYNC_SOURCE_SCHEMA,
+    containedSiteSyncManifest: BROWSER_CONTAINED_SITE_SYNC_MANIFEST_SCHEMA,
+    containedSiteSyncExport: BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA,
+    containedSiteSyncApplyPlan: BROWSER_CONTAINED_SITE_SYNC_APPLY_PLAN_SCHEMA,
+    containedSiteSyncValidation: BROWSER_CONTAINED_SITE_SYNC_VALIDATION_SCHEMA,
+    containedSiteSyncApplyResult: BROWSER_CONTAINED_SITE_SYNC_APPLY_RESULT_SCHEMA,
   },
   preview: {
     lease: PREVIEW_LEASE_SCHEMA,
@@ -167,6 +191,7 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     fuzzCoveragePlan: FUZZ_COVERAGE_PLAN_SCHEMA,
     fuzzSuite: FUZZ_SUITE_SCHEMA,
     fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
+    blockExerciseResult: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
   },
 } as const
 
@@ -181,6 +206,23 @@ export interface RuntimeContractManifest {
   providerRuntime: ReturnType<typeof providerRuntimeInvocationContract>
 }
 
+export interface RuntimeDescriptor {
+  schema: typeof RUNTIME_DESCRIPTOR_SCHEMA
+  version: 1
+  runtime: {
+    id: "wp-codebox"
+    name: "WP Codebox"
+  }
+  readiness: {
+    status: "available"
+    publicApi: true
+    contractManifest: true
+  }
+  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
+  abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  contractManifest: RuntimeContractManifest
+}
+
 export function runtimeContractManifest(): RuntimeContractManifest {
   return {
     schema: RUNTIME_CONTRACT_MANIFEST_SCHEMA,
@@ -188,6 +230,25 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     schemas: RUNTIME_CONTRACT_SCHEMAS,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
     providerRuntime: providerRuntimeInvocationContract(),
+  }
+}
+
+export function runtimeDescriptor(): RuntimeDescriptor {
+  return {
+    schema: RUNTIME_DESCRIPTOR_SCHEMA,
+    version: 1,
+    runtime: {
+      id: "wp-codebox",
+      name: "WP Codebox",
+    },
+    readiness: {
+      status: "available",
+      publicApi: true,
+      contractManifest: true,
+    },
+    capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    contractManifest: runtimeContractManifest(),
   }
 }
 

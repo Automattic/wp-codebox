@@ -88,10 +88,9 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
     }
   }
 
-  const response = await server.playground.run({ code: hostMountWritePhp(files) })
-  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
-  const materialized = parsed.materialized ?? 0
-  const totalSkipped = skipped + (parsed.skipped ?? 0)
+  const materializedByPersistentWriter = await materializeHostMountFilesWithPersistentWriter(server, files)
+  const materialized = materializedByPersistentWriter?.materialized ?? 0
+  const totalSkipped = skipped + (materializedByPersistentWriter?.skipped ?? 0)
   return {
     materialized,
     deleted: 0,
@@ -101,6 +100,52 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
       status: materialized > 0 ? "completed" : "skipped",
       metadata: { materialized, deleted: 0, skipped: totalSkipped },
     }),
+  }
+}
+
+async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number } | undefined> {
+  if (!server.playground.writeFile) {
+    return materializeHostMountFilesWithPhp(server, files)
+  }
+
+  const directories = [...new Set(files.map((file) => dirname(file.target.trim())).filter((directory) => directory && directory !== "."))]
+  const directoryResult = await createHostMountDirectories(server, directories)
+  let materialized = 0
+  let skipped = directoryResult.skipped
+  for (const file of files) {
+    const target = file.target.trim()
+    if (!target || target.includes("\0")) {
+      skipped++
+      continue
+    }
+    try {
+      await server.playground.writeFile(target, Buffer.from(file.contentsBase64, "base64").toString("utf8"))
+      materialized++
+    } catch {
+      skipped++
+    }
+  }
+  return { materialized, skipped }
+}
+
+async function createHostMountDirectories(server: PlaygroundCliServer, directories: string[]): Promise<{ created: number; skipped: number }> {
+  if (directories.length === 0) {
+    return { created: 0, skipped: 0 }
+  }
+  const response = await server.playground.run({ code: hostMountMkdirPhp(directories) })
+  const parsed = JSON.parse(response.text || "{}") as { created?: number; skipped?: number }
+  return {
+    created: parsed.created ?? 0,
+    skipped: parsed.skipped ?? 0,
+  }
+}
+
+async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number }> {
+  const response = await server.playground.run({ code: hostMountWritePhp(files) })
+  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
+  return {
+    materialized: parsed.materialized ?? 0,
+    skipped: parsed.skipped ?? 0,
   }
 }
 
@@ -124,8 +169,6 @@ export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: Vfs
       present.add(file.relativePath)
       writableFiles.push(file)
     }
-    const existing = await hostFileHashes(mount.source)
-
     for (const file of writableFiles) {
       if (file.contentsBase64 === undefined) {
         continue
@@ -140,17 +183,20 @@ export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: Vfs
       result.materialized++
     }
 
-    for (const relativePath of Object.keys(existing)) {
-      if (present.has(relativePath)) {
-        continue
+    if (mount.metadata && typeof mount.metadata === "object" && !Array.isArray(mount.metadata) && (mount.metadata as { materializeDeletes?: unknown }).materializeDeletes === true) {
+      const existing = await hostFileHashes(mount.source)
+      for (const relativePath of Object.keys(existing)) {
+        if (present.has(relativePath)) {
+          continue
+        }
+        const hostPath = containedHostPath(mount.source, relativePath)
+        if (!hostPath) {
+          result.skipped++
+          continue
+        }
+        await rm(hostPath, { force: true })
+        result.deleted++
       }
-      const hostPath = containedHostPath(mount.source, relativePath)
-      if (!hostPath) {
-        result.skipped++
-        continue
-      }
-      await rm(hostPath, { force: true })
-      result.deleted++
     }
   }
 
@@ -272,6 +318,28 @@ foreach (($payload['files'] ?? array()) as $file) {
     $materialized++;
 }
 echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function hostMountMkdirPhp(directories: string[]): string {
+  const payload = JSON.stringify(JSON.stringify({ directories }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$created = 0;
+$skipped = 0;
+foreach (($payload['directories'] ?? array()) as $directory) {
+    $directory = (string) $directory;
+    if ('' === $directory || str_contains($directory, "\0")) {
+        $skipped++;
+        continue;
+    }
+    if (is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory)) {
+        $created++;
+        continue;
+    }
+    $skipped++;
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-directory-materialization/v1', 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
 `
 }
 

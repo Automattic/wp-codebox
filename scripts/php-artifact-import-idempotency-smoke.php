@@ -132,6 +132,12 @@ try {
 	expect( 'generic-replay-fixture' === $get['artifact']['id'], 'Expected readable generic artifact id.' );
 	expect( 'generic-replay-package' === $get['artifact']['metadata']['kind'], 'Expected readable generic metadata.' );
 	expect( 'files/runtime-snapshot.json' === $get['artifact']['manifest']['files'][1]['path'], 'Expected generic replay bundle manifest paths to remain readable.' );
+
+	$inspect = $artifacts->inspect( array( 'artifacts_path' => $store, 'artifact_id' => 'generic-replay-fixture', 'wp_codebox_bin' => $verifier ) );
+	expect( ! is_wp_error( $inspect ), 'Expected generic imported artifact to be inspectable: ' . ( is_wp_error( $inspect ) ? $inspect->get_error_message() : '' ) );
+	expect( 'wp-codebox/artifact-inspection/v1' === $inspect['schema'], 'Expected inspect artifact schema.' );
+	expect( 'generic-replay-fixture' === $inspect['artifact']['id'], 'Expected inspect artifact id.' );
+	expect( true === $inspect['verification']['valid'], 'Expected inspect verification payload.' );
 } finally {
 	remove_tree( $root );
 }

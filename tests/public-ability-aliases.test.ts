@@ -30,6 +30,11 @@ for (const canonical of ["wp-codebox/create-browser-playground-session", "wp-cod
   assert.match(descriptorsPhp, new RegExp(`'${canonical}'\\s*=>\\s*array\\(`))
 }
 
+for (const artifactAbility of ["wp-codebox/list-artifacts", "wp-codebox/get-artifact", "wp-codebox/inspect-artifact"]) {
+  assert.match(descriptorsPhp, new RegExp(`'${artifactAbility}'\\s*=>\\s*array\\(`))
+  assert.match(apiPhp, new RegExp(`'${artifactAbility}'|ABILITY_[A-Z_]+\\s*=\\s*'${artifactAbility}'`))
+}
+
 for (const removedAlias of ["wp-codebox/create-sandbox-session", "wp-codebox/create-task-contract", "wp-codebox/open-contained-runtime"]) {
   assert.doesNotMatch(descriptorsPhp, new RegExp(`'${removedAlias}'\\s*=>`))
   assert.doesNotMatch(apiPhp, new RegExp(`'${removedAlias}'\\s*=>`))

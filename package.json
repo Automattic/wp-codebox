@@ -174,6 +174,7 @@
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
     "test:runtime-command-result-envelope": "tsx tests/runtime-command-result-envelope.test.ts",
     "test:wordpress-runtime-discovery-contracts": "tsx tests/wordpress-runtime-discovery-contracts.test.ts",
+    "test:wordpress-runtime-discovery-coverage-plan": "tsx tests/wordpress-runtime-discovery-coverage-plan.test.ts",
     "test:wordpress-block-fuzz-suite": "tsx tests/wordpress-block-fuzz-suite.test.ts",
     "test:runtime-package-execution": "tsx tests/runtime-package-execution.test.ts",
     "test:public-ability-aliases": "tsx tests/public-ability-aliases.test.ts",

@@ -24,6 +24,7 @@ metadata exposes `meta.canonical_ability` for aliases.
 - `wp-codebox/publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
+- `wp-codebox/inspect-artifact`
 - `wp-codebox/discard-artifact`
 - `wp-codebox/review-artifact`
 - `wp-codebox/apply-artifact-preflight`
@@ -51,6 +52,7 @@ the same service layer as the `wp-codebox/*` ability and WP-CLI surfaces:
 - `WP_Codebox_API::open_or_create_browser_session( $input )`
 - `WP_Codebox_API::list_artifacts( $input )`
 - `WP_Codebox_API::get_artifact( $input )`
+- `WP_Codebox_API::inspect_artifact( $input )`
 - `WP_Codebox_API::preflight_artifact_apply( $input )`
 - `WP_Codebox_API::stage_artifact_apply( $input )`
 - `WP_Codebox_API::apply_approved_artifact( $input )`
@@ -246,9 +248,12 @@ Browser hosts that produce files outside the sandbox should use
 `persist-browser-artifact` to store browser-produced files as a canonical WP
 Codebox artifact bundle, and `import-artifact-bundle` or
 `reimport-artifact-bundle` to rehydrate an existing bundle into the configured
-artifact store. WP Codebox preserves caller metadata and returns artifact result
-envelopes; the caller owns product interpretation, review state, and apply
-decisions.
+artifact store. Consumers that need to read or verify a stored bundle should use
+`inspect-artifact` or `WP_Codebox_API::inspect_artifact()`; the response includes
+the Codebox-owned artifact DTO and verification payload, so callers do not need
+to know the on-disk artifact layout. WP Codebox preserves caller metadata and
+returns artifact result envelopes; the caller owns product interpretation,
+review state, and apply decisions.
 
 Browser-contained preview consumers can call `preview-reuse-decision` before
 opening a preview. It returns an explicit `action` such as `hydrate-ref` or
@@ -290,6 +295,7 @@ by Abilities:
 
 - `wp codebox artifacts list --format=json`
 - `wp codebox artifacts get <artifact_id> --format=json`
+- `wp codebox artifacts inspect <artifact_id> --format=json`
 - `wp codebox artifacts stage-apply <artifact_id> --approved-files='/path.php' --format=json`
 - `wp codebox artifacts apply <artifact_id> --approved-files='/path.php' --format=json`
 - `wp codebox browser-session create --goal='Prepare a browser sandbox' --format=json`
