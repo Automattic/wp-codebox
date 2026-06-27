@@ -417,7 +417,7 @@ export const commandRegistry = [
       { name: "hook-sample-limit", description: "Maximum hook hotspot rows to include; defaults to 50.", format: "non-negative integer" },
       { name: "hook-limit", description: "Maximum distinct hooks tracked before truncation; defaults to 500.", format: "positive integer" },
     ],
-    outputShape: "wp-codebox/performance-observation/v1 JSON with source=in-process, kind=rest-request, timing/memory, database query fingerprints when $wpdb->queries is available, and hook hotspot samples captured through the all hook.",
+    outputShape: "wp-codebox/performance-observation/v1 JSON with source=in-process, kind=rest-request, timing/memory, database query fingerprints captured through the bounded query recorder, and hook hotspot samples captured through the all hook.",
     outputSchema: objectEnvelopeSchema(PERFORMANCE_OBSERVATION_SCHEMA, {
       timing: { type: "object" },
       memory: { type: "object" },

@@ -5,6 +5,7 @@ import { runHttpRequest } from "../packages/runtime-playground/src/http-request-
 import { pageLoadPhpCode } from "../packages/runtime-playground/src/page-load-command-handlers.js"
 import { restPerformanceObservationInputFromArgs, restPerformanceObservationPhpCode } from "../packages/runtime-playground/src/performance-observation-command-handlers.js"
 import { restRequestPhpCode } from "../packages/runtime-playground/src/rest-request-command-handlers.js"
+import { runPhpJson } from "../scripts/test-kit.js"
 
 const observation = performanceObservation({
   command: "wordpress.rest-request",
@@ -64,7 +65,8 @@ assert.equal(restObservationInput.hookSampleLimit, 2)
 const restObservationCode = restPerformanceObservationPhpCode(restObservationInput)
 assert.match(restObservationCode, /'schema' => 'wp-codebox\/performance-observation\/v1'/)
 assert.match(restObservationCode, /'command' => 'wordpress.rest-performance-observation'/)
-assert.match(restObservationCode, /'database' => array\( 'status' => \$wp_codebox_queries_available \? 'captured' : 'uncaptured'/)
+assert.match(restObservationCode, /wp_codebox_query_recorder_start\( 'rest-performance-observation'/)
+assert.match(restObservationCode, /'database' => array\( 'status' => \$wp_codebox_query_capture_status/)
 assert.match(restObservationCode, /'hooks' => array\( 'status' => 'captured'/)
 assert.match(restObservationCode, /add_filter\( 'all', \$wp_codebox_hook_sampler, PHP_INT_MIN, 0 \)/)
 
@@ -80,17 +82,49 @@ const pageLoadCode = pageLoadPhpCode({
 assert.match(pageLoadCode, /'timing' => array\('status' => 'captured'/)
 assert.match(pageLoadCode, /'mode' => 'simulated'/)
 assert.match(pageLoadCode, /'memory' => array\('status' => 'captured'/)
-assert.match(pageLoadCode, /'status' => \$wp_codebox_page_load_queries_available \? 'captured' : 'uncaptured'/)
+assert.match(pageLoadCode, /wp_codebox_query_recorder_start\('page-load'/)
+assert.match(pageLoadCode, /'status' => \$wp_codebox_page_load_query_capture_status/)
 assert.match(pageLoadCode, /'reason' => 'hook_timing_not_instrumented'/)
 assert.match(pageLoadCode, /'reason' => 'not_a_browser_observation'/)
 assert.match(pageLoadCode, /'metadata' => array\('runner' => 'wp-codebox\/runtime-playground'/)
 
-const restCode = restRequestPhpCode({ method: "GET", path: "/wp/v2/posts", headers: {}, params: {}, body: "" })
+const restCode = restRequestPhpCode({ method: "GET", path: "/wp/v2/posts", headers: {}, params: {}, body: "", capture: {} })
 assert.match(restCode, /'timing' => array\(\n        'status' => 'captured'/)
 assert.match(restCode, /'memory' => array\(\n        'status' => 'captured'/)
-assert.match(restCode, /'status' => \$wp_codebox_queries_available \? 'captured' : 'uncaptured'/)
-assert.match(restCode, /'reason' => \$wp_codebox_queries_available \? null : 'wpdb_queries_unavailable'/)
+assert.match(restCode, /wp_codebox_query_recorder_start\( 'rest-request'/)
+assert.match(restCode, /'status' => \$wp_codebox_query_capture_status/)
 assert.match(restCode, /'network' => array\( 'status' => 'unsupported', 'reason' => 'in_process_rest_request' \)/)
+
+const capturedRestCode = restRequestPhpCode({ method: "GET", path: "/wp/v2/posts", headers: {}, params: {}, body: "", capture: { queries: true } })
+const capturedRest = await runPhpJson<any>(`
+$GLOBALS['wp_codebox_test_filters'] = array();
+function add_filter( $hook, $callback, $priority = 10, $accepted_args = 1 ) { $GLOBALS['wp_codebox_test_filters'][ $hook ][] = $callback; }
+function remove_filter( $hook, $callback, $priority = 10 ) { $GLOBALS['wp_codebox_test_filters'][ $hook ] = array_values( array_filter( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array(), static fn( $item ) => $item !== $callback ) ); }
+function apply_filters( $hook, $value ) { foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $callback ) { $value = $callback( $value ); } return $value; }
+class WP_REST_Request { public string $method; public string $route; public array $params = array(); public function __construct( $method, $route ) { $this->method = $method; $this->route = $route; } public function set_header( $name, $value ) {} public function set_param( $name, $value ) { $this->params[ $name ] = $value; } public function has_param( $name ) { return array_key_exists( $name, $this->params ); } public function set_body( $body ) {} }
+class WP_Codebox_Test_REST_Response { public function get_status() { return 200; } public function get_headers() { return array(); } public function get_data() { return array( 'ok' => true ); } }
+function rest_do_request( $request ) { apply_filters( 'query', 'SELECT * FROM wp_posts WHERE ID = 123' ); apply_filters( 'query', 'SELECT * FROM wp_posts WHERE ID = 456' ); return new WP_Codebox_Test_REST_Response(); }
+function rest_get_server() { return new class { public function response_to_data( $response, $embed ) { return $response->get_data(); } }; }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+${capturedRestCode}
+`)
+assert.equal(capturedRest.performance.database.status, "captured")
+assert.equal(capturedRest.performance.database.queryCount, 2)
+assert.equal(capturedRest.performance.database.fingerprints[0].fingerprint, "select * from wp_posts where id = ?")
+assert.equal(capturedRest.performance.database.fingerprints[0].count, 2)
+assert.equal(capturedRest.performance.database.repeatedQueries[0].count, 2)
+
+const unavailableObservationCode = restPerformanceObservationPhpCode(restPerformanceObservationInputFromArgs(["path=/wp/v2/posts", "capture-queries=true"]))
+const unavailableObservation = await runPhpJson<any>(`
+class WP_REST_Request { public function __construct( $method, $route ) {} public function set_param( $name, $value ) {} }
+class WP_Codebox_Test_REST_Response { public function get_status() { return 200; } }
+function rest_do_request( $request ) { return new WP_Codebox_Test_REST_Response(); }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+${unavailableObservationCode}
+`)
+assert.equal(unavailableObservation.database.status, "unavailable")
+assert.equal(unavailableObservation.database.reason, "wordpress_filter_api_unavailable")
+assert.equal(unavailableObservation.database.queryCount, 0)
 
 const previousFetch = globalThis.fetch
 globalThis.fetch = async () =>

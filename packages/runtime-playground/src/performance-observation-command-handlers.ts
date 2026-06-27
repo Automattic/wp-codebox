@@ -1,4 +1,5 @@
 import { argValue, booleanArg, jsonObjectArg, nonNegativeIntegerArg, positiveIntegerArg } from "./command-args.js"
+import { wordpressQueryRecorderPhp } from "./query-recorder.js"
 import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 
 export interface RestPerformanceObservationInput {
@@ -34,20 +35,21 @@ export function restPerformanceObservationInputFromArgs(args: string[]): RestPer
 export function restPerformanceObservationPhpCode(input: RestPerformanceObservationInput): string {
   const userSessionMetadata = input.userSession?.metadata
   return `define( 'REST_REQUEST', true );
+${wordpressQueryRecorderPhp()}
 $wp_codebox_observation_started_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
 $wp_codebox_observation_start_time = microtime( true );
 $wp_codebox_observation_start_memory = memory_get_usage( true );
-$wp_codebox_query_start = isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries ) ? count( $GLOBALS['wpdb']->queries ) : 0;
 $wp_codebox_method = ${JSON.stringify(input.method)};
 $wp_codebox_path = ${JSON.stringify(input.path)};
 $wp_codebox_params = json_decode( ${JSON.stringify(JSON.stringify(input.params))}, true );
-$wp_codebox_capture = json_decode( ${JSON.stringify(JSON.stringify(input.capture))}, true );
+$wp_codebox_capture = json_decode( ${JSON.stringify(JSON.stringify(input.capture ?? {}))}, true );
 $wp_codebox_query_fingerprint_limit = ${input.queryFingerprintLimit};
 $wp_codebox_hook_sample_limit = ${input.hookSampleLimit};
 $wp_codebox_hook_limit = ${input.hookLimit};
 $wp_codebox_query_length_limit = ${input.queryLengthLimit};
 $wp_codebox_user_session = json_decode( ${JSON.stringify(JSON.stringify(userSessionMetadata ?? null))}, true );
 $wp_codebox_capture_queries_requested = is_array( $wp_codebox_capture ) && array_key_exists( 'queries', $wp_codebox_capture ) ? (bool) $wp_codebox_capture['queries'] : true;
+$wp_codebox_query_recorder_start = $wp_codebox_capture_queries_requested ? wp_codebox_query_recorder_start( 'rest-performance-observation', $wp_codebox_query_fingerprint_limit, $wp_codebox_query_length_limit ) : array( 'status' => 'uncaptured', 'reason' => 'query_capture_not_requested' );
 
 if ( ! class_exists( 'WP_REST_Request' ) || ! function_exists( 'rest_do_request' ) ) {
     throw new RuntimeException( 'The WordPress REST API is not available in this runtime.' );
@@ -108,42 +110,13 @@ try {
 $wp_codebox_finished_at = microtime( true );
 $wp_codebox_observation_finished_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
 $wp_codebox_end_memory = memory_get_usage( true );
-$wp_codebox_queries_available = $wp_codebox_capture_queries_requested && isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries );
-$wp_codebox_query_groups = array();
-$wp_codebox_query_count = 0;
-$wp_codebox_query_total_ms = 0.0;
-if ( $wp_codebox_queries_available ) {
-    foreach ( array_slice( $GLOBALS['wpdb']->queries, $wp_codebox_query_start ) as $wp_codebox_query ) {
-        $wp_codebox_sql = is_array( $wp_codebox_query ) && isset( $wp_codebox_query[0] ) ? (string) $wp_codebox_query[0] : '';
-        if ( '' === $wp_codebox_sql ) {
-            continue;
-        }
-        ++$wp_codebox_query_count;
-        $wp_codebox_elapsed_ms = is_array( $wp_codebox_query ) && isset( $wp_codebox_query[1] ) ? round( ( (float) $wp_codebox_query[1] ) * 1000, 3 ) : null;
-        if ( null !== $wp_codebox_elapsed_ms ) {
-            $wp_codebox_query_total_ms += $wp_codebox_elapsed_ms;
-        }
-        $wp_codebox_fingerprint = preg_replace( '/\/\*.*?\*\//s', '/* ? */', $wp_codebox_sql );
-        $wp_codebox_fingerprint = preg_replace( "/'(?:''|[^'])*'/", "'?'", is_string( $wp_codebox_fingerprint ) ? $wp_codebox_fingerprint : $wp_codebox_sql );
-        $wp_codebox_fingerprint = preg_replace( '/\"(?:\"\"|[^\"])*\"/', '\"?\"', is_string( $wp_codebox_fingerprint ) ? $wp_codebox_fingerprint : $wp_codebox_sql );
-        $wp_codebox_fingerprint = preg_replace( '/\\b[-+]?\\d+(?:\\.\\d+)?(?:e[-+]?\\d+)?\\b/i', '?', is_string( $wp_codebox_fingerprint ) ? $wp_codebox_fingerprint : $wp_codebox_sql );
-        $wp_codebox_fingerprint = trim( (string) preg_replace( '/\\s+/', ' ', is_string( $wp_codebox_fingerprint ) ? $wp_codebox_fingerprint : $wp_codebox_sql ) );
-        $wp_codebox_key = hash( 'sha256', strtolower( $wp_codebox_fingerprint ) );
-        if ( ! isset( $wp_codebox_query_groups[ $wp_codebox_key ] ) ) {
-            $wp_codebox_query_groups[ $wp_codebox_key ] = array( 'fingerprint' => substr( strtolower( $wp_codebox_fingerprint ), 0, $wp_codebox_query_length_limit ), 'count' => 0, 'sampleMs' => $wp_codebox_elapsed_ms, 'totalTimeMs' => 0, 'caller' => is_array( $wp_codebox_query ) && isset( $wp_codebox_query[2] ) ? substr( (string) $wp_codebox_query[2], 0, 240 ) : null );
-        }
-        ++$wp_codebox_query_groups[ $wp_codebox_key ]['count'];
-        if ( null !== $wp_codebox_elapsed_ms ) {
-            $wp_codebox_query_groups[ $wp_codebox_key ]['totalTimeMs'] = round( $wp_codebox_query_groups[ $wp_codebox_key ]['totalTimeMs'] + $wp_codebox_elapsed_ms, 3 );
-        }
-    }
-}
-$wp_codebox_query_capture_status = $wp_codebox_capture_queries_requested ? ( $wp_codebox_queries_available ? 'captured' : 'unavailable' ) : 'uncaptured';
-$wp_codebox_query_capture_reason = $wp_codebox_capture_queries_requested ? ( $wp_codebox_queries_available ? null : 'wpdb_queries_unavailable' ) : 'query_capture_not_requested';
-$wp_codebox_fingerprints = array_values( $wp_codebox_query_groups );
-usort( $wp_codebox_fingerprints, static fn( $a, $b ) => ( (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 ) ) ?: strcmp( (string) ( $a['fingerprint'] ?? '' ), (string) ( $b['fingerprint'] ?? '' ) ) );
-$wp_codebox_fingerprints = array_slice( $wp_codebox_fingerprints, 0, $wp_codebox_query_fingerprint_limit );
-$wp_codebox_repeated_queries = array_values( array_filter( $wp_codebox_fingerprints, static fn( $query ) => isset( $query['count'] ) && $query['count'] > 1 ) );
+$wp_codebox_query_report = $wp_codebox_capture_queries_requested && ( $wp_codebox_query_recorder_start['status'] ?? null ) === 'captured' ? wp_codebox_query_recorder_report( 'rest-performance-observation' ) : array( 'status' => (string) ( $wp_codebox_query_recorder_start['status'] ?? 'unavailable' ), 'reason' => $wp_codebox_query_recorder_start['reason'] ?? 'query_recorder_unavailable', 'queryCount' => 0, 'totalTimeMs' => 0, 'fingerprints' => array(), 'repeatedQueries' => array() );
+$wp_codebox_query_capture_status = (string) ( $wp_codebox_query_report['status'] ?? 'unavailable' );
+$wp_codebox_query_capture_reason = $wp_codebox_query_report['reason'] ?? null;
+$wp_codebox_query_count = (int) ( $wp_codebox_query_report['queryCount'] ?? 0 );
+$wp_codebox_query_total_ms = (float) ( $wp_codebox_query_report['totalTimeMs'] ?? 0 );
+$wp_codebox_fingerprints = is_array( $wp_codebox_query_report['fingerprints'] ?? null ) ? $wp_codebox_query_report['fingerprints'] : array();
+$wp_codebox_repeated_queries = is_array( $wp_codebox_query_report['repeatedQueries'] ?? null ) ? $wp_codebox_query_report['repeatedQueries'] : array();
 
 $wp_codebox_hook_timings = array_values( array_map( static fn( $sample ) => array_filter( array( 'hook' => $sample['hook'], 'count' => (int) $sample['count'], 'totalTimeMs' => round( max( 0, ( (float) $sample['last'] - (float) $sample['first'] ) * 1000 ), 3 ), 'callbackCount' => (int) $sample['callbackCount'] ), static fn( $value ) => 0 !== $value && '' !== $value ), $wp_codebox_hook_samples ) );
 usort( $wp_codebox_hook_timings, static fn( $a, $b ) => ( (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 ) ) ?: strcmp( (string) ( $a['hook'] ?? '' ), (string) ( $b['hook'] ?? '' ) ) );
