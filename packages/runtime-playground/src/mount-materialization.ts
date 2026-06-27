@@ -29,6 +29,8 @@ export interface MountMaterializationResult {
   phaseResult: MaterializationPhaseResult
 }
 
+export type StagedInputMaterializationResult = MountMaterializationResult
+
 interface HostMountFilePayload {
   target: string
   contentsBase64: string
@@ -68,6 +70,10 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
 }
 
 export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
+  return await materializePlaygroundStagedInputs(server, mounts)
+}
+
+export async function materializePlaygroundStagedInputs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<StagedInputMaterializationResult> {
   const files: HostMountFilePayload[] = []
   let skipped = 0
   for (const mount of mounts) {
@@ -81,7 +87,7 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
       deleted: 0,
       skipped,
       phaseResult: materializationPhaseResult({
-        phase: "playground-host-mount-materialization",
+        phase: "playground-staged-input-materialization",
         status: "skipped",
         metadata: { materialized: 0, deleted: 0, skipped },
       }),
@@ -96,7 +102,7 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
     deleted: 0,
     skipped: totalSkipped,
     phaseResult: materializationPhaseResult({
-      phase: "playground-host-mount-materialization",
+      phase: "playground-staged-input-materialization",
       status: materialized > 0 ? "completed" : "skipped",
       metadata: { materialized, deleted: 0, skipped: totalSkipped },
     }),

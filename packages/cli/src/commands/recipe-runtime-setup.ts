@@ -177,7 +177,8 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
-  if (stagedFiles.length > 0 && typeof runtime.materializeMounts === "function") {
+  const materializeStagedInputs = runtime.materializeStagedInputs ?? runtime.materializeMounts
+  if (stagedFiles.length > 0 && typeof materializeStagedInputs === "function") {
     const stagedMounts = stagedFiles.map((stagedFile) => ({
       type: stagedFile.type,
       source: stagedFile.source,
@@ -185,7 +186,7 @@ export async function applyRecipeRuntimeSetup(args: {
       mode: "readwrite" as const,
       metadata: stagedFile.metadata,
     }))
-    await awaitRecipe("staged-file.materialize", () => runtime.materializeMounts!(stagedMounts))
+    await awaitRecipe("staged-file.materialize", () => materializeStagedInputs(stagedMounts))
     interruption?.throwIfInterrupted()
   }
 

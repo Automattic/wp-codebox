@@ -31,7 +31,7 @@ const prepared: PreparedRecipeRuntimeSetup = {
 const runtime = {
   async info() { return { id: "runtime", backend: "wordpress-playground", environment: { kind: "wordpress" }, createdAt: new Date().toISOString(), status: "running" } },
   async mount(spec) { calls.push(`mount:${spec.target}`) },
-  async materializeMounts(mounts) {
+  async materializeStagedInputs(mounts) {
     calls.push(`materialize:${mounts.map((mount) => mount.target).join(",")}`)
     assert.deepEqual(mounts, [{
       type: "directory",
@@ -41,6 +41,7 @@ const runtime = {
       metadata: { kind: "runtime-package-source" },
     }])
   },
+  async materializeMounts() { throw new Error("setup should use materializeStagedInputs when available") },
   async execute(spec) { calls.push(`execute:${spec.command}`); throw new Error("setup should not execute commands in this fixture") },
   async observe() { throw new Error("unused") },
   async snapshot() { throw new Error("unused") },
