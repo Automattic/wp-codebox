@@ -93,6 +93,21 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function list_artifacts( array $input ): array {
+		return self::record( 'list_artifacts', 'wp-codebox/artifact-list/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function get_artifact( array $input ): array {
+		return self::record( 'get_artifact', 'wp-codebox/artifact/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function inspect_artifact( array $input ): array {
+		return self::record( 'inspect_artifact', 'wp-codebox/artifact-inspection/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
 	public static function import_artifact_bundle( array $input ): array {
 		return self::record( 'import_artifact_bundle', 'wp-codebox/import-artifact-bundle/v1', $input );
 	}
@@ -100,6 +115,21 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input @return array<string,mixed> */
 	public static function reimport_artifact_bundle( array $input ): array {
 		return self::record( 'reimport_artifact_bundle', 'wp-codebox/reimport-artifact-bundle/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function apply_artifact_preflight( array $input ): array {
+		return self::record( 'apply_artifact_preflight', 'wp-codebox/artifact-apply-preflight/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function stage_artifact_apply( array $input ): array {
+		return self::record( 'stage_artifact_apply', 'wp-codebox/pending-apply/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function apply_approved_artifact( array $input ): array {
+		return self::record( 'apply_approved_artifact', 'wp-codebox/artifact-apply/v1', $input );
 	}
 
 	/** @param array<string,mixed> $input @return array<string,mixed> */
@@ -118,6 +148,8 @@ function expect( bool $condition, string $message ): void {
 
 $expected_methods = array(
 	'execute_ability',
+	'runtime_descriptor',
+	'runtime_contract_manifest',
 	'run_agent_task',
 	'run_agent_task_batch',
 	'run_agent_task_fanout',
@@ -138,6 +170,7 @@ $expected_methods = array(
 	'request_host_delegation',
 	'list_artifacts',
 	'get_artifact',
+	'inspect_artifact',
 	'normalize_artifact_bundle',
 	'persist_artifact',
 	'import_artifact',
@@ -157,6 +190,24 @@ foreach ( $expected_methods as $method ) {
 	expect( $reflection->getMethod( $method )->isPublic(), 'API method is not public: ' . $method );
 }
 
+$expected_constants = array(
+	'ABILITY_LIST_ARTIFACTS' => 'wp-codebox/list-artifacts',
+	'ABILITY_GET_ARTIFACT' => 'wp-codebox/get-artifact',
+	'ABILITY_INSPECT_ARTIFACT' => 'wp-codebox/inspect-artifact',
+	'ABILITY_APPLY_ARTIFACT_PREFLIGHT' => 'wp-codebox/apply-artifact-preflight',
+	'ABILITY_STAGE_ARTIFACT_APPLY' => 'wp-codebox/stage-artifact-apply',
+	'ABILITY_APPLY_APPROVED_ARTIFACT' => 'wp-codebox/apply-approved-artifact',
+	'ARTIFACT_SCHEMA' => 'wp-codebox/artifact/v1',
+	'ARTIFACT_INSPECTION_SCHEMA' => 'wp-codebox/artifact-inspection/v1',
+	'ARTIFACT_APPLY_PREFLIGHT_SCHEMA' => 'wp-codebox/artifact-apply-preflight/v1',
+	'ARTIFACT_APPLY_SCHEMA' => 'wp-codebox/artifact-apply/v1',
+	'ARTIFACT_APPLY_RESULT_SCHEMA' => 'wp-codebox/apply-result/v1',
+);
+foreach ( $expected_constants as $constant => $value ) {
+	expect( $reflection->hasConstant( $constant ), 'Missing public API constant: ' . $constant );
+	expect( $value === $reflection->getConstant( $constant ), 'Unexpected public API constant value: ' . $constant );
+}
+
 $blocked = WP_Codebox_API::execute_ability( 'external-backend/workspace-show', array() );
 expect( $blocked instanceof WP_Error, 'Expected non-wp-codebox ability names to be rejected.' );
 expect( 'wp_codebox_api_ability_not_supported' === $blocked->get_error_code(), 'Expected unsupported ability error code.' );
@@ -166,6 +217,18 @@ foreach ( array( 'agents/run-runtime-package', 'datamachine/jobs-list', 'playgro
 	$blocked = WP_Codebox_API::execute_ability( $raw_ability, array() );
 	expect( $blocked instanceof WP_Error, 'Expected raw backend ability name to be rejected: ' . $raw_ability );
 }
+
+$descriptor = WP_Codebox_API::runtime_descriptor();
+expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor['schema'], 'Expected public runtime descriptor schema.' );
+expect( 'available' === $descriptor['readiness']['status'], 'Expected descriptor readiness status.' );
+expect( in_array( 'runtime-requirements:resolve', $descriptor['capabilities'], true ), 'Expected runtime requirements capability.' );
+expect( 'wp-codebox/resolve-runtime-requirements' === $descriptor['abilities']['runtimeRequirements']['resolve'], 'Expected runtime requirements ability in descriptor.' );
+expect( 'wp-codebox/runtime-contract-manifest/v1' === $descriptor['contractManifest']['schema'], 'Expected nested runtime contract manifest.' );
+
+$descriptor_ability = WP_Codebox_API::execute_ability( 'wp-codebox/runtime-descriptor', array( 'ignored' => true ) );
+expect( is_array( $descriptor_ability ), 'Expected descriptor ability facade result.' );
+expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor_ability['schema'], 'Expected descriptor ability schema.' );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Descriptor must not dispatch through runtime backend internals.' );
 
 $runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-prepare' => array( 'method' => 'prepare_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-prepare-result/v1' ),
@@ -198,6 +261,12 @@ $public_abilities = array(
 	'wp-codebox/persist-browser-artifact' => array( 'method' => 'persist_browser_artifact', 'schema' => 'wp-codebox/artifact-result/v1' ),
 	'wp-codebox/import-artifact-bundle' => array( 'method' => 'import_artifact_bundle', 'schema' => 'wp-codebox/import-artifact-bundle/v1' ),
 	'wp-codebox/reimport-artifact-bundle' => array( 'method' => 'reimport_artifact_bundle', 'schema' => 'wp-codebox/reimport-artifact-bundle/v1' ),
+	'wp-codebox/list-artifacts' => array( 'method' => 'list_artifacts', 'schema' => 'wp-codebox/artifact-list/v1' ),
+	'wp-codebox/get-artifact' => array( 'method' => 'get_artifact', 'schema' => 'wp-codebox/artifact/v1' ),
+	'wp-codebox/inspect-artifact' => array( 'method' => 'inspect_artifact', 'schema' => 'wp-codebox/artifact-inspection/v1' ),
+	'wp-codebox/apply-artifact-preflight' => array( 'method' => 'apply_artifact_preflight', 'schema' => 'wp-codebox/artifact-apply-preflight/v1' ),
+	'wp-codebox/stage-artifact-apply' => array( 'method' => 'stage_artifact_apply', 'schema' => 'wp-codebox/pending-apply/v1' ),
+	'wp-codebox/apply-approved-artifact' => array( 'method' => 'apply_approved_artifact', 'schema' => 'wp-codebox/artifact-apply/v1' ),
 	'wp-codebox/request-host-delegation' => array( 'method' => 'request_host_delegation', 'schema' => 'wp-codebox/host-delegation-result/v1' ),
 );
 

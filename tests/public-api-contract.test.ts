@@ -24,6 +24,8 @@ import {
   wordpressRestMatrixContract,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
+  ARTIFACT_APPLY_PAYLOAD_SCHEMA,
+  ARTIFACT_APPLY_PREFLIGHT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
@@ -35,6 +37,7 @@ import {
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
+  WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
@@ -101,6 +104,8 @@ assert.deepEqual(exportKeys(corePackage), [
 ])
 assert.equal(exportKeys(rootPackage).some((key) => key.includes("internals")), false, "workspace package must not mirror internal package entrypoints")
 assert.equal(exportKeys(corePackage).filter((key) => key.includes("internals")).length, 1, "core package internals entrypoint must stay quarantined to the package split")
+assert.equal(ARTIFACT_APPLY_PREFLIGHT_SCHEMA, "wp-codebox/artifact-apply-preflight/v1")
+assert.equal(ARTIFACT_APPLY_PAYLOAD_SCHEMA, "wp-codebox/artifact-apply-payload/v1")
 
 assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
@@ -118,6 +123,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-task-run-result.js",
   "./headless-agent-task-contracts.js",
   "./agent-terminal-result.js",
+  "./artifact-apply-adapter.js",
   "./artifact-capture-policy.js",
   "./artifact-diagnostics.js",
   "./artifact-export-links.js",
@@ -173,6 +179,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./runtime-neutral-contracts.js",
   "./runtime-overlay-bundle.js",
   "./runtime-overlay-descriptors.js",
+  "./runtime-package-contracts.js",
   "./runtime-package-execution.js",
   "./runtime-policy.js",
   "./runtime-preset-registry.js",
@@ -185,10 +192,12 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-policy.js",
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
+  "./wordpress-block-exercise-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
+  "./wordpress-runtime-discovery-coverage-plan.js",
   "./wordpress-block-fuzz-suite.js",
   "./wordpress-runtime-actions.js",
   "./wordpress-hotspots-contracts.js",
@@ -203,7 +212,10 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./performance-observation.js",
   "./rest-matrix-contracts.js",
   "./runtime-contract-manifest.js",
+  "./runtime-package-contracts.js",
+  "./runtime-package-execution.js",
   "./wordpress-crud-contracts.js",
+  "./wordpress-block-exercise-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
   "./wordpress-hotspots-contracts.js",
@@ -425,6 +437,7 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
 assert.equal(runtimeContractManifest().providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)

@@ -3,16 +3,25 @@ import assert from "node:assert/strict"
 import * as core from "@automattic/wp-codebox-core"
 import * as contracts from "@automattic/wp-codebox-core/contracts"
 import * as phpSnippets from "@automattic/wp-codebox-core/php-snippets"
+import * as publicFacade from "@automattic/wp-codebox-core/public"
 
-for (const entrypoint of [core, contracts]) {
+for (const entrypoint of [core, contracts, publicFacade]) {
   assert.equal(typeof entrypoint.runtimeContractManifest, "function")
+  assert.equal(typeof entrypoint.runtimeDescriptor, "function")
   const manifest = entrypoint.runtimeContractManifest()
+  const descriptor = entrypoint.runtimeDescriptor()
 
   assert.equal(manifest.schema, "wp-codebox/runtime-contract-manifest/v1")
   assert.equal(manifest.schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
   assert.equal(manifest.schemas.runtimePackage.task, "wp-codebox/runtime-package-task/v1")
   assert.equal(manifest.schemas.runtimePackage.result, "wp-codebox/runtime-package-result/v1")
+  assert.equal(manifest.abilities.runtimeRequirements.resolve, "wp-codebox/resolve-runtime-requirements")
   assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
+
+  assert.equal(descriptor.schema, "wp-codebox/runtime-descriptor/v1")
+  assert.equal(descriptor.readiness.status, "available")
+  assert.equal(descriptor.contractManifest.schema, manifest.schema)
+  assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
 }
 
 assert.equal(contracts.RUNTIME_PACKAGE_TASK_SCHEMA, "wp-codebox/runtime-package-task/v1")

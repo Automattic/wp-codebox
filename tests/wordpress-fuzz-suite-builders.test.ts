@@ -72,8 +72,8 @@ const adminInventory: WordPressAdminPageInventory = {
 }
 
 const adminSuite = adminPageInventoryToFuzzSuite(adminInventory, { user: "admin" })
-assert.equal(adminSuite.target?.entrypoint, "wordpress.admin-page-load")
-assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.admin-page-load"] })
+assert.equal(adminSuite.target?.entrypoint, "wordpress.simulated-admin-page-load")
+assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.simulated-admin-page-load"] })
 assert.equal(adminSuite.metadata?.pageLoadMode, "simulated")
 assert.deepEqual(adminSuite.cases[0]?.input, { args: ["path=tools.php", "user=admin"] })
 assert.deepEqual(adminSuite.cases[1]?.input, { args: ["path=admin.php?page=demo-settings", "user=admin"] })
@@ -100,8 +100,8 @@ const frontendInventory: WordPressFrontendUrlInventory = {
 }
 
 const frontendSuite = frontendUrlInventoryToFuzzSuite(frontendInventory)
-assert.equal(frontendSuite.target?.entrypoint, "wordpress.frontend-page-load")
-assert.deepEqual(frontendSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.frontend-page-load"] })
+assert.equal(frontendSuite.target?.entrypoint, "wordpress.simulated-frontend-page-load")
+assert.deepEqual(frontendSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.simulated-frontend-page-load"] })
 assert.deepEqual(frontendSuite.cases[0]?.input, { args: ["path=/hello-world/?preview=true"] })
 assert.equal((frontendSuite.cases[0]?.metadata?.safety as Record<string, unknown>).executable, true)
 

@@ -11,7 +11,7 @@ import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runB
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
-import { argValue, cleanWpCliOutput, shellArgv, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { argValue, cleanWpCliOutput, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -1155,6 +1155,23 @@ class PlaygroundRuntime implements Runtime {
     const operation = wordpressCrudOperationFromArgs(spec.args ?? [])
     const response = await this.runPlaygroundCommand("wordpress.crud-operation", server, { code: bootstrapPhpCode(this.spec, wordpressCrudOperationPhpCode(operation), spec.args ?? []) })
     assertPlaygroundResponseOk("wordpress.crud-operation", response)
+    return response.text
+  }
+
+  async runBlockRender(spec: ExecutionSpec): Promise<string> {
+    return this.runBlockExerciseCommand({ ...spec, command: "wordpress.block-render" })
+  }
+
+  async runBlockExercise(spec: ExecutionSpec): Promise<string> {
+    return this.runBlockExerciseCommand({ ...spec, command: "wordpress.block-exercise" })
+  }
+
+  private async runBlockExerciseCommand(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const command = spec.command === "wordpress.block-render" ? "wordpress.block-render" : "wordpress.block-exercise"
+    const input = wordpressBlockExerciseInputFromArgs(spec.args ?? [], command)
+    const response = await this.runPlaygroundCommand(command, server, { code: bootstrapPhpCode(this.spec, wordpressBlockExercisePhpCode(input, command), spec.args ?? []) })
+    assertPlaygroundResponseOk(command, response)
     return response.text
   }
 

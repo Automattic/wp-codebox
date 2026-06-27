@@ -82,6 +82,15 @@ final class WP_Codebox_Abilities {
 		);
 		register_rest_route(
 			'wp-codebox/v1',
+			'/runtime-task',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_runtime_task' ),
+				'permission_callback' => array( self::class, 'can_run_agent_task' ),
+			)
+		);
+		register_rest_route(
+			'wp-codebox/v1',
 			'/browser-callback/(?P<capability>[A-Za-z0-9][A-Za-z0-9_-]*)',
 			array(
 				'methods'             => 'POST',
@@ -111,6 +120,15 @@ final class WP_Codebox_Abilities {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( self::class, 'rest_preview_boot_ref' ),
+				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+			)
+		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-contained-site-sync/(?P<operation>[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_-]*)*)',
+			array(
+				'methods'             => array( 'GET', 'POST' ),
+				'callback'            => array( self::class, 'rest_browser_contained_site_sync' ),
 				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
 			)
 		);
@@ -147,6 +165,16 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_runtime_task( WP_REST_Request $request ): array|WP_Error {
+		$input = $request->get_json_params();
+		if ( ! is_array( $input ) ) {
+			return new WP_Error( 'wp_codebox_runtime_task_rest_payload_invalid', 'Runtime task requests must send a JSON object.', array( 'status' => 400 ) );
+		}
+
+		return WP_Codebox_API::run_runtime_task( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
 	public static function rest_browser_blueprint_ref( WP_REST_Request $request ): array|WP_Error {
 		$hydration = self::hydrate_browser_blueprint_ref(
 			array(
@@ -170,6 +198,24 @@ final class WP_Codebox_Abilities {
 		}
 
 		return self::preview_boot_ref( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_browser_contained_site_sync( WP_REST_Request $request ): array|WP_Error {
+		$operation = str_replace( '-', '_', trim( (string) $request->get_param( 'operation' ), '/' ) );
+		$operation = str_replace( '/', '_', $operation );
+		$input     = 'GET' === strtoupper( (string) $request->get_method() ) ? $request->get_params() : $request->get_json_params();
+		$input     = is_array( $input ) ? $input : array();
+
+		return match ( $operation ) {
+			'source_connect'      => self::browser_contained_site_sync_source_connect( $input ),
+			'manifest'            => self::browser_contained_site_sync_manifest( $input ),
+			'export'              => self::browser_contained_site_sync_export( $input ),
+			'apply_plan_generate' => self::browser_contained_site_sync_apply_plan_generate( $input ),
+			'apply_plan_validate' => self::browser_contained_site_sync_apply_plan_validate( $input ),
+			'apply'               => self::browser_contained_site_sync_apply( $input ),
+			default               => new WP_Error( 'wp_codebox_browser_contained_site_sync_operation_invalid', 'Unsupported browser contained-site sync operation.', array( 'status' => 400, 'operation' => $operation ) ),
+		};
 	}
 
 	/**

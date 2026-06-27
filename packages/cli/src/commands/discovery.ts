@@ -1,6 +1,6 @@
-import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
+import { createWorkspaceRecipeJsonSchema, runtimeDescriptor, type RuntimeDescriptor, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
 import { commandRegistry, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
-import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput } from "../output.js"
+import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput, printRuntimeDescriptorHumanOutput } from "../output.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../runtime-backends.js"
 
 interface CommandCatalogOutput {
@@ -31,6 +31,18 @@ export async function runRecipeSchemaCommand(args: string[]): Promise<number> {
   const output = recipeSchemaOutput()
   if (!json) {
     printRecipeSchemaHumanOutput(output)
+    return 0
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
+
+export async function runRuntimeDescriptorCommand(args: string[]): Promise<number> {
+  const json = parseDiscoveryJsonOption(args)
+  const output = runtimeDescriptorOutput()
+  if (!json) {
+    printRuntimeDescriptorHumanOutput(output)
     return 0
   }
 
@@ -95,4 +107,8 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
       runtimeOverlayStrategies: recipePolicy.runtimeOverlayStrategies,
     }),
   }
+}
+
+function runtimeDescriptorOutput(): RuntimeDescriptor {
+  return runtimeDescriptor()
 }

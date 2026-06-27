@@ -287,11 +287,20 @@ export function printRecipeSchemaHumanOutput(output: RecipeSchemaOutputLike): vo
   console.log(`Top-level fields: ${properties.join(", ")}`)
 }
 
+export function printRuntimeDescriptorHumanOutput(output: { schema: string; readiness: { status: string }; capabilities: readonly string[]; contractManifest: { schema: string } }): void {
+  console.log("WP Codebox runtime descriptor")
+  console.log(`Schema: ${output.schema}`)
+  console.log(`Readiness: ${output.readiness.status}`)
+  console.log(`Contract manifest: ${output.contractManifest.schema}`)
+  console.log(`Capabilities: ${output.capabilities.join(", ")}`)
+}
+
 export function printHelp(): void {
   const recipeCommandIds = listCliRecipeCommandDefinitions().map((command) => command.id)
 
   console.log(`Usage:
   wp-codebox commands [--json]
+  wp-codebox runtime descriptor [--json]
   wp-codebox schema recipe [--json]
   wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
@@ -438,6 +447,7 @@ Workspace policy:
 
 Discovery:
   commands             Print supported runtime and recipe command metadata.
+  runtime descriptor   Print public runtime readiness, capabilities, ability names, and contract manifest.
   schema recipe        Print the wp-codebox/workspace-recipe/v1 JSON Schema.
 
 Recipe commands:

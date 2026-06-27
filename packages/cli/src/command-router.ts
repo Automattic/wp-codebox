@@ -52,6 +52,9 @@ const cliCommandRoutes = {
   mcp: {
     "render-client-configs": "mcpRenderClientConfigs",
   },
+  runtime: {
+    descriptor: "runtimeDescriptor",
+  },
   commands: "commands",
   doctor: "doctor",
   cleanup: "cleanup",

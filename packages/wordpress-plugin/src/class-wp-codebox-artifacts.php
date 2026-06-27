@@ -11,6 +11,7 @@ final class WP_Codebox_Artifacts {
 
 	private const LIST_SCHEMA  = 'wp-codebox/artifact-list/v1';
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
+	private const INSPECT_SCHEMA = 'wp-codebox/artifact-inspection/v1';
 	private const BROWSER_ARTIFACT_GRANT_SCHEMA = 'wp-codebox/browser-artifact-grant/v1';
 	private const BROWSER_ARTIFACT_REF_SCHEMA = 'wp-codebox/browser-artifact-ref/v1';
 	private const BROWSER_PERSISTED_BUNDLE_SCHEMA = 'wp-codebox/browser-persisted-artifact-bundle/v1';
@@ -72,6 +73,26 @@ final class WP_Codebox_Artifacts {
 			'success'  => true,
 			'schema'   => self::GET_SCHEMA,
 			'artifact' => $bundle,
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function inspect( array $input ): array|WP_Error {
+		$bundle = $this->resolve_any_bundle( $input );
+		if ( is_wp_error( $bundle ) ) {
+			return $bundle;
+		}
+
+		$verification = $this->verify_artifact_bundle( $bundle, $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
+		}
+
+		return array(
+			'success'      => true,
+			'schema'       => self::INSPECT_SCHEMA,
+			'artifact'     => $bundle,
+			'verification' => $verification,
 		);
 	}
 

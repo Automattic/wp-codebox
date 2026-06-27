@@ -9,6 +9,8 @@ import {
   inventoryWordPressAdminPages,
   inventoryWordPressFrontendUrls,
   inventoryWordPressRestRoutes,
+  renderWordPressBlock,
+  exerciseWordPressBlock,
   loadWordPressAdminPage,
   loadWordPressFrontendPage,
   openWordPressAdminPage,
@@ -77,6 +79,8 @@ await inventoryWordPressAdminPages(fakeEpisode)
 await inventoryWordPressFrontendUrls(fakeEpisode)
 await runWordPressCrudOperation(fakeEpisode, { operation: "read", resource: { kind: "post", type: "page", id: 42 } })
 await readWordPressDatabase(fakeEpisode, { resource: { table: "posts", identifiers: { ID: 42 } }, query: { limit: 1 } })
+await renderWordPressBlock(fakeEpisode, { blockName: "core/paragraph", attrs: { align: "wide" }, content: "Hello" })
+await exerciseWordPressBlock(fakeEpisode, { blockName: "core/latest-posts", mode: "serialize-parse", attrs: { postsToShow: 3 } })
 await loadWordPressAdminPage(fakeEpisode, { path: "edit.php?post_type=page", user: "admin", capture: { queries: true } })
 await loadWordPressFrontendPage(fakeEpisode, { path: "/sample-page/", query: { preview: true } })
 
@@ -98,6 +102,8 @@ assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.frontend-url-inventory",
   "wordpress.crud-operation",
   "wordpress.db-operation",
+  "wordpress.block-render",
+  "wordpress.block-exercise",
   "wordpress.admin-page-load",
   "wordpress.frontend-page-load",
 ])
@@ -123,8 +129,10 @@ assert.equal(JSON.parse(calls[15]?.args[0]?.replace("operation-json=", "") ?? "{
 assert.equal(JSON.parse(calls[15]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
 assert.equal(JSON.parse(calls[16]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
 assert.equal(JSON.parse(calls[16]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
-assert.deepEqual(calls[17]?.args, ["path=edit.php?post_type=page", "user=admin", 'capture-json={"queries":true}'])
-assert.deepEqual(calls[18]?.args, ["path=/sample-page/", "query-json={\"preview\":true}"])
+assert.deepEqual(calls[17]?.args, ["block-name=core/paragraph", 'attrs-json={"align":"wide"}', "content=Hello", "mode=render"])
+assert.deepEqual(calls[18]?.args, ["block-name=core/latest-posts", 'attrs-json={"postsToShow":3}', "mode=serialize-parse"])
+assert.deepEqual(calls[19]?.args, ["path=edit.php?post_type=page", "user=admin", 'capture-json={"queries":true}'])
+assert.deepEqual(calls[20]?.args, ["path=/sample-page/", "query-json={\"preview\":true}"])
 assert.equal(adminObservation.performance?.schema, "wp-codebox/performance-observation/v1")
 assert.equal(pageObservation.performance?.target, "/sample-page/")
 

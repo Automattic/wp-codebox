@@ -12,8 +12,37 @@ defined( 'ABSPATH' ) || exit;
  */
 final class WP_Codebox_API {
 
+	private const RUNTIME_DESCRIPTOR_SCHEMA        = 'wp-codebox/runtime-descriptor/v1';
+	private const RUNTIME_CONTRACT_MANIFEST_SCHEMA = 'wp-codebox/runtime-contract-manifest/v1';
+
+	/** @var string[] */
+	private const PUBLIC_RUNTIME_CAPABILITIES = array(
+		'agent-task:run',
+		'agent-task:batch',
+		'agent-task:fanout',
+		'runtime-package:run',
+		'runtime-requirements:resolve',
+		'wordpress-runtime:workload',
+		'wordpress-runtime:fuzz-suite',
+		'contract-manifest:read',
+	);
+
+	public const ABILITY_LIST_ARTIFACTS = 'wp-codebox/list-artifacts';
+	public const ABILITY_GET_ARTIFACT = 'wp-codebox/get-artifact';
+	public const ABILITY_INSPECT_ARTIFACT = 'wp-codebox/inspect-artifact';
+	public const ABILITY_APPLY_ARTIFACT_PREFLIGHT = 'wp-codebox/apply-artifact-preflight';
+	public const ABILITY_STAGE_ARTIFACT_APPLY = 'wp-codebox/stage-artifact-apply';
+	public const ABILITY_APPLY_APPROVED_ARTIFACT = 'wp-codebox/apply-approved-artifact';
+
+	public const ARTIFACT_SCHEMA = 'wp-codebox/artifact/v1';
+	public const ARTIFACT_INSPECTION_SCHEMA = 'wp-codebox/artifact-inspection/v1';
+	public const ARTIFACT_APPLY_PREFLIGHT_SCHEMA = 'wp-codebox/artifact-apply-preflight/v1';
+	public const ARTIFACT_APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
+	public const ARTIFACT_APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
+
 	/** @var array<string,string> */
 	private const ABILITY_METHODS = array(
+		'wp-codebox/runtime-descriptor'                     => 'runtime_descriptor',
 		'wp-codebox/run-agent-task'                         => 'run_agent_task',
 		'wp-codebox/run-agent-task-batch'                   => 'run_agent_task_batch',
 		'wp-codebox/run-agent-task-fanout'                  => 'run_agent_task_fanout',
@@ -34,16 +63,24 @@ final class WP_Codebox_API {
 		'wp-codebox/export-browser-contained-site'          => 'export_browser_contained_site',
 		'wp-codebox/plan-browser-contained-site-apply'      => 'plan_browser_contained_site_apply',
 		'wp-codebox/apply-browser-contained-site-plan'      => 'apply_browser_contained_site_plan',
+		'wp-codebox/browser-contained-site-sync-delegation' => 'browser_contained_site_sync_delegation',
+		'wp-codebox/browser-contained-site-sync-source-connect' => 'browser_contained_site_sync_source_connect',
+		'wp-codebox/browser-contained-site-sync-manifest'   => 'browser_contained_site_sync_manifest',
+		'wp-codebox/browser-contained-site-sync-export'     => 'browser_contained_site_sync_export',
+		'wp-codebox/browser-contained-site-sync-apply-plan-generate' => 'browser_contained_site_sync_apply_plan_generate',
+		'wp-codebox/browser-contained-site-sync-apply-plan-validate' => 'browser_contained_site_sync_apply_plan_validate',
+		'wp-codebox/browser-contained-site-sync-apply'      => 'browser_contained_site_sync_apply',
 		'wp-codebox/request-host-delegation'                => 'request_host_delegation',
-		'wp-codebox/list-artifacts'                         => 'list_artifacts',
-		'wp-codebox/get-artifact'                           => 'get_artifact',
+		self::ABILITY_LIST_ARTIFACTS                        => 'list_artifacts',
+		self::ABILITY_GET_ARTIFACT                          => 'get_artifact',
+		self::ABILITY_INSPECT_ARTIFACT                      => 'inspect_artifact',
 		'wp-codebox/normalize-browser-artifact-bundle'      => 'normalize_artifact_bundle',
 		'wp-codebox/persist-browser-artifact'               => 'persist_artifact',
 		'wp-codebox/import-artifact-bundle'                 => 'import_artifact',
 		'wp-codebox/reimport-artifact-bundle'               => 'reimport_artifact',
-		'wp-codebox/apply-artifact-preflight'               => 'preflight_artifact_apply',
-		'wp-codebox/stage-artifact-apply'                   => 'stage_artifact_apply',
-		'wp-codebox/apply-approved-artifact'                => 'apply_approved_artifact',
+		self::ABILITY_APPLY_ARTIFACT_PREFLIGHT              => 'preflight_artifact_apply',
+		self::ABILITY_STAGE_ARTIFACT_APPLY                  => 'stage_artifact_apply',
+		self::ABILITY_APPLY_APPROVED_ARTIFACT               => 'apply_approved_artifact',
 		'wp-codebox/runner-workspace-prepare'               => 'prepare_runner_workspace',
 		'wp-codebox/prepare-runner-workspace'               => 'prepare_runner_workspace',
 		'wp-codebox/prepare'                                => 'prepare_runner_workspace',
@@ -57,6 +94,213 @@ final class WP_Codebox_API {
 		'wp-codebox/publish-runner-workspace'               => 'publish_runner_workspace',
 		'wp-codebox/publish'                                => 'publish_runner_workspace',
 	);
+
+	/** @param array<string,mixed> $input Ignored descriptor input. @return array<string,mixed> */
+	public static function runtime_descriptor( array $input = array() ): array {
+		unset( $input );
+
+		return array(
+			'schema'           => self::RUNTIME_DESCRIPTOR_SCHEMA,
+			'version'          => 1,
+			'runtime'          => array(
+				'id'   => 'wp-codebox',
+				'name' => 'WP Codebox',
+			),
+			'readiness'        => array(
+				'status'            => 'available',
+				'publicApi'         => true,
+				'contractManifest'  => true,
+			),
+			'capabilities'     => self::PUBLIC_RUNTIME_CAPABILITIES,
+			'abilities'        => self::runtime_abilities(),
+			'contractManifest' => self::runtime_contract_manifest(),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public static function runtime_contract_manifest(): array {
+		return array(
+			'schema'          => self::RUNTIME_CONTRACT_MANIFEST_SCHEMA,
+			'version'         => 1,
+			'schemas'         => self::runtime_contract_schemas(),
+			'abilities'       => self::runtime_abilities(),
+			'providerRuntime' => self::provider_runtime_contract(),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function runtime_contract_schemas(): array {
+		return array(
+			'agentTask'                => array(
+				'runRequest'        => 'wp-codebox/agent-task-run-request/v1',
+				'runResult'         => 'wp-codebox/agent-task-run-result/v1',
+				'headlessRequest'   => 'wp-codebox/headless-agent-task-request/v1',
+				'headlessResult'    => 'wp-codebox/headless-agent-task-result/v1',
+				'legacyRunResponse' => 'wp-codebox/agent-task-run-result/v1',
+			),
+			'runtimeBoundary'          => array(
+				'profile'                    => 'wp-codebox/runtime-profile/v1',
+				'previewLease'               => 'wp-codebox/preview-lease/v1',
+				'browserContainedSiteStatus' => 'wp-codebox/browser-contained-site-status/v1',
+				'browserContainedSiteOpen'   => 'wp-codebox/browser-contained-site-open/v1',
+				'browserSessionProductDto'   => 'wp-codebox/browser-session-product-dto/v1',
+				'browserPreviewBootConfig'   => 'wp-codebox/browser-preview-boot-config/v1',
+				'runtimeAccess'              => 'wp-codebox/runtime-access/v1',
+			),
+			'browserSession'            => array(
+				'productDto'               => 'wp-codebox/browser-session-product-dto/v1',
+				'containedSiteStatus'      => 'wp-codebox/browser-contained-site-status/v1',
+				'containedSiteOpen'        => 'wp-codebox/browser-contained-site-open/v1',
+				'previewBootConfig'        => 'wp-codebox/browser-preview-boot-config/v1',
+				'containedSiteSnapshot'    => 'wp-codebox/browser-contained-site-snapshot/v1',
+				'containedSiteExport'      => 'wp-codebox/browser-contained-site-export/v1',
+				'containedSiteApplyPlan'   => 'wp-codebox/browser-contained-site-apply-plan/v1',
+				'containedSiteApplyResult' => 'wp-codebox/browser-contained-site-apply-result/v1',
+			),
+			'preview'                   => array(
+				'lease'          => 'wp-codebox/preview-lease/v1',
+				'reviewerAccess' => 'wp-codebox/preview-reviewer-access/v1',
+				'runtimeAccess'  => 'wp-codebox/runtime-access/v1',
+			),
+			'artifact'                  => array(
+				'resultEnvelope'                => 'wp-codebox/artifact-result-envelope/v1',
+				'typedArtifact'                 => 'wp-codebox/structured-artifact/v1',
+				'typedArtifactIndex'            => 'wp-codebox/typed-artifacts-index/v1',
+				'runtimePackageDeclaration'     => 'wp-codebox/runtime-package-artifact-declaration/v1',
+				'runtimePackageProjection'      => 'wp-codebox/runtime-package-output-projection/v1',
+				'bundleFileManifest'            => 'wp-codebox/artifact-bundle-file-manifest/v1',
+				'browserArtifactPersistenceRef' => 'wp-codebox/browser-artifact-persistence/ref/v1',
+			),
+			'artifactBundle'            => array(
+				'resultEnvelope'        => 'wp-codebox/artifact-result-envelope/v1',
+				'fileManifest'          => 'wp-codebox/artifact-bundle-file-manifest/v1',
+				'browserPersistenceRef' => 'wp-codebox/browser-artifact-persistence/ref/v1',
+			),
+			'taskState'                 => array(
+				'agentTaskRunResult'  => 'wp-codebox/agent-task-run-result/v1',
+				'runtimeRunResult'    => 'wp-codebox/runtime-run-result/v1',
+				'agentRuntimeWorkload' => 'wp-codebox/agent-runtime-workload/v1',
+			),
+			'runtimeProvider'           => array(
+				'invocationContract'     => 'wp-codebox/provider-runtime-invocation-contract/v1',
+				'credentialRequirements' => 'wp-codebox/provider-credential-requirements/v1',
+				'credentialPreflight'    => 'wp-codebox/provider-credential-preflight/v1',
+				'credentialResolution'   => 'wp-codebox/provider-credential-resolution/v1',
+			),
+			'providerRuntime'           => array(
+				'invocation'             => 'wp-codebox/provider-runtime-invocation-contract/v1',
+				'invocationContract'     => 'wp-codebox/provider-runtime-invocation-contract/v1',
+				'credentialRequirements' => 'wp-codebox/provider-credential-requirements/v1',
+				'credentialPreflight'    => 'wp-codebox/provider-credential-preflight/v1',
+				'credentialResolution'   => 'wp-codebox/provider-credential-resolution/v1',
+			),
+			'hostDelegation'            => array(
+				'request' => 'wp-codebox/host-delegation-request/v1',
+				'result'  => 'wp-codebox/host-delegation-result/v1',
+				'event'   => 'wp-codebox/host-delegation-event/v1',
+			),
+			'runtimePackage'            => array(
+				'task'            => 'wp-codebox/runtime-package-task/v1',
+				'result'          => 'wp-codebox/runtime-package-result/v1',
+				'diagnostic'      => 'wp-codebox/runtime-package-diagnostic/v1',
+				'executionInput'  => 'wp-codebox/runtime-package-execution-input/v1',
+				'executionResult' => 'wp-codebox/runtime-package-execution-result/v1',
+			),
+			'runnerWorkspace'           => array(
+				'prepareRequest'     => 'wp-codebox/runner-workspace-prepare-request/v1',
+				'prepareResult'      => 'wp-codebox/runner-workspace-prepare-result/v1',
+				'captureRequest'     => 'wp-codebox/runner-workspace-capture-request/v1',
+				'captureResult'      => 'wp-codebox/runner-workspace-capture-result/v1',
+				'commandRequest'     => 'wp-codebox/runner-workspace-command-request/v1',
+				'commandResult'      => 'wp-codebox/runner-workspace-command-result/v1',
+				'publicationRequest' => 'wp-codebox/runner-workspace-publication-request/v1',
+				'publicationResult'  => 'wp-codebox/runner-workspace-publication-result/v1',
+			),
+			'parentToolBridge'          => array(
+				'bridge'  => 'wp-codebox/parent-tool-bridge/v1',
+				'request' => 'wp-codebox/parent-tool-request/v1',
+				'result'  => 'wp-codebox/parent-tool-result/v1',
+			),
+			'fanoutAggregation'         => array(
+				'input'  => 'wp-codebox/agent-fanout-aggregation-input/v1',
+				'output' => 'wp-codebox/agent-fanout-aggregation-output/v1',
+			),
+			'wordpressRuntimeDiscovery' => array(
+				'result'               => 'wp-codebox/wordpress-runtime-discovery/v1',
+				'restRouteInventory'   => 'wp-codebox/wordpress-rest-route-inventory/v1',
+				'adminPageInventory'   => 'wp-codebox/wordpress-admin-page-inventory/v1',
+				'databaseInventory'    => 'wp-codebox/wordpress-db-inventory/v1',
+				'frontendUrlInventory' => 'wp-codebox/wordpress-frontend-url-inventory/v1',
+				'restMatrix'           => 'wp-codebox/wordpress-rest-matrix/v1',
+				'restMatrixResult'     => 'wp-codebox/wordpress-rest-matrix-result/v1',
+			),
+			'wordpressDb'               => array(
+				'operation' => 'wp-codebox/wordpress-db-operation/v1',
+				'result'    => 'wp-codebox/wordpress-db-result/v1',
+			),
+			'wordpressRuntime'          => array(
+				'workloadRun'         => 'wp-codebox/wordpress-workload-run/v1',
+				'fuzzCoveragePlan'    => 'wp-codebox/fuzz-coverage-plan/v1',
+				'fuzzSuite'           => 'wp-codebox/fuzz-suite/v1',
+				'fuzzSuiteResult'     => 'wp-codebox/fuzz-suite-result/v1',
+				'blockExerciseResult' => 'wp-codebox/wordpress-block-exercise-result/v1',
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function provider_runtime_contract(): array {
+		return array(
+			'schema'         => 'wp-codebox/provider-runtime-invocation-contract/v1',
+			'version'        => 1,
+			'tasks'          => array(
+				'workspacePrepare'         => 'wp-codebox.runner-workspace.prepare',
+				'workspaceCapture'         => 'wp-codebox.runner-workspace.capture',
+				'workspaceCommand'         => 'wp-codebox.runner-workspace.command',
+				'workspacePublish'         => 'wp-codebox.runner-workspace.publish',
+				'toolCallTranscriptRecord' => 'wp-codebox.tool-call-transcript.record',
+				'artifactHandoff'          => 'wp-codebox.artifact-handoff',
+			),
+			'abilities'      => array(
+				'workspacePrepare'         => 'wp-codebox/runner-workspace-prepare',
+				'workspaceCapture'         => 'wp-codebox/runner-workspace-capture',
+				'workspaceCommand'         => 'wp-codebox/runner-workspace-command',
+				'workspacePublish'         => 'wp-codebox/runner-workspace-publish',
+				'toolCallTranscriptRecord' => 'wp-codebox/record-tool-call-transcript',
+				'artifactHandoff'          => 'wp-codebox/handoff-artifacts',
+			),
+			'result_schemas' => array(
+				'workspace_prepare'          => 'wp-codebox/runner-workspace-prepare-result/v1',
+				'workspace_capture'          => 'wp-codebox/runner-workspace-capture-result/v1',
+				'workspace_command'          => 'wp-codebox/runner-workspace-command-result/v1',
+				'workspace_publication'      => 'wp-codebox/runner-workspace-publication-result/v1',
+				'tool_call_transcript'       => 'wp-codebox/tool-call-transcript/v1',
+				'evidence_artifact_envelope' => 'wp-codebox/evidence-artifact-envelope/v1',
+				'artifact_result_envelope'   => 'wp-codebox/artifact-result-envelope/v1',
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function runtime_abilities(): array {
+		return array(
+			'agentTask'           => array(
+				'run'    => 'wp-codebox/run-agent-task',
+				'batch'  => 'wp-codebox/run-agent-task-batch',
+				'fanout' => 'wp-codebox/run-agent-task-fanout',
+			),
+			'runtimePackage'      => array(
+				'run' => 'wp-codebox/run-runtime-package',
+			),
+			'runtimeRequirements' => array(
+				'resolve' => 'wp-codebox/resolve-runtime-requirements',
+			),
+			'wordpressRuntime'    => array(
+				'runWorkload'  => 'wp-codebox/run-wordpress-workload',
+				'runFuzzSuite' => 'wp-codebox/run-fuzz-suite',
+			),
+		);
+	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function execute_ability( string $ability_name, array $input = array() ): array|WP_Error {
@@ -179,6 +423,41 @@ final class WP_Codebox_API {
 		return WP_Codebox_Abilities::apply_browser_contained_site_plan( $input );
 	}
 
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_delegation( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_delegation( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_source_connect( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_source_connect( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_manifest( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_manifest( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_export( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_export( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply_plan_generate( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_generate( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply_plan_validate( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply_plan_validate( $input );
+	}
+
+	/** @param array<string,mixed> $input Browser contained-site sync input. @return array<string,mixed>|WP_Error */
+	public static function browser_contained_site_sync_apply( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::browser_contained_site_sync_apply( $input );
+	}
+
 	/** @param array<string,mixed> $input Host delegation input. @return array<string,mixed>|WP_Error */
 	public static function request_host_delegation( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::request_host_delegation( $input );
@@ -192,6 +471,11 @@ final class WP_Codebox_API {
 	/** @param array<string,mixed> $input Artifact lookup input. @return array<string,mixed>|WP_Error */
 	public static function get_artifact( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::get_artifact( $input );
+	}
+
+	/** @param array<string,mixed> $input Artifact inspection input. @return array<string,mixed>|WP_Error */
+	public static function inspect_artifact( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::inspect_artifact( $input );
 	}
 
 	/** @param array<string,mixed> $input Artifact bundle normalization input. @return array<string,mixed>|WP_Error */
