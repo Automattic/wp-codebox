@@ -1665,6 +1665,7 @@ function normalizeBrowserPageLoadOutput(output: string, surface: "admin" | "fron
     browserProbeSchema: entry.schema,
     schema: "wp-codebox/wordpress-page-load-result/v1",
     mode: "browser",
+    source: "browser",
     command: "wordpress.browser-page-load",
     status: browserPageLoadStatus(entry),
     target: { kind: surface, path, method: "GET" },
@@ -1678,6 +1679,7 @@ function normalizeBrowserPageLoadOutput(output: string, surface: "admin" | "fron
     parsed.outputs = normalizedOutputs
     parsed.schema = "wp-codebox/wordpress-page-load-result/v1"
     parsed.mode = "browser"
+    parsed.source = "browser"
     parsed.command = "wordpress.browser-page-load"
     parsed.status = normalizedOutputs.some((entry) => isRecord(entry) && entry.status === "error") ? "error" : "ok"
     parsed.target = { kind: surface, path, method: "GET" }

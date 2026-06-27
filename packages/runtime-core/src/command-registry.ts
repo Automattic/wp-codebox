@@ -20,6 +20,7 @@ export interface CommandOutputSchemaContract {
 export interface CommandDefinition {
   id: string
   description: string
+  metadata?: CommandDefinitionMetadata
   acceptedArgs: Array<{
     name: string
     description: string
@@ -34,6 +35,13 @@ export interface CommandDefinition {
   validation?: CommandValidationDescriptor
   recipe: boolean
   handler: CommandHandlerBinding
+}
+
+export interface CommandDefinitionMetadata {
+  deprecated?: boolean
+  aliasOnly?: boolean
+  aliasFor?: string
+  excludeFromFuzzTargets?: boolean
 }
 
 export interface CommandValidationDescriptor {
@@ -526,6 +534,7 @@ export const commandRegistry = [
   {
     id: "wordpress.admin-page-load",
     description: "Backward-compatible alias for wordpress.simulated-admin-page-load. Loads a WordPress admin target in-process; it does not perform a real server or browser page load.",
+    metadata: { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-admin-page-load", excludeFromFuzzTargets: true },
     acceptedArgs: [
       { name: "path", description: "Admin path relative to wp-admin, such as index.php or edit.php?post_type=page. Defaults to index.php.", format: "admin path" },
       { name: "url", description: "Optional admin URL or path. Relative paths are resolved under wp-admin/.", format: "path or URL" },
@@ -564,6 +573,7 @@ export const commandRegistry = [
   {
     id: "wordpress.frontend-page-load",
     description: "Backward-compatible alias for wordpress.simulated-frontend-page-load. Loads a WordPress frontend target in-process; it does not perform a real server or browser page load.",
+    metadata: { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-frontend-page-load", excludeFromFuzzTargets: true },
     acceptedArgs: [
       { name: "path", description: "Frontend path relative to home URL. Defaults to /.", format: "frontend path" },
       { name: "url", description: "Optional frontend URL or path.", format: "path or URL" },
@@ -1123,6 +1133,10 @@ export function effectivePolicyCommandsFor(commands: readonly string[], definiti
 
 export function runtimeCommandDefinitions(): CommandDefinition[] {
   return commandRegistry.filter((definition) => definition.handler.kind === "playground")
+}
+
+export function fuzzTargetCommandDefinitions(): CommandDefinition[] {
+  return runtimeCommandDefinitions().filter((definition) => !definition.metadata?.excludeFromFuzzTargets)
 }
 
 export function recipeCommandDefinitions(): CommandDefinition[] {
