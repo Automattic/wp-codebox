@@ -54,6 +54,7 @@ import {
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
+  WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   WORDPRESS_WORKLOAD_RUN_SCHEMA,
   isRuntimeContractSchema,
@@ -128,6 +129,7 @@ assert.equal(manifest.schemas.wordpressRuntime.workloadRun, WORDPRESS_WORKLOAD_R
 assert.equal(manifest.schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
 assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)

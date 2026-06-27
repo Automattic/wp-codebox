@@ -6,6 +6,8 @@ import {
   createWordPressEpisode,
   createWordPressRuntime,
   runWordPressEpisodeActions,
+  renderWordPressBlock,
+  exerciseWordPressBlock,
   setWordPressPluginState,
   setupWordPressPlugin,
   setupWordPressTheme,
@@ -16,6 +18,8 @@ import {
 assert.equal(typeof createWordPressRuntime, "function")
 assert.equal(typeof createWordPressEpisode, "function")
 assert.equal(typeof runWordPressEpisodeActions, "function")
+assert.equal(typeof renderWordPressBlock, "function")
+assert.equal(typeof exerciseWordPressBlock, "function")
 assert.equal(typeof setupWordPressPlugin, "function")
 assert.equal(typeof setWordPressPluginState, "function")
 assert.equal(typeof setupWordPressTheme, "function")

@@ -27,6 +27,7 @@ import {
 } from "./runner-workspace-publication.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
+import { WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
 import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA } from "./browser-contained-site-contracts.js"
 
@@ -167,6 +168,7 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     fuzzCoveragePlan: FUZZ_COVERAGE_PLAN_SCHEMA,
     fuzzSuite: FUZZ_SUITE_SCHEMA,
     fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
+    blockExerciseResult: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
   },
 } as const
 

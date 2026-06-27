@@ -4,6 +4,7 @@ import type { FuzzSuiteContract, FuzzSuiteResultEnvelope } from "./fuzz-suite-co
 import { runFuzzSuite, type FuzzSuiteRunOptions } from "./fuzz-suite-runner.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation, type WordPressDbOperation, type WordPressDbVerb } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation, type WordPressCrudOperation } from "./wordpress-crud-contracts.js"
+import { normalizeWordPressBlockExerciseInput, type WordPressBlockExerciseInput } from "./wordpress-block-exercise-contracts.js"
 import type { PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runWordPressRestMatrix, type WordPressRestMatrixContract, type WordPressRestMatrixResultEnvelope } from "./rest-matrix-contracts.js"
 import type { ArtifactBundle, Runtime, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeStepResult } from "./runtime-contracts.js"
@@ -82,6 +83,8 @@ export type WordPressDatabaseReadOptions = Omit<WordPressDbOperation, "schema" |
   schema?: typeof WORDPRESS_DB_OPERATION_SCHEMA
   operation?: WordPressDatabaseReadOperation
 }
+
+export type WordPressBlockExerciseOptions = Partial<WordPressBlockExerciseInput> & { blockName: string }
 
 export interface WordPressPageLoadOptions {
   path?: string
@@ -205,6 +208,15 @@ export function readWordPressDatabase(episode: WordPressRuntimeActionEpisode, op
   return runWordPressCommand(episode, "wordpress.db-operation", [`operation-json=${JSON.stringify(normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: operation.operation ?? "read", ...operation }))}`], timeoutMs)
 }
 
+export function renderWordPressBlock(episode: WordPressRuntimeActionEpisode, input: WordPressBlockExerciseOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
+  const normalized = normalizeWordPressBlockExerciseInput({ ...input, mode: "render" })
+  return runWordPressCommand(episode, "wordpress.block-render", blockExerciseArgs(normalized), timeoutMs)
+}
+
+export function exerciseWordPressBlock(episode: WordPressRuntimeActionEpisode, input: WordPressBlockExerciseOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.block-exercise", blockExerciseArgs(normalizeWordPressBlockExerciseInput(input)), timeoutMs)
+}
+
 export function loadWordPressAdminPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageLoadOptions = {}): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.admin-page-load", pageLoadArgs(page), page.timeoutMs)
 }
@@ -253,6 +265,17 @@ function pageLoadArgs(options: WordPressPageLoadOptions): string[] {
     ...(options.session ? [`session=${options.session}`] : []),
     ...(options.captureDiagnostics?.length ? [`capture-diagnostics=${options.captureDiagnostics.join(",")}`] : []),
     ...captureArgs(options),
+  ]
+}
+
+function blockExerciseArgs(input: WordPressBlockExerciseInput): string[] {
+  return [
+    `block-name=${input.blockName}`,
+    ...(input.attrs ? [`attrs-json=${JSON.stringify(input.attrs)}`] : []),
+    ...(input.content !== undefined ? [`content=${input.content}`] : []),
+    ...(input.markup !== undefined ? [`markup=${input.markup}`] : []),
+    ...(input.mode ? [`mode=${input.mode}`] : []),
+    ...(input.source ? [`source=${input.source}`] : []),
   ]
 }
 

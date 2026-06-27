@@ -33,15 +33,15 @@ const PLANNED_REST_REQUEST_TARGET: FuzzSuiteTargetRef = {
 
 const ADMIN_PAGE_LOAD_TARGET: FuzzSuiteTargetRef = {
   kind: "runtime",
-  id: "wordpress.admin-page-load",
-  entrypoint: "wordpress.admin-page-load",
+  id: "wordpress.simulated-admin-page-load",
+  entrypoint: "wordpress.simulated-admin-page-load",
   label: "WordPress admin page load",
 }
 
 const FRONTEND_PAGE_LOAD_TARGET: FuzzSuiteTargetRef = {
   kind: "runtime",
-  id: "wordpress.frontend-page-load",
-  entrypoint: "wordpress.frontend-page-load",
+  id: "wordpress.simulated-frontend-page-load",
+  entrypoint: "wordpress.simulated-frontend-page-load",
   label: "WordPress frontend page load",
 }
 
@@ -60,13 +60,13 @@ const REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
 const ADMIN_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:runtime", "runtime"],
   targetKinds: ["runtime"],
-  commands: ["wordpress.admin-page-load"],
+  commands: ["wordpress.simulated-admin-page-load"],
 }
 
 const FRONTEND_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:runtime", "runtime"],
   targetKinds: ["runtime"],
-  commands: ["wordpress.frontend-page-load"],
+  commands: ["wordpress.simulated-frontend-page-load"],
 }
 
 const DB_OPERATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
