@@ -1173,6 +1173,7 @@ export interface ArtifactBundle {
 export interface Runtime {
   info(): Promise<RuntimeInfo>
   mount(spec: MountSpec): Promise<void>
+  materializeMounts?(mounts: MountSpec[]): Promise<unknown>
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
   snapshot(options?: unknown): Promise<Snapshot>

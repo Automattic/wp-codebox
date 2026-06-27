@@ -18,7 +18,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
+import { materializePlaygroundMountsFromVfs, materializePlaygroundMountsToVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -261,6 +261,16 @@ class PlaygroundRuntime implements Runtime {
 
     this.mounts.push(mount)
     this.recordEvent("runtime.mounted", { mount })
+  }
+
+  async materializeMounts(mounts: MountSpec[]): Promise<unknown> {
+    if (this.status === "destroyed" || mounts.length === 0) {
+      return undefined
+    }
+
+    const materialization = await materializePlaygroundMountsToVfs(await this.bootPlayground(), mounts)
+    this.recordEvent("runtime.mounts.materialized", { ...materialization, source: "host-to-vfs" })
+    return materialization
   }
 
   async execute(spec: ExecutionSpec): Promise<ExecutionResult> {

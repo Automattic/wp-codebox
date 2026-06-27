@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
@@ -27,6 +27,11 @@ export interface MountMaterializationResult {
   deleted: number
   skipped: number
   phaseResult: MaterializationPhaseResult
+}
+
+interface HostMountFilePayload {
+  target: string
+  contentsBase64: string
 }
 
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
@@ -60,6 +65,43 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
   const response = await server.playground.run({ code: vfsMountSnapshotPhp(hostSnapshots) })
   const parsed = JSON.parse(response.text || "{}") as { mounts?: VfsMountSnapshot[] }
   return applyVfsMountSnapshots(mounts, parsed.mounts ?? [])
+}
+
+export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
+  const files: HostMountFilePayload[] = []
+  let skipped = 0
+  for (const mount of mounts) {
+    const collected = await hostMountFilesForVfs(mount)
+    files.push(...collected.files)
+    skipped += collected.skipped
+  }
+  if (files.length === 0) {
+    return {
+      materialized: 0,
+      deleted: 0,
+      skipped,
+      phaseResult: materializationPhaseResult({
+        phase: "playground-host-mount-materialization",
+        status: "skipped",
+        metadata: { materialized: 0, deleted: 0, skipped },
+      }),
+    }
+  }
+
+  const response = await server.playground.run({ code: hostMountWritePhp(files) })
+  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
+  const materialized = parsed.materialized ?? 0
+  const totalSkipped = skipped + (parsed.skipped ?? 0)
+  return {
+    materialized,
+    deleted: 0,
+    skipped: totalSkipped,
+    phaseResult: materializationPhaseResult({
+      phase: "playground-host-mount-materialization",
+      status: materialized > 0 ? "completed" : "skipped",
+      metadata: { materialized, deleted: 0, skipped: totalSkipped },
+    }),
+  }
 }
 
 export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: VfsMountSnapshot[]): Promise<MountMaterializationResult> {
@@ -154,6 +196,83 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
   }
 
   return files
+}
+
+async function hostMountFilesForVfs(mount: MountSpec): Promise<{ files: HostMountFilePayload[]; skipped: number }> {
+  const files: HostMountFilePayload[] = []
+  let skipped = 0
+  let sourceStat
+  try {
+    sourceStat = await stat(mount.source)
+  } catch {
+    return { files, skipped: 1 }
+  }
+
+  if (mount.type === "file" || sourceStat.isFile()) {
+    files.push({ target: mount.target, contentsBase64: (await readFile(mount.source)).toString("base64") })
+    return { files, skipped }
+  }
+  if (!sourceStat.isDirectory()) {
+    return { files, skipped: skipped + 1 }
+  }
+
+  for (const file of await hostMountDirectoryFiles(mount.source)) {
+    files.push({ target: `${mount.target.replace(/\/+$/, "")}/${file.relativePath}`, contentsBase64: file.contentsBase64 })
+  }
+  return { files, skipped }
+}
+
+async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""): Promise<Array<{ relativePath: string; contentsBase64: string }>> {
+  const files: Array<{ relativePath: string; contentsBase64: string }> = []
+  let entries
+  try {
+    entries = await readdir(join(directory, relativeDirectory), { withFileTypes: true })
+  } catch {
+    return files
+  }
+
+  for (const entry of entries) {
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+    const absolutePath = join(directory, relativePath)
+    if (entry.isDirectory()) {
+      files.push(...await hostMountDirectoryFiles(directory, relativePath))
+      continue
+    }
+    if (!entry.isFile()) {
+      continue
+    }
+    files.push({ relativePath, contentsBase64: (await readFile(absolutePath)).toString("base64") })
+  }
+  return files
+}
+
+function hostMountWritePhp(files: HostMountFilePayload[]): string {
+  const payload = JSON.stringify(JSON.stringify({ files }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$materialized = 0;
+$skipped = 0;
+foreach (($payload['files'] ?? array()) as $file) {
+    $target = (string) ($file['target'] ?? '');
+    $contents = (string) ($file['contentsBase64'] ?? '');
+    if ('' === $target || str_contains($target, "\0")) {
+        $skipped++;
+        continue;
+    }
+    $directory = dirname($target);
+    if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+        $skipped++;
+        continue;
+    }
+    $decoded = base64_decode($contents, true);
+    if (false === $decoded || false === file_put_contents($target, $decoded)) {
+        $skipped++;
+        continue;
+    }
+    $materialized++;
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
 }
 
 export function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string {

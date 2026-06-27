@@ -177,6 +177,18 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
+  if (stagedFiles.length > 0 && typeof runtime.materializeMounts === "function") {
+    const stagedMounts = stagedFiles.map((stagedFile) => ({
+      type: stagedFile.type,
+      source: stagedFile.source,
+      target: stagedFile.target,
+      mode: "readwrite" as const,
+      metadata: stagedFile.metadata,
+    }))
+    await awaitRecipe("staged-file.materialize", () => runtime.materializeMounts!(stagedMounts))
+    interruption?.throwIfInterrupted()
+  }
+
   const muPluginInstallCode = installMuPluginsCode(extraPlugins)
   if (muPluginInstallCode) {
     executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(muPluginInstallCode) }), "setup", -2, "extra-plugin.install-mu-loader"))
