@@ -41,6 +41,7 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
     ...(command === "wordpress.server-page-load" ? {
       schema: "wp-codebox/wordpress-page-load-result/v1",
       mode: "server-http",
+      source: "server-http",
     } : {}),
     command,
     method: input.method,

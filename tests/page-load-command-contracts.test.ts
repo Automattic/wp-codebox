@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
+import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzTargetCommandDefinitions, getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
 import { httpRequestInputFromArgs } from "../packages/runtime-playground/src/commands.js"
 import { pageLoadInputFromArgs } from "../packages/runtime-playground/src/page-load-command-handlers.js"
 import { wordpressBrowserPageLoadAction, wordpressServerPageLoadAction, wordpressSimulatedAdminPageLoadAction, wordpressSimulatedFrontendPageLoadAction } from "../packages/runtime-playground/src/public.js"
@@ -14,14 +14,28 @@ const browserPageLoad = getCommandDefinition("wordpress.browser-page-load")
 assert.equal(adminAlias?.handler.kind, "playground")
 assert.equal(adminAlias?.handler.method, "runAdminPageLoad")
 assert.match(adminAlias?.description ?? "", /Backward-compatible alias/)
+assert.deepEqual(adminAlias?.metadata, { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-admin-page-load", excludeFromFuzzTargets: true })
 assert.equal(simulatedAdmin?.handler.kind, "playground")
 assert.equal(simulatedAdmin?.handler.method, "runAdminPageLoad")
+assert.equal(simulatedAdmin?.metadata?.deprecated, undefined)
 
 assert.equal(frontendAlias?.handler.kind, "playground")
 assert.equal(frontendAlias?.handler.method, "runFrontendPageLoad")
 assert.match(frontendAlias?.description ?? "", /Backward-compatible alias/)
+assert.deepEqual(frontendAlias?.metadata, { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-frontend-page-load", excludeFromFuzzTargets: true })
 assert.equal(simulatedFrontend?.handler.kind, "playground")
 assert.equal(simulatedFrontend?.handler.method, "runFrontendPageLoad")
+assert.equal(simulatedFrontend?.metadata?.deprecated, undefined)
+
+const fuzzTargetCommands = fuzzTargetCommandDefinitions().map((command) => command.id)
+assert.equal(fuzzTargetCommands.includes("wordpress.admin-page-load"), false)
+assert.equal(fuzzTargetCommands.includes("wordpress.frontend-page-load"), false)
+assert.equal(fuzzTargetCommands.includes("wordpress.simulated-admin-page-load"), true)
+assert.equal(fuzzTargetCommands.includes("wordpress.simulated-frontend-page-load"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands.includes("wordpress.admin-page-load"), false)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands.includes("wordpress.frontend-page-load"), false)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands.includes("wordpress.simulated-admin-page-load"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands.includes("wordpress.simulated-frontend-page-load"), true)
 
 assert.equal(serverPageLoad?.handler.kind, "playground")
 assert.equal(serverPageLoad?.handler.method, "runServerPageLoad")

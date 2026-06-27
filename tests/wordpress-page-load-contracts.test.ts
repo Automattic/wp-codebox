@@ -7,6 +7,7 @@ import { getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
 
 const result = wordpressPageLoadResult({
   mode: "simulated",
+  source: "in-process",
   command: "wordpress.frontend-page-load",
   status: "ok",
   target: { kind: "frontend", path: "/hello-world/", method: "GET" },
@@ -15,6 +16,8 @@ const result = wordpressPageLoadResult({
     schema: "wp-codebox/performance-observation/v1",
     command: "wordpress.frontend-page-load",
     target: "/hello-world/",
+    source: "in-process",
+    kind: "simulated-page-load",
     database: { queryCount: 3, totalTimeMs: 1.25, fingerprints: [], repeatedQueries: [] },
     hooks: { timings: [] },
   },
@@ -23,9 +26,12 @@ const result = wordpressPageLoadResult({
 
 assert.equal(result.schema, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA)
 assert.equal(result.mode, "simulated")
+assert.equal(result.source, "in-process")
 assert.equal(result.command, "wordpress.frontend-page-load")
 assert.equal(result.status, "ok")
 assert.equal(result.performance?.database?.queryCount, 3)
+assert.equal(result.performance?.source, "in-process")
+assert.equal(result.performance?.kind, "simulated-page-load")
 assert.equal(result.artifactRefs?.[0]?.kind, "wordpress-page-load-result")
 
 const adminDefinition = getCommandDefinition("wordpress.admin-page-load")
