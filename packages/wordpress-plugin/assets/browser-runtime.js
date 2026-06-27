@@ -674,6 +674,10 @@
 		};
 		const client = await startPlaygroundWeb( request );
 
+		if ( typeof options.onClientConnected === 'function' ) {
+			options.onClientConnected( client );
+		}
+
 		return {
 			schema: 'wp-codebox/browser-preview-start-result/v1',
 			success: true,
