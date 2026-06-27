@@ -10,8 +10,15 @@ for (const entrypoint of [core, contracts]) {
 
   assert.equal(manifest.schema, "wp-codebox/runtime-contract-manifest/v1")
   assert.equal(manifest.schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
+  assert.equal(manifest.schemas.runtimePackage.task, "wp-codebox/runtime-package-task/v1")
+  assert.equal(manifest.schemas.runtimePackage.result, "wp-codebox/runtime-package-result/v1")
   assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 }
+
+assert.equal(contracts.RUNTIME_PACKAGE_TASK_SCHEMA, "wp-codebox/runtime-package-task/v1")
+assert.equal(contracts.RUNTIME_PACKAGE_RESULT_SCHEMA, "wp-codebox/runtime-package-result/v1")
+assert.equal(typeof contracts.normalizeRuntimePackageTask, "function")
+assert.equal(typeof contracts.validateRuntimePackageTask, "function")
 
 assert.equal(contracts.PERFORMANCE_OBSERVATION_SCHEMA, "wp-codebox/performance-observation/v1")
 assert.equal(contracts.performanceObservation({ command: "wordpress.rest-performance-observation" }).schema, "wp-codebox/performance-observation/v1")

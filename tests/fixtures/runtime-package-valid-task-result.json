@@ -1,0 +1,64 @@
+{
+  "task": {
+    "schema": "wp-codebox/runtime-package-task/v1",
+    "package": {
+      "slug": "example-agent",
+      "source": "/workspace/example-project/bundles/example-agent"
+    },
+    "workflow": {
+      "id": "example-agent"
+    },
+    "input": {
+      "prompt": "Collect typed outputs"
+    },
+    "artifact_declarations": [
+      {
+        "schema": "wp-codebox/runtime-package-artifact-declaration/v1",
+        "name": "report",
+        "type": "markdown",
+        "direction": "output",
+        "required": true,
+        "path": "files/report.md",
+        "metadata": {}
+      }
+    ],
+    "output_projections": [
+      {
+        "schema": "wp-codebox/runtime-package-output-projection/v1",
+        "name": "summary",
+        "source": "result.summary",
+        "type": "text",
+        "required": true,
+        "metadata": {}
+      }
+    ],
+    "required_artifacts": ["report"],
+    "metadata": {
+      "caller": "contract-fixture"
+    }
+  },
+  "result": {
+    "schema": "wp-codebox/runtime-package-result/v1",
+    "status": "success",
+    "success": true,
+    "package": {
+      "slug": "example-agent",
+      "source": "/workspace/example-project/bundles/example-agent"
+    },
+    "outputs": {
+      "summary": "Typed output preserved"
+    },
+    "artifacts": [
+      {
+        "name": "report",
+        "type": "markdown",
+        "path": "files/report.md",
+        "contentType": "text/markdown"
+      }
+    ],
+    "diagnostics": [],
+    "metadata": {
+      "caller": "contract-fixture"
+    }
+  }
+}

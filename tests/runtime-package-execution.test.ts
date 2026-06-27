@@ -8,10 +8,15 @@ import {
   CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
   normalizeRuntimePackageArtifactDeclarations,
   normalizeRuntimePackageOutputProjections,
+  normalizeRuntimePackageResult,
+  normalizeRuntimePackageTask,
   RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA,
   RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
+  RUNTIME_PACKAGE_RESULT_SCHEMA,
+  RUNTIME_PACKAGE_TASK_SCHEMA,
   runtimePackageExecutionInput,
+  validateRuntimePackageTask,
 } from "../packages/runtime-core/src/public.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
@@ -52,6 +57,49 @@ assert.deepEqual(normalizeRuntimePackageOutputProjections([{ name: "artifactInde
   path: "files/typed/index.json",
   metadata: {},
 }])
+
+const task = normalizeRuntimePackageTask({
+  runtimePackage: "bundles/example-agent",
+  workspaceRoot: "/workspace/example-project",
+  input: { prompt: "collect typed outputs" },
+  artifactDeclarations: [{ name: "report", type: "markdown", required: true, path: "files/report.md" }],
+  outputProjections: [{ name: "summary", source: "result.summary", type: "text", required: true }],
+  metadata: { caller: "contract-test" },
+})
+assert.equal(task.schema, RUNTIME_PACKAGE_TASK_SCHEMA)
+assert.deepEqual(task.package, { slug: "example-agent", source: "/workspace/example-project/bundles/example-agent" })
+assert.deepEqual(task.workflow, { id: "example-agent" })
+assert.deepEqual(task.required_artifacts, ["report"])
+assert.deepEqual(validateRuntimePackageTask(task), { valid: true, task, diagnostics: [] })
+
+const missingPublicFields = validateRuntimePackageTask({ schema: RUNTIME_PACKAGE_TASK_SCHEMA, package: { slug: "example-agent" } })
+assert.equal(missingPublicFields.valid, false)
+assert.deepEqual(missingPublicFields.diagnostics.map((diagnostic) => diagnostic.code), [
+  "missing_package_source",
+  "missing_workflow_id",
+  "missing_input",
+  "missing_artifact_declarations",
+  "missing_required_artifacts",
+])
+
+const unnormalizedTask = { ...task, package: { slug: "example-agent", source: "bundles/example-agent" } }
+const unnormalizedValidation = validateRuntimePackageTask(unnormalizedTask)
+assert.equal(unnormalizedValidation.valid, false)
+assert.equal(unnormalizedValidation.diagnostics[0].code, "workspace_root_required")
+
+const validFixture = JSON.parse(await readFile(new URL("./fixtures/runtime-package-valid-task-result.json", import.meta.url), "utf8"))
+assert.deepEqual(validateRuntimePackageTask(validFixture.task), { valid: true, task: validFixture.task, diagnostics: [] })
+assert.deepEqual(normalizeRuntimePackageResult(validFixture.result), validFixture.result)
+
+const missingBundleFixture = JSON.parse(await readFile(new URL("./fixtures/runtime-package-missing-bundle-failure.json", import.meta.url), "utf8"))
+assert.equal(normalizeRuntimePackageResult(missingBundleFixture).schema, RUNTIME_PACKAGE_RESULT_SCHEMA)
+assert.equal(normalizeRuntimePackageResult(missingBundleFixture).diagnostics[0].code, "runtime_package_import_failed")
+
+const missingArtifactFixture = JSON.parse(await readFile(new URL("./fixtures/runtime-package-missing-required-artifact-failure.json", import.meta.url), "utf8"))
+const missingArtifactResult = normalizeRuntimePackageResult(missingArtifactFixture)
+assert.equal(missingArtifactResult.success, false)
+assert.equal(missingArtifactResult.outputs.summary, "The semantic result is still preserved when artifact validation fails.")
+assert.equal(missingArtifactResult.diagnostics[0].code, "runtime_package_required_artifact_missing")
 
 const recipe = buildRuntimePackageRunRecipe({
   runtimePackage: "example/runtime-package",

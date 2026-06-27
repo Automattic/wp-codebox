@@ -1,0 +1,25 @@
+{
+  "schema": "wp-codebox/runtime-package-result/v1",
+  "status": "failed",
+  "success": false,
+  "package": {
+    "slug": "example-agent",
+    "source": "/workspace/example-project/bundles/example-agent"
+  },
+  "outputs": {
+    "summary": "The semantic result is still preserved when artifact validation fails."
+  },
+  "artifacts": [],
+  "diagnostics": [
+    {
+      "schema": "wp-codebox/runtime-package-diagnostic/v1",
+      "code": "runtime_package_required_artifact_missing",
+      "message": "Required runtime package artifact is missing: report.",
+      "severity": "error",
+      "path": "artifacts.report"
+    }
+  ],
+  "metadata": {
+    "required_artifacts": ["report"]
+  }
+}

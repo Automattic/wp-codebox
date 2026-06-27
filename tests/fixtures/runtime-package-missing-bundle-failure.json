@@ -1,0 +1,24 @@
+{
+  "schema": "wp-codebox/runtime-package-result/v1",
+  "status": "failed",
+  "success": false,
+  "package": {
+    "slug": "missing-agent",
+    "source": "/workspace/example-project/bundles/missing-agent"
+  },
+  "outputs": {},
+  "artifacts": [],
+  "diagnostics": [
+    {
+      "schema": "wp-codebox/runtime-package-diagnostic/v1",
+      "code": "runtime_package_import_failed",
+      "message": "Runtime package import failed.",
+      "severity": "error",
+      "path": "package.source",
+      "details": {
+        "source": "/workspace/example-project/bundles/missing-agent"
+      }
+    }
+  ],
+  "metadata": {}
+}
