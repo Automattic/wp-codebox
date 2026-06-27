@@ -33,8 +33,16 @@ for (const rawPublicPath of [
   assert.doesNotMatch(publicDocsText, rawPublicPath, `public docs must not teach ${rawPublicPath}`)
 }
 
-for (const substrateTerm of [/\bData Machine\b/i, /\bData Machine Code\b/i, /\bAgents API\b/i, /\bdatamachine\b/i]) {
-  assert.doesNotMatch(publicDocsText, substrateTerm, `public docs must stay on Codebox-owned API language`)
+for (const forbiddenConsumerGuidance of [
+  /studio\s+wp\s+datamachine/i,
+  /wp\s+datamachine/i,
+  /agents-api\/[a-z0-9._/-]+/i,
+  /datamachine\/[a-z0-9._/-]+/i,
+  /data-machine-code\/[a-z0-9._/-]+/i,
+  /call\s+(?:the\s+)?(?:Data Machine|Agents API|Data Machine Code)\b/i,
+  /use\s+(?:the\s+)?(?:Data Machine|Agents API|Data Machine Code)\s+(?:ability|api|endpoint)\b/i,
+]) {
+  assert.doesNotMatch(publicDocsText, forbiddenConsumerGuidance, `public docs must not teach consumers to call ${forbiddenConsumerGuidance}`)
 }
 
 const publicExamplesText = await readPublicText(["examples"])
@@ -47,6 +55,9 @@ const publicApiContract = await readFile(new URL("docs/public-api-contract.md", 
 assert.match(publicApiContract, /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/)
 assert.match(publicApiContract, /Product consumers should use the Codebox-owned public surfaces/)
 assert.match(publicApiContract, /manifest intentionally excludes backend handler bindings/)
+assert.match(publicApiContract, /Data Machine, Agents API, and Data Machine Code are\s+allowed internal\/default substrate adapters/)
+assert.match(publicApiContract, /They are not consumer API names/)
+assert.match(publicApiContract, /advanced adapter surface/)
 assert.match(publicApiContract, /`wp-codebox\/run-plan-progress\/v1`/)
 assert.match(publicApiContract, /Hosts may stream or persist those snapshots in\s+their own job system/)
 assert.match(publicApiContract, /host UIs own the button, policy, and durable cancellation request transport/)

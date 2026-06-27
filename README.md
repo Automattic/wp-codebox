@@ -84,7 +84,7 @@ What WP Codebox provides for product use cases:
 
 - Run a PHP or WP-CLI probe against mounted WordPress code.
 - Validate raw contained-runtime blueprints through the same runtime and artifact contract.
-- Execute a WordPress Ability inside a disposable contained WordPress runtime.
+- Execute a WordPress Ability inside a disposable contained WordPress runtime through Codebox-owned request/result contracts.
 - Run repeatable workspace recipes that mount plugins, seed workspaces, and capture outputs.
 - Drive stateful runtime episodes with reset, step, observe, snapshot, artifact, and close operations.
 - Launch sandboxed coding-agent tasks from the CLI or WordPress ability surface.
@@ -95,7 +95,7 @@ What WP Codebox provides for product use cases:
 
 The WordPress plugin ships a browser runtime helper at
 `window.wpCodeboxBrowser` for product callers that drive a contained WordPress runtime
-from the browser. Low-level helpers such as `runPhpRequest`,
+from the browser. Advanced adapter helpers such as `runPhpRequest`,
 `runWordPressOperation`, `ensureDirectory`, and `writeFile` remain available for
 custom workflows. Prefer the typed site-operation helpers for common safe
 actions because they validate input and return a normalized product envelope:

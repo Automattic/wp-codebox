@@ -44,6 +44,7 @@ assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-pac
 assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_package'\s*\)/)
 assert.match(abilitiesPhp, /'canonical_ability'\s*=>\s*'wp-codebox\/run-runtime-package'/)
 assert.doesNotMatch(abilitiesPhp, /wp_register_ability\(\s*'agents\/run-runtime-package'/)
-assert.doesNotMatch(abilitiesPhp + descriptorsPhp + schemasPhp, /datamachine|data machine/i)
+assert.doesNotMatch(abilitiesPhp + descriptorsPhp, /wp_register_ability\(\s*'(?:agents|datamachine|data-machine-code)\//i)
+assert.doesNotMatch(descriptorsPhp + apiPhp, /'(?:agents|datamachine|data-machine-code)\/[a-z0-9._/-]+'\s*=>/i)
 
 console.log("public canonical abilities ok")
