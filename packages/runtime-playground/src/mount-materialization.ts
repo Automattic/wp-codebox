@@ -88,10 +88,9 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
     }
   }
 
-  const response = await server.playground.run({ code: hostMountWritePhp(files) })
-  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
-  const materialized = parsed.materialized ?? 0
-  const totalSkipped = skipped + (parsed.skipped ?? 0)
+  const materializedByPersistentWriter = await materializeHostMountFilesWithPersistentWriter(server, files)
+  const materialized = materializedByPersistentWriter?.materialized ?? 0
+  const totalSkipped = skipped + (materializedByPersistentWriter?.skipped ?? 0)
   return {
     materialized,
     deleted: 0,
@@ -101,6 +100,38 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
       status: materialized > 0 ? "completed" : "skipped",
       metadata: { materialized, deleted: 0, skipped: totalSkipped },
     }),
+  }
+}
+
+async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number } | undefined> {
+  if (!server.playground.writeFile) {
+    return materializeHostMountFilesWithPhp(server, files)
+  }
+
+  let materialized = 0
+  let skipped = 0
+  for (const file of files) {
+    const target = file.target.trim()
+    if (!target || target.includes("\0")) {
+      skipped++
+      continue
+    }
+    try {
+      await server.playground.writeFile(target, Buffer.from(file.contentsBase64, "base64").toString("utf8"))
+      materialized++
+    } catch {
+      skipped++
+    }
+  }
+  return { materialized, skipped }
+}
+
+async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number }> {
+  const response = await server.playground.run({ code: hostMountWritePhp(files) })
+  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
+  return {
+    materialized: parsed.materialized ?? 0,
+    skipped: parsed.skipped ?? 0,
   }
 }
 
