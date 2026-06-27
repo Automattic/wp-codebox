@@ -99,6 +99,13 @@ await withTempDir("wp-codebox-run-registry-finalizer-", async (directory) => {
   assert.equal(output.run?.result?.schema, "wp-codebox/runtime-run-result/v1")
   assert.equal(record.result?.schema, "wp-codebox/runtime-run-result/v1")
   assert.equal(record.result?.summary?.failure_summary, "recipe failed validation")
+  assert.deepEqual(record.result?.summary?.diagnostics, [{
+    source: "recipe-validation",
+    severity: "error",
+    code: "invalid",
+    path: "$.workflow",
+    message: "invalid workflow",
+  }])
 })
 
 await withTempDir("wp-codebox-run-registry-cancel-", async (directory) => {
