@@ -86,4 +86,44 @@ await withTempDir("wp-codebox-runtime-package-staging-dedupe-", async (root) => 
   }
 })
 
+await withTempDir("wp-codebox-runtime-package-target-root-", async (root) => {
+  const previousCwd = process.cwd()
+  const launcherCwd = join(root, "launcher")
+  const workspaceRoot = join(root, "wp-site-generator")
+  const bundleSource = join(workspaceRoot, "bundles", "store-idea-agent")
+  await mkdir(launcherCwd, { recursive: true })
+  await mkdir(bundleSource, { recursive: true })
+
+  try {
+    process.chdir(launcherCwd)
+    const recipe = buildAgentTaskRecipe({
+      runtime_task: {
+        input: {
+          schema: "wp-codebox/runtime-package-task/v1",
+          package: {
+            slug: "store-idea-agent",
+            source: "/workspace/wp-site-generator/bundles/store-idea-agent",
+          },
+          workflow: { id: "store-idea-agent" },
+          input: {},
+          artifact_declarations: [],
+          required_artifacts: [],
+        },
+      },
+    }, {
+      ...taskInput,
+      target: {
+        kind: "repo",
+        materialization: { root: workspaceRoot },
+      } as TaskInput["target"],
+    }, "latest")
+
+    assert.equal(recipe.inputs?.stagedFiles?.length, 1)
+    assert.equal(recipe.inputs?.stagedFiles?.[0]?.source, bundleSource)
+    assert.equal(recipe.inputs?.stagedFiles?.[0]?.target, "/workspace/wp-site-generator/bundles/store-idea-agent")
+  } finally {
+    process.chdir(previousCwd)
+  }
+})
+
 console.log("agent task runtime package staging ok")

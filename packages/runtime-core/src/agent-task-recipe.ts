@@ -62,6 +62,7 @@ export interface AgentTaskRunInput {
   verify_steps?: WorkspaceRecipe["workflow"]["after"]
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
+  target?: Record<string, unknown>
 }
 
 interface RuntimeOverlayProfileDefaults {
@@ -86,7 +87,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
   const runtimeMounts = runtimeStateMounts(input)
-  const stagedFiles = stagedRuntimeSources(input)
+  const stagedFiles = stagedRuntimeSources(input, taskInput)
   const providerPlugins = providerPluginEntries(input, artifacts)
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
@@ -335,15 +336,16 @@ function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): str
     : `/wordpress/wp-content/plugins/${slug}`
 }
 
-function stagedRuntimeSources(input: AgentTaskRunInput): WorkspaceRecipeStagedFile[] {
+function stagedRuntimeSources(input: AgentTaskRunInput, taskInput: TaskInput): WorkspaceRecipeStagedFile[] {
   const stagedFiles: WorkspaceRecipeStagedFile[] = []
   const seenTargets = new Set<string>()
+  const roots = workspaceSourceRoots(input, taskInput)
   for (const stagedFile of Array.isArray(input.stagedFiles) ? input.stagedFiles : []) {
     if (!stagedFile?.target || seenTargets.has(stagedFile.target)) continue
     stagedFiles.push(stagedFile)
     seenTargets.add(stagedFile.target)
   }
-  for (const stagedFile of [...stagedAgentBundleSources(input.agent_bundles), ...stagedRuntimePackageSources(input.runtime_task)]) {
+  for (const stagedFile of [...stagedAgentBundleSources(input.agent_bundles, roots), ...stagedRuntimePackageSources(input.runtime_task, roots)]) {
     if (!stagedFile.target || seenTargets.has(stagedFile.target)) continue
     stagedFiles.push(stagedFile)
     seenTargets.add(stagedFile.target)
@@ -351,7 +353,7 @@ function stagedRuntimeSources(input: AgentTaskRunInput): WorkspaceRecipeStagedFi
   return stagedFiles
 }
 
-function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"]): WorkspaceRecipeStagedFile[] {
+function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"], roots: string[]): WorkspaceRecipeStagedFile[] {
   if (!Array.isArray(agentBundles)) return []
 
   const stagedFiles: WorkspaceRecipeStagedFile[] = []
@@ -359,7 +361,7 @@ function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles
   for (const bundle of agentBundles) {
     const source = stringValue(bundle.source)
     if (!source || bundle.bundle || seenTargets.has(source)) continue
-    const localSource = localAgentBundleSource(source)
+    const localSource = localAgentBundleSource(source, roots)
     if (!localSource) continue
     stagedFiles.push({
       source: localSource,
@@ -370,19 +372,19 @@ function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles
   return stagedFiles
 }
 
-function stagedRuntimePackageSources(runtimeTask: AgentTaskRunInput["runtime_task"]): WorkspaceRecipeStagedFile[] {
+function stagedRuntimePackageSources(runtimeTask: AgentTaskRunInput["runtime_task"], roots: string[]): WorkspaceRecipeStagedFile[] {
   const runtimeTaskInput = objectValue(runtimeTask?.input)
   const runtimePackage = objectValue(runtimeTaskInput?.package)
   const source = stringValue(runtimePackage?.source)
   if (!source) return []
 
-  const localSource = localAgentBundleSource(source)
+  const localSource = localAgentBundleSource(source, roots)
   if (!localSource) return []
 
   return [{ source: localSource, target: source }]
 }
 
-function localAgentBundleSource(source: string): string {
+function localAgentBundleSource(source: string, roots: string[]): string {
   const direct = resolve(source)
   if (existsSync(direct)) return direct
 
@@ -392,8 +394,29 @@ function localAgentBundleSource(source: string): string {
   const relativeToWorkspace = source.slice(workspacePrefix.length).split("/").filter(Boolean).slice(1).join("/")
   if (!relativeToWorkspace) return ""
 
-  const fromCwd = resolve(process.cwd(), relativeToWorkspace)
-  return existsSync(fromCwd) ? fromCwd : ""
+  for (const root of [...roots, process.cwd()]) {
+    const fromRoot = resolve(root, relativeToWorkspace)
+    if (existsSync(fromRoot)) return fromRoot
+  }
+  return ""
+}
+
+function workspaceSourceRoots(input: AgentTaskRunInput, taskInput: TaskInput): string[] {
+  const roots: string[] = []
+  for (const target of [objectValue(input.target), objectValue(taskInput.target)]) {
+    if (!target) continue
+    for (const value of [
+      objectValue(target.materialization)?.root,
+      objectValue(target.materialization)?.cwd,
+      target.root,
+      target.cwd,
+      target.path,
+    ]) {
+      const root = stringValue(value)
+      if (root && !roots.includes(root)) roots.push(root)
+    }
+  }
+  return roots
 }
 
 function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
