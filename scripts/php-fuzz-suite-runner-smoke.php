@@ -575,6 +575,9 @@ assert( 'wp_codebox_fuzz_suite_runner_mode_unavailable' === $runtime_backed_requ
 assert( 'wp_codebox_fuzz_suite_runner_mode_unavailable' === $runtime_backed_request['cases'][0]['skipReason'] );
 assert( 'runtime-backed' === $runtime_backed_request['diagnostics'][0]['metadata']['requested_runner_mode'] );
 assert( false === $runtime_backed_request['diagnostics'][0]['metadata']['runtime_backed_execution']['supported_by_this_ability'] );
+assert( 'php-in-process-only' === $runtime_backed_request['diagnostics'][0]['metadata']['runtime_backed_execution']['ability_execution_mode'] );
+assert( 'wp-codebox run-fuzz-suite --runner-mode=runtime-backed' === $runtime_backed_request['diagnostics'][0]['metadata']['runtime_backed_execution']['public_runtime_backed_path'] );
+assert( 'wp-codebox run-fuzz-suite --runner-mode=runtime-backed' === $runtime_backed_request['diagnostics'][0]['metadata']['required_support']['cli'] );
 assert( '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite' === $runtime_backed_request['diagnostics'][0]['metadata']['required_support']['typescript_public_facade'] );
 assert( in_array( 'runtime-action:browser', $runtime_backed_request['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
 

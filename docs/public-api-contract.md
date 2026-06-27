@@ -112,14 +112,18 @@ integration-specific filters.
 
 `wp-codebox/run-fuzz-suite` accepts public target kinds `rest`, `http`,
 `ability`, `command`, `runtime`, and `runtime-action`. The WordPress plugin
-ability runs safe in-process `rest`, same-site `http`, and WordPress `ability`
-targets directly. Requests may set `runnerMode` / `runner_mode` to `auto`,
+ability is an in-process WordPress ability only: it runs safe in-process `rest`,
+same-site `http`, and WordPress `ability` targets directly and does not start a
+runtime-backed episode. Requests may set `runnerMode` / `runner_mode` to `auto`,
 `php-in-process`, or `runtime-backed`; the WordPress plugin ability only provides
 `php-in-process`, so `runtime-backed` fails closed with `status: "error"` before
-case execution. Targets that require the runtime command, browser, editor, or
-page-load executors return `status: "skipped"`, a case-level `skipReason`, and a
-warning diagnostic in permissive PHP mode rather than silently passing without
-exercising the target. Public suite builders declare
+case execution and returns metadata with `supported_by_this_ability: false`,
+`ability_execution_mode: "php-in-process-only"`, and the public runtime-backed
+path `wp-codebox run-fuzz-suite --runner-mode=runtime-backed`. Targets that
+require the runtime command, browser, editor, or page-load executors return
+`status: "skipped"`, a case-level `skipReason`, and a warning diagnostic in
+permissive PHP mode rather than silently passing without exercising the target.
+Public suite builders declare
 `metadata.requiredRunnerCapabilities`, and the PHP ability also infers required
 target/runtime-action capabilities from suite targets, so callers can choose
 between PHP in-process mode and runtime-backed mode before execution.
@@ -132,10 +136,11 @@ required capabilities fail closed with `status: "error"` instead of looking like
 successful structured skip.
 
 TypeScript callers running through the public Codebox contract should build fuzz
-suites with `@automattic/wp-codebox-core/contracts` and run them through
-`wp-codebox/run-fuzz-suite`, `WP_Codebox_API`, or the matching CLI wrapper. Runtime
-backend implementors can wire the same contract to a contained runtime episode
-behind those public surfaces.
+suites with `@automattic/wp-codebox-core/contracts`. Use `wp-codebox/run-fuzz-suite`
+or `WP_Codebox_API` for in-process WordPress ability coverage, and use the public
+`wp-codebox run-fuzz-suite --runner-mode=runtime-backed` CLI path or
+`@automattic/wp-codebox-playground/public executeWordPressFuzzSuite` when the suite
+needs browser, editor, page, CRUD, runtime, or runtime-action coverage.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`

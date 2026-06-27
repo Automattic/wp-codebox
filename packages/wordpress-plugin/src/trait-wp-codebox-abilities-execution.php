@@ -67,8 +67,8 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 			self::fuzz_suite_diagnostic(
 				'error',
 				'wp_codebox_fuzz_suite_runner_mode_unavailable',
-				'wp-codebox/run-fuzz-suite runs PHP in-process mode only; use the runtime-backed Codebox runner for browser, editor, page, CRUD, runtime, or runtime-action coverage.',
-				array( 'requested_runner_mode' => $requested_runner_mode, 'available_runner_mode' => $runner_capabilities['mode'], 'missing_capabilities' => $missing_capabilities, 'runtime_backed_execution' => self::fuzz_suite_runtime_backed_execution_contract(), 'required_support' => array( 'typescript_public_facade' => '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite', 'episode_methods' => array( 'step', 'reset' ) ) )
+				'wp-codebox/run-fuzz-suite is an in-process WordPress ability only; use wp-codebox run-fuzz-suite --runner-mode=runtime-backed or @automattic/wp-codebox-playground/public executeWordPressFuzzSuite for browser, editor, page, CRUD, runtime, or runtime-action coverage.',
+				array( 'requested_runner_mode' => $requested_runner_mode, 'available_runner_mode' => $runner_capabilities['mode'], 'missing_capabilities' => $missing_capabilities, 'runtime_backed_execution' => self::fuzz_suite_runtime_backed_execution_contract(), 'required_support' => array( 'cli' => 'wp-codebox run-fuzz-suite --runner-mode=runtime-backed', 'typescript_public_facade' => '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite', 'episode_methods' => array( 'step', 'reset' ) ) )
 			)
 		);
 	}
@@ -162,6 +162,8 @@ private static function fuzz_suite_supported_runner_capabilities(): array {
 private static function fuzz_suite_runtime_backed_execution_contract(): array {
 	return array(
 		'supported_by_this_ability' => false,
+		'ability_execution_mode'    => 'php-in-process-only',
+		'public_runtime_backed_path' => 'wp-codebox run-fuzz-suite --runner-mode=runtime-backed',
 		'supported_public_facade'   => '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite',
 		'required_episode_methods'  => array( 'step', 'reset' ),
 		'failure_code'              => 'wp_codebox_fuzz_suite_runner_mode_unavailable',

@@ -384,7 +384,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-fuzz-suite',
 				array(
 					'label'               => 'Run Fuzz Suite',
-					'description'         => 'Run safe WordPress fuzz-suite cases against this disposable runtime and return structured case results plus artifact references.',
+					'description'         => 'Run safe PHP in-process WordPress fuzz-suite cases against this disposable runtime and return structured case results plus artifact references. Runtime-backed execution is available through the public wp-codebox CLI or TypeScript facade, not this ability callback.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::fuzz_suite_request_schema(),
 					'output_schema'       => self::fuzz_suite_result_schema(),
