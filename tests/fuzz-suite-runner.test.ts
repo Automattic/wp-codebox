@@ -83,6 +83,28 @@ assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities.includes
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("db_operation"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.db-operation"), true)
 
+const blockedRestMutation = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-rest-mutation-blocked",
+  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
+}), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
+assert.equal(blockedRestMutation.status, "skipped")
+assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_input_unsupported")
+assert.equal(blockedRestMutation.cases[0]?.diagnostics[0]?.metadata?.mutationSkipped, true)
+
+const allowedRestMutations: string[] = []
+const allowedRestMutation = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-rest-mutation-allowed",
+  metadata: { allowRestMutations: true },
+  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
+}), {
+  runtimeActionExecutor: async ({ action }) => {
+    allowedRestMutations.push(action.type)
+    return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200 }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete" } }
+  },
+})
+assert.equal(allowedRestMutation.status, "passed")
+assert.deepEqual(allowedRestMutations, ["rest_request"])
+
 const plannedEditor = planFuzzSuiteCaseExecutionSpec({
   suite: fuzzSuiteContract({ id: "planner", cases: [] }),
   case: { id: "editor", target: { kind: "runtime-action" }, input: { type: "editor_open", target: "site" } },

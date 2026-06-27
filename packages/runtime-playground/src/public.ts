@@ -4,12 +4,14 @@ import {
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
+  createWordPressRuntimeCheckpoint,
   executeFuzzSuite,
   openWordPressAdminPage,
   openWordPressEditor,
   probeWordPressBrowser,
   readWordPressDatabase,
   requestWordPressRest,
+  restoreWordPressRuntimeCheckpoint,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
   runWordPressCrudOperation,
   runWordPressBrowserAction,
@@ -17,6 +19,10 @@ import {
   runWordPressWpCli,
   visitWordPressPage,
   wordpressHotspotsArtifact,
+  deleteBoundaryArtifact,
+  isRestMutationMethod,
+  mutationArtifactDigest,
+  mutationIsolationArtifact,
   type ArtifactBundle,
   type ArtifactSpec,
   type ExecutionResult,
@@ -28,6 +34,7 @@ import {
   type FuzzSuiteResetExecutor,
   type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
+  type FuzzSuiteRuntimeActionExecutionInput,
   type FuzzSuiteRuntimeWorkloadExecutor,
   type FuzzSuiteRunOptions,
   type ObservationSpec,
@@ -37,6 +44,8 @@ import {
   type RuntimeCreateSpec,
   type RuntimeEpisode,
   type RuntimeEpisodeActionSpec,
+  type RuntimeEpisodeContentDigest,
+  type RuntimeEpisodeTraceRef,
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
   type WordPressHotspotObservationInput,
@@ -162,7 +171,8 @@ export async function runWordPressEpisodeActions(
 
 export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteRuntimeActionExecutor {
   return {
-    async executeRuntimeAction({ action }) {
+    async executeRuntimeAction(input) {
+      const { action } = input
       if (action.type === "wp_cli") {
         return runWordPressWpCli(episode, action)
       }
@@ -170,6 +180,9 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
         return runWordPressPhp(episode, action)
       }
       if (action.type === "rest_request") {
+        if (isRestMutationMethod(action.method ?? "GET")) {
+          return executeRollbackSafeRestMutation(episode, { ...input, action })
+        }
         return requestWordPressRest(episode, action)
       }
       if (action.type === "crud_operation") {
@@ -229,6 +242,64 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
       const step = await episode.step({ kind: "command", ...spec }, { type: "command-result" })
       return step.execution
     },
+  }
+}
+
+async function executeRollbackSafeRestMutation(
+  episode: Pick<RuntimeEpisode, "step">,
+  input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "rest_request" }> },
+): Promise<RuntimeActionObservation> {
+  const method = (input.action.method ?? "GET").toUpperCase()
+  const target = input.action.path
+  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
+  const createStep = await createWordPressRuntimeCheckpoint(episode, {
+    name: checkpointName,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
+  })
+  const observation = await requestWordPressRest(episode, input.action)
+  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const status = restObservationStatus(observation)
+  const affectedIdentifiers = restMutationAffectedIdentifiers(observation)
+  const baseArtifact = {
+    operation: "rest_request" as const,
+    target,
+    method,
+    status,
+    checkpointName,
+    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    afterObservation: mutationStepEvidence(observation.step, "observed"),
+    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
+    affectedIdentifiers,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+  }
+  const artifact = method === "DELETE" ? deleteBoundaryArtifact(baseArtifact) : mutationIsolationArtifact(baseArtifact)
+  const artifactWithRef = {
+    ...artifact,
+    artifactPath: method === "DELETE" ? `files/delete-boundaries/${input.case.id}.json` : `files/mutation-isolation/${input.case.id}.json`,
+  }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  const artifactWithDigest = {
+    ...artifactWithRef,
+    sha256: mutationArtifactDigest(artifactWithRef),
+    bytes: Buffer.byteLength(content),
+  }
+  const artifactRef: RuntimeEpisodeTraceRef = {
+    kind: artifactWithDigest.artifactKind,
+    id: `${input.case.id}:${artifactWithDigest.artifactKind}`,
+    path: artifactWithDigest.artifactPath,
+    digest: { algorithm: "sha256", value: artifactWithDigest.sha256 },
+  }
+  const data = {
+    ...observation.data,
+    mutationIsolationArtifact: artifactWithDigest,
+    ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : {}),
+  }
+
+  return {
+    ...observation,
+    data,
+    artifactRefs: [...(observation.artifactRefs ?? []), artifactRef],
+    digest: digestRuntimeActionObservationData(data),
   }
 }
 
@@ -526,6 +597,48 @@ function parseJsonRecord(text: string | undefined): Record<string, unknown> | un
   } catch (_error) {
     return undefined
   }
+}
+
+function mutationCheckpointName(suiteId: string, caseId: string, caseIndex: number): string {
+  return `mutation-${safeArtifactSegment(suiteId)}-${caseIndex}-${safeArtifactSegment(caseId)}`
+}
+
+function safeArtifactSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "case"
+}
+
+function mutationStepEvidence(step: RuntimeEpisodeStepResult | undefined, status: string): { status: string; stepId?: string; executionId?: string; exitCode?: number; command?: string; artifactRefs?: FuzzSuiteArtifactRef[] } {
+  return {
+    status,
+    stepId: step?.id,
+    executionId: step?.execution.id,
+    exitCode: step?.execution.exitCode,
+    command: step?.execution.command,
+    artifactRefs: step ? fuzzSuiteStepArtifactRefs(step) : undefined,
+  }
+}
+
+function restObservationStatus(observation: RuntimeActionObservation): number | undefined {
+  return numberValue(observation.data.status ?? recordValue(observation.data.stdout)?.status)
+}
+
+function restMutationAffectedIdentifiers(observation: RuntimeActionObservation): Array<{ kind?: string; id: string | number; source?: string }> | undefined {
+  const data = recordValue(observation.data.body) ?? recordValue(observation.data.stdout)
+  const id = data?.id
+  if (typeof id === "string" || typeof id === "number") {
+    return [{ id, source: "rest-response" }]
+  }
+  const deleted = recordValue(data?.deleted)
+  const previous = recordValue(data?.previous)
+  const previousId = previous?.id ?? deleted?.id
+  if (typeof previousId === "string" || typeof previousId === "number") {
+    return [{ id: previousId, source: "rest-response.previous" }]
+  }
+  return undefined
+}
+
+function digestRuntimeActionObservationData(data: Record<string, unknown>): RuntimeEpisodeContentDigest {
+  return { algorithm: "sha256", value: createHash("sha256").update(JSON.stringify(data)).digest("hex") }
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

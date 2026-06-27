@@ -31,6 +31,8 @@ import {
   FUZZ_COVERAGE_PLAN_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
+  DELETE_BOUNDARY_ARTIFACT_SCHEMA,
+  MUTATION_ISOLATION_ARTIFACT_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
@@ -153,6 +155,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./live-progress.js",
   "./mcp-client-configs.js",
   "./mount-primitives.js",
+  "./mutation-isolation-contracts.js",
   "./parent-tool-bridge.js",
   "./performance-observation.js",
   "./recipe-builders.js",
@@ -196,6 +199,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./command-registry.js",
   "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
+  "./mutation-isolation-contracts.js",
   "./performance-observation.js",
   "./rest-matrix-contracts.js",
   "./runtime-contract-manifest.js",
@@ -434,6 +438,8 @@ assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", path: "fi
 assert.equal(normalizePreviewReviewerAccess(undefined).status, "unavailable")
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
+assert.equal(publicApi.mutationIsolationArtifact({ operation: "rest_request", target: "/wp/v2/posts", method: "POST" }).schema, MUTATION_ISOLATION_ARTIFACT_SCHEMA)
+assert.equal(publicApi.deleteBoundaryArtifact({ operation: "rest_request", target: "/wp/v2/posts/1", method: "DELETE" }).schema, DELETE_BOUNDARY_ARTIFACT_SCHEMA)
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({

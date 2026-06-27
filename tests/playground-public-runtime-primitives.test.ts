@@ -24,6 +24,11 @@ const episode = {
   async step(action: { command: string; args?: string[]; timeoutMs?: number }, observation?: unknown): Promise<RuntimeEpisodeStepResult> {
     steps.push({ command: action.command, args: action.args, timeoutMs: action.timeoutMs, observation })
     const index = steps.length
+    const method = action.args?.find((arg) => arg.startsWith("method="))?.slice("method=".length)
+    const path = action.args?.find((arg) => arg.startsWith("path="))?.slice("path=".length)
+    const stdout = action.command === "wordpress.rest-request" && method === "DELETE"
+      ? JSON.stringify({ method, path, route: path, status: 200, body: { deleted: true, previous: { id: 123 } } })
+      : JSON.stringify({ ok: true })
     return {
       id: `step-${index}`,
       index,
@@ -41,7 +46,7 @@ const episode = {
         command: action.command,
         args: action.args ?? [],
         exitCode: 0,
-        stdout: JSON.stringify({ ok: true }),
+        stdout,
         stderr: "",
         startedAt: "2026-01-01T00:00:00.000Z",
         finishedAt: "2026-01-01T00:00:01.000Z",
@@ -108,5 +113,22 @@ const suiteResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
 }))
 assert.equal(suiteResult.status, "error")
 assert.equal(suiteResult.cases[0]?.reset?.status, "unsupported")
+
+const beforeMutationStepCount = steps.length
+const mutationResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
+  id: "mutation-suite-run",
+  metadata: { allowRestMutations: true },
+  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" } }],
+}))
+assert.equal(mutationResult.status, "passed")
+assert.deepEqual(steps.slice(beforeMutationStepCount).map((step) => step.command), ["wp-codebox.checkpoint-create", "wordpress.rest-request", "wp-codebox.checkpoint-restore"])
+assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === "delete-boundary" && ref.path === "files/delete-boundaries/delete-post.json"), true)
+const deleteBoundary = mutationResult.cases[0]?.metadata?.deleteBoundary as Record<string, unknown> | undefined
+assert.equal(deleteBoundary?.schema, "wp-codebox/delete-boundary-artifact/v1")
+assert.equal(deleteBoundary?.method, "DELETE")
+assert.equal(deleteBoundary?.target, "/wp/v2/posts/123")
+assert.equal(deleteBoundary?.status, 200)
+assert.equal((deleteBoundary?.restore as Record<string, unknown> | undefined)?.status, "passed")
+assert.equal((deleteBoundary?.restore as Record<string, unknown> | undefined)?.command, "wp-codebox.checkpoint-restore")
 
 console.log("playground public runtime primitives ok")

@@ -1,5 +1,6 @@
 import { stripUndefined } from "./object-utils.js"
 import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
+import { DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
@@ -194,6 +195,8 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
     if (runtimeAction?.status === "valid" && executeRuntimeAction && target) {
       try {
         const observation = await executeRuntimeAction({ suite, case: fuzzCase, caseIndex: index, target, action: runtimeAction.action })
+        const mutationArtifacts = fuzzSuiteRuntimeActionMutationArtifactRefs(observation)
+        const metadataInput = fuzzSuiteRuntimeActionMetadataInput(fuzzCase.input, runtimeAction.action)
         cases.push({
           id: fuzzCase.id,
           status: "passed",
@@ -201,19 +204,21 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           target,
           reset,
           diagnostics: [],
-          artifactRefs: fuzzSuiteRuntimeActionArtifactRefs(observation),
+          artifactRefs: dedupeFuzzSuiteArtifactRefs([...(fuzzSuiteRuntimeActionArtifactRefs(observation) ?? []), ...mutationArtifacts]),
           metadata: stripUndefined({
-            input: fuzzCase.input,
+            input: metadataInput,
             description: fuzzCase.description,
             caseMetadata: fuzzCase.metadata,
             adapter: { adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" },
-            replay: { ...replayMetadata, runtimeAction: runtimeAction.action },
+            replay: { ...replayMetadata, input: metadataInput, runtimeAction: fuzzSuiteRuntimeActionMetadataInput(runtimeAction.action, runtimeAction.action) },
             observation: {
               type: observation.type,
               status: observation.status,
               observedAt: observation.observedAt,
               digest: observation.digest,
             },
+            mutationIsolation: recordValue(observation.data.mutationIsolationArtifact),
+            deleteBoundary: recordValue(observation.data.deleteBoundaryArtifact),
           }),
         })
       } catch (error) {
@@ -629,7 +634,7 @@ function httpFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
 function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
   return {
     kind: "rest",
-    adapt({ case: fuzzCase, target }) {
+    adapt({ suite, case: fuzzCase, target }) {
       const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
       if (input.invalid || !isRecord(input.payload)) {
         return unsupportedInputAdapterResolution(fuzzCase, target, "Expected REST input object with path or route.", { adapterKind: "rest" })
@@ -637,6 +642,10 @@ function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
       const path = stringField(input.payload, "path") ?? stringField(input.payload, "route") ?? fuzzSuiteTargetCommand(target)
       if (!path) {
         return unsupportedInputAdapterResolution(fuzzCase, target, "Expected REST target id/entrypoint or input path/route.", { adapterKind: "rest" })
+      }
+      const method = stringField(input.payload, "method") ?? "GET"
+      if (isRestMutationMethod(method) && !fuzzSuiteAllowsRestMutations(suite, fuzzCase, input.payload)) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires explicit allowRestMutations opt-in on the suite, case, or input.", { adapterKind: "rest", mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true })
       }
       return {
         status: "supported",
@@ -652,7 +661,7 @@ function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
             optionalStringArg("user", input.payload.user),
             optionalStringArg("session", input.payload.session),
           ].filter((arg): arg is string => Boolean(arg)),
-          method: stringField(input.payload, "method"),
+          method,
           path,
           timeoutMs: input.timeoutMs,
         }) as ExecutionSpec,
@@ -665,7 +674,7 @@ function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
 function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
   return {
     kind: "runtime-action",
-    adapt({ case: fuzzCase, target }) {
+    adapt({ suite, case: fuzzCase, target }) {
       const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
       if (input.invalid || !isRecord(input.payload) || typeof input.payload.type !== "string") {
         return unsupportedInputAdapterResolution(fuzzCase, target, "Expected runtime-action input object with a type field.", { adapterKind: "runtime-action" })
@@ -709,6 +718,10 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         if (!path) {
           return unsupportedInputAdapterResolution(fuzzCase, target, "Expected rest_request runtime-action input path or route.", { adapterKind: "runtime-action", actionType: input.payload.type })
         }
+        const method = stringField(input.payload, "method") ?? "GET"
+        if (isRestMutationMethod(method) && !fuzzSuiteAllowsRestMutations(suite, fuzzCase, input.payload)) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires explicit allowRestMutations opt-in on the suite, case, or input.", { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true })
+        }
         return {
           status: "supported",
           spec: stripUndefined({
@@ -723,7 +736,7 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
               optionalStringArg("user", input.payload.user),
               optionalStringArg("session", input.payload.session),
             ].filter((arg): arg is string => Boolean(arg)),
-            method: stringField(input.payload, "method"),
+            method,
             path,
             timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
           }) as ExecutionSpec,
@@ -1069,6 +1082,40 @@ function fuzzSuiteRuntimeActionArtifactRefs(observation: RuntimeActionObservatio
   return refs.length > 0 ? refs : undefined
 }
 
+function fuzzSuiteRuntimeActionMutationArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] {
+  const artifacts = [recordValue(observation.data.mutationIsolationArtifact), recordValue(observation.data.deleteBoundaryArtifact)]
+  return artifacts.flatMap((artifact) => {
+    if (!artifact) return []
+    const path = typeof artifact?.artifactPath === "string" ? artifact.artifactPath : undefined
+    const schema = typeof artifact?.schema === "string" ? artifact.schema : undefined
+    if (!path || (schema !== MUTATION_ISOLATION_ARTIFACT_SCHEMA && schema !== DELETE_BOUNDARY_ARTIFACT_SCHEMA)) {
+      return []
+    }
+    return [stripUndefined({
+      path,
+      kind: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? "delete-boundary" : "mutation-isolation",
+      contentType: "application/json",
+      sha256: typeof artifact.sha256 === "string" ? artifact.sha256 : undefined,
+      bytes: typeof artifact.bytes === "number" ? artifact.bytes : undefined,
+      name: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? "delete-boundary" : "mutation-isolation",
+      metadata: { schema, method: artifact.method, target: artifact.target, status: artifact.status, restore: recordValue(artifact.restore) },
+    })]
+  })
+}
+
+function dedupeFuzzSuiteArtifactRefs(refs: readonly FuzzSuiteArtifactRef[]): FuzzSuiteArtifactRef[] | undefined {
+  const seen = new Set<string>()
+  const deduped: FuzzSuiteArtifactRef[] = []
+  for (const ref of refs) {
+    const key = `${ref.kind}:${ref.path}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      deduped.push(ref)
+    }
+  }
+  return deduped.length > 0 ? deduped : undefined
+}
+
 function fuzzSuiteArtifactRefFromTrace(ref: RuntimeEpisodeTraceRef): FuzzSuiteArtifactRef | undefined {
   const path = ref.path ?? ref.artifactId ?? ref.id
   if (!path) {
@@ -1091,4 +1138,31 @@ function fuzzSuiteReplayMetadata(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCa
     target,
     input: fuzzCase.input,
   })
+}
+
+function fuzzSuiteAllowsRestMutations(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase, input?: Record<string, unknown>): boolean {
+  const candidates = [input, fuzzCase.metadata, suite.metadata]
+  return candidates.some((metadata) => Boolean(metadata?.allowRestMutations ?? metadata?.allow_rest_mutations))
+}
+
+function fuzzSuiteRuntimeActionMetadataInput(input: unknown, action: RuntimeAction): unknown {
+  if (action.type !== "rest_request" || !isRestMutationMethod(action.method ?? "GET")) {
+    return input
+  }
+  const payload = recordValue(input)
+  return stripUndefined({
+    ...(payload ?? {}),
+    type: "rest_request",
+    method: action.method ?? "GET",
+    path: action.path,
+    headers: payload?.headers === undefined ? undefined : "[redacted]",
+    params: payload?.params === undefined ? undefined : "[redacted]",
+    body: payload?.body === undefined ? undefined : "[redacted]",
+    body_json: payload?.body_json === undefined ? undefined : "[redacted]",
+    bodyJson: payload?.bodyJson === undefined ? undefined : "[redacted]",
+  })
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
