@@ -6,8 +6,16 @@ const root = new URL("../", import.meta.url)
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
 
 const sandbox = {
-  window: {} as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any> },
+  window: { dispatchEvent: () => true } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
+  CustomEvent: class CustomEvent {
+    type: string
+    detail: unknown
+    constructor(type: string, init: { detail?: unknown } = {}) {
+      this.type = type
+      this.detail = init.detail
+    }
+  },
   TextDecoder,
   TextEncoder,
   URL,
@@ -40,6 +48,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:parent-tool-bridge",
     "browser-runtime:aggregate-fanout-outputs",
     "browser-runtime:invoke-result",
+    "browser-connector:request",
     "playground:run-php",
     "playground:run-recipe",
     "browser-runtime:validate-materialization",
@@ -64,6 +73,8 @@ assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
+assert.equal(typeof api.v1.createBrowserConnectorRequest, "function")
+assert.equal(typeof api.v1.executeBrowserConnectorRequest, "function")
 assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
 assert.equal(typeof api.v1.createRuntimeTaskRequest, "function")
@@ -241,6 +252,54 @@ assert.deepEqual(plain(canonicalBrowserRun.diagnostics), [
 ])
 assert.equal(canonicalBrowserRun.error.schema, "wp-codebox/browser-sdk-error/v1")
 assert.equal(canonicalBrowserRun.error.code, "canonical-failed")
+
+const connectorRequest = api.v1.createBrowserConnectorRequest({
+  id: "connector-request-1",
+  connector: "primary-ai",
+  provider: "openai",
+  model: "gpt-4.1-mini",
+  operation: "http.request",
+  request: { method: "POST", uri: "/v1/responses", body: "{}" },
+  sandbox_session_id: "browser-session-1",
+  caller_session_id: "caller-session-1",
+  authorization: { caller: "wp-codebox", scope: "browser-connector:request" },
+})
+assert.deepEqual(plain(connectorRequest), {
+  schema: "wp-codebox/browser-connector-request/v1",
+  id: "connector-request-1",
+  connector: "primary-ai",
+  provider: "openai",
+  model: "gpt-4.1-mini",
+  operation: "http.request",
+  payload: { method: "POST", uri: "/v1/responses", body: "{}" },
+  session: { sandbox_session_id: "browser-session-1", caller_session_id: "caller-session-1" },
+  authorization: { caller: "wp-codebox", scope: "browser-connector:request" },
+})
+
+let providerProxyRequest: any = null
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    providerProxyRequest = request
+    return { success: true, response: { http: { status: 200, body: "{}" } } }
+  },
+}
+const connectorResponse = await api.v1.executeBrowserConnectorRequest(connectorRequest)
+assert.equal(connectorResponse.success, true)
+assert.equal(providerProxyRequest.path, "/wp-codebox/v1/browser-provider-request")
+assert.equal(providerProxyRequest.data.schema, "wp-codebox/browser-provider-proxy-request/v1")
+assert.equal(providerProxyRequest.data.connector, "primary-ai")
+assert.deepEqual(plain(providerProxyRequest.data.request), { method: "POST", uri: "/v1/responses", body: "{}" })
+await api.v1.methods.executeBrowserProviderProxyRequest({
+  schema: "wp-codebox/browser-provider-proxy-request/v1",
+  operation: "http.request",
+  connector: "primary-ai",
+  inherit: { connectors: ["primary-ai"] },
+  orchestrator: { id: "legacy-runtime" },
+  request: { method: "POST", uri: "/v1/responses" },
+})
+assert.deepEqual(plain(providerProxyRequest.data.inherit), { connectors: ["primary-ai"] })
+assert.deepEqual(plain(providerProxyRequest.data.orchestrator), { id: "legacy-runtime" })
+delete sandbox.window.wp
 
 const runtimeTaskRequest = api.v1.createRuntimeTaskRequest({
   targetId: "wp-codebox/browser-playground",

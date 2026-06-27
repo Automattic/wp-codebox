@@ -1,6 +1,7 @@
 ( () => {
 	const defaultRunnerDir = '/wordpress/wp-content/uploads/wp-codebox/runner';
 	const defaultRunnerUrlBase = '/wp-content/uploads/wp-codebox/runner';
+	const browserConnectorRequestSchema = 'wp-codebox/browser-connector-request/v1';
 	const browserProviderProxySchema = 'wp-codebox/browser-provider-proxy-request/v1';
 	const browserProviderProxyMaxBytes = 1000000;
 	const browserSdkSchema = 'wp-codebox/browser-sdk/v1';
@@ -19,6 +20,7 @@
 		'browser-runtime:parent-tool-bridge',
 		'browser-runtime:aggregate-fanout-outputs',
 		'browser-runtime:invoke-result',
+		'browser-connector:request',
 		'playground:run-php',
 		'playground:run-recipe',
 		'browser-runtime:validate-materialization',
@@ -107,6 +109,52 @@
 				data: result?.error?.data ?? null,
 			},
 		};
+	};
+
+	const browserConnectorRequest = ( input = {} ) => {
+		const source = isPlainObject( input ) ? input : {};
+		const session = isPlainObject( source.session ) ? source.session : Object.fromEntries( Object.entries( {
+			sandbox_session_id: typeof source.sandbox_session_id === 'string' ? source.sandbox_session_id : undefined,
+			session_id: typeof source.session_id === 'string' ? source.session_id : undefined,
+			caller_session_id: typeof source.caller_session_id === 'string' ? source.caller_session_id : undefined,
+			job_id: typeof source.job_id === 'string' ? source.job_id : undefined,
+		} ).filter( ( [ , item ] ) => item !== undefined && item !== '' ) );
+		const payload = isPlainObject( source.payload ) ? source.payload : ( isPlainObject( source.request ) ? source.request : {} );
+		return Object.fromEntries( Object.entries( {
+			schema: browserConnectorRequestSchema,
+			id: typeof source.id === 'string' && source.id ? source.id : undefined,
+			connector: typeof source.connector === 'string' ? source.connector : '',
+			provider: typeof source.provider === 'string' ? source.provider : '',
+			model: typeof source.model === 'string' ? source.model : '',
+			operation: typeof source.operation === 'string' ? source.operation : '',
+			payload,
+			session,
+			context: isPlainObject( source.context ) ? source.context : {},
+			authorization: isPlainObject( source.authorization ) ? source.authorization : {},
+		} ).filter( ( [ key, item ] ) => key === 'schema' || item !== undefined && item !== '' && ( ! isPlainObject( item ) || Object.keys( item ).length > 0 ) ) );
+	};
+
+	const browserProviderProxyRequest = ( input = {} ) => {
+		const source = isPlainObject( input ) ? input : {};
+		const connectorRequest = browserConnectorRequest( source );
+		const session = isPlainObject( connectorRequest.session ) ? connectorRequest.session : {};
+		const context = isPlainObject( connectorRequest.context ) ? connectorRequest.context : {};
+		return Object.fromEntries( Object.entries( {
+			schema: browserProviderProxySchema,
+			id: connectorRequest.id,
+			operation: connectorRequest.operation,
+			provider: connectorRequest.provider,
+			model: connectorRequest.model,
+			connector: connectorRequest.connector,
+			inherit: isPlainObject( source.inherit ) ? source.inherit : undefined,
+			sandbox_session_id: session.sandbox_session_id || session.session_id || context.sandbox_session_id || context.session_id,
+			session_id: session.session_id || context.session_id,
+			caller_session_id: session.caller_session_id || context.caller_session_id,
+			job_id: session.job_id || context.job_id,
+			orchestrator: isPlainObject( context.orchestrator ) ? context.orchestrator : ( isPlainObject( source.orchestrator ) ? source.orchestrator : undefined ),
+			authorization: connectorRequest.authorization,
+			request: connectorRequest.payload,
+		} ).filter( ( [ key, item ] ) => key === 'schema' || item !== undefined && item !== '' && ( ! isPlainObject( item ) || Object.keys( item ).length > 0 ) ) );
 	};
 
 	const siteOperationEnvelope = ( operation, result, meta = {} ) => {
@@ -665,6 +713,8 @@
 		executableBrowserSession: api.executableBrowserSession,
 		bootExecutableBrowserSession: async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ),
 		parentToolBridge: api.parentToolBridge,
+		createBrowserConnectorRequest: api.createBrowserConnectorRequest,
+		executeBrowserConnectorRequest: api.executeBrowserConnectorRequest,
 		createParentToolRequest: api.createParentToolRequest,
 		dispatchParentTool: api.dispatchParentTool,
 		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
@@ -672,6 +722,9 @@
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,
+			createBrowserConnectorRequest: api.createBrowserConnectorRequest,
+			executeBrowserConnectorRequest: api.executeBrowserConnectorRequest,
+			executeBrowserProviderProxyRequest: api.executeBrowserProviderProxyRequest,
 			consumeContainedSiteSync: api.consumeContainedSiteSync,
 			startBrowserPreview: api.startBrowserPreview,
 			bootExecutableBrowserSession: api.bootExecutableBrowserSession,
@@ -926,7 +979,11 @@
 			return null;
 		}
 
-		return isPlainObject( message ) && message.schema === browserProviderProxySchema ? message : null;
+		if ( isPlainObject( message ) && message.schema === browserConnectorRequestSchema ) {
+			return browserProviderProxyRequest( message );
+		}
+
+		return isPlainObject( message ) && message.schema === browserProviderProxySchema ? browserProviderProxyRequest( message ) : null;
 	};
 
 	const browserProviderProxyEndpoint = () => {
@@ -947,13 +1004,14 @@
 	};
 
 	const executeBrowserProviderProxyRequest = async ( message ) => {
-		const body = JSON.stringify( message );
+		const proxyMessage = browserProviderProxyRequest( message );
+		const body = JSON.stringify( proxyMessage );
 		if ( body.length > browserProviderProxyMaxBytes ) {
 			return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_payload_too_large', 'Browser provider proxy request is too large.' );
 		}
 
 		const startedAt = Date.now();
-		const requestSummary = summarizeBrowserProviderProxyMessage( message );
+		const requestSummary = summarizeBrowserProviderProxyMessage( proxyMessage );
 		browserProviderDiagnostics().counts.started += 1;
 
 		try {
@@ -962,7 +1020,7 @@
 				result = await window.wp.apiFetch( {
 					path: '/wp-codebox/v1/browser-provider-request',
 					method: 'POST',
-					data: message,
+					data: proxyMessage,
 				} );
 				browserProviderDiagnostics().counts.completed += 1;
 				recordBrowserProviderDiagnostic( {
@@ -1008,6 +1066,8 @@
 			return proxyError;
 		}
 	};
+
+	const executeBrowserConnectorRequest = async ( input ) => executeBrowserProviderProxyRequest( browserConnectorRequest( input ) );
 
 	const installBrowserProviderProxy = ( client ) => {
 		const onMessage = typeof client?.onMessage === 'function' ? client.onMessage.bind( client ) : null;
@@ -2571,6 +2631,9 @@ echo wp_json_encode( array(
 		browserSessionRecipe,
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
+		createBrowserConnectorRequest: browserConnectorRequest,
+		executeBrowserConnectorRequest,
+		executeBrowserProviderProxyRequest,
 		createParentToolRequest,
 		dispatchParentTool,
 		ensureDirectory,

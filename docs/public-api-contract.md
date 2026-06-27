@@ -231,6 +231,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
   starts a Codebox browser preview from the boot DTO and returns
   `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
+  `createBrowserConnectorRequest()` builds the canonical
+  `wp-codebox/browser-connector-request/v1` envelope for connector-scoped browser
+  calls, and `executeBrowserConnectorRequest()` adapts that envelope through the
+  Codebox-owned provider bridge without exposing the legacy proxy transport shape;
   `createRuntimeTaskRequest()` builds the public
   `wp-codebox/runtime-task-request/v1` envelope with an explicit `target_id`;
   `runRuntimeTask()` posts that envelope to Codebox's public
