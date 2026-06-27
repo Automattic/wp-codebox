@@ -118,6 +118,7 @@ async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundC
   const directoryResult = await createHostMountDirectories(server, directories)
   let materialized = 0
   let skipped = directoryResult.skipped
+  const failedFiles: HostMountFilePayload[] = []
   for (const file of files) {
     const target = file.target.trim()
     if (!target || target.includes("\0")) {
@@ -128,8 +129,13 @@ async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundC
       await server.playground.writeFile(target, Buffer.from(file.contentsBase64, "base64").toString("utf8"))
       materialized++
     } catch {
-      skipped++
+      failedFiles.push(file)
     }
+  }
+  if (failedFiles.length > 0) {
+    const fallback = await materializeHostMountFilesWithPhp(server, failedFiles)
+    materialized += fallback.materialized
+    skipped += fallback.skipped
   }
   return { materialized, skipped }
 }
