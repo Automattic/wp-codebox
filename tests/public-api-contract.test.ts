@@ -19,6 +19,8 @@ import {
   performanceObservation,
   runtimePackageExecutionInput,
   runtimeContractManifest,
+  codeboxPublicContractPrimitive,
+  codeboxPublicContractPrimitives,
   restRouteInventoryToFuzzSuite,
   runtimeProfile,
   wordpressRestMatrixContract,
@@ -172,6 +174,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./run-registry.js",
   "./runner-workspace-publication.js",
   "./runtime-boundary-contracts.js",
+  "./public-contract-primitives.js",
   "./runtime-contract-manifest.js",
   "./runtime-command-result.js",
   "./runtime-contracts.js",
@@ -270,6 +273,7 @@ for (const publicModule of [
   "./performance-observation.js",
   "./recipe-builders.js",
   "./runtime-boundary-contracts.js",
+  "./public-contract-primitives.js",
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
@@ -430,6 +434,14 @@ assert.equal(typeof restRouteInventoryToFuzzSuite, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(typeof runtimeContractManifest, "function")
+assert.equal(typeof codeboxPublicContractPrimitives, "function")
+assert.equal(codeboxPublicContractPrimitive("runtimeSession").schemas.access, "wp-codebox/runtime-access/v1")
+assert.equal(codeboxPublicContractPrimitive("runtimeProfile").schemas.profile, RUNTIME_PROFILE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("task").schemas.headlessResult, "wp-codebox/headless-agent-task-result/v1")
+assert.equal(codeboxPublicContractPrimitive("agent").abilities.runTask, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask.run)
+assert.equal(codeboxPublicContractPrimitive("artifact").schemas.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("credential").redacted, true)
+assert.deepEqual(codeboxPublicContractPrimitives().task.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask)
 assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)

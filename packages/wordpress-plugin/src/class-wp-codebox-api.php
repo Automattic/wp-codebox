@@ -302,6 +302,79 @@ final class WP_Codebox_API {
 		);
 	}
 
+	/** @return array<string,string> Public Codebox ability id to facade method map. */
+	public static function public_abilities(): array {
+		return self::ABILITY_METHODS;
+	}
+
+	/** @return array<string,array<string,string>> Public schema ids grouped by Codebox primitive. */
+	public static function public_contract_schemas(): array {
+		$schemas = self::runtime_contract_schemas();
+
+		return array(
+			'runtimeSession' => array(
+				'access'                     => $schemas['runtimeBoundary']['runtimeAccess'],
+				'previewLease'               => $schemas['runtimeBoundary']['previewLease'],
+				'previewReviewerAccess'      => $schemas['preview']['reviewerAccess'],
+				'browserSessionProductDto'   => $schemas['runtimeBoundary']['browserSessionProductDto'],
+				'browserPreviewBootConfig'   => $schemas['runtimeBoundary']['browserPreviewBootConfig'],
+				'browserContainedSiteStatus' => $schemas['runtimeBoundary']['browserContainedSiteStatus'],
+				'browserContainedSiteOpen'   => $schemas['runtimeBoundary']['browserContainedSiteOpen'],
+			),
+			'runtimeProfile' => array(
+				'profile' => $schemas['runtimeBoundary']['profile'],
+			),
+			'task'           => array(
+				'input'           => 'wp-codebox/task-input/v1',
+				'runRequest'      => $schemas['agentTask']['runRequest'],
+				'runResult'       => $schemas['agentTask']['runResult'],
+				'headlessRequest' => $schemas['agentTask']['headlessRequest'],
+				'headlessResult'  => $schemas['agentTask']['headlessResult'],
+			),
+			'agent'          => array(
+				'workload'  => $schemas['taskState']['agentRuntimeWorkload'],
+				'runResult' => $schemas['taskState']['agentTaskRunResult'],
+			),
+			'artifact'       => array(
+				'resultEnvelope'                => $schemas['artifact']['resultEnvelope'],
+				'typedArtifact'                 => $schemas['artifact']['typedArtifact'],
+				'typedArtifactIndex'            => $schemas['artifact']['typedArtifactIndex'],
+				'bundleFileManifest'            => $schemas['artifact']['bundleFileManifest'],
+				'browserArtifactPersistenceRef' => $schemas['artifact']['browserArtifactPersistenceRef'],
+			),
+			'credential'     => array(
+				'requirements' => $schemas['runtimeProvider']['credentialRequirements'],
+				'preflight'    => $schemas['runtimeProvider']['credentialPreflight'],
+				'resolution'   => $schemas['runtimeProvider']['credentialResolution'],
+			),
+		);
+	}
+
+	/** @return array<string,mixed> Public primitive map for PHP SDK consumers. */
+	public static function public_contract_primitives(): array {
+		$schemas   = self::public_contract_schemas();
+		$abilities = self::runtime_abilities();
+
+		return array(
+			'runtimeSession' => array( 'schemas' => $schemas['runtimeSession'] ),
+			'runtimeProfile' => array( 'schemas' => $schemas['runtimeProfile'] ),
+			'task'           => array(
+				'abilities' => $abilities['agentTask'],
+				'schemas'   => $schemas['task'],
+			),
+			'agent'          => array(
+				'abilities' => array(
+					'runTask'       => $abilities['agentTask']['run'],
+					'runTaskBatch'  => $abilities['agentTask']['batch'],
+					'runTaskFanout' => $abilities['agentTask']['fanout'],
+				),
+				'schemas'   => $schemas['agent'],
+			),
+			'artifact'       => array( 'schemas' => $schemas['artifact'] ),
+			'credential'     => array( 'schemas' => $schemas['credential'], 'redacted' => true ),
+		);
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function execute_ability( string $ability_name, array $input = array() ): array|WP_Error {
 		$ability_name = trim( $ability_name );

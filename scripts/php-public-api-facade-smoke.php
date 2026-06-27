@@ -148,6 +148,9 @@ function expect( bool $condition, string $message ): void {
 
 $expected_methods = array(
 	'execute_ability',
+	'public_abilities',
+	'public_contract_schemas',
+	'public_contract_primitives',
 	'runtime_descriptor',
 	'runtime_contract_manifest',
 	'run_agent_task',
@@ -207,6 +210,19 @@ foreach ( $expected_constants as $constant => $value ) {
 	expect( $reflection->hasConstant( $constant ), 'Missing public API constant: ' . $constant );
 	expect( $value === $reflection->getConstant( $constant ), 'Unexpected public API constant value: ' . $constant );
 }
+
+$public_schemas = WP_Codebox_API::public_contract_schemas();
+expect( 'wp-codebox/runtime-access/v1' === $public_schemas['runtimeSession']['access'], 'Expected runtime session access schema.' );
+expect( 'wp-codebox/runtime-profile/v1' === $public_schemas['runtimeProfile']['profile'], 'Expected runtime profile schema.' );
+expect( 'wp-codebox/headless-agent-task-request/v1' === $public_schemas['task']['headlessRequest'], 'Expected headless task request schema.' );
+expect( 'wp-codebox/agent-runtime-workload/v1' === $public_schemas['agent']['workload'], 'Expected agent workload schema.' );
+expect( 'wp-codebox/artifact-result-envelope/v1' === $public_schemas['artifact']['resultEnvelope'], 'Expected artifact envelope schema.' );
+expect( 'wp-codebox/provider-credential-preflight/v1' === $public_schemas['credential']['preflight'], 'Expected redacted credential preflight schema.' );
+
+$public_primitives = WP_Codebox_API::public_contract_primitives();
+expect( 'wp-codebox/run-agent-task' === $public_primitives['task']['abilities']['run'], 'Expected task run ability.' );
+expect( true === $public_primitives['credential']['redacted'], 'Expected credential primitive to advertise redaction.' );
+expect( isset( WP_Codebox_API::public_abilities()['wp-codebox/run-agent-task'] ), 'Expected public ability accessor to include run-agent-task.' );
 
 $blocked = WP_Codebox_API::execute_ability( 'external-backend/workspace-show', array() );
 expect( $blocked instanceof WP_Error, 'Expected non-wp-codebox ability names to be rejected.' );

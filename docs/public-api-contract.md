@@ -15,7 +15,9 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/public`: curated public facade for runtime,
   task/package, runner workspace, tool bridge, parent tool bridge, browser,
   artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
-  this facade over the broad root barrel.
+  this facade over the broad root barrel. `codeboxPublicContractPrimitives()`
+  exposes the Codebox-owned runtime session, runtime profile, task, agent,
+  artifact, and redacted credential schema/ability map for SDK discovery.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
   contract metadata used by CLI and orchestrator consumers. This entrypoint also
   exposes generic WordPress runtime discovery, CRUD/DB, REST matrix, fuzz-suite
@@ -175,6 +177,10 @@ WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 `wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
 backend systems internally, while public docs and schemas present Codebox-owned
 ability names, schemas, and facades to callers.
+`WP_Codebox_API::public_contract_primitives()` and
+`WP_Codebox_API::public_contract_schemas()` provide the matching PHP discovery
+surface for runtime session, runtime profile, task, agent, artifact, and
+redacted credential primitives.
 
 WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `wp codebox ...` wrappers for these public operations, including
@@ -202,6 +208,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `wp-codebox/run-runtime-task`, `wp-codebox/run-wordpress-workload`,
   `wp-codebox/run-runtime-package`, the matching CLI wrappers, or
   `WP_Codebox_API` instead of composing runtime backend internals directly.
+- **Public primitive discovery:** `codeboxPublicContractPrimitives()` groups the
+  stable runtime session/profile/task/agent/artifact/credential schemas and
+  public task/agent ability ids under Codebox-owned names. PHP consumers use the
+  equivalent `WP_Codebox_API::public_contract_primitives()` accessor. Credential
+  entries advertise redacted requirement/preflight/resolution DTOs only.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.

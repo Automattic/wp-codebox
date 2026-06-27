@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 
 import {
+  CODEBOX_PUBLIC_CONTRACT_PRIMITIVES,
+  codeboxPublicContractPrimitive,
+  codeboxPublicContractPrimitives,
+} from "../packages/runtime-core/src/public.js"
+
+import {
   AGENT_RUNTIME_WORKLOAD_SCHEMA,
   AGENT_TASK_RUN_REQUEST_SCHEMA,
   AGENT_TASK_RUN_RESULT_SCHEMA,
@@ -172,6 +178,15 @@ assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
 assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
 assert.deepEqual(descriptor.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 assert.deepEqual(descriptor.contractManifest, manifest)
+
+assert.deepEqual(codeboxPublicContractPrimitives(), CODEBOX_PUBLIC_CONTRACT_PRIMITIVES)
+assert.equal(codeboxPublicContractPrimitive("runtimeSession").schemas.access, "wp-codebox/runtime-access/v1")
+assert.equal(codeboxPublicContractPrimitive("runtimeProfile").schemas.profile, RUNTIME_PROFILE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("task").schemas.headlessRequest, "wp-codebox/headless-agent-task-request/v1")
+assert.equal(codeboxPublicContractPrimitive("agent").schemas.workload, AGENT_RUNTIME_WORKLOAD_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("artifact").schemas.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("credential").schemas.preflight, "wp-codebox/provider-credential-preflight/v1")
+assert.equal(codeboxPublicContractPrimitive("credential").redacted, true)
 
 assert.doesNotMatch(JSON.stringify(manifest), /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 assert.doesNotMatch(JSON.stringify(manifest), /agents\/run-runtime-package|wp_codebox_runner_workspace_backend|workspace_worktree_add/i)
