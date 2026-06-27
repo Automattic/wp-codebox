@@ -85,6 +85,7 @@
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:legacy-agent-task-contracts": "tsx tests/agent-task-contracts.test.ts",
     "test:agent-runtime-workload-normalizers": "tsx tests/agent-runtime-workload-normalizers.test.ts",
+    "test:agent-task-runtime-package-staging": "tsx tests/agent-task-runtime-package-staging.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
     "test:browser-visual-compare-blocks-engine-adapter": "tsx tests/browser-visual-compare-blocks-engine-adapter.test.ts",

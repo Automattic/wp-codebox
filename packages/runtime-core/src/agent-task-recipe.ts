@@ -86,8 +86,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
   const runtimeMounts = runtimeStateMounts(input)
-  const agentBundleStagedFiles = stagedAgentBundleSources(input.agent_bundles)
-  const stagedFiles = [...(Array.isArray(input.stagedFiles) ? input.stagedFiles : []), ...agentBundleStagedFiles]
+  const stagedFiles = stagedRuntimeSources(input)
   const providerPlugins = providerPluginEntries(input, artifacts)
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
@@ -336,6 +335,22 @@ function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): str
     : `/wordpress/wp-content/plugins/${slug}`
 }
 
+function stagedRuntimeSources(input: AgentTaskRunInput): WorkspaceRecipeStagedFile[] {
+  const stagedFiles: WorkspaceRecipeStagedFile[] = []
+  const seenTargets = new Set<string>()
+  for (const stagedFile of Array.isArray(input.stagedFiles) ? input.stagedFiles : []) {
+    if (!stagedFile?.target || seenTargets.has(stagedFile.target)) continue
+    stagedFiles.push(stagedFile)
+    seenTargets.add(stagedFile.target)
+  }
+  for (const stagedFile of [...stagedAgentBundleSources(input.agent_bundles), ...stagedRuntimePackageSources(input.runtime_task)]) {
+    if (!stagedFile.target || seenTargets.has(stagedFile.target)) continue
+    stagedFiles.push(stagedFile)
+    seenTargets.add(stagedFile.target)
+  }
+  return stagedFiles
+}
+
 function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"]): WorkspaceRecipeStagedFile[] {
   if (!Array.isArray(agentBundles)) return []
 
@@ -353,6 +368,18 @@ function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles
     seenTargets.add(source)
   }
   return stagedFiles
+}
+
+function stagedRuntimePackageSources(runtimeTask: AgentTaskRunInput["runtime_task"]): WorkspaceRecipeStagedFile[] {
+  const runtimeTaskInput = objectValue(runtimeTask?.input)
+  const runtimePackage = objectValue(runtimeTaskInput?.package)
+  const source = stringValue(runtimePackage?.source)
+  if (!source) return []
+
+  const localSource = localAgentBundleSource(source)
+  if (!localSource) return []
+
+  return [{ source: localSource, target: source }]
 }
 
 function localAgentBundleSource(source: string): string {
