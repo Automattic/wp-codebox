@@ -11,28 +11,28 @@ const successfulInput = {
   plan: {
     id: "fanout-plan-1",
     workers: [
-      { id: "worker-a", artifact_namespace: "workers/worker-a" },
-      { id: "worker-b", depends_on: ["worker-a"], artifact_namespace: "workers/worker-b" },
+      { id: "worker-a", artifactNamespace: "workers/worker-a" },
+      { id: "worker-b", dependsOn: ["worker-a"], artifactNamespace: "workers/worker-b" },
     ],
   },
   policy: "fail" as const,
-  aggregation: {
+  aggregator: {
     agent: "generic-aggregator",
     outputNamespace: "aggregate/final",
   },
-  worker_results: [
+  workerResultRefs: [
     {
-      worker_id: "worker-a",
+      workerId: "worker-a",
       status: "succeeded",
-      artifact_refs: [
-        { path: "workers/worker-a/report.json", final_path: "reports/a.json", kind: "report" },
+      artifactRefs: [
+        { path: "workers/worker-a/report.json", finalPath: "reports/a.json", kind: "report" },
       ],
     },
     {
-      worker_id: "worker-b",
+      workerId: "worker-b",
       status: "succeeded",
-      artifact_refs: [
-        { path: "workers/worker-b/report.json", final_path: "reports/b.json", kind: "report" },
+      artifactRefs: [
+        { path: "workers/worker-b/report.json", finalPath: "reports/b.json", kind: "report" },
       ],
     },
   ],
@@ -53,15 +53,15 @@ assert.equal(success.rawWorkerArtifactRefs.length, 2)
 assert.deepEqual(success.finalArtifactRefs, [{ path: "aggregate/final/report.json", kind: "aggregate-report" }])
 assert.deepEqual(success.conflicts, [])
 
-const legacyWorkerStatuses = normalizeFanoutAggregationInput({
+const normalizedWorkerStatuses = normalizeFanoutAggregationInput({
   ...successfulInput,
-  worker_results: [
-    { worker_id: "worker-a", status: "completed", success: true, artifact_refs: [] },
-    { worker_id: "worker-b", status: "no_op", artifact_refs: [] },
+  workerResultRefs: [
+    { workerId: "worker-a", status: "completed", success: true, artifactRefs: [] },
+    { workerId: "worker-b", status: "no_op", artifactRefs: [] },
   ],
 })
-assert.equal(legacyWorkerStatuses.workerResultRefs[0].status, "succeeded")
-assert.equal(legacyWorkerStatuses.workerResultRefs[1].status, "no_op")
+assert.equal(normalizedWorkerStatuses.workerResultRefs[0].status, "succeeded")
+assert.equal(normalizedWorkerStatuses.workerResultRefs[1].status, "no_op")
 
 const deterministic = aggregateFanoutOutputs(successfulInput)
 assert.equal(defaultFanoutAggregationOutputPath(successfulInput), "aggregate/final/result.json")
@@ -73,16 +73,16 @@ assert.deepEqual(deterministic.finalArtifactRefs, [{
 
 const duplicatePath = aggregateFanoutOutputs({
   ...successfulInput,
-  worker_results: [
+  workerResultRefs: [
     {
-      worker_id: "worker-a",
+      workerId: "worker-a",
       status: "succeeded",
-      artifact_refs: [{ path: "workers/worker-a/index.html", final_path: "site/index.html" }],
+      artifactRefs: [{ path: "workers/worker-a/index.html", finalPath: "site/index.html" }],
     },
     {
-      worker_id: "worker-b",
+      workerId: "worker-b",
       status: "succeeded",
-      artifact_refs: [{ path: "workers/worker-b/index.html", final_path: "site/index.html" }],
+      artifactRefs: [{ path: "workers/worker-b/index.html", finalPath: "site/index.html" }],
     },
   ],
 })
@@ -96,17 +96,17 @@ assert.deepEqual(duplicatePath.conflicts[0].workerIds, ["worker-a", "worker-b"])
 const failedWorker = aggregateFanoutOutputs({
   ...successfulInput,
   policy: "caller-review-required",
-  worker_results: [
+  workerResultRefs: [
     {
-      worker_id: "worker-a",
+      workerId: "worker-a",
       status: "failed",
       error: { code: "worker-exit", message: "Worker exited with code 1." },
-      artifact_refs: [{ path: "workers/worker-a/error.log", kind: "log" }],
+      artifactRefs: [{ path: "workers/worker-a/error.log", kind: "log" }],
     },
     {
-      worker_id: "worker-b",
+      workerId: "worker-b",
       status: "succeeded",
-      artifact_refs: [{ path: "workers/worker-b/report.json", final_path: "reports/b.json" }],
+      artifactRefs: [{ path: "workers/worker-b/report.json", finalPath: "reports/b.json" }],
     },
   ],
 })
@@ -117,11 +117,11 @@ assert.ok(failedWorker.conflicts.some((conflict) => conflict.type === "failed-wo
 const missingDependency = aggregateFanoutOutputs({
   ...successfulInput,
   policy: "partial",
-  worker_results: [
+  workerResultRefs: [
     {
-      worker_id: "worker-b",
+      workerId: "worker-b",
       status: "succeeded",
-      artifact_refs: [{ path: "workers/worker-b/report.json", final_path: "reports/b.json" }],
+      artifactRefs: [{ path: "workers/worker-b/report.json", finalPath: "reports/b.json" }],
     },
   ],
 })
@@ -138,7 +138,7 @@ assert.ok(aggregationFailure.conflicts.some((conflict) => conflict.type === "agg
 const repairPolicy = aggregateFanoutOutputs({
   ...successfulInput,
   policy: "repair",
-  conflict_candidates: [{ type: "incompatible-schema", severity: "error", message: "Worker schemas differ." }],
+  conflictCandidates: [{ type: "incompatible-schema", severity: "error", message: "Worker schemas differ." }],
 })
 assert.equal(repairPolicy.status, "repair_required")
 

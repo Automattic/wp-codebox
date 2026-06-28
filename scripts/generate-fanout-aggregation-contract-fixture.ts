@@ -8,31 +8,31 @@ const successfulInput = {
   plan: {
     id: "fanout-contract-fixture",
     workers: [
-      { id: "alpha", artifact_namespace: "workers/alpha" },
-      { id: "beta", depends_on: ["alpha"], artifact_namespace: "workers/beta" },
+      { id: "alpha", artifactNamespace: "workers/alpha" },
+      { id: "beta", dependsOn: ["alpha"], artifactNamespace: "workers/beta" },
     ],
   },
   policy: "fail",
-  aggregation: {
+  aggregator: {
     agent: "generic-aggregator",
     outputNamespace: "aggregate/final",
   },
-  worker_results: [
+  workerResultRefs: [
     {
-      worker_id: "alpha",
+      workerId: "alpha",
       status: "completed",
       success: true,
-      result_ref: "fanout/workers/alpha/result.json",
-      artifact_refs: [
-        { path: "fanout/workers/alpha/artifacts/report.json", final_path: "reports/alpha.json", kind: "worker-report" },
+      resultRef: "fanout/workers/alpha/result.json",
+      artifactRefs: [
+        { path: "fanout/workers/alpha/artifacts/report.json", finalPath: "reports/alpha.json", kind: "worker-report" },
       ],
     },
     {
-      worker_id: "beta",
+      workerId: "beta",
       status: "succeeded",
-      result_ref: "fanout/workers/beta/result.json",
-      artifact_refs: [
-        { path: "fanout/workers/beta/artifacts/report.json", final_path: "reports/beta.json", kind: "worker-report" },
+      resultRef: "fanout/workers/beta/result.json",
+      artifactRefs: [
+        { path: "fanout/workers/beta/artifacts/report.json", finalPath: "reports/beta.json", kind: "worker-report" },
       ],
     },
   ],
@@ -40,7 +40,7 @@ const successfulInput = {
 
 const vectors = [
   {
-    name: "success-with-legacy-status-and-default-output",
+    name: "success-with-normalized-status-and-default-output",
     input: successfulInput,
   },
   {
@@ -48,9 +48,9 @@ const vectors = [
     input: {
       ...successfulInput,
       policy: "partial",
-      worker_results: [
-        { worker_id: "alpha", status: "succeeded", artifact_refs: [{ path: "fanout/workers/alpha/index.html", final_path: "site/index.html" }] },
-        { worker_id: "beta", status: "succeeded", artifact_refs: [{ path: "fanout/workers/beta/index.html", final_path: "site/index.html" }] },
+      workerResultRefs: [
+        { workerId: "alpha", status: "succeeded", artifactRefs: [{ path: "fanout/workers/alpha/index.html", finalPath: "site/index.html" }] },
+        { workerId: "beta", status: "succeeded", artifactRefs: [{ path: "fanout/workers/beta/index.html", finalPath: "site/index.html" }] },
       ],
     },
   },
@@ -59,14 +59,14 @@ const vectors = [
     input: {
       ...successfulInput,
       policy: "caller-review-required",
-      worker_results: [
+      workerResultRefs: [
         {
-          worker_id: "alpha",
+          workerId: "alpha",
           status: "failed",
           error: { code: "worker-exit", message: "Worker exited with code 1." },
-          artifact_refs: [{ path: "fanout/workers/alpha/error.log", kind: "log" }],
+          artifactRefs: [{ path: "fanout/workers/alpha/error.log", kind: "log" }],
         },
-        { worker_id: "beta", status: "succeeded", artifact_refs: [{ path: "fanout/workers/beta/report.json", final_path: "reports/beta.json" }] },
+        { workerId: "beta", status: "succeeded", artifactRefs: [{ path: "fanout/workers/beta/report.json", finalPath: "reports/beta.json" }] },
       ],
     },
   },
@@ -75,8 +75,8 @@ const vectors = [
     input: {
       ...successfulInput,
       policy: "partial",
-      worker_results: [
-        { worker_id: "beta", status: "succeeded", artifact_refs: [{ path: "fanout/workers/beta/report.json", final_path: "reports/beta.json" }] },
+      workerResultRefs: [
+        { workerId: "beta", status: "succeeded", artifactRefs: [{ path: "fanout/workers/beta/report.json", finalPath: "reports/beta.json" }] },
       ],
     },
   },
@@ -85,7 +85,7 @@ const vectors = [
     input: {
       ...successfulInput,
       policy: "repair",
-      conflict_candidates: [{ type: "incompatible-schema", severity: "error", message: "Worker schemas differ." }],
+      conflictCandidates: [{ type: "incompatible-schema", severity: "error", message: "Worker schemas differ." }],
     },
   },
 ].map((vector) => ({

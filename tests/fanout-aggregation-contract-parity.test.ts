@@ -27,8 +27,8 @@ assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, rawWorke
 const normalizedFromArtifacts = plain(fanoutAggregationInputFromWorkerArtifacts({
   plan: fixture.vectors[0].input.plan,
   policy: fixture.vectors[0].input.policy,
-  aggregator: fixture.vectors[0].input.aggregation,
-  workerResultRefs: fixture.vectors[0].input.worker_results,
+  aggregator: fixture.vectors[0].input.aggregator,
+  workerResultRefs: fixture.vectors[0].input.workerResultRefs,
 }))
 assert.equal(normalizedFromArtifacts.schema, "wp-codebox/agent-fanout-aggregation-input/v1")
 assert.deepEqual(plain(aggregateFanoutOutputs(normalizedFromArtifacts)), fixture.vectors[0].expectedOutput, "worker artifact refs must normalize into the same aggregation output")

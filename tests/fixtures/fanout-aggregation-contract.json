@@ -3,51 +3,51 @@
   "source": "packages/runtime-core/src/fanout-aggregation.ts",
   "vectors": [
     {
-      "name": "success-with-legacy-status-and-default-output",
+      "name": "success-with-normalized-status-and-default-output",
       "input": {
         "plan": {
           "id": "fanout-contract-fixture",
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha"
+              "artifactNamespace": "workers/alpha"
             },
             {
               "id": "beta",
-              "depends_on": [
+              "dependsOn": [
                 "alpha"
               ],
-              "artifact_namespace": "workers/beta"
+              "artifactNamespace": "workers/beta"
             }
           ]
         },
         "policy": "fail",
-        "aggregation": {
+        "aggregator": {
           "agent": "generic-aggregator",
           "outputNamespace": "aggregate/final"
         },
-        "worker_results": [
+        "workerResultRefs": [
           {
-            "worker_id": "alpha",
+            "workerId": "alpha",
             "status": "completed",
             "success": true,
-            "result_ref": "fanout/workers/alpha/result.json",
-            "artifact_refs": [
+            "resultRef": "fanout/workers/alpha/result.json",
+            "artifactRefs": [
               {
                 "path": "fanout/workers/alpha/artifacts/report.json",
-                "final_path": "reports/alpha.json",
+                "finalPath": "reports/alpha.json",
                 "kind": "worker-report"
               }
             ]
           },
           {
-            "worker_id": "beta",
+            "workerId": "beta",
             "status": "succeeded",
-            "result_ref": "fanout/workers/beta/result.json",
-            "artifact_refs": [
+            "resultRef": "fanout/workers/beta/result.json",
+            "artifactRefs": [
               {
                 "path": "fanout/workers/beta/artifacts/report.json",
-                "final_path": "reports/beta.json",
+                "finalPath": "reports/beta.json",
                 "kind": "worker-report"
               }
             ]
@@ -63,22 +63,17 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha",
+              "artifactNamespace": "workers/alpha",
               "dependsOn": [],
-              "required": true,
-              "artifactNamespace": "workers/alpha"
+              "required": true
             },
             {
               "id": "beta",
-              "depends_on": [
-                "alpha"
-              ],
-              "artifact_namespace": "workers/beta",
               "dependsOn": [
                 "alpha"
               ],
-              "required": true,
-              "artifactNamespace": "workers/beta"
+              "artifactNamespace": "workers/beta",
+              "required": true
             }
           ]
         },
@@ -148,40 +143,40 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha"
+              "artifactNamespace": "workers/alpha"
             },
             {
               "id": "beta",
-              "depends_on": [
+              "dependsOn": [
                 "alpha"
               ],
-              "artifact_namespace": "workers/beta"
+              "artifactNamespace": "workers/beta"
             }
           ]
         },
         "policy": "partial",
-        "aggregation": {
+        "aggregator": {
           "agent": "generic-aggregator",
           "outputNamespace": "aggregate/final"
         },
-        "worker_results": [
+        "workerResultRefs": [
           {
-            "worker_id": "alpha",
+            "workerId": "alpha",
             "status": "succeeded",
-            "artifact_refs": [
+            "artifactRefs": [
               {
                 "path": "fanout/workers/alpha/index.html",
-                "final_path": "site/index.html"
+                "finalPath": "site/index.html"
               }
             ]
           },
           {
-            "worker_id": "beta",
+            "workerId": "beta",
             "status": "succeeded",
-            "artifact_refs": [
+            "artifactRefs": [
               {
                 "path": "fanout/workers/beta/index.html",
-                "final_path": "site/index.html"
+                "finalPath": "site/index.html"
               }
             ]
           }
@@ -196,22 +191,17 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha",
+              "artifactNamespace": "workers/alpha",
               "dependsOn": [],
-              "required": true,
-              "artifactNamespace": "workers/alpha"
+              "required": true
             },
             {
               "id": "beta",
-              "depends_on": [
-                "alpha"
-              ],
-              "artifact_namespace": "workers/beta",
               "dependsOn": [
                 "alpha"
               ],
-              "required": true,
-              "artifactNamespace": "workers/beta"
+              "artifactNamespace": "workers/beta",
+              "required": true
             }
           ]
         },
@@ -292,31 +282,31 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha"
+              "artifactNamespace": "workers/alpha"
             },
             {
               "id": "beta",
-              "depends_on": [
+              "dependsOn": [
                 "alpha"
               ],
-              "artifact_namespace": "workers/beta"
+              "artifactNamespace": "workers/beta"
             }
           ]
         },
         "policy": "caller-review-required",
-        "aggregation": {
+        "aggregator": {
           "agent": "generic-aggregator",
           "outputNamespace": "aggregate/final"
         },
-        "worker_results": [
+        "workerResultRefs": [
           {
-            "worker_id": "alpha",
+            "workerId": "alpha",
             "status": "failed",
             "error": {
               "code": "worker-exit",
               "message": "Worker exited with code 1."
             },
-            "artifact_refs": [
+            "artifactRefs": [
               {
                 "path": "fanout/workers/alpha/error.log",
                 "kind": "log"
@@ -324,12 +314,12 @@
             ]
           },
           {
-            "worker_id": "beta",
+            "workerId": "beta",
             "status": "succeeded",
-            "artifact_refs": [
+            "artifactRefs": [
               {
                 "path": "fanout/workers/beta/report.json",
-                "final_path": "reports/beta.json"
+                "finalPath": "reports/beta.json"
               }
             ]
           }
@@ -344,22 +334,17 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha",
+              "artifactNamespace": "workers/alpha",
               "dependsOn": [],
-              "required": true,
-              "artifactNamespace": "workers/alpha"
+              "required": true
             },
             {
               "id": "beta",
-              "depends_on": [
-                "alpha"
-              ],
-              "artifact_namespace": "workers/beta",
               "dependsOn": [
                 "alpha"
               ],
-              "required": true,
-              "artifactNamespace": "workers/beta"
+              "artifactNamespace": "workers/beta",
+              "required": true
             }
           ]
         },
@@ -460,30 +445,30 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha"
+              "artifactNamespace": "workers/alpha"
             },
             {
               "id": "beta",
-              "depends_on": [
+              "dependsOn": [
                 "alpha"
               ],
-              "artifact_namespace": "workers/beta"
+              "artifactNamespace": "workers/beta"
             }
           ]
         },
         "policy": "partial",
-        "aggregation": {
+        "aggregator": {
           "agent": "generic-aggregator",
           "outputNamespace": "aggregate/final"
         },
-        "worker_results": [
+        "workerResultRefs": [
           {
-            "worker_id": "beta",
+            "workerId": "beta",
             "status": "succeeded",
-            "artifact_refs": [
+            "artifactRefs": [
               {
                 "path": "fanout/workers/beta/report.json",
-                "final_path": "reports/beta.json"
+                "finalPath": "reports/beta.json"
               }
             ]
           }
@@ -498,22 +483,17 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha",
+              "artifactNamespace": "workers/alpha",
               "dependsOn": [],
-              "required": true,
-              "artifactNamespace": "workers/alpha"
+              "required": true
             },
             {
               "id": "beta",
-              "depends_on": [
-                "alpha"
-              ],
-              "artifact_namespace": "workers/beta",
               "dependsOn": [
                 "alpha"
               ],
-              "required": true,
-              "artifactNamespace": "workers/beta"
+              "artifactNamespace": "workers/beta",
+              "required": true
             }
           ]
         },
@@ -564,50 +544,50 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha"
+              "artifactNamespace": "workers/alpha"
             },
             {
               "id": "beta",
-              "depends_on": [
+              "dependsOn": [
                 "alpha"
               ],
-              "artifact_namespace": "workers/beta"
+              "artifactNamespace": "workers/beta"
             }
           ]
         },
         "policy": "repair",
-        "aggregation": {
+        "aggregator": {
           "agent": "generic-aggregator",
           "outputNamespace": "aggregate/final"
         },
-        "worker_results": [
+        "workerResultRefs": [
           {
-            "worker_id": "alpha",
+            "workerId": "alpha",
             "status": "completed",
             "success": true,
-            "result_ref": "fanout/workers/alpha/result.json",
-            "artifact_refs": [
+            "resultRef": "fanout/workers/alpha/result.json",
+            "artifactRefs": [
               {
                 "path": "fanout/workers/alpha/artifacts/report.json",
-                "final_path": "reports/alpha.json",
+                "finalPath": "reports/alpha.json",
                 "kind": "worker-report"
               }
             ]
           },
           {
-            "worker_id": "beta",
+            "workerId": "beta",
             "status": "succeeded",
-            "result_ref": "fanout/workers/beta/result.json",
-            "artifact_refs": [
+            "resultRef": "fanout/workers/beta/result.json",
+            "artifactRefs": [
               {
                 "path": "fanout/workers/beta/artifacts/report.json",
-                "final_path": "reports/beta.json",
+                "finalPath": "reports/beta.json",
                 "kind": "worker-report"
               }
             ]
           }
         ],
-        "conflict_candidates": [
+        "conflictCandidates": [
           {
             "type": "incompatible-schema",
             "severity": "error",
@@ -624,22 +604,17 @@
           "workers": [
             {
               "id": "alpha",
-              "artifact_namespace": "workers/alpha",
+              "artifactNamespace": "workers/alpha",
               "dependsOn": [],
-              "required": true,
-              "artifactNamespace": "workers/alpha"
+              "required": true
             },
             {
               "id": "beta",
-              "depends_on": [
-                "alpha"
-              ],
-              "artifact_namespace": "workers/beta",
               "dependsOn": [
                 "alpha"
               ],
-              "required": true,
-              "artifactNamespace": "workers/beta"
+              "artifactNamespace": "workers/beta",
+              "required": true
             }
           ]
         },

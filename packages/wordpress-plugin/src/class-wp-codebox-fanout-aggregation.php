@@ -76,8 +76,8 @@ final class WP_Codebox_Fanout_Aggregation {
 
 	/** @param array<string,mixed> $input Aggregation input. @return array<string,mixed> */
 	public function normalize_input( array $input ): array {
-		$worker_results      = $this->normalize_worker_result_refs( $input['workerResultRefs'] ?? $input['worker_results'] ?? $input['workerResults'] ?? array() );
-		$input_artifact_refs = $this->normalize_artifact_refs( $input['artifactRefs'] ?? $input['artifact_refs'] ?? array() );
+		$worker_results      = $this->normalize_worker_result_refs( $input['workerResultRefs'] ?? array() );
+		$input_artifact_refs = $this->normalize_artifact_refs( $input['artifactRefs'] ?? array() );
 		$artifact_refs       = self::INPUT_SCHEMA === (string) ( $input['schema'] ?? '' ) ? $input_artifact_refs : array_merge( $input_artifact_refs, ...array_map( static fn( array $worker ): array => $worker['artifactRefs'] ?? array(), $worker_results ) );
 
 		return array_filter(
@@ -85,10 +85,10 @@ final class WP_Codebox_Fanout_Aggregation {
 				'schema'             => self::INPUT_SCHEMA,
 				'plan'               => $this->normalize_plan( is_array( $input['plan'] ?? null ) ? $input['plan'] : array() ),
 				'policy'             => (string) ( $input['policy'] ?? 'fail' ),
-				'aggregator'         => is_array( $input['aggregator'] ?? null ) ? $input['aggregator'] : ( is_array( $input['aggregation'] ?? null ) ? $input['aggregation'] : null ),
+				'aggregator'         => is_array( $input['aggregator'] ?? null ) ? $input['aggregator'] : null,
 				'workerResultRefs'   => $worker_results,
 				'artifactRefs'       => $artifact_refs,
-				'conflictCandidates' => $this->normalize_conflict_records( $input['conflictCandidates'] ?? $input['conflict_candidates'] ?? array() ),
+				'conflictCandidates' => $this->normalize_conflict_records( $input['conflictCandidates'] ?? array() ),
 				'metadata'           => is_array( $input['metadata'] ?? null ) ? $input['metadata'] : null,
 			),
 			static fn( mixed $value ): bool => null !== $value
@@ -143,11 +143,10 @@ final class WP_Codebox_Fanout_Aggregation {
 
 	/** @param array<string,mixed> $worker Worker plan. @return array<string,mixed> */
 	private function normalize_worker_plan( array $worker ): array {
-		$depends_on = $worker['dependsOn'] ?? $worker['depends_on'] ?? array();
 		$worker['id'] = is_string( $worker['id'] ?? null ) ? $worker['id'] : '';
-		$worker['dependsOn'] = is_array( $depends_on ) ? array_values( array_filter( $depends_on, 'is_string' ) ) : array();
+		$worker['dependsOn'] = is_array( $worker['dependsOn'] ?? null ) ? array_values( array_filter( $worker['dependsOn'], 'is_string' ) ) : array();
 		$worker['required'] = false !== ( $worker['required'] ?? true );
-		$worker['artifactNamespace'] = is_string( $worker['artifactNamespace'] ?? null ) ? $worker['artifactNamespace'] : ( is_string( $worker['artifact_namespace'] ?? null ) ? $worker['artifact_namespace'] : null );
+		$worker['artifactNamespace'] = is_string( $worker['artifactNamespace'] ?? null ) ? $worker['artifactNamespace'] : null;
 		$worker['metadata'] = is_array( $worker['metadata'] ?? null ) ? $worker['metadata'] : null;
 
 		return array_filter( $worker, static fn( mixed $value ): bool => null !== $value );
@@ -164,16 +163,15 @@ final class WP_Codebox_Fanout_Aggregation {
 
 	/** @param array<string,mixed> $worker Worker result. @return array<string,mixed> */
 	private function normalize_worker_result_ref( array $worker ): array {
-		$worker_id = is_string( $worker['workerId'] ?? null ) && '' !== $worker['workerId'] ? $worker['workerId'] : ( is_string( $worker['worker_id'] ?? null ) ? $worker['worker_id'] : '' );
-		$artifacts = $worker['artifactRefs'] ?? $worker['artifact_refs'] ?? array();
+		$worker_id = is_string( $worker['workerId'] ?? null ) && '' !== $worker['workerId'] ? $worker['workerId'] : '';
 
 		return array_filter(
 			array(
 				'workerId'     => $worker_id,
 				'status'       => WP_Codebox_Status_Taxonomy::agent_task_status( array( 'status' => $worker['status'] ?? '', 'success' => $worker['success'] ?? null ) ),
 				'required'     => false !== ( $worker['required'] ?? true ),
-				'resultRef'    => is_string( $worker['resultRef'] ?? null ) ? $worker['resultRef'] : ( is_string( $worker['result_ref'] ?? null ) ? $worker['result_ref'] : null ),
-				'artifactRefs' => $this->normalize_artifact_refs( $artifacts, $worker_id ),
+				'resultRef'    => is_string( $worker['resultRef'] ?? null ) ? $worker['resultRef'] : null,
+				'artifactRefs' => $this->normalize_artifact_refs( $worker['artifactRefs'] ?? array(), $worker_id ),
 				'error'        => $this->normalize_error( $worker['error'] ?? null ),
 				'metadata'     => is_array( $worker['metadata'] ?? null ) ? $worker['metadata'] : null,
 			),
@@ -197,10 +195,10 @@ final class WP_Codebox_Fanout_Aggregation {
 				'id'          => is_string( $artifact['id'] ?? null ) ? $artifact['id'] : null,
 				'path'        => is_string( $artifact['path'] ?? null ) ? $artifact['path'] : '',
 				'kind'        => is_string( $artifact['kind'] ?? null ) ? $artifact['kind'] : null,
-				'workerId'    => is_string( $artifact['workerId'] ?? null ) ? $artifact['workerId'] : ( is_string( $artifact['worker_id'] ?? null ) ? $artifact['worker_id'] : ( is_string( $fallback_worker_id ) ? $fallback_worker_id : null ) ),
+				'workerId'    => is_string( $artifact['workerId'] ?? null ) ? $artifact['workerId'] : ( is_string( $fallback_worker_id ) ? $fallback_worker_id : null ),
 				'namespace'   => is_string( $artifact['namespace'] ?? null ) ? $artifact['namespace'] : null,
-				'finalPath'   => is_string( $artifact['finalPath'] ?? null ) ? $artifact['finalPath'] : ( is_string( $artifact['final_path'] ?? null ) ? $artifact['final_path'] : null ),
-				'contentType' => is_string( $artifact['contentType'] ?? null ) ? $artifact['contentType'] : ( is_string( $artifact['content_type'] ?? null ) ? $artifact['content_type'] : null ),
+				'finalPath'   => is_string( $artifact['finalPath'] ?? null ) ? $artifact['finalPath'] : null,
+				'contentType' => is_string( $artifact['contentType'] ?? null ) ? $artifact['contentType'] : null,
 				'sha256'      => is_string( $artifact['sha256'] ?? null ) ? $artifact['sha256'] : null,
 				'bytes'       => is_int( $artifact['bytes'] ?? null ) || is_float( $artifact['bytes'] ?? null ) ? $artifact['bytes'] : null,
 				'metadata'    => is_array( $artifact['metadata'] ?? null ) ? $artifact['metadata'] : null,
@@ -220,18 +218,15 @@ final class WP_Codebox_Fanout_Aggregation {
 
 	/** @param array<string,mixed> $conflict Conflict record. @return array<string,mixed> */
 	private function normalize_conflict_record( array $conflict ): array {
-		$worker_ids = $conflict['workerIds'] ?? $conflict['worker_ids'] ?? null;
-		$artifacts  = $conflict['artifactRefs'] ?? $conflict['artifact_refs'] ?? null;
-
 		return array_filter(
 			array(
 				'type'         => is_string( $conflict['type'] ?? null ) ? $conflict['type'] : 'partial-output',
 				'severity'     => is_string( $conflict['severity'] ?? null ) ? $conflict['severity'] : 'error',
 				'message'      => is_string( $conflict['message'] ?? null ) ? $conflict['message'] : 'Fanout aggregation conflict candidate.',
-				'workerIds'    => is_array( $worker_ids ) ? array_values( array_filter( $worker_ids, 'is_string' ) ) : null,
+				'workerIds'    => is_array( $conflict['workerIds'] ?? null ) ? array_values( array_filter( $conflict['workerIds'], 'is_string' ) ) : null,
 				'path'         => is_string( $conflict['path'] ?? null ) ? $conflict['path'] : null,
-				'artifactRefs' => is_array( $artifacts ) ? $this->normalize_artifact_refs( $artifacts ) : null,
-				'dependencyId' => is_string( $conflict['dependencyId'] ?? null ) ? $conflict['dependencyId'] : ( is_string( $conflict['dependency_id'] ?? null ) ? $conflict['dependency_id'] : null ),
+				'artifactRefs' => is_array( $conflict['artifactRefs'] ?? null ) ? $this->normalize_artifact_refs( $conflict['artifactRefs'] ) : null,
+				'dependencyId' => is_string( $conflict['dependencyId'] ?? null ) ? $conflict['dependencyId'] : null,
 				'details'      => is_array( $conflict['details'] ?? null ) ? $conflict['details'] : null,
 			),
 			static fn( mixed $value ): bool => null !== $value

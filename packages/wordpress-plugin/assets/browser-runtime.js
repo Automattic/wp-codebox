@@ -2077,33 +2077,33 @@ try {
 	const normalizeFanoutWorkerPlan = ( worker ) => ( {
 		...( worker && typeof worker === 'object' ? worker : {} ),
 		id: typeof worker?.id === 'string' ? worker.id : '',
-		dependsOn: Array.isArray( worker?.dependsOn ) ? worker.dependsOn.filter( ( value ) => typeof value === 'string' && value.length > 0 ) : Array.isArray( worker?.depends_on ) ? worker.depends_on.filter( ( value ) => typeof value === 'string' && value.length > 0 ) : [],
+		dependsOn: Array.isArray( worker?.dependsOn ) ? worker.dependsOn.filter( ( value ) => typeof value === 'string' && value.length > 0 ) : [],
 		required: worker?.required !== false,
-		artifactNamespace: typeof worker?.artifactNamespace === 'string' ? worker.artifactNamespace : typeof worker?.artifact_namespace === 'string' ? worker.artifact_namespace : undefined,
+		artifactNamespace: typeof worker?.artifactNamespace === 'string' ? worker.artifactNamespace : undefined,
 	} );
 
 	const normalizeFanoutArtifactRef = ( artifact, fallbackWorkerId ) => ( {
 		id: typeof artifact?.id === 'string' ? artifact.id : undefined,
 		path: typeof artifact?.path === 'string' ? artifact.path : '',
 		kind: typeof artifact?.kind === 'string' ? artifact.kind : undefined,
-		workerId: typeof artifact?.workerId === 'string' ? artifact.workerId : typeof artifact?.worker_id === 'string' ? artifact.worker_id : typeof fallbackWorkerId === 'string' ? fallbackWorkerId : undefined,
+		workerId: typeof artifact?.workerId === 'string' ? artifact.workerId : typeof fallbackWorkerId === 'string' ? fallbackWorkerId : undefined,
 		namespace: typeof artifact?.namespace === 'string' ? artifact.namespace : undefined,
-		finalPath: typeof artifact?.finalPath === 'string' ? artifact.finalPath : typeof artifact?.final_path === 'string' ? artifact.final_path : undefined,
-		contentType: typeof artifact?.contentType === 'string' ? artifact.contentType : typeof artifact?.content_type === 'string' ? artifact.content_type : undefined,
+		finalPath: typeof artifact?.finalPath === 'string' ? artifact.finalPath : undefined,
+		contentType: typeof artifact?.contentType === 'string' ? artifact.contentType : undefined,
 		sha256: typeof artifact?.sha256 === 'string' ? artifact.sha256 : undefined,
 		bytes: typeof artifact?.bytes === 'number' ? artifact.bytes : undefined,
 		metadata: artifact?.metadata && typeof artifact.metadata === 'object' && ! Array.isArray( artifact.metadata ) ? artifact.metadata : undefined,
 	} );
 
 	const normalizeFanoutWorkerResultRef = ( worker ) => {
-		const artifactRefs = Array.isArray( worker?.artifactRefs ) ? worker.artifactRefs : Array.isArray( worker?.artifact_refs ) ? worker.artifact_refs : [];
-		const workerId = typeof worker?.workerId === 'string' ? worker.workerId : typeof worker?.worker_id === 'string' ? worker.worker_id : '';
+		const artifactRefs = Array.isArray( worker?.artifactRefs ) ? worker.artifactRefs : [];
+		const workerId = typeof worker?.workerId === 'string' ? worker.workerId : '';
 		const status = typeof worker?.status === 'string' && worker.status.length > 0 ? worker.status : 'missing';
 		return {
 			workerId,
 			status: status === 'completed' && worker?.success === true ? 'succeeded' : status,
 			required: worker?.required !== false,
-			resultRef: typeof worker?.resultRef === 'string' ? worker.resultRef : typeof worker?.result_ref === 'string' ? worker.result_ref : undefined,
+			resultRef: typeof worker?.resultRef === 'string' ? worker.resultRef : undefined,
 			artifactRefs: artifactRefs.map( ( artifact ) => normalizeFanoutArtifactRef( artifact, workerId ) ),
 			...( worker?.error && typeof worker.error === 'object' ? { error: worker.error } : {} ),
 			...( worker?.metadata && typeof worker.metadata === 'object' && ! Array.isArray( worker.metadata ) ? { metadata: worker.metadata } : {} ),
@@ -2114,16 +2114,16 @@ try {
 		type: typeof conflict?.type === 'string' ? conflict.type : 'partial-output',
 		severity: typeof conflict?.severity === 'string' ? conflict.severity : 'error',
 		message: typeof conflict?.message === 'string' ? conflict.message : 'Fanout aggregation conflict candidate.',
-		...( Array.isArray( conflict?.workerIds ) ? { workerIds: conflict.workerIds.filter( ( value ) => typeof value === 'string' && value.length > 0 ) } : Array.isArray( conflict?.worker_ids ) ? { workerIds: conflict.worker_ids.filter( ( value ) => typeof value === 'string' && value.length > 0 ) } : {} ),
+		...( Array.isArray( conflict?.workerIds ) ? { workerIds: conflict.workerIds.filter( ( value ) => typeof value === 'string' && value.length > 0 ) } : {} ),
 		...( typeof conflict?.path === 'string' ? { path: conflict.path } : {} ),
-		...( typeof conflict?.dependencyId === 'string' ? { dependencyId: conflict.dependencyId } : typeof conflict?.dependency_id === 'string' ? { dependencyId: conflict.dependency_id } : {} ),
+		...( typeof conflict?.dependencyId === 'string' ? { dependencyId: conflict.dependencyId } : {} ),
 		...( conflict?.details && typeof conflict.details === 'object' && ! Array.isArray( conflict.details ) ? { details: conflict.details } : {} ),
 	} );
 
 	const normalizeFanoutAggregationInput = ( input ) => {
 		const source = input && typeof input === 'object' ? input : {};
-		const workerResultRefs = ( Array.isArray( source.workerResultRefs ) ? source.workerResultRefs : Array.isArray( source.worker_results ) ? source.worker_results : Array.isArray( source.workerResults ) ? source.workerResults : [] ).map( normalizeFanoutWorkerResultRef );
-		const directArtifactRefs = ( Array.isArray( source.artifactRefs ) ? source.artifactRefs : Array.isArray( source.artifact_refs ) ? source.artifact_refs : [] ).map( ( artifact ) => normalizeFanoutArtifactRef( artifact ) );
+		const workerResultRefs = ( Array.isArray( source.workerResultRefs ) ? source.workerResultRefs : [] ).map( normalizeFanoutWorkerResultRef );
+		const directArtifactRefs = ( Array.isArray( source.artifactRefs ) ? source.artifactRefs : [] ).map( ( artifact ) => normalizeFanoutArtifactRef( artifact ) );
 		const artifactRefs = source.schema === fanoutAggregationInputSchema ? directArtifactRefs : [ ...directArtifactRefs, ...workerResultRefs.flatMap( ( worker ) => worker.artifactRefs ) ];
 		return {
 			schema: fanoutAggregationInputSchema,
@@ -2132,10 +2132,10 @@ try {
 				workers: ( Array.isArray( source.plan?.workers ) ? source.plan.workers : [] ).map( normalizeFanoutWorkerPlan ),
 			},
 			policy: typeof source.policy === 'string' ? source.policy : 'fail',
-			aggregator: source.aggregator && typeof source.aggregator === 'object' ? source.aggregator : source.aggregation && typeof source.aggregation === 'object' ? source.aggregation : undefined,
+			aggregator: source.aggregator && typeof source.aggregator === 'object' ? source.aggregator : undefined,
 			workerResultRefs,
 			artifactRefs,
-			conflictCandidates: ( Array.isArray( source.conflictCandidates ) ? source.conflictCandidates : Array.isArray( source.conflict_candidates ) ? source.conflict_candidates : [] ).map( normalizeFanoutConflict ),
+			conflictCandidates: ( Array.isArray( source.conflictCandidates ) ? source.conflictCandidates : [] ).map( normalizeFanoutConflict ),
 			...( source.metadata && typeof source.metadata === 'object' && ! Array.isArray( source.metadata ) ? { metadata: source.metadata } : {} ),
 		};
 	};
@@ -3019,24 +3019,24 @@ echo wp_json_encode( array(
 				plan: {
 					id: 'contract-fanout',
 					workers: [
-						{ id: 'worker-a', artifact_namespace: 'fanout/workers/worker-a' },
-						{ id: 'worker-b', depends_on: [ 'worker-a' ], artifact_namespace: 'fanout/workers/worker-b' },
+						{ id: 'worker-a', artifactNamespace: 'fanout/workers/worker-a' },
+						{ id: 'worker-b', dependsOn: [ 'worker-a' ], artifactNamespace: 'fanout/workers/worker-b' },
 					],
 				},
 				policy: 'fail',
-				aggregation: {
+				aggregator: {
 					outputNamespace: 'aggregate/final',
 				},
-				worker_results: [
+				workerResultRefs: [
 					{
-						worker_id: 'worker-a',
+						workerId: 'worker-a',
 						status: 'succeeded',
-						artifact_refs: [ { path: 'fanout/workers/worker-a/result.json', final_path: 'worker-a/result.json' } ],
+						artifactRefs: [ { path: 'fanout/workers/worker-a/result.json', finalPath: 'worker-a/result.json' } ],
 					},
 					{
-						worker_id: 'worker-b',
+						workerId: 'worker-b',
 						status: 'succeeded',
-						artifact_refs: [ { path: 'fanout/workers/worker-b/result.json', final_path: 'worker-b/result.json' } ],
+						artifactRefs: [ { path: 'fanout/workers/worker-b/result.json', finalPath: 'worker-b/result.json' } ],
 					},
 				],
 			}, { name: 'codebox-contract-fanout-aggregation' } );
@@ -3048,8 +3048,8 @@ echo wp_json_encode( array(
 			return {
 				schema: result.data.schema,
 				status: result.data.status,
-				final_path: result.data.finalArtifactRefs?.[ 0 ]?.path || '',
-				worker_results: result.data.workerResultRefs?.length || 0,
+				finalPath: result.data.finalArtifactRefs?.[ 0 ]?.path || '',
+				workerResults: result.data.workerResultRefs?.length || 0,
 			};
 		} );
 

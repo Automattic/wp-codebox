@@ -164,7 +164,6 @@ final class WP_Codebox_Agent_Task_Ability_Descriptors {
 								'task'            => array( 'type' => 'string' ),
 								'agent'           => array( 'type' => 'string' ),
 								'dependsOn'       => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-								'depends_on'      => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 								'timeout_seconds' => array( 'type' => 'integer' ),
 							) + $context['task_input_alias_properties'],
 						),

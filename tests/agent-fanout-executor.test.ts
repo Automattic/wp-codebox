@@ -46,7 +46,7 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   assert.equal(result.progress.status, "succeeded")
   assert.equal(result.progress.session_id, "fanout-test")
   assert.equal(result.progress.run_id, "fanout-test")
-  assert.deepEqual(result.progress.progress, { total: 2, active: 0, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
+  assert.deepEqual(result.progress.progress, { current: 2, total: 2, active: 0, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0, percent: 100 })
 
   const events = (await readFile(join(root, "fanout", "events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
   const plan = JSON.parse(await readFile(join(root, "fanout", "plan.json"), "utf8"))
@@ -81,7 +81,7 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   assert.deepEqual(events.map((event) => [event.phase, event.timestamp, event.session_id, event.run_id]), events.map((event) => [event.event, "2026-01-02T03:04:05.000Z", "fanout-test", "fanout-test"]))
   assert.equal(events[0].normalized_progress.schema, "wp-codebox/live-progress-event/v1")
   assert.equal(events[0].normalized_progress.label, "Fanout started")
-  assert.deepEqual(events[0].normalized_progress.progress, { total: 2, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
+  assert.deepEqual(events[0].normalized_progress.progress, { current: 0, total: 2, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0, percent: 0 })
   assert.equal(events.at(-1).normalized_progress.phase, "fanout.completed")
   assert.equal(events.at(-1).normalized_progress.status, "succeeded")
 })
@@ -97,7 +97,7 @@ await withTempDir("wp-codebox-agent-fanout-dag-", async (root) => {
       { id: "setup", goal: "Prepare shared context" },
       { id: "failing", goal: "Fail this branch" },
       { id: "after-setup", goal: "Run after setup", dependsOn: ["setup"] },
-      { id: "after-failing", goal: "Skip after failing", depends_on: ["failing"] },
+      { id: "after-failing", goal: "Skip after failing", dependsOn: ["failing"] },
       { id: "after-skipped", goal: "Skip after skipped", dependsOn: ["after-failing"] },
     ],
   }, {

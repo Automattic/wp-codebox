@@ -127,13 +127,8 @@ export interface FanoutAggregationOutput {
 export type FanoutAggregationInputRequest = Partial<Omit<FanoutAggregationInput, "schema" | "workerResultRefs" | "artifactRefs" | "conflictCandidates">> & {
   schema?: string
   workerResultRefs?: unknown[]
-  worker_results?: unknown[]
-  workerResults?: unknown[]
   artifactRefs?: unknown[]
-  artifact_refs?: unknown[]
   conflictCandidates?: unknown[]
-  conflict_candidates?: unknown[]
-  aggregation?: FanoutAggregatorConfig
 }
 
 export function fanoutAggregationInputFromWorkerArtifacts(options: FanoutAggregationInputFromWorkerArtifactsOptions): FanoutAggregationInput {
@@ -149,8 +144,8 @@ export function fanoutAggregationInputFromWorkerArtifacts(options: FanoutAggrega
 }
 
 export function normalizeFanoutAggregationInput(input: FanoutAggregationInputRequest): FanoutAggregationInput {
-  const workerResultRefs = (input.workerResultRefs ?? input.worker_results ?? input.workerResults ?? []).map(normalizeWorkerResultRef)
-  const inputArtifactRefs = (input.artifactRefs ?? input.artifact_refs ?? []).map((artifact) => normalizeArtifactRef(artifact))
+  const workerResultRefs = (input.workerResultRefs ?? []).map(normalizeWorkerResultRef)
+  const inputArtifactRefs = (input.artifactRefs ?? []).map((artifact) => normalizeArtifactRef(artifact))
   const artifactRefs = input.schema === FANOUT_AGGREGATION_INPUT_SCHEMA
     ? inputArtifactRefs
     : [...inputArtifactRefs, ...workerResultRefs.flatMap((worker) => worker.artifactRefs)]
@@ -159,10 +154,10 @@ export function normalizeFanoutAggregationInput(input: FanoutAggregationInputReq
     schema: FANOUT_AGGREGATION_INPUT_SCHEMA,
     plan: normalizePlan(input.plan),
     policy: input.policy ?? "fail",
-    aggregator: input.aggregator ?? input.aggregation,
+    aggregator: input.aggregator,
     workerResultRefs,
     artifactRefs,
-    conflictCandidates: (input.conflictCandidates ?? input.conflict_candidates ?? []).map(normalizeConflictRecord),
+    conflictCandidates: (input.conflictCandidates ?? []).map(normalizeConflictRecord),
     metadata: input.metadata,
   }
 }
@@ -339,28 +334,26 @@ function normalizePlan(plan: FanoutAggregationInputRequest["plan"]): FanoutPlan 
 
 function normalizeWorkerPlan(worker: unknown): FanoutWorkerPlan {
   const source = isRecord(worker) ? worker : {}
-  const dependsOn = source.dependsOn ?? source.depends_on
 
   return {
     ...source,
     id: isString(source.id) ? source.id : "",
-    dependsOn: Array.isArray(dependsOn) ? dependsOn.filter(isString) : [],
+    dependsOn: Array.isArray(source.dependsOn) ? source.dependsOn.filter(isString) : [],
     required: source.required !== false,
-    artifactNamespace: isString(source.artifactNamespace) ? source.artifactNamespace : isString(source.artifact_namespace) ? source.artifact_namespace : undefined,
+    artifactNamespace: isString(source.artifactNamespace) ? source.artifactNamespace : undefined,
     metadata: isRecord(source.metadata) ? source.metadata : undefined,
   }
 }
 
 function normalizeWorkerResultRef(workerResult: unknown): FanoutWorkerResultRef {
   const source = isRecord(workerResult) ? workerResult : {}
-  const artifactRefs = source.artifactRefs ?? source.artifact_refs
 
   return {
-    workerId: isString(source.workerId) ? source.workerId : isString(source.worker_id) ? source.worker_id : "",
+    workerId: isString(source.workerId) ? source.workerId : "",
     status: isString(source.status) ? normalizeAgentTaskStatus({ status: source.status, success: source.success }) : "missing",
     required: source.required !== false,
-    resultRef: isString(source.resultRef) ? source.resultRef : isString(source.result_ref) ? source.result_ref : undefined,
-    artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map((artifact) => normalizeArtifactRef(artifact, source.workerId ?? source.worker_id)) : [],
+    resultRef: isString(source.resultRef) ? source.resultRef : undefined,
+    artifactRefs: Array.isArray(source.artifactRefs) ? source.artifactRefs.map((artifact) => normalizeArtifactRef(artifact, source.workerId)) : [],
     error: normalizeError(source.error),
     metadata: isRecord(source.metadata) ? source.metadata : undefined,
   }
@@ -373,10 +366,10 @@ function normalizeArtifactRef(artifactRef: unknown, fallbackWorkerId?: unknown):
     id: isString(source.id) ? source.id : undefined,
     path: isString(source.path) ? source.path : "",
     kind: isString(source.kind) ? source.kind : undefined,
-    workerId: isString(source.workerId) ? source.workerId : isString(source.worker_id) ? source.worker_id : isString(fallbackWorkerId) ? fallbackWorkerId : undefined,
+    workerId: isString(source.workerId) ? source.workerId : isString(fallbackWorkerId) ? fallbackWorkerId : undefined,
     namespace: isString(source.namespace) ? source.namespace : undefined,
-    finalPath: isString(source.finalPath) ? source.finalPath : isString(source.final_path) ? source.final_path : undefined,
-    contentType: isString(source.contentType) ? source.contentType : isString(source.content_type) ? source.content_type : undefined,
+    finalPath: isString(source.finalPath) ? source.finalPath : undefined,
+    contentType: isString(source.contentType) ? source.contentType : undefined,
     sha256: isString(source.sha256) ? source.sha256 : undefined,
     bytes: typeof source.bytes === "number" ? source.bytes : undefined,
     metadata: isRecord(source.metadata) ? source.metadata : undefined,
@@ -385,17 +378,15 @@ function normalizeArtifactRef(artifactRef: unknown, fallbackWorkerId?: unknown):
 
 function normalizeConflictRecord(conflict: unknown): FanoutConflictRecord {
   const source = isRecord(conflict) ? conflict : {}
-  const artifactRefs = source.artifactRefs ?? source.artifact_refs
-  const workerIds = source.workerIds ?? source.worker_ids
 
   return {
     type: isString(source.type) ? source.type : "partial-output",
     severity: isString(source.severity) ? source.severity : "error",
     message: isString(source.message) ? source.message : "Fanout aggregation conflict candidate.",
-    workerIds: Array.isArray(workerIds) ? workerIds.filter(isString) : undefined,
+    workerIds: Array.isArray(source.workerIds) ? source.workerIds.filter(isString) : undefined,
     path: isString(source.path) ? source.path : undefined,
-    artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map((artifact) => normalizeArtifactRef(artifact)) : undefined,
-    dependencyId: isString(source.dependencyId) ? source.dependencyId : isString(source.dependency_id) ? source.dependency_id : undefined,
+    artifactRefs: Array.isArray(source.artifactRefs) ? source.artifactRefs.map((artifact) => normalizeArtifactRef(artifact)) : undefined,
+    dependencyId: isString(source.dependencyId) ? source.dependencyId : undefined,
     details: isRecord(source.details) ? source.details : undefined,
   }
 }

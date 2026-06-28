@@ -448,12 +448,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		return array_map(
 			fn( array $run ): array => array(
-				'worker_id'     => (string) ( $run['worker_id'] ?? '' ),
+				'workerId'      => (string) ( $run['worker_id'] ?? '' ),
 				'status'        => (string) ( $run['status'] ?? '' ),
 				'success'       => true === ( $run['success'] ?? false ),
 				'required'      => $required_by_id[ (string) ( $run['worker_id'] ?? '' ) ] ?? true,
-				'result_ref'    => 'fanout/workers/' . (string) ( $run['worker_id'] ?? '' ) . '/result.json',
-				'artifact_refs' => $this->fanout_worker_artifact_refs( $run ),
+				'resultRef'     => 'fanout/workers/' . (string) ( $run['worker_id'] ?? '' ) . '/result.json',
+				'artifactRefs'  => $this->fanout_worker_artifact_refs( $run ),
 				'error'         => is_array( $run['error'] ?? null ) ? $run['error'] : null,
 			),
 			$runs
