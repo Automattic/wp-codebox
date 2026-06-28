@@ -466,10 +466,10 @@ private static function fuzz_suite_runtime_backed_runner_capabilities_contract( 
 	$capabilities = array(
 		'schema'                          => 'wp-codebox/fuzz-runner-capabilities/v1',
 		'mode'                            => 'runtime-backed',
-		'capabilities'                    => array( 'target:ability', 'target:command', 'target:http', 'target:rest', 'target:runtime', 'target:runtime-action', 'runtime', 'runtime-action:admin_page', 'runtime-action:browser', 'runtime-action:browser_probe', 'runtime-action:crud_operation', 'runtime-action:db_operation', 'runtime-action:editor_open', 'runtime-action:page', 'runtime-action:php', 'runtime-action:rest_request', 'runtime-action:wp_cli', 'db_operation', 'rest-mutation:fixture-opt-in', 'mutation-isolation-artifact', 'delete-boundary-artifact' ),
+		'capabilities'                    => array( 'target:ability', 'target:command', 'target:http', 'target:rest', 'target:runtime', 'target:runtime-action', 'runtime', 'runtime-action:admin_page', 'runtime-action:browser', 'runtime-action:browser_probe', 'runtime-action:crud_operation', 'runtime-action:db_operation', 'runtime-action:editor_open', 'runtime-action:page', 'runtime-action:php', 'runtime-action:random_walk', 'runtime-action:rest_request', 'runtime-action:wp_cli', 'db_operation', 'rest-mutation:fixture-opt-in', 'mutation-isolation-artifact', 'delete-boundary-artifact' ),
 		'targetKinds'                     => array( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' ),
 		'operationKinds'                  => array( 'read', 'crud', 'mutation-isolation', 'delete-boundary' ),
-		'runtimeActionTypes'              => array( 'admin_page', 'browser', 'browser_probe', 'crud_operation', 'db_operation', 'editor_open', 'page', 'php', 'rest_request', 'wp_cli' ),
+		'runtimeActionTypes'              => array( 'admin_page', 'browser', 'browser_probe', 'crud_operation', 'db_operation', 'editor_open', 'page', 'php', 'random_walk', 'rest_request', 'wp_cli' ),
 		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.admin-page-load', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.ensure-plugin-active', 'wordpress.frontend-page-load', 'wordpress.http-request', 'wordpress.plugin-state', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
 		'unsupportedRequiredCapabilities' => array(),
 	);
@@ -674,6 +674,14 @@ private static function fuzz_suite_runtime_action_step( array $input ): array {
 			'action'  => $type,
 		);
 	}
+	if ( 'random_walk' === $type ) {
+		return array(
+			'command' => 'wordpress.browser-actions',
+			'args'    => self::fuzz_suite_random_walk_action_args( $input ),
+			'action'  => $type,
+			'replay'  => self::fuzz_suite_random_walk_replay( $input ),
+		);
+	}
 	if ( 'browser_probe' === $type ) {
 		return array(
 			'command' => 'wordpress.browser-probe',
@@ -717,6 +725,42 @@ private static function fuzz_suite_browser_action_args( array $input ): array {
 	);
 
 	return self::fuzz_suite_args_from_map( array( 'url' => ( isset( $input['url'] ) && 'navigate' !== $operation ) ? $input['url'] : null, 'steps-json' => array( $step ), 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ) ) );
+}
+
+/** @param array<string,mixed> $input Runtime random-walk input. @return string[] */
+private static function fuzz_suite_random_walk_action_args( array $input ): array {
+	$steps = self::fuzz_suite_random_walk_steps( $input );
+	return self::fuzz_suite_args_from_map( array( 'steps-json' => $steps, 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ) ) );
+}
+
+/** @param array<string,mixed> $input Runtime random-walk input. @return array<int,array<string,mixed>> */
+private static function fuzz_suite_random_walk_steps( array $input ): array {
+	$context = in_array( (string) ( $input['context'] ?? '' ), array( 'browser', 'admin', 'editor' ), true ) ? (string) $input['context'] : 'browser';
+	$seed = (string) ( $input['seed'] ?? 'browser-random-walk' );
+	$max_steps = max( 1, min( 50, (int) ( $input['max_steps'] ?? $input['maxSteps'] ?? 8 ) ) );
+	$families = array_values( array_intersect( array_map( 'strval', is_array( $input['action_families'] ?? null ) ? $input['action_families'] : ( is_array( $input['actionFamilies'] ?? null ) ? $input['actionFamilies'] : array() ) ), array( 'click', 'fill', 'press', 'select', 'navigate', 'capture' ) ) );
+	if ( empty( $families ) ) {
+		$families = array( 'click', 'fill', 'press', 'capture' );
+	}
+	$start_url = (string) ( $input['start_url'] ?? $input['startUrl'] ?? ( 'admin' === $context ? '/wp-admin/' : ( 'editor' === $context ? '/wp-admin/post-new.php' : '/' ) ) );
+	$steps = array( array( 'kind' => 'navigate', 'url' => $start_url, 'waitFor' => 'load' ) );
+	for ( $index = 0; $index < $max_steps - 1; $index++ ) {
+		$family = $families[ abs( crc32( $seed . ':' . (string) $index ) ) % count( $families ) ];
+		$steps[] = match ( $family ) {
+			'navigate' => array( 'kind' => 'navigate', 'url' => $start_url, 'waitFor' => 'load' ),
+			'fill' => array( 'kind' => 'fill', 'selector' => "input[type='search'], input[type='text'], textarea", 'value' => 'fuzz-' . $seed . '-' . (string) $index ),
+			'press' => array( 'kind' => 'press', 'key' => 0 === $index % 2 ? 'Tab' : 'Escape' ),
+			'select' => array( 'kind' => 'select', 'selector' => 'select', 'value' => '' ),
+			'capture' => array( 'kind' => 'capture' ),
+			default => array( 'kind' => 'click', 'selector' => "a, button, input[type='submit'], .button" ),
+		};
+	}
+	return $steps;
+}
+
+/** @param array<string,mixed> $input Runtime random-walk input. @return array<string,mixed> */
+private static function fuzz_suite_random_walk_replay( array $input ): array {
+	return array_filter( array( 'schema' => 'wp-codebox/browser-random-walk/v1', 'seed' => $input['seed'] ?? 'browser-random-walk', 'maxSteps' => $input['max_steps'] ?? $input['maxSteps'] ?? 8, 'actionFamilies' => $input['action_families'] ?? $input['actionFamilies'] ?? array(), 'context' => $input['context'] ?? 'browser', 'startUrl' => $input['start_url'] ?? $input['startUrl'] ?? null, 'resetPolicy' => $input['reset_policy'] ?? $input['resetPolicy'] ?? null ), static fn( mixed $value ): bool => null !== $value );
 }
 
 private static function fuzz_suite_csv_arg( mixed $value ): ?string {
@@ -1913,6 +1957,9 @@ private static function fuzz_suite_unsupported_step_reason( string $command, arr
 		'wordpress.frontend-page-load' => array( 'wp_codebox_fuzz_runtime_action_page_unsupported', 'runtime_action_page_unsupported', 'Runtime-action type page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
 		'wordpress.runtime-action'     => array( 'wp_codebox_fuzz_runtime_action_unsupported', 'runtime_action_unsupported', 'Runtime-action type is not supported by the public PHP fuzz-suite ability.' ),
 	);
+	if ( 'wordpress.browser-actions' === $command && 'random_walk' === (string) ( $observation['action'] ?? '' ) ) {
+		return array( 'code' => 'wp_codebox_fuzz_runtime_action_random_walk_unsupported', 'reason' => 'runtime_action_random_walk_unsupported', 'message' => 'Runtime-action type random_walk requires the browser runtime executor; the public PHP fuzz-suite ability records a structured skip with replay metadata.' );
+	}
 
 	if ( isset( $runtime_commands[ $command ] ) ) {
 		return array( 'code' => $runtime_commands[ $command ][0], 'reason' => $runtime_commands[ $command ][1], 'message' => $runtime_commands[ $command ][2] );

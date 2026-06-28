@@ -61,6 +61,41 @@ assert.equal(restCoveragePlan.untested[0]?.reason?.code, "mutating_rest_method_r
 assert.equal(restCoveragePlan.untested[0]?.parameterGeneration?.hook, "wordpress.rest-mutating-route-opt-in")
 assert.equal(restCoveragePlan.parameterGenerationHooks?.length, 2)
 
+const generatedRestInventory: WordPressRestRouteInventory = {
+  schema: WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
+  command: "wordpress.rest-route-inventory",
+  status: "ok",
+  routes: [
+    { route: "/example/v1/items", namespace: "example/v1", methods: ["GET", "POST"], argNames: ["search", "title"], endpoints: [{ methods: ["GET"], permission: { mode: "public" }, args: [{ name: "search", required: false, type: "string" }] }, { methods: ["POST"], permission: { mode: "callback" }, args: [{ name: "title", required: true, type: "string" }, { name: "count", required: false, type: "integer" }] }] },
+    { route: "/example/v1/items/(?P<id>[\\d]+)", namespace: "example/v1", methods: ["DELETE"], argNames: ["id", "force"], endpoints: [{ methods: ["DELETE"], permission: { mode: "callback" }, args: [{ name: "id", required: true, type: "integer" }, { name: "force", required: false, type: "boolean" }] }] },
+  ],
+  namespaces: ["example/v1"],
+  diagnostics: [],
+}
+const generatedRestSuite = restRouteInventoryToFuzzSuite(generatedRestInventory, {
+  session: "admin",
+  restPayloadFamilies: ["valid-minimal", "boundary-large-string", "invalid-type"],
+  restGeneratedMutationResetPolicy: { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" },
+})
+const generatedGetBoundary = generatedRestSuite.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-boundary-large-string")
+assert.deepEqual(generatedGetBoundary?.input, { method: "GET", path: "/example/v1/items", params: { search: "x".repeat(256) }, session: "admin" })
+assert.equal(generatedGetBoundary?.metadata?.payloadFamily, "boundary-large-string")
+assert.equal((generatedGetBoundary?.metadata?.seed as Record<string, unknown> | undefined)?.source, "wordpress.rest-route-inventory")
+assert.equal((generatedGetBoundary?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "rest-get-example-v1-items-0-boundary-large-string")
+
+const generatedPostInvalid = generatedRestSuite.cases.find((fuzzCase) => fuzzCase.id === "rest-post-example-v1-items-1-invalid-type")
+assert.equal(generatedPostInvalid?.target?.kind, "runtime-action")
+assert.deepEqual(generatedPostInvalid?.input, { type: "rest_request", method: "POST", path: "/example/v1/items", bodyJson: { title: 12345, count: "not-a-number" }, session: "admin" })
+assert.deepEqual(generatedPostInvalid?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" })
+assert.deepEqual(generatedPostInvalid?.mutation, { intent: "write", destructive: false, intensity: "medium", resetRequired: true })
+assert.equal((generatedPostInvalid?.metadata?.safety as Record<string, unknown> | undefined)?.executable, true)
+
+const generatedDeleteInvalid = generatedRestSuite.cases.find((fuzzCase) => fuzzCase.id === "rest-delete-example-v1-items-p-id-d-0-invalid-type")
+assert.deepEqual(generatedDeleteInvalid?.input, { type: "rest_request", method: "DELETE", path: "/example/v1/items/not-a-number", bodyJson: { force: "not-a-boolean" }, session: "admin" })
+assert.deepEqual(generatedDeleteInvalid?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
+assert.deepEqual(generatedDeleteInvalid?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" })
+assert.equal((generatedDeleteInvalid?.metadata?.safety as Record<string, unknown> | undefined)?.payloadFamily, "invalid-type")
+
 const adminInventory: WordPressAdminPageInventory = {
   schema: WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
   command: "wordpress.admin-page-inventory",
@@ -77,6 +112,10 @@ assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities
 assert.equal(adminSuite.metadata?.pageLoadMode, "simulated")
 assert.deepEqual(adminSuite.cases[0]?.input, { args: ["path=tools.php", "user=admin"] })
 assert.deepEqual(adminSuite.cases[1]?.input, { args: ["path=admin.php?page=demo-settings", "user=admin"] })
+assert.equal(adminSuite.cases.some((fuzzCase) => fuzzCase.id === "admin-page-denied-settings"), false)
+assert.equal(adminSuite.cases[2]?.target?.entrypoint, "wordpress.browser-actions")
+assert.deepEqual(adminSuite.cases[2]?.input, { args: ["url=/wp-admin/tools.php", "auth=wordpress-admin", "capture=steps,html,screenshot,dom-snapshot", "max-dom-snapshot-elements=500"] })
+assert.deepEqual(adminSuite.cases[2]?.metadata?.actionDiscovery, { mode: "browser-dom-snapshot", executesActions: false, artifactEvidence: ["html", "dom-snapshot", "screenshot"] })
 
 const serverAdminSuite = adminPageInventoryToFuzzSuite(adminInventory, { pageLoadMode: "server" })
 assert.equal(serverAdminSuite.target?.entrypoint, "wordpress.server-page-load")
@@ -84,7 +123,7 @@ assert.deepEqual(serverAdminSuite.metadata?.requiredRunnerCapabilities, { capabi
 assert.deepEqual(serverAdminSuite.cases[0]?.input, { args: ["path=tools.php", "surface=admin"] })
 
 const adminCoveragePlan = adminPageInventoryToCoveragePlan(adminInventory, { user: "admin" })
-assert.deepEqual({ discovered: adminCoveragePlan.summary.discovered, generated: adminCoveragePlan.summary.generated, executable: adminCoveragePlan.summary.executable, executed: adminCoveragePlan.summary.executed, skipped: adminCoveragePlan.summary.skipped, untested: adminCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 2, executed: 0, skipped: 1, untested: 0 })
+assert.deepEqual({ discovered: adminCoveragePlan.summary.discovered, generated: adminCoveragePlan.summary.generated, executable: adminCoveragePlan.summary.executable, executed: adminCoveragePlan.summary.executed, skipped: adminCoveragePlan.summary.skipped, untested: adminCoveragePlan.summary.untested }, { discovered: 5, generated: 5, executable: 4, executed: 0, skipped: 1, untested: 0 })
 assert.equal(adminCoveragePlan.skipped[0]?.reason?.code, "admin_page_capability_denied")
 
 const frontendInventory: WordPressFrontendUrlInventory = {
@@ -121,22 +160,34 @@ const databaseInventory: WordPressDatabaseInventory = {
   prefix: "wp_",
   tables: [
     { name: "wp_posts", baseName: "posts", classification: "core", columns: [{ name: "ID", type: "bigint", nullable: false, key: "PRI", default: null, extra: "auto_increment" }] },
-    { name: "wp_demo", baseName: "demo", classification: "prefixed", columns: [{ name: "id", type: "bigint", nullable: false, key: "PRI", default: null, extra: "" }] },
+    { name: "wp_demo", baseName: "demo", classification: "prefixed", columns: [{ name: "id", type: "bigint", nullable: false, key: "PRI", default: null, extra: "auto_increment" }, { name: "name", type: "varchar(255)", nullable: false, key: "", default: null, extra: "" }], indexes: [{ name: "PRIMARY", column: "id", unique: true, sequence: 1 }] },
     { name: "external_events", baseName: "external_events", classification: "external", columns: [{ name: "id", type: "bigint", nullable: false, key: "PRI", default: null, extra: "" }] },
   ],
-  totals: { tableCount: 3, rowCount: 0, columnCount: 3, indexCount: 0, dataBytes: 0, indexBytes: 0, totalBytes: 0 },
+  totals: { tableCount: 3, rowCount: 0, columnCount: 4, indexCount: 1, dataBytes: 0, indexBytes: 0, totalBytes: 0 },
   diagnostics: [],
 }
 
 const databaseSuite = databaseInventoryToFuzzSuite(databaseInventory)
 assert.equal(databaseSuite.target?.entrypoint, "wordpress.db-operation")
 assert.deepEqual(databaseSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime", "db_operation"], targetKinds: ["runtime"], commands: ["wordpress.db-operation"] })
-assert.equal(databaseSuite.cases.length, 2)
+assert.equal(databaseSuite.cases.length, 4)
 assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").operation, "inspect")
 assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
+assert.equal(JSON.parse((databaseSuite.cases[1]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.equal(databaseSuite.cases.some((entry) => entry.id === "db-insert-demo"), false)
+
+const mutatingDatabaseSuite = databaseInventoryToFuzzSuite(databaseInventory, { dbGeneratedMutationResetPolicy: { mode: "checkpoint-per-case", checkpointName: "db-baseline" } })
+assert.equal(mutatingDatabaseSuite.cases.length, 7)
+const dbInsert = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-insert-demo")
+assert.equal(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").options.mutation, "insert")
+assert.deepEqual(dbInsert?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "db-baseline" })
+assert.deepEqual(dbInsert?.mutation, { intent: "write", destructive: false, intensity: "medium", resetRequired: true })
+const dbDelete = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-delete-demo")
+assert.deepEqual(dbDelete?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
 
 const databaseCoveragePlan = databaseInventoryToCoveragePlan(databaseInventory)
-assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 2, executed: 0, skipped: 1, untested: 0 })
-assert.equal(databaseCoveragePlan.skipped[0]?.reason?.code, "external_table_not_fuzzed")
+assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 9, generated: 9, executable: 4, executed: 0, skipped: 5, untested: 0 })
+assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "external_table_not_fuzzed"), true)
+assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "db_mutation_requires_reset_policy"), true)
 
 console.log("wordpress fuzz suite builders ok")

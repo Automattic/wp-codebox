@@ -485,6 +485,17 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
+  async restoreSnapshot(snapshot: Snapshot): Promise<Snapshot> {
+    await this.restoreSnapshotPayload(await runtimeSnapshotPayload(snapshot))
+    this.recordEvent("runtime.snapshot.restored", {
+      id: snapshot.id,
+      createdAt: snapshot.createdAt,
+      snapshotSchema: snapshot.schema ?? null,
+      mode: "same-runtime",
+    })
+    return snapshot
+  }
+
   async listCheckpoints(): Promise<RuntimeCheckpointResult> {
     return {
       schema: "wp-codebox/runtime-checkpoint-result/v1",

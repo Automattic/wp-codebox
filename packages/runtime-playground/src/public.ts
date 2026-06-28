@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
+  artifactFileDigest,
+  resolveArtifactPath,
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
@@ -30,6 +33,8 @@ import {
   MUTATION_ISOLATION_ARTIFACT_KIND,
   mutationIsolationArtifact,
   type ArtifactBundle,
+  type ArtifactManifest,
+  type ArtifactManifestFile,
   type ArtifactSpec,
   type ExecutionResult,
   type ExecutionSpec,
@@ -54,6 +59,7 @@ import {
   type RuntimeEpisodeTraceRef,
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
+  type Snapshot,
   type WordPressHotspotObservationInput,
 } from "@automattic/wp-codebox-core/public"
 export {
@@ -149,7 +155,14 @@ export interface WordPressPageLoadActionOptions {
   captureDiagnostics?: string[]
 }
 
-export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities">
+export interface WordPressFuzzSuiteExecutionOptions extends Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities"> {
+  artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+}
+type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
+
+export interface WordPressFuzzSuiteResetExecutorOptions {
+  artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+}
 
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
@@ -352,7 +365,7 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
   }
 }
 
-export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpisode, "reset" | "step">): FuzzSuiteResetExecutor {
+export function createWordPressFuzzSuiteResetExecutor(episode: WordPressFuzzSuiteResetEpisode, options: WordPressFuzzSuiteResetExecutorOptions = {}): FuzzSuiteResetExecutor {
   let checkpointCreated = false
   return {
     async resetFuzzSuiteCase({ suite, case: fuzzCase, caseIndex, policy }): Promise<FuzzSuiteCaseResetResult> {
@@ -387,18 +400,83 @@ export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpiso
         }
       }
       if (policy.mode === "restore-snapshot") {
+        const snapshotRef = policy.snapshotRef ?? policy.snapshot_ref
+        if (!snapshotRef) {
+          return {
+            mode: policy.mode,
+            status: "failed",
+            fixtureRefs,
+            diagnostics: [{
+              severity: "error",
+              code: "fuzz_suite_snapshot_ref_missing",
+              caseId: fuzzCase.id,
+              message: `Fuzz suite case ${fuzzCase.id} uses restore-snapshot reset policy without a snapshotRef.`,
+            }],
+            metadata: { resetPerformed: false, restorePerformed: false },
+          }
+        }
+        const sameRuntimeSnapshotRef = isSameRuntimeSnapshotRef(snapshotRef)
+        const externalSnapshot = !sameRuntimeSnapshotRef ? await externalSnapshotFromArtifactRef(snapshotRef, options) : undefined
+        if (!sameRuntimeSnapshotRef && externalSnapshot && !externalSnapshot.snapshot) {
+          const unsupportedReason = externalSnapshot.unsupportedReason ?? "external-snapshot-artifact-restore-unavailable"
+          return {
+            mode: policy.mode,
+            status: "unsupported",
+            snapshotRef,
+            fixtureRefs,
+            diagnostics: [{
+              severity: "error",
+              code: "fuzz_suite_snapshot_ref_unsupported",
+              caseId: fuzzCase.id,
+              message: externalSnapshot.message ?? `Snapshot ref ${snapshotRef} is not a same-runtime snapshot id or supported local snapshot artifact ref.`,
+              metadata: { snapshotRef, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason, ...externalSnapshot.metadata },
+            }],
+            metadata: { resetPerformed: false, restorePerformed: false, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason, ...externalSnapshot.metadata },
+          }
+        }
+        if (episode.restoreSnapshot) {
+          try {
+            const restoreInput = externalSnapshot?.snapshot ?? snapshotRef
+            const restored = await episode.restoreSnapshot(restoreInput)
+            return {
+              mode: policy.mode,
+              status: "passed",
+              snapshotRef,
+              fixtureRefs,
+              artifactRefs: fuzzSuiteSnapshotArtifactRefs(restored),
+              diagnostics: [],
+              metadata: { resetPerformed: true, restorePerformed: true, snapshotId: restored.id, semantics: restored.semantics, ...(externalSnapshot?.metadata ? { externalSnapshot: externalSnapshot.metadata } : {}) },
+            }
+          } catch (error) {
+            return {
+              mode: policy.mode,
+              status: "failed",
+              snapshotRef,
+              fixtureRefs,
+              diagnostics: [{
+                severity: "error",
+                code: "fuzz_suite_snapshot_restore_failed",
+                caseId: fuzzCase.id,
+                message: error instanceof Error ? error.message : String(error),
+                metadata: { snapshotRef },
+              }],
+              metadata: { resetPerformed: false, restorePerformed: false, snapshotRef },
+            }
+          }
+        }
         return {
           mode: policy.mode,
           status: "unsupported",
-          snapshotRef: policy.snapshotRef ?? policy.snapshot_ref,
+          snapshotRef,
           fixtureRefs,
           diagnostics: [{
             severity: "error",
             code: "fuzz_suite_snapshot_restore_unsupported",
             caseId: fuzzCase.id,
-            message: "The public Playground episode facade cannot restore arbitrary snapshotRef values; use checkpoint-per-case for same-run runtime restoration.",
+            message: "The supplied runtime episode cannot restore snapshot refs; provide a RuntimeEpisode with restoreSnapshot support, or use checkpoint-per-case for same-run runtime restoration.",
+            metadata: { snapshotRef, supportedResetModes: ["none", "checkpoint-per-case"], runtimePrimitiveRequired: "snapshot-restore" },
           }],
-          metadata: { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"] },
+          metadata: { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"], unsupportedReason: "snapshot-restore-primitive-unavailable" },
         }
       }
       return { mode: "none", status: "not-required" }
@@ -407,7 +485,7 @@ export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpiso
 }
 
 export function executeWordPressFuzzSuite(
-  episode: Pick<RuntimeEpisode, "reset" | "step">,
+  episode: WordPressFuzzSuiteResetEpisode,
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
 ): Promise<FuzzSuiteResultEnvelope> {
@@ -440,7 +518,7 @@ export function executeWordPressFuzzSuite(
       }
       return execution
     },
-    resetExecutor: createWordPressFuzzSuiteResetExecutor(episode),
+    resetExecutor: createWordPressFuzzSuiteResetExecutor(episode, { artifactBundles: options.artifactBundles }),
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     metadata: {
       ...options.metadata,
@@ -934,6 +1012,117 @@ function workloadResultArtifactRefs(execution: ExecutionResult): NonNullable<Exe
 
 function fuzzSuiteStepArtifactRefs(step: RuntimeEpisodeStepResult): FuzzSuiteArtifactRef[] {
   return (step.execution.artifactRefs ?? []).flatMap((ref) => {
+    const path = ref.path ?? ref.artifactId ?? ref.id
+    return path ? [{
+      path,
+      kind: ref.kind,
+      sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
+      metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest },
+    }] : []
+  })
+}
+
+function isSameRuntimeSnapshotRef(snapshotRef: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(snapshotRef)
+}
+
+interface ExternalSnapshotResolution {
+  snapshot?: Snapshot
+  unsupportedReason?: string
+  message?: string
+  metadata?: Record<string, unknown>
+}
+
+async function externalSnapshotFromArtifactRef(snapshotRef: string, options: WordPressFuzzSuiteResetExecutorOptions): Promise<ExternalSnapshotResolution> {
+  if (/^https?:\/\//i.test(snapshotRef)) {
+    return {
+      unsupportedReason: "remote-snapshot-ref-unsupported",
+      message: `Snapshot ref ${snapshotRef} is remote; restore-snapshot only supports trusted local artifact bundle refs.`,
+    }
+  }
+
+  const match = /^artifact:([^/]+)\/(files\/.+)$/.exec(snapshotRef)
+  if (!match) {
+    return {
+      unsupportedReason: "unsupported-snapshot-ref-format",
+      message: `Snapshot ref ${snapshotRef} is not a supported local artifact snapshot ref.`,
+    }
+  }
+
+  const [, bundleId, artifactPath] = match
+  const bundle = options.artifactBundles?.find((candidate) => candidate.id === bundleId)
+  if (!bundle) {
+    return {
+      unsupportedReason: "trusted-artifact-bundle-unavailable",
+      message: `Snapshot ref ${snapshotRef} names artifact bundle ${bundleId}, but that bundle was not supplied as a trusted local artifact bundle.`,
+      metadata: { bundleId, artifactPath },
+    }
+  }
+
+  let absolutePath: string
+  try {
+    absolutePath = resolveArtifactPath(bundle.directory, artifactPath).absolutePath
+  } catch (error) {
+    return {
+      unsupportedReason: "artifact-path-outside-bundle",
+      message: error instanceof Error ? error.message : String(error),
+      metadata: { bundleId, artifactPath },
+    }
+  }
+
+  try {
+    const payloadText = await readFile(absolutePath, "utf8")
+    const manifestFile = await artifactManifestFileForPath(bundle.directory, artifactPath)
+    const digest = artifactFileDigest(payloadText)
+    if (manifestFile?.sha256 && manifestFile.sha256.value !== digest.value) {
+      return {
+        unsupportedReason: "snapshot-artifact-hash-mismatch",
+        message: `Snapshot artifact ${artifactPath} does not match the SHA-256 recorded in ${bundleId}/manifest.json.`,
+        metadata: { bundleId, artifactPath, expectedSha256: manifestFile.sha256.value, actualSha256: digest.value },
+      }
+    }
+
+    const payload = JSON.parse(payloadText) as Record<string, unknown>
+    if (payload.schema !== "wp-codebox/wordpress-runtime-snapshot/v1" || payload.compatibility === undefined) {
+      return {
+        unsupportedReason: "snapshot-artifact-schema-unsupported",
+        message: `Snapshot artifact ${artifactPath} is not a wp-codebox/wordpress-runtime-snapshot/v1 artifact.`,
+        metadata: { bundleId, artifactPath },
+      }
+    }
+
+    const snapshotId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : snapshotRef
+    const createdAt = typeof payload.createdAt === "string" && payload.createdAt.length > 0 ? payload.createdAt : new Date(0).toISOString()
+    const snapshot: Snapshot = {
+      id: snapshotId,
+      createdAt,
+      semantics: "runtime-state-artifact",
+      metadata: { artifact: { absolutePath }, artifactRef: snapshotRef },
+      artifactRefs: [{ kind: "runtime-snapshot-artifact", id: snapshotRef, artifactId: snapshotRef, path: artifactPath, digest }],
+    }
+
+    return { snapshot, metadata: { bundleId, artifactPath, sha256: digest.value } }
+  } catch (error) {
+    return {
+      unsupportedReason: "snapshot-artifact-unreadable",
+      message: error instanceof Error ? error.message : String(error),
+      metadata: { bundleId, artifactPath },
+    }
+  }
+}
+
+async function artifactManifestFileForPath(bundleDirectory: string, artifactPath: string): Promise<ArtifactManifestFile | undefined> {
+  try {
+    const manifestPath = resolveArtifactPath(bundleDirectory, "manifest.json").absolutePath
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ArtifactManifest
+    return Array.isArray(manifest.files) ? manifest.files.find((file) => file.path === artifactPath) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function fuzzSuiteSnapshotArtifactRefs(snapshot: { artifactRefs?: RuntimeEpisodeTraceRef[] }): FuzzSuiteArtifactRef[] {
+  return (snapshot.artifactRefs ?? []).flatMap((ref) => {
     const path = ref.path ?? ref.artifactId ?? ref.id
     return path ? [{
       path,

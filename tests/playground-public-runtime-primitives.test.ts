@@ -1,6 +1,10 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 
-import { DELETE_BOUNDARY_ARTIFACT_KIND, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult } from "../packages/runtime-core/src/public.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult, type Snapshot } from "../packages/runtime-core/src/public.js"
 import {
   createWordPressFuzzSuiteResetExecutor,
   createWordPressRuntimeCheckpoint,
@@ -55,6 +59,50 @@ const episode = {
     }
   },
 }
+const restoredSnapshotRefs: string[] = []
+const restoredExternalSnapshotRefs: string[] = []
+const episodeWithSnapshotRestore = {
+  ...episode,
+  async restoreSnapshot(snapshotRef: Snapshot | string): Promise<Snapshot> {
+    if (typeof snapshotRef !== "string") {
+      assert.equal(snapshotRef.metadata.artifactRef, "artifact:baseline/files/runtime-snapshot.json")
+      restoredExternalSnapshotRefs.push(String(snapshotRef.metadata.artifactRef))
+      return snapshotRef
+    }
+    restoredSnapshotRefs.push(snapshotRef)
+    return {
+      schema: "wp-codebox/runtime-episode-snapshot/v1",
+      id: snapshotRef,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      semantics: "runtime-state-artifact",
+      metadata: { runtime: { backend: "wordpress-playground" } },
+      artifactRefs: [{ kind: "runtime-snapshot-artifact", id: snapshotRef, path: `files/runtime-snapshots/${snapshotRef}.json`, digest: { algorithm: "sha256", value: "snapshot-sha" } }],
+    }
+  },
+}
+
+const externalSnapshotBundleDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-snapshot-"))
+await mkdir(join(externalSnapshotBundleDirectory, "files"), { recursive: true })
+const externalSnapshotPayload = `${JSON.stringify({
+  schema: "wp-codebox/wordpress-runtime-snapshot/v1",
+  version: 1,
+  id: "external-baseline",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  compatibility: { backend: "wordpress-playground", wordpressVersion: "6.8", phpVersion: "8.2" },
+  metadata: { runtime: { id: "runtime-1", backend: "wordpress-playground", status: "ready", createdAt: "2026-01-01T00:00:00.000Z", environment: { kind: "wordpress" } }, mounts: [], mountedInputs: [], activeTheme: "", activePlugins: [], wpContentPath: "wp-content" },
+  database: { tables: [] },
+  files: [],
+  hashes: { database: { algorithm: "sha256", value: "database-sha" }, files: { algorithm: "sha256", value: "files-sha" } },
+}, null, 2)}\n`
+const externalSnapshotSha256 = createHash("sha256").update(externalSnapshotPayload).digest("hex")
+await writeFile(join(externalSnapshotBundleDirectory, "files", "runtime-snapshot.json"), externalSnapshotPayload)
+await writeFile(join(externalSnapshotBundleDirectory, "manifest.json"), `${JSON.stringify({
+  id: "baseline",
+  contentDigest: { algorithm: "sha256", inputs: ["files/runtime-snapshot.json"], value: externalSnapshotSha256 },
+  createdAt: "2026-01-01T00:00:00.000Z",
+  runtime: { id: "runtime-1", backend: "wordpress-playground", status: "ready", createdAt: "2026-01-01T00:00:00.000Z", environment: { kind: "wordpress" } },
+  files: [{ path: "files/runtime-snapshot.json", kind: "runtime-snapshot-artifact", contentType: "application/json", sha256: { algorithm: "sha256", value: externalSnapshotSha256 } }],
+}, null, 2)}\n`)
 
 await observeWordPressRestPerformance(episode, {
   method: "POST",
@@ -103,8 +151,9 @@ const resetResult = await resetExecutor.resetFuzzSuiteCase({
 })
 assert.equal(resetResult.status, "unsupported")
 assert.equal(resetResult.snapshotRef, "artifact:baseline/files/runtime-snapshot.json")
-assert.equal(resetResult.diagnostics?.[0]?.code, "fuzz_suite_snapshot_restore_unsupported")
-assert.deepEqual(resetResult.metadata, { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"] })
+assert.equal(resetResult.diagnostics?.[0]?.code, "fuzz_suite_snapshot_ref_unsupported")
+assert.deepEqual(resetResult.diagnostics?.[0]?.metadata, { snapshotRef: "artifact:baseline/files/runtime-snapshot.json", supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason: "trusted-artifact-bundle-unavailable", bundleId: "baseline", artifactPath: "files/runtime-snapshot.json" })
+assert.deepEqual(resetResult.metadata, { resetPerformed: false, restorePerformed: false, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason: "trusted-artifact-bundle-unavailable", bundleId: "baseline", artifactPath: "files/runtime-snapshot.json" })
 
 const suiteResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
   id: "snapshot-suite-run",
@@ -113,6 +162,58 @@ const suiteResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
 }))
 assert.equal(suiteResult.status, "error")
 assert.equal(suiteResult.cases[0]?.reset?.status, "unsupported")
+
+const unsupportedExternalSnapshot = await createWordPressFuzzSuiteResetExecutor(episodeWithSnapshotRestore).resetFuzzSuiteCase({
+  suite: fuzzSuiteContract({ id: "external-snapshot-suite", cases: [{ id: "case-one" }] }),
+  case: { id: "case-one" },
+  caseIndex: 0,
+  policy: { mode: "restore-snapshot", snapshotRef: "artifact:baseline/files/runtime-snapshot.json" },
+})
+assert.equal(unsupportedExternalSnapshot.status, "unsupported")
+assert.equal(unsupportedExternalSnapshot.diagnostics?.[0]?.code, "fuzz_suite_snapshot_ref_unsupported")
+assert.deepEqual(unsupportedExternalSnapshot.metadata, { resetPerformed: false, restorePerformed: false, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason: "trusted-artifact-bundle-unavailable", bundleId: "baseline", artifactPath: "files/runtime-snapshot.json" })
+
+const unsupportedRemoteSnapshot = await createWordPressFuzzSuiteResetExecutor(episodeWithSnapshotRestore, { artifactBundles: [{ id: "baseline", directory: externalSnapshotBundleDirectory }] }).resetFuzzSuiteCase({
+  suite: fuzzSuiteContract({ id: "remote-snapshot-suite", cases: [{ id: "case-one" }] }),
+  case: { id: "case-one" },
+  caseIndex: 0,
+  policy: { mode: "restore-snapshot", snapshotRef: "https://example.com/runtime-snapshot.json" },
+})
+assert.equal(unsupportedRemoteSnapshot.status, "unsupported")
+assert.equal(unsupportedRemoteSnapshot.diagnostics?.[0]?.metadata?.unsupportedReason, "remote-snapshot-ref-unsupported")
+
+const supportedExternalSnapshot = await createWordPressFuzzSuiteResetExecutor(episodeWithSnapshotRestore, { artifactBundles: [{ id: "baseline", directory: externalSnapshotBundleDirectory }] }).resetFuzzSuiteCase({
+  suite: fuzzSuiteContract({ id: "external-snapshot-suite", cases: [{ id: "case-one" }] }),
+  case: { id: "case-one" },
+  caseIndex: 0,
+  policy: { mode: "restore-snapshot", snapshotRef: "artifact:baseline/files/runtime-snapshot.json" },
+})
+assert.equal(supportedExternalSnapshot.status, "passed")
+assert.equal(supportedExternalSnapshot.snapshotRef, "artifact:baseline/files/runtime-snapshot.json")
+assert.equal(supportedExternalSnapshot.artifactRefs?.[0]?.sha256, externalSnapshotSha256)
+assert.deepEqual(restoredExternalSnapshotRefs, ["artifact:baseline/files/runtime-snapshot.json"])
+
+const externalSnapshotSuiteResult = await executeWordPressFuzzSuite(episodeWithSnapshotRestore, fuzzSuiteContract({
+  id: "external-snapshot-suite-run",
+  resetPolicy: { mode: "restore-snapshot", snapshotRef: "artifact:baseline/files/runtime-snapshot.json" },
+  cases: [{ id: "case-one", target: { kind: "command", id: "wordpress.rest-performance-observation" }, input: { command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types"] } }],
+}), { artifactBundles: [{ id: "baseline", directory: externalSnapshotBundleDirectory }] })
+assert.equal(externalSnapshotSuiteResult.status, "passed")
+assert.equal(externalSnapshotSuiteResult.cases[0]?.reset?.status, "passed")
+assert.equal(externalSnapshotSuiteResult.cases[0]?.reset?.artifactRefs?.[0]?.sha256, externalSnapshotSha256)
+assert.deepEqual(restoredExternalSnapshotRefs, ["artifact:baseline/files/runtime-snapshot.json", "artifact:baseline/files/runtime-snapshot.json"])
+
+const snapshotRestoreResult = await executeWordPressFuzzSuite(episodeWithSnapshotRestore, fuzzSuiteContract({
+  id: "same-runtime-snapshot-suite-run",
+  resetPolicy: { mode: "restore-snapshot", snapshotRef: "snapshot-baseline" },
+  cases: [{ id: "destructive-rest", target: { kind: "rest", id: "/wp/v2/posts/123" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } }],
+}))
+assert.equal(snapshotRestoreResult.status, "passed")
+assert.equal(snapshotRestoreResult.cases[0]?.reset?.status, "passed")
+assert.equal(snapshotRestoreResult.cases[0]?.reset?.snapshotRef, "snapshot-baseline")
+assert.equal(snapshotRestoreResult.cases[0]?.reset?.artifactRefs?.[0]?.path, "files/runtime-snapshots/snapshot-baseline.json")
+assert.deepEqual(restoredSnapshotRefs, ["snapshot-baseline"])
+assert.equal((snapshotRestoreResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.resetPolicyAllowsMutation, true)
 
 const beforeMutationStepCount = steps.length
 const deleteOptIn = restMutationFixtureOptInContract({

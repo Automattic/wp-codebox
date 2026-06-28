@@ -253,6 +253,27 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     return snapshot
   }
 
+  async restoreSnapshot(snapshotOrRef: Snapshot | string): Promise<Snapshot> {
+    const snapshot = typeof snapshotOrRef === "string"
+      ? this.snapshots.find((candidate) => candidate.id === snapshotOrRef)
+      : snapshotOrRef
+    if (!snapshot) {
+      throw new Error(`Runtime episode snapshot not found: ${snapshotOrRef}`)
+    }
+
+    const runtime = this.assertRuntime()
+    if (!runtime.restoreSnapshot) {
+      const runtimeInfo = await runtime.info()
+      throw new Error(`Runtime backend does not support same-runtime snapshot restore: ${runtimeInfo.backend}`)
+    }
+
+    const restored = snapshotWithSemantics(await runtime.restoreSnapshot(snapshot))
+    if (!this.snapshots.some((candidate) => candidate.id === restored.id)) {
+      this.snapshots.push(restored)
+    }
+    return restored
+  }
+
   async collectArtifacts(spec: ArtifactSpec = this.spec.artifactSpec ?? {}): Promise<ArtifactBundle> {
     const artifacts = await this.assertRuntime().collectArtifacts(spec)
     this.artifacts = {

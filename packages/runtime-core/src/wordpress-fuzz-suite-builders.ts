@@ -1,9 +1,9 @@
 import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook, type FuzzCoveragePlanReason } from "./fuzz-coverage-plan-contracts.js"
 import type { FuzzFixtureSeedOperation, RestMutationFixtureOptInContract } from "./fuzz-fixture-plan-contracts.js"
-import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
+import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract, type FuzzSuiteMutationIntent, type FuzzSuiteResetPolicy, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
-import type { WordPressAdminPageDescriptor, WordPressAdminPageInventory, WordPressDatabaseInventory, WordPressDatabaseTableDescriptor, WordPressFrontendUrlDescriptor, WordPressFrontendUrlInventory, WordPressRestRouteArgDescriptor, WordPressRestRouteDescriptor, WordPressRestRouteEndpointDescriptor, WordPressRestRouteInventory } from "./wordpress-runtime-discovery-contracts.js"
+import type { WordPressAdminPageDescriptor, WordPressAdminPageInteractionDescriptor, WordPressAdminPageInventory, WordPressDatabaseColumnDescriptor, WordPressDatabaseInventory, WordPressDatabaseTableDescriptor, WordPressFrontendUrlDescriptor, WordPressFrontendUrlInventory, WordPressRestRouteArgDescriptor, WordPressRestRouteDescriptor, WordPressRestRouteEndpointDescriptor, WordPressRestRouteInventory } from "./wordpress-runtime-discovery-contracts.js"
 
 export interface WordPressInventoryFuzzSuiteOptions {
   id?: string
@@ -14,9 +14,13 @@ export interface WordPressInventoryFuzzSuiteOptions {
   pageLoadMode?: WordPressPageLoadFuzzMode
   capture?: readonly string[]
   restMutationOptIns?: readonly RestMutationFixtureOptInContract[]
+  restPayloadFamilies?: readonly WordPressRestPayloadFamily[]
+  restGeneratedMutationResetPolicy?: FuzzSuiteResetPolicy
+  dbGeneratedMutationResetPolicy?: FuzzSuiteResetPolicy
 }
 
 export type WordPressPageLoadFuzzMode = "simulated" | "server" | "browser"
+export type WordPressRestPayloadFamily = "valid-minimal" | "boundary-large-string" | "invalid-type"
 
 const SAFE_REST_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
@@ -55,6 +59,13 @@ const DB_OPERATION_TARGET: FuzzSuiteTargetRef = {
   label: "WordPress DB operation",
 }
 
+const ADMIN_ACTION_DISCOVERY_TARGET: FuzzSuiteTargetRef = {
+  kind: "runtime",
+  id: "wordpress.browser-actions",
+  entrypoint: "wordpress.browser-actions",
+  label: "WordPress admin action discovery",
+}
+
 const REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:rest"],
   targetKinds: ["rest"],
@@ -83,6 +94,12 @@ const DB_OPERATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:runtime", "runtime", "db_operation"],
   targetKinds: ["runtime"],
   commands: ["wordpress.db-operation"],
+}
+
+const ADMIN_ACTION_DISCOVERY_REQUIRED_RUNNER_CAPABILITIES = {
+  capabilities: ["target:runtime", "runtime"],
+  targetKinds: ["runtime"],
+  commands: ["wordpress.browser-actions"],
 }
 
 const REST_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
@@ -114,7 +131,7 @@ export function adminPageInventoryToFuzzSuite(inventory: WordPressAdminPageInven
     id: options.id ?? "wordpress-admin-page-inventory-fuzz-suite",
     version: options.version,
     target: pageLoad.target,
-    cases: inventory.pages.map((page) => adminPageFuzzSuiteCase(page, options)),
+    cases: adminPageInventoryFuzzSuiteCases(inventory, options),
     coveragePlan: adminPageInventoryToCoveragePlan(inventory, options),
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, adminUrl: inventory.adminUrl, menuLoaded: inventory.menuLoaded, pageLoadMode: pageLoad.mode, requiredRunnerCapabilities: pageLoad.requiredRunnerCapabilities }),
   })
@@ -137,7 +154,7 @@ export function databaseInventoryToFuzzSuite(inventory: WordPressDatabaseInvento
     id: options.id ?? "wordpress-database-inventory-fuzz-suite",
     version: options.version,
     target: DB_OPERATION_TARGET,
-    cases: inventory.tables.filter((table) => table.classification !== "external").map((table) => databaseTableFuzzSuiteCase(table)),
+    cases: inventory.tables.filter((table) => table.classification !== "external").flatMap((table) => databaseTableFuzzSuiteCases(table, options)),
     coveragePlan: databaseInventoryToCoveragePlan(inventory, options),
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, prefix: inventory.prefix, requiredRunnerCapabilities: DB_OPERATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES }),
   })
@@ -161,7 +178,7 @@ export function restRouteInventoryToCoveragePlan(inventory: WordPressRestRouteIn
 }
 
 export function adminPageInventoryToCoveragePlan(inventory: WordPressAdminPageInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
-  const discovered = inventory.pages.map((page) => adminPageCoveragePlanItem(page, options))
+  const discovered = adminPageInventoryCoveragePlanItems(inventory, options)
   const executable = discovered.filter((item) => !item.reason)
   const skipped = discovered.filter((item) => item.reason?.code === "admin_page_capability_denied")
 
@@ -190,7 +207,7 @@ export function frontendUrlInventoryToCoveragePlan(inventory: WordPressFrontendU
 }
 
 export function databaseInventoryToCoveragePlan(inventory: WordPressDatabaseInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
-  const discovered = inventory.tables.map((table) => databaseTableCoveragePlanItem(table))
+  const discovered = inventory.tables.flatMap((table) => databaseTableCoveragePlanItems(table, options))
   const executable = discovered.filter((item) => !item.reason)
   const skipped = discovered.filter((item) => item.reason)
 
@@ -206,35 +223,54 @@ export function databaseInventoryToCoveragePlan(inventory: WordPressDatabaseInve
 }
 
 function restRouteFuzzSuiteCases(route: WordPressRestRouteDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase[] {
-  const endpointCases = route.endpoints?.flatMap((endpoint, endpointIndex) => endpoint.methods.map((method) => restRouteFuzzSuiteCase(route, method, options, endpoint, endpointIndex)))
+  const endpointCases = route.endpoints?.flatMap((endpoint, endpointIndex) => endpoint.methods.flatMap((method) => restRouteFuzzSuiteCasesForMethod(route, method, options, endpoint, endpointIndex)))
   if (endpointCases?.length) {
     return endpointCases
   }
-  return route.methods.map((method) => restRouteFuzzSuiteCase(route, method, options))
+  return route.methods.flatMap((method) => restRouteFuzzSuiteCasesForMethod(route, method, options))
 }
 
-function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number): FuzzSuiteCase {
+function restRouteFuzzSuiteCasesForMethod(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number): FuzzSuiteCase[] {
+  const payloadFamilies = options.restPayloadFamilies
+  if (!payloadFamilies?.length) {
+    return [restRouteFuzzSuiteCase(route, method, options, endpoint, endpointIndex)]
+  }
+
+  return payloadFamilies.flatMap((payloadFamily) => {
+    const fuzzCase = restRouteFuzzSuiteCase(route, method, options, endpoint, endpointIndex, payloadFamily)
+    return fuzzCase.input === undefined && (fuzzCase.metadata?.safety as Record<string, unknown> | undefined)?.payloadFamilySkipped ? [] : [fuzzCase]
+  })
+}
+
+function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number, payloadFamily?: WordPressRestPayloadFamily): FuzzSuiteCase {
   const normalizedMethod = method.toUpperCase()
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
   const mutationOptIn = safeMethod ? undefined : matchingRestMutationOptIn(route.route, normalizedMethod, options)
-  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : concreteRestMutationInput(route, normalizedMethod, mutationOptIn)
+  const concreteInput = safeMethod
+    ? concreteRestInput(route, normalizedMethod, options, endpoint, payloadFamily)
+    : concreteRestMutationInput(route, normalizedMethod, options, endpoint, mutationOptIn, payloadFamily)
   const executable = concreteInput !== undefined
+  const generatedMutation = !safeMethod && !mutationOptIn && executable
+  const mutation = generatedMutation ? restGeneratedMutationIntent(normalizedMethod) : undefined
   const safety = stripUndefined({
     executable,
     safeMethod,
     planned: !executable,
-    reason: executable ? undefined : safeMethod ? "route_requires_discovered_parameters" : "mutating_rest_method_requires_explicit_opt_in",
+    reason: executable ? undefined : safeMethod ? "route_requires_discovered_parameters" : payloadFamily && !options.restGeneratedMutationResetPolicy ? "mutating_rest_method_requires_reset_policy" : "mutating_rest_method_requires_explicit_opt_in",
     requiredArgs: requiredArgs.length ? requiredArgs : undefined,
     generatedParameters: concreteInput?.generatedParameters,
+    payloadFamily,
+    payloadFamilySkipped: payloadFamily && concreteInput === undefined && generatedRestPayloadFamilySkippable(payloadFamily) ? true : undefined,
   })
 
   return stripUndefined({
-    id: `rest-${slugify(normalizedMethod)}-${slugify(route.route)}${endpointIndex === undefined ? "" : `-${endpointIndex}`}`,
+    id: `${restRouteCaseId(route.route, normalizedMethod, endpointIndex)}${payloadFamily ? `-${slugify(payloadFamily)}` : ""}`,
     target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Rollback-isolated WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
     input: concreteInput ? restInputForCase(concreteInput, !safeMethod) : undefined,
-    resetPolicy: !safeMethod && mutationOptIn ? mutationOptIn.rollbackPolicy ?? mutationOptIn.rollback_policy : undefined,
+    resetPolicy: !safeMethod ? (mutationOptIn ? mutationOptIn.rollbackPolicy ?? mutationOptIn.rollback_policy : options.restGeneratedMutationResetPolicy) : undefined,
+    mutation,
     metadata: stripUndefined({
       source: "wordpress.rest-route-inventory",
       route: route.route,
@@ -243,6 +279,9 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
       permission: endpoint?.permission,
       argNames: route.argNames,
       safety,
+      payloadFamily,
+      seed: payloadFamily ? { source: "wordpress.rest-route-inventory", route: route.route, method: normalizedMethod, endpointIndex, payloadFamily } : undefined,
+      replay: payloadFamily ? { source: "wordpress.rest-route-inventory", caseId: `${restRouteCaseId(route.route, normalizedMethod, endpointIndex)}-${slugify(payloadFamily)}`, route: route.route, method: normalizedMethod, payloadFamily } : undefined,
       restMutationFixtureOptIn: mutationOptIn,
       requiredRunnerCapabilities: safeMethod ? REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES : restMutationRequiredRunnerCapabilities(normalizedMethod),
     }),
@@ -262,7 +301,7 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
   const mutationOptIn = safeMethod ? undefined : matchingRestMutationOptIn(route.route, normalizedMethod, options)
-  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : concreteRestMutationInput(route, normalizedMethod, mutationOptIn)
+  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : concreteRestMutationInput(route, normalizedMethod, options, endpoint, mutationOptIn)
   const executable = concreteInput !== undefined
   const reason = executable ? undefined : restRouteUntestedReason(safeMethod, requiredArgs)
   const parameterGeneration = executable ? undefined : stripUndefined({
@@ -305,16 +344,20 @@ interface ConcreteRestInput {
   mutationFixtureOperation?: FuzzFixtureSeedOperation
 }
 
-function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor): ConcreteRestInput | undefined {
+function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, payloadFamily: WordPressRestPayloadFamily = "valid-minimal"): ConcreteRestInput | undefined {
   const args = endpoint?.args ?? []
   const pathArgNames = restRoutePathArgNames(route.route)
+  const concreteArgs = restConcretePayloadArgs(args, pathArgNames, payloadFamily)
+  if (payloadFamily !== "valid-minimal" && concreteArgs.length === 0 && pathArgNames.length === 0) {
+    return undefined
+  }
   const pathSamples: Record<string, unknown> = {}
   const querySamples: Record<string, unknown> = {}
   let path = route.route
 
   for (const name of pathArgNames) {
     const arg = args.find((candidate) => candidate.name === name)
-    const sample = restArgSample(arg, restRoutePathPattern(route.route, name))
+    const sample = restArgSample(arg, restRoutePathPattern(route.route, name), payloadFamily)
     if (sample === undefined || typeof sample === "object") {
       return undefined
     }
@@ -322,11 +365,11 @@ function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, 
     path = path.replace(restRoutePathTokenPattern(name), encodeURIComponent(String(sample)))
   }
 
-  for (const arg of args) {
-    if (!arg.required || pathArgNames.includes(arg.name)) {
+  for (const arg of concreteArgs) {
+    if ((payloadFamily === "valid-minimal" && !arg.required) || pathArgNames.includes(arg.name)) {
       continue
     }
-    const sample = restArgSample(arg)
+    const sample = restArgSample(arg, undefined, payloadFamily)
     if (sample === undefined) {
       return undefined
     }
@@ -348,8 +391,9 @@ function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, 
   })
 }
 
-function concreteRestMutationInput(route: WordPressRestRouteDescriptor, method: string, optIn: RestMutationFixtureOptInContract | undefined): ConcreteRestInput | undefined {
-  if (!optIn) return undefined
+function concreteRestMutationInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint: WordPressRestRouteEndpointDescriptor | undefined, optIn: RestMutationFixtureOptInContract | undefined, payloadFamily?: WordPressRestPayloadFamily): ConcreteRestInput | undefined {
+  if (!optIn && (!payloadFamily || !options.restGeneratedMutationResetPolicy)) return undefined
+  if (!optIn) return concreteGeneratedRestMutationInput(route, method, options, endpoint, payloadFamily ?? "valid-minimal")
   const operation = optIn.fixturePlan?.operations.find((candidate) => candidate.kind === "mutation" && (candidate.method ?? "").toUpperCase() === method && (candidate.target === route.route || candidate.target !== undefined))
   if (!operation && !optIn.fixturePlanRef) return undefined
   const operationInput = operation?.input && typeof operation.input === "object" && !Array.isArray(operation.input) ? operation.input as Record<string, unknown> : undefined
@@ -364,6 +408,27 @@ function concreteRestMutationInput(route: WordPressRestRouteDescriptor, method: 
     session: optIn.auth?.session,
     fixturePlanRef: optIn.fixturePlanRef ?? optIn.fixturePlan?.id,
     mutationFixtureOperation: operation,
+  })
+}
+
+function concreteGeneratedRestMutationInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint: WordPressRestRouteEndpointDescriptor | undefined, payloadFamily: WordPressRestPayloadFamily): ConcreteRestInput | undefined {
+  const baseInput = concreteRestInput(route, method, options, endpoint, payloadFamily)
+  if (!baseInput) return undefined
+  const args = endpoint?.args ?? []
+  const pathArgNames = restRoutePathArgNames(route.route)
+  const bodyArgs = restConcretePayloadArgs(args, pathArgNames, payloadFamily).filter((arg) => !pathArgNames.includes(arg.name))
+  const bodyJson: Record<string, unknown> = {}
+  for (const arg of bodyArgs) {
+    const sample = restArgSample(arg, undefined, payloadFamily)
+    if (sample !== undefined) {
+      bodyJson[arg.name] = sample
+    }
+  }
+
+  return stripUndefined({
+    ...baseInput,
+    params: undefined,
+    bodyJson: Object.keys(bodyJson).length ? bodyJson : payloadFamily === "valid-minimal" ? {} : undefined,
   })
 }
 
@@ -398,7 +463,18 @@ function restRoutePathTokenPattern(name: string): RegExp {
   return new RegExp(`\\(\\?P<${escapeRegExp(name)}>([^)]+)\\)`)
 }
 
-function restArgSample(arg: WordPressRestRouteArgDescriptor | undefined, pathPattern?: string): unknown {
+function restArgSample(arg: WordPressRestRouteArgDescriptor | undefined, pathPattern?: string, payloadFamily: WordPressRestPayloadFamily = "valid-minimal"): unknown {
+  if (payloadFamily === "boundary-large-string") {
+    if (restArgAcceptsType(arg, "string") || !arg?.type) {
+      return "x".repeat(256)
+    }
+    return undefined
+  }
+
+  if (payloadFamily === "invalid-type") {
+    return restInvalidTypeSample(arg)
+  }
+
   if (arg?.enum?.length) {
     return arg.enum[0]
   }
@@ -437,6 +513,42 @@ function restArgSample(arg: WordPressRestRouteArgDescriptor | undefined, pathPat
   return "sample"
 }
 
+function restConcretePayloadArgs(args: readonly WordPressRestRouteArgDescriptor[], pathArgNames: readonly string[], payloadFamily: WordPressRestPayloadFamily): WordPressRestRouteArgDescriptor[] {
+  if (payloadFamily === "valid-minimal") {
+    return [...args]
+  }
+
+  const optionalArg = args.find((arg) => !arg.required && !pathArgNames.includes(arg.name) && restArgSample(arg, undefined, payloadFamily) !== undefined)
+  const requiredArgs = args.filter((arg) => arg.required)
+  return optionalArg ? [...requiredArgs, optionalArg] : []
+}
+
+function generatedRestPayloadFamilySkippable(payloadFamily: WordPressRestPayloadFamily): boolean {
+  return payloadFamily === "boundary-large-string" || payloadFamily === "invalid-type"
+}
+
+function restArgAcceptsType(arg: WordPressRestRouteArgDescriptor | undefined, type: string): boolean {
+  if (!arg?.type) return true
+  return Array.isArray(arg.type) ? arg.type.includes(type) : arg.type === type
+}
+
+function restInvalidTypeSample(arg: WordPressRestRouteArgDescriptor | undefined): unknown {
+  if (arg?.enum?.length) return "__wp_codebox_invalid_enum__"
+  const type = Array.isArray(arg?.type) ? arg?.type.find((candidate) => candidate !== "null") : arg?.type
+  if (type === "integer" || type === "number") return "not-a-number"
+  if (type === "boolean") return "not-a-boolean"
+  if (type === "array") return "not-an-array"
+  if (type === "object") return "not-an-object"
+  return 12345
+}
+
+function restGeneratedMutationIntent(method: string): FuzzSuiteMutationIntent {
+  if (method === "DELETE") {
+    return { intent: "delete", destructive: true, intensity: "high", resetRequired: true }
+  }
+  return { intent: "write", destructive: false, intensity: "medium", resetRequired: true }
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -455,6 +567,16 @@ function restRouteUntestedReason(safeMethod: boolean, requiredArgs: string[]): F
   }
 }
 
+function adminPageInventoryFuzzSuiteCases(inventory: WordPressAdminPageInventory, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase[] {
+  const accessiblePages = inventory.pages.filter((page) => page.canAccess !== false)
+  return [...accessiblePages.map((page) => adminPageFuzzSuiteCase(page, options)), ...accessiblePages.flatMap((page) => adminPageSupplementalFuzzSuiteCases(page, options))]
+}
+
+function adminPageSupplementalFuzzSuiteCases(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase[] {
+  const interactions = adminPageInteractions(page)
+  return [...interactions.map((interaction) => adminPageInteractionFuzzSuiteCase(page, interaction, options)), interactions.length ? undefined : adminPageActionDiscoveryFuzzSuiteCase(page, options)].filter((entry): entry is FuzzSuiteCase => Boolean(entry))
+}
+
 function adminPageFuzzSuiteCase(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
   const path = adminPagePath(page)
   const pageLoad = pageLoadFuzzMode("admin", options.pageLoadMode)
@@ -469,6 +591,16 @@ function adminPageFuzzSuiteCase(page: WordPressAdminPageDescriptor, options: Wor
   })
 }
 
+function adminPageInventoryCoveragePlanItems(inventory: WordPressAdminPageInventory, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem[] {
+  const accessiblePages = inventory.pages.filter((page) => page.canAccess !== false)
+  return [...inventory.pages.map((page) => adminPageCoveragePlanItem(page, options)), ...accessiblePages.flatMap((page) => adminPageSupplementalCoveragePlanItems(page, options))]
+}
+
+function adminPageSupplementalCoveragePlanItems(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem[] {
+  const interactions = adminPageInteractions(page)
+  return [...interactions.map((interaction) => adminPageInteractionCoveragePlanItem(page, interaction, options)), interactions.length ? undefined : adminPageActionDiscoveryCoveragePlanItem(page, options)].filter((entry): entry is FuzzCoveragePlanItem => Boolean(entry))
+}
+
 function adminPageCoveragePlanItem(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
   const path = adminPagePath(page)
   const pageLoad = pageLoadFuzzMode("admin", options.pageLoadMode)
@@ -480,6 +612,66 @@ function adminPageCoveragePlanItem(page: WordPressAdminPageDescriptor, options: 
     reason: page.canAccess === false ? { code: "admin_page_capability_denied", message: "The discovered admin page is not accessible to the current runtime user.", data: { capability: page.capability } } : undefined,
     metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, parentSlug: page.parentSlug, capability: page.capability, pageLoadMode: pageLoad.mode, observationCapture: captureMetadata(options) }),
   })
+}
+
+function adminPageInteractionFuzzSuiteCase(page: WordPressAdminPageDescriptor, interaction: WordPressAdminPageInteractionDescriptor & { kind: string; index: number }, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
+  const path = adminPagePath(page)
+  const pageLoad = pageLoadFuzzMode("admin", options.pageLoadMode)
+  const mutates = adminInteractionMutates(interaction)
+  return stripUndefined({
+    id: `admin-page-${slugify(page.menuSlug)}-${slugify(interaction.kind)}-${slugify(adminInteractionId(interaction))}`,
+    target: pageLoad.target,
+    description: `${mutates ? "Plan" : "Exercise"} ${interaction.kind} on ${page.pageTitle || page.menuTitle}`,
+    input: mutates ? undefined : { args: [...pageLoadArgs(path, pageLoad.surface, options), `interaction=${interaction.kind}`, `interactionId=${adminInteractionId(interaction)}`] },
+    resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
+    mutation: mutates ? { intent: "write", destructive: false, intensity: "medium", resetRequired: true } : undefined,
+    metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, path, interaction, capability: interaction.capability ?? page.capability, nonce: interaction.nonceAction ?? interaction.nonce_action, pageLoadMode: pageLoad.mode, safety: { executable: !mutates, mutates, reason: mutates ? "admin_interaction_requires_runtime_form_execution" : undefined }, requiredRunnerCapabilities: pageLoad.requiredRunnerCapabilities }),
+  })
+}
+
+function adminPageInteractionCoveragePlanItem(page: WordPressAdminPageDescriptor, interaction: WordPressAdminPageInteractionDescriptor & { kind: string; index: number }, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
+  const fuzzCase = adminPageInteractionFuzzSuiteCase(page, interaction, options)
+  return stripUndefined({
+    id: fuzzCase.id,
+    target: fuzzCase.target,
+    description: fuzzCase.description,
+    input: fuzzCase.input,
+    reason: fuzzCase.input ? undefined : { code: "admin_interaction_requires_runtime_form_execution", message: "The admin interaction metadata is discovered, but execution requires a runtime that can bind nonces, fields, and reset state." },
+    metadata: stripUndefined({ ...fuzzCase.metadata, observationCapture: captureMetadata(options) }),
+  })
+}
+
+function adminPageActionDiscoveryFuzzSuiteCase(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
+  const path = adminPagePath(page)
+  return stripUndefined({
+    id: `admin-page-${slugify(page.menuSlug)}-discover-actions`,
+    target: ADMIN_ACTION_DISCOVERY_TARGET,
+    description: `Discover admin actions on ${page.pageTitle || page.menuTitle}`,
+    input: { args: adminActionDiscoveryArgs(path, options) },
+    metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, path, capability: page.capability, pageLoadMode: "browser", actionDiscovery: { mode: "browser-dom-snapshot", executesActions: false, artifactEvidence: ["html", "dom-snapshot", "screenshot"] }, safety: { executable: true, readOnly: true }, requiredRunnerCapabilities: ADMIN_ACTION_DISCOVERY_REQUIRED_RUNNER_CAPABILITIES }),
+  })
+}
+
+function adminPageActionDiscoveryCoveragePlanItem(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
+  const fuzzCase = adminPageActionDiscoveryFuzzSuiteCase(page, options)
+  return stripUndefined({ id: fuzzCase.id, target: fuzzCase.target, description: fuzzCase.description, input: fuzzCase.input, metadata: stripUndefined({ ...fuzzCase.metadata, observationCapture: captureMetadata(options) }) })
+}
+
+function adminPageInteractions(page: WordPressAdminPageDescriptor): Array<WordPressAdminPageInteractionDescriptor & { kind: string; index: number }> {
+  return [...tagAdminInteractions(page.forms, "form"), ...tagAdminInteractions(page.actions, "action")]
+}
+
+function tagAdminInteractions(interactions: WordPressAdminPageInteractionDescriptor[] | undefined, kind: string): Array<WordPressAdminPageInteractionDescriptor & { kind: string; index: number }> {
+  return interactions?.map((interaction, index) => ({ ...interaction, kind: interaction.kind ?? kind, index })) ?? []
+}
+
+function adminInteractionId(interaction: WordPressAdminPageInteractionDescriptor & { kind: string; index: number }): string {
+  return interaction.id ?? interaction.selector ?? interaction.action ?? `${interaction.kind}-${interaction.index + 1}`
+}
+
+function adminInteractionMutates(interaction: WordPressAdminPageInteractionDescriptor): boolean {
+  const method = String(interaction.method ?? "GET").toUpperCase()
+  return interaction.safety?.mutates === true || !["GET", "HEAD"].includes(method)
 }
 
 function frontendUrlFuzzSuiteCase(url: WordPressFrontendUrlDescriptor, homeUrl: string, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
@@ -508,30 +700,107 @@ function frontendUrlCoveragePlanItem(url: WordPressFrontendUrlDescriptor, homeUr
   })
 }
 
-function databaseTableFuzzSuiteCase(table: WordPressDatabaseTableDescriptor): FuzzSuiteCase {
+function databaseTableFuzzSuiteCases(table: WordPressDatabaseTableDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase[] {
+  return databaseTableOperationPlans(table).filter((plan) => plan.operation === "inspect" || plan.operation === "read" || Boolean(options.dbGeneratedMutationResetPolicy)).map((plan) => databaseTableFuzzSuiteCase(table, plan, options))
+}
+
+function databaseTableFuzzSuiteCase(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
+  const mutates = plan.operation !== "inspect" && plan.operation !== "read"
+  const executable = !mutates || Boolean(options.dbGeneratedMutationResetPolicy)
   return stripUndefined({
-    id: `db-inspect-${slugify(table.baseName || table.name)}`,
+    id: `db-${slugify(plan.operation)}-${slugify(table.baseName || table.name)}`,
     target: DB_OPERATION_TARGET,
-    description: `Inspect ${table.baseName || table.name}`,
-    input: { args: [`operation-json=${JSON.stringify(databaseInspectOperation(table))}`] },
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, safety: { executable: true, readOnly: true } }),
+    description: `${plan.label} ${table.baseName || table.name}`,
+    input: executable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
+    resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
+    mutation: mutates ? { intent: plan.operation === "delete" ? "delete" : "write", destructive: plan.operation === "delete", intensity: plan.operation === "delete" ? "high" : "medium", resetRequired: true } : undefined,
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" } }),
   })
 }
 
-function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor): FuzzCoveragePlanItem {
+function databaseTableCoveragePlanItems(table: WordPressDatabaseTableDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem[] {
+  return databaseTableOperationPlans(table).map((plan) => databaseTableCoveragePlanItem(table, plan, options))
+}
+
+function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
   const executable = table.classification !== "external"
+  const mutates = plan.operation !== "inspect" && plan.operation !== "read"
+  const mutationExecutable = !mutates || Boolean(options.dbGeneratedMutationResetPolicy)
   return stripUndefined({
-    id: `db-inspect-${slugify(table.baseName || table.name)}`,
+    id: `db-${slugify(plan.operation)}-${slugify(table.baseName || table.name)}`,
     target: DB_OPERATION_TARGET,
-    description: `Inspect ${table.baseName || table.name}`,
-    input: executable ? { args: [`operation-json=${JSON.stringify(databaseInspectOperation(table))}`] } : undefined,
-    reason: executable ? undefined : { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." },
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, observationCapture: missingCaptureMetadata() }),
+    description: `${plan.label} ${table.baseName || table.name}`,
+    input: executable && mutationExecutable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
+    reason: !executable ? { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." } : !mutationExecutable ? { code: "db_mutation_requires_reset_policy", message: "Generated database mutations require an explicit reset policy before execution." } : undefined,
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, operation: plan.operation, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata() }),
   })
 }
 
-function databaseInspectOperation(table: WordPressDatabaseTableDescriptor) {
-  return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "inspect", resource: { table: table.baseName || table.name }, metadata: { source: "wordpress-db-inventory", table: table.name, classification: table.classification } })
+interface DatabaseTableOperationPlan {
+  operation: "inspect" | "read" | "insert" | "update" | "delete"
+  label: string
+  seed?: Record<string, unknown>
+  replay?: Record<string, unknown>
+}
+
+function databaseTableOperationPlans(table: WordPressDatabaseTableDescriptor): DatabaseTableOperationPlan[] {
+  const safePlans: DatabaseTableOperationPlan[] = [{ operation: "inspect", label: "Inspect" }, { operation: "read", label: "Read" }]
+  if (table.classification === "external" || !tableWritable(table) || !primaryishColumn(table) || !writableSampleColumn(table)) {
+    return safePlans
+  }
+  return [...safePlans, ...["insert", "update", "delete"].map((operation) => ({ operation: operation as DatabaseTableOperationPlan["operation"], label: operation[0]?.toUpperCase() + operation.slice(1), seed: { source: "wordpress-db-inventory", table: table.name, operation }, replay: { source: "wordpress-db-inventory", table: table.name, operation, primaryKeyColumns: primaryKeyColumns(table) } }))]
+}
+
+function databaseOperation(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan) {
+  const tableRef = table.baseName || table.name
+  const keyColumn = primaryishColumn(table)
+  const writableColumn = writableSampleColumn(table)
+  if (plan.operation === "read") {
+    return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "read", query: { table: tableRef, columns: readableColumns(table), limit: 1 }, metadata: dbOperationMetadata(table, plan) })
+  }
+  if (plan.operation === "insert") {
+    return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "write", query: { table: tableRef, values: writableColumn ? { [writableColumn.name]: sampleDbValue(writableColumn) } : undefined }, options: { mutation: "insert", bounded: true }, metadata: dbOperationMetadata(table, plan) })
+  }
+  if (plan.operation === "update") {
+    return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "write", query: { table: tableRef, where: keyColumn ? { [keyColumn.name]: sampleDbValue(keyColumn) } : undefined, values: writableColumn ? { [writableColumn.name]: sampleDbValue(writableColumn) } : undefined, limit: 1 }, options: { mutation: "update", bounded: true }, metadata: dbOperationMetadata(table, plan) })
+  }
+  if (plan.operation === "delete") {
+    return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "write", query: { table: tableRef, where: keyColumn ? { [keyColumn.name]: sampleDbValue(keyColumn) } : undefined, limit: 1 }, options: { mutation: "delete", bounded: true }, metadata: dbOperationMetadata(table, plan) })
+  }
+  return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "inspect", resource: { table: tableRef }, metadata: dbOperationMetadata(table, plan) })
+}
+
+function dbOperationMetadata(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan): Record<string, unknown> {
+  return { source: "wordpress-db-inventory", table: table.name, classification: table.classification, operation: plan.operation, primaryKeyColumns: primaryKeyColumns(table) }
+}
+
+function tableWritable(table: WordPressDatabaseTableDescriptor): boolean {
+  return table.writable !== false && table.classification !== "external"
+}
+
+function primaryKeyColumns(table: WordPressDatabaseTableDescriptor): string[] {
+  return table.primaryKeyColumns ?? table.primary_key_columns ?? table.indexes?.filter((index) => index.name === "PRIMARY" || index.unique).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0)).map((index) => index.column) ?? table.columns.filter((column) => column.key === "PRI").map((column) => column.name)
+}
+
+function primaryishColumn(table: WordPressDatabaseTableDescriptor): WordPressDatabaseColumnDescriptor | undefined {
+  const primaryNames = primaryKeyColumns(table)
+  return table.columns.find((column) => primaryNames.includes(column.name)) ?? table.columns.find((column) => column.key === "PRI" || column.key === "UNI")
+}
+
+function writableSampleColumn(table: WordPressDatabaseTableDescriptor): WordPressDatabaseColumnDescriptor | undefined {
+  return table.columns.find((column) => !/auto_increment/i.test(column.extra) && column.key !== "PRI") ?? table.columns.find((column) => !/auto_increment/i.test(column.extra))
+}
+
+function readableColumns(table: WordPressDatabaseTableDescriptor): string[] {
+  return table.columns.slice(0, 5).map((column) => column.name)
+}
+
+function sampleDbValue(column: WordPressDatabaseColumnDescriptor): string | number | boolean | null {
+  const type = column.type.toLowerCase()
+  if (type.includes("int") || type.includes("decimal") || type.includes("float") || type.includes("double")) return 1
+  if (type.includes("bool")) return true
+  if (type.includes("date") || type.includes("time")) return "2000-01-01 00:00:00"
+  return "wp-codebox-fuzz-sample"
 }
 
 function pageLoadFuzzMode(surface: "admin" | "frontend", mode: WordPressPageLoadFuzzMode = "simulated") {
@@ -548,6 +817,20 @@ function pageLoadFuzzMode(surface: "admin" | "frontend", mode: WordPressPageLoad
 
 function pageLoadArgs(path: string, surface: "admin" | "frontend", options: WordPressInventoryFuzzSuiteOptions): string[] {
   return [`path=${path}`, options.pageLoadMode === "server" || options.pageLoadMode === "browser" ? `surface=${surface}` : undefined, optionalArg("user", options.user), optionalArg("session", options.session)].filter((arg): arg is string => Boolean(arg))
+}
+
+function adminActionDiscoveryArgs(path: string, options: WordPressInventoryFuzzSuiteOptions): string[] {
+  return [
+    `url=/wp-admin/${path.replace(/^\/+/, "")}`,
+    "auth=wordpress-admin",
+    numericString(options.user) ? `auth-user-id=${options.user}` : undefined,
+    "capture=steps,html,screenshot,dom-snapshot",
+    "max-dom-snapshot-elements=500",
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function numericString(value: string | undefined): boolean {
+  return typeof value === "string" && /^\d+$/.test(value)
 }
 
 function adminPagePath(page: WordPressAdminPageDescriptor): string {

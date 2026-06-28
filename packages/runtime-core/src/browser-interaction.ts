@@ -30,6 +30,14 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
 
 export type BrowserInteractionStepKind = typeof BROWSER_INTERACTION_STEP_KINDS[number]
 
+export const BROWSER_RANDOM_WALK_SCHEMA = "wp-codebox/browser-random-walk/v1" as const
+
+export const BROWSER_RANDOM_WALK_CONTEXTS = ["browser", "admin", "editor"] as const
+export type BrowserRandomWalkContext = typeof BROWSER_RANDOM_WALK_CONTEXTS[number]
+
+export const BROWSER_RANDOM_WALK_ACTION_FAMILIES = ["click", "fill", "press", "select", "navigate", "capture"] as const
+export type BrowserRandomWalkActionFamily = typeof BROWSER_RANDOM_WALK_ACTION_FAMILIES[number]
+
 /** Locator/element state checked by an `expect` step. */
 export const BROWSER_INTERACTION_EXPECT_STATES = ["visible", "hidden", "attached", "detached", "enabled", "disabled", "checked", "unchecked", "editable"] as const
 
@@ -74,6 +82,29 @@ export interface BrowserInteractionStep {
   duration?: string
   /** Per-step timeout override (e.g. 5s). */
   timeout?: string
+}
+
+export interface BrowserRandomWalkContract {
+  schema: typeof BROWSER_RANDOM_WALK_SCHEMA
+  context: BrowserRandomWalkContext
+  seed: string
+  maxSteps: number
+  actionFamilies: BrowserRandomWalkActionFamily[]
+  startUrl?: string
+  resetPolicy?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export interface BrowserRandomWalkPlan {
+  schema: typeof BROWSER_RANDOM_WALK_SCHEMA
+  status: "planned" | "unsupported"
+  context: BrowserRandomWalkContext
+  seed: string
+  maxSteps: number
+  actionFamilies: BrowserRandomWalkActionFamily[]
+  steps: BrowserInteractionStep[]
+  replay: Record<string, unknown>
+  diagnostics: { code: string; message: string; metadata?: Record<string, unknown> }[]
 }
 
 export interface BrowserInteractionStepValidationIssue {
@@ -188,4 +219,110 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
 /** True when an interaction script contains at least one policy-gated evaluate step. */
 export function browserInteractionScriptUsesEvaluate(steps: readonly BrowserInteractionStep[]): boolean {
   return steps.some((step) => step.kind === "evaluate")
+}
+
+export function browserRandomWalkContract(input: Record<string, unknown>): BrowserRandomWalkContract {
+  const context = normalizeBrowserRandomWalkContext(input.context)
+  const seed = typeof input.seed === "string" && input.seed.length > 0 ? input.seed : "browser-random-walk"
+  const maxSteps = normalizeBrowserRandomWalkMaxSteps(input.maxSteps ?? input.max_steps)
+  const families = normalizeBrowserRandomWalkActionFamilies(input.actionFamilies ?? input.action_families)
+  return {
+    schema: BROWSER_RANDOM_WALK_SCHEMA,
+    context,
+    seed,
+    maxSteps,
+    actionFamilies: families,
+    startUrl: typeof input.startUrl === "string" ? input.startUrl : typeof input.start_url === "string" ? input.start_url : undefined,
+    resetPolicy: isPlainObject(input.resetPolicy) ? input.resetPolicy : isPlainObject(input.reset_policy) ? input.reset_policy : undefined,
+    metadata: isPlainObject(input.metadata) ? input.metadata : undefined,
+  }
+}
+
+export function planBrowserRandomWalk(input: Record<string, unknown>): BrowserRandomWalkPlan {
+  const contract = browserRandomWalkContract(input)
+  const diagnostics: BrowserRandomWalkPlan["diagnostics"] = []
+  const steps: BrowserInteractionStep[] = []
+  const startUrl = contract.startUrl ?? defaultBrowserRandomWalkStartUrl(contract.context)
+
+  if (!startUrl) {
+    diagnostics.push({ code: "browser_random_walk_start_url_required", message: `Random walk context ${contract.context} requires startUrl.` })
+  } else {
+    steps.push({ kind: "navigate", url: startUrl, waitFor: "load" })
+  }
+
+  const budget = Math.max(contract.maxSteps - steps.length, 0)
+  for (let index = 0; index < budget; index += 1) {
+    const family = pickDeterministic(contract.actionFamilies, `${contract.seed}:${index}`)
+    const step = browserRandomWalkStep(family, contract, index)
+    if (step) steps.push(step)
+  }
+
+  if (steps.length === 0) {
+    diagnostics.push({ code: "browser_random_walk_no_executable_steps", message: "Random walk planning produced no executable browser interaction steps." })
+  }
+
+  return {
+    schema: BROWSER_RANDOM_WALK_SCHEMA,
+    status: diagnostics.length > 0 ? "unsupported" : "planned",
+    context: contract.context,
+    seed: contract.seed,
+    maxSteps: contract.maxSteps,
+    actionFamilies: contract.actionFamilies,
+    steps,
+    replay: {
+      schema: BROWSER_RANDOM_WALK_SCHEMA,
+      seed: contract.seed,
+      maxSteps: contract.maxSteps,
+      actionFamilies: contract.actionFamilies,
+      context: contract.context,
+      startUrl,
+      resetPolicy: contract.resetPolicy,
+    },
+    diagnostics,
+  }
+}
+
+function normalizeBrowserRandomWalkContext(value: unknown): BrowserRandomWalkContext {
+  return (BROWSER_RANDOM_WALK_CONTEXTS as readonly string[]).includes(String(value)) ? value as BrowserRandomWalkContext : "browser"
+}
+
+function normalizeBrowserRandomWalkMaxSteps(value: unknown): number {
+  const numeric = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(numeric)) return 8
+  return Math.max(1, Math.min(Math.floor(numeric), 50))
+}
+
+function normalizeBrowserRandomWalkActionFamilies(value: unknown): BrowserRandomWalkActionFamily[] {
+  const raw = Array.isArray(value) ? value : []
+  const normalized = raw.filter((item): item is BrowserRandomWalkActionFamily => (BROWSER_RANDOM_WALK_ACTION_FAMILIES as readonly string[]).includes(String(item)))
+  return normalized.length > 0 ? [...new Set(normalized)] : ["click", "fill", "press", "capture"]
+}
+
+function defaultBrowserRandomWalkStartUrl(context: BrowserRandomWalkContext): string | undefined {
+  if (context === "admin") return "/wp-admin/"
+  if (context === "editor") return "/wp-admin/post-new.php"
+  return "/"
+}
+
+function browserRandomWalkStep(family: BrowserRandomWalkActionFamily, contract: BrowserRandomWalkContract, index: number): BrowserInteractionStep | undefined {
+  if (family === "navigate") return { kind: "navigate", url: contract.startUrl ?? defaultBrowserRandomWalkStartUrl(contract.context), waitFor: "load" }
+  if (family === "click") return { kind: "click", selector: "a, button, input[type='submit'], .button" }
+  if (family === "fill") return { kind: "fill", selector: "input[type='search'], input[type='text'], textarea", value: `fuzz-${contract.seed}-${index}` }
+  if (family === "press") return { kind: "press", key: index % 2 === 0 ? "Tab" : "Escape" }
+  if (family === "select") return { kind: "select", selector: "select", value: "" }
+  if (family === "capture") return { kind: "capture" }
+  return undefined
+}
+
+function pickDeterministic<T>(items: readonly T[], seed: string): T {
+  return items[deterministicHash(seed) % items.length] as T
+}
+
+function deterministicHash(input: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
 }

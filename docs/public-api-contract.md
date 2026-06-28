@@ -42,7 +42,7 @@ Use these package entrypoints from external integrations:
   distribution. External integrations should compose the Codebox core facades,
   WordPress abilities, CLI, or browser SDK instead of importing backend
   implementation packages directly.
-- `@automattic/wp-codebox-playground`: advanced adapter surface for
+- `@automattic/wp-codebox-playground`: advanced runtime backend entrypoint for
   runtime-backend implementors. New consumers should prefer
   `@automattic/wp-codebox-playground/public`. Product consumers should use the Codebox-owned public surfaces above and the WordPress/browser surfaces below.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
@@ -325,11 +325,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 
 Current backend references such as host job systems, agent execution substrates,
 workspace backends, or contained WordPress runtime backends describe adapters WP
-Codebox may use internally. Data Machine, Agents API, and Data Machine Code are
-allowed internal/default substrate adapters when Codebox needs job, agent, or
-workspace services. They are not consumer API names: external integrations depend
-on the Codebox ability ids, schemas, package entrypoints, and browser SDK facades
-above.
+Codebox may use internally. Internal/default substrate adapters can provide job,
+agent, or workspace services, but they are not consumer API names: external
+integrations depend on the Codebox ability ids, schemas, package entrypoints, and
+browser SDK facades above.
 
 ## Integration Boundary
 

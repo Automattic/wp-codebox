@@ -12,6 +12,8 @@ export type FuzzSuiteDiagnosticSeverity = "error" | "warning" | "info"
 export type FuzzSuiteRunnerMode = "php-in-process" | "runtime-backed" | (string & {})
 export type FuzzSuiteResetMode = "none" | "checkpoint-per-case" | "restore-snapshot"
 export type FuzzSuiteResetStatus = "not-required" | "passed" | "failed" | "unsupported"
+export type FuzzSuiteMutationIntensity = "none" | "low" | "medium" | "high" | (string & {})
+export type FuzzSuiteMutationIntentKind = "read" | "write" | "delete" | "destructive" | (string & {})
 
 export interface FuzzSuiteTargetRef {
   kind: FuzzSuiteTargetKind
@@ -27,7 +29,18 @@ export interface FuzzSuiteCase {
   input?: unknown
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
+  mutation?: FuzzSuiteMutationIntent
+  mutation_intent?: FuzzSuiteMutationIntent | string
   description?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteMutationIntent {
+  intent?: FuzzSuiteMutationIntentKind
+  destructive?: boolean
+  intensity?: FuzzSuiteMutationIntensity
+  resetRequired?: boolean
+  reset_required?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -60,6 +73,8 @@ export interface FuzzSuiteContract {
   target?: FuzzSuiteTargetRef
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
+  mutation?: FuzzSuiteMutationIntent
+  mutation_intent?: FuzzSuiteMutationIntent | string
   cases: FuzzSuiteCase[]
   coveragePlan?: FuzzCoveragePlanContract
   metadata?: Record<string, unknown>
@@ -128,6 +143,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "runtime-action:admin_page",
     "runtime-action:browser",
     "runtime-action:browser_probe",
+    "runtime-action:random_walk",
     "runtime-action:crud_operation",
     "runtime-action:db_operation",
     "runtime-action:editor_open",
@@ -146,7 +162,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   ],
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
-  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "rest_request", "wp_cli"],
+  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "wp_cli"],
   commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.http-request", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
 }
@@ -228,6 +244,8 @@ export function fuzzSuiteContract(input: {
   target?: FuzzSuiteTargetRef
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
+  mutation?: FuzzSuiteMutationIntent
+  mutation_intent?: FuzzSuiteMutationIntent | string
   cases?: FuzzSuiteCase[]
   coveragePlan?: FuzzCoveragePlanContract
   metadata?: Record<string, unknown>
@@ -239,6 +257,8 @@ export function fuzzSuiteContract(input: {
     target: input.target,
     resetPolicy: input.resetPolicy,
     reset_policy: input.reset_policy,
+    mutation: input.mutation,
+    mutation_intent: input.mutation_intent,
     cases: input.cases ?? [],
     coveragePlan: input.coveragePlan,
     metadata: input.metadata,
@@ -481,7 +501,13 @@ function fuzzSuiteCoveragePlan(suite: { id: string; version?: string } | FuzzSui
 }
 
 function fuzzSuiteCaseCoveragePlanItem(fuzzCase: FuzzSuiteCase): FuzzCoveragePlanItem {
-  return stripUndefined({ id: fuzzCase.id, target: fuzzCase.target, description: fuzzCase.description, input: fuzzCase.input, metadata: fuzzCase.metadata })
+  return stripUndefined({
+    id: fuzzCase.id,
+    target: fuzzCase.target,
+    description: fuzzCase.description,
+    input: fuzzCase.input,
+    metadata: stripUndefined({ ...fuzzCase.metadata, mutation: fuzzCase.mutation, mutation_intent: fuzzCase.mutation_intent }),
+  })
 }
 
 function fuzzSuiteCaseResultCoveragePlanItem(result: FuzzSuiteCaseResult, base?: FuzzCoveragePlanItem): FuzzCoveragePlanItem {

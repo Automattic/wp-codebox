@@ -119,6 +119,23 @@ export interface WordPressAdminPageDescriptor {
   canAccess?: boolean | null
   canonicalUrl?: string
   parentSlug?: string
+  forms?: WordPressAdminPageInteractionDescriptor[]
+  actions?: WordPressAdminPageInteractionDescriptor[]
+}
+
+export interface WordPressAdminPageInteractionDescriptor {
+  id?: string
+  kind?: "form" | "action" | "interaction" | string
+  method?: string
+  selector?: string
+  action?: string
+  fields?: Record<string, unknown>
+  capability?: string
+  nonceAction?: string
+  nonce_action?: string
+  nonceField?: string
+  nonce_field?: string
+  safety?: Record<string, unknown>
 }
 
 export interface WordPressDatabaseSchemaDiscovery {
@@ -151,6 +168,9 @@ export interface WordPressDatabaseTableDescriptor {
   name: string
   baseName: string
   classification: "core" | "prefixed" | "external"
+  writable?: boolean | null
+  primaryKeyColumns?: string[]
+  primary_key_columns?: string[]
   engine?: string
   rowCount?: number
   dataBytes?: number

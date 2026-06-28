@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { normalizeRootedPath, pathIsWithinRoot, relativePathIsWithinRoot } from "./file-tree-policy.js"
+import { planBrowserRandomWalk } from "./browser-interaction.js"
 import { performanceObservation, type PerformanceObservation, type PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
@@ -12,7 +13,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -60,7 +61,7 @@ export interface RuntimeFilesystemAction {
 
 export interface RuntimeBrowserAction {
   type: "browser"
-  operation: "navigate" | "click" | "fill" | "press" | "wait" | "capture"
+  operation: "navigate" | "click" | "fill" | "press" | "select" | "wait" | "capture"
   url?: string
   selector?: string
   text?: string
@@ -70,6 +71,23 @@ export interface RuntimeBrowserAction {
   duration?: string
   capture?: string[]
   timeout_ms?: number
+}
+
+export interface RuntimeBrowserRandomWalkAction {
+  type: "random_walk"
+  context?: "browser" | "admin" | "editor"
+  seed?: string
+  max_steps?: number
+  maxSteps?: number
+  action_families?: string[]
+  actionFamilies?: string[]
+  start_url?: string
+  startUrl?: string
+  reset_policy?: Record<string, unknown>
+  resetPolicy?: Record<string, unknown>
+  capture?: string[]
+  timeout_ms?: number
+  metadata?: Record<string, unknown>
 }
 
 export interface RuntimeBrowserProbeAction {
@@ -195,6 +213,10 @@ export async function runRuntimeAction(
 
   if (action.type === "browser") {
     return runRuntimeBrowserAction(episode, action)
+  }
+
+  if (action.type === "random_walk") {
+    return runRuntimeBrowserRandomWalkAction(episode, action)
   }
 
   if (action.type === "browser_probe") {
@@ -576,6 +598,52 @@ async function runRuntimeBrowserAction(episode: RuntimeEpisode, action: RuntimeB
       stderr: step.execution.stderr,
       executionId: step.execution.id,
       stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+async function runRuntimeBrowserRandomWalkAction(episode: RuntimeEpisode, action: RuntimeBrowserRandomWalkAction): Promise<RuntimeActionObservation> {
+  const plan = planBrowserRandomWalk(action as unknown as Record<string, unknown>)
+  if (plan.status === "unsupported") {
+    throw new RuntimeActionPolicyError(`Browser random walk is unsupported: ${plan.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`, action)
+  }
+  const args = [`steps-json=${JSON.stringify(plan.steps)}`]
+  if (action.capture && action.capture.length > 0) {
+    args.push(`capture=${action.capture.join(",")}`)
+  }
+  const step = await episode.step(
+    {
+      kind: "browser",
+      command: "wordpress.browser-actions",
+      args,
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+      operation: "random_walk",
+    },
+    { type: "browser-result" },
+  )
+
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      operation: "random_walk",
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+      randomWalk: plan,
     },
     artifactRefs: step.observation?.artifactRefs,
   })

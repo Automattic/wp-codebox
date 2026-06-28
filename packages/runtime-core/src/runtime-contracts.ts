@@ -1178,6 +1178,7 @@ export interface Runtime {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
   snapshot(options?: unknown): Promise<Snapshot>
+  restoreSnapshot?(snapshot: Snapshot): Promise<Snapshot>
   createCheckpoint?(spec: RuntimeCheckpointSpec): Promise<RuntimeCheckpointResult>
   restoreCheckpoint?(name: string): Promise<RuntimeCheckpointResult>
   listCheckpoints?(): Promise<RuntimeCheckpointResult>
@@ -1240,6 +1241,7 @@ export interface RuntimeEpisode {
   step(action: RuntimeEpisodeActionSpec, observation?: ObservationSpec | false): Promise<RuntimeEpisodeStepResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
   snapshot(): Promise<Snapshot>
+  restoreSnapshot(snapshot: Snapshot | string): Promise<Snapshot>
   collectArtifacts(spec?: ArtifactSpec): Promise<ArtifactBundle>
   trace(): Promise<RuntimeEpisodeTrace>
   close(): Promise<void>
