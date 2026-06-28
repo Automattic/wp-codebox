@@ -714,6 +714,11 @@
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
 		ensureDirectory: ( client, args = {}, options = {} ) => api.ensureDirectory( client, args, options ),
 		writeFile: ( client, args = {}, options = {} ) => api.writeFile( client, args, options ),
+		readFile: ( client, args = {}, options = {} ) => api.readFile( client, args, options ),
+		listDirectory: ( client, args = {}, options = {} ) => api.listDirectory( client, args, options ),
+		grep: ( client, args = {}, options = {} ) => api.grep( client, args, options ),
+		editFile: ( client, args = {}, options = {} ) => api.editFile( client, args, options ),
+		applyPatch: ( client, args = {}, options = {} ) => api.applyPatch( client, args, options ),
 		runRecipe: ( client, recipe, taskPayload, options = {} ) => api.runRecipe( client, recipe, taskPayload, options ),
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
@@ -738,6 +743,11 @@
 			createParentToolRequest: api.createParentToolRequest,
 			dispatchParentTool: api.dispatchParentTool,
 			ensureDirectory: api.ensureDirectory,
+			readFile: api.readFile,
+			listDirectory: api.listDirectory,
+			grep: api.grep,
+			editFile: api.editFile,
+			applyPatch: api.applyPatch,
 			executableBrowserSession: api.executableBrowserSession,
 			installTheme: api.installTheme,
 			parentToolBridge: api.parentToolBridge,
@@ -1212,6 +1222,163 @@ function wp_codebox_browser_operation_safe_relative_path( $relative_path, $label
 	return implode( '/', $parts );
 }
 
+function wp_codebox_browser_operation_contained_path( $relative_path, $label ) {
+	$relative = wp_codebox_browser_operation_safe_relative_path( $relative_path, $label );
+	return ABSPATH . $relative;
+}
+
+function wp_codebox_browser_operation_dir_path( $relative_path, $label ) {
+	if ( null === $relative_path || '' === $relative_path ) {
+		return rtrim( ABSPATH, '/' );
+	}
+
+	$relative = wp_codebox_browser_operation_safe_relative_path( $relative_path, $label );
+	return ABSPATH . $relative;
+}
+
+function wp_codebox_browser_operation_looks_binary( $content ) {
+	return false !== strpos( substr( $content, 0, 8000 ), chr( 0 ) );
+}
+
+function wp_codebox_browser_operation_collect_files( $base ) {
+	if ( is_file( $base ) ) {
+		return array( $base );
+	}
+
+	$files = array();
+	$iterator = new RecursiveIteratorIterator(
+		new RecursiveDirectoryIterator( $base, FilesystemIterator::SKIP_DOTS ),
+		RecursiveIteratorIterator::LEAVES_ONLY
+	);
+	foreach ( $iterator as $info ) {
+		if ( $info->isFile() ) {
+			$path = (string) $info->getPathname();
+			if ( false !== strpos( $path, '/.git/' ) ) {
+				continue;
+			}
+			$files[] = $path;
+		}
+	}
+	sort( $files );
+
+	return $files;
+}
+
+function wp_codebox_browser_operation_apply_hunks( $original, $hunks ) {
+	$had_trailing_newline = '' === $original || "\n" === substr( $original, -1 );
+	$lines = '' === $original ? array() : explode( "\n", $original );
+	if ( $had_trailing_newline && '' !== $original ) {
+		array_pop( $lines );
+	}
+
+	$result = array();
+	$cursor = 0;
+	foreach ( $hunks as $hunk ) {
+		$target = max( 0, (int) $hunk['old_start'] - 1 );
+		while ( $cursor < $target && $cursor < count( $lines ) ) {
+			$result[] = $lines[ $cursor ];
+			$cursor++;
+		}
+		foreach ( $hunk['lines'] as $pair ) {
+			$marker = $pair[0];
+			$text = $pair[1];
+			if ( ' ' === $marker ) {
+				if ( ! isset( $lines[ $cursor ] ) || $lines[ $cursor ] !== $text ) {
+					throw new RuntimeException( sprintf( 'Patch context mismatch at line %d.', $cursor + 1 ) );
+				}
+				$result[] = $lines[ $cursor ];
+				$cursor++;
+			} elseif ( '-' === $marker ) {
+				if ( ! isset( $lines[ $cursor ] ) || $lines[ $cursor ] !== $text ) {
+					throw new RuntimeException( sprintf( 'Patch removed-line mismatch at line %d.', $cursor + 1 ) );
+				}
+				$cursor++;
+			} elseif ( '+' === $marker ) {
+				$result[] = $text;
+			}
+		}
+	}
+	while ( $cursor < count( $lines ) ) {
+		$result[] = $lines[ $cursor ];
+		$cursor++;
+	}
+
+	$content = implode( "\n", $result );
+	if ( $had_trailing_newline && '' !== $content ) {
+		$content .= "\n";
+	}
+
+	return $content;
+}
+
+function wp_codebox_browser_operation_diff_path( $token ) {
+	$token = trim( $token );
+	$tab = strpos( $token, chr( 9 ) );
+	if ( false !== $tab ) {
+		$token = substr( $token, 0, $tab );
+	}
+	$token = trim( $token );
+	if ( '/dev/null' === $token ) {
+		return null;
+	}
+	if ( 0 === strpos( $token, 'a/' ) || 0 === strpos( $token, 'b/' ) ) {
+		$token = substr( $token, 2 );
+	}
+
+	return $token;
+}
+
+function wp_codebox_browser_operation_parse_patch( $patch ) {
+	$lines = explode( "\n", str_replace( "\r\n", "\n", $patch ) );
+	$count = count( $lines );
+	$files = array();
+	$i = 0;
+	while ( $i < $count ) {
+		$line = $lines[ $i ];
+		if ( 0 !== strpos( $line, '--- ' ) ) {
+			$i++;
+			continue;
+		}
+		$source = wp_codebox_browser_operation_diff_path( substr( $line, 4 ) );
+		if ( $i + 1 >= $count || 0 !== strpos( $lines[ $i + 1 ], '+++ ' ) ) {
+			throw new InvalidArgumentException( 'Malformed patch: missing +++ line.' );
+		}
+		$target = wp_codebox_browser_operation_diff_path( substr( $lines[ $i + 1 ], 4 ) );
+		$i += 2;
+		$hunks = array();
+		while ( $i < $count && 0 === strpos( $lines[ $i ], '@@' ) ) {
+			if ( ! preg_match( '/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/', $lines[ $i ], $m ) ) {
+				throw new InvalidArgumentException( 'Malformed patch hunk header.' );
+			}
+			$hunk = array( 'old_start' => (int) $m[1], 'lines' => array() );
+			$i++;
+			while ( $i < $count ) {
+				$hline = $lines[ $i ];
+				if ( 0 === strpos( $hline, '@@' ) || 0 === strpos( $hline, '--- ' ) || 0 === strpos( $hline, 'diff --git ' ) ) {
+					break;
+				}
+				if ( '' === $hline ) {
+					break;
+				}
+				$marker = $hline[0];
+				if ( chr( 92 ) === $marker ) {
+					$i++;
+					continue;
+				}
+				if ( ' ' !== $marker && '+' !== $marker && '-' !== $marker ) {
+					break;
+				}
+				$hunk['lines'][] = array( $marker, substr( $hline, 1 ) );
+				$i++;
+			}
+			$hunks[] = $hunk;
+		}
+		$files[] = array( 'source' => $source, 'target' => $target, 'hunks' => $hunks );
+	}
+
+	return $files;
+}
+
 try {
 	$type = isset( $operation['type'] ) && is_string( $operation['type'] ) ? $operation['type'] : '';
 
@@ -1363,6 +1530,258 @@ try {
 				'name' => $theme->get( 'Name' ),
 			) );
 
+		case 'readFile':
+			$relative = wp_codebox_browser_operation_safe_relative_path( wp_codebox_browser_operation_arg( $operation, 'path' ), 'File' );
+			$path = ABSPATH . $relative;
+			if ( ! is_file( $path ) || ! is_readable( $path ) ) {
+				throw new RuntimeException( sprintf( 'File is not readable: %s', $relative ) );
+			}
+
+			$max_bytes = (int) wp_codebox_browser_operation_arg( $operation, 'maxBytes', 1048576 );
+			$size = (int) filesize( $path );
+			if ( $max_bytes > 0 && $size > $max_bytes ) {
+				throw new RuntimeException( sprintf( 'File is %d bytes, exceeding the %d byte limit.', $size, $max_bytes ) );
+			}
+
+			$content = file_get_contents( $path );
+			if ( false === $content ) {
+				throw new RuntimeException( sprintf( 'Unable to read file: %s', $relative ) );
+			}
+
+			$offset = (int) wp_codebox_browser_operation_arg( $operation, 'offset', 0 );
+			$limit = (int) wp_codebox_browser_operation_arg( $operation, 'limit', 0 );
+			$start_line = $offset > 0 ? $offset : 1;
+			if ( $offset > 0 || $limit > 0 ) {
+				$all_lines = explode( "\n", $content );
+				$slice = array_slice( $all_lines, $start_line - 1, $limit > 0 ? $limit : null );
+				$content = implode( "\n", $slice );
+				$lines_read = count( $slice );
+			} else {
+				$lines_read = '' === $content ? 0 : substr_count( $content, "\n" ) + 1;
+			}
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'file',
+				'path' => $path,
+				'relativePath' => $relative,
+				'content' => $content,
+				'size' => $size,
+				'linesRead' => $lines_read,
+				'offset' => $start_line,
+			) );
+
+		case 'listDirectory':
+			$relative_arg = wp_codebox_browser_operation_arg( $operation, 'path', '' );
+			$dir = wp_codebox_browser_operation_dir_path( $relative_arg, 'Directory' );
+			if ( ! is_dir( $dir ) ) {
+				throw new RuntimeException( sprintf( 'Not a directory: %s', is_string( $relative_arg ) ? $relative_arg : '' ) );
+			}
+
+			$entries = array();
+			$names = scandir( $dir );
+			foreach ( false === $names ? array() : $names as $name ) {
+				if ( '.' === $name || '..' === $name ) {
+					continue;
+				}
+				$full = $dir . '/' . $name;
+				$entries[] = array(
+					'name' => $name,
+					'type' => is_dir( $full ) ? 'directory' : 'file',
+					'size' => is_file( $full ) ? (int) filesize( $full ) : 0,
+				);
+			}
+			usort( $entries, function ( $a, $b ) {
+				if ( $a['type'] !== $b['type'] ) {
+					return 'directory' === $a['type'] ? -1 : 1;
+				}
+				return strcmp( $a['name'], $b['name'] );
+			} );
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'directory',
+				'path' => is_string( $relative_arg ) ? $relative_arg : '',
+				'entries' => $entries,
+			) );
+
+		case 'grep':
+			$pattern = wp_codebox_browser_operation_arg( $operation, 'pattern' );
+			if ( ! is_string( $pattern ) || '' === $pattern ) {
+				throw new InvalidArgumentException( 'Grep requires a pattern.' );
+			}
+			$regex = chr( 126 ) . str_replace( chr( 126 ), chr( 92 ) . chr( 126 ), $pattern ) . chr( 126 );
+			if ( false === @preg_match( $regex, '' ) ) {
+				throw new InvalidArgumentException( 'Grep pattern is not a valid regular expression.' );
+			}
+
+			$relative_arg = wp_codebox_browser_operation_arg( $operation, 'path', '' );
+			$base = wp_codebox_browser_operation_dir_path( $relative_arg, 'Search path' );
+			if ( ! file_exists( $base ) ) {
+				throw new RuntimeException( 'Search path does not exist.' );
+			}
+
+			$include = (string) wp_codebox_browser_operation_arg( $operation, 'include', '' );
+			$max_results = max( 1, min( 500, (int) wp_codebox_browser_operation_arg( $operation, 'maxResults', 100 ) ) );
+			$context_lines = max( 0, min( 10, (int) wp_codebox_browser_operation_arg( $operation, 'contextLines', 0 ) ) );
+			$base_prefix = rtrim( ABSPATH, '/' ) . '/';
+
+			$matches = array();
+			$truncated = false;
+			foreach ( wp_codebox_browser_operation_collect_files( $base ) as $file ) {
+				$relative_file = 0 === strpos( $file, $base_prefix ) ? substr( $file, strlen( $base_prefix ) ) : $file;
+				if ( '' !== $include && ! fnmatch( $include, $relative_file ) && ! fnmatch( $include, basename( $relative_file ) ) ) {
+					continue;
+				}
+				if ( (int) filesize( $file ) > 1048576 ) {
+					continue;
+				}
+				$content = file_get_contents( $file );
+				if ( false === $content || wp_codebox_browser_operation_looks_binary( $content ) ) {
+					continue;
+				}
+				$file_lines = explode( "\n", $content );
+				foreach ( $file_lines as $index => $text_line ) {
+					if ( 1 !== @preg_match( $regex, $text_line ) ) {
+						continue;
+					}
+					if ( count( $matches ) >= $max_results ) {
+						$truncated = true;
+						break 2;
+					}
+					$match = array(
+						'path' => $relative_file,
+						'line' => $index + 1,
+						'text' => $text_line,
+					);
+					if ( $context_lines > 0 ) {
+						$match['context'] = array_values( array_slice( $file_lines, max( 0, $index - $context_lines ), $context_lines * 2 + 1 ) );
+					}
+					$matches[] = $match;
+				}
+			}
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'grep',
+				'pattern' => $pattern,
+				'count' => count( $matches ),
+				'truncated' => $truncated,
+				'matches' => $matches,
+			) );
+
+		case 'editFile':
+			$relative = wp_codebox_browser_operation_safe_relative_path( wp_codebox_browser_operation_arg( $operation, 'path' ), 'File' );
+			$path = ABSPATH . $relative;
+			if ( ! is_file( $path ) || ! is_readable( $path ) ) {
+				throw new RuntimeException( sprintf( 'File is not readable: %s', $relative ) );
+			}
+
+			$old = wp_codebox_browser_operation_arg( $operation, 'oldString', wp_codebox_browser_operation_arg( $operation, 'search', '' ) );
+			$new = wp_codebox_browser_operation_arg( $operation, 'newString', wp_codebox_browser_operation_arg( $operation, 'replace', '' ) );
+			if ( ! is_string( $old ) || '' === $old ) {
+				throw new InvalidArgumentException( 'Edit requires oldString to find.' );
+			}
+			$new = is_string( $new ) ? $new : '';
+
+			$content = file_get_contents( $path );
+			if ( false === $content ) {
+				throw new RuntimeException( sprintf( 'Unable to read file: %s', $relative ) );
+			}
+
+			$occurrences = substr_count( $content, $old );
+			if ( 0 === $occurrences ) {
+				throw new RuntimeException( 'Edit found no occurrence of oldString.' );
+			}
+
+			$replace_all = (bool) wp_codebox_browser_operation_arg( $operation, 'replaceAll', false );
+			if ( ! $replace_all && $occurrences > 1 ) {
+				throw new RuntimeException( sprintf( 'oldString matched %d times; pass replaceAll or a more specific string.', $occurrences ) );
+			}
+
+			if ( $replace_all ) {
+				$updated = str_replace( $old, $new, $content, $replacements );
+			} else {
+				$pos = strpos( $content, $old );
+				$updated = substr_replace( $content, $new, $pos, strlen( $old ) );
+				$replacements = 1;
+			}
+
+			$bytes = file_put_contents( $path, $updated );
+			if ( false === $bytes ) {
+				throw new RuntimeException( sprintf( 'Unable to write file: %s', $relative ) );
+			}
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'file',
+				'path' => $path,
+				'relativePath' => $relative,
+				'replacements' => (int) $replacements,
+			) );
+
+		case 'applyPatch':
+			$patch = wp_codebox_browser_operation_arg( $operation, 'patch' );
+			if ( ! is_string( $patch ) || '' === trim( $patch ) ) {
+				throw new InvalidArgumentException( 'Apply-patch requires a unified diff.' );
+			}
+
+			$patch_files = wp_codebox_browser_operation_parse_patch( $patch );
+			if ( empty( $patch_files ) ) {
+				throw new InvalidArgumentException( 'No file changes were found in the patch.' );
+			}
+
+			$staged = array();
+			foreach ( $patch_files as $patch_file ) {
+				$relative = wp_codebox_browser_operation_safe_relative_path(
+					null === $patch_file['target'] ? $patch_file['source'] : $patch_file['target'],
+					'Patch file'
+				);
+				$path = ABSPATH . $relative;
+				if ( null === $patch_file['target'] ) {
+					if ( ! is_file( $path ) ) {
+						throw new RuntimeException( sprintf( 'Cannot delete missing file: %s', $relative ) );
+					}
+					$staged[] = array( 'op' => 'delete', 'path' => $path, 'relative' => $relative );
+					continue;
+				}
+
+				$original = '';
+				if ( null !== $patch_file['source'] ) {
+					if ( ! is_file( $path ) ) {
+						throw new RuntimeException( sprintf( 'Patch source file does not exist: %s', $relative ) );
+					}
+					$read = file_get_contents( $path );
+					if ( false === $read ) {
+						throw new RuntimeException( sprintf( 'Patch source file could not be read: %s', $relative ) );
+					}
+					$original = $read;
+				} elseif ( is_file( $path ) ) {
+					throw new RuntimeException( sprintf( 'Patch creates a file that already exists: %s', $relative ) );
+				}
+
+				$updated = wp_codebox_browser_operation_apply_hunks( $original, $patch_file['hunks'] );
+				$staged[] = array( 'op' => 'write', 'path' => $path, 'relative' => $relative, 'content' => $updated );
+			}
+
+			$changed = array();
+			foreach ( $staged as $entry ) {
+				if ( 'delete' === $entry['op'] ) {
+					if ( ! unlink( $entry['path'] ) ) {
+						throw new RuntimeException( sprintf( 'Could not delete %s.', $entry['relative'] ) );
+					}
+					$changed[] = $entry['relative'];
+					continue;
+				}
+				wp_codebox_browser_operation_mkdir( dirname( $entry['path'] ) );
+				if ( false === file_put_contents( $entry['path'], $entry['content'] ) ) {
+					throw new RuntimeException( sprintf( 'Could not write %s.', $entry['relative'] ) );
+				}
+				$changed[] = $entry['relative'];
+			}
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'patch',
+				'changedFiles' => array_values( array_unique( $changed ) ),
+				'status' => 'applied',
+			) );
+
 		default:
 			throw new InvalidArgumentException( sprintf( 'Unsupported browser operation: %s', $type ?: 'unknown' ) );
 	}
@@ -1502,6 +1921,31 @@ try {
 
 	const writeFile = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
 		type: 'writeFile',
+		args,
+	}, options );
+
+	const readFile = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
+		type: 'readFile',
+		args,
+	}, options );
+
+	const listDirectory = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
+		type: 'listDirectory',
+		args,
+	}, options );
+
+	const grep = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
+		type: 'grep',
+		args,
+	}, options );
+
+	const editFile = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
+		type: 'editFile',
+		args,
+	}, options );
+
+	const applyPatch = ( client, args = {}, options = {} ) => runWordPressOperation( client, {
+		type: 'applyPatch',
 		args,
 	}, options );
 
@@ -2661,6 +3105,11 @@ echo wp_json_encode( array(
 		startBrowserPreview,
 		validateBrowserRuntimeMaterialization,
 		writeFile,
+		readFile,
+		listDirectory,
+		grep,
+		editFile,
+		applyPatch,
 		writeReviewFile,
 	};
 	wpCodeboxBrowserApi.v1 = browserSdkFacade( wpCodeboxBrowserApi );
