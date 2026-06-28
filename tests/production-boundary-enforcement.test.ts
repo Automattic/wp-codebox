@@ -4,6 +4,8 @@ import { join, relative } from "node:path"
 
 const root = new URL("..", import.meta.url)
 const packagesDir = new URL("../packages/", import.meta.url)
+const runtimeCoreDir = new URL("../packages/runtime-core/", import.meta.url)
+const runtimeCoreSrcDir = new URL("../packages/runtime-core/src/", import.meta.url)
 const publicDocPaths = [
   "README.md",
   "docs/README.md",
@@ -36,6 +38,13 @@ const forbiddenPublicExportTargets = [
 ]
 const forbiddenPublicImportSpecifiers = [
   /@wp-playground\//,
+]
+const forbiddenRuntimeCoreBackendSpecifiers = [
+  /@automattic\/wp-codebox-playground(?:\/|$)/,
+  /@wp-playground\//,
+  /\bplaywright\b/,
+  /\.\.\/runtime-playground(?:\/|$)/,
+  /packages\/runtime-playground(?:\/|$)/,
 ]
 const publicContractFiles = [
   "packages/runtime-core/src/runtime-boundary-contracts.ts",
@@ -85,6 +94,23 @@ for (const manifest of await packageManifests(packagesDir)) {
   }
 }
 
+const runtimeCorePackage = JSON.parse(await readFile(new URL("package.json", runtimeCoreDir), "utf8")) as { dependencies?: Record<string, string> }
+for (const dependency of Object.keys(runtimeCorePackage.dependencies ?? {})) {
+  if (forbiddenRuntimeCoreBackendSpecifiers.some((forbidden) => forbidden.test(dependency))) {
+    violations.push(`packages/runtime-core/package.json depends on runtime backend package ${dependency}`)
+  }
+}
+
+for (const file of await sourceFiles(runtimeCoreSrcDir)) {
+  const source = await readFile(file, "utf8")
+  const rel = relative(root.pathname, file)
+  for (const specifier of importedModuleSpecifiers(source)) {
+    if (forbiddenRuntimeCoreBackendSpecifiers.some((forbidden) => forbidden.test(specifier))) {
+      violations.push(`${rel} imports runtime backend module ${specifier}`)
+    }
+  }
+}
+
 for (const rel of ["packages/runtime-core/src/index.ts", "packages/runtime-playground/src/index.ts", "packages/cli/src/index.ts"]) {
   const source = await readFile(new URL(`../${rel}`, import.meta.url), "utf8")
   for (const target of exportedModuleSpecifiers(source)) {
@@ -127,6 +153,22 @@ async function packageManifests(dir: URL): Promise<string[]> {
   return manifests
 }
 
+async function sourceFiles(dir: URL): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const files: string[] = []
+
+  for (const entry of entries) {
+    const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, dir)
+    if (entry.isDirectory()) {
+      files.push(...await sourceFiles(child))
+    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      files.push(child.pathname)
+    }
+  }
+
+  return files
+}
+
 function exportTargets(exportsField: unknown): string[] {
   if (typeof exportsField === "string") return [exportsField]
   if (!exportsField || typeof exportsField !== "object") return []
@@ -136,6 +178,14 @@ function exportTargets(exportsField: unknown): string[] {
 
 function exportedModuleSpecifiers(source: string): string[] {
   return [...source.matchAll(/export\s+(?:type\s+)?(?:\{[^}]*\}|\*)\s+from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "")
+}
+
+function importedModuleSpecifiers(source: string): string[] {
+  return [
+    ...source.matchAll(/import\s+(?:type\s+)?(?:[^"']+?\s+from\s+)?["']([^"']+)["']/g),
+    ...source.matchAll(/import\(["']([^"']+)["']\)/g),
+    ...source.matchAll(/export\s+(?:type\s+)?(?:\{[^}]*\}|\*)\s+from\s+["']([^"']+)["']/g),
+  ].map((match) => match[1] ?? "")
 }
 
 function exportedContractNames(source: string): string[] {
