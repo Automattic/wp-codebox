@@ -9,7 +9,7 @@ import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, type EditorActionStep } from "./editor-actions.js"
+import { editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep } from "./editor-actions.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
@@ -497,7 +497,12 @@ export async function runEditorOpenCommand({
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const target = editorOpenTargetFromArgs(args)
+  const target = await resolveEditorOpenTarget(editorOpenTargetFromArgs(args), {
+    command: "wordpress.editor-open",
+    runPlaygroundCommand,
+    runtimeSpec,
+    server,
+  })
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("steps")
@@ -704,7 +709,12 @@ export async function runEditorActionsCommand({
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const target = editorOpenTargetFromArgs(args)
+  const target = await resolveEditorOpenTarget(editorOpenTargetFromArgs(args), {
+    command: "wordpress.editor-actions",
+    runPlaygroundCommand,
+    runtimeSpec,
+    server,
+  })
   const actionSteps = await editorActionStepsFromArgs(args)
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
@@ -1524,7 +1534,12 @@ export async function runEditorValidateBlocksCommand({
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const target = editorOpenTargetFromArgs(args)
+  const target = await resolveEditorOpenTarget(editorOpenTargetFromArgs(args), {
+    command: "wordpress.editor-validate-blocks",
+    runPlaygroundCommand,
+    runtimeSpec,
+    server,
+  })
   const content = await editorValidateContentFromArgs(args)
   const provider = editorValidateProviderFromArgs(args)
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
