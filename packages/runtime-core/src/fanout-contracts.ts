@@ -76,7 +76,7 @@ export interface FanoutRequestContract {
   concurrency?: number
   agent?: string
   orchestrator?: Record<string, unknown>
-  aggregation?: Record<string, unknown>
+  aggregator?: Record<string, unknown>
   [key: string]: unknown
 }
 

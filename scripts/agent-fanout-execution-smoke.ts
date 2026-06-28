@@ -13,7 +13,7 @@ const result = await executeAgentFanoutRequest({
   concurrency: 2,
   agent: "sandbox-worker",
   orchestrator: { request_id: "browser-task-123", product: "smoke" },
-  aggregation: { policy: "fail", outputNamespace: "aggregate/final" },
+  aggregator: { policy: "fail", outputNamespace: "aggregate/final" },
   workers: [
     { id: "design", goal: "Draft a design candidate.", artifactNamespace: "workers/design" },
     { id: "copy", goal: "Draft a copy candidate.", artifactNamespace: "workers/copy" },
