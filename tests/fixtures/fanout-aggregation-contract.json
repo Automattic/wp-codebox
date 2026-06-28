@@ -1,137 +1,705 @@
 {
-  "input": {
-    "plan": {
-      "id": "fanout-contract-fixture",
-      "workers": [
-        {
-          "id": "alpha",
-          "artifact_namespace": "workers/alpha"
+  "generatedBy": "scripts/generate-fanout-aggregation-contract-fixture.ts",
+  "source": "packages/runtime-core/src/fanout-aggregation.ts",
+  "vectors": [
+    {
+      "name": "success-with-legacy-status-and-default-output",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta"
+            }
+          ]
         },
-        {
-          "id": "beta",
-          "depends_on": [
-            "alpha"
-          ],
-          "artifact_namespace": "workers/beta"
-        }
-      ]
-    },
-    "policy": "fail",
-    "aggregation": {
-      "agent": "generic-aggregator",
-      "outputNamespace": "aggregate/final"
-    },
-    "worker_results": [
-      {
-        "worker_id": "alpha",
-        "status": "completed",
-        "success": true,
-        "result_ref": "fanout/workers/alpha/result.json",
-        "artifact_refs": [
+        "policy": "fail",
+        "aggregation": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "worker_results": [
           {
-            "path": "fanout/workers/alpha/artifacts/report.json",
-            "final_path": "reports/alpha.json",
-            "kind": "worker-report"
+            "worker_id": "alpha",
+            "status": "completed",
+            "success": true,
+            "result_ref": "fanout/workers/alpha/result.json",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/alpha/artifacts/report.json",
+                "final_path": "reports/alpha.json",
+                "kind": "worker-report"
+              }
+            ]
+          },
+          {
+            "worker_id": "beta",
+            "status": "succeeded",
+            "result_ref": "fanout/workers/beta/result.json",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/beta/artifacts/report.json",
+                "final_path": "reports/beta.json",
+                "kind": "worker-report"
+              }
+            ]
           }
         ]
       },
-      {
-        "worker_id": "beta",
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
         "status": "succeeded",
-        "result_ref": "fanout/workers/beta/result.json",
-        "artifact_refs": [
-          {
-            "path": "fanout/workers/beta/artifacts/report.json",
-            "final_path": "reports/beta.json",
-            "kind": "worker-report"
-          }
-        ]
-      }
-    ]
-  },
-  "expectedOutput": {
-    "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
-    "status": "succeeded",
-    "policy": "fail",
-    "plan": {
-      "id": "fanout-contract-fixture",
-      "workers": [
-        {
-          "id": "alpha",
-          "artifact_namespace": "workers/alpha",
-          "dependsOn": [],
-          "required": true,
-          "artifactNamespace": "workers/alpha"
+        "policy": "fail",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true,
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "required": true,
+              "artifactNamespace": "workers/beta"
+            }
+          ]
         },
-        {
-          "id": "beta",
-          "depends_on": [
-            "alpha"
-          ],
-          "artifact_namespace": "workers/beta",
-          "dependsOn": [
-            "alpha"
-          ],
-          "required": true,
-          "artifactNamespace": "workers/beta"
-        }
-      ]
-    },
-    "aggregator": {
-      "agent": "generic-aggregator",
-      "outputNamespace": "aggregate/final"
-    },
-    "workerResultRefs": [
-      {
-        "workerId": "alpha",
-        "status": "succeeded",
-        "required": true,
-        "resultRef": "fanout/workers/alpha/result.json",
-        "artifactRefs": [
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "succeeded",
+            "required": true,
+            "resultRef": "fanout/workers/alpha/result.json",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/artifacts/report.json",
+                "kind": "worker-report",
+                "workerId": "alpha",
+                "finalPath": "reports/alpha.json"
+              }
+            ]
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "resultRef": "fanout/workers/beta/result.json",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/artifacts/report.json",
+                "kind": "worker-report",
+                "workerId": "beta",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
           {
             "path": "fanout/workers/alpha/artifacts/report.json",
             "kind": "worker-report",
             "workerId": "alpha",
             "finalPath": "reports/alpha.json"
-          }
-        ]
-      },
-      {
-        "workerId": "beta",
-        "status": "succeeded",
-        "required": true,
-        "resultRef": "fanout/workers/beta/result.json",
-        "artifactRefs": [
+          },
           {
             "path": "fanout/workers/beta/artifacts/report.json",
             "kind": "worker-report",
             "workerId": "beta",
             "finalPath": "reports/beta.json"
           }
+        ],
+        "finalArtifactRefs": [
+          {
+            "path": "aggregate/final/result.json",
+            "kind": "fanout-aggregate-output",
+            "contentType": "application/json"
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "name": "duplicate-final-path-partial-policy",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta"
+            }
+          ]
+        },
+        "policy": "partial",
+        "aggregation": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "worker_results": [
+          {
+            "worker_id": "alpha",
+            "status": "succeeded",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/alpha/index.html",
+                "final_path": "site/index.html"
+              }
+            ]
+          },
+          {
+            "worker_id": "beta",
+            "status": "succeeded",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/beta/index.html",
+                "final_path": "site/index.html"
+              }
+            ]
+          }
+        ]
+      },
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+        "status": "partial",
+        "policy": "partial",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true,
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "required": true,
+              "artifactNamespace": "workers/beta"
+            }
+          ]
+        },
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "succeeded",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/index.html",
+                "workerId": "alpha",
+                "finalPath": "site/index.html"
+              }
+            ]
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/index.html",
+                "workerId": "beta",
+                "finalPath": "site/index.html"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
+          {
+            "path": "fanout/workers/alpha/index.html",
+            "workerId": "alpha",
+            "finalPath": "site/index.html"
+          },
+          {
+            "path": "fanout/workers/beta/index.html",
+            "workerId": "beta",
+            "finalPath": "site/index.html"
+          }
+        ],
+        "finalArtifactRefs": [],
+        "conflicts": [
+          {
+            "type": "duplicate-final-artifact-path",
+            "severity": "error",
+            "message": "Multiple fanout worker artifacts target final path site/index.html.",
+            "path": "site/index.html",
+            "workerIds": [
+              "alpha",
+              "beta"
+            ],
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/index.html",
+                "workerId": "alpha",
+                "finalPath": "site/index.html"
+              },
+              {
+                "path": "fanout/workers/beta/index.html",
+                "workerId": "beta",
+                "finalPath": "site/index.html"
+              }
+            ]
+          }
         ]
       }
-    ],
-    "rawWorkerArtifactRefs": [
-      {
-        "path": "fanout/workers/alpha/artifacts/report.json",
-        "kind": "worker-report",
-        "workerId": "alpha",
-        "finalPath": "reports/alpha.json"
+    },
+    {
+      "name": "failed-required-worker-caller-review-policy",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta"
+            }
+          ]
+        },
+        "policy": "caller-review-required",
+        "aggregation": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "worker_results": [
+          {
+            "worker_id": "alpha",
+            "status": "failed",
+            "error": {
+              "code": "worker-exit",
+              "message": "Worker exited with code 1."
+            },
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/alpha/error.log",
+                "kind": "log"
+              }
+            ]
+          },
+          {
+            "worker_id": "beta",
+            "status": "succeeded",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "final_path": "reports/beta.json"
+              }
+            ]
+          }
+        ]
       },
-      {
-        "path": "fanout/workers/beta/artifacts/report.json",
-        "kind": "worker-report",
-        "workerId": "beta",
-        "finalPath": "reports/beta.json"
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+        "status": "caller_review_required",
+        "policy": "caller-review-required",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true,
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "required": true,
+              "artifactNamespace": "workers/beta"
+            }
+          ]
+        },
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "failed",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/error.log",
+                "kind": "log",
+                "workerId": "alpha"
+              }
+            ],
+            "error": {
+              "code": "worker-exit",
+              "message": "Worker exited with code 1."
+            }
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "workerId": "beta",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
+          {
+            "path": "fanout/workers/alpha/error.log",
+            "kind": "log",
+            "workerId": "alpha"
+          },
+          {
+            "path": "fanout/workers/beta/report.json",
+            "workerId": "beta",
+            "finalPath": "reports/beta.json"
+          }
+        ],
+        "finalArtifactRefs": [],
+        "conflicts": [
+          {
+            "type": "failed-worker",
+            "severity": "error",
+            "message": "Required fanout worker alpha ended with status failed.",
+            "workerIds": [
+              "alpha"
+            ],
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/error.log",
+                "kind": "log",
+                "workerId": "alpha"
+              }
+            ],
+            "details": {
+              "error": {
+                "code": "worker-exit",
+                "message": "Worker exited with code 1."
+              }
+            }
+          },
+          {
+            "type": "failed-worker-dependency",
+            "severity": "error",
+            "message": "Fanout worker beta depends on alpha, which ended with status failed.",
+            "workerIds": [
+              "beta",
+              "alpha"
+            ],
+            "dependencyId": "alpha",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/error.log",
+                "kind": "log",
+                "workerId": "alpha"
+              }
+            ]
+          }
+        ]
       }
-    ],
-    "finalArtifactRefs": [
-      {
-        "path": "aggregate/final/result.json",
-        "kind": "fanout-aggregate-output",
-        "contentType": "application/json"
+    },
+    {
+      "name": "missing-dependency-partial-policy",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta"
+            }
+          ]
+        },
+        "policy": "partial",
+        "aggregation": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "worker_results": [
+          {
+            "worker_id": "beta",
+            "status": "succeeded",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "final_path": "reports/beta.json"
+              }
+            ]
+          }
+        ]
+      },
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+        "status": "partial",
+        "policy": "partial",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true,
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "required": true,
+              "artifactNamespace": "workers/beta"
+            }
+          ]
+        },
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "workerId": "beta",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
+          {
+            "path": "fanout/workers/beta/report.json",
+            "workerId": "beta",
+            "finalPath": "reports/beta.json"
+          }
+        ],
+        "finalArtifactRefs": [],
+        "conflicts": [
+          {
+            "type": "missing-worker-dependency",
+            "severity": "error",
+            "message": "Fanout worker beta depends on missing worker alpha.",
+            "workerIds": [
+              "beta"
+            ],
+            "dependencyId": "alpha"
+          }
+        ]
       }
-    ],
-    "conflicts": []
-  }
+    },
+    {
+      "name": "repair-policy-conflict-candidate",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta"
+            }
+          ]
+        },
+        "policy": "repair",
+        "aggregation": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "worker_results": [
+          {
+            "worker_id": "alpha",
+            "status": "completed",
+            "success": true,
+            "result_ref": "fanout/workers/alpha/result.json",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/alpha/artifacts/report.json",
+                "final_path": "reports/alpha.json",
+                "kind": "worker-report"
+              }
+            ]
+          },
+          {
+            "worker_id": "beta",
+            "status": "succeeded",
+            "result_ref": "fanout/workers/beta/result.json",
+            "artifact_refs": [
+              {
+                "path": "fanout/workers/beta/artifacts/report.json",
+                "final_path": "reports/beta.json",
+                "kind": "worker-report"
+              }
+            ]
+          }
+        ],
+        "conflict_candidates": [
+          {
+            "type": "incompatible-schema",
+            "severity": "error",
+            "message": "Worker schemas differ."
+          }
+        ]
+      },
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+        "status": "repair_required",
+        "policy": "repair",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifact_namespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true,
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "depends_on": [
+                "alpha"
+              ],
+              "artifact_namespace": "workers/beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "required": true,
+              "artifactNamespace": "workers/beta"
+            }
+          ]
+        },
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "succeeded",
+            "required": true,
+            "resultRef": "fanout/workers/alpha/result.json",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/artifacts/report.json",
+                "kind": "worker-report",
+                "workerId": "alpha",
+                "finalPath": "reports/alpha.json"
+              }
+            ]
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "resultRef": "fanout/workers/beta/result.json",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/artifacts/report.json",
+                "kind": "worker-report",
+                "workerId": "beta",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
+          {
+            "path": "fanout/workers/alpha/artifacts/report.json",
+            "kind": "worker-report",
+            "workerId": "alpha",
+            "finalPath": "reports/alpha.json"
+          },
+          {
+            "path": "fanout/workers/beta/artifacts/report.json",
+            "kind": "worker-report",
+            "workerId": "beta",
+            "finalPath": "reports/beta.json"
+          }
+        ],
+        "finalArtifactRefs": [],
+        "conflicts": [
+          {
+            "type": "incompatible-schema",
+            "severity": "error",
+            "message": "Worker schemas differ."
+          }
+        ]
+      }
+    }
+  ]
 }

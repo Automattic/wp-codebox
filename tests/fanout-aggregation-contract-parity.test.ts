@@ -11,20 +11,27 @@ const root = new URL("../", import.meta.url)
 const fixture = JSON.parse(await readFile(new URL("fixtures/fanout-aggregation-contract.json", import.meta.url), "utf8"))
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const runtimeOutput = plain(aggregateFanoutOutputs(fixture.input))
-assert.deepEqual(plain(validateFanoutAggregationOutput(runtimeOutput)), fixture.expectedOutput, "canonical fanout output fixture must validate")
-assert.deepEqual(runtimeOutput, fixture.expectedOutput, "runtime-core aggregation output must match the canonical fixture")
+assert.equal(fixture.generatedBy, "scripts/generate-fanout-aggregation-contract-fixture.ts", "fanout fixture must declare its runtime-core generator")
+assert.ok(Array.isArray(fixture.vectors) && fixture.vectors.length > 1, "fanout fixture must cover multiple aggregation vectors")
+
+for (const vector of fixture.vectors) {
+  const runtimeOutput = plain(aggregateFanoutOutputs(vector.input))
+  assert.deepEqual(plain(validateFanoutAggregationOutput(runtimeOutput)), vector.expectedOutput, `${vector.name}: canonical fanout output fixture must validate`)
+  assert.deepEqual(runtimeOutput, vector.expectedOutput, `${vector.name}: runtime-core aggregation output must match the generated fixture`)
+}
+
+const runtimeOutput = plain(aggregateFanoutOutputs(fixture.vectors[0].input))
 assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, workerResultRefs: undefined }), /workerResultRefs/, "canonical fanout output requires worker result refs")
 assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, rawWorkerArtifactRefs: [{ kind: "worker-report" }] }), /requires path/, "canonical fanout output requires artifact ref paths")
 
 const normalizedFromArtifacts = plain(fanoutAggregationInputFromWorkerArtifacts({
-  plan: fixture.input.plan,
-  policy: fixture.input.policy,
-  aggregator: fixture.input.aggregation,
-  workerResultRefs: fixture.input.worker_results,
+  plan: fixture.vectors[0].input.plan,
+  policy: fixture.vectors[0].input.policy,
+  aggregator: fixture.vectors[0].input.aggregation,
+  workerResultRefs: fixture.vectors[0].input.worker_results,
 }))
 assert.equal(normalizedFromArtifacts.schema, "wp-codebox/agent-fanout-aggregation-input/v1")
-assert.deepEqual(plain(aggregateFanoutOutputs(normalizedFromArtifacts)), fixture.expectedOutput, "worker artifact refs must normalize into the same aggregation output")
+assert.deepEqual(plain(aggregateFanoutOutputs(normalizedFromArtifacts)), fixture.vectors[0].expectedOutput, "worker artifact refs must normalize into the same aggregation output")
 
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
 const sandbox = {
@@ -37,14 +44,16 @@ const sandbox = {
 vm.runInNewContext(runtimeSource, sandbox, { filename: "browser-runtime.js" })
 const browserAggregate = sandbox.window.wpCodeboxBrowser?.v1?.aggregateFanoutOutputs
 assert.equal(typeof browserAggregate, "function", "browser runtime must expose the aggregation contract helper")
-assert.deepEqual(plain(browserAggregate?.(fixture.input)), fixture.expectedOutput, "WordPress browser runtime aggregation output must match runtime-core")
+for (const vector of fixture.vectors) {
+  assert.deepEqual(plain(browserAggregate?.(vector.input)), vector.expectedOutput, `${vector.name}: WordPress browser runtime aggregation output must match runtime-core`)
+}
 
 await withTempDir("wp-codebox-fanout-aggregation-parity-", async (artifactRoot) => {
   const result = await executeAgentFanoutRequest({
     schema: FANOUT_REQUEST_SCHEMA,
     concurrency: 2,
     orchestrator: { session_id: "fanout-contract-fixture" },
-    aggregation: fixture.input.aggregation,
+    aggregation: fixture.vectors[0].input.aggregation,
     workers: [
       { id: "alpha", goal: "Collect alpha result" },
       { id: "beta", goal: "Collect beta result", dependsOn: ["alpha"] },

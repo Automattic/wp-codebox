@@ -20,28 +20,20 @@ if ( ! is_array( $fixture ) ) {
 	exit( 1 );
 }
 
-$aggregation = new WP_Codebox_Fanout_Aggregation();
-$output      = $aggregation->aggregate( $fixture['input'] );
-assert_same_contract( $fixture['expectedOutput'], $output, 'PHP fanout aggregation output' );
+$vectors = $fixture['vectors'] ?? null;
+if ( ! is_array( $vectors ) ) {
+	fwrite( STDERR, "Fanout aggregation contract fixture must include generated vectors.\n" );
+	exit( 1 );
+}
 
-$duplicate_output = $aggregation->aggregate(
-	array(
-		'plan'           => array(
-			'id'      => 'duplicate-final-path',
-			'workers' => array(
-				array( 'id' => 'one' ),
-				array( 'id' => 'two' ),
-			),
-		),
-		'policy'         => 'partial',
-		'worker_results' => array(
-			array( 'worker_id' => 'one', 'status' => 'succeeded', 'artifact_refs' => array( array( 'path' => 'one.json', 'final_path' => 'same.json' ) ) ),
-			array( 'worker_id' => 'two', 'status' => 'succeeded', 'artifact_refs' => array( array( 'path' => 'two.json', 'final_path' => 'same.json' ) ) ),
-		),
-	)
-);
-assert_same_contract( 'partial', $duplicate_output['status'], 'partial policy conflict status' );
-assert_same_contract( 'duplicate-final-artifact-path', $duplicate_output['conflicts'][0]['type'], 'duplicate final-path conflict' );
-assert_same_contract( array(), $duplicate_output['finalArtifactRefs'], 'conflicted aggregation final refs' );
+$aggregation = new WP_Codebox_Fanout_Aggregation();
+foreach ( $vectors as $vector ) {
+	if ( ! is_array( $vector ) ) {
+		fwrite( STDERR, "Fanout aggregation contract vector must be an object.\n" );
+		exit( 1 );
+	}
+	$output = $aggregation->aggregate( is_array( $vector['input'] ?? null ) ? $vector['input'] : array() );
+	assert_same_contract( $vector['expectedOutput'] ?? null, $output, 'PHP fanout aggregation output vector ' . (string) ( $vector['name'] ?? '' ) );
+}
 
 echo "PHP fanout aggregation contract smoke passed\n";
