@@ -81,6 +81,7 @@
     "release:package": "tsx scripts/package-release-artifact.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "wp-codebox:source": "node bin/wp-codebox-source.mjs",
+    "generate:browser-fanout-aggregation-runtime": "tsx scripts/generate-browser-fanout-aggregation-runtime.ts",
     "generate:fanout-aggregation-contract": "tsx scripts/generate-fanout-aggregation-contract-fixture.ts",
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",

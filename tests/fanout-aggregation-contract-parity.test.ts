@@ -34,6 +34,13 @@ assert.equal(normalizedFromArtifacts.schema, "wp-codebox/agent-fanout-aggregatio
 assert.deepEqual(plain(aggregateFanoutOutputs(normalizedFromArtifacts)), fixture.vectors[0].expectedOutput, "worker artifact refs must normalize into the same aggregation output")
 
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
+const browserFanoutSource = (await readFile(new URL("packages/runtime-core/src/browser-fanout-aggregation-runtime.js", root), "utf8")).trimEnd()
+const generatedFanoutStart = "\t// BEGIN generated fanout aggregation runtime. Run `npm run generate:browser-fanout-aggregation-runtime`."
+const generatedFanoutEnd = "\t// END generated fanout aggregation runtime."
+assert.ok(runtimeSource.includes(generatedFanoutStart), "browser runtime must include the fanout aggregation generation start marker")
+assert.ok(runtimeSource.includes(generatedFanoutEnd), "browser runtime must include the fanout aggregation generation end marker")
+const generatedFanoutBlock = runtimeSource.slice(runtimeSource.indexOf(generatedFanoutStart) + generatedFanoutStart.length, runtimeSource.indexOf(generatedFanoutEnd)).trim()
+assert.deepEqual(generatedFanoutBlock.split("\n").map((line) => line.replace(/^\t/, "")).join("\n"), browserFanoutSource, "browser runtime fanout aggregation block must be generated from the runtime-core source")
 const sandbox = {
   window: {} as { wpCodeboxBrowser?: { v1?: { aggregateFanoutOutputs?: (input: unknown) => unknown } } },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
