@@ -30,6 +30,19 @@ assert.equal(ref?.path, "artifacts/run-1")
 assert.equal(ref?.sha256, "abc123")
 assert.deepEqual(ref?.digest, { algorithm: "sha256", value: "abc123" })
 
+const browserAliasRef = normalizePublicArtifactRefDTO({
+  artifact_type: "browser-screenshot",
+  artifactId: "screenshot-1",
+  artifactsPath: "files/browser/screenshot.png",
+  content_digest: "def456",
+})
+
+assert.equal(browserAliasRef?.kind, "browser-screenshot")
+assert.equal(browserAliasRef?.id, "screenshot-1")
+assert.equal(browserAliasRef?.path, "files/browser/screenshot.png")
+assert.equal(browserAliasRef?.sha256, "def456")
+assert.deepEqual(browserAliasRef?.digest, { algorithm: "sha256", value: "def456" })
+
 const runResult = {
   artifacts: {
     id: "bundle-1",
