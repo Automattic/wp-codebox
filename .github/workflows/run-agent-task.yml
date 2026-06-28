@@ -215,7 +215,11 @@ jobs:
           WRITABLE_PATHS: ${{ inputs.writable_paths }}
           PROVIDER: ${{ inputs.provider }}
           MODEL: ${{ inputs.model }}
-          RUNNER_WORKSPACE: ${{ inputs.runner_workspace }}
+          # Not `RUNNER_WORKSPACE`: that name is a reserved GitHub Actions
+          # built-in (the `RUNNER_` prefix cannot be overridden), so a workflow
+          # value set under it is ignored and the script receives the runner's
+          # workspace path instead of this JSON config.
+          RUNNER_WORKSPACE_CONFIG: ${{ inputs.runner_workspace }}
           VALIDATION_DEPENDENCIES: ${{ inputs.validation_dependencies }}
           CONTEXT_REPOSITORIES: ${{ inputs.context_repositories }}
           VERIFICATION_COMMANDS: ${{ inputs.verification_commands }}
