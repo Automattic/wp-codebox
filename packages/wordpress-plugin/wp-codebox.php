@@ -71,7 +71,13 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once __DIR__ . '/src/class-wp-codebox-cli-command.php';
 }
 
-add_action( 'plugins_loaded', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ), 20 );
+// The Agents API adapter probes the abilities registry (wp_get_ability) to
+// decide whether to register its runtime profiles/provider. As of WordPress 7.0
+// the Abilities API moved into core and WP_Abilities_Registry::get_instance()
+// emits a _doing_it_wrong notice when accessed before the `init` action. Hook
+// this on `wp_abilities_api_init` — the same signal the plugin's own abilities
+// register on — so the registry is never touched before it is initialized.
+add_action( 'wp_abilities_api_init', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ) );
 add_action( 'plugins_loaded', array( WP_Codebox_Php_Ai_Client_Browser_Provider_Adapter::class, 'register' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();
