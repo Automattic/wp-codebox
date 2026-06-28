@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 
+import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
+
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 const releaseRoot = resolve(repoRoot, "dist", "release")
@@ -73,7 +75,18 @@ exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
     maxBuffer: 1024 * 1024 * 10,
   })
 
-  process.stdout.write(JSON.stringify([{ path: `dist/${artifactName}`, type: "node-cli-tarball", platform: `${platformName}-${archName}` }]) + "\n")
+  // The deployable artifact is the WordPress plugin zip declared by homeboy.json
+  // (build_artifact: packages/wordpress-plugin/dist/wp-codebox.zip). It bundles
+  // the CLI release tree staged above, so build it here and surface it in the
+  // manifest so the release pipeline uploads it as a GitHub Release asset.
+  await assembleWordpressPluginZip(repoRoot)
+
+  process.stdout.write(
+    JSON.stringify([
+      { path: "packages/wordpress-plugin/dist/wp-codebox.zip", type: "wordpress-plugin-zip" },
+      { path: `dist/${artifactName}`, type: "node-cli-tarball", platform: `${platformName}-${archName}` },
+    ]) + "\n",
+  )
 } finally {
   await rm(stagingReleaseRoot, recursiveRmOptions)
 }
