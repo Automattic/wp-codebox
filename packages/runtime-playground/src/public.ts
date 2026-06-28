@@ -19,10 +19,13 @@ import {
   renderWordPressBlock,
   exerciseWordPressBlock,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+  WORDPRESS_DB_OPERATION_SCHEMA,
+  planBrowserRandomWalk,
   runWordPressCrudOperation,
   runWordPressBrowserAction,
   runWordPressPhp,
   runWordPressWpCli,
+  normalizeWordPressDbOperation,
   visitWordPressPage,
   wordpressHotspotsArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
@@ -222,7 +225,7 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "db_operation") {
         if (action.operation === "write") {
-          throw new Error("Unsupported WordPress fuzz runtime-action type: db_operation write")
+          return executeRollbackSafeDbMutation(episode, { ...input, action })
         }
         const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
         return {
@@ -240,6 +243,30 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       if (action.type === "browser") {
         return runWordPressBrowserAction(episode, action)
       }
+      if (action.type === "random_walk") {
+        const plan = planBrowserRandomWalk(action as unknown as Record<string, unknown>)
+        if (plan.status === "unsupported") {
+          throw new Error(`Browser random walk is unsupported: ${plan.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`)
+        }
+        const step = await episode.step({
+          kind: "browser",
+          command: "wordpress.browser-actions",
+          args: [`steps-json=${JSON.stringify(plan.steps)}`, ...(action.capture?.length ? [`capture=${action.capture.join(",")}`] : [])],
+          ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+          operation: "random_walk",
+        }, { type: "browser-result" })
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { operation: "random_walk", mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id, randomWalk: plan },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: digestRuntimeActionObservationData({ operation: "random_walk", args: step.execution.args, exitCode: step.execution.exitCode }),
+        }
+      }
       if (action.type === "browser_probe") {
         return probeWordPressBrowser(episode, action)
       }
@@ -254,6 +281,70 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
+  }
+}
+
+async function executeRollbackSafeDbMutation(
+  episode: Pick<RuntimeEpisode, "step">,
+  input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "db_operation" }> },
+): Promise<RuntimeActionObservation> {
+  const operation = normalizeWordPressDbOperation({
+    schema: WORDPRESS_DB_OPERATION_SCHEMA,
+    ...input.action,
+    operation: "write",
+    options: { ...(input.action.options ?? {}), allowWrites: true, resetIsolated: true },
+    metadata: { ...(input.action.metadata ?? {}), resetIsolated: true, affectedRowsMayBeZeroOrUnknown: true },
+  })
+  const target = operation.resource?.table ?? operation.query?.table ?? "database"
+  const mutation = typeof operation.options?.mutation === "string" ? operation.options.mutation.toUpperCase() : "WRITE"
+  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
+  const createStep = await createWordPressRuntimeCheckpoint(episode, {
+    name: checkpointName,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "db_operation", mutation },
+  })
+  if (createStep.execution.exitCode !== 0) {
+    throw new Error(`Checkpoint create failed for rollback-isolated DB mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  }
+  const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
+  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
+  const resultMetadata = recordValue(recordValue(stdout)?.metadata)
+  const artifact = mutationIsolationArtifact({
+    operation: "db_operation",
+    target,
+    method: mutation,
+    checkpointName,
+    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    afterObservation: mutationStepEvidence(step, "observed"),
+    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
+    affectedIdentifiers: undefined,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+  })
+  const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const data = {
+    operation,
+    mappedCommand: step.execution.command,
+    args: step.execution.args,
+    exitCode: step.execution.exitCode,
+    stdout,
+    stderr: step.execution.stderr,
+    executionId: step.execution.id,
+    stepId: step.id,
+    mutationIsolationArtifact: artifactWithDigest,
+    mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+  }
+  return {
+    schema: "wp-codebox/runtime-action-observation/v1",
+    type: input.action.type,
+    status: "ok",
+    action: input.action,
+    data,
+    observedAt: new Date().toISOString(),
+    step,
+    artifactRefs: step.observation?.artifactRefs,
+    digest: digestRuntimeActionObservationData(data),
   }
 }
 

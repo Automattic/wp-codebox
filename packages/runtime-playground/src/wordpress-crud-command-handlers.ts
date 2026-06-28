@@ -255,6 +255,22 @@ function wp_codebox_db_limit( $operation ) {
     return max( 1, min( 100, $limit ) );
 }
 
+function wp_codebox_db_write_allowed( $operation ) {
+    $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
+    return ! empty( $options['allowWrites'] ) || ! empty( $options['allow_writes'] );
+}
+
+function wp_codebox_db_write_bounded( $operation ) {
+    $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
+    return ! empty( $options['bounded'] );
+}
+
+function wp_codebox_db_write_mutation( $operation ) {
+    $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
+    $mutation = isset( $options['mutation'] ) ? strtolower( (string) $options['mutation'] ) : 'update';
+    return in_array( $mutation, array( 'insert', 'update', 'delete' ), true ) ? $mutation : 'update';
+}
+
 function wp_codebox_db_quote_identifier( $identifier ) {
     return '\`' . str_replace( '\`', '\`\`', (string) $identifier ) . '\`';
 }
@@ -315,6 +331,20 @@ function wp_codebox_db_select_columns( $columns, $allowed_columns ) {
     return count( $safe ) > 0 ? array( 'sql' => implode( ', ', array_map( 'wp_codebox_db_quote_identifier', $safe ) ), 'columns' => $safe ) : null;
 }
 
+function wp_codebox_db_safe_values( $values, $allowed_columns ) {
+    if ( ! is_array( $values ) ) {
+        return array();
+    }
+    $safe = array();
+    foreach ( $values as $column => $value ) {
+        $column = preg_replace( '/[^A-Za-z0-9_]/', '', (string) $column );
+        if ( $column !== '' && isset( $allowed_columns[ $column ] ) && ( is_scalar( $value ) || $value === null ) ) {
+            $safe[ $column ] = $value;
+        }
+    }
+    return $safe;
+}
+
 function wp_codebox_emit_db_result( $operation ) {
     global $wpdb;
     $verb = (string) $operation['operation'];
@@ -322,7 +352,34 @@ function wp_codebox_emit_db_result( $operation ) {
 
     try {
         if ( $verb === 'write' ) {
-            wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'db-write-unsupported', 'Generic DB writes are intentionally unsupported. Use WordPress CRUD resources with options.allowWrites=true for bounded writes.' ) );
+            if ( ! wp_codebox_db_write_allowed( $operation ) || ! wp_codebox_db_write_bounded( $operation ) ) {
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'db-write-guard-required', 'DB writes require options.allowWrites=true and options.bounded=true.' ) );
+                return;
+            }
+            $table = wp_codebox_db_resolve_table( $operation );
+            if ( ! $table ) {
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-table', 'DB writes require a discovered prefixed WordPress table name or base name.' ) );
+                return;
+            }
+            $allowed_columns = wp_codebox_db_table_columns( $table['name'] );
+            $mutation = wp_codebox_db_write_mutation( $operation );
+            $values = wp_codebox_db_safe_values( isset( $query['values'] ) ? $query['values'] : array(), $allowed_columns );
+            $where = wp_codebox_db_safe_values( isset( $query['where'] ) ? $query['where'] : array(), $allowed_columns );
+            $affected = 0;
+            $diagnostics = array( array( 'code' => 'reset-isolated-db-mutation', 'message' => 'DB mutation executed through reset-isolated fuzz runtime; affected rows may be zero or unknown.', 'severity' => 'info' ) );
+            if ( $mutation === 'insert' && count( $values ) > 0 ) {
+                $result = $wpdb->insert( $table['name'], $values );
+                $affected = $result === false ? null : (int) $wpdb->rows_affected;
+            } elseif ( $mutation === 'update' && count( $values ) > 0 && count( $where ) > 0 ) {
+                $result = $wpdb->update( $table['name'], $values, $where );
+                $affected = $result === false ? null : (int) $wpdb->rows_affected;
+            } elseif ( $mutation === 'delete' && count( $where ) > 0 ) {
+                $result = $wpdb->delete( $table['name'], $where );
+                $affected = $result === false ? null : (int) $wpdb->rows_affected;
+            } else {
+                $diagnostics[] = array( 'code' => 'db-mutation-no-op', 'message' => 'Mutation candidate had insufficient bounded values/filters; recorded as a zero-row runtime observation.', 'severity' => 'info' );
+            }
+            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'diagnostics' => $diagnostics, 'metadata' => array( 'table' => $table, 'mutation' => $mutation, 'affectedRows' => $affected, 'affectedRowsMayBeZeroOrUnknown' => true, 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'write', 'table' => $table['name'] ) ) ) ) );
             return;
         }
 

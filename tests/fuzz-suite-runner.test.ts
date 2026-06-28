@@ -439,6 +439,38 @@ assert.equal((mutatingSequenceWithReset.cases[0]?.metadata?.adapter as Record<st
 assert.deepEqual((mutatingSequenceWithReset.cases[0]?.metadata?.replay as { sequence?: { seed?: string; maxSteps?: number; actionFamilies?: string[] } } | undefined)?.sequence, { schema: "wp-codebox/runtime-action-sequence/v1", seed: "seq-mutate", maxSteps: 3, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] })
 assert.equal(mutatingSequenceWithReset.artifactRefs.length, 2)
 
+const sequenceFailure = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-sequence-step-failure",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "sequence-failure-baseline" },
+  target: { kind: "runtime-action" },
+  cases: [{ id: "sequence-fails", input: { type: "sequence", steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "browser", operation: "click", selector: "#missing" }] } }],
+}), {
+  resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
+  runtimeActionExecutor: async ({ action }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: {}, observedAt: "2026-01-01T00:00:00.000Z", step: { id: `step-${action.type}`, index: 0, action: { schema: "wp-codebox/runtime-episode-action/v1", id: `action-${action.type}`, kind: "command", command: action.type === "browser" ? "wordpress.browser-actions" : "wordpress.rest-request", args: [], digest: { algorithm: "sha256", value: action.type } }, actionRef: { kind: "action", id: `action-${action.type}` }, execution: { id: `exec-${action.type}`, command: action.type === "browser" ? "wordpress.browser-actions" : "wordpress.rest-request", args: [], exitCode: action.type === "browser" ? 1 : 0, stdout: "", stderr: action.type === "browser" ? "missing selector" : "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }, executionRef: { kind: "execution", id: `exec-${action.type}` } }, digest: { algorithm: "sha256", value: action.type } }),
+})
+assert.equal(sequenceFailure.status, "failed")
+assert.equal(sequenceFailure.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_failed")
+assert.equal(sequenceFailure.cases[0]?.diagnostics[0]?.metadata?.stepIndex, 1)
+
+let dbWriteOperation: Record<string, unknown> | undefined
+const commandBackedDbWrite = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-db-write-reset-command-backed",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "db-baseline" },
+  target: { kind: "runtime-action" },
+  cases: [{ id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update", bounded: true } } }],
+}), {
+  resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
+  executor: async (spec) => {
+    dbWriteOperation = JSON.parse(spec.args?.[0]?.replace("operation-json=", "") ?? "{}")
+    return { id: "exec-db-write", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: JSON.stringify({ schema: "wp-codebox/wordpress-db-result/v1", status: "ok", metadata: { affectedRows: 0, affectedRowsMayBeZeroOrUnknown: true } }), stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }
+  },
+})
+assert.equal(commandBackedDbWrite.status, "passed")
+assert.equal(commandBackedDbWrite.cases[0]?.target?.kind, "runtime-action")
+assert.equal(dbWriteOperation?.operation, "write")
+assert.deepEqual((dbWriteOperation?.options as Record<string, unknown> | undefined)?.allowWrites, true)
+assert.deepEqual((dbWriteOperation?.metadata as Record<string, unknown> | undefined)?.affectedRowsMayBeZeroOrUnknown, true)
+
 const restMatrix = wordpressRestMatrixContract({
   id: "rest-matrix-001",
   cases: [{ id: "get-posts", method: "GET", path: "/wp/v2/posts", params: { per_page: 1 }, headers: { accept: "application/json" }, session: "admin" }],
