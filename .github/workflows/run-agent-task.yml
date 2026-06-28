@@ -180,8 +180,20 @@ jobs:
       - name: Resolve WP Codebox workflow ref
         id: workflow-ref
         env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: printf 'ref=%s\n' "${WORKFLOW_REF##*@}" >> "$GITHUB_OUTPUT"
+          # `github.job_workflow_sha` is the commit SHA of THIS reusable workflow
+          # file, so the checked-out helper scripts always match the version of
+          # run-agent-task.yml that is executing. `github.workflow_ref` must not be
+          # used here: inside a reusable workflow it resolves to the caller's
+          # top-level workflow ref, so its branch name (e.g. `trunk` for a caller
+          # whose default branch is not `main`) gets used to check out
+          # Automattic/wp-codebox and fails when that ref does not exist here.
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          ref="${JOB_WORKFLOW_SHA}"
+          if [ -z "${ref}" ]; then
+            ref="main"
+          fi
+          printf 'ref=%s\n' "${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout WP Codebox workflow helpers
         uses: actions/checkout@v4
