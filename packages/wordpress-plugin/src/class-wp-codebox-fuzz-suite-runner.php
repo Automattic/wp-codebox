@@ -147,7 +147,7 @@ public static function fuzz_suite_runner_capabilities_contract( array $suite = a
 }
 
 /** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
-private static function fuzz_suite_runtime_backed_runner_capabilities_contract( array $suite = array() ): array {
+public static function fuzz_suite_runtime_backed_runner_capabilities_contract( array $suite = array() ): array {
 	$capabilities = array(
 		'schema'                          => 'wp-codebox/fuzz-runner-capabilities/v1',
 		'mode'                            => 'runtime-backed',
