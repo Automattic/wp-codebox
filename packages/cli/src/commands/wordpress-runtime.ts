@@ -28,7 +28,7 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   }
 
   const options = await parsePublicRuntimeCommandOptions(args)
-  if (options.runnerMode === "runtime-backed" && !options.dryRun) {
+  if (options.runnerMode === "runtime-backed" && !options.dryRun && !fuzzSuiteRequiresRecipeRuntime(options.input)) {
     await runRuntimeBackedFuzzSuiteCommand(options)
     return 0
   }
@@ -116,6 +116,11 @@ function runtimeBackedFuzzSuitePolicy(suite: FuzzSuiteContract): RuntimePolicy {
     secrets: "none",
     approvals: "never",
   }
+}
+
+function fuzzSuiteRequiresRecipeRuntime(input: Record<string, unknown>): boolean {
+  const requirements = fuzzSuiteRuntimeRequirements(input)
+  return arrayOption(requirements?.extra_plugins).length > 0 || arrayOption(requirements?.component_contracts).length > 0
 }
 
 function runtimeBackedFuzzSuiteCommands(suite: FuzzSuiteContract): string[] {

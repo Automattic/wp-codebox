@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
   WORDPRESS_HOTSPOTS_SCHEMA,
@@ -314,7 +315,7 @@ async function executeRollbackSafeRestMutation(
 export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteRuntimeWorkloadExecutor {
   return {
     async executeRuntimeWorkload({ workload, case: fuzzCase }) {
-      const steps = [...workloadSteps(workload.before, workload), ...workloadSteps(workload.steps, workload), ...workloadSteps(workload.after, workload)]
+      const steps = [...workloadSteps(workload.before, workload, fuzzCase), ...workloadSteps(workload.steps, workload, fuzzCase), ...workloadSteps(workload.after, workload, fuzzCase)]
       const startedAt = new Date().toISOString()
       const executions: ExecutionResult[] = []
       for (const step of steps) {
@@ -424,17 +425,17 @@ export function executeWordPressFuzzSuite(
     },
     runtimeActionExecutor: async (input) => {
       const observation = await runtimeActionExecutor.executeRuntimeAction(input)
-      pushHotspotObservation(hotspotObservations, performanceObservationFromRuntimeAction(observation), runtimeActionArtifactRefs(observation))
+      pushHotspotObservation(hotspotObservations, performanceObservationFromRuntimeAction(observation), runtimeActionArtifactRefs(observation), { caseId: input.case.id, targetId: input.target.id ?? input.target.entrypoint, phase: input.action.type })
       return observation
     },
     runtimeWorkloadExecutor: async (input) => {
       const execution = await runtimeWorkloadExecutor.executeRuntimeWorkload(input)
       const observations = performanceObservationsFromWorkloadExecution(execution)
       if (observations.length === 0) {
-        pushHotspotObservation(hotspotObservations, performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution), executionArtifactRefs(execution))
+        pushHotspotObservation(hotspotObservations, performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution), executionArtifactRefs(execution), { caseId: input.case.id, targetId: input.target.id ?? input.target.entrypoint, phase: input.target.entrypoint ?? input.target.kind })
       } else {
         for (const observation of observations) {
-          pushHotspotObservation(hotspotObservations, observation, executionArtifactRefs(execution))
+          pushHotspotObservation(hotspotObservations, observation, executionArtifactRefs(execution), { caseId: input.case.id, targetId: input.target.id ?? input.target.entrypoint, phase: input.target.entrypoint ?? input.target.kind })
         }
       }
       return execution
@@ -458,7 +459,11 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
     artifactRefs: result.artifactRefs,
     metadata: { suiteId: result.suite.id, runnerMode: result.metadata?.runnerMode },
   })
+  const homeboyObservationSet = homeboyFuzzObservationSetArtifact(result, observations)
+  const homeboyHotspotSet = homeboyFuzzHotspotSetArtifact(result, homeboyObservationSet.observations)
   const content = `${JSON.stringify(artifact, null, 2)}\n`
+  const homeboyObservationContent = `${JSON.stringify(homeboyObservationSet, null, 2)}\n`
+  const homeboyHotspotContent = `${JSON.stringify(homeboyHotspotSet, null, 2)}\n`
   const ref: FuzzSuiteArtifactRef = {
     path: "files/wordpress-hotspots.json",
     kind: "wordpress-hotspots",
@@ -468,26 +473,149 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
     name: "wordpress-hotspots",
     metadata: { schema: WORDPRESS_HOTSPOTS_SCHEMA, source: "executeWordPressFuzzSuite" },
   }
+  const homeboyObservationRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-observations.json", "fuzz-observation-set", "homeboy/fuzz-observation-set/v1", homeboyObservationContent)
+  const homeboyHotspotRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-hotspots.json", "fuzz-hotspot-set", "homeboy/fuzz-hotspot-set/v1", homeboyHotspotContent)
 
   return {
     ...result,
-    artifactRefs: dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref]),
+    artifactRefs: dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref, homeboyObservationRef, homeboyHotspotRef]),
     metadata: {
       ...result.metadata,
       artifacts: {
         ...(recordValue(result.metadata?.artifacts) ?? {}),
         wordpressHotspots: artifact,
+        fuzzObservationSet: homeboyObservationSet,
+        fuzzHotspotSet: homeboyHotspotSet,
       },
     },
   }
 }
 
-function pushHotspotObservation(out: WordPressHotspotObservationInput[], observation: PerformanceObservation | undefined, artifactRefs: FuzzSuiteArtifactRef[] = []): void {
+function pushHotspotObservation(out: WordPressHotspotObservationInput[], observation: PerformanceObservation | undefined, artifactRefs: FuzzSuiteArtifactRef[] = [], metadata: Record<string, unknown> = {}): void {
   if (!observation) return
   out.push({
     observation,
     artifactRefs: artifactRefs.map((ref) => ({ path: ref.path, kind: ref.kind, contentType: ref.contentType, sha256: ref.sha256, bytes: ref.bytes, name: ref.name, metadata: ref.metadata })),
+    metadata,
   })
+}
+
+function homeboyArtifactRef(path: string, kind: string, schema: string, content: string): FuzzSuiteArtifactRef {
+  return {
+    path,
+    kind,
+    contentType: "application/json",
+    sha256: createHash("sha256").update(content).digest("hex"),
+    bytes: Buffer.byteLength(content),
+    name: kind,
+    metadata: { schema, source: "executeWordPressFuzzSuite" },
+  }
+}
+
+function homeboyFuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): { schema: string; generated_at: string; source: string; observations: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+  const flattened = observations.flatMap((input) => homeboyFuzzObservations(input))
+  return {
+    schema: "homeboy/fuzz-observation-set/v1",
+    generated_at: new Date().toISOString(),
+    source: "wp-codebox",
+    observations: flattened,
+    summary: {
+      total: flattened.length,
+      families: countByString(flattened, "family"),
+      metrics: countByString(flattened, "metric"),
+    },
+    metadata: { suite_id: result.suite.id, runner: "wp-codebox", runner_mode: result.metadata?.runnerMode },
+  }
+}
+
+function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observations: Array<Record<string, unknown>>): { schema: string; generated_at: string; source: string; hotspots: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+  const grouped = new Map<string, Record<string, unknown>[]>()
+  for (const observation of observations) {
+    const key = [stringValue(observation.case_id), stringValue(observation.target_id), stringValue(observation.subject), stringValue(observation.metric)].join("|")
+    grouped.set(key, [...(grouped.get(key) ?? []), observation])
+  }
+  const scored = [...grouped.values()].map((items) => {
+    const first = items[0] ?? {}
+    const value = items.reduce((sum, item) => sum + (numberValue(item.value) ?? 0), 0)
+    return {
+      family: first.family,
+      case_id: first.case_id,
+      target_id: first.target_id,
+      operation_id: first.operation_id,
+      phase: first.phase,
+      subject: first.subject,
+      metric: first.metric,
+      value,
+      unit: first.unit,
+      score: homeboyHotspotScore(stringValue(first.metric), value),
+      sample_count: items.reduce((sum, item) => sum + (numberValue(item.sample_count) ?? 1), 0),
+      metadata: { sources: items.length },
+    }
+  }).sort((a, b) => b.score - a.score || String(a.subject).localeCompare(String(b.subject)))
+  const maxScore = scored[0]?.score ?? 0
+  const hotspots = scored.map((item, index) => ({ ...item, rank: index + 1, relative_score: maxScore > 0 ? Number((item.score / maxScore).toFixed(6)) : 0 }))
+  return {
+    schema: "homeboy/fuzz-hotspot-set/v1",
+    generated_at: new Date().toISOString(),
+    source: "wp-codebox",
+    hotspots,
+    summary: { total: hotspots.length, families: countByString(hotspots, "family"), max_score: maxScore },
+    metadata: { suite_id: result.suite.id, runner: "wp-codebox", runner_mode: result.metadata?.runnerMode },
+  }
+}
+
+function homeboyFuzzObservations(input: WordPressHotspotObservationInput): Array<Record<string, unknown>> {
+  const observation = input.observation
+  const metadata = recordValue(input.metadata) ?? {}
+  const common = {
+    case_id: stringValue(metadata.caseId) ?? stringValue(observation.metadata?.caseId),
+    target_id: stringValue(metadata.targetId) ?? observation.target,
+    operation_id: observation.command,
+    phase: stringValue(metadata.phase) ?? observation.kind,
+    subject: observation.target ?? observation.command ?? observation.kind ?? "observation",
+    metadata: { source: observation.source, execution_id: stringValue(observation.metadata?.executionId) },
+  }
+  return [
+    homeboyFuzzObservation(common, "timing", "duration-ms", observation.timing?.durationMs, "ms"),
+    homeboyFuzzObservation(common, "database", "query-count", observation.database?.queryCount, "count"),
+    homeboyFuzzObservation(common, "database", "query-time-ms", observation.database?.totalTimeMs, "ms"),
+    homeboyFuzzObservation(common, "memory", "memory-delta-bytes", observation.memory?.deltaBytes, "bytes"),
+    homeboyFuzzObservation(common, "network", "network-failures", observation.network?.failures, "count"),
+    ...Object.entries(observation.browser?.metrics ?? {}).map(([name, value]) => homeboyFuzzObservation({ ...common, subject: `${common.subject}:${name}` }, "browser", name, value, undefined)),
+  ].filter((item): item is Record<string, unknown> => Boolean(item))
+}
+
+function homeboyFuzzObservation(common: Record<string, unknown>, family: string, metric: string, value: unknown, unit: string | undefined): Record<string, unknown> | undefined {
+  const number = numberValue(value)
+  if (number === undefined || number <= 0) return undefined
+  return {
+    family,
+    case_id: common.case_id,
+    target_id: common.target_id,
+    operation_id: common.operation_id,
+    phase: common.phase,
+    subject: common.subject,
+    metric,
+    value: number,
+    unit,
+    sample_count: 1,
+    metadata: common.metadata,
+  }
+}
+
+function homeboyHotspotScore(metric: string | undefined, value: number): number {
+  if (metric === "query-count") return value * 10
+  if (metric === "network-failures") return value * 100
+  if (metric === "memory-delta-bytes") return value / 1024 / 1024
+  return value
+}
+
+function countByString(items: Array<Record<string, unknown>>, key: string): Record<string, number> {
+  return items.reduce<Record<string, number>>((summary, item) => {
+    const value = stringValue(item[key])
+    if (value) summary[value] = (summary[value] ?? 0) + 1
+    return summary
+  }, {})
 }
 
 function performanceObservationFromRuntimeAction(observation: RuntimeActionObservation): PerformanceObservation | undefined {
@@ -536,7 +664,40 @@ function performanceObservationFromExecution(spec: Partial<ExecutionSpec>, execu
 function performanceObservationsFromWorkloadExecution(execution: ExecutionResult): PerformanceObservation[] {
   const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
   const raw = arrayValue(json?.observations ?? json?.performanceObservations ?? json?.performance_observations)
-  return raw.flatMap((item) => isPerformanceObservation(item) ? [item] : [])
+  return [
+    ...raw.flatMap((item) => isPerformanceObservation(item) ? [item] : []),
+    ...performanceObservationsFromBenchResult(json, execution),
+  ]
+}
+
+function performanceObservationsFromBenchResult(json: Record<string, unknown> | undefined, execution: ExecutionResult): PerformanceObservation[] {
+  if (json?.schema !== "wp-codebox/bench-results/v1") return []
+  const observations: PerformanceObservation[] = []
+  for (const scenario of arrayValue(json.scenarios)) {
+    const scenarioRecord = recordValue(scenario)
+    const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
+    if (profile?.schema !== "wp-codebox/wordpress-rest-db-query-profile/v1") continue
+    for (const profileCase of arrayValue(profile.cases)) {
+      const caseRecord = recordValue(profileCase)
+      const summary = recordValue(caseRecord?.summary)
+      const queryCount = numberValue(summary?.query_count)
+      const totalTimeMs = numberValue(summary?.total_time_ms)
+      const path = stringValue(caseRecord?.path) ?? stringValue(caseRecord?.case_id) ?? "rest-db-query-profile"
+      const observation: PerformanceObservation = {
+        schema: "wp-codebox/performance-observation/v1",
+        command: "wordpress.run-workload",
+        target: path,
+        source: "rest-db-query-profiler",
+        kind: "rest-request",
+        database: queryCount !== undefined || totalTimeMs !== undefined ? { queryCount, totalTimeMs } : undefined,
+        metadata: { executionId: execution.id, scenarioId: stringValue(scenarioRecord?.id), caseId: stringValue(caseRecord?.case_id) },
+      }
+      if (hasObservationMetrics(observation)) {
+        observations.push(observation)
+      }
+    }
+  }
+  return observations
 }
 
 function normalizeObservationDatabase(input: Record<string, unknown> | undefined): PerformanceObservation["database"] | undefined {
@@ -673,11 +834,11 @@ function numericRecord(value: Record<string, unknown>): Record<string, number> |
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
-function workloadSteps(value: unknown, workload: Record<string, unknown>): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
+function workloadSteps(value: unknown, workload: Record<string, unknown>, fuzzCase?: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
   if (!Array.isArray(value)) {
     return []
   }
-  return value.flatMap((step) => {
+  const commandSteps = value.flatMap((step) => {
     if (!step || typeof step !== "object" || Array.isArray(step)) {
       return []
     }
@@ -696,6 +857,39 @@ function workloadSteps(value: unknown, workload: Record<string, unknown>): Array
       advisory: record.advisory === true,
     }]
   })
+  if (commandSteps.length > 0) {
+    return commandSteps
+  }
+  if (value.some((step) => step && typeof step === "object" && !Array.isArray(step) && typeof (step as Record<string, unknown>).type === "string")) {
+    return [{ command: "wordpress.run-php", args: [`code=${typedWorkloadRunnerCode(workload, fuzzCase)}`] }]
+  }
+  return []
+}
+
+function typedWorkloadRunnerCode(workload: Record<string, unknown>, fuzzCase?: unknown): string {
+  return benchRunCode({
+    componentId: stringValue(workload.componentId) ?? stringValue(workload.component_id) ?? "wordpress-workload",
+    pluginSlug: typedWorkloadPluginSlug(workload, fuzzCase),
+    iterations: 1,
+    warmupIterations: 0,
+    dependencySlugs: [],
+    env: recordValue(workload.runtime_env) ?? recordValue(workload.runtimeEnv) ?? {},
+    bootstrapFiles: [],
+    workloads: [workload],
+    lifecycle: {},
+    resetPolicy: {},
+  })
+}
+
+function typedWorkloadPluginSlug(workload: Record<string, unknown>, fuzzCase?: unknown): string {
+  const fuzzCaseRecord = recordValue(fuzzCase)
+  const explicit = stringValue(workload.pluginSlug) ?? stringValue(workload.plugin_slug) ?? stringValue(recordValue(workload.metadata)?.plugin_slug) ?? stringValue(recordValue(fuzzCaseRecord?.metadata)?.plugin_slug)
+  if (explicit) return explicit
+  const metadata = recordValue(fuzzCaseRecord?.metadata)
+  const caseMetadata = recordValue(metadata?.caseMetadata) ?? recordValue(metadata?.case_metadata) ?? metadata
+  const activation = stringValue(recordValue(recordValue(recordValue(caseMetadata?.intent)?.plugin)?.activation)?.entrypoint) ?? stringValue(recordValue(recordValue(caseMetadata?.intent)?.plugin)?.activation)
+  const slug = activation?.split("/")[0]?.trim()
+  return slug || "wp-codebox-workload"
 }
 
 function stepArgMap(args: string[] | undefined): Record<string, string> {
