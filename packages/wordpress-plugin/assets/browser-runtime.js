@@ -2051,6 +2051,7 @@ try {
 		return `<?php\n${ prelude }\n?>\n${ source }`;
 	};
 
+	// BEGIN generated fanout aggregation runtime. Run `npm run generate:browser-fanout-aggregation-runtime`.
 	const fanoutAggregationInputSchema = 'wp-codebox/agent-fanout-aggregation-input/v1';
 	const fanoutAggregationOutputSchema = 'wp-codebox/agent-fanout-aggregation-output/v1';
 
@@ -2267,6 +2268,7 @@ try {
 			error: output.status === 'succeeded' ? null : { code: 'fanout_aggregation_failed', message: 'Fanout aggregation reported conflicts.', data: { status: output.status, conflicts: output.conflicts } },
 		};
 	};
+	// END generated fanout aggregation runtime.
 
 	const browserSessionRecipe = ( session ) => {
 		if ( ! session || typeof session !== 'object' ) {
