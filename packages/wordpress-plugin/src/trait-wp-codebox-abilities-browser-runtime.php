@@ -479,6 +479,12 @@ private static function browser_runtime_plugin_specs( array $plugins ): array|WP
 		$resource = (string) ( $plugin['resource'] ?? 'url' );
 		$path     = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
 		$package  = (string) ( $plugin['package'] ?? '' );
+		if ( 'url' === $resource && '' === $path && 'browser' !== $package && '' === trim( (string) ( $plugin['url'] ?? '' ) ) ) {
+			$host_dir = self::browser_host_runtime_plugin_dir( (string) ( $plugin['slug'] ?? '' ) );
+			if ( '' !== $host_dir ) {
+				$path = $host_dir;
+			}
+		}
 		if ( 'url' === $resource && '' === $path && 'browser' !== $package ) {
 			$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
 			if ( '' === $slug ) {
@@ -574,6 +580,11 @@ private static function browser_component_plugins( array $input, array $declared
 		$key  = self::browser_runtime_component_key( $slug );
 		$contract = is_array( $contracts[ $slug ] ?? null ) ? $contracts[ $slug ] : ( is_array( $contracts[ $key ] ?? null ) ? $contracts[ $key ] : array() );
 		$path = (string) ( $contract['path'] ?? '' );
+		$source = '' !== $path ? 'host-component-path' : '';
+		if ( '' === $path ) {
+			$path   = self::browser_host_runtime_plugin_dir( $slug );
+			$source = '' !== $path ? 'host-installed-plugin' : '';
+		}
 		if ( '' !== $path ) {
 			if ( ! is_dir( $path ) ) {
 				return new WP_Error( 'wp_codebox_browser_component_path_missing', 'Browser runtime component path does not exist.', array( 'status' => 400, 'slug' => $slug, 'path' => $path ) );
@@ -594,7 +605,7 @@ private static function browser_component_plugins( array $input, array $declared
 				'sha256'                  => $package['sha256'],
 				'provenance'              => array(
 					'schema' => 'wp-codebox/browser-component-plugin-provenance/v1',
-					'source' => 'host-component-path',
+					'source' => $source,
 					'sha256' => $package['sha256'],
 				),
 			);
@@ -603,6 +614,7 @@ private static function browser_component_plugins( array $input, array $declared
 
 		$component = is_array( $registry[ $slug ] ?? null ) ? $registry[ $slug ] : array();
 		if ( empty( $component ) ) {
+			self::browser_runtime_component_unresolved( $slug );
 			continue;
 		}
 
@@ -694,6 +706,84 @@ private static function browser_runtime_component_registry(): array {
 		: array();
 
 	return is_array( $registry ) ? $registry : array();
+}
+
+/**
+ * Resolves a runtime plugin/component slug to a host-installed plugin directory.
+ *
+ * The agent runtime provisions its substrate (e.g. agents-api and the selected
+ * AI provider plugin) into the sandbox from the host's own installed copies, so
+ * consumers select the runtime profile and supply domain inputs only — they
+ * never hand-inject runtime plugin sources. This is the default source strategy;
+ * an explicit component contract path or the browser runtime component registry
+ * still take precedence, and supply a source for plugins not installed locally.
+ *
+ * @param string $slug Plugin slug.
+ * @return string Absolute host plugin directory, or '' when not installed.
+ */
+private static function browser_host_runtime_plugin_dir( string $slug ): string {
+	$slug = self::safe_key( $slug );
+	if ( '' === $slug ) {
+		return '';
+	}
+
+	$roots = array();
+	if ( defined( 'WP_PLUGIN_DIR' ) ) {
+		$roots[] = (string) WP_PLUGIN_DIR;
+	}
+
+	/**
+	 * Filters the host plugin roots searched when resolving a runtime plugin
+	 * slug to an installed source. Defaults to WP_PLUGIN_DIR. A host or deploy
+	 * can add roots so runtime plugins that live outside the standard plugin
+	 * directory still resolve to an installable source.
+	 *
+	 * @param array<int,string> $roots Host plugin roots.
+	 * @param string            $slug  Plugin slug being resolved.
+	 */
+	if ( function_exists( 'apply_filters' ) ) {
+		$roots = apply_filters( 'wp_codebox_browser_runtime_host_plugin_roots', $roots, $slug );
+	}
+
+	foreach ( is_array( $roots ) ? $roots : array() as $root ) {
+		$root = trim( (string) $root );
+		if ( '' === $root ) {
+			continue;
+		}
+
+		$dir = self::browser_clean_path( rtrim( $root, '/\\' ) . DIRECTORY_SEPARATOR . $slug );
+		if ( '' !== $dir && is_dir( $dir ) ) {
+			return $dir;
+		}
+	}
+
+	return '';
+}
+
+/**
+ * Surfaces a required runtime component that has no resolvable source.
+ *
+ * A component reaches this path when it is neither installed on the host nor
+ * backed by a component contract path or registry source. The host or deploy
+ * must provide a source (via wp_codebox_browser_runtime_component_registry,
+ * wp_codebox_component_contracts, or wp_codebox_browser_runtime_host_plugin_roots);
+ * the runtime sandbox cannot fabricate one.
+ *
+ * @param string $slug Unresolved component slug.
+ */
+private static function browser_runtime_component_unresolved( string $slug ): void {
+	$slug = self::safe_key( $slug );
+	if ( '' === $slug ) {
+		return;
+	}
+
+	if ( function_exists( 'do_action' ) ) {
+		do_action( 'wp_codebox_browser_runtime_component_unresolved', $slug );
+	}
+
+	if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+		error_log( sprintf( 'WP Codebox: browser runtime component "%s" has no resolvable source. Install it on the host or provide a source via the component registry/contract or host plugin roots filter.', $slug ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+	}
 }
 
 private static function browser_component_plugins_required( array $input ): bool {

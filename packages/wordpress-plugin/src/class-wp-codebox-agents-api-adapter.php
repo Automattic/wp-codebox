@@ -135,6 +135,7 @@ final class WP_Codebox_Agents_API_Adapter {
 		}
 
 		add_filter( 'wp_codebox_runtime_profile_registry', array( self::class, 'runtime_profile_registry' ) );
+		add_filter( 'wp_codebox_browser_runtime_required_components', array( self::class, 'browser_runtime_required_components' ) );
 		add_filter( 'wp_codebox_browser_runtime_default_invocation', array( self::class, 'browser_runtime_default_invocation' ) );
 		add_filter( 'wp_codebox_browser_runtime_default_ability', array( self::class, 'default_chat_ability' ) );
 		add_filter( 'wp_codebox_browser_runtime_ability_names', array( self::class, 'ability_names' ) );
@@ -334,7 +335,95 @@ final class WP_Codebox_Agents_API_Adapter {
 			'provenance'             => array( 'adapter' => self::class ),
 		);
 
+		// WP Codebox is the agentic runtime: selecting codebox-agent-runtime must
+		// provision the runtime substrate (agents-api) by default, so consumers
+		// supply domain inputs (bundle, goal, provider selection) only and never
+		// hand-inject the runtime plugins themselves.
+		$registry['codebox-agent-runtime'] = self::merge_default_components(
+			is_array( $registry['codebox-agent-runtime'] ?? null ) ? $registry['codebox-agent-runtime'] : array(),
+			self::default_runtime_component_slugs()
+		);
+
 		return $registry;
+	}
+
+	/**
+	 * Default runtime substrate component slugs provisioned for the agent runtime.
+	 *
+	 * Minimal set proven from code: agents-api ships its own conversation loop,
+	 * workflow runner, and bundle importer, so it runs worker bundles + the agent
+	 * loop without Data Machine. The selected AI provider plugin is provisioned
+	 * separately via the provider profile. Both resolve from the host's installed
+	 * copies. A host/deploy that needs additional substrate (e.g. data-machine /
+	 * data-machine-code for bundles that use those abilities) adds slugs through
+	 * this filter and supplies a source via the component registry/contract or
+	 * host plugin roots filter.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function default_runtime_component_slugs(): array {
+		$slugs = array( 'agents-api' );
+		if ( function_exists( 'apply_filters' ) ) {
+			$filtered = apply_filters( 'wp_codebox_agent_runtime_default_components', $slugs );
+			if ( is_array( $filtered ) ) {
+				$slugs = $filtered;
+			}
+		}
+
+		$normalized = array();
+		foreach ( $slugs as $slug ) {
+			$slug = function_exists( 'sanitize_key' ) ? sanitize_key( (string) $slug ) : strtolower( trim( (string) $slug ) );
+			if ( '' !== $slug && ! in_array( $slug, $normalized, true ) ) {
+				$normalized[] = $slug;
+			}
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Required browser runtime component slugs.
+	 *
+	 * Ensures the runtime substrate installs even on the required-only browser
+	 * path (when provider plugin paths, connectors, or secret env are present)
+	 * in addition to when the codebox-agent-runtime profile declares it.
+	 *
+	 * @param array<int,string> $slugs Required component slugs.
+	 * @return array<int,string>
+	 */
+	public static function browser_runtime_required_components( array $slugs = array() ): array {
+		foreach ( self::default_runtime_component_slugs() as $slug ) {
+			if ( ! in_array( $slug, $slugs, true ) ) {
+				$slugs[] = $slug;
+			}
+		}
+
+		return $slugs;
+	}
+
+	/**
+	 * Merges default component slugs into a runtime profile registry entry.
+	 *
+	 * @param array<string,mixed> $profile Profile registry entry.
+	 * @param array<int,string>   $slugs   Default component slugs.
+	 * @return array<string,mixed>
+	 */
+	private static function merge_default_components( array $profile, array $slugs ): array {
+		$components = is_array( $profile['components'] ?? null ) ? $profile['components'] : array();
+		$existing   = array();
+		foreach ( $components as $component ) {
+			$existing[] = is_array( $component ) ? (string) ( $component['slug'] ?? '' ) : (string) $component;
+		}
+
+		foreach ( $slugs as $slug ) {
+			if ( ! in_array( $slug, $existing, true ) ) {
+				$components[] = array( 'slug' => $slug );
+			}
+		}
+
+		$profile['components'] = $components;
+
+		return $profile;
 	}
 
 	/** @param array<string,mixed> $task_input_schema Codebox task input schema. @return array<string,mixed> */

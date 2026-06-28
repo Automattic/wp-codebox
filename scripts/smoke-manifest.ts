@@ -144,6 +144,7 @@ export const smokeGroups = {
       phpSmoke("php-agents-api-execution-targets-smoke"),
       npmScript("test:php-agents-api-adapter-contract"),
       npmScript("test:php-sandbox-workspace-executor"),
+      phpSmoke("php-browser-runtime-agent-substrate-smoke"),
       phpSmoke("php-run-plan-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("codex-agent-recipe-smoke"),

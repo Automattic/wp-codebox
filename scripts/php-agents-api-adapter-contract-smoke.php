@@ -281,3 +281,32 @@ assert( 'wp-codebox/example-runtime-result/v1' === $explicit_runtime['schema'] )
 $unknown_runtime = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider_id' => 'missing-runtime' ) );
 assert( is_wp_error( $unknown_runtime ) );
 assert( 'wp_codebox_runtime_provider_unavailable' === $unknown_runtime->get_error_code() );
+
+// Default agent-runtime substrate provisioning (issue #1591): selecting
+// codebox-agent-runtime contributes the runtime substrate (agents-api) by
+// default, so consumers supply domain inputs only and never hand-inject
+// agents-api / data-machine / provider plugins.
+$profile_registry = WP_Codebox_Agents_API_Adapter::runtime_profile_registry(
+	array(
+		'codebox-agent-runtime' => array(
+			'id'           => 'codebox-agent-runtime',
+			'capabilities' => array( 'codebox.agent-runtime' ),
+		),
+	)
+);
+$agent_runtime_component_slugs = array_map(
+	static fn( array $component ): string => (string) ( $component['slug'] ?? '' ),
+	is_array( $profile_registry['codebox-agent-runtime']['components'] ?? null ) ? $profile_registry['codebox-agent-runtime']['components'] : array()
+);
+assert( in_array( 'agents-api', $agent_runtime_component_slugs, true ) );
+
+$required_components = WP_Codebox_Agents_API_Adapter::browser_runtime_required_components( array() );
+assert( in_array( 'agents-api', $required_components, true ) );
+
+// A host/deploy that needs additional substrate (e.g. Data Machine for bundles
+// that use those abilities) extends the default set through the filter.
+$GLOBALS['wp_codebox_test_filters']['wp_codebox_agent_runtime_default_components'] = array( 'agents-api', 'data-machine', 'data-machine-code' );
+$extended_required = WP_Codebox_Agents_API_Adapter::browser_runtime_required_components( array() );
+assert( in_array( 'data-machine', $extended_required, true ) );
+assert( in_array( 'data-machine-code', $extended_required, true ) );
+unset( $GLOBALS['wp_codebox_test_filters']['wp_codebox_agent_runtime_default_components'] );
