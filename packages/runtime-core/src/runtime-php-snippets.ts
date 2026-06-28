@@ -190,13 +190,14 @@ function ${preload}(array $plugin, bool $include_plugin_file, string $role = 're
         throw new RuntimeException($command_label . ' cannot preload recipe plugin file "' . $plugin_file . '". ' . ${diagnosticString}($plugin, $role, 'missing or unreadable plugin file'));
     }
     $plugin_dir = dirname($plugin_file);
-    $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
-    if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
-        require_once $plugin_autoload;
-    }
     $plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
     if ('.' !== $plugin_dir && is_file($plugin_package_autoload)) {
         require_once $plugin_package_autoload;
+    } else {
+        $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+        if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
+            require_once $plugin_autoload;
+        }
     }
     if (!$include_plugin_file) {
         return ${diagnostic}($plugin, $role);

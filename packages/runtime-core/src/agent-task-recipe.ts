@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
@@ -87,7 +87,10 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
   const runtimeMounts = runtimeStateMounts(input)
-  const stagedFiles = stagedRuntimeSources(input, taskInput)
+  const sourceRoots = workspaceSourceRoots(input, taskInput)
+  const runtimeTask = runtimeTaskWithInlineBundle(input.runtime_task, sourceRoots)
+  const effectiveInput = { ...input, runtime_task: runtimeTask }
+  const stagedFiles = stagedRuntimeSources(effectiveInput, taskInput, sourceRoots)
   const providerPlugins = providerPluginEntries(input, artifacts)
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
@@ -124,8 +127,8 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   if (Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0) {
     workflowArgs.push(`agent-bundles-json=${JSON.stringify(input.agent_bundles)}`)
   }
-  if (input.runtime_task && typeof input.runtime_task === "object" && !Array.isArray(input.runtime_task)) {
-    workflowArgs.push(`runtime-task-json=${JSON.stringify(input.runtime_task)}`)
+  if (runtimeTask && typeof runtimeTask === "object" && !Array.isArray(runtimeTask)) {
+    workflowArgs.push(`runtime-task-json=${JSON.stringify(runtimeTask)}`)
   }
   if (taskInput.structured_artifacts.length > 0) {
     workflowArgs.push(`structured-artifacts-json=${JSON.stringify(taskInput.structured_artifacts)}`)
@@ -353,10 +356,10 @@ function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): str
     : `/wordpress/wp-content/plugins/${slug}`
 }
 
-function stagedRuntimeSources(input: AgentTaskRunInput, taskInput: TaskInput): WorkspaceRecipeStagedFile[] {
+function stagedRuntimeSources(input: AgentTaskRunInput, taskInput: TaskInput, sourceRoots = workspaceSourceRoots(input, taskInput)): WorkspaceRecipeStagedFile[] {
   const stagedFiles: WorkspaceRecipeStagedFile[] = []
   const seenTargets = new Set<string>()
-  const roots = workspaceSourceRoots(input, taskInput)
+  const roots = sourceRoots
   for (const stagedFile of Array.isArray(input.stagedFiles) ? input.stagedFiles : []) {
     if (!stagedFile?.target || seenTargets.has(stagedFile.target)) continue
     stagedFiles.push(stagedFile)
@@ -368,6 +371,187 @@ function stagedRuntimeSources(input: AgentTaskRunInput, taskInput: TaskInput): W
     seenTargets.add(stagedFile.target)
   }
   return stagedFiles
+}
+
+function runtimeTaskWithInlineBundle(runtimeTask: AgentTaskRunInput["runtime_task"], roots: string[]): AgentTaskRunInput["runtime_task"] {
+  const runtimeTaskInput = objectValue(runtimeTask?.input)
+  const runtimePackage = objectValue(runtimeTaskInput?.package)
+  if (!runtimeTaskInput || !runtimePackage || runtimePackage.bundle) return runtimeTask
+
+  const source = stringValue(runtimePackage.source)
+  if (!source) return runtimeTask
+
+  const localSource = localAgentBundleSource(source, roots)
+  if (!localSource) return runtimeTask
+
+  const bundle = readDataMachineBundleDirectory(localSource)
+  if (!bundle) return runtimeTask
+
+  return {
+    ...(runtimeTask ?? {}),
+    input: {
+      ...runtimeTaskInput,
+      package: {
+        ...runtimePackage,
+        bundle,
+      },
+    },
+  }
+}
+
+function readDataMachineBundleDirectory(directory: string): Record<string, unknown> | undefined {
+	try {
+		const manifest = readJsonFile(resolve(directory, "manifest.json"))
+		const manifestObject = objectValue(manifest) ?? {}
+		const manifestAgent = objectValue(manifestObject.agent) ?? {}
+		if (!manifestAgent.slug) return undefined
+
+		const included = objectValue(manifestObject.included) ?? {}
+		const pipelineDocuments = orderedBundleDocuments(directory, "pipelines", included.pipelines)
+		const flowDocuments = orderedBundleDocuments(directory, "flows", included.flows)
+    const pipelineIds = new Map<string, number>()
+    const pipelineStepKeys = new Map<string, Map<number, string>>()
+
+    const pipelines = pipelineDocuments.map((pipeline, index) => {
+      const pipelineId = index + 1
+      const slug = stringValue(pipeline.slug) || `pipeline-${pipelineId}`
+      const pipelineConfig: Record<string, unknown> = {}
+      const stepKeys = new Map<number, string>()
+      pipelineIds.set(slug, pipelineId)
+      for (const step of Array.isArray(pipeline.steps) ? pipeline.steps.filter(isPlainObject) : []) {
+        const position = numberValue(step.step_position, Object.keys(pipelineConfig).length)
+			const pipelineStepId = `${pipelineId}_bundle_step_${position}`
+			stepKeys.set(position, pipelineStepId)
+			pipelineConfig[pipelineStepId] = {
+				...(objectValue(step.step_config) ?? {}),
+				pipeline_step_id: pipelineStepId,
+				step_type: stringValue(step.step_type),
+				execution_order: position,
+        }
+      }
+      pipelineStepKeys.set(slug, stepKeys)
+      return {
+        original_id: pipelineId,
+        portable_slug: slug,
+        pipeline_name: stringValue(pipeline.name) || slug,
+        pipeline_config: pipelineConfig,
+        memory_file_contents: {},
+      }
+    })
+
+    const flows = flowDocuments.map((flow, index) => {
+      const flowId = index + 1
+      const pipelineSlug = stringValue(flow.pipeline_slug)
+      const pipelineId = pipelineIds.get(pipelineSlug) ?? 0
+      const stepKeys = pipelineStepKeys.get(pipelineSlug) ?? new Map<number, string>()
+      const flowConfig: Record<string, unknown> = {}
+      for (const step of Array.isArray(flow.steps) ? flow.steps.filter(isPlainObject) : []) {
+        const position = numberValue(step.step_position, Object.keys(flowConfig).length)
+        const pipelineStepId = stepKeys.get(position) ?? `${pipelineId}_bundle_step_${position}`
+        const flowStepId = `${pipelineStepId}_${flowId}`
+        flowConfig[flowStepId] = {
+          ...step,
+          flow_step_id: flowStepId,
+          pipeline_step_id: pipelineStepId,
+          pipeline_id: pipelineId,
+          flow_id: flowId,
+          execution_order: position,
+        }
+      }
+      return {
+        original_id: flowId,
+        original_pipeline_id: pipelineId,
+        portable_slug: stringValue(flow.slug) || `flow-${flowId}`,
+        flow_name: stringValue(flow.name) || stringValue(flow.slug) || `Flow ${flowId}`,
+        flow_config: flowConfig,
+        scheduling_config: {
+          enabled: stringValue(flow.schedule) !== "manual",
+          interval: stringValue(flow.schedule) || "manual",
+          max_items: Array.isArray(flow.max_items) ? flow.max_items : [],
+        },
+        memory_file_contents: {},
+      }
+    })
+
+		return {
+			bundle_version: stringValue(manifestObject.bundle_version) || "1",
+			bundle_slug: stringValue(manifestObject.bundle_slug) || stringValue(manifestAgent.slug) || "agent-bundle",
+			source_ref: stringValue(manifestObject.source_ref),
+			source_revision: stringValue(manifestObject.source_revision),
+			bundle_schema_version: 1,
+			exported_at: stringValue(manifestObject.exported_at) || new Date().toISOString(),
+      agent: {
+        agent_slug: stringValue(manifestAgent.slug) || "agent",
+        agent_name: stringValue(manifestAgent.label) || stringValue(manifestAgent.slug) || "Agent",
+        agent_config: objectValue(manifestAgent.agent_config),
+      },
+      files: readTextFiles(resolve(directory, "memory", "agent")),
+      user_template: readOptionalText(resolve(directory, "memory", "USER.md")),
+      pipelines,
+      flows,
+      artifact_files: {},
+      extension_artifacts: {},
+      extras: {},
+      abilities_manifest: {},
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function orderedBundleDocuments(directory: string, kind: "pipelines" | "flows", included: unknown): Array<Record<string, unknown>> {
+  const kindDirectory = resolve(directory, kind)
+  const slugs = Array.isArray(included) ? included.map(stringValue).filter(Boolean) : []
+  const bySlug = new Map<string, Record<string, unknown>>()
+  for (const file of safeDirectoryFiles(kindDirectory).filter((file) => file.endsWith(".json")).sort()) {
+    const document = readJsonFile(resolve(kindDirectory, file))
+    if (isPlainObject(document)) bySlug.set(stringValue(document.slug) || file.replace(/\.json$/i, ""), document)
+  }
+  const ordered = slugs.map((slug) => bySlug.get(slug)).filter(isPlainObject)
+  for (const [slug, document] of bySlug) {
+    if (!slugs.includes(slug)) ordered.push(document)
+  }
+  return ordered
+}
+
+function safeDirectoryFiles(directory: string): string[] {
+  try {
+    return readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+function readTextFiles(directory: string, root = directory): Record<string, string> {
+  const files: Record<string, string> = {}
+  let entries
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch {
+    return files
+  }
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) Object.assign(files, readTextFiles(path, root))
+    if (entry.isFile()) files[relative(root, path).replace(/\\/g, "/")] = readFileSync(path, "utf8")
+  }
+  return files
+}
+
+function readOptionalText(path: string): string {
+  try {
+    return statSync(path).isFile() ? readFileSync(path, "utf8") : ""
+  } catch {
+    return ""
+  }
+}
+
+function readJsonFile(path: string): unknown {
+  return JSON.parse(readFileSync(path, "utf8"))
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
 
 function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"], roots: string[]): WorkspaceRecipeStagedFile[] {

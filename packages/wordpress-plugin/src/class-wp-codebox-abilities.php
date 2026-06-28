@@ -65,6 +65,15 @@ final class WP_Codebox_Abilities {
 
 	public function __construct() {
 		if ( ! class_exists( 'WP_Ability' ) ) {
+			add_action( 'wp_abilities_api_init', array( $this, 'register_when_abilities_api_is_ready' ) );
+			return;
+		}
+
+		$this->register_when_abilities_api_is_ready();
+	}
+
+	public function register_when_abilities_api_is_ready(): void {
+		if ( ! class_exists( 'WP_Ability' ) ) {
 			return;
 		}
 

@@ -314,6 +314,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   try {
     const autoload = await stat(join(prepared.source, "vendor", "autoload.php"))
     if (autoload.isFile()) {
+      await writeComposerInstalledPackageAutoloader(prepared.source)
       return prepared
     }
   } catch {
@@ -363,9 +364,7 @@ async function writeComposerInstalledPackageAutoloader(pluginSource: string): Pr
   if (!await pathIsFile(installedPath)) {
     return
   }
-  const installed = JSON.parse(await readFile(installedPath, "utf8")) as unknown
-  const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
-  if (classmapPaths.length === 0 || !await pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) {
+  if (!await pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) {
     return
   }
 
@@ -378,7 +377,11 @@ if (is_file($wp_codebox_composer_package_classmap)) {
             $loaded_classmap = require $wp_codebox_composer_package_classmap;
             $classmap = is_array($loaded_classmap) ? $loaded_classmap : array();
         }
-        if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+    if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+            return;
+        }
+        $wp_codebox_php_ai_client_prefix = 'WordPress' . chr(92) . 'AiClient' . chr(92);
+        if (str_starts_with($class, $wp_codebox_php_ai_client_prefix)) {
             return;
         }
         require_once $classmap[$class];
@@ -1510,13 +1513,14 @@ foreach ($plugins as $plugin) {
     if ('.' === $plugin_dir || '' === $plugin_dir) {
         throw new RuntimeException('WP Codebox Composer autoloader plugin entry must include a directory.');
     }
-    $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
-    if (is_file($autoload)) {
-        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
-    }
     $package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
     if (is_file($package_autoload)) {
         $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload_packages.php';";
+        continue;
+    }
+    $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+    if (is_file($autoload)) {
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
     }
 }
 if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {

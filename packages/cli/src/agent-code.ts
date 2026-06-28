@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { readdir, readFile, stat } from "node:fs/promises"
+import { join, relative, resolve } from "node:path"
 import { normalizeAgentBundles, phpRuntimeComponentLifecycleActionReplayFunction, sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload, type TaskInputAgentBundle } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
@@ -39,7 +39,7 @@ export async function resolveSandboxTaskCode(options: AgentSandboxCodeOptions): 
   return `echo json_encode(array('task_received' => true), JSON_PRETTY_PRINT);`
 }
 
-function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
+async function agentChatTaskCode(options: AgentSandboxCodeOptions): Promise<string> {
   const mode = options.mode ?? "sandbox"
   const agentModes = sandboxAgentModes(mode)
   const sandboxToolPolicy = options.sandboxToolPolicy
@@ -90,7 +90,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundles(options.agentBundles ?? [])
-  const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
+  const runtimeTask = await normalizeRuntimeTask(options.runtimeTask, input, sandboxWorkspace)
   return `
 if (function_exists('wp_set_current_user')) {
     wp_set_current_user(1);
@@ -320,15 +320,45 @@ function wp_codebox_registered_provider_ids(object $registry): array {
     return $provider_ids;
 }
 
+function wp_codebox_runtime_task_ability_candidates(string $requested_ability): array {
+    $aliases = function_exists('apply_filters') ? apply_filters('wp_codebox_runtime_task_ability_aliases', array(
+        'runtime-package/run' => array('agents/run-runtime-package', 'wp-codebox/run-runtime-package'),
+    )) : array();
+    $candidates = array($requested_ability);
+    if (is_array($aliases) && isset($aliases[$requested_ability]) && is_array($aliases[$requested_ability])) {
+        $candidates = array_merge($candidates, array_values($aliases[$requested_ability]));
+    }
+    $candidates = array_values(array_unique(array_filter(array_map('strval', $candidates), static fn(string $ability): bool => '' !== $ability)));
+    return !empty($candidates) ? $candidates : array($requested_ability);
+}
+
+function wp_codebox_resolve_runtime_task_ability(string $requested_ability): array {
+    $candidates = wp_codebox_runtime_task_ability_candidates($requested_ability);
+    if (!function_exists('wp_get_ability')) {
+        return array('name' => $requested_ability, 'ability' => null, 'candidates' => $candidates);
+    }
+    foreach ($candidates as $candidate) {
+        $ability = wp_get_ability($candidate);
+        if (null !== $ability && method_exists($ability, 'execute')) {
+            return array('name' => $candidate, 'ability' => $ability, 'candidates' => $candidates);
+        }
+    }
+    return array('name' => $requested_ability, 'ability' => null, 'candidates' => $candidates);
+}
+
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
-$ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
-$ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
+$requested_ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
+$resolved_runtime_task_ability = empty($sandbox_agent_bundle_import_failures) ? wp_codebox_resolve_runtime_task_ability($requested_ability_name) : array('name' => $requested_ability_name, 'ability' => null, 'candidates' => array($requested_ability_name));
+$ability_name = (string) ($resolved_runtime_task_ability['name'] ?? $requested_ability_name);
+$ability = $resolved_runtime_task_ability['ability'] ?? null;
 $registered_ability_ids = function_exists('wp_get_abilities') ? array_keys(wp_get_abilities()) : array();
 sort($registered_ability_ids);
 $runtime_task_preflight = array(
     'schema' => 'wp-codebox/runtime-task-ability-preflight/v1',
     'runtime_task_requested' => $runtime_task_run,
-    'ability' => $ability_name,
+    'ability' => $requested_ability_name,
+    'resolved_ability' => $ability_name,
+    'ability_candidates' => $resolved_runtime_task_ability['candidates'] ?? array($requested_ability_name),
     'registry_available' => function_exists('wp_get_ability'),
     'available' => null !== $ability && method_exists($ability, 'execute'),
     'registered_ability_ids' => $registered_ability_ids,
@@ -484,7 +514,7 @@ function defaultSandboxWorkspace(workspace: SandboxWorkspaceContract | undefined
   return mount ? { ...mount } : null
 }
 
-function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {
+async function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>, workspace?: SandboxWorkspaceContract): Promise<Record<string, unknown> | null> {
   if (!config || typeof config !== "object" || Array.isArray(config)) return null
 
   const ability = stringFromKeys(config, ["ability", "ability_name", "abilityName"])
@@ -498,7 +528,7 @@ function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agent
     input.task_input = agentInput
   }
 
-  const normalized: Record<string, unknown> = { ability, input }
+  const normalized: Record<string, unknown> = { ability, input: await runtimeTaskInputWithInlineBundle(ability, input, workspace) }
   if (typeof config.wait_for_completion === "boolean") {
     normalized.wait_for_completion = config.wait_for_completion
   }
@@ -512,6 +542,124 @@ function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agent
   }
 
   return normalized
+}
+
+async function runtimeTaskInputWithInlineBundle(ability: string, input: Record<string, unknown>, workspace?: SandboxWorkspaceContract): Promise<Record<string, unknown>> {
+  if (!['runtime-package/run', 'agents/run-runtime-package', 'wp-codebox/run-runtime-package'].includes(ability)) return input
+  const packageDescriptor = recordValue(input.package)
+  if (!packageDescriptor || recordValue(packageDescriptor.bundle)) return input
+  const source = typeof packageDescriptor.source === 'string' ? packageDescriptor.source.trim() : ''
+  if (!source) return input
+  const hostPath = workspaceHostPath(source, workspace)
+  if (!hostPath) return input
+  const bundle = await readDataMachineBundleDirectory(hostPath)
+  if (!bundle) return input
+  return { ...input, package: { ...packageDescriptor, bundle } }
+}
+
+function workspaceHostPath(sandboxPath: string, workspace?: SandboxWorkspaceContract): string {
+  const mounts = Array.isArray(workspace?.mounts) ? workspace.mounts : []
+  for (const mount of mounts) {
+    const mountRecord = mount as unknown as Record<string, unknown>
+    const target = typeof mount?.target === 'string' ? mount.target.replace(/\/+$/, '') : ''
+    const source = typeof mountRecord.source === 'string' ? mountRecord.source.replace(/\/+$/, '') : ''
+    if (!target || !source) continue
+    if (sandboxPath === target || sandboxPath.startsWith(`${target}/`)) {
+      return join(source, sandboxPath.slice(target.length).replace(/^\/+/, ''))
+    }
+  }
+  return ''
+}
+
+async function readDataMachineBundleDirectory(directory: string): Promise<Record<string, unknown> | null> {
+  try {
+    const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')) as Record<string, unknown>
+    const pipelines = await readJsonDocuments(join(directory, 'pipelines'))
+    const flows = await readJsonDocuments(join(directory, 'flows'))
+    const memory = await readTextFiles(join(directory, 'memory'))
+    return {
+      bundle_version: String(manifest.bundle_version ?? '1'),
+      bundle_slug: String(manifest.bundle_slug ?? recordValue(manifest.agent)?.slug ?? 'agent-bundle'),
+      source_ref: String(manifest.source_ref ?? ''),
+      source_revision: String(manifest.source_revision ?? ''),
+      bundle_schema_version: 1,
+      exported_at: String(manifest.exported_at ?? new Date().toISOString()),
+      agent: bundleAgentFromManifest(recordValue(manifest.agent) ?? {}),
+      files: agentMemoryFiles(memory),
+      pipelines: pipelines.map((pipeline, index) => legacyPipeline(pipeline, index + 1)),
+      flows: flows.map((flow, index) => legacyFlow(flow, index + 1, pipelines)),
+      artifact_files: {},
+      extension_artifacts: [],
+      extras: {},
+      abilities_manifest: {},
+    }
+  } catch {
+    return null
+  }
+}
+
+async function readJsonDocuments(directory: string): Promise<Record<string, unknown>[]> {
+  try {
+    const entries = (await readdir(directory)).filter((entry) => entry.endsWith('.json')).sort()
+    return Promise.all(entries.map(async (entry) => JSON.parse(await readFile(join(directory, entry), 'utf8')) as Record<string, unknown>))
+  } catch {
+    return []
+  }
+}
+
+async function readTextFiles(directory: string, base = directory): Promise<Record<string, string>> {
+  const files: Record<string, string> = {}
+  try {
+    for (const entry of await readdir(directory)) {
+      const full = join(directory, entry)
+      const info = await stat(full)
+      if (info.isDirectory()) Object.assign(files, await readTextFiles(full, base))
+      if (info.isFile()) files[relative(base, full).replace(/\\/g, '/')] = await readFile(full, 'utf8')
+    }
+  } catch {}
+  return files
+}
+
+function bundleAgentFromManifest(agent: Record<string, unknown>): Record<string, unknown> {
+  return {
+    agent_slug: String(agent.slug ?? 'agent'),
+    agent_name: String(agent.label ?? agent.slug ?? 'Agent'),
+    description: String(agent.description ?? ''),
+    agent_config: recordValue(agent.agent_config) ?? {},
+  }
+}
+
+function agentMemoryFiles(memory: Record<string, string>): Record<string, string> {
+  const files: Record<string, string> = {}
+  for (const [path, contents] of Object.entries(memory)) {
+    if (path.startsWith('agent/')) files[path.slice('agent/'.length)] = contents
+  }
+  return files
+}
+
+function legacyPipeline(pipeline: Record<string, unknown>, id: number): Record<string, unknown> {
+  const config: Record<string, unknown> = {}
+  for (const step of Array.isArray(pipeline.steps) ? pipeline.steps : []) {
+    if (!recordValue(step)) continue
+    const position = Number((step as Record<string, unknown>).step_position ?? Object.keys(config).length)
+    const key = `${id}_bundle_step_${position}`
+    config[key] = { ...(recordValue((step as Record<string, unknown>).step_config) ?? {}), pipeline_step_id: key, step_type: String((step as Record<string, unknown>).step_type ?? ''), execution_order: position }
+  }
+  return { original_id: id, portable_slug: String(pipeline.slug ?? `pipeline-${id}`), pipeline_name: String(pipeline.name ?? 'Pipeline'), pipeline_config: config, memory_file_contents: {} }
+}
+
+function legacyFlow(flow: Record<string, unknown>, id: number, pipelines: Record<string, unknown>[]): Record<string, unknown> {
+  const pipelineIndex = Math.max(0, pipelines.findIndex((pipeline) => pipeline.slug === flow.pipeline_slug))
+  const pipelineId = pipelineIndex + 1
+  const config: Record<string, unknown> = {}
+  for (const step of Array.isArray(flow.steps) ? flow.steps : []) {
+    if (!recordValue(step)) continue
+    const position = Number((step as Record<string, unknown>).step_position ?? Object.keys(config).length)
+    const pipelineStepId = `${pipelineId}_bundle_step_${position}`
+    const key = `${pipelineStepId}_${id}`
+    config[key] = { ...step as Record<string, unknown>, flow_step_id: key, pipeline_step_id: pipelineStepId, pipeline_id: pipelineId, flow_id: id, execution_order: position }
+  }
+  return { original_id: id, original_pipeline_id: pipelineId, portable_slug: String(flow.slug ?? `flow-${id}`), flow_name: String(flow.name ?? 'Flow'), flow_config: config, scheduling_config: { enabled: String(flow.schedule ?? 'manual') !== 'manual', interval: String(flow.schedule ?? 'manual'), max_items: Array.isArray(flow.max_items) ? flow.max_items : [] }, memory_file_contents: {} }
 }
 
 function stringFromKeys(record: Record<string, unknown>, keys: string[]): string {

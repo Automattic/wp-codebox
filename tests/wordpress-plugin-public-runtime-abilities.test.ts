@@ -8,6 +8,9 @@ const executionPhp = await readFile("packages/wordpress-plugin/src/trait-wp-code
 const fuzzSuiteRunnerPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-fuzz-suite-runner.php", "utf8")
 const runtimePackageServicePhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-package-service.php", "utf8")
 
+assert.match(abilitiesPhp, /add_action\(\s*'wp_abilities_api_init',\s*array\(\s*\$this,\s*'register_when_abilities_api_is_ready'\s*\)\s*\)/, "WP Codebox must defer ability registration until the Abilities API is ready")
+assert.match(abilitiesPhp, /function register_when_abilities_api_is_ready\(\): void/, "deferred ability registration callback must be present")
+
 for (const ability of ["wp-codebox/run-wordpress-workload", "wp-codebox/run-fuzz-suite", "wp-codebox/run-runtime-package"]) {
   assert.match(abilitiesPhp, new RegExp(`wp_register_ability\\(\\s*'${ability}'`), `${ability} must be registered`)
   assert.match(runtimeDescriptorsPhp, new RegExp(`'canonical_ability'\\s*=>\\s*'${ability}'`), `${ability} must mark its canonical id`)

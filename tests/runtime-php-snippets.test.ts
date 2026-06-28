@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { mkdtempSync } from "node:fs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
@@ -112,6 +116,34 @@ const sandboxAgentCodeWithRuntimeTask = await resolveSandboxTaskCode({
 })
 assert.match(sandboxAgentCodeWithRuntimeTask, /json_decode\(<<<'WP_CODEBOX_LITERAL_/)
 assert.doesNotMatch(sandboxAgentCodeWithRuntimeTask, /json_decode\(".*\$\{package\.root\}/s)
+
+const bundleRoot = mkdtempSync(join(tmpdir(), "wp-codebox-runtime-package-bundle-"))
+const workspaceRoot = join(bundleRoot, "workspace")
+const bundlePath = join(workspaceRoot, "bundles", "store-idea-agent")
+mkdirSync(join(bundlePath, "pipelines"), { recursive: true })
+mkdirSync(join(bundlePath, "flows"), { recursive: true })
+mkdirSync(join(bundlePath, "memory", "agent"), { recursive: true })
+writeFileSync(join(bundlePath, "manifest.json"), JSON.stringify({ bundle_slug: "store-idea-agent", bundle_version: "1", agent: { slug: "store-idea-agent", label: "Store Idea Agent" } }))
+writeFileSync(join(bundlePath, "pipelines", "store-idea-artifact-pipeline.json"), JSON.stringify({ slug: "store-idea-artifact-pipeline", name: "Store Idea Artifact Pipeline", steps: [{ step_position: 0, step_type: "ai", step_config: { label: "Generate" } }] }))
+writeFileSync(join(bundlePath, "flows", "store-idea-artifact-flow.json"), JSON.stringify({ slug: "store-idea-artifact-flow", name: "Store Idea Artifact", pipeline_slug: "store-idea-artifact-pipeline", schedule: "manual", max_items: [], steps: [{ step_position: 0, step_type: "ai" }] }))
+writeFileSync(join(bundlePath, "memory", "agent", "SOUL.md"), "# Store Idea Agent\n")
+const sandboxAgentCodeWithRuntimePackageBundle = await resolveSandboxTaskCode({
+  task: "Run runtime package",
+  agent: "wp-codebox-sandbox",
+  runtimeTask: {
+    ability: "wp-codebox/run-runtime-package",
+    input: { package: { slug: "store-idea-agent", source: "/workspace/example/bundles/store-idea-agent" } },
+  },
+  sandboxWorkspace: {
+    schema: "wp-codebox/sandbox-workspace/v1",
+    root: "/workspace",
+    defaultMode: "repo-backed",
+    mounts: [{ target: "/workspace/example", source: workspaceRoot, mode: "readwrite", sourceMode: "repo-backed" } as never],
+  },
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+assert.match(sandboxAgentCodeWithRuntimePackageBundle, /"bundle_slug":"store-idea-agent"/)
+assert.match(sandboxAgentCodeWithRuntimePackageBundle, /"bundle":\{"bundle_version":"1","bundle_slug":"store-idea-agent"/)
 
 const sandboxAgentCodeWithTools = await resolveSandboxTaskCode({
   task: "Inspect workspace",

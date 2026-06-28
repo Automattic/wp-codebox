@@ -23,6 +23,14 @@ try {
     concept_packet: { title: "Runtime task ability available" },
   })
 
+  const alias = await runRuntimeTaskRecipe(root, componentPath, "runtime-package/run")
+  const aliasRuntime = sandboxAgentRuntime(alias)
+  assert.equal(alias.success, true, JSON.stringify(aliasRuntime, null, 2))
+  assert.equal(aliasRuntime.success, true, JSON.stringify(aliasRuntime, null, 2))
+  assert.equal(aliasRuntime.result?.schema, "example/runtime-package-result/v1")
+  assert.equal(aliasRuntime.result?.success, true)
+  assert.equal(aliasRuntime.result?.concept_packet?.title, "Runtime task ability available")
+
   const missing = await runRuntimeTaskRecipe(root, componentPath, "example/missing-runtime-task")
   const missingRuntime = sandboxAgentRuntime(missing)
   assert.equal(missingRuntime.success, false)
@@ -66,6 +74,25 @@ add_action( 'wp_abilities_api_init', static function (): void {
             'output_schema' => array( 'type' => 'object' ),
         )
     );
+
+    wp_register_ability(
+        'agents/run-runtime-package',
+        array(
+            'label' => 'Example Runtime Package Adapter',
+            'description' => 'Synthetic runtime package adapter for sandbox ability alias tests.',
+            'category' => 'wp-codebox',
+            'execute_callback' => static function ( array $input ): array {
+                return array(
+                    'schema' => 'example/runtime-package-result/v1',
+                    'success' => true,
+                    'concept_packet' => array( 'title' => (string) ( $input['title'] ?? '' ) ),
+                );
+            },
+            'permission_callback' => '__return_true',
+            'input_schema' => array( 'type' => 'object' ),
+            'output_schema' => array( 'type' => 'object' ),
+        )
+    );
 } );
 `)
   return pluginPath
@@ -89,14 +116,14 @@ async function runRuntimeTaskRecipe(rootPath: string, componentPath: string, abi
   return JSON.parse(output) as { success?: boolean; executions?: Array<{ recipeCommand?: string; stdout?: string; parsed?: unknown }> }
 }
 
-function sandboxAgentRuntime(runOutput: { executions?: Array<{ recipeCommand?: string; stdout?: string; parsed?: unknown }> }): { success?: boolean; result?: unknown; error?: { code?: string; data?: { preflight?: { schema?: string; ability?: string; available?: boolean; registered_ability_ids?: string[] } } } } {
+function sandboxAgentRuntime(runOutput: { executions?: Array<{ recipeCommand?: string; stdout?: string; parsed?: unknown }> }): { success?: boolean; result?: any; error?: { code?: string; data?: { preflight?: { schema?: string; ability?: string; resolved_ability?: string; available?: boolean; registered_ability_ids?: string[] } } } } {
   const execution = runOutput.executions?.find((item) => item.recipeCommand === "wp-codebox.agent-sandbox-run")
   assert.ok(execution, "agent sandbox execution should be present")
   const parsed = typeof execution.parsed === "object" && execution.parsed !== null
     ? execution.parsed as Record<string, unknown>
     : JSON.parse(String(execution.stdout ?? "{}")) as Record<string, unknown>
   const output = typeof parsed.output === "string" ? JSON.parse(parsed.output) as Record<string, unknown> : parsed
-  return output.agent_runtime as { success?: boolean; result?: unknown; error?: { code?: string; data?: { preflight?: { schema?: string; ability?: string; available?: boolean; registered_ability_ids?: string[] } } } }
+  return output.agent_runtime as { success?: boolean; result?: any; error?: { code?: string; data?: { preflight?: { schema?: string; ability?: string; resolved_ability?: string; available?: boolean; registered_ability_ids?: string[] } } } }
 }
 
 async function captureStdout(callback: () => Promise<unknown>): Promise<string> {
