@@ -20,6 +20,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runner.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-connectors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-agents-api-executors.php';
+require_once __DIR__ . '/class-wp-codebox-sandbox-workspace-executor.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-backend.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
@@ -64,6 +65,7 @@ final class WP_Codebox_Abilities {
 
 		$this->register_category();
 		$this->register_agents_api_executor_adapters();
+		WP_Codebox_Sandbox_Workspace_Executor::register();
 		$this->register();
 		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
 		add_filter( 'rest_pre_dispatch', array( self::class, 'rest_handle_browser_callback_cors_preflight' ), 10, 3 );
