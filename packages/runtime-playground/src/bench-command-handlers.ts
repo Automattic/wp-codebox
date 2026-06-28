@@ -1514,14 +1514,160 @@ function wp_codebox_bench_workload_run_steps(array $workload): array {
     return !empty($steps) ? $steps : array($workload);
 }
 
+function wp_codebox_bench_required_value_specs($values, string $type): array {
+    $specs = array();
+    foreach (is_array($values) ? $values : array() as $value) {
+        if (is_string($value) && trim($value) !== '') {
+            $specs[] = array('type' => $type, 'value' => trim($value));
+        } elseif (is_array($value)) {
+            $spec = array_merge(array('type' => $type), $value);
+            if (!isset($spec['value']) && isset($spec['name'])) {
+                $spec['value'] = $spec['name'];
+            }
+            $specs[] = $spec;
+        }
+    }
+    return $specs;
+}
+
+function wp_codebox_bench_required_artifact_specs_from_declarations($declarations): array {
+    $specs = array();
+    foreach (is_array($declarations) ? $declarations : array() as $key => $declaration) {
+        if (is_array($declaration) && !empty($declaration['required'])) {
+            $spec = array('type' => 'artifact');
+            if (is_string($key) && $key !== '') {
+                $spec['value'] = $key;
+            }
+            foreach (array('name', 'kind', 'schema', 'semantic_key', 'semantic') as $field) {
+                if (isset($declaration[$field]) && is_string($declaration[$field]) && trim($declaration[$field]) !== '') {
+                    $spec[$field] = trim($declaration[$field]);
+                }
+            }
+            if (!isset($spec['value']) && isset($spec['name'])) {
+                $spec['value'] = $spec['name'];
+            }
+            $specs[] = $spec;
+        }
+    }
+    return $specs;
+}
+
+function wp_codebox_bench_workload_required_specs(array $workload): array {
+    return array_merge(
+        wp_codebox_bench_required_value_specs($workload['required_artifacts'] ?? ($workload['requiredArtifacts'] ?? array()), 'artifact'),
+        wp_codebox_bench_required_value_specs($workload['required_artifact_kinds'] ?? ($workload['requiredArtifactKinds'] ?? array()), 'artifact_kind'),
+        wp_codebox_bench_required_value_specs($workload['required_observations'] ?? ($workload['requiredObservations'] ?? array()), 'observation'),
+        wp_codebox_bench_required_artifact_specs_from_declarations($workload['artifacts'] ?? array())
+    );
+}
+
+function wp_codebox_bench_artifact_matches_required_spec(string $key, array $artifact, array $spec): bool {
+    if (($spec['type'] ?? '') === 'artifact_kind') {
+        $expected_kind = isset($spec['value']) && is_string($spec['value']) ? trim($spec['value']) : (isset($spec['kind']) && is_string($spec['kind']) ? trim($spec['kind']) : '');
+        return $expected_kind !== '' && isset($artifact['kind']) && is_string($artifact['kind']) && $artifact['kind'] === $expected_kind;
+    }
+
+    $metadata = isset($artifact['metadata']) && is_array($artifact['metadata']) ? $artifact['metadata'] : array();
+    $candidates = array($key);
+    foreach (array('name', 'kind', 'source', 'path') as $field) {
+        if (isset($artifact[$field]) && is_string($artifact[$field])) {
+            $candidates[] = $artifact[$field];
+        }
+    }
+    foreach (array('schema', 'semantic', 'semantic_key') as $field) {
+        if (isset($metadata[$field]) && is_string($metadata[$field])) {
+            $candidates[] = $metadata[$field];
+        }
+    }
+
+    foreach (array('value', 'name', 'kind', 'schema', 'semantic_key', 'semantic') as $field) {
+        if (!isset($spec[$field]) || !is_string($spec[$field]) || trim($spec[$field]) === '') {
+            continue;
+        }
+        $expected = trim($spec[$field]);
+        foreach ($candidates as $candidate) {
+            if ($candidate === $expected) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function wp_codebox_bench_step_matches_required_spec(array $step, array $spec): bool {
+    $expected = isset($spec['value']) && is_string($spec['value']) ? trim($spec['value']) : '';
+    if ($expected === '') {
+        return false;
+    }
+    foreach (array('type', 'name', 'command', 'ability', 'path', 'route') as $field) {
+        if (isset($step[$field]) && is_scalar($step[$field]) && (string) $step[$field] === $expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function wp_codebox_bench_payload_satisfies_required_spec(array $payload, array $spec): bool {
+    foreach (is_array($payload['artifacts'] ?? null) ? $payload['artifacts'] : array() as $key => $artifact) {
+        if (is_array($artifact) && wp_codebox_bench_artifact_matches_required_spec((string) $key, $artifact, $spec)) {
+            return true;
+        }
+    }
+    if (($spec['type'] ?? '') === 'observation') {
+        foreach (is_array($payload['steps'] ?? null) ? $payload['steps'] : array() as $step) {
+            if (is_array($step) && wp_codebox_bench_step_matches_required_spec($step, $spec)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function wp_codebox_bench_required_spec_label(array $spec): string {
+    foreach (array('value', 'name', 'kind', 'schema', 'semantic_key', 'semantic') as $field) {
+        if (isset($spec[$field]) && is_string($spec[$field]) && trim($spec[$field]) !== '') {
+            return ($spec['type'] ?? 'required') . ':' . trim($spec[$field]);
+        }
+    }
+    return (string) ($spec['type'] ?? 'required');
+}
+
+function wp_codebox_bench_assert_required_observations(array $workload, array $payload): void {
+    $required_specs = wp_codebox_bench_workload_required_specs($workload);
+    if (empty($required_specs)) {
+        return;
+    }
+
+    $missing = array();
+    foreach ($required_specs as $spec) {
+        if (!is_array($spec) || wp_codebox_bench_payload_satisfies_required_spec($payload, $spec)) {
+            continue;
+        }
+        $missing[] = wp_codebox_bench_required_spec_label($spec);
+    }
+    if (empty($missing)) {
+        return;
+    }
+
+    $artifact_keys = array_keys(is_array($payload['artifacts'] ?? null) ? $payload['artifacts'] : array());
+    $step_types = array_values(array_filter(array_map(static fn($step) => is_array($step) && isset($step['type']) ? (string) $step['type'] : null, is_array($payload['steps'] ?? null) ? $payload['steps'] : array())));
+    throw new RuntimeException('wordpress.bench required observations were not produced for workload "' . (string) ($workload['id'] ?? 'configured') . '". diagnostic=' . wp_json_encode(array(
+        'schema' => 'wp-codebox/bench-required-observation-diagnostic/v1',
+        'workload_id' => (string) ($workload['id'] ?? 'configured'),
+        'missing' => $missing,
+        'actual' => array(
+            'artifact_keys' => $artifact_keys,
+            'step_count' => count(is_array($payload['steps'] ?? null) ? $payload['steps'] : array()),
+            'step_types' => $step_types,
+        ),
+    ), JSON_UNESCAPED_SLASHES));
+}
+
 function wp_codebox_bench_run_configured_workload(array $workload, string $plugin_path) {
     $steps = wp_codebox_bench_workload_run_steps($workload);
     $payload = array('metrics' => array(), 'metadata' => array(), 'artifacts' => array(), 'steps' => array(), 'diagnostics' => array());
     if (isset($workload['metadata']) && is_array($workload['metadata'])) {
         $payload['metadata'] = array_merge($payload['metadata'], $workload['metadata']);
-    }
-    if (isset($workload['artifacts']) && is_array($workload['artifacts'])) {
-        $payload['artifacts'] = array_merge($payload['artifacts'], $workload['artifacts']);
     }
     foreach ($steps as $step) {
         if (!is_array($step)) {
@@ -1578,6 +1724,7 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
             }
         }
     }
+    wp_codebox_bench_assert_required_observations($workload, $payload);
     return $payload;
 }
 

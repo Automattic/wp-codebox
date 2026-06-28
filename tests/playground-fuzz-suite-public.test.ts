@@ -116,25 +116,23 @@ const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-ho
 assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
 assert.equal(hotspotsRef?.contentType, "application/json")
 assert.equal(hotspotsRef?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
-const hotspots = (result.metadata?.artifacts as { wordpressHotspots?: { schema?: string; summary?: { surfaces?: Record<string, number> }; hotspots?: Array<{ identifier: { surface: string; route?: string; id: string }; metrics: Array<{ kind: string; value: number }> }> } } | undefined)?.wordpressHotspots
-assert.equal(hotspots?.schema, "wp-codebox/wordpress-hotspots/v1")
-assert.equal((hotspots?.summary?.surfaces?.rest ?? 0) >= 1, true)
-assert.equal((hotspots?.summary?.surfaces?.db ?? 0) >= 1, true)
-assert.equal((hotspots?.summary?.surfaces?.browser ?? 0) >= 1, true)
-assert.equal(hotspots?.hotspots?.some((hotspot) => hotspot.identifier.route === "/wp/v2/types" && hotspot.metrics.some((metric) => metric.kind === "query-count" && metric.value === 7)), true)
-assert.equal(hotspots?.hotspots?.some((hotspot) => hotspot.identifier.route === "/wc/store/v1/products" && hotspot.metrics.some((metric) => metric.kind === "query-count" && metric.value === 9)), true)
 const homeboyObservationRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-observation-set")
 assert.equal(homeboyObservationRef?.path, "files/fuzz-observations.json")
 assert.equal(homeboyObservationRef?.metadata?.schema, "homeboy/fuzz-observation-set/v1")
 const homeboyHotspotRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-hotspot-set")
 assert.equal(homeboyHotspotRef?.path, "files/fuzz-hotspots.json")
 assert.equal(homeboyHotspotRef?.metadata?.schema, "homeboy/fuzz-hotspot-set/v1")
-const homeboyObservationSet = (result.metadata?.artifacts as { fuzzObservationSet?: { schema?: string; observations?: Array<{ family?: string; case_id?: string; subject?: string; metric?: string; value?: number; unit?: string }> } } | undefined)?.fuzzObservationSet
-assert.equal(homeboyObservationSet?.schema, "homeboy/fuzz-observation-set/v1")
-assert.equal(homeboyObservationSet?.observations?.some((observation) => observation.family === "database" && observation.case_id === "typed-workload" && observation.subject === "/wc/store/v1/products" && observation.metric === "query-count" && observation.value === 9 && observation.unit === "count"), true)
-const homeboyHotspotSet = (result.metadata?.artifacts as { fuzzHotspotSet?: { schema?: string; hotspots?: Array<{ family?: string; subject?: string; metric?: string; value?: number; rank?: number }> } } | undefined)?.fuzzHotspotSet
-assert.equal(homeboyHotspotSet?.schema, "homeboy/fuzz-hotspot-set/v1")
-assert.equal(homeboyHotspotSet?.hotspots?.some((hotspot) => hotspot.family === "database" && hotspot.subject === "/wc/store/v1/products" && hotspot.metric === "query-count" && hotspot.value === 9 && typeof hotspot.rank === "number"), true)
+const fuzzResultRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-suite-result")
+assert.equal(fuzzResultRef?.path, "files/fuzz-result.json")
+assert.equal(fuzzResultRef?.metadata?.schema, "wp-codebox/fuzz-suite-result/v1")
+const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { path?: string }; wordpressHotspots?: { path?: string; hotspots?: unknown[] }; fuzzObservationSet?: { path?: string; observations?: unknown[] }; fuzzHotspotSet?: { path?: string; hotspots?: unknown[] } } | undefined
+assert.equal(metadataArtifacts?.fuzzResult?.path, "files/fuzz-result.json")
+assert.equal(metadataArtifacts?.wordpressHotspots?.path, "files/wordpress-hotspots.json")
+assert.equal(metadataArtifacts?.fuzzObservationSet?.path, "files/fuzz-observations.json")
+assert.equal(metadataArtifacts?.fuzzHotspotSet?.path, "files/fuzz-hotspots.json")
+assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
+assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
+assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
 
 console.log("playground fuzz suite public ok")
 

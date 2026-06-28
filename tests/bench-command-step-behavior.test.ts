@@ -57,6 +57,23 @@ const commandStepHelpers = [
   "wp_codebox_bench_workload_run_steps",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
+const configuredWorkloadHelpers = [
+  "wp_codebox_bench_metric_prefix",
+  "wp_codebox_bench_command_step_record",
+  "wp_codebox_bench_run_command_step",
+  "wp_codebox_bench_command_step_payload",
+  "wp_codebox_bench_workload_run_steps",
+  "wp_codebox_bench_required_value_specs",
+  "wp_codebox_bench_required_artifact_specs_from_declarations",
+  "wp_codebox_bench_workload_required_specs",
+  "wp_codebox_bench_artifact_matches_required_spec",
+  "wp_codebox_bench_step_matches_required_spec",
+  "wp_codebox_bench_payload_satisfies_required_spec",
+  "wp_codebox_bench_required_spec_label",
+  "wp_codebox_bench_assert_required_observations",
+  "wp_codebox_bench_run_configured_workload",
+].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
+
 const externalHttpGuardrailHelpers = [
   "wp_codebox_bench_metric_prefix",
   "wp_codebox_bench_command_step_record",
@@ -126,6 +143,50 @@ assert.equal(typeof commandStepPayload.steps[0].timing.duration_ms, "number")
 assert.equal(typeof commandStepPayload.metrics.ability_duration_ms, "number")
 assert.equal(commandStepPayload.metrics.custom_count, 2)
 assert.deepEqual(commandStepPayload.metadata, { called: "example/run" })
+
+const requiredObservationGate = await withTempDir("wp-codebox-required-observation-gate-", async (directory) => {
+  const phpTestFile = join(directory, "required-observation-gate.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${configuredWorkloadHelpers}
+function wp_json_encode($value, $flags = 0) { return json_encode($value, $flags); }
+$messages = array();
+foreach (array(
+    array(
+        'id' => 'declared-report-only',
+        'artifacts' => array('report' => array('required' => true, 'kind' => 'json')),
+        'run' => array(array('type' => 'php', 'code' => 'return array("metrics" => array("ok_count" => 1));')),
+    ),
+    array(
+        'id' => 'missing-profiler-observation',
+        'required_observations' => array('rest-db-query-profiler'),
+        'run' => array(array('type' => 'php', 'code' => 'return array("artifacts" => array("report" => array("name" => "report", "kind" => "json")));')),
+    ),
+) as $workload) {
+    try {
+        wp_codebox_bench_run_configured_workload($workload, ${JSON.stringify(directory)});
+        $messages[] = 'ok';
+    } catch (Throwable $e) {
+        $messages[] = $e->getMessage();
+    }
+}
+$payload = wp_codebox_bench_run_configured_workload(array(
+    'id' => 'emitted-report',
+    'required_artifacts' => array('report'),
+    'run' => array(array('type' => 'php', 'code' => 'return array("artifacts" => array("report" => array("name" => "report", "kind" => "json")), "steps" => array(array("type" => "artifact-postprocess")));')),
+), ${JSON.stringify(directory)});
+$messages[] = array_keys($payload['artifacts'])[0];
+echo json_encode($messages, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<string[]>(phpTestFile)
+})
+assert.match(requiredObservationGate[0], /required observations were not produced/)
+assert.match(requiredObservationGate[0], /artifact:report/)
+assert.match(requiredObservationGate[0], /"step_count":0/)
+assert.match(requiredObservationGate[1], /observation:rest-db-query-profiler/)
+assert.equal(requiredObservationGate[2], "report")
 
 const externalHttpGuardrailPayload = await withTempDir("wp-codebox-external-http-guardrail-", async (directory) => {
   const phpTestFile = join(directory, "external-http-guardrail.php")

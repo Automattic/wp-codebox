@@ -475,17 +475,24 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
   }
   const homeboyObservationRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-observations.json", "fuzz-observation-set", "homeboy/fuzz-observation-set/v1", homeboyObservationContent)
   const homeboyHotspotRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-hotspots.json", "fuzz-hotspot-set", "homeboy/fuzz-hotspot-set/v1", homeboyHotspotContent)
+  const artifactRefs = dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref, homeboyObservationRef, homeboyHotspotRef])
+  const linkedMetadataArtifacts = {
+    ...(recordValue(result.metadata?.artifacts) ?? {}),
+    wordpressHotspots: ref,
+    fuzzObservationSet: homeboyObservationRef,
+    fuzzHotspotSet: homeboyHotspotRef,
+  }
+  const resultArtifactContent = `${JSON.stringify({ ...result, artifactRefs, metadata: { ...result.metadata, artifacts: linkedMetadataArtifacts } }, null, 2)}\n`
+  const resultRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-result.json", "fuzz-suite-result", result.schema, resultArtifactContent)
 
   return {
     ...result,
-    artifactRefs: dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref, homeboyObservationRef, homeboyHotspotRef]),
+    artifactRefs: dedupeFuzzSuiteArtifactRefs([...artifactRefs, resultRef]),
     metadata: {
       ...result.metadata,
       artifacts: {
-        ...(recordValue(result.metadata?.artifacts) ?? {}),
-        wordpressHotspots: artifact,
-        fuzzObservationSet: homeboyObservationSet,
-        fuzzHotspotSet: homeboyHotspotSet,
+        ...linkedMetadataArtifacts,
+        fuzzResult: resultRef,
       },
     },
   }
