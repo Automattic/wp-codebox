@@ -16,11 +16,23 @@ const episode = {
   async step(action: { command: string; args?: string[] }, observation?: unknown): Promise<RuntimeEpisodeStepResult> {
     steps.push({ command: action.command, args: action.args, observation })
     const index = steps.length
+    const runPhpCode = action.command === "wordpress.run-php" ? action.args?.[0]?.replace(/^code=/, "") ?? "" : ""
     const commandPayloads: Record<string, Record<string, unknown>> = {
       "wordpress.rest-request": { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 } },
-      "wordpress.run-php": { status: "passed", artifactRefs: [{ name: "php-report", path: "workloads/php-report.json" }] },
+      "wordpress.run-php": runPhpCode.includes("rest-db-query-profiler") ? {
+        schema: "wp-codebox/bench-results/v1",
+        scenarios: [{
+          id: "typed-rest-profile",
+          artifacts: {
+            "rest-db-query-profile": {
+              schema: "wp-codebox/wordpress-rest-db-query-profile/v1",
+              cases: [{ case_id: "products", method: "GET", path: "/wc/store/v1/products", summary: { query_count: 9, total_time_ms: 12.5 } }],
+            },
+          },
+        }],
+      } : { status: "passed", artifactRefs: [{ name: "php-report", path: "workloads/php-report.json" }] },
       "wordpress.rest-performance-observation": {
         observations: [{ schema: "wp-codebox/performance-observation/v1", command: "wordpress.rest-performance-observation", target: "/wp/v2/types", kind: "rest-request", timing: { durationMs: 120 }, database: { queryCount: 7, totalTimeMs: 34 } }],
       },
@@ -70,6 +82,7 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     { id: "db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
     { id: "workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }] } },
     { id: "php-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", runtime_env: { WC_REST_BATCH_IMPORT_ITEMS: "2" }, settings: { fixtureMode: "small" }, steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/wp-codebox-workloads/rest-product-batch-import.php"] }] } },
+    { id: "typed-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }] }, metadata: { caseMetadata: { intent: { plugin: { activation: "woocommerce/woocommerce.php" } } } } },
   ],
 }), { requireCoverage: true })
 
@@ -78,7 +91,7 @@ assert.equal(result.success, true)
 assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
-assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation", "wp-codebox.checkpoint-restore", "wordpress.run-php"])
+assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation", "wp-codebox.checkpoint-restore", "wordpress.run-php", "wp-codebox.checkpoint-restore", "wordpress.run-php"])
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
@@ -86,6 +99,7 @@ assert.equal(result.cases[1]?.reset?.status, "passed")
 assert.equal(result.cases[2]?.status, "passed")
 assert.equal(result.cases[3]?.status, "passed")
 assert.equal(result.cases[4]?.status, "passed")
+assert.equal(result.cases[5]?.status, "passed")
 assert.equal(steps[7]?.args?.[0]?.startsWith("operation-json="), true)
 assert.equal(JSON.parse(steps[7]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
 assert.deepEqual(steps[9]?.args, ["path=/wp/v2/types", "capture-queries=1"])
@@ -96,6 +110,8 @@ assert.deepEqual(nestedPhpInput.runtimeEnv, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
 assert.deepEqual(nestedPhpInput.runtime_env, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
 assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
 assert.equal(result.cases[4]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
+assert.match(steps[13]?.args?.[0] ?? "", /rest-db-query-profiler/)
+assert.match(steps[13]?.args?.[0] ?? "", /woocommerce/)
 const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-hotspots")
 assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
 assert.equal(hotspotsRef?.contentType, "application/json")
@@ -106,6 +122,19 @@ assert.equal((hotspots?.summary?.surfaces?.rest ?? 0) >= 1, true)
 assert.equal((hotspots?.summary?.surfaces?.db ?? 0) >= 1, true)
 assert.equal((hotspots?.summary?.surfaces?.browser ?? 0) >= 1, true)
 assert.equal(hotspots?.hotspots?.some((hotspot) => hotspot.identifier.route === "/wp/v2/types" && hotspot.metrics.some((metric) => metric.kind === "query-count" && metric.value === 7)), true)
+assert.equal(hotspots?.hotspots?.some((hotspot) => hotspot.identifier.route === "/wc/store/v1/products" && hotspot.metrics.some((metric) => metric.kind === "query-count" && metric.value === 9)), true)
+const homeboyObservationRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-observation-set")
+assert.equal(homeboyObservationRef?.path, "files/fuzz-observations.json")
+assert.equal(homeboyObservationRef?.metadata?.schema, "homeboy/fuzz-observation-set/v1")
+const homeboyHotspotRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-hotspot-set")
+assert.equal(homeboyHotspotRef?.path, "files/fuzz-hotspots.json")
+assert.equal(homeboyHotspotRef?.metadata?.schema, "homeboy/fuzz-hotspot-set/v1")
+const homeboyObservationSet = (result.metadata?.artifacts as { fuzzObservationSet?: { schema?: string; observations?: Array<{ family?: string; case_id?: string; subject?: string; metric?: string; value?: number; unit?: string }> } } | undefined)?.fuzzObservationSet
+assert.equal(homeboyObservationSet?.schema, "homeboy/fuzz-observation-set/v1")
+assert.equal(homeboyObservationSet?.observations?.some((observation) => observation.family === "database" && observation.case_id === "typed-workload" && observation.subject === "/wc/store/v1/products" && observation.metric === "query-count" && observation.value === 9 && observation.unit === "count"), true)
+const homeboyHotspotSet = (result.metadata?.artifacts as { fuzzHotspotSet?: { schema?: string; hotspots?: Array<{ family?: string; subject?: string; metric?: string; value?: number; rank?: number }> } } | undefined)?.fuzzHotspotSet
+assert.equal(homeboyHotspotSet?.schema, "homeboy/fuzz-hotspot-set/v1")
+assert.equal(homeboyHotspotSet?.hotspots?.some((hotspot) => hotspot.family === "database" && hotspot.subject === "/wc/store/v1/products" && hotspot.metric === "query-count" && hotspot.value === 9 && typeof hotspot.rank === "number"), true)
 
 console.log("playground fuzz suite public ok")
 
