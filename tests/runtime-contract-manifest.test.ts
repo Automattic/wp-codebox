@@ -57,6 +57,7 @@ import {
   RUNTIME_PROFILE_SCHEMA,
   RUNTIME_DESCRIPTOR_SCHEMA,
   RUNTIME_RUN_RESULT_SCHEMA,
+  TYPED_ARTIFACT_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
@@ -98,7 +99,7 @@ assert.equal(manifest.schemas.browserSession.containedSiteApplyResult, BROWSER_C
 assert.equal(manifest.schemas.preview.lease, PREVIEW_LEASE_SCHEMA)
 assert.equal(manifest.schemas.preview.reviewerAccess, "wp-codebox/preview-reviewer-access/v1")
 assert.equal(manifest.schemas.artifact.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
-assert.equal(manifest.schemas.artifact.typedArtifact, "wp-codebox/structured-artifact/v1")
+assert.equal(manifest.schemas.artifact.typedArtifact, TYPED_ARTIFACT_SCHEMA)
 assert.equal(manifest.schemas.artifact.typedArtifactIndex, "wp-codebox/typed-artifacts-index/v1")
 assert.equal(manifest.schemas.artifact.runtimePackageDeclaration, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA)
 assert.equal(manifest.schemas.artifact.runtimePackageProjection, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA)
@@ -164,8 +165,8 @@ assert.equal(RUNTIME_CONTRACT_NORMALIZERS.agentTaskRunResult({ status: "complete
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.artifactResultEnvelope({ success: true, result: { artifact_ref: { kind: "bundle", path: "artifacts/run" } } }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.previewReviewerAccess(undefined).status, "unavailable")
-assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifact({ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) })?.artifact.kind, "typed-artifact")
-assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifactIndex({ artifacts: [{ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) }] }).artifacts.length, 1)
+assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifact({ name: "report", type: "json", artifact: { path: "files/report.json", sha256: "a".repeat(64) } })?.artifact?.kind, "typed-artifact")
+assert.equal(RUNTIME_CONTRACT_NORMALIZERS.typedArtifactIndex({ artifacts: [{ name: "report", type: "json", artifact: { path: "files/report.json", sha256: "a".repeat(64) } }] }).artifacts.length, 1)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationInput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutputEnvelope(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } })).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)

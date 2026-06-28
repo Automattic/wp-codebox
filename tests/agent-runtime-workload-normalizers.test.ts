@@ -67,7 +67,7 @@ const adaptedSingleResultShape = normalizeAgentRuntimeWorkload({
   schema: "example/runtime-package-result/v1",
   success: true,
   concept_packet: { title: "Generated concept" },
-  typed_artifacts: [{ name: "concept_packet", artifact_schema: "example/concept-packet/v1", payload: { title: "Generated concept" } }],
+  typed_artifacts: [{ name: "concept_packet", type: "example.concept-packet", payload_schema: "example/concept-packet/v1", payload: { title: "Generated concept" } }],
   structured_artifacts: [{ name: "concept_packet", schema: "example/concept-packet/v1", payload: { title: "Generated concept" } }],
 }, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters })
 assert.equal(adaptedSingleResultShape.success, true)

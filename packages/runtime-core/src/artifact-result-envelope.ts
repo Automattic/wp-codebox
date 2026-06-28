@@ -1,5 +1,6 @@
 import type { MaterializationArtifactRef, MaterializationDiagnostic } from "./materialization-contracts.js"
 import { buildArtifactDiagnostics, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics } from "./artifact-diagnostics.js"
+import { normalizeTypedArtifactDTOs, type TypedArtifactDTO } from "./structured-artifacts.js"
 
 export const ARTIFACT_RESULT_ENVELOPE_SCHEMA = "wp-codebox/artifact-result-envelope/v1" as const
 
@@ -14,6 +15,7 @@ export interface ArtifactResultEnvelopeBase {
   artifactBundle?: MaterializationArtifactRef
   artifactRefs: MaterializationArtifactRef[]
   evidenceRefs: MaterializationArtifactRef[]
+  typed_artifacts: TypedArtifactDTO[]
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   diagnostics: MaterializationDiagnostic[]
@@ -51,6 +53,7 @@ export function artifactDiagnosticsResultEnvelope(input: {
   artifactBundle?: MaterializationArtifactRef
   artifactRefs?: MaterializationArtifactRef[]
   evidenceRefs?: MaterializationArtifactRef[]
+  typedArtifacts?: unknown
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   metadata?: Record<string, unknown>
@@ -64,6 +67,7 @@ export function artifactDiagnosticsResultEnvelope(input: {
     artifactBundle: input.artifactBundle,
     artifactRefs: input.artifactRefs,
     evidenceRefs: input.evidenceRefs,
+    typedArtifacts: input.typedArtifacts,
     verification: input.verification,
     result: stripUndefined({
       ...input.result,
@@ -82,6 +86,7 @@ export function artifactResultEnvelope(input: {
   artifactBundle?: MaterializationArtifactRef
   artifactRefs?: MaterializationArtifactRef[]
   evidenceRefs?: MaterializationArtifactRef[]
+  typedArtifacts?: unknown
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   diagnostics?: MaterializationDiagnostic[]
@@ -92,6 +97,7 @@ export function artifactResultEnvelope(input: {
   const status = input.status ?? (input.error ? "failed" : "created")
   const artifactRefs = normalizeArtifactRefs([...(input.artifactBundle ? [input.artifactBundle] : []), ...(input.artifactRefs ?? [])])
   const evidenceRefs = normalizeArtifactRefs(input.evidenceRefs ?? [])
+  const typedArtifacts = normalizeArtifactResultTypedArtifacts(input.typedArtifacts ?? input.result)
   const diagnostics = input.diagnostics ?? []
   const base = stripUndefined({
     schema: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
@@ -101,8 +107,9 @@ export function artifactResultEnvelope(input: {
     artifactBundle: input.artifactBundle,
     artifactRefs,
     evidenceRefs,
+    typed_artifacts: typedArtifacts,
     verification: input.verification,
-    result: input.result,
+    result: resultWithoutTypedArtifacts(input.result),
     diagnostics,
     metadata: input.metadata,
   })
@@ -141,6 +148,7 @@ export function normalizeArtifactResultEnvelope(input: unknown, fallbackOperatio
       artifactBundle: materializationArtifactRef(record.artifactBundle),
       artifactRefs: Array.isArray(record.artifactRefs) ? record.artifactRefs.map(materializationArtifactRef).filter(isDefined) : [],
       evidenceRefs: Array.isArray(record.evidenceRefs) ? record.evidenceRefs.map(materializationArtifactRef).filter(isDefined) : [],
+      typedArtifacts: record.typed_artifacts,
       verification: asRecord(record.verification),
       result: asRecord(record.result),
       diagnostics: Array.isArray(record.diagnostics) ? record.diagnostics.map(materializationDiagnostic).filter(isDefined) : [],
@@ -157,10 +165,28 @@ export function normalizeArtifactResultEnvelope(input: unknown, fallbackOperatio
     artifactBundle: materializationArtifactRef(result.artifactBundle ?? result.artifact_bundle ?? result.artifact_ref),
     artifactRefs: Array.isArray(result.artifactRefs) ? result.artifactRefs.map(materializationArtifactRef).filter(isDefined) : [],
     evidenceRefs: Array.isArray(result.evidenceRefs) ? result.evidenceRefs.map(materializationArtifactRef).filter(isDefined) : [],
+    typedArtifacts: result.typed_artifacts,
     verification: asRecord(result.verification),
     result,
     error: result.success === false ? errorObject(result.error) ?? "Artifact operation failed." : undefined,
   })
+}
+
+function resultWithoutTypedArtifacts(result: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!result || !("typed_artifacts" in result)) return result
+  const { typed_artifacts, ...rest } = result
+  void typed_artifacts
+  return rest
+}
+
+export function normalizeArtifactResultTypedArtifacts(input: unknown): TypedArtifactDTO[] {
+  const record = asRecord(input)
+  const source = Array.isArray(input)
+    ? input
+    : Array.isArray(record?.typed_artifacts)
+      ? record.typed_artifacts
+      : []
+  return normalizeTypedArtifactDTOs(source)
 }
 
 function normalizeArtifactRefs(refs: MaterializationArtifactRef[]): MaterializationArtifactRef[] {

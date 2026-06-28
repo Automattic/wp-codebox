@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -35,7 +35,7 @@ export interface AgentTaskRunOutput {
   completion_outcome: Record<string, unknown>
   component_contracts: Array<Record<string, unknown>>
   structured_artifacts: Array<Record<string, unknown>>
-  typed_artifacts: Array<Record<string, unknown>>
+  typed_artifacts: TypedArtifactDTO[]
   outputs: Record<string, unknown>
   artifact_result: ArtifactResultEnvelope
   run: Record<string, unknown>
@@ -198,16 +198,16 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const session = sandboxSession(input, run, artifacts, success ? "completed" : "failed")
     const structuredArtifacts = structuredArtifactRefs(agentTaskResult, workload.outputs)
     const outputs = stripUndefined({ ...workload.outputs })
-    const typedArtifacts = agentTaskRunTypedArtifacts(agentTaskResult, outputs, run)
+    const typedArtifacts = normalizeArtifactResultTypedArtifacts({ typed_artifacts: [...arrayRecords(agentTaskResult.typed_artifacts), ...arrayRecords(outputs.typed_artifacts)] })
     const evidence = evidenceRefs(run, artifacts, failureEvidence)
     const artifactResult = artifactResultEnvelope({
       operation: "agent-task-run",
       status: success ? "created" : "failed",
       artifactBundle: agentTaskRunResult.refs.artifact_bundles[0],
       artifactRefs: [...agentTaskRunResult.refs.artifact_bundles, ...agentTaskRunResult.artifacts],
+      typedArtifacts,
       result: {
         structured_artifacts: structuredArtifacts,
-        typed_artifacts: typedArtifacts,
         agent_reply: agentReply(agentResult, terminalResult, agentTaskRunResult),
         transcript_refs: agentTaskRunResult.refs.transcripts,
         evidence_refs: evidence,
@@ -625,36 +625,6 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>, worklo
   return dedupeRecords([...fromOutputs, ...fromWorkloadOutputs].filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))))
 }
 
-export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
-  const outputs = objectValue(agentTaskResult.outputs) || {}
-  const outputsResult = objectValue(outputs.result) || {}
-  const result = objectValue(agentTaskResult.result) || {}
-  const raw = objectValue(agentTaskResult.raw) || {}
-  const rawResult = objectValue(raw.result) || {}
-  const rawRuntimeResult = objectValue(objectValue(raw.agent_runtime)?.result) || {}
-  return dedupeRecords([
-    agentTaskResult.typed_artifacts,
-    outputs.typed_artifacts,
-    objectValue(outputsResult.outputs)?.typed_artifacts,
-    objectValue(outputsResult.engine_data)?.outputs && objectValue(objectValue(outputsResult.engine_data)?.outputs)?.typed_artifacts,
-    workloadOutputs.typed_artifacts,
-    result.typed_artifacts,
-    objectValue(result.outputs)?.typed_artifacts,
-    objectValue(result.engine_data)?.outputs && objectValue(objectValue(result.engine_data)?.outputs)?.typed_artifacts,
-    rawResult.typed_artifacts,
-    objectValue(rawResult.outputs)?.typed_artifacts,
-    objectValue(rawResult.engine_data)?.outputs && objectValue(objectValue(rawResult.engine_data)?.outputs)?.typed_artifacts,
-    rawRuntimeResult.typed_artifacts,
-    objectValue(rawRuntimeResult.outputs)?.typed_artifacts,
-    objectValue(rawRuntimeResult.engine_data)?.outputs && objectValue(objectValue(rawRuntimeResult.engine_data)?.outputs)?.typed_artifacts,
-  ].flatMap(typedArtifactList))
-}
-
-export function agentTaskRunTypedArtifacts(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown>, run: Record<string, unknown>): Array<Record<string, unknown>> {
-  const runtimeOutputs = objectValue(run.outputs) || {}
-  return typedArtifactRefs(agentTaskResult, stripUndefined({ ...runtimeOutputs, ...workloadOutputs }))
-}
-
 export function agentTaskResultFromRun(run: Record<string, unknown>, runRecord: Record<string, unknown> = {}, artifactsRecord: Record<string, unknown> = {}): Record<string, unknown> {
   return objectValue(run.agentTaskResult)
     || objectValue(run.agent_task_result)
@@ -663,34 +633,6 @@ export function agentTaskResultFromRun(run: Record<string, unknown>, runRecord: 
     || objectValue(artifactsRecord.agentTaskResult)
     || objectValue(artifactsRecord.agent_task_result)
     || {}
-}
-
-function typedArtifactList(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return value.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
-  }
-
-  const record = objectValue(value)
-  if (!record) {
-    return []
-  }
-
-  return Object.entries(record)
-    .map(([name, artifact]) => typedArtifactFromMapEntry(name, artifact))
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
-}
-
-function typedArtifactFromMapEntry(name: string, artifact: unknown): Record<string, unknown> | undefined {
-  const record = objectValue(artifact)
-  if (!record) {
-    return undefined
-  }
-
-  return stripUndefined({
-    ...record,
-    name: stringValue(record.name) || stringValue(record.output_key) || name,
-    artifact_schema: stringValue(record.artifact_schema) || stringValue(record.schema) || undefined,
-  })
 }
 
 function agentReply(agentResult: Record<string, unknown>, terminalResult: AgentTerminalResult | undefined, runResult: AgentTaskRunResultSummary): Record<string, unknown> | undefined {

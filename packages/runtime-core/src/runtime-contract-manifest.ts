@@ -14,7 +14,7 @@ import { RUNTIME_PACKAGE_DIAGNOSTIC_SCHEMA, RUNTIME_PACKAGE_RESULT_SCHEMA, RUNTI
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { WORDPRESS_REST_MATRIX_RESULT_SCHEMA, WORDPRESS_REST_MATRIX_SCHEMA } from "./rest-matrix-contracts.js"
 import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, PREVIEW_REVIEWER_ACCESS_SCHEMA, RUNTIME_ACCESS_SCHEMA, RUNTIME_PROFILE_SCHEMA, normalizePreviewReviewerAccess, normalizeRuntimeAccess, normalizeRuntimeProfile, type RuntimeAccess, type RuntimeProfile } from "./runtime-boundary-contracts.js"
-import { STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, normalizeTypedArtifactDTO, normalizeTypedArtifactIndex, type TypedArtifactIndex, type TypedArtifactRef } from "./structured-artifacts.js"
+import { TYPED_ARTIFACT_INDEX_SCHEMA, TYPED_ARTIFACT_SCHEMA, normalizeTypedArtifactDTO, normalizeTypedArtifactIndex, type TypedArtifactDTO, type TypedArtifactIndex } from "./structured-artifacts.js"
 import {
   RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
@@ -112,7 +112,7 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   },
   artifact: {
     resultEnvelope: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
-    typedArtifact: STRUCTURED_ARTIFACT_SCHEMA,
+    typedArtifact: TYPED_ARTIFACT_SCHEMA,
     typedArtifactIndex: TYPED_ARTIFACT_INDEX_SCHEMA,
     runtimePackageDeclaration: RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA,
     runtimePackageProjection: RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
@@ -285,6 +285,6 @@ export const RUNTIME_CONTRACT_NORMALIZERS = {
   runtimeProfile: (input: unknown) => RuntimeProfile
   runtimeAccess: (input: unknown) => RuntimeAccess
   previewReviewerAccess: typeof normalizePreviewReviewerAccess
-  typedArtifact: (input: unknown) => TypedArtifactRef | undefined
+  typedArtifact: (input: unknown) => TypedArtifactDTO | undefined
   typedArtifactIndex: (input: unknown) => TypedArtifactIndex
 }

@@ -4,6 +4,7 @@ import {
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
   PUBLIC_ARTIFACT_REF_DTO_SCHEMA,
   TYPED_ARTIFACT_INDEX_SCHEMA,
+  TYPED_ARTIFACT_SCHEMA,
   changedFilesArtifactRefs,
   findChangedFilesArtifactRef,
   findPatchArtifactRef,
@@ -92,18 +93,21 @@ assert.equal(session.artifact_refs.changed_files[0]?.path, "artifacts/browser-se
 assert.equal(session.artifact_refs.patches[0]?.path, "artifacts/browser-session-1/files/patch.diff")
 
 const typedArtifact = normalizeTypedArtifactDTO({
+  schema: TYPED_ARTIFACT_SCHEMA,
   name: "review-summary",
-  kind: "review",
-  payloadSchema: "example/review/v1",
+  type: "review",
+  payload_schema: "example/review/v1",
   payload: { status: "passed" },
   source: "runtime-command",
-  artifact_path: "files/typed/review-summary.json",
-  content_type: "application/json",
-  digest: { algorithm: "sha256", value: "d".repeat(64) },
+  artifact: {
+    path: "files/typed/review-summary.json",
+    contentType: "application/json",
+    sha256: "d".repeat(64),
+  },
   metadata: { scenario: "homepage" },
 })
 
-assert.equal(typedArtifact?.schema, "wp-codebox/structured-artifact/v1")
+assert.equal(typedArtifact?.schema, TYPED_ARTIFACT_SCHEMA)
 assert.equal(typedArtifact?.name, "review-summary")
 assert.equal(typedArtifact?.type, "review")
 assert.equal(typedArtifact?.payload_schema, "example/review/v1")

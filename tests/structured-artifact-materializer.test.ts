@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer"
 import {
   STRUCTURED_ARTIFACT_INDEX_SCHEMA,
   STRUCTURED_ARTIFACT_SCHEMA,
+  TYPED_ARTIFACT_SCHEMA,
   TYPED_ARTIFACT_INDEX_SCHEMA,
   materializeStructuredArtifactFiles,
   type StructuredArtifactPayload,
@@ -77,5 +78,6 @@ assert.deepEqual(typedMaterialized.refs[0].artifact, {
   contentType: "application/json",
   sha256: typedMaterialized.files[0].sha256.value,
 })
+assert.equal(typedMaterialized.refs[0].schema, TYPED_ARTIFACT_SCHEMA)
 
 console.log("structured artifact materializer passed")

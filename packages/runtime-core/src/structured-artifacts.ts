@@ -2,6 +2,7 @@ import { isPlainObject } from "./object-utils.js"
 import { artifactFileDigest, type ArtifactFileDigest } from "./artifact-manifest.js"
 
 export const STRUCTURED_ARTIFACT_SCHEMA = "wp-codebox/structured-artifact/v1" as const
+export const TYPED_ARTIFACT_SCHEMA = "wp-codebox/typed-artifact/v1" as const
 export const STRUCTURED_ARTIFACT_INDEX_SCHEMA = "wp-codebox/structured-artifacts-index/v1" as const
 export const TYPED_ARTIFACT_INDEX_SCHEMA = "wp-codebox/typed-artifacts-index/v1" as const
 
@@ -36,7 +37,7 @@ export interface StructuredArtifactIndex {
 }
 
 export interface TypedArtifactRef {
-  schema: typeof STRUCTURED_ARTIFACT_SCHEMA
+  schema: typeof TYPED_ARTIFACT_SCHEMA
   name: string
   type: string
   payload_schema?: string | Record<string, unknown>
@@ -54,6 +55,10 @@ export interface TypedArtifactRef {
   }
 }
 
+export interface TypedArtifactDTO extends Omit<TypedArtifactRef, "artifact"> {
+  artifact?: TypedArtifactRef["artifact"]
+}
+
 export interface TypedArtifactIndex {
   schema: typeof TYPED_ARTIFACT_INDEX_SCHEMA
   direction: "output"
@@ -67,7 +72,8 @@ export interface NormalizeTypedArtifactDTODefaults {
   contentType?: string
 }
 
-export interface MaterializedStructuredArtifactRef extends Omit<StructuredArtifactPayload, "payload"> {
+export interface MaterializedStructuredArtifactRef extends Omit<StructuredArtifactPayload, "schema" | "payload"> {
+  schema: typeof STRUCTURED_ARTIFACT_SCHEMA | typeof TYPED_ARTIFACT_SCHEMA
   payload?: unknown
   artifact?: {
     path: string
@@ -114,8 +120,10 @@ export function materializeStructuredArtifactFiles<TArtifact extends StructuredA
     const extension = input.extension ? input.extension(contentType, artifact, index) : structuredArtifactExtension(contentType)
     const path = `${artifactPathPrefix}/${safeStructuredArtifactName(artifact.name)}-${index + 1}${extension}`
     const sha256 = artifactFileDigest(contents)
+    const schema = input.artifactKind === "typed-artifact" ? TYPED_ARTIFACT_SCHEMA : artifact.schema
     const ref: MaterializedStructuredArtifactRef = stripUndefined({
       ...artifact,
+      schema,
       artifact: {
         path,
         kind: input.artifactKind,
@@ -173,27 +181,28 @@ export function normalizeStructuredArtifacts(value: unknown, direction: Structur
   })
 }
 
-export function normalizeTypedArtifactDTO(input: unknown, defaults: NormalizeTypedArtifactDTODefaults = {}): TypedArtifactRef | undefined {
+export function normalizeTypedArtifactDTO(input: unknown, defaults: NormalizeTypedArtifactDTODefaults = {}): TypedArtifactDTO | undefined {
   const entry = isPlainObject(input) ? input : undefined
   if (!entry) return undefined
 
   const name = stringValue(entry.name) || defaults.name || ""
-  const type = stringValue(entry.type) || stringValue(entry.kind) || defaults.type || ""
+  const type = stringValue(entry.type) || defaults.type || ""
   if (!name || !type) return undefined
 
-  const artifact = typedArtifactFile(entry.artifact ?? entry.file ?? entry.ref ?? entry, defaults)
-  if (!artifact) return undefined
+  const artifact = typedArtifactFile(entry.artifact, defaults)
+  const hasPayload = "payload" in entry
+  if (!artifact && !hasPayload) return undefined
 
   const provenance = isPlainObject(entry.provenance) ? entry.provenance : {}
   const source = stringValue(provenance.source) || stringValue(entry.source) || defaults.source || "runtime"
-  const payloadSchema = structuredPayloadSchema(entry.payload_schema ?? entry.payloadSchema ?? entry.artifact_schema ?? entry.artifactSchema)
+  const payloadSchema = structuredPayloadSchema(entry.payload_schema)
 
   return stripUndefined({
-    schema: STRUCTURED_ARTIFACT_SCHEMA,
+    schema: TYPED_ARTIFACT_SCHEMA,
     name,
     type,
     ...(payloadSchema !== undefined ? { payload_schema: payloadSchema } : {}),
-    ...("payload" in entry ? { payload: entry.payload } : {}),
+    ...(hasPayload ? { payload: entry.payload } : {}),
     metadata: isPlainObject(entry.metadata) ? entry.metadata : {},
     provenance: {
       ...provenance,
@@ -201,10 +210,10 @@ export function normalizeTypedArtifactDTO(input: unknown, defaults: NormalizeTyp
       source,
     },
     artifact,
-  }) as TypedArtifactRef
+  }) as TypedArtifactDTO
 }
 
-export function normalizeTypedArtifactDTOs(input: unknown): TypedArtifactRef[] {
+export function normalizeTypedArtifactDTOs(input: unknown): TypedArtifactDTO[] {
   const artifacts = Array.isArray(input)
     ? input
     : isPlainObject(input) && Array.isArray(input.artifacts)
@@ -220,12 +229,9 @@ export function normalizeTypedArtifactIndex(input: unknown): TypedArtifactIndex 
   return {
     schema: TYPED_ARTIFACT_INDEX_SCHEMA,
     direction: "output",
-    artifacts: normalizeTypedArtifactDTOs(input),
+    artifacts: normalizeTypedArtifactDTOs(input).filter((artifact): artifact is TypedArtifactRef => Boolean(artifact.artifact)),
   }
 }
-
-export const normalizeTypedArtifactRef = normalizeTypedArtifactDTO
-export const normalizeTypedArtifactRefs = normalizeTypedArtifactDTOs
 
 function structuredPayloadSchema(value: unknown): string | Record<string, unknown> | undefined {
   if (typeof value === "string" && value.trim()) return value.trim()

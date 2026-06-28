@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import {
   STRUCTURED_ARTIFACT_SCHEMA,
+  TYPED_ARTIFACT_SCHEMA,
   TYPED_ARTIFACT_INDEX_SCHEMA,
   artifactFileDigest,
   calculateArtifactContentDigest,
@@ -74,7 +75,7 @@ async function writeTypedArtifactBundle(directory: string, options: { omitTypedA
     schema: TYPED_ARTIFACT_INDEX_SCHEMA,
     direction: "output",
     artifacts: [{
-      schema: STRUCTURED_ARTIFACT_SCHEMA,
+      schema: TYPED_ARTIFACT_SCHEMA,
       name: "summary",
       type: "example.summary",
       payload_schema: options.invalidPayloadForSchema ? { $id: "example/summary/v1", type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } : "example/summary/v1",
