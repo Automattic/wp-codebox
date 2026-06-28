@@ -97,6 +97,7 @@ export interface MaterializationResultEnvelopeExtraction {
 export interface BrowserArtifactProjectionInput {
   artifact?: Record<string, unknown> | null
   artifacts?: unknown
+  artifactRefs?: unknown
   artifact_bundle?: Record<string, unknown> | null
   artifactBundle?: Record<string, unknown> | null
   materialization?: Record<string, unknown> | null
@@ -273,7 +274,10 @@ export function browserArtifactPersistenceProjection(input: BrowserArtifactProje
     ? source.artifacts.filter(isRecord)
     : artifact ? [artifact] : []
   const materialization = asRecord(source.materialization) ?? undefined
-  const artifactRefs = browserArtifactProjectionRefs({ artifactBundle, artifacts, materialization })
+  const artifactRefs = [
+    ...normalizeMaterializationArtifactRefs(Array.isArray(source.artifactRefs) ? source.artifactRefs : []),
+    ...browserArtifactProjectionRefs({ artifactBundle, artifacts, materialization }),
+  ]
 
   return stripUndefined({
     schema: BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
@@ -407,7 +411,7 @@ function normalizeDigest(input: unknown): MaterializationArtifactRef["digest"] |
   }
   const value = stringValue(input.value)
   const algorithm = stringValue(input.algorithm) || "sha256"
-  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest) ?? normalizeDigest(input.contentDigest)
+  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest) ?? normalizeDigest(input.contentDigest) ?? normalizeDigest(input.content_digest)
 }
 
 function phaseDiagnostics(phase: MaterializationPhaseResult): MaterializationDiagnostic[] {

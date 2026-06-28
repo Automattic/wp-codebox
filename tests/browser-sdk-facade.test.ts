@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import vm from "node:vm"
 
+import { browserArtifactPersistenceProjection } from "../packages/runtime-core/src/index.js"
+
 const root = new URL("../", import.meta.url)
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
 
@@ -333,14 +335,20 @@ assert.equal(runtimeTaskResult.schema, "wp-codebox/runtime-task-result/v1")
 assert.deepEqual(plain(runtimeTaskCalls), [{ path: "/wp-codebox/v1/runtime-task", method: "POST", data: plain(runtimeTaskRequest) }])
 ;(sandbox.window as any).wp = previousWp
 
-assert.deepEqual(plain(api.v1.browserArtifactPersistenceRef({
+const persistenceProjectionInput = {
   schema: "wp-codebox/browser-artifact-persistence/ref/v1",
   artifactRefs: [
     { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", directory: "artifacts/run-1", contentDigest: { algorithm: "sha256", value: "abc" } },
+    { role: "browser-html", path: "files/browser/index.html", digest: { content_digest: "def" } },
   ],
-}).artifactRefs), [
+  artifact: { kind: "browser-html", path: "files/browser/index.html", sha256: "def" },
+}
+const expectedPersistenceArtifactRefs = [
   { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", path: "artifacts/run-1", digest: { algorithm: "sha256", value: "abc" } },
-])
+  { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
+]
+assert.deepEqual(plain(api.v1.browserArtifactPersistenceRef(persistenceProjectionInput).artifactRefs), expectedPersistenceArtifactRefs)
+assert.deepEqual(plain(browserArtifactPersistenceProjection(persistenceProjectionInput).artifactRefs), expectedPersistenceArtifactRefs)
 
 const executableSession = {
   schema: "wp-codebox/browser-executable-session/v1",
