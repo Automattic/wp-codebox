@@ -470,7 +470,44 @@ function workloadPackageRoot(input: Record<string, unknown>, suiteInput?: Record
 function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
   const encodedInput = Buffer.from(JSON.stringify(wordpressWorkloadPhpWrapperInput(workload)), "utf8").toString("base64")
   const encodedArgs = Buffer.from(JSON.stringify(args), "utf8").toString("base64")
-  return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+  return `${wordpressWorkloadExternalHttpGuardrailHelpers()}\n$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function wordpressWorkloadExternalHttpGuardrailHelpers(): string {
+  return `if (!function_exists('wp_codebox_bench_run_external_http_guardrail_step')) {
+    function wp_codebox_bench_run_external_http_guardrail_step(array $args): array {
+        $state = is_array($GLOBALS['wp_codebox_external_http_guardrail_state'] ?? null) ? $GLOBALS['wp_codebox_external_http_guardrail_state'] : array('allowlist' => array(), 'block' => true, 'requests' => array());
+        $action = (string) ($args['action'] ?? 'collect');
+        if ($action === 'install') {
+            $allowlist = $args['allowlistDomains'] ?? $args['allowlist'] ?? array();
+            $state = array('allowlist' => array_values(array_filter(array_map('strval', is_array($allowlist) ? $allowlist : explode(',', (string) $allowlist)))), 'block' => (bool) ($args['blockNetwork'] ?? $args['block_network'] ?? true), 'requests' => array());
+            $GLOBALS['wp_codebox_external_http_guardrail_state'] = $state;
+            if (empty($GLOBALS['wp_codebox_external_http_guardrail_filter_installed'])) {
+                add_filter('pre_http_request', 'wp_codebox_external_http_guardrail_pre_http_request', 10, 3);
+                $GLOBALS['wp_codebox_external_http_guardrail_filter_installed'] = true;
+            }
+        }
+        $state = is_array($GLOBALS['wp_codebox_external_http_guardrail_state'] ?? null) ? $GLOBALS['wp_codebox_external_http_guardrail_state'] : $state;
+        $requests = is_array($state['requests'] ?? null) ? $state['requests'] : array();
+        $blocked = count(array_filter($requests, static fn(array $request): bool => ($request['classification'] ?? '') === 'blocked'));
+        $allowlisted = count(array_filter($requests, static fn(array $request): bool => ($request['classification'] ?? '') === 'allowlisted_boundary_blocked'));
+        return array('schema' => 'wp-codebox/external-http-guardrail/v1', 'status' => 'passed', 'summary' => array('total' => count($requests), 'blocked' => $blocked, 'allowlisted' => $allowlisted), 'requests' => $requests, 'metadata' => array('runner' => 'wp-codebox/wordpress-workload-run/v1', 'allowlist' => array_values(array_map('strval', $state['allowlist'] ?? array()))));
+    }
+}
+if (!function_exists('wp_codebox_external_http_guardrail_pre_http_request')) {
+    function wp_codebox_external_http_guardrail_pre_http_request($preempt, array $parsed_args, string $url) {
+        $state = is_array($GLOBALS['wp_codebox_external_http_guardrail_state'] ?? null) ? $GLOBALS['wp_codebox_external_http_guardrail_state'] : array();
+        $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+        $allowlist = array_map('strtolower', array_map('strval', is_array($state['allowlist'] ?? null) ? $state['allowlist'] : array()));
+        $classification = in_array($host, $allowlist, true) ? 'allowlisted_boundary_blocked' : 'blocked';
+        $state['requests'][] = array('url' => preg_replace('/([?&](?:token|secret|nonce|_wpnonce|authorization)=)[^&]+/i', '$1[redacted]', $url), 'host' => $host, 'method' => (string) ($parsed_args['method'] ?? 'GET'), 'classification' => $classification);
+        $GLOBALS['wp_codebox_external_http_guardrail_state'] = $state;
+        if (!empty($state['block'])) {
+            return new WP_Error('wp_codebox_external_http_guardrail_blocked', 'External HTTP request blocked by WP Codebox fuzz guardrail.', array('host' => $host, 'classification' => $classification));
+        }
+        return $preempt;
+    }
+}`
 }
 
 function workloadWithRuntimeRequirementSettings(workload: Record<string, unknown>, runtimeRequirements: Record<string, unknown> | undefined): Record<string, unknown> {

@@ -21,7 +21,7 @@ file_put_contents(
 );
 file_put_contents(
 	$wp_codebox_smoke_root . 'closure-workload.php',
-	"<?php\nreturn function (): array {\n\twp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'install', 'allowlistDomains' => array( 'public-api.wordpress.com' ), 'blockNetwork' => true ) );\n\twp_remote_get( 'https://jetpack-homeboy-guardrail.invalid/guardrail-probe?token=secret-value' );\n\treturn wp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'collect' ) );\n};\n"
+	"<?php\nreturn function (): array {\n\twp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'install', 'allowlistDomains' => array( 'public-api.wordpress.com' ), 'blockNetwork' => true ) );\n\twp_remote_get( 'https://workload-guardrail.invalid/guardrail-probe?token=secret-value&_wpnonce=nonce-value', array( 'headers' => array( 'Authorization' => 'Bearer secret', 'X-Test' => 'visible' ) ) );\n\treturn wp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'collect' ) );\n};\n"
 );
 define( 'ABSPATH', $wp_codebox_smoke_root );
 define( 'WP_CONTENT_DIR', __DIR__ );
@@ -230,6 +230,7 @@ $GLOBALS['wp'] = (object) array( 'query_vars' => array( 'rest_route' => '/wc/sto
 $_GET['rest_route'] = '/wc/store/v1/products';
 $GLOBALS['wp_codebox_rest_server_route_contexts'] = array();
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-wordpress-runtime-primitives.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-fuzz-suite-runner.php';
 
@@ -553,6 +554,9 @@ assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_
 assert( 'wp-codebox/external-http-guardrail/v1' === $result['cases'][22]['metadata']['observations'][1]['payload']['schema'] );
 assert( 1 === $result['cases'][22]['metadata']['observations'][1]['payload']['summary']['blocked'] );
 assert( str_contains( $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['url'], 'token=[redacted]' ) );
+assert( str_contains( $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['url'], '_wpnonce=[redacted]' ) );
+assert( '[redacted]' === $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['headers']['Authorization'] );
+assert( 'visible' === $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['headers']['X-Test'] );
 assert( 'wp-codebox/fuzz-runner-capabilities/v1' === $result['metadata']['runnerCapabilities']['schema'] );
 assert( 'php-in-process' === $result['metadata']['runnerCapabilities']['mode'] );
 assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capabilities'], true ) );

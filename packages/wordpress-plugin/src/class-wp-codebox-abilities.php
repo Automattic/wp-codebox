@@ -29,6 +29,7 @@ require_once __DIR__ . '/class-wp-codebox-runner-workspace-tools.php';
 require_once __DIR__ . '/trait-wp-codebox-runner-workspace-executor-behavior.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-executor.php';
 require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
+require_once __DIR__ . '/class-wp-codebox-wordpress-runtime-primitives.php';
 require_once __DIR__ . '/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/class-wp-codebox-agent-task-ability-descriptors.php';

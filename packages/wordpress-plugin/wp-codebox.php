@@ -57,6 +57,7 @@ require_once __DIR__ . '/src/class-wp-codebox-agent-process-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-run-result-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-outcome-classifier.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-provider-registry.php';
+require_once __DIR__ . '/src/class-wp-codebox-wordpress-runtime-primitives.php';
 require_once __DIR__ . '/src/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';

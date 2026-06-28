@@ -12,6 +12,39 @@ function is_wp_error( mixed $value ): bool {
 	return $value instanceof WP_Error;
 }
 
+function add_filter( string $hook, callable $callback, int $priority = 10, int $accepted_args = 1 ): void {
+	$GLOBALS['wp_codebox_test_filters'][ $hook ][ $priority ][] = array( $callback, $accepted_args );
+}
+
+function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $filters ) {
+		foreach ( $filters as $filter ) {
+			$value = $filter[0]( $value, ...array_slice( $args, 0, (int) $filter[1] - 1 ) );
+		}
+	}
+	return $value;
+}
+
+function wp_parse_url( string $url, int $component = -1 ): mixed {
+	return -1 === $component ? parse_url( $url ) : parse_url( $url, $component );
+}
+
+function home_url( string $path = '/' ): string {
+	return 'https://example.test' . ( str_starts_with( $path, '/' ) ? $path : '/' . $path );
+}
+
+function wp_remote_request( string $url, array $args = array() ): array|WP_Error {
+	$preempt = apply_filters( 'pre_http_request', false, $args, $url );
+	if ( false !== $preempt ) {
+		return $preempt;
+	}
+	return array( 'status' => 200, 'body' => 'ok' );
+}
+
+function wp_remote_get( string $url, array $args = array() ): array|WP_Error {
+	return wp_remote_request( $url, array_merge( $args, array( 'method' => 'GET' ) ) );
+}
+
 class WP_REST_Request {
 	public array $params = array();
 	public array $headers = array();
@@ -33,6 +66,7 @@ function rest_do_request( WP_REST_Request $request ): WP_Codebox_Test_REST_Respo
 	return new WP_Codebox_Test_REST_Response( '/wp/v2/status' === $request->path ? 200 : 404 );
 }
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-wordpress-runtime-primitives.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php';
@@ -91,6 +125,7 @@ $php_result = WP_Codebox_WordPress_Workload_Runner_Smoke::run_wordpress_workload
 		'schema' => 'wp-codebox/wordpress-workload-run/v1',
 		'steps'  => array(
 			array( 'command' => 'wordpress.run-workload', 'args' => array( 'type=php', 'path=' . $php_workload_path ) ),
+			array( 'command' => 'wordpress.collect-workload-result', 'args' => array( 'artifact=php-report' ) ),
 		),
 	)
 );
@@ -102,7 +137,52 @@ assert( 'passed' === $php_result['steps'][0]['status'] );
 assert( 'wp-codebox/wordpress-workload-run/v1' === $php_result['steps'][0]['observation']['input_schema'] );
 assert( 'php' === $php_result['steps'][0]['observation']['arg_type'] );
 assert( 'workload/php-report.json' === $php_result['artifacts'][0]['path'] );
+assert( 'wp-codebox/wordpress-workload-result-collection/v1' === $php_result['steps'][1]['observation']['payload']['schema'] );
+assert( 1 === $php_result['steps'][1]['observation']['payload']['summary']['steps'] );
+assert( 'workload/php-report.json' === $php_result['steps'][1]['observation']['payload']['artifactRefs'][0]['path'] );
 @unlink( $php_workload_path );
+
+$guardrail_workload_path = tempnam( sys_get_temp_dir(), 'wp-codebox-guardrail-' );
+assert( is_string( $guardrail_workload_path ) );
+file_put_contents(
+	$guardrail_workload_path,
+	<<<'PHP'
+<?php
+return static function (): array {
+	$blocked = wp_remote_get( 'https://blocked-service.invalid/path?token=secret-value&_wpnonce=nonce-value', array( 'headers' => array( 'Authorization' => 'Bearer secret', 'X-WP-Nonce' => 'nonce-value', 'X-Public' => 'visible' ) ) );
+	$guardrail = wp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'collect' ) );
+	return array(
+		'status' => $blocked instanceof WP_Error ? 'passed' : 'failed',
+		'artifactRefs' => array(
+			array( 'name' => 'external-http-guardrail', 'path' => 'workload/guardrail.json', 'payload' => $guardrail ),
+		),
+	);
+};
+PHP
+);
+
+$guardrail_result = WP_Codebox_WordPress_Workload_Runner_Smoke::run_wordpress_workload(
+	array(
+		'schema'   => 'wp-codebox/wordpress-workload-run/v1',
+		'steps'    => array(
+			array( 'command' => 'wordpress.ensure-external-http-guardrail', 'args' => array( 'allowlist=allowed-service.invalid', 'block_network=true' ) ),
+			array( 'command' => 'wordpress.run-workload', 'args' => array( 'type=php', 'path=' . $guardrail_workload_path ) ),
+			array( 'command' => 'wordpress.collect-workload-result', 'args' => array( 'artifact=external-http-guardrail', 'command=wordpress.run-workload' ) ),
+		),
+	)
+);
+
+assert( is_array( $guardrail_result ) );
+assert( true === $guardrail_result['success'] );
+$blocked_request = $guardrail_result['steps'][2]['observation']['payload']['artifactRefs'][0]['payload']['requests'][0];
+assert( 'blocked' === $blocked_request['classification'] );
+assert( str_contains( $blocked_request['url'], 'token=[redacted]' ) );
+assert( str_contains( $blocked_request['url'], '_wpnonce=[redacted]' ) );
+assert( '[redacted]' === $blocked_request['headers']['Authorization'] );
+assert( '[redacted]' === $blocked_request['headers']['X-WP-Nonce'] );
+assert( 'visible' === $blocked_request['headers']['X-Public'] );
+assert( 'wp-codebox/wordpress-workload-result-collection/v1' === $guardrail_result['steps'][2]['observation']['payload']['schema'] );
+@unlink( $guardrail_workload_path );
 
 $not_callable_path = tempnam( sys_get_temp_dir(), 'wp-codebox-workload-' );
 assert( is_string( $not_callable_path ) );

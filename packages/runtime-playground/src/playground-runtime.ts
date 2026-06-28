@@ -7,6 +7,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
+import { adminFuzzInputFromArgs, adminFuzzPhpCode } from "./admin-fuzz-command-handlers.js"
 import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
@@ -54,6 +55,61 @@ import type {
 } from "@automattic/wp-codebox-core"
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function pluginModuleOptionsTablesInventoryPhpCode(): string {
+  return `<?php
+global $wpdb;
+$wp_codebox_plugin_inventory_options = array();
+$wp_codebox_plugin_inventory_core_prefixes = array('siteurl', 'home', 'blogname', 'blogdescription', 'users_can_register', 'admin_email', 'start_of_week', 'use_balanceTags', 'use_smilies', 'require_name_email', 'comments_notify', 'posts_per_rss', 'rss_use_excerpt', 'default_category', 'default_comment_status', 'default_ping_status', 'default_pingback_flag', 'posts_per_page', 'date_format', 'time_format', 'links_updated_date_format', 'comment_moderation', 'moderation_notify', 'permalink_structure', 'rewrite_rules', 'stylesheet', 'template', 'current_theme', 'active_plugins', 'recently_activated', 'sidebars_widgets', 'widget_', 'theme_mods_', 'cron', 'db_version', 'initial_db_version', 'WPLANG');
+function wp_codebox_plugin_inventory_is_core_option(string $name, array $core_prefixes): bool {
+    foreach ($core_prefixes as $prefix) {
+        if ($name === $prefix || str_starts_with($name, $prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+function wp_codebox_plugin_inventory_value_shape($value): array {
+    $serialized = is_string($value) && is_serialized($value);
+    $decoded = $serialized ? maybe_unserialize($value) : $value;
+    $type = gettype($decoded);
+    return array('type' => $type, 'serialized' => $serialized, 'bytes' => is_string($value) ? strlen($value) : strlen(wp_json_encode($value)), 'itemCount' => is_array($decoded) ? count($decoded) : null);
+}
+$wp_codebox_plugin_inventory_rows = $wpdb->get_results("SELECT option_name, option_value, autoload FROM {$wpdb->options} ORDER BY option_name ASC LIMIT 500", ARRAY_A);
+foreach ((array) $wp_codebox_plugin_inventory_rows as $wp_codebox_plugin_inventory_row) {
+    $wp_codebox_plugin_inventory_name = (string) ($wp_codebox_plugin_inventory_row['option_name'] ?? '');
+    if ($wp_codebox_plugin_inventory_name === '' || wp_codebox_plugin_inventory_is_core_option($wp_codebox_plugin_inventory_name, $wp_codebox_plugin_inventory_core_prefixes)) {
+        continue;
+    }
+    $wp_codebox_plugin_inventory_options[] = array('name' => $wp_codebox_plugin_inventory_name, 'autoload' => (string) ($wp_codebox_plugin_inventory_row['autoload'] ?? ''), 'valueShape' => wp_codebox_plugin_inventory_value_shape($wp_codebox_plugin_inventory_row['option_value'] ?? ''), 'safety' => array('read' => true, 'update' => false, 'reason' => 'read_only_inventory'));
+    if (count($wp_codebox_plugin_inventory_options) >= 100) {
+        break;
+    }
+}
+$wp_codebox_plugin_inventory_core_tables = array();
+foreach ((array) $wpdb->tables('all') as $wp_codebox_plugin_inventory_base_table) {
+    $wp_codebox_plugin_inventory_core_tables[(string) $wp_codebox_plugin_inventory_base_table] = true;
+    $wp_codebox_plugin_inventory_core_tables[$wpdb->prefix . $wp_codebox_plugin_inventory_base_table] = true;
+}
+$wp_codebox_plugin_inventory_tables = array();
+$wp_codebox_plugin_inventory_table_names = $wpdb->get_col($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($wpdb->prefix) . '%'));
+foreach ((array) $wp_codebox_plugin_inventory_table_names as $wp_codebox_plugin_inventory_table_name) {
+    $wp_codebox_plugin_inventory_table_name = (string) $wp_codebox_plugin_inventory_table_name;
+    if (isset($wp_codebox_plugin_inventory_core_tables[$wp_codebox_plugin_inventory_table_name])) {
+        continue;
+    }
+    $wp_codebox_plugin_inventory_columns = array();
+    $wp_codebox_plugin_inventory_safe_table = str_replace('\`', '\`\`', $wp_codebox_plugin_inventory_table_name);
+    foreach ((array) $wpdb->get_results('DESCRIBE \`' . $wp_codebox_plugin_inventory_safe_table . '\`', ARRAY_A) as $wp_codebox_plugin_inventory_column) {
+        $wp_codebox_plugin_inventory_columns[] = array('name' => (string) ($wp_codebox_plugin_inventory_column['Field'] ?? ''), 'type' => (string) ($wp_codebox_plugin_inventory_column['Type'] ?? ''), 'nullable' => strtoupper((string) ($wp_codebox_plugin_inventory_column['Null'] ?? '')) === 'YES', 'key' => (string) ($wp_codebox_plugin_inventory_column['Key'] ?? ''));
+    }
+    $wp_codebox_plugin_inventory_tables[] = array('name' => $wp_codebox_plugin_inventory_table_name, 'baseName' => str_starts_with($wp_codebox_plugin_inventory_table_name, $wpdb->prefix) ? substr($wp_codebox_plugin_inventory_table_name, strlen($wpdb->prefix)) : $wp_codebox_plugin_inventory_table_name, 'columns' => $wp_codebox_plugin_inventory_columns, 'safety' => array('read' => true, 'write' => false, 'reason' => 'read_only_inventory'));
+    if (count($wp_codebox_plugin_inventory_tables) >= 100) {
+        break;
+    }
+}
+echo wp_json_encode(array('schema' => 'wp-codebox/wordpress-plugin-module-options-tables-inventory/v1', 'command' => 'wordpress.inventory-plugin-module-options-tables', 'status' => 'ok', 'options' => $wp_codebox_plugin_inventory_options, 'tables' => $wp_codebox_plugin_inventory_tables, 'totals' => array('options' => count($wp_codebox_plugin_inventory_options), 'tables' => count($wp_codebox_plugin_inventory_tables)), 'diagnostics' => array(), 'artifactRefs' => array()), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }
 
 function commandExitCode(envelope: RuntimeCommandResultEnvelope | undefined): number {
@@ -1186,6 +1242,20 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
+  async runCollectWorkloadResult(spec: ExecutionSpec): Promise<string> {
+    const args = new Map((spec.args ?? []).map((arg) => {
+      const index = arg.indexOf("=")
+      return index === -1 ? [arg, ""] : [arg.slice(0, index), arg.slice(index + 1)]
+    }))
+    return `${JSON.stringify({
+      schema: "wp-codebox/workload-result-collection/v1",
+      command: spec.command,
+      status: "ok",
+      artifact: args.get("artifact") ?? null,
+      expectedSchema: args.get("schema") ?? null,
+    }, null, 2)}\n`
+  }
+
   async runCrudOperation(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const operation = wordpressCrudOperationFromArgs(spec.args ?? [])
@@ -1318,6 +1388,46 @@ class PlaygroundRuntime implements Runtime {
       server,
       surface: "admin",
     })
+  }
+
+  async runFuzzAdminPages(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const input = adminFuzzInputFromArgs(spec.args ?? [], this.spec)
+    const response = await this.runPlaygroundCommand("wordpress.fuzz-admin-pages", server, { code: bootstrapPhpCode(this.spec, adminFuzzPhpCode(input), spec.args ?? []) })
+    assertPlaygroundResponseOk("wordpress.fuzz-admin-pages", response)
+    return response.text
+  }
+
+  async runFuzzPluginModuleState(spec: ExecutionSpec): Promise<string> {
+    const args = new Map((spec.args ?? []).map((arg) => {
+      const index = arg.indexOf("=")
+      return index === -1 ? [arg, ""] : [arg.slice(0, index), arg.slice(index + 1)]
+    }))
+    const executeMutations = args.get("execute_mutations") === "true" || args.get("execute-mutations") === "true"
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-plugin-module-state-plan/v1",
+      command: spec.command,
+      status: executeMutations ? "unsupported" : "ok",
+      mutationMode: args.get("mutation_mode") ?? args.get("mutation-mode") ?? "declared_plan",
+      executeMutations,
+      externalDispatch: args.get("external_dispatch") === "true" || args.get("external-dispatch") === "true",
+      safeguards: {
+        connectedStateRequiredForMutation: args.get("connected_state_required_for_mutation") === "true" || args.get("connected-state-required-for-mutation") === "true",
+        runtimeIsolationRequiredForMutation: args.get("runtime_isolation_required_for_mutation") === "true" || args.get("runtime-isolation-required-for-mutation") === "true",
+        rollbackRequired: args.get("rollback_required") === "true" || args.get("rollback-required") === "true",
+      },
+      plannedActions: [],
+      skipReasons: executeMutations ? ["mutation_execution_unsupported"] : [],
+      diagnostics: executeMutations ? [{ code: "mutation-execution-unsupported", message: "wordpress.fuzz-plugin-module-state only supports declared planning until explicit fixture and rollback artifacts are provided.", severity: "warning" }] : [],
+      artifactRefs: [],
+    }, null, 2)}\n`
+  }
+
+  async runInventoryPluginModuleOptionsTables(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const response = await this.runPlaygroundCommand("wordpress.inventory-plugin-module-options-tables", server, { code: bootstrapPhpCode(this.spec, pluginModuleOptionsTablesInventoryPhpCode(), spec.args ?? []) })
+    assertPlaygroundResponseOk("wordpress.inventory-plugin-module-options-tables", response)
+    return response.text
   }
 
   async runDatabaseInventory(): Promise<string> {

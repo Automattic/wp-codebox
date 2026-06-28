@@ -14,6 +14,7 @@ export type FuzzSuiteResetMode = "none" | "checkpoint-per-case" | "restore-snaps
 export type FuzzSuiteResetStatus = "not-required" | "passed" | "failed" | "unsupported"
 export type FuzzSuiteMutationIntensity = "none" | "low" | "medium" | "high" | (string & {})
 export type FuzzSuiteMutationIntentKind = "read" | "write" | "delete" | "destructive" | (string & {})
+export type FuzzSuiteCasePhase = "setup" | "action" | "assert" | "teardown"
 
 export interface FuzzSuiteTargetRef {
   kind: FuzzSuiteTargetKind
@@ -27,11 +28,23 @@ export interface FuzzSuiteCase {
   id: string
   target?: FuzzSuiteTargetRef
   input?: unknown
+  phases?: Partial<Record<FuzzSuiteCasePhase, FuzzSuitePhaseStep[]>>
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
   mutation?: FuzzSuiteMutationIntent
   mutation_intent?: FuzzSuiteMutationIntent | string
   description?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuitePhaseStep {
+  command: string
+  args?: string[]
+  timeoutMs?: number
+  timeout_ms?: number
+  allowFailure?: boolean
+  allow_failure?: boolean
+  advisory?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -164,7 +177,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
   runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "sequence", "wp_cli"],
-  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.http-request", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
+  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.fuzz-admin-pages", "wordpress.fuzz-plugin-module-state", "wordpress.http-request", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
 }
 

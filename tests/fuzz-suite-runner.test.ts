@@ -21,6 +21,15 @@ const result = await runFuzzSuite(fuzzSuiteContract({
     { id: "case-runtime-action-editor", target: { kind: "runtime-action" }, input: { type: "editor_open", target: "post-new", post_type: "page", capture: ["editor-state"] } },
     { id: "case-runtime-action-crud", target: { kind: "runtime-action" }, input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
     { id: "case-runtime-action-db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
+    {
+      id: "case-runtime-workload-phases",
+      target: { kind: "runtime", id: "wordpress.run-workload" },
+      phases: {
+        setup: [{ command: "wordpress.ensure-plugin-active", args: ["plugin=example/example.php"] }],
+        action: [{ command: "wordpress.fuzz-admin-pages", args: ["safe_methods=GET"] }],
+        assert: [{ command: "wordpress.collect-workload-result", args: ["artifact=admin_page_coverage"] }],
+      },
+    },
     { id: "case-runtime-action-unsupported", target: { kind: "runtime-action" }, input: { type: "filesystem", operation: "list" } },
   ],
 }), {
@@ -45,20 +54,20 @@ assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.suite.id, "suite-001")
 assert.equal(result.status, "failed")
 assert.equal(result.success, false)
-assert.deepEqual(result.summary, { total: 14, passed: 12, failed: 1, error: 0, skipped: 1 })
+assert.deepEqual(result.summary, { total: 15, passed: 13, failed: 1, error: 0, skipped: 1 })
 assert.deepEqual(result.coverageSummary, {
-  discovered: 14,
-  generated: 14,
-  executed: 13,
+  discovered: 15,
+  generated: 15,
+  executed: 14,
   skipped: 1,
   untested: 0,
   skippedReasons: [{ reason: "fuzz_suite_target_adapter_unsupported", count: 1, caseIds: ["case-runtime-action-unsupported"] }],
 })
 assert.equal(result.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 14, generated: 14, executable: 14, executed: 13, skipped: 1, untested: 0 })
+assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 15, generated: 15, executable: 15, executed: 14, skipped: 1, untested: 0 })
 assert.deepEqual(result.coveragePlan?.executed.map((item) => item.id), result.cases.filter((item) => item.status !== "skipped").map((item) => item.id))
 assert.equal(result.coveragePlan?.skipped[0]?.reason?.code, "fuzz_suite_target_adapter_unsupported")
-assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation", "wordpress.db-operation"])
+assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.run-workload"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
 assert.deepEqual(executed[3], { command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET", "params-json={\"context\":\"view\"}"], method: "GET", path: "/wp/v2/types" })
@@ -73,14 +82,18 @@ assert.deepEqual(executed[10], { command: "wordpress.editor-open", args: ["targe
 assert.equal(JSON.parse(executed[11]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
 assert.equal(JSON.parse(executed[12]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
 assert.equal(JSON.parse(executed[12]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
+const phaseWorkload = JSON.parse(executed[13]?.args?.[0]?.replace("workload-json=", "") ?? "{}")
+assert.equal(phaseWorkload.schema, "wp-codebox/wordpress-workload-run/v1")
+assert.equal(phaseWorkload.steps.length, 3)
+assert.deepEqual(phaseWorkload.steps.map((step: { command: string; phase: string }) => [step.phase, step.command]), [["setup", "wordpress.ensure-plugin-active"], ["action", "wordpress.fuzz-admin-pages"], ["assert", "wordpress.collect-workload-result"]])
 assert.equal(result.cases[0]?.status, "passed")
 assert.equal(result.cases[0]?.artifactRefs?.[0]?.path, "/artifacts/exec-1.json")
 assert.equal(result.cases[1]?.status, "failed")
 assert.equal(result.cases[1]?.diagnostics[0]?.code, "fuzz_suite_command_failed")
-assert.equal(result.cases[13]?.status, "skipped")
-assert.equal(result.cases[13]?.skipReason, "fuzz_suite_target_adapter_unsupported")
-assert.equal(result.cases[13]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
-assert.equal(result.artifactRefs.length, 13)
+assert.equal(result.cases[14]?.status, "skipped")
+assert.equal(result.cases[14]?.skipReason, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.cases[14]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.artifactRefs.length, 14)
 assert.equal((result.cases[0]?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "case-pass")
 assert.deepEqual(result.cases[0]?.metadata?.timing, { startedAt: "2026-01-01T00:00:01.000Z", finishedAt: "2026-01-01T00:00:02.000Z", durationMs: 1000 })
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities.includes("db_operation"), true)
@@ -88,6 +101,45 @@ assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.i
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("random_walk"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("sequence"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.db-operation"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.fuzz-admin-pages"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.collect-workload-result"), true)
+
+const phaseWorkloadSpecs: ExecutionSpec[] = []
+const phaseWorkloadResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-phase-workload",
+  cases: [{
+    id: "phase-case",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: { runtimeEnv: { EXAMPLE: "1" }, stagedFiles: [{ source: "bench/example.php", target: "/tmp/wp-codebox-workloads/example.php" }] },
+    phases: {
+      setup: [{ command: "wordpress.wp-cli", args: ["command=plugin list"], timeoutMs: 1000 }],
+      action: [{ command: "wordpress.run-workload", args: ["type=php", "path=${package.root}/bench/example.php"] }],
+      assert: [{ command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET"] }],
+      teardown: [{ command: "wordpress.wp-cli", args: ["command=cache flush"], advisory: true }],
+    },
+  }],
+}), {
+  executor: async (spec) => {
+    phaseWorkloadSpecs.push(spec)
+    return { id: "phase-exec", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }
+  },
+})
+assert.equal(phaseWorkloadResult.status, "passed")
+assert.deepEqual(phaseWorkloadSpecs.map((spec) => spec.command), ["wordpress.run-workload"])
+const loweredPhaseWorkload = JSON.parse(phaseWorkloadSpecs[0]?.args?.[0]?.replace("workload-json=", "") ?? "{}")
+assert.deepEqual(loweredPhaseWorkload.steps.map((step: { phase: string; command: string }) => [step.phase, step.command]), [["setup", "wordpress.wp-cli"], ["action", "wordpress.run-workload"], ["assert", "wordpress.rest-request"], ["teardown", "wordpress.wp-cli"]])
+assert.deepEqual(loweredPhaseWorkload.runtimeEnv, { EXAMPLE: "1" })
+assert.equal(loweredPhaseWorkload.stagedFiles[0].target, "/tmp/wp-codebox-workloads/example.php")
+assert.equal(loweredPhaseWorkload.steps[1].args[1], "path=${package.root}/bench/example.php")
+assert.deepEqual(loweredPhaseWorkload.metadata.phaseCounts, { setup: 1, action: 1, assert: 1, teardown: 1 })
+
+const invalidPhaseWorkload = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-invalid-phase-workload",
+  cases: [{ id: "bad-phase", target: { kind: "runtime", id: "wordpress.run-workload" }, phases: { action: [{ command: "", args: ["path=/"] }] } }],
+}), { executor: async () => { throw new Error("invalid phase workload must not execute") } })
+assert.equal(invalidPhaseWorkload.status, "skipped")
+assert.equal(invalidPhaseWorkload.cases[0]?.diagnostics[0]?.code, "fuzz_suite_input_unsupported")
+assert.match(invalidPhaseWorkload.cases[0]?.diagnostics[0]?.message ?? "", /phases\.action\[0\] requires a non-empty command/)
 
 const plannedWalkA = planBrowserRandomWalk({ context: "editor", seed: "same", max_steps: 5, action_families: ["click", "fill", "capture"] })
 const plannedWalkB = planBrowserRandomWalk({ context: "editor", seed: "same", max_steps: 5, action_families: ["click", "fill", "capture"] })
@@ -141,10 +193,11 @@ const allowedRestMutation = await runFuzzSuite(fuzzSuiteContract({
     return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200, deleteBoundaryArtifact: { schema: DELETE_BOUNDARY_ARTIFACT_SCHEMA, artifactKind: DELETE_BOUNDARY_ARTIFACT_KIND, operation: "rest_request", target: "/wp/v2/posts/10", method: "DELETE", status: 200, artifactPath: "files/delete-boundaries/delete-post.json", sha256: "delete", bytes: 123, generatedAt: "2026-01-01T00:00:00.000Z" } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete" } }
   },
 })
-assert.equal(allowedRestMutation.status, "passed")
+assert.equal(allowedRestMutation.status, "failed")
 assert.deepEqual(allowedRestMutations, ["rest_request"])
 assert.equal(allowedRestMutation.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), undefined)
 assert.equal((allowedRestMutation.cases[0]?.metadata?.deleteBoundary as Record<string, unknown> | undefined)?.artifactPath, "files/delete-boundaries/delete-post.json")
+assert.equal(allowedRestMutation.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_rollback_evidence_missing")
 
 const resetGuardedRestMutationSpecs: ExecutionSpec[] = []
 const resetGuardedRestMutation = await runFuzzSuite(fuzzSuiteContract({
@@ -172,7 +225,7 @@ const resetGuardedRuntimeActionMutation = await runFuzzSuite(fuzzSuiteContract({
   cases: [{ id: "delete-post-runtime-action-reset-guarded", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
 }), {
   resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
-  runtimeActionExecutor: async ({ action }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200 }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete-reset-guarded" } }),
+  runtimeActionExecutor: async ({ action }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200, deleteBoundaryArtifact: { schema: DELETE_BOUNDARY_ARTIFACT_SCHEMA, artifactKind: DELETE_BOUNDARY_ARTIFACT_KIND, operation: "rest_request", target: "/wp/v2/posts/10", method: "DELETE", status: 200, generatedAt: "2026-01-01T00:00:00.000Z", restore: { status: "passed", exitCode: 0 }, rollback: passingRollbackArtifact("rest_request", "/wp/v2/posts/10") } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete-reset-guarded" } }),
 })
 assert.equal(resetGuardedRuntimeActionMutation.status, "passed")
 assert.equal((resetGuardedRuntimeActionMutation.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.resetPolicyAllowsMutation, true)
@@ -193,7 +246,7 @@ for (const method of ["POST", "PUT", "PATCH"] as const) {
     id: `suite-rest-${method.toLowerCase()}-mutation`,
     cases: [{ id: `${method.toLowerCase()}-entity`, target: { kind: "runtime-action" }, input: { type: "rest_request", method, path: "/example/v1/entities/1", bodyJson: { name: "fixture" }, restMutationFixtureOptIn: fixtureOptIn } }],
   }), {
-    runtimeActionExecutor: async ({ action, case: fuzzCase }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method, path: "/example/v1/entities/1", status: method === "POST" ? 201 : 200, mutationIsolationArtifact: { schema: MUTATION_ISOLATION_ARTIFACT_SCHEMA, artifactKind: MUTATION_ISOLATION_ARTIFACT_KIND, operation: "rest_request", target: "/example/v1/entities/1", method, status: method === "POST" ? 201 : 200, artifactPath: `files/mutation-isolation/${fuzzCase.id}.json`, sha256: method.toLowerCase(), bytes: 123, generatedAt: "2026-01-01T00:00:00.000Z" } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: method } }),
+    runtimeActionExecutor: async ({ action, case: fuzzCase }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method, path: "/example/v1/entities/1", status: method === "POST" ? 201 : 200, mutationIsolationArtifact: { schema: MUTATION_ISOLATION_ARTIFACT_SCHEMA, artifactKind: MUTATION_ISOLATION_ARTIFACT_KIND, operation: "rest_request", target: "/example/v1/entities/1", method, status: method === "POST" ? 201 : 200, artifactPath: `files/mutation-isolation/${fuzzCase.id}.json`, sha256: method.toLowerCase(), bytes: 123, generatedAt: "2026-01-01T00:00:00.000Z", restore: { status: "passed", exitCode: 0 }, rollback: passingRollbackArtifact("rest_request", "/example/v1/entities/1") } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: method } }),
   })
   assert.equal(mutationResult.status, "passed")
   assert.equal((mutationResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.executorKind, "episode")
@@ -432,8 +485,9 @@ const mutatingSequenceWithReset = await runFuzzSuite(fuzzSuiteContract({
     return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { actionType: action.type }, observedAt: "2026-01-01T00:00:00.000Z", artifactRefs: [{ kind: "runtime-action", id: `${action.type}-artifact`, path: `files/sequence-${action.type}.json` }], digest: { algorithm: "sha256", value: `seq-${action.type}` } }
   },
 })
-assert.equal(mutatingSequenceWithReset.status, "passed")
+assert.equal(mutatingSequenceWithReset.status, "failed")
 assert.deepEqual(sequenceSteps, ["rest_request", "db_operation"])
+assert.equal(mutatingSequenceWithReset.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_rollback_evidence_missing")
 assert.equal((mutatingSequenceWithReset.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "sequence")
 assert.equal((mutatingSequenceWithReset.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.steps, 2)
 assert.deepEqual((mutatingSequenceWithReset.cases[0]?.metadata?.replay as { sequence?: { seed?: string; maxSteps?: number; actionFamilies?: string[] } } | undefined)?.sequence, { schema: "wp-codebox/runtime-action-sequence/v1", seed: "seq-mutate", maxSteps: 3, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] })
@@ -498,5 +552,19 @@ assert.equal(restResult.schema, "wp-codebox/wordpress-rest-matrix-result/v1")
 assert.equal(restResult.sourceSchema, "wp-codebox/wordpress-rest-matrix/v1")
 assert.equal(restResult.success, true)
 assert.equal(restExecuted[0]?.command, "wordpress.rest-request")
+
+function passingRollbackArtifact(operation: string, target: string): Record<string, unknown> {
+  return {
+    schema: "wp-codebox/wordpress-rollback-artifact/v1",
+    artifactKind: "wordpress-rollback",
+    operation,
+    target,
+    lifecycle: { before: { status: "captured" }, after: { status: "captured" }, restore: { status: "restored" } },
+    result: { status: "passed", restored: true, validation: "matched-before" },
+    diff: { objects: [{ kind: "post", id: 10, changed: true, restoreMatchesBefore: true }] },
+    changedObjects: [{ kind: "post", id: 10, source: "rollback-diff" }],
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  }
+}
 
 console.log("fuzz suite runner ok")

@@ -19,6 +19,9 @@ interface PlaygroundCommandRuntime {
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageInventory(spec: ExecutionSpec): Promise<string>
+  runFuzzAdminPages(spec: ExecutionSpec): Promise<string>
+  runFuzzPluginModuleState(spec: ExecutionSpec): Promise<string>
+  runInventoryPluginModuleOptionsTables(spec: ExecutionSpec): Promise<string>
   runDatabaseInventory(spec: ExecutionSpec): Promise<string>
   runFrontendUrlInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageLoad(spec: ExecutionSpec): Promise<string>
@@ -33,6 +36,7 @@ interface PlaygroundCommandRuntime {
   runPluginCheck(spec: ExecutionSpec): Promise<string>
   runPluginSetup(spec: ExecutionSpec): Promise<string>
   runPluginState(spec: ExecutionSpec): Promise<string>
+  runCollectWorkloadResult(spec: ExecutionSpec): Promise<string>
   runCorePhpunit(spec: ExecutionSpec): Promise<string>
   runThemeSetup(spec: ExecutionSpec): Promise<string>
   runThemeCheck(spec: ExecutionSpec): Promise<string>

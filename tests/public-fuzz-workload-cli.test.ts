@@ -55,6 +55,10 @@ return static function ( array $input, array $args ): array {
   assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:patch:mutation-isolation-artifact"), true)
   assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:delete:delete-boundary-artifact"), true)
   assert.equal(readinessJson.capabilities.commands.includes("wordpress.rest-request"), true)
+  assert.equal(readinessJson.capabilities.commands.includes("wordpress.fuzz-admin-pages"), true)
+  assert.equal(readinessJson.capabilities.commands.includes("wordpress.fuzz-plugin-module-state"), true)
+  assert.equal(readinessJson.capabilities.commands.includes("wordpress.inventory-plugin-module-options-tables"), true)
+  assert.equal(readinessJson.capabilities.commands.includes("wordpress.collect-workload-result"), true)
   assert.equal(readinessJson.capabilities.runtimeActionTypes.includes("editor_insert_save"), false)
 
   const fuzzInput = join(directory, "fuzz.json")
@@ -158,11 +162,59 @@ return static function ( array $input, array $args ): array {
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.run-php")
   const nestedPhpCode = phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].args[0]
   assert.match(nestedPhpCode, /^code=/)
+  assert.match(nestedPhpCode, /function wp_codebox_bench_run_external_http_guardrail_step/)
   const nestedPhpInput = decodeFirstWrapperJson(nestedPhpCode)
   assert.deepEqual(nestedPhpInput.bench_env, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
   assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].target.includes("/tmp/wp-codebox-workloads/"), true)
   assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].source.endsWith("bench/rest-product-batch-import.php"), true)
+
+  const adminPhaseFuzzInput = join(directory, "runtime-admin-phase-workload-fuzz.json")
+  await writeFile(adminPhaseFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-admin-phase-workload-suite",
+    cases: [{
+      id: "admin-phase-workload",
+      target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+      phases: {
+        setup: [{ command: "wordpress.ensure-plugin-active", args: ["plugin=sample-plugin/sample-plugin.php"] }],
+        action: [{ command: "wordpress.fuzz-admin-pages", args: ["safe_methods=GET"] }],
+        assert: [{ command: "wordpress.collect-workload-result", args: ["artifact=admin_page_coverage"] }],
+      },
+    }],
+  }), "utf8")
+  const adminPhaseFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", adminPhaseFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const adminPhaseFuzzJson = JSON.parse(adminPhaseFuzzOutput)
+  assert.equal(adminPhaseFuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(adminPhaseFuzzJson.status, "passed")
+  assert.equal(adminPhaseFuzzJson.cases[0].status, "passed")
+  assert.equal(adminPhaseFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
+  assert.deepEqual(adminPhaseFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps.map((step: { command: string }) => step.command), ["wordpress.ensure-plugin-active", "wordpress.fuzz-admin-pages", "wordpress.collect-workload-result"])
+
+  const modulePhaseFuzzInput = join(directory, "runtime-module-phase-workload-fuzz.json")
+  await writeFile(modulePhaseFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-module-phase-workload-suite",
+    cases: [{
+      id: "module-phase-workload",
+      target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+      phases: {
+        setup: [{ command: "wordpress.ensure-plugin-active", args: ["plugin=sample-plugin/sample-plugin.php"] }],
+        action: [{ command: "wordpress.fuzz-plugin-module-state", args: ["execute_mutations=false", "mutation_mode=declared_plan"] }],
+        assert: [{ command: "wordpress.collect-workload-result", args: ["artifact=module_state_matrix"] }],
+      },
+    }],
+  }), "utf8")
+  const modulePhaseFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", modulePhaseFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const modulePhaseFuzzJson = JSON.parse(modulePhaseFuzzOutput)
+  assert.equal(modulePhaseFuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(modulePhaseFuzzJson.status, "passed")
+  assert.equal(modulePhaseFuzzJson.cases[0].status, "passed")
+  assert.deepEqual(modulePhaseFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps.map((step: { command: string }) => step.command), ["wordpress.ensure-plugin-active", "wordpress.fuzz-plugin-module-state", "wordpress.collect-workload-result"])
 
   const workloadInput = join(directory, "workload.json")
   await writeFile(workloadInput, JSON.stringify({

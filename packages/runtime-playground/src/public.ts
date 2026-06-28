@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
@@ -33,6 +34,7 @@ import {
   isRestMutationMethod,
   mutationArtifactDigest,
   mutationIsolationArtifact,
+  wordpressRollbackArtifact,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
@@ -61,6 +63,7 @@ import {
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
   type Snapshot,
+  type WordPressRollbackArtifact,
   type WordPressHotspotObservationInput,
 } from "@automattic/wp-codebox-core/public"
 export {
@@ -210,6 +213,9 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
         return requestWordPressRest(episode, action)
       }
       if (action.type === "crud_operation") {
+        if (action.operation === "create" || action.operation === "update" || action.operation === "delete") {
+          return executeRollbackSafeCrudMutation(episode, { ...input, action })
+        }
         const step = await runWordPressCrudOperation(episode, action, action.timeout_ms)
         return {
           schema: "wp-codebox/runtime-action-observation/v1",
@@ -297,6 +303,7 @@ async function executeRollbackSafeDbMutation(
   })
   const target = operation.resource?.table ?? operation.query?.table ?? "database"
   const mutation = typeof operation.options?.mutation === "string" ? operation.options.mutation.toUpperCase() : "WRITE"
+  const captureSpec = rollbackCaptureSpec({ operation: "db_operation", target, action: input.action, table: operation.resource?.table ?? operation.query?.table, options: operation.options, metadata: operation.metadata })
   const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
   const createStep = await createWordPressRuntimeCheckpoint(episode, {
     name: checkpointName,
@@ -305,10 +312,14 @@ async function executeRollbackSafeDbMutation(
   if (createStep.execution.exitCode !== 0) {
     throw new Error(`Checkpoint create failed for rollback-isolated DB mutation ${input.case.id}: ${createStep.execution.stderr}`)
   }
+  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
   const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
+  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", captureSpec, input.action.timeout_ms)
   const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
   const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
   const resultMetadata = recordValue(recordValue(stdout)?.metadata)
+  const rollback = rollbackArtifactFromCaptures({ operation: "db_operation", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
   const artifact = mutationIsolationArtifact({
     operation: "db_operation",
     target,
@@ -317,6 +328,7 @@ async function executeRollbackSafeDbMutation(
     beforeCheckpoint: mutationStepEvidence(createStep, "created"),
     afterObservation: mutationStepEvidence(step, "observed"),
     restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
+    rollback,
     affectedIdentifiers: undefined,
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   })
@@ -333,6 +345,7 @@ async function executeRollbackSafeDbMutation(
     executionId: step.execution.id,
     stepId: step.id,
     mutationIsolationArtifact: artifactWithDigest,
+    rollbackArtifact: rollback,
     mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   }
   return {
@@ -346,6 +359,241 @@ async function executeRollbackSafeDbMutation(
     artifactRefs: step.observation?.artifactRefs,
     digest: digestRuntimeActionObservationData(data),
   }
+}
+
+async function executeRollbackSafeCrudMutation(
+  episode: Pick<RuntimeEpisode, "step">,
+  input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "crud_operation" }> },
+): Promise<RuntimeActionObservation> {
+  const target = crudTarget(input.action)
+  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
+  const captureSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action), options: input.action.options, metadata: input.action.metadata })
+  const createStep = await createWordPressRuntimeCheckpoint(episode, {
+    name: checkpointName,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "crud_operation", mutation: input.action.operation.toUpperCase() },
+  })
+  if (createStep.execution.exitCode !== 0) {
+    throw new Error(`Checkpoint create failed for rollback-isolated CRUD mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  }
+  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
+  const step = await runWordPressCrudOperation(episode, input.action, input.action.timeout_ms)
+  const afterSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action, parseJsonRecord(step.execution.stdout)), options: input.action.options, metadata: input.action.metadata })
+  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
+  const restoreCommandStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const restoreStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
+  const rollback = rollbackArtifactFromCaptures({ operation: "crud_operation", target, beforeStep, afterStep, restoreStep, restoreCommandStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const artifact = mutationIsolationArtifact({
+    operation: "crud_operation",
+    target,
+    method: input.action.operation.toUpperCase(),
+    checkpointName,
+    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    afterObservation: mutationStepEvidence(step, "observed"),
+    restore: mutationStepEvidence(restoreCommandStep, restoreCommandStep.execution.exitCode === 0 ? "passed" : "failed"),
+    rollback,
+    affectedIdentifiers: rollback.changedObjects,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+  })
+  const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const data = {
+    stepId: step.id,
+    executionId: step.execution.id,
+    mappedCommand: step.execution.command,
+    args: step.execution.args,
+    exitCode: step.execution.exitCode,
+    stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout,
+    stderr: step.execution.stderr,
+    mutationIsolationArtifact: artifactWithDigest,
+    rollbackArtifact: rollback,
+  }
+  return { schema: "wp-codebox/runtime-action-observation/v1", type: input.action.type, status: "ok", action: input.action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
+}
+
+interface RollbackCaptureSpecInput {
+  operation: string
+  target: string
+  action: object
+  table?: string
+  object?: { kind: string; id?: string | number; type?: string }
+  options?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+interface RollbackCaptureSpec {
+  schema: "wp-codebox/wordpress-rollback-capture-request/v1"
+  operation: string
+  target: string
+  options: string[]
+  tables: Array<{ table: string; where?: Record<string, unknown>; limit: number }>
+  objects: Array<{ kind: string; id?: string | number; type?: string }>
+}
+
+function rollbackCaptureSpec(input: RollbackCaptureSpecInput): RollbackCaptureSpec {
+  const configured = recordValue(input.options?.rollbackCapture ?? input.options?.rollback_capture ?? input.metadata?.rollbackCapture ?? input.metadata?.rollback_capture)
+  const actionRecord = input.action as Record<string, unknown>
+  const optionNames = stringList(configured?.options ?? configured?.optionNames ?? configured?.option_names)
+  const tableSpecs = arrayValue(configured?.tables).flatMap((item) => {
+    const record = recordValue(item)
+    const table = stringValue(record?.table)
+    return table ? [{ table, where: recordValue(record?.where), limit: boundedLimit(record?.limit) }] : []
+  })
+  const objectSpecs = arrayValue(configured?.objects).flatMap((item) => {
+    const record = recordValue(item)
+    const kind = stringValue(record?.kind)
+    return kind ? [{ kind, id: scalarId(record?.id), type: stringValue(record?.type) }] : []
+  })
+  const affectedObjects = arrayValue(input.metadata?.affectedIdentifiers).flatMap((item) => {
+    const record = recordValue(item)
+    const kind = stringValue(record?.kind) ?? restPathObject(input.target)?.kind
+    const id = scalarId(record?.id)
+    return kind && id !== undefined ? [{ kind, id }] : []
+  })
+  const restObject = input.operation === "rest_request" ? restPathObject(input.target) : undefined
+  const inferredOptions = input.object?.kind === "option" && typeof input.object.id === "string" ? [input.object.id] : []
+  const query = recordValue(actionRecord.query)
+  const tables = [
+    ...tableSpecs,
+    ...(input.table ? [{ table: input.table, where: recordValue(query?.where), limit: boundedLimit(query?.limit) }] : []),
+  ]
+  const objects = [...objectSpecs, ...affectedObjects, ...(input.object ? [input.object] : []), ...(restObject ? [restObject] : [])]
+  return {
+    schema: "wp-codebox/wordpress-rollback-capture-request/v1",
+    operation: input.operation,
+    target: input.target,
+    options: [...new Set([...optionNames, ...inferredOptions])].sort(),
+    tables: dedupeTableSpecs(tables),
+    objects: dedupeObjectSpecs(objects),
+  }
+}
+
+async function captureWordPressRollbackState(episode: Pick<RuntimeEpisode, "step">, caseId: string, phase: "before" | "after" | "restore", spec: RollbackCaptureSpec, timeoutMs: number | undefined): Promise<RuntimeEpisodeStepResult> {
+  return episode.step({
+    kind: "command",
+    command: "wordpress.run-php",
+    args: [`code=${wordpressRollbackCapturePhp(spec, phase)}`],
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    metadata: { caseId, phase, schema: spec.schema },
+  }, { type: "command-result" })
+}
+
+function rollbackArtifactFromCaptures(input: { operation: string; target: string; beforeStep: RuntimeEpisodeStepResult; afterStep: RuntimeEpisodeStepResult; restoreStep: RuntimeEpisodeStepResult; restoreCommandStep: RuntimeEpisodeStepResult; metadata: Record<string, unknown> }): WordPressRollbackArtifact {
+  const before = parseRollbackCapture(input.beforeStep)
+  const after = parseRollbackCapture(input.afterStep)
+  const restored = parseRollbackCapture(input.restoreStep)
+  const options = diffNamedRecords(recordValue(before?.options), recordValue(after?.options), recordValue(restored?.options)).map((entry) => ({ name: entry.name, changed: entry.changed, before: entry.before, after: entry.after, restored: entry.restored, restoreMatchesBefore: entry.restoreMatchesBefore }))
+  const tables = diffNamedRecords(recordValue(before?.tables), recordValue(after?.tables), recordValue(restored?.tables)).map((entry) => ({ table: entry.name, changed: entry.changed, before: entry.before, after: entry.after, restored: entry.restored, restoreMatchesBefore: entry.restoreMatchesBefore }))
+  const objects = diffNamedRecords(recordValue(before?.objects), recordValue(after?.objects), recordValue(restored?.objects)).map((entry) => {
+    const [kind, id] = entry.name.split(":", 2)
+    return { kind, id, changed: entry.changed, before: entry.before, after: entry.after, restored: entry.restored, restoreMatchesBefore: entry.restoreMatchesBefore }
+  })
+  const restoreCommandPassed = input.restoreCommandStep.execution.exitCode === 0
+  const capturePassed = input.beforeStep.execution.exitCode === 0 && input.afterStep.execution.exitCode === 0 && input.restoreStep.execution.exitCode === 0
+  const allRestored = [...options, ...tables, ...objects].every((entry) => entry.restoreMatchesBefore)
+  const evidenceExists = options.length + tables.length + objects.length > 0
+  const restoredOk = restoreCommandPassed && capturePassed && evidenceExists && allRestored
+  const diagnostics = [
+    ...(!evidenceExists ? [{ severity: "error" as const, code: "rollback-evidence-missing", message: "Rollback capture produced no supported option, table, or object evidence." }] : []),
+    ...(!capturePassed ? [{ severity: "error" as const, code: "rollback-capture-failed", message: "Rollback capture command failed.", metadata: { beforeExitCode: input.beforeStep.execution.exitCode, afterExitCode: input.afterStep.execution.exitCode, restoreExitCode: input.restoreStep.execution.exitCode } }] : []),
+    ...(restoreCommandPassed && !allRestored ? [{ severity: "error" as const, code: "rollback-restore-validation-failed", message: "Post-restore capture does not match the before capture." }] : []),
+  ]
+  return wordpressRollbackArtifact({
+    operation: input.operation,
+    target: input.target,
+    lifecycle: {
+      before: { ...mutationStepEvidence(input.beforeStep, input.beforeStep.execution.exitCode === 0 ? "captured" : "failed"), capture: before },
+      after: { ...mutationStepEvidence(input.afterStep, input.afterStep.execution.exitCode === 0 ? "captured" : "failed"), capture: after },
+      restore: { ...mutationStepEvidence(input.restoreStep, input.restoreStep.execution.exitCode === 0 ? "restored" : "failed"), capture: restored },
+    },
+    result: { status: restoredOk ? "passed" : "failed", restored: restoredOk, validation: restoredOk ? "matched-before" : evidenceExists ? "mismatch" : "not-validated" },
+    diff: { options, tables, objects },
+    changedOptions: options.filter((entry) => entry.changed).map((entry) => entry.name),
+    changedTables: tables.filter((entry) => entry.changed).map((entry) => entry.table),
+    changedObjects: objects.filter((entry) => entry.changed).map((entry) => ({ kind: entry.kind, id: entry.id ?? `${entry.kind}:unknown`, source: "rollback-diff" })),
+    diagnostics,
+    metadata: input.metadata,
+  })
+}
+
+function parseRollbackCapture(step: RuntimeEpisodeStepResult): Record<string, unknown> | undefined {
+  return recordValue(step.execution.result?.json) ?? parseJsonRecord(step.execution.stdout)
+}
+
+function diffNamedRecords(before: Record<string, unknown> | undefined, after: Record<string, unknown> | undefined, restored: Record<string, unknown> | undefined): Array<{ name: string; changed: boolean; before?: unknown; after?: unknown; restored?: unknown; restoreMatchesBefore: boolean }> {
+  const names = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {}), ...Object.keys(restored ?? {})])].sort()
+  return names.map((name) => {
+    const beforeValue = before?.[name]
+    const afterValue = after?.[name]
+    const restoredValue = restored?.[name]
+    return { name, changed: stableJson(beforeValue) !== stableJson(afterValue), before: beforeValue, after: afterValue, restored: restoredValue, restoreMatchesBefore: stableJson(beforeValue) === stableJson(restoredValue) }
+  })
+}
+
+function wordpressRollbackCapturePhp(spec: RollbackCaptureSpec, phase: string): string {
+  const encoded = Buffer.from(JSON.stringify({ ...spec, phase }), "utf8").toString("base64")
+  return `/* wp-codebox/wordpress-rollback-capture-request/v1 */\n$__wp_codebox_spec = json_decode(base64_decode('${encoded}'), true);\n$__wp_codebox_out = array('schema' => 'wp-codebox/wordpress-rollback-capture/v1', 'phase' => $__wp_codebox_spec['phase'], 'target' => $__wp_codebox_spec['target'], 'options' => array(), 'tables' => array(), 'objects' => array(), 'diagnostics' => array());\n$__wp_codebox_alloptions = wp_load_alloptions();\nforeach ((array) ($__wp_codebox_spec['options'] ?? array()) as $__name) { $__exists = array_key_exists($__name, $__wp_codebox_alloptions) || null !== get_option($__name, null); $__wp_codebox_out['options'][$__name] = array('exists' => $__exists, 'value' => get_option($__name, null)); }\nglobal $wpdb;\nforeach ((array) ($__wp_codebox_spec['tables'] ?? array()) as $__table_spec) { $__table = preg_replace('/[^A-Za-z0-9_]/', '', (string) ($__table_spec['table'] ?? '')); if ('' === $__table) { continue; } $__where = (array) ($__table_spec['where'] ?? array()); $__limit = max(1, min(50, (int) ($__table_spec['limit'] ?? 25))); $__clauses = array(); $__values = array(); foreach ($__where as $__key => $__value) { if (! is_scalar($__value) && null !== $__value) { continue; } $__clauses[] = preg_replace('/[^A-Za-z0-9_]/', '', (string) $__key) . ' = %s'; $__values[] = (string) $__value; } $__sql = 'SELECT * FROM ' . $__table . (count($__clauses) ? ' WHERE ' . implode(' AND ', $__clauses) : '') . ' ORDER BY 1 LIMIT ' . $__limit; $__rows = empty($__values) ? $wpdb->get_results($__sql, ARRAY_A) : $wpdb->get_results($wpdb->prepare($__sql, $__values), ARRAY_A); $__wp_codebox_out['tables'][$__table] = array('rows' => is_array($__rows) ? $__rows : array(), 'row_count' => is_array($__rows) ? count($__rows) : 0); }\nforeach ((array) ($__wp_codebox_spec['objects'] ?? array()) as $__object) { $__kind = (string) ($__object['kind'] ?? ''); $__id = $__object['id'] ?? null; $__key = $__kind . ':' . (null === $__id ? 'unknown' : (string) $__id); if ('post' === $__kind && $__id) { $__post = get_post($__id, ARRAY_A); $__wp_codebox_out['objects'][$__key] = $__post ? array('exists' => true, 'value' => $__post, 'meta' => get_post_meta($__id)) : array('exists' => false); } elseif ('term' === $__kind && $__id) { $__term = get_term($__id, (string) ($__object['type'] ?? '')); $__wp_codebox_out['objects'][$__key] = (! is_wp_error($__term) && $__term) ? array('exists' => true, 'value' => (array) $__term, 'meta' => get_term_meta($__id)) : array('exists' => false); } elseif ('user' === $__kind && $__id) { $__user = get_user_by('id', $__id); $__wp_codebox_out['objects'][$__key] = $__user ? array('exists' => true, 'value' => $__user->to_array(), 'meta' => get_user_meta($__id)) : array('exists' => false); } elseif ('comment' === $__kind && $__id) { $__comment = get_comment($__id, ARRAY_A); $__wp_codebox_out['objects'][$__key] = $__comment ? array('exists' => true, 'value' => $__comment, 'meta' => get_comment_meta($__id)) : array('exists' => false); } elseif ('option' === $__kind && is_string($__id)) { $__exists = array_key_exists($__id, $__wp_codebox_alloptions) || null !== get_option($__id, null); $__wp_codebox_out['objects'][$__key] = array('exists' => $__exists, 'value' => get_option($__id, null)); } }\necho wp_json_encode($__wp_codebox_out, JSON_UNESCAPED_SLASHES) . "\\n";`
+}
+
+function crudTarget(action: object): string {
+  const resource = recordValue((action as Record<string, unknown>).resource)
+  return [stringValue(resource?.kind), stringValue(resource?.type), scalarId(resource?.id)].filter((value) => value !== undefined).join(":") || "crud-object"
+}
+
+function crudCaptureObject(action: object, result?: Record<string, unknown>): { kind: string; id?: string | number; type?: string } | undefined {
+  const resource = recordValue((action as Record<string, unknown>).resource)
+  const kind = stringValue(resource?.kind)
+  if (!kind) return undefined
+  const resultItem = recordValue(result?.item) ?? recordValue(result?.data) ?? result
+  return { kind, type: stringValue(resource?.type), id: scalarId(resource?.id ?? resultItem?.id) }
+}
+
+function restPathObject(path: string): { kind: string; id?: string | number; type?: string } | undefined {
+  const match = path.match(/^\/wp\/v2\/(posts|pages|users|comments|categories|tags)\/(\d+)/)
+  if (!match) return undefined
+  const [, collection, id] = match
+  const kind = collection === "users" ? "user" : collection === "comments" ? "comment" : collection === "categories" || collection === "tags" ? "term" : "post"
+  return { kind, id: Number(id), type: collection === "categories" ? "category" : collection === "tags" ? "post_tag" : collection === "pages" ? "page" : collection === "posts" ? "post" : undefined }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []))] : []
+}
+
+function scalarId(value: unknown): string | number | undefined {
+  return typeof value === "string" || typeof value === "number" ? value : undefined
+}
+
+function boundedLimit(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.min(50, Math.trunc(value))) : 25
+}
+
+function dedupeTableSpecs(tables: RollbackCaptureSpec["tables"]): RollbackCaptureSpec["tables"] {
+  const seen = new Set<string>()
+  return tables.filter((table) => {
+    const key = `${table.table}:${stableJson(table.where ?? {})}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function dedupeObjectSpecs(objects: RollbackCaptureSpec["objects"]): RollbackCaptureSpec["objects"] {
+  const seen = new Set<string>()
+  return objects.filter((object) => {
+    const key = `${object.kind}:${object.type ?? ""}:${object.id ?? ""}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`).join(",")}}`
+  }
+  return JSON.stringify(value)
 }
 
 export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteCommandExecutor {
@@ -364,6 +612,7 @@ async function executeRollbackSafeRestMutation(
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
   const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
+  const captureSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: recordValue(input.case.metadata) })
   const createStep = await createWordPressRuntimeCheckpoint(episode, {
     name: checkpointName,
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
@@ -371,10 +620,15 @@ async function executeRollbackSafeRestMutation(
   if (createStep.execution.exitCode !== 0) {
     throw new Error(`Checkpoint create failed for rollback-isolated REST mutation ${input.case.id}: ${createStep.execution.stderr}`)
   }
+  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
   const observation = await requestWordPressRest(episode, input.action)
-  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const status = restObservationStatus(observation)
   const affectedIdentifiers = restMutationAffectedIdentifiers(observation)
+  const afterSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: { ...(recordValue(input.case.metadata) ?? {}), affectedIdentifiers } })
+  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
+  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
+  const status = restObservationStatus(observation)
+  const rollback = rollbackArtifactFromCaptures({ operation: "rest_request", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
   const baseArtifact = {
     operation: "rest_request" as const,
     target,
@@ -384,6 +638,7 @@ async function executeRollbackSafeRestMutation(
     beforeCheckpoint: mutationStepEvidence(createStep, "created"),
     afterObservation: mutationStepEvidence(observation.step, "observed"),
     restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
+    rollback,
     affectedIdentifiers,
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
   }
@@ -402,6 +657,7 @@ async function executeRollbackSafeRestMutation(
   const data = {
     ...observation.data,
     ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
+    rollbackArtifact: rollback,
   }
 
   return {
@@ -418,8 +674,8 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       const steps = [...workloadSteps(workload.before, workload, fuzzCase), ...workloadSteps(workload.steps, workload, fuzzCase), ...workloadSteps(workload.after, workload, fuzzCase)]
       const startedAt = new Date().toISOString()
       const executions: ExecutionResult[] = []
-      for (const step of steps) {
-        const result = await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs }, { type: "command-result" })
+      for (const [stepIndex, step] of steps.entries()) {
+        const result = await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs, metadata: stripUndefined({ ...step.metadata, phase: step.phase, phaseIndex: step.phaseIndex, workloadStepIndex: stepIndex }) }, { type: "command-result" })
         executions.push(result.execution)
         if (result.execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
           break
@@ -435,7 +691,7 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
         const observation = performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution)
         return observation ? [observation] : []
       })
-      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0, observations: observations.length > 0 ? observations : undefined }
+      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, phases: steps.slice(0, executions.length).map((step, index) => stripUndefined({ index, phase: step.phase, command: step.command })), exitCode: failed ? failed.exitCode : 0, observations: observations.length > 0 ? observations : undefined }
       return {
         id: `wordpress-run-workload-${fuzzCase.id}`,
         command: "wordpress.run-workload",
@@ -998,7 +1254,7 @@ function numericRecord(value: Record<string, unknown>): Record<string, number> |
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
-function workloadSteps(value: unknown, workload: Record<string, unknown>, fuzzCase?: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
+function workloadSteps(value: unknown, workload: Record<string, unknown>, fuzzCase?: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean; phase?: string; phaseIndex?: number; metadata?: Record<string, unknown> }> {
   if (!Array.isArray(value)) {
     return []
   }
@@ -1019,6 +1275,9 @@ function workloadSteps(value: unknown, workload: Record<string, unknown>, fuzzCa
       timeoutMs: typeof record.timeoutMs === "number" ? record.timeoutMs : typeof record.timeout_ms === "number" ? record.timeout_ms : undefined,
       allowFailure: record.allowFailure === true || record.allow_failure === true,
       advisory: record.advisory === true,
+      phase: stringValue(record.phase),
+      phaseIndex: numberValue(record.phaseIndex ?? record.phase_index),
+      metadata: recordValue(record.metadata),
     }]
   })
   if (commandSteps.length > 0) {

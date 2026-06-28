@@ -270,7 +270,7 @@ private static function execute_fuzz_suite_case( array $case, array $suite, int 
 			break;
 		}
 
-		$step_result = self::execute_fuzz_suite_step( $step, $case, $suite, $case_id, $observations );
+		$step_result = self::execute_fuzz_suite_step( $step, $case, $suite, $case_id, $observations, $artifacts );
 		$observations[] = $step_result['observation'];
 		foreach ( $step_result['artifactRefs'] ?? array() as $artifact_ref ) {
 			$artifacts[] = $artifact_ref;
@@ -421,7 +421,7 @@ private static function fuzz_suite_args_from_map( array $values ): array {
 }
 
 /** @param array<string,mixed> $step Step. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @return array<string,mixed> */
-private static function execute_fuzz_suite_step( array $step, array $case, array $suite, string $case_id, array $prior_observations = array() ): array {
+private static function execute_fuzz_suite_step( array $step, array $case, array $suite, string $case_id, array $prior_observations = array(), array $prior_artifacts = array() ): array {
 	$command = (string) ( $step['command'] ?? '' );
 	$args = self::fuzz_suite_parse_args( is_array( $step['args'] ?? null ) ? $step['args'] : array() );
 	$observation = array_filter(
@@ -451,7 +451,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 			'wordpress.trace-browser-coverage' => self::execute_fuzz_suite_browser_coverage( $args, $case, $suite, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
 			'wordpress.summarize-fuzz-artifacts' => self::execute_fuzz_suite_artifact_summary( $args, $case, $suite, $observation, $case_id ),
-			'wordpress.collect-workload-result' => self::execute_fuzz_suite_collect_artifact( $args, $case, $observation ),
+			'wordpress.collect-workload-result' => self::execute_fuzz_suite_collect_artifact( $args, $case, $observation, $prior_artifacts ),
 			'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => self::execute_fuzz_suite_workload_step( $args, $command, $case, $observation, $case_id ),
 			default => self::fuzz_suite_step_unsupported( $command, $observation, $case_id ),
 		};
@@ -585,7 +585,7 @@ private static function execute_fuzz_suite_admin_page_fuzz( array $args, array $
 /** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
 private static function execute_fuzz_suite_external_http_guardrail( array $args, array $observation ): array {
 	if ( function_exists( 'wp_codebox_bench_run_external_http_guardrail_step' ) ) {
-		$payload = wp_codebox_bench_run_external_http_guardrail_step(
+		$payload = WP_Codebox_WordPress_Runtime_Primitives::external_http_guardrail(
 			array(
 				'action'           => 'install',
 				'allowlistDomains' => self::csv_fuzz_suite_arg( (string) ( $args['allowlist'] ?? '' ) ),
@@ -1062,11 +1062,16 @@ private static function execute_fuzz_suite_ability( array $args, array $observat
 }
 
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
-private static function execute_fuzz_suite_collect_artifact( array $args, array $case, array $observation ): array {
-	$name = (string) ( $args['artifact'] ?? '' );
-	$refs = array_values( array_filter( self::fuzz_suite_declared_artifact_refs( $case ), static fn( array $artifact ): bool => '' === $name || ( $artifact['name'] ?? '' ) === $name ) );
+private static function execute_fuzz_suite_collect_artifact( array $args, array $case, array $observation, array $prior_artifacts = array() ): array {
+	$name = (string) ( $args['artifact'] ?? $args['name'] ?? '' );
+	$prior_steps = array_map(
+		static fn( array $prior ): array => array_filter( array( 'command' => (string) ( $prior['command'] ?? '' ), 'status' => (string) ( $prior['status'] ?? 'passed' ), 'observation' => $prior ), static fn( mixed $value ): bool => '' !== $value ),
+		array_values( array_filter( is_array( $observation['prior_observations'] ?? null ) ? $observation['prior_observations'] : array(), 'is_array' ) )
+	);
+	$collection = WP_Codebox_WordPress_Runtime_Primitives::collect_workload_result( $args, $prior_steps, array_merge( self::fuzz_suite_declared_artifact_refs( $case ), $prior_artifacts ) );
 	$observation['artifact'] = $name;
-	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs );
+	$observation['payload'] = $collection['payload'];
+	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $collection['artifactRefs'] );
 }
 
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @param array<string,mixed> $observation Observation. @return array<string,mixed> */

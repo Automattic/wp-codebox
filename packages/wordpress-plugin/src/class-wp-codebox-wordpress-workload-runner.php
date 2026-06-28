@@ -84,8 +84,12 @@ final class WP_Codebox_WordPress_Workload_Runner {
 		$diagnostics = array();
 		$artifacts   = array();
 
+		if ( $this->should_install_http_guardrail( $input ) ) {
+			WP_Codebox_WordPress_Runtime_Primitives::external_http_guardrail( array( 'action' => 'install', 'blockNetwork' => true, 'allowlist' => $this->guardrail_allowlist( $input ) ) );
+		}
+
 		foreach ( $this->all_steps( $input ) as $index => $step ) {
-			$result = $this->execute_step( $step, $input, $index );
+			$result = $this->execute_step( $step, $input, $index, $steps, $artifacts );
 			$steps[] = $result;
 
 			foreach ( is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array() as $diagnostic ) {
@@ -120,14 +124,15 @@ final class WP_Codebox_WordPress_Workload_Runner {
 	}
 
 	/** @param array<string,mixed> $step Workload step. @param array<string,mixed> $input Workload request. @return array<string,mixed> */
-	private function execute_step( array $step, array $input, int $index ): array {
+	private function execute_step( array $step, array $input, int $index, array $prior_steps = array(), array $prior_artifacts = array() ): array {
 		$command = trim( (string) ( $step['command'] ?? '' ) );
 		$args    = $this->parse_args( is_array( $step['args'] ?? null ) ? $step['args'] : array() );
 
 		try {
 			$result = match ( $command ) {
 				'wordpress.rest-request'             => $this->execute_rest_request( $args, $index ),
-				'wordpress.collect-workload-result'  => $this->collect_artifact( $args, $input ),
+				'wordpress.ensure-external-http-guardrail' => $this->execute_external_http_guardrail( $args ),
+				'wordpress.collect-workload-result'  => $this->collect_artifact( $args, $input, $prior_steps, $prior_artifacts ),
 				'wordpress.run-workload'             => 'php' === strtolower( (string) ( $args['type'] ?? '' ) ) ? $this->execute_php_workload( $args, $input, $index ) : $this->acknowledge_recipe_step( $command ),
 				'wordpress.run-declarative-fuzz'     => $this->acknowledge_recipe_step( $command ),
 				default                              => $this->unsupported_step( $command, $index ),
@@ -234,17 +239,47 @@ final class WP_Codebox_WordPress_Workload_Runner {
 	}
 
 	/** @param array<string,string> $args Step args. @param array<string,mixed> $input Workload request. @return array<string,mixed> */
-	private function collect_artifact( array $args, array $input ): array {
-		$name      = (string) ( $args['artifact'] ?? $args['name'] ?? '' );
-		$artifacts = is_array( $input['artifacts'] ?? null ) ? $input['artifacts'] : array();
-		$refs      = array_values(
-			array_filter(
-				$artifacts,
-				static fn( mixed $artifact ): bool => is_array( $artifact ) && ( '' === $name || (string) ( $artifact['name'] ?? '' ) === $name )
+	private function collect_artifact( array $args, array $input, array $prior_steps = array(), array $prior_artifacts = array() ): array {
+		$declared_artifacts = is_array( $input['artifacts'] ?? null ) ? array_values( array_filter( $input['artifacts'], 'is_array' ) ) : array();
+		$collection         = WP_Codebox_WordPress_Runtime_Primitives::collect_workload_result( $args, $prior_steps, array_merge( $declared_artifacts, $prior_artifacts ) );
+		$payload            = $collection['payload'];
+
+		return array(
+			'status'       => 'passed',
+			'observation'  => array_filter( array( 'artifact' => (string) ( $args['artifact'] ?? $args['name'] ?? '' ), 'payload' => $payload ), static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) ) && '' !== $value ),
+			'artifactRefs' => $collection['artifactRefs'],
+		);
+	}
+
+	/** @param array<string,string> $args Step args. @return array<string,mixed> */
+	private function execute_external_http_guardrail( array $args ): array {
+		$payload = WP_Codebox_WordPress_Runtime_Primitives::external_http_guardrail(
+			array(
+				'action'       => 'install',
+				'allowlist'    => $this->csv_arg( (string) ( $args['allowlist'] ?? '' ) ),
+				'blockNetwork' => filter_var( $args['block_network'] ?? $args['blockNetwork'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE ) ?? true,
 			)
 		);
 
-		return array( 'status' => 'passed', 'observation' => array_filter( array( 'artifact' => $name ) ), 'artifactRefs' => $refs );
+		return array( 'status' => 'passed', 'observation' => array( 'installed' => true, 'payload' => $payload ), 'artifactRefs' => array( array( 'name' => 'external-http-guardrail', 'kind' => 'external-http-guardrail', 'path' => 'files/guardrails/external-http.json', 'contentType' => 'application/json', 'payload' => $payload ) ) );
+	}
+
+	/** @param array<string,mixed> $input Workload request. */
+	private function should_install_http_guardrail( array $input ): bool {
+		$metadata = is_array( $input['metadata'] ?? null ) ? $input['metadata'] : array();
+		$context  = strtolower( implode( ' ', array_map( 'strval', array( $input['safety'] ?? '', $input['mode'] ?? '', $input['profile'] ?? '', $metadata['safety'] ?? '', $metadata['mode'] ?? '', $metadata['profile'] ?? '' ) ) ) );
+		return str_contains( $context, 'destructive' ) || str_contains( $context, 'aggressive' );
+	}
+
+	/** @param array<string,mixed> $input Workload request. @return string[] */
+	private function guardrail_allowlist( array $input ): array {
+		$guardrail = is_array( $input['external_http_guardrail'] ?? null ) ? $input['external_http_guardrail'] : array();
+		return array_values( array_map( 'strval', is_array( $guardrail['allowlist'] ?? null ) ? $guardrail['allowlist'] : array() ) );
+	}
+
+	/** @return string[] */
+	private function csv_arg( string $value ): array {
+		return array_values( array_filter( array_map( 'trim', explode( ',', $value ) ), static fn( string $item ): bool => '' !== $item ) );
 	}
 
 	/** @return array<string,mixed> */

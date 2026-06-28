@@ -3,7 +3,7 @@ import { planBrowserRandomWalk } from "./browser-interaction.js"
 import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
-import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
+import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
 
@@ -308,7 +308,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       continue
     }
 
-    const runtimeWorkload = target && isWordPressWorkloadRunTarget(target) ? fuzzSuiteRuntimeWorkloadInput(fuzzCase.input) : undefined
+    const runtimeWorkload = target && isWordPressWorkloadRunTarget(target) ? fuzzSuiteRuntimeWorkloadFromCase(fuzzCase) : undefined
     if (runtimeWorkload?.status === "invalid") {
       const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, runtimeWorkload.message, { adapterKind: "runtime-workload" }).diagnostics?.[0] : undefined
       if (diagnostic) {
@@ -634,7 +634,7 @@ function commandFuzzSuiteTargetAdapter(kind: "command" | "runtime"): FuzzSuiteTa
         return unsupportedTargetAdapterResolution(fuzzCase, target, `Fuzz suite target ${target.kind} is missing an id or entrypoint.`, { adapterKind: kind })
       }
       if (kind === "runtime" && command === "wordpress.run-workload") {
-        const workload = fuzzSuiteRuntimeWorkloadInput(fuzzCase.input)
+        const workload = fuzzSuiteRuntimeWorkloadFromCase(fuzzCase)
         if (workload.status === "invalid") {
           return unsupportedInputAdapterResolution(fuzzCase, target, workload.message, { adapterKind: "runtime-workload" })
         }
@@ -987,6 +987,107 @@ function fuzzSuiteRuntimeWorkloadInput(input: unknown): { status: "valid"; workl
   return { status: "valid", workload }
 }
 
+const FUZZ_SUITE_PHASE_ORDER = ["setup", "action", "assert", "teardown"] as const
+
+function fuzzSuiteRuntimeWorkloadFromCase(fuzzCase: FuzzSuiteCase): { status: "valid"; workload: Record<string, unknown> } | { status: "invalid"; message: string } {
+  const phaseWorkload = fuzzSuiteRuntimeWorkloadFromPhases(fuzzCase)
+  if (phaseWorkload) {
+    return phaseWorkload
+  }
+  return fuzzSuiteRuntimeWorkloadInput(fuzzCase.input)
+}
+
+function fuzzSuiteRuntimeWorkloadFromPhases(fuzzCase: FuzzSuiteCase): { status: "valid"; workload: Record<string, unknown> } | { status: "invalid"; message: string } | undefined {
+  const rawPhases = fuzzCase.phases
+  if (rawPhases === undefined) {
+    return undefined
+  }
+  if (!isRecord(rawPhases)) {
+    return { status: "invalid", message: `Fuzz suite case ${fuzzCase.id} phases must be an object with setup, action, assert, and teardown arrays.` }
+  }
+
+  const steps: WorkspaceRecipeStep[] = []
+  const phaseCounts: Record<string, number> = {}
+  for (const phase of FUZZ_SUITE_PHASE_ORDER) {
+    const rawSteps = rawPhases[phase]
+    if (rawSteps === undefined) {
+      phaseCounts[phase] = 0
+      continue
+    }
+    if (!Array.isArray(rawSteps)) {
+      return { status: "invalid", message: `Fuzz suite case ${fuzzCase.id} phases.${phase} must be an array of workload steps.` }
+    }
+    phaseCounts[phase] = rawSteps.length
+    for (const [stepIndex, rawStep] of rawSteps.entries()) {
+      const normalized = normalizeFuzzSuitePhaseStep(rawStep, phase, stepIndex, fuzzCase.id)
+      if (normalized.status === "invalid") {
+        return normalized
+      }
+      steps.push(normalized.step)
+    }
+  }
+
+  if (steps.length === 0) {
+    return { status: "invalid", message: `Fuzz suite case ${fuzzCase.id} phases must contain at least one setup, action, assert, or teardown step.` }
+  }
+
+  const normalizedInput = fuzzSuiteCaseRecordInput(fuzzCase.input)
+  if (normalizedInput.invalid) {
+    return { status: "invalid", message: `Fuzz suite case ${fuzzCase.id} input must be an object with a finite timeoutMs when phases are used.` }
+  }
+  const base = fuzzSuiteRuntimeWorkloadInput(fuzzCase.input)
+  const baseWorkload = base.status === "valid" ? base.workload : isRecord(normalizedInput.payload) ? normalizedInput.payload : {}
+  const metadata = isRecord(baseWorkload.metadata) ? baseWorkload.metadata : {}
+  return {
+    status: "valid",
+    workload: stripUndefined({
+      ...baseWorkload,
+      schema: baseWorkload.schema ?? "wp-codebox/wordpress-workload-run/v1",
+      id: baseWorkload.id ?? `${fuzzCase.id}-phases`,
+      source: baseWorkload.source ?? "fuzz-suite-case-phases",
+      steps,
+      metadata: stripUndefined({
+        ...metadata,
+        caseId: fuzzCase.id,
+        phaseOrder: FUZZ_SUITE_PHASE_ORDER,
+        phaseCounts,
+        replay: stripUndefined({
+          ...(isRecord(metadata.replay) ? metadata.replay : {}),
+          caseId: fuzzCase.id,
+          phases: FUZZ_SUITE_PHASE_ORDER.filter((phase) => phaseCounts[phase] > 0),
+        }),
+      }),
+    }),
+  }
+}
+
+function normalizeFuzzSuitePhaseStep(rawStep: unknown, phase: typeof FUZZ_SUITE_PHASE_ORDER[number], stepIndex: number, caseId: string): { status: "valid"; step: WorkspaceRecipeStep } | { status: "invalid"; message: string } {
+  if (!isRecord(rawStep)) {
+    return { status: "invalid", message: `Fuzz suite case ${caseId} phases.${phase}[${stepIndex}] must be an object workload step.` }
+  }
+  const command = stringField(rawStep, "command")
+  if (!command) {
+    return { status: "invalid", message: `Fuzz suite case ${caseId} phases.${phase}[${stepIndex}] requires a non-empty command.` }
+  }
+  if (rawStep.args !== undefined && (!Array.isArray(rawStep.args) || !rawStep.args.every((arg) => typeof arg === "string"))) {
+    return { status: "invalid", message: `Fuzz suite case ${caseId} phases.${phase}[${stepIndex}].args must be an array of strings.` }
+  }
+  const timeoutMs = rawStep.timeoutMs ?? rawStep.timeout_ms
+  if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs))) {
+    return { status: "invalid", message: `Fuzz suite case ${caseId} phases.${phase}[${stepIndex}].timeoutMs must be a finite number.` }
+  }
+  const step = stripUndefined({
+    command,
+    args: rawStep.args as string[] | undefined,
+    timeoutMs,
+    allowFailure: rawStep.allowFailure === true || rawStep.allow_failure === true,
+    advisory: rawStep.advisory === true,
+    phase,
+    metadata: stripUndefined({ ...(isRecord(rawStep.metadata) ? rawStep.metadata : {}), phase, phaseIndex: stepIndex }),
+  }) as WorkspaceRecipeStep & { phase: string; metadata: Record<string, unknown> }
+  return { status: "valid", step }
+}
+
 function fuzzSuiteRuntimeActionSequence(input: RuntimeAction): { status: "valid"; steps: RuntimeAction[]; replay: Record<string, unknown> } | { status: "invalid"; message: string } {
   if (input.type !== "sequence") {
     return { status: "invalid", message: "Expected runtime-action sequence input." }
@@ -1052,7 +1153,9 @@ function fuzzSuiteRuntimeActionMutationClassification(action: RuntimeAction): { 
 
 function fuzzSuiteRuntimeActionObservationDiagnostics(observation: RuntimeActionObservation, fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef, metadata: Record<string, unknown> = {}): FuzzSuiteDiagnostic[] {
   const exitCode = observation.step?.execution.exitCode
-  const restore = recordValue(recordValue(observation.data.mutationIsolationArtifact)?.restore) ?? recordValue(recordValue(observation.data.deleteBoundaryArtifact)?.restore)
+  const mutationArtifact = recordValue(observation.data.mutationIsolationArtifact) ?? recordValue(observation.data.deleteBoundaryArtifact)
+  const restore = recordValue(mutationArtifact?.restore)
+  const rollback = recordValue(observation.data.rollbackArtifact) ?? recordValue(mutationArtifact?.rollback)
   const restoreExitCode = typeof restore?.exitCode === "number" ? restore.exitCode : undefined
   const diagnostics: FuzzSuiteDiagnostic[] = []
   if (exitCode !== undefined && exitCode !== 0) {
@@ -1061,7 +1164,23 @@ function fuzzSuiteRuntimeActionObservationDiagnostics(observation: RuntimeAction
   if (restoreExitCode !== undefined && restoreExitCode !== 0) {
     diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_restore_failed", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} rollback restore exited with ${restoreExitCode}.`, metadata: stripUndefined({ ...metadata, restore, actionType: observation.type }) })
   }
+  if (rollback) {
+    const result = recordValue(rollback.result)
+    if (result?.status !== "passed" || result?.restored !== true) {
+      diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_rollback_validation_failed", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} rollback evidence did not validate restore parity.`, metadata: stripUndefined({ ...metadata, rollbackResult: result, rollbackDiagnostics: rollback.diagnostics, actionType: observation.type }) })
+    }
+  } else if (restore || isRollbackEvidenceRequired(observation)) {
+    diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_rollback_evidence_missing", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} did not produce required rollback evidence.`, metadata: stripUndefined({ ...metadata, actionType: observation.type }) })
+  }
   return diagnostics
+}
+
+function isRollbackEvidenceRequired(observation: RuntimeActionObservation): boolean {
+  const action = recordValue(observation.action)
+  if (observation.type === "rest_request") return isRestMutationMethod(action?.method ?? "GET")
+  if (observation.type === "db_operation") return action?.operation === "write"
+  if (observation.type === "crud_operation") return action?.operation === "create" || action?.operation === "update" || action?.operation === "delete"
+  return false
 }
 
 function fuzzSuiteUnsupportedDiagnostic(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef | undefined): FuzzSuiteDiagnostic {
