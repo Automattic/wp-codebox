@@ -8,8 +8,7 @@ import { agentRuntimeMounts, parseAgentRuntimeProbeOptions, type AgentRuntimeMou
 const root = mkdtempSync(join(tmpdir(), "wp-codebox-agent-runtime-components-"))
 const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
-const originalDataMachinePath = process.env.WP_CODEBOX_DATA_MACHINE_PATH
-const originalDataMachineCodePath = process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
+const originalAgentsApiVendorRoot = process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
@@ -28,29 +27,40 @@ try {
 
   assert.equal(agentsApiMount, undefined)
 
-  const dataMachine = join(root, "data-machine")
-  const bundledAgentsApi = join(dataMachine, "vendor", "wordpress", "agents-api")
-  const dataMachineCode = join(root, "data-machine-code")
+  // A vendoring plugin (named generically here — wp-codebox does not know the
+  // product) ships Agents API under its conventional vendored subpath. A deploy
+  // points at the vendoring root through WP_CODEBOX_AGENTS_API_VENDOR_ROOT.
+  const vendorRoot = join(root, "runtime-substrate")
+  const bundledAgentsApi = join(vendorRoot, "vendor", "wordpress", "agents-api")
+  const optInComponent = join(root, "opt-in-component")
   mkdirSync(bundledAgentsApi, { recursive: true })
-  mkdirSync(dataMachineCode, { recursive: true })
-  writeFileSync(join(dataMachine, "data-machine.php"), "<?php\n/* Plugin Name: Data Machine */\n")
+  mkdirSync(optInComponent, { recursive: true })
   writeFileSync(join(bundledAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
-  writeFileSync(join(dataMachineCode, "data-machine-code.php"), "<?php\n/* Plugin Name: Data Machine Code */\n")
+  writeFileSync(join(optInComponent, "opt-in-component.php"), "<?php\n/* Plugin Name: Opt In Component */\n")
   const workspace = join(root, "workspace")
   mkdirSync(workspace, { recursive: true })
   chdir(workspace)
+  process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT = vendorRoot
+
+  // Default runtime: only Agents API is mounted. The runner's agent-facing
+  // file/git/GitHub tool surface is served by the codebox-native runner-workspace
+  // executor (registered by the active wp-codebox plugin), so no external
+  // coding-agent plugin is mounted as a default runtime component. Agents API
+  // resolves from the vendoring root, with no product-specific name baked in.
   const defaultMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
   assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "agents-api")?.source, bundledAgentsApi)
-  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine")?.source, dataMachine)
-  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine-code")?.source, dataMachineCode)
+  assert.equal(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine"), undefined)
+  assert.equal(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine-code"), undefined)
 
-  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = [dataMachine, dataMachineCode].join(",")
+  // A host/deploy that still needs additional substrate opts back in through the
+  // configured runtime component paths — an arbitrary, codebox-name-neutral set.
+  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = [optInComponent].join(",")
   const configuredMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
-  assertSamePath(configuredMounts.find((mount) => mount.metadata?.slug === "data-machine")?.source, dataMachine)
-  assertSamePath(configuredMounts.find((mount) => mount.metadata?.slug === "data-machine-code")?.source, dataMachineCode)
+  assertSamePath(configuredMounts.find((mount) => mount.metadata?.slug === "opt-in-component")?.source, optInComponent)
   delete process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
-  rmSync(dataMachine, { recursive: true, force: true })
+  delete process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT
+  rmSync(vendorRoot, { recursive: true, force: true })
   const defaultAgentsApi = join(root, "agents-api")
   mkdirSync(defaultAgentsApi, { recursive: true })
   writeFileSync(join(defaultAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
@@ -70,15 +80,10 @@ try {
   } else {
     process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
   }
-  if (originalDataMachinePath === undefined) {
-    delete process.env.WP_CODEBOX_DATA_MACHINE_PATH
+  if (originalAgentsApiVendorRoot === undefined) {
+    delete process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT
   } else {
-    process.env.WP_CODEBOX_DATA_MACHINE_PATH = originalDataMachinePath
-  }
-  if (originalDataMachineCodePath === undefined) {
-    delete process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
-  } else {
-    process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH = originalDataMachineCodePath
+    process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT = originalAgentsApiVendorRoot
   }
   if (originalRuntimeComponentPaths === undefined) {
     delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS

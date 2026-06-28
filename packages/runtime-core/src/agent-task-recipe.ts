@@ -188,17 +188,30 @@ function defaultRuntimeComponentPlugins(): WorkspaceRecipeExtraPlugin[] {
 }
 
 function defaultRuntimeComponentSources(): Array<{ source: string; slug?: string }> {
-  const dataMachine = defaultSiblingComponentPath("data-machine", "data-machine.php", process.env.WP_CODEBOX_DATA_MACHINE_PATH)
-  const dataMachineCode = defaultSiblingComponentPath("data-machine-code", "data-machine-code.php", process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH)
-  const agentsApi = defaultAgentsApiPath(dataMachine)
+  // The runner agent's file/git/GitHub tool surface is served by the
+  // codebox-native runner-workspace executor (target `wp-codebox/runner-workspace`),
+  // registered by the bundled wp-codebox plugin (mounted below as
+  // `wordpress-plugin`). The external coding-agent plugin is no longer mounted by
+  // default for the runner: it only ever supplied that surface.
+  //
+  // Default runtime substrate: the Agents API runtime (conversation loop +
+  // tool-execution core) plus the bundled wp-codebox plugin. A host/deploy that
+  // still needs additional substrate opts in via the configured component paths.
+  const agentsApi = defaultAgentsApiPath(resolveBundledAgentsApiSearchRoot())
 
   return uniqueComponentSources([
-    dataMachine ? { source: dataMachine, slug: "data-machine" } : undefined,
-    dataMachineCode ? { source: dataMachineCode, slug: "data-machine-code" } : undefined,
     agentsApi ? { source: agentsApi, slug: "agents-api" } : undefined,
     ...configuredRuntimeComponentPaths().map((source) => ({ source })),
     ...bundledRuntimeComponentPaths().map((source) => ({ source, slug: "wordpress-plugin" })),
   ])
+}
+
+// The Agents API runtime can ship vendored inside another plugin. wp-codebox does
+// not name that plugin: a deploy points at the vendoring plugin root through
+// WP_CODEBOX_AGENTS_API_VENDOR_ROOT, and Agents API is then resolved from its
+// conventional vendored subpath. Explicit WP_CODEBOX_AGENTS_API_PATH still wins.
+function resolveBundledAgentsApiSearchRoot(): string {
+  return process.env.WP_CODEBOX_AGENTS_API_VENDOR_ROOT?.trim() ?? ""
 }
 
 function bundledRuntimeComponentPaths(): string[] {
@@ -212,13 +225,17 @@ function configuredRuntimeComponentPaths(): string[] {
     .filter(Boolean)
 }
 
-function defaultAgentsApiPath(dataMachinePath = ""): string {
+// Resolve the Agents API runtime source. Explicit path wins; otherwise, if a
+// vendoring plugin root is supplied, resolve Agents API from its conventional
+// vendored subpath; otherwise fall back to a sibling agents-api checkout. No
+// product-specific plugin name is referenced.
+function defaultAgentsApiPath(vendorRoot = ""): string {
   const explicit = process.env.WP_CODEBOX_AGENTS_API_PATH?.trim()
   if (explicit) {
     return explicit
   }
 
-  const bundled = dataMachinePath ? resolve(dataMachinePath, "vendor", "wordpress", "agents-api") : ""
+  const bundled = vendorRoot ? resolve(vendorRoot, "vendor", "wordpress", "agents-api") : ""
   if (bundled && existsSync(resolve(bundled, "agents-api.php"))) {
     return bundled
   }

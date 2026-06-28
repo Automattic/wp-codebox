@@ -80,6 +80,7 @@ export const smokeGroups = {
       tsxSmoke("policy-validation-smoke"),
       tsxSmoke("workspace-policy-smoke"),
       phpSmoke("php-runner-workspace-tools-smoke"),
+      phpSmoke("php-runner-workspace-executor-dispatch-smoke"),
       tsxSmoke("source-policy-smoke"),
       tsxSmoke("overlay-preparer-registry-smoke"),
     ],

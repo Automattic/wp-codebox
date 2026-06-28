@@ -5,7 +5,7 @@
  * WordPress-independent engine that performs the agent-facing file, git, and
  * GitHub operations directly against a runner workspace root. Owned by WP
  * Codebox so the runner stops depending on an external coding-agent plugin
- * (Data Machine Code) for its git/GitHub agent-tool surface.
+ * for its git/GitHub agent-tool surface.
  *
  * Every method is bound to a single workspace root and confines filesystem
  * access to that root. Git operations shell out to the local `git` binary.

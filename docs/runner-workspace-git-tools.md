@@ -123,14 +123,69 @@ reviewable change. This PR ships the tractable, deterministically-tested core.
 
 ### Follow-up PRs (deferred)
 
-1. **Wire the executor into the runner conversation loop + declare the tools**
-   so the codebox-native executor is the one the sandbox agent uses, with tool
-   declarations sourced from codebox. Playground integration verification.
-2. **Swap the CLI default mount**: stop mounting `data-machine-code` in
-   `agent-sandbox.ts`; mount the codebox-native runtime component instead. Reuse
-   the existing `workspaceRoot`/clone plumbing for `clone` / `worktree-add`.
-3. **Network-level GitHub verification** (recorded-cassette or live-token gated)
+1. **Network-level GitHub verification** (recorded-cassette or live-token gated)
    for create-PR / issue / comment, plus `git push` against a throwaway remote.
+2. **Legacy removal** (held): remove any remaining Data-Machine-Code-specific
+   wiring once the runner has run end-to-end on the codebox-native surface in the
+   Playground. This PR already stops mounting it by default; the held step is
+   pruning dead references, not behavior.
+
+## Phase 2 — Wired (this is the dependency-shedding change)
+
+Phase 2 wires the executor onto the now-live contract and flips the CLI runner
+mount off the external coding-agent plugin.
+
+### Wired onto the live contract (mirrors the merged sandbox executor #1605)
+
+- `WP_Codebox_Runner_Workspace_Executor::register()` registers the executor onto
+  the canonical Agents API filters exactly as the git-less sandbox executor does:
+  - `agents_api_tool_sources` — declares the 14 file/git/GitHub tools under the
+    `wp-codebox-runner` source, each carrying
+    `runtime.executor_target = wp-codebox/runner-workspace` and a `host` executor
+    kind, with per-tool capability + side-effect metadata.
+  - `agents_api_executor_targets` / `agents_api_execution_targets` — registers the
+    `wp-codebox/runner-workspace` target descriptor.
+  - `agents_api_tool_executors` — registers the executor instance under the target
+    id so the registry-based dispatch in `WP_Agent_Tool_Execution_Core`
+    (`executePreparedTool` → `resolveExecutorForTool`) routes matching calls here.
+- `register()` is invoked from `WP_Codebox_Abilities` next to the sandbox
+  executor registration, and gates on `substrate_exists()` (both the
+  `WP_Agent_Tool_Executor` interface **and** `WP_Agent_Tool_Source_Registry` must
+  be loaded — the gotcha the merged sandbox harness surfaced).
+- The runner agent already runs through the Agents API conversation loop, which
+  instantiates `WP_Agent_Tool_Execution_Core` and calls `executePreparedTool`;
+  that path builds the executor registry from `agents_api_tool_executors`. So
+  registering the executor is sufficient — no conversation-loop change is needed.
+
+### CLI mount flip (the dependency shed)
+
+`defaultRuntimeComponentSources()` in **both** `packages/cli/src/agent-sandbox.ts`
+and `packages/runtime-core/src/agent-task-recipe.ts` stops mounting the external
+coding-agent plugin (and the data-machine plugin it sat next to). Only the Agents
+API runtime is mounted by default, alongside the bundled wp-codebox plugin
+(`wordpress-plugin`) that registers the runner executor. A host/deploy that still
+needs extra substrate opts back in through `CONTAINED_RUNTIME_COMPONENT_PATHS` /
+`WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS`.
+
+wp-codebox no longer names the data-machine plugins anywhere on the runner path:
+Agents API resolution takes an explicit `WP_CODEBOX_AGENTS_API_PATH`, then a
+generic vendoring root via `WP_CODEBOX_AGENTS_API_VENDOR_ROOT`
+(`<root>/vendor/wordpress/agents-api`), then a sibling `agents-api` checkout.
+
+### Verification
+
+- `scripts/php-runner-workspace-executor-dispatch-smoke.php` drives the **real**
+  Agents API `WP_Agent_Tool_Execution_Core` + `WP_Agent_Tool_Executor_Registry`
+  (no shims for the registry/core) against a real temp git repo: a tool with
+  `runtime.executor_target = wp-codebox/runner-workspace` routes to the runner
+  executor (NOT the default), returns real workspace content/git state, and an
+  untargeted control tool falls back to the default executor (backward compat).
+- No-DMC-needed: the runner agent-facing surface is exactly the 14 file/git/GitHub
+  tools the executor covers (the mirrored subset above). The host-side
+  `WP_Codebox_Runner_Workspace_Adapter` handles `clone` / `worktree-add` /
+  prepare / publish through the `wp_codebox_runner_workspace_backend` filter —
+  host orchestration, not an in-runner agent tool — so dropping the default mount
+  does not strip any agent-called surface.
 
 ### Integration notes for the follow-up
 

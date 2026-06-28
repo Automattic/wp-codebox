@@ -25,6 +25,9 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-backend.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/class-wp-codebox-runtime-package-service.php';
+require_once __DIR__ . '/class-wp-codebox-runner-workspace-tools.php';
+require_once __DIR__ . '/trait-wp-codebox-runner-workspace-executor-behavior.php';
+require_once __DIR__ . '/class-wp-codebox-runner-workspace-executor.php';
 require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
 require_once __DIR__ . '/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/class-wp-codebox-fuzz-suite-runner.php';
@@ -72,6 +75,7 @@ final class WP_Codebox_Abilities {
 		$this->register_category();
 		$this->register_agents_api_executor_adapters();
 		WP_Codebox_Sandbox_Workspace_Executor::register();
+		WP_Codebox_Runner_Workspace_Executor::register();
 		$this->register();
 		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
 		add_filter( 'rest_pre_dispatch', array( self::class, 'rest_handle_browser_callback_cors_preflight' ), 10, 3 );

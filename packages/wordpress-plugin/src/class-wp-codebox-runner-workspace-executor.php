@@ -6,7 +6,7 @@
  * workspace root and maps agent tool calls to engine operations. This is the
  * `wp-codebox/runner-workspace` executor target: it gives the runner a native
  * git + GitHub + file agent-tool surface so it no longer depends on an external
- * coding-agent plugin (Data Machine Code) for those tools.
+ * coding-agent plugin for those tools.
  *
  * The executor implements the Agents API WP_Agent_Tool_Executor contract when
  * that interface is available; the pure execute_tool() entrypoint is also
@@ -36,6 +36,10 @@ if ( interface_exists( '\\AgentsAPI\\AI\\Tools\\WP_Agent_Tool_Executor' ) ) {
 				'tool_name' => $tool_name,
 				'success'   => ! empty( $result['success'] ),
 				'result'    => $result,
+				'runtime'   => array(
+					'executor_target'      => self::TARGET_ID,
+					'side_effect_boundary' => self::SIDE_EFFECT_BOUNDARY,
+				),
 			);
 		}
 	}
