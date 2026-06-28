@@ -25,6 +25,7 @@ require_once __DIR__ . '/class-wp-codebox-runner-workspace-backend.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
 require_once __DIR__ . '/class-wp-codebox-wordpress-workload-runner.php';
+require_once __DIR__ . '/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 
 final class WP_Codebox_Abilities {

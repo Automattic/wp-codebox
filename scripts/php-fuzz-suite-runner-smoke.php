@@ -231,6 +231,7 @@ $_GET['rest_route'] = '/wc/store/v1/products';
 $GLOBALS['wp_codebox_rest_server_route_contexts'] = array();
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-fuzz-suite-runner.php';
 
 class WP_Codebox_Fuzz_Suite_Runner_Smoke {
 	use WP_Codebox_Abilities_Execution;
