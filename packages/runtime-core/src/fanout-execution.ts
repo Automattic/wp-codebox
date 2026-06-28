@@ -8,7 +8,7 @@ export interface FanoutExecutionOptions<TWorker extends RunPlanWorkerContract = 
   sessionId?: string
   clock?: RunPlanClock
   aggregationPolicy?: FanoutAggregationPolicy
-  aggregation?: Record<string, unknown>
+  aggregator?: Record<string, unknown>
   finalArtifactRefs?: FanoutArtifactRef[]
   outputNamespace?: string
   onFanoutStarted?: (event: FanoutExecutionLifecycleSnapshot<TWorker>) => Promise<void> | void
@@ -109,11 +109,11 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
   const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRefWithDependencyRefs(result, workers[index], execution.workers, workers))
   await options.onAggregationStarted?.({ fanoutId, sessionId, concurrency, workers, plan, execution, workerResultRefs })
 
-  const aggregation = optionalObjectValue(request.aggregation) ?? options.aggregation
+  const aggregator = optionalObjectValue(request.aggregator) ?? options.aggregator
   const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
     plan: { id: fanoutId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
-    policy: options.aggregationPolicy ?? (stringValue(aggregation?.policy) || "fail"),
-    aggregator: aggregation,
+    policy: options.aggregationPolicy ?? (stringValue(aggregator?.policy) || "fail"),
+    aggregator,
     workerResultRefs,
   })
   const aggregate = aggregateFanoutOutputs(aggregationInput, {

@@ -193,8 +193,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$this->fanout_aggregation->input_from_worker_artifacts(
 				array(
 					'plan'             => $this->fanout_aggregation_plan( $parent_session_id, $workers ),
-					'policy'           => is_array( $input['aggregation'] ?? null ) && is_string( $input['aggregation']['policy'] ?? null ) ? $input['aggregation']['policy'] : 'fail',
-					'aggregator'       => is_array( $input['aggregation'] ?? null ) ? $input['aggregation'] : null,
+					'policy'           => is_array( $input['aggregator'] ?? null ) && is_string( $input['aggregator']['policy'] ?? null ) ? $input['aggregator']['policy'] : 'fail',
+					'aggregator'       => is_array( $input['aggregator'] ?? null ) ? $input['aggregator'] : null,
 					'workerResultRefs' => $this->fanout_worker_result_refs( $runs, $workers ),
 				)
 			),
@@ -526,7 +526,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$this->ensure_directory( $worker_artifacts_path );
 
 		$input = array_merge( $parent, $worker );
-		unset( $input['workers'], $input['dependencies'], $input['aggregation'], $input['concurrency'], $input['_run_plan_descriptor'] );
+		unset( $input['workers'], $input['dependencies'], $input['aggregator'], $input['concurrency'], $input['_run_plan_descriptor'] );
 
 		$input['goal']               = (string) $worker['goal'];
 		$input['sandbox_session_id'] = $parent_session_id . ':' . (string) $worker['id'];

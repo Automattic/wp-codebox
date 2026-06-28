@@ -60,7 +60,7 @@ await withTempDir("wp-codebox-fanout-aggregation-parity-", async (artifactRoot) 
     schema: FANOUT_REQUEST_SCHEMA,
     concurrency: 2,
     orchestrator: { session_id: "fanout-contract-fixture" },
-    aggregation: fixture.vectors[0].input.aggregation,
+    aggregator: fixture.vectors[0].input.aggregator,
     workers: [
       { id: "alpha", goal: "Collect alpha result" },
       { id: "beta", goal: "Collect beta result", dependsOn: ["alpha"] },
