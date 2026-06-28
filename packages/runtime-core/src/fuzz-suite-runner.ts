@@ -174,7 +174,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       continue
     }
 
-    const runtimeAction = target?.kind === "runtime-action" && executeRuntimeAction ? fuzzSuiteRuntimeActionInput(fuzzCase.input) : undefined
+    const runtimeAction = target?.kind === "runtime-action" ? fuzzSuiteRuntimeActionInput(fuzzCase.input) : undefined
     if (runtimeAction?.status === "invalid") {
       const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, runtimeAction.message, { adapterKind: "runtime-action" }).diagnostics?.[0] : undefined
       if (diagnostic) {
@@ -189,6 +189,61 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           diagnostics: [diagnostic],
           metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action" } }),
         })
+        continue
+      }
+    }
+
+    if (runtimeAction?.status === "valid" && runtimeAction.action.type === "sequence") {
+      if (!executeRuntimeAction || !target) {
+        const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, "Runtime-action sequence cases require an episode-aware runtimeActionExecutor.", { adapterKind: "runtime-action", actionType: "sequence", executorRequired: "runtimeActionExecutor" }).diagnostics?.[0] : undefined
+        if (diagnostic) {
+          diagnostics.push(diagnostic)
+          cases.push({ id: fuzzCase.id, status: "skipped", success: false, target, reset, skipReason: diagnostic.code, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: "sequence" } }) })
+          continue
+        }
+      }
+
+      const sequence = fuzzSuiteRuntimeActionSequence(runtimeAction.action)
+      if (sequence.status === "invalid") {
+        const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, sequence.message, { adapterKind: "runtime-action", actionType: "sequence" }).diagnostics?.[0] : undefined
+        if (diagnostic) {
+          diagnostics.push(diagnostic)
+          cases.push({ id: fuzzCase.id, status: "skipped", success: false, target, reset, skipReason: diagnostic.code, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: "sequence" } }) })
+          continue
+        }
+      } else if (fuzzSuiteRuntimeActionSequenceMutates(sequence.steps) && !fuzzSuiteResetPolicyAllowsMutation(suite, fuzzCase)) {
+        const diagnostic: FuzzSuiteDiagnostic = { severity: "warning", code: "fuzz_suite_sequence_reset_policy_required", caseId: fuzzCase.id, target, message: "Runtime-action sequence includes mutating steps and requires a fuzz-suite reset policy before execution.", metadata: { actionType: "sequence", resetPolicyRequired: true } }
+        diagnostics.push(diagnostic)
+        cases.push({ id: fuzzCase.id, status: "skipped", success: false, target, reset, skipReason: diagnostic.code, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: "sequence" } }) })
+        continue
+      } else if (executeRuntimeAction && target) {
+        try {
+          const observations: RuntimeActionObservation[] = []
+          for (const [stepIndex, action] of sequence.steps.entries()) {
+            observations.push(await executeRuntimeAction({ suite, case: fuzzCase, caseIndex: index, target, action }))
+          }
+          cases.push({
+            id: fuzzCase.id,
+            status: "passed",
+            success: true,
+            target,
+            reset,
+            diagnostics: [],
+            artifactRefs: dedupeFuzzSuiteArtifactRefs(observations.flatMap((observation) => [...(fuzzSuiteRuntimeActionArtifactRefs(observation) ?? []), ...fuzzSuiteRuntimeActionMutationArtifactRefs(observation)])),
+            metadata: stripUndefined({
+              input: fuzzSuiteRuntimeActionMetadataInput(fuzzCase.input, runtimeAction.action),
+              description: fuzzCase.description,
+              caseMetadata: fuzzCase.metadata,
+              adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode", steps: sequence.steps.length },
+              replay: { ...replayMetadata, sequence: sequence.replay },
+              observations: observations.map((observation, stepIndex) => ({ stepIndex, type: observation.type, status: observation.status, observedAt: observation.observedAt, digest: observation.digest })),
+            }),
+          })
+        } catch (error) {
+          const diagnostic: FuzzSuiteDiagnostic = { severity: "error", code: "fuzz_suite_runtime_action_sequence_execution_error", caseId: fuzzCase.id, target, message: error instanceof Error ? error.message : String(error) }
+          diagnostics.push(diagnostic)
+          cases.push({ id: fuzzCase.id, status: "error", success: false, target, reset, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode" } }) })
+        }
         continue
       }
     }
@@ -854,6 +909,22 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "sequence") {
+        const sequence = fuzzSuiteRuntimeActionSequence(input.payload as unknown as RuntimeAction)
+        if (sequence.status === "invalid") {
+          return unsupportedInputAdapterResolution(fuzzCase, target, sequence.message, { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.runtime-action-sequence",
+            args: [`sequence-json=${JSON.stringify(sequence.replay)}`],
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, executorRequired: "runtimeActionExecutor", sequence: sequence.replay },
+        }
+      }
+
       if (input.payload.type === "editor_open") {
         return {
           status: "supported",
@@ -905,6 +976,44 @@ function fuzzSuiteRuntimeWorkloadInput(input: unknown): { status: "valid"; workl
     return { status: "invalid", message: "Expected wordpress.run-workload input with a steps array." }
   }
   return { status: "valid", workload }
+}
+
+function fuzzSuiteRuntimeActionSequence(input: RuntimeAction): { status: "valid"; steps: RuntimeAction[]; replay: Record<string, unknown> } | { status: "invalid"; message: string } {
+  if (input.type !== "sequence") {
+    return { status: "invalid", message: "Expected runtime-action sequence input." }
+  }
+  const maxSteps = typeof input.max_steps === "number" ? input.max_steps : typeof input.maxSteps === "number" ? input.maxSteps : input.steps.length
+  const steps = Array.isArray(input.steps) ? input.steps.slice(0, Math.max(0, maxSteps)) : []
+  if (steps.length === 0) {
+    return { status: "invalid", message: "Runtime-action sequence requires at least one step." }
+  }
+  const invalidStep = steps.find((step) => !isRecord(step) || typeof step.type !== "string" || step.type === "sequence")
+  if (invalidStep) {
+    return { status: "invalid", message: "Runtime-action sequence steps must be runtime-action objects and may not nest sequence actions." }
+  }
+  return {
+    status: "valid",
+    steps,
+    replay: stripUndefined({
+      schema: "wp-codebox/runtime-action-sequence/v1",
+      seed: input.seed ?? "runtime-action-sequence",
+      maxSteps,
+      actionFamilies: input.action_families ?? input.actionFamilies,
+      resetPolicy: input.reset_policy ?? input.resetPolicy,
+      steps,
+      replay: input.replay,
+    }),
+  }
+}
+
+function fuzzSuiteRuntimeActionSequenceMutates(steps: readonly RuntimeAction[]): boolean {
+  return steps.some((step) => {
+    if (step.type === "rest_request") return isRestMutationMethod(step.method ?? "GET")
+    if (step.type === "db_operation") return step.operation !== "inspect" && step.operation !== "read"
+    if (step.type === "crud_operation") return step.operation !== "read"
+    if (step.type === "wp_cli") return /\b(create|update|delete|insert|import|rewrite|flush|activate|deactivate)\b/i.test(step.command)
+    return false
+  })
 }
 
 function fuzzSuiteUnsupportedDiagnostic(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef | undefined): FuzzSuiteDiagnostic {

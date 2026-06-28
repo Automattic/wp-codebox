@@ -66,7 +66,7 @@ const generatedRestInventory: WordPressRestRouteInventory = {
   command: "wordpress.rest-route-inventory",
   status: "ok",
   routes: [
-    { route: "/example/v1/items", namespace: "example/v1", methods: ["GET", "POST"], argNames: ["search", "title"], endpoints: [{ methods: ["GET"], permission: { mode: "public" }, args: [{ name: "search", required: false, type: "string" }] }, { methods: ["POST"], permission: { mode: "callback" }, args: [{ name: "title", required: true, type: "string" }, { name: "count", required: false, type: "integer" }] }] },
+    { route: "/example/v1/items", namespace: "example/v1", methods: ["GET", "POST"], argNames: ["search", "title"], endpoints: [{ methods: ["GET"], permission: { mode: "public" }, args: [{ name: "search", required: false, type: "string" }, { name: "count", required: false, type: "integer" }, { name: "metadata", required: false, type: "object" }, { name: "status", required: false, type: "string", enum: ["draft", "published"] }, { name: "enabled", required: false, type: "boolean" }] }, { methods: ["POST"], permission: { mode: "callback" }, args: [{ name: "title", required: true, type: "string" }, { name: "count", required: false, type: "integer" }, { name: "metadata", required: false, type: "object" }, { name: "status", required: false, type: "string", enum: ["draft", "published"] }, { name: "enabled", required: false, type: "boolean" }] }] },
     { route: "/example/v1/items/(?P<id>[\\d]+)", namespace: "example/v1", methods: ["DELETE"], argNames: ["id", "force"], endpoints: [{ methods: ["DELETE"], permission: { mode: "callback" }, args: [{ name: "id", required: true, type: "integer" }, { name: "force", required: false, type: "boolean" }] }] },
   ],
   namespaces: ["example/v1"],
@@ -95,6 +95,28 @@ assert.deepEqual(generatedDeleteInvalid?.input, { type: "rest_request", method: 
 assert.deepEqual(generatedDeleteInvalid?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
 assert.deepEqual(generatedDeleteInvalid?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" })
 assert.equal((generatedDeleteInvalid?.metadata?.safety as Record<string, unknown> | undefined)?.payloadFamily, "invalid-type")
+
+const advancedRestFamilies = ["nested-object", "null-empty", "enum-variant", "numeric-boundary", "boolean-flip", "repeated-field"] as const
+const advancedRestSuiteA = restRouteInventoryToFuzzSuite(generatedRestInventory, {
+  session: "admin",
+  restPayloadFamilies: advancedRestFamilies,
+  restGeneratedMutationResetPolicy: { mode: "checkpoint-per-case", checkpointName: "advanced-rest-baseline" },
+})
+const advancedRestSuiteB = restRouteInventoryToFuzzSuite(generatedRestInventory, {
+  session: "admin",
+  restPayloadFamilies: advancedRestFamilies,
+  restGeneratedMutationResetPolicy: { mode: "checkpoint-per-case", checkpointName: "advanced-rest-baseline" },
+})
+assert.deepEqual(advancedRestSuiteA.cases, advancedRestSuiteB.cases)
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-nested-object")?.input, { method: "GET", path: "/example/v1/items", params: { metadata: { nested: { value: "sample", list: ["sample", "sample-2"] } } }, session: "admin" })
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-null-empty")?.input, { method: "GET", path: "/example/v1/items", params: { search: "" }, session: "admin" })
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-enum-variant")?.input, { method: "GET", path: "/example/v1/items", params: { status: "published" }, session: "admin" })
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-numeric-boundary")?.input, { method: "GET", path: "/example/v1/items", params: { count: 0 }, session: "admin" })
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-boolean-flip")?.input, { method: "GET", path: "/example/v1/items", params: { enabled: false }, session: "admin" })
+assert.deepEqual(advancedRestSuiteA.cases.find((fuzzCase) => fuzzCase.id === "rest-get-example-v1-items-0-repeated-field")?.input, { method: "GET", path: "/example/v1/items", params: { search: ["sample", "sample", "sample"] }, session: "admin" })
+assert.equal(JSON.stringify(advancedRestSuiteA).includes("Woo"), false)
+assert.equal(JSON.stringify(advancedRestSuiteA).includes("Gutenberg"), false)
+assert.equal(JSON.stringify(advancedRestSuiteA).includes("Jetpack"), false)
 
 const adminInventory: WordPressAdminPageInventory = {
   schema: WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
@@ -170,14 +192,16 @@ const databaseInventory: WordPressDatabaseInventory = {
 const databaseSuite = databaseInventoryToFuzzSuite(databaseInventory)
 assert.equal(databaseSuite.target?.entrypoint, "wordpress.db-operation")
 assert.deepEqual(databaseSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime", "db_operation"], targetKinds: ["runtime"], commands: ["wordpress.db-operation"] })
-assert.equal(databaseSuite.cases.length, 4)
+assert.equal(databaseSuite.cases.length, 6)
 assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").operation, "inspect")
 assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
 assert.equal(JSON.parse((databaseSuite.cases[1]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.deepEqual(JSON.parse((databaseSuite.cases[2]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").query.where, { ID: 1 })
+assert.deepEqual(databaseSuite.cases[2]?.metadata?.columnLabels, ["ID"])
 assert.equal(databaseSuite.cases.some((entry) => entry.id === "db-insert-demo"), false)
 
 const mutatingDatabaseSuite = databaseInventoryToFuzzSuite(databaseInventory, { dbGeneratedMutationResetPolicy: { mode: "checkpoint-per-case", checkpointName: "db-baseline" } })
-assert.equal(mutatingDatabaseSuite.cases.length, 7)
+assert.equal(mutatingDatabaseSuite.cases.length, 9)
 const dbInsert = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-insert-demo")
 assert.equal(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").options.mutation, "insert")
 assert.deepEqual(dbInsert?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "db-baseline" })
@@ -186,7 +210,7 @@ const dbDelete = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-de
 assert.deepEqual(dbDelete?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
 
 const databaseCoveragePlan = databaseInventoryToCoveragePlan(databaseInventory)
-assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 9, generated: 9, executable: 4, executed: 0, skipped: 5, untested: 0 })
+assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 12, generated: 12, executable: 6, executed: 0, skipped: 6, untested: 0 })
 assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "external_table_not_fuzzed"), true)
 assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "db_mutation_requires_reset_policy"), true)
 

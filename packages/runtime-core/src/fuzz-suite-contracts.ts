@@ -150,6 +150,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "runtime-action:page",
     "runtime-action:php",
     "runtime-action:rest_request",
+    "runtime-action:sequence",
     "runtime-action:wp_cli",
     "db_operation",
     "rest-mutation:fixture-opt-in",
@@ -162,7 +163,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   ],
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
-  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "wp_cli"],
+  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "sequence", "wp_cli"],
   commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.http-request", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
 }

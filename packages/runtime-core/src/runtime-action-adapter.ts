@@ -13,7 +13,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeActionSequenceAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -127,6 +127,21 @@ export interface RuntimePageAction {
   timeout_ms?: number
 }
 
+export interface RuntimeActionSequenceAction {
+  type: "sequence"
+  seed?: string
+  max_steps?: number
+  maxSteps?: number
+  action_families?: string[]
+  actionFamilies?: string[]
+  reset_policy?: Record<string, unknown>
+  resetPolicy?: Record<string, unknown>
+  steps: RuntimeAction[]
+  replay?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  timeout_ms?: number
+}
+
 export interface RuntimeWordPressPluginSetupAction {
   type: "wordpress_plugin_setup"
   action?: "install" | "list"
@@ -233,6 +248,10 @@ export async function runRuntimeAction(
 
   if (action.type === "page") {
     return runRuntimePageAction(episode, action)
+  }
+
+  if (action.type === "sequence") {
+    throw new RuntimeActionPolicyError("Runtime action sequences must be expanded by the fuzz-suite runner before episode execution.", action)
   }
 
   if (action.type === "wordpress_plugin_setup") {

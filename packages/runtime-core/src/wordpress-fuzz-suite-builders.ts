@@ -20,9 +20,11 @@ export interface WordPressInventoryFuzzSuiteOptions {
 }
 
 export type WordPressPageLoadFuzzMode = "simulated" | "server" | "browser"
-export type WordPressRestPayloadFamily = "valid-minimal" | "boundary-large-string" | "invalid-type"
+export type WordPressRestPayloadFamily = "valid-minimal" | "boundary-large-string" | "invalid-type" | "nested-object" | "null-empty" | "enum-variant" | "numeric-boundary" | "boolean-flip" | "repeated-field"
 
 const SAFE_REST_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+const REST_LARGE_STRING_LENGTH = 256
+const REST_REPEATED_FIELD_COUNT = 3
 
 const REST_REQUEST_TARGET: FuzzSuiteTargetRef = {
   kind: "rest",
@@ -466,13 +468,38 @@ function restRoutePathTokenPattern(name: string): RegExp {
 function restArgSample(arg: WordPressRestRouteArgDescriptor | undefined, pathPattern?: string, payloadFamily: WordPressRestPayloadFamily = "valid-minimal"): unknown {
   if (payloadFamily === "boundary-large-string") {
     if (restArgAcceptsType(arg, "string") || !arg?.type) {
-      return "x".repeat(256)
+      return "x".repeat(REST_LARGE_STRING_LENGTH)
     }
     return undefined
   }
 
   if (payloadFamily === "invalid-type") {
     return restInvalidTypeSample(arg)
+  }
+
+  if (payloadFamily === "nested-object") {
+    return restNestedSample(arg)
+  }
+
+  if (payloadFamily === "null-empty") {
+    return restNullEmptySample(arg)
+  }
+
+  if (payloadFamily === "enum-variant") {
+    return arg?.enum?.length ? arg.enum[arg.enum.length - 1] : undefined
+  }
+
+  if (payloadFamily === "numeric-boundary") {
+    return restNumericBoundarySample(arg)
+  }
+
+  if (payloadFamily === "boolean-flip") {
+    return restArgAcceptsType(arg, "boolean") ? false : undefined
+  }
+
+  if (payloadFamily === "repeated-field") {
+    const sample = restArgSample(arg, pathPattern, "valid-minimal")
+    return sample === undefined ? undefined : Array.from({ length: REST_REPEATED_FIELD_COUNT }, () => sample)
   }
 
   if (arg?.enum?.length) {
@@ -524,7 +551,7 @@ function restConcretePayloadArgs(args: readonly WordPressRestRouteArgDescriptor[
 }
 
 function generatedRestPayloadFamilySkippable(payloadFamily: WordPressRestPayloadFamily): boolean {
-  return payloadFamily === "boundary-large-string" || payloadFamily === "invalid-type"
+  return payloadFamily !== "valid-minimal"
 }
 
 function restArgAcceptsType(arg: WordPressRestRouteArgDescriptor | undefined, type: string): boolean {
@@ -540,6 +567,26 @@ function restInvalidTypeSample(arg: WordPressRestRouteArgDescriptor | undefined)
   if (type === "array") return "not-an-array"
   if (type === "object") return "not-an-object"
   return 12345
+}
+
+function restNestedSample(arg: WordPressRestRouteArgDescriptor | undefined): unknown {
+  if (restArgAcceptsType(arg, "object")) return { nested: { value: "sample", list: ["sample", "sample-2"] } }
+  if (restArgAcceptsType(arg, "array")) return [{ value: "sample" }, { value: "sample-2" }]
+  return undefined
+}
+
+function restNullEmptySample(arg: WordPressRestRouteArgDescriptor | undefined): unknown {
+  if (Array.isArray(arg?.type) && arg.type.includes("null")) return null
+  if (restArgAcceptsType(arg, "string") || !arg?.type) return ""
+  if (restArgAcceptsType(arg, "array")) return []
+  if (restArgAcceptsType(arg, "object")) return {}
+  return undefined
+}
+
+function restNumericBoundarySample(arg: WordPressRestRouteArgDescriptor | undefined): unknown {
+  if (restArgAcceptsType(arg, "integer")) return 0
+  if (restArgAcceptsType(arg, "number")) return Number.EPSILON
+  return undefined
 }
 
 function restGeneratedMutationIntent(method: string): FuzzSuiteMutationIntent {
@@ -708,13 +755,13 @@ function databaseTableFuzzSuiteCase(table: WordPressDatabaseTableDescriptor, pla
   const mutates = plan.operation !== "inspect" && plan.operation !== "read"
   const executable = !mutates || Boolean(options.dbGeneratedMutationResetPolicy)
   return stripUndefined({
-    id: `db-${slugify(plan.operation)}-${slugify(table.baseName || table.name)}`,
+    id: `db-${slugify(plan.id ?? plan.operation)}-${slugify(table.baseName || table.name)}`,
     target: DB_OPERATION_TARGET,
     description: `${plan.label} ${table.baseName || table.name}`,
     input: executable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
     resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
     mutation: mutates ? { intent: plan.operation === "delete" ? "delete" : "write", destructive: plan.operation === "delete", intensity: plan.operation === "delete" ? "high" : "medium", resetRequired: true } : undefined,
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" } }),
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" } }),
   })
 }
 
@@ -727,16 +774,17 @@ function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor, 
   const mutates = plan.operation !== "inspect" && plan.operation !== "read"
   const mutationExecutable = !mutates || Boolean(options.dbGeneratedMutationResetPolicy)
   return stripUndefined({
-    id: `db-${slugify(plan.operation)}-${slugify(table.baseName || table.name)}`,
+    id: `db-${slugify(plan.id ?? plan.operation)}-${slugify(table.baseName || table.name)}`,
     target: DB_OPERATION_TARGET,
     description: `${plan.label} ${table.baseName || table.name}`,
     input: executable && mutationExecutable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
     reason: !executable ? { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." } : !mutationExecutable ? { code: "db_mutation_requires_reset_policy", message: "Generated database mutations require an explicit reset policy before execution." } : undefined,
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, operation: plan.operation, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata() }),
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata() }),
   })
 }
 
 interface DatabaseTableOperationPlan {
+  id?: string
   operation: "inspect" | "read" | "insert" | "update" | "delete"
   label: string
   seed?: Record<string, unknown>
@@ -745,6 +793,10 @@ interface DatabaseTableOperationPlan {
 
 function databaseTableOperationPlans(table: WordPressDatabaseTableDescriptor): DatabaseTableOperationPlan[] {
   const safePlans: DatabaseTableOperationPlan[] = [{ operation: "inspect", label: "Inspect" }, { operation: "read", label: "Read" }]
+  const keyColumn = primaryishColumn(table)
+  if (keyColumn) {
+    safePlans.push({ id: "read-keyed", operation: "read", label: "Read keyed", seed: { source: "wordpress-db-inventory", table: table.name, operation: "read", queryFamily: "read-keyed" }, replay: { source: "wordpress-db-inventory", table: table.name, operation: "read", queryFamily: "read-keyed", column: keyColumn.name } })
+  }
   if (table.classification === "external" || !tableWritable(table) || !primaryishColumn(table) || !writableSampleColumn(table)) {
     return safePlans
   }
@@ -756,6 +808,9 @@ function databaseOperation(table: WordPressDatabaseTableDescriptor, plan: Databa
   const keyColumn = primaryishColumn(table)
   const writableColumn = writableSampleColumn(table)
   if (plan.operation === "read") {
+    if (plan.id === "read-keyed" && keyColumn) {
+      return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "read", query: { table: tableRef, columns: readableColumns(table), where: { [keyColumn.name]: sampleDbValue(keyColumn) }, limit: 1 }, metadata: dbOperationMetadata(table, plan) })
+    }
     return normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, operation: "read", query: { table: tableRef, columns: readableColumns(table), limit: 1 }, metadata: dbOperationMetadata(table, plan) })
   }
   if (plan.operation === "insert") {
@@ -771,7 +826,7 @@ function databaseOperation(table: WordPressDatabaseTableDescriptor, plan: Databa
 }
 
 function dbOperationMetadata(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan): Record<string, unknown> {
-  return { source: "wordpress-db-inventory", table: table.name, classification: table.classification, operation: plan.operation, primaryKeyColumns: primaryKeyColumns(table) }
+  return { source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, classification: table.classification, operation: plan.operation, queryFamily: plan.id, primaryKeyColumns: primaryKeyColumns(table), columnLabels: table.columns.map((column) => column.name) }
 }
 
 function tableWritable(table: WordPressDatabaseTableDescriptor): boolean {

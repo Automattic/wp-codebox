@@ -86,6 +86,7 @@ assert.deepEqual(result.cases[0]?.metadata?.timing, { startedAt: "2026-01-01T00:
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities.includes("db_operation"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("db_operation"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("random_walk"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("sequence"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.db-operation"), true)
 
 const plannedWalkA = planBrowserRandomWalk({ context: "editor", seed: "same", max_steps: 5, action_families: ["click", "fill", "capture"] })
@@ -375,6 +376,43 @@ assert.deepEqual(runtimeActionResult.summary, { total: 2, passed: 2, failed: 0, 
 assert.deepEqual(runtimeActions, ["browser", "admin_page"])
 assert.equal(runtimeActionResult.cases[0]?.artifactRefs?.[0]?.path, "files/browser.json")
 assert.equal((runtimeActionResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.executorKind, "episode")
+
+const sequenceWithoutExecutor = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-sequence-without-executor",
+  target: { kind: "runtime-action" },
+  cases: [{ id: "sequence", input: { type: "sequence", seed: "seq-1", max_steps: 2, action_families: ["read"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }] } }],
+}))
+assert.equal(sequenceWithoutExecutor.status, "skipped")
+assert.equal(sequenceWithoutExecutor.cases[0]?.skipReason, "fuzz_suite_input_unsupported")
+assert.equal(sequenceWithoutExecutor.cases[0]?.diagnostics[0]?.metadata?.executorRequired, "runtimeActionExecutor")
+
+const mutatingSequenceWithoutReset = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-mutating-sequence-without-reset",
+  target: { kind: "runtime-action" },
+  cases: [{ id: "sequence-mutation", input: { type: "sequence", seed: "seq-mutate", maxSteps: 2, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] } }],
+}), { runtimeActionExecutor: async () => { throw new Error("must not execute without reset") } })
+assert.equal(mutatingSequenceWithoutReset.status, "skipped")
+assert.equal(mutatingSequenceWithoutReset.cases[0]?.skipReason, "fuzz_suite_sequence_reset_policy_required")
+
+const sequenceSteps: string[] = []
+const mutatingSequenceWithReset = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-mutating-sequence-with-reset",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "sequence-baseline" },
+  target: { kind: "runtime-action" },
+  cases: [{ id: "sequence-mutation", input: { type: "sequence", seed: "seq-mutate", maxSteps: 3, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] } }],
+}), {
+  resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
+  runtimeActionExecutor: async ({ action }) => {
+    sequenceSteps.push(action.type)
+    return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { actionType: action.type }, observedAt: "2026-01-01T00:00:00.000Z", artifactRefs: [{ kind: "runtime-action", id: `${action.type}-artifact`, path: `files/sequence-${action.type}.json` }], digest: { algorithm: "sha256", value: `seq-${action.type}` } }
+  },
+})
+assert.equal(mutatingSequenceWithReset.status, "passed")
+assert.deepEqual(sequenceSteps, ["rest_request", "db_operation"])
+assert.equal((mutatingSequenceWithReset.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "sequence")
+assert.equal((mutatingSequenceWithReset.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.steps, 2)
+assert.deepEqual((mutatingSequenceWithReset.cases[0]?.metadata?.replay as { sequence?: { seed?: string; maxSteps?: number; actionFamilies?: string[] } } | undefined)?.sequence, { schema: "wp-codebox/runtime-action-sequence/v1", seed: "seq-mutate", maxSteps: 3, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] })
+assert.equal(mutatingSequenceWithReset.artifactRefs.length, 2)
 
 const restMatrix = wordpressRestMatrixContract({
   id: "rest-matrix-001",
