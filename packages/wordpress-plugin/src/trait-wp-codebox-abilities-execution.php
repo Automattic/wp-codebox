@@ -3663,72 +3663,66 @@ private static function browser_runtime_has_plugin( array $runtime, string $slug
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function list_artifacts( array $input = array() ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->list( $input );
+	return self::artifact_ability_service()->list_artifacts( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function get_artifact( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->get( $input );
+	return self::artifact_ability_service()->get_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function inspect_artifact( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->inspect( $input );
+	return self::artifact_ability_service()->inspect_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function discard_artifact( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->discard( $input );
+	return self::artifact_ability_service()->discard_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function normalize_browser_artifact_bundle( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->normalize_browser_bundle( $input );
+	return self::artifact_ability_service()->normalize_browser_artifact_bundle( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function persist_browser_artifact( array $input ): array|WP_Error {
-	$result = ( new WP_Codebox_Artifacts() )->persist_browser_bundle( $input );
-	if ( is_wp_error( $result ) ) {
-		return $result;
-	}
-
-	$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_ARTIFACT_WRITE_SCOPE );
-	if ( ! empty( $authorization['caller'] ) || ! empty( $authorization['scope'] ) ) {
-		$result['authorization'] = $authorization;
-	}
-
-	return $result;
+	return self::artifact_ability_service()->persist_browser_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function import_artifact_bundle( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->import_artifact_bundle( $input );
+	return self::artifact_ability_service()->import_artifact_bundle( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function reimport_artifact_bundle( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->reimport_artifact_bundle( $input );
+	return self::artifact_ability_service()->reimport_artifact_bundle( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function review_artifact( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->review_artifact( $input );
+	return self::artifact_ability_service()->review_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function apply_artifact_preflight( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->apply_preflight( $input );
+	return self::artifact_ability_service()->apply_artifact_preflight( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function apply_approved_artifact( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Artifacts() )->apply_approved( $input );
+	return self::artifact_ability_service()->apply_approved_artifact( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function stage_artifact_apply( array $input ): array|WP_Error {
-	return WP_Codebox_Pending_Artifact_Apply::stage_apply_artifact( $input );
+	return self::artifact_ability_service()->stage_artifact_apply( $input );
+}
+
+private static function artifact_ability_service(): WP_Codebox_Artifact_Ability_Service {
+	return new WP_Codebox_Artifact_Ability_Service();
 }
 }
 

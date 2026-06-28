@@ -65,6 +65,7 @@ require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-patch-approval-filter.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
+require_once __DIR__ . '/src/class-wp-codebox-artifact-ability-service.php';
 require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 require_once __DIR__ . '/src/class-wp-codebox-api.php';
