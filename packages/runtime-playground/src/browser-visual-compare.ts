@@ -296,6 +296,15 @@ async function runVisualComparePairCommand({
   const maxExplanationElements = positiveIntegerArg(args, "max-explanation-elements", 25)
   const maxExplanationCandidates = positiveIntegerArg(args, "max-explanation-candidates", 160)
   const explainSelectors = visualCompareExplainSelectors(args)
+  // Disposable WP Codebox sandboxes have no outbound network egress. A captured
+  // page that references external resources (Google Fonts, CDNs, analytics) would
+  // otherwise leave those requests hanging until the navigation/screenshot hits
+  // the wall timeout, surfacing as a `capture-failed`/timeout even though the
+  // local document served fine. Aborting cross-origin requests up front makes
+  // both targets render deterministically (offline, system-font fallback) and
+  // fast. On by default; `block-external-requests=false` opts back into the live
+  // (egress-dependent) behavior.
+  const blockExternalRequests = strictBooleanArg(args, "block-external-requests", true)
 
   if (threshold < 0 || threshold > 1) {
     throw new Error("threshold must be between 0 and 1")
@@ -353,6 +362,9 @@ async function runVisualComparePairCommand({
     const browser = await launchChromiumBrowser()
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
+      if (blockExternalRequests) {
+        await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin)
+      }
       viewport = await browserProbeViewport(page)
       try {
         let sourceCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
@@ -1413,6 +1425,34 @@ function visualCompareExplainSelectors(args: string[]): string[] {
   }
 
   return [...selectors]
+}
+
+// Abort every request whose origin differs from the live preview origin so an
+// egress-free sandbox renders captured pages deterministically instead of
+// hanging on unreachable external resources. Same-origin requests (the document,
+// its local CSS/JS/images served by the preview server) pass through untouched.
+async function installVisualCompareOfflineIsolation(page: Page, previewOrigin: string): Promise<void> {
+  let allowedOrigin: string | null = null
+  try {
+    allowedOrigin = new URL(previewOrigin).origin
+  } catch {
+    allowedOrigin = null
+  }
+  await page.route("**/*", (route) => {
+    const requestUrl = route.request().url()
+    let requestOrigin: string | null = null
+    try {
+      requestOrigin = new URL(requestUrl).origin
+    } catch {
+      requestOrigin = null
+    }
+    // Allow same-origin (preview) and non-HTTP schemes (data:, blob:, about:).
+    if (!requestUrl.startsWith("http") || (allowedOrigin && requestOrigin === allowedOrigin)) {
+      void route.continue()
+      return
+    }
+    void route.abort()
+  })
 }
 
 async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
