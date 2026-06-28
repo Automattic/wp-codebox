@@ -8,7 +8,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 
 export { BrowserCommandArtifactError, isBrowserCommandArtifactError }
 export { runBrowserActionsCommand, runBrowserScenarioCommand, type BrowserActionsRunPlan } from "./browser-actions-runner.js"
-export { runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand } from "./editor-command-runners.js"
+export { runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand } from "./editor-command-runners.js"
 export { runBrowserProbeCommand, runSingleBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
 export { browserWordPressDiagnosticProvider } from "./browser-wordpress-diagnostic-provider.js"
 export { wordpressAdminAuthCookiePhpCode } from "./browser-probe-support.js"

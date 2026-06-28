@@ -3,13 +3,13 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
+import { editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, type EditorActionStep } from "./editor-actions.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
@@ -1348,4 +1348,331 @@ function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs
     ...(Array.isArray(state.blocks) ? { blockCount: state.blocks.length } : {}),
     storesAvailable: state.storesAvailable,
   }
+}
+
+const EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS = 30_000
+
+export interface BlockValidationNode {
+  name: string
+  isValid: boolean
+  issues: string[]
+  innerBlocks?: BlockValidationNode[]
+}
+
+export interface BlockValidationResult {
+  name: string
+  isValid: boolean
+  issues: string[]
+}
+
+export interface EditorValidateBlocksResult {
+  total_blocks: number
+  valid_blocks: number
+  invalid_blocks: number
+  validation_method: "wp.blocks.validateBlock"
+  validation_provider: string
+  results: BlockValidationResult[]
+}
+
+interface EditorBlockValidationEvaluation {
+  nodes: BlockValidationNode[]
+  validationProvider: string
+  contentSource: "argument" | "edited-post-content"
+  blockTypesRegistered: number
+}
+
+interface EditorBlockValidation {
+  result: EditorValidateBlocksResult
+  contentSource: "argument" | "edited-post-content"
+  blockTypesRegistered: number
+}
+
+export function flattenBlockValidationNodes(nodes: BlockValidationNode[]): BlockValidationResult[] {
+  const results: BlockValidationResult[] = []
+  const walk = (list: BlockValidationNode[]): void => {
+    for (const node of list) {
+      results.push({
+        name: typeof node.name === "string" ? node.name : "",
+        isValid: node.isValid !== false,
+        issues: Array.isArray(node.issues) ? node.issues.filter((issue): issue is string => typeof issue === "string") : [],
+      })
+      if (Array.isArray(node.innerBlocks) && node.innerBlocks.length > 0) {
+        walk(node.innerBlocks)
+      }
+    }
+  }
+  walk(nodes)
+  return results
+}
+
+export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; validationProvider: string }): EditorValidateBlocksResult {
+  const results = flattenBlockValidationNodes(input.nodes)
+  const validBlocks = results.filter((result) => result.isValid).length
+  return {
+    total_blocks: results.length,
+    valid_blocks: validBlocks,
+    invalid_blocks: results.length - validBlocks,
+    validation_method: "wp.blocks.validateBlock",
+    validation_provider: input.validationProvider,
+    results,
+  }
+}
+
+export async function validateEditorBlocks(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidation> {
+  const evaluation = await evaluateEditorBlockValidation(page, options)
+  return {
+    result: summarizeBlockValidation({ nodes: evaluation.nodes, validationProvider: evaluation.validationProvider }),
+    contentSource: evaluation.contentSource,
+    blockTypesRegistered: evaluation.blockTypesRegistered,
+  }
+}
+
+async function evaluateEditorBlockValidation(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidationEvaluation> {
+  return page.evaluate((input) => {
+    const win = window as unknown as {
+      wp?: {
+        blocks?: {
+          parse?: (content: string) => unknown[]
+          validateBlock?: (block: unknown, blockType?: unknown) => unknown
+          getBlockType?: (name: string) => unknown
+          getBlockTypes?: () => unknown[]
+        }
+        data?: { select?: (store: string) => Record<string, unknown> }
+      }
+    }
+    const wpBlocks = win.wp?.blocks
+    if (!wpBlocks || typeof wpBlocks.parse !== "function") {
+      throw new Error("wp-codebox-editor-validate-blocks-unavailable: wp.blocks.parse is not available in the editor runtime")
+    }
+    const validateBlock = wpBlocks.validateBlock
+    const getBlockType = wpBlocks.getBlockType
+    const getBlockTypes = wpBlocks.getBlockTypes
+    const blockTypesRegistered = typeof getBlockTypes === "function" ? (getBlockTypes() as unknown[]).length : 0
+
+    let contentSource: "argument" | "edited-post-content" = "argument"
+    let content = input.content
+    if (typeof content !== "string") {
+      const select = win.wp?.data?.select
+      const editor = typeof select === "function" ? select("core/editor") : undefined
+      content = typeof editor?.getEditedPostContent === "function" ? String((editor.getEditedPostContent as () => unknown)() ?? "") : ""
+      contentSource = "edited-post-content"
+    }
+
+    const formatIssue = (issue: unknown): string => {
+      if (typeof issue === "string") {
+        return issue
+      }
+      if (issue && typeof issue === "object") {
+        const record = issue as Record<string, unknown>
+        if (Array.isArray(record.args)) {
+          return record.args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ").trim()
+        }
+        if (typeof record.message === "string") {
+          return record.message
+        }
+      }
+      return String(issue)
+    }
+
+    type ValidationNode = { name: string; isValid: boolean; issues: string[]; innerBlocks: ValidationNode[] }
+    const validateNode = (block: unknown): ValidationNode => {
+      const record = (block && typeof block === "object" ? block : {}) as Record<string, unknown>
+      const name = typeof record.name === "string" ? record.name : ""
+      let isValid = record.isValid !== false
+      let issues: string[] = []
+      if (typeof validateBlock === "function") {
+        const blockType = typeof getBlockType === "function" && name ? getBlockType(name) : undefined
+        try {
+          const outcome = validateBlock(block, blockType)
+          if (Array.isArray(outcome)) {
+            isValid = Boolean(outcome[0])
+            if (Array.isArray(outcome[1])) {
+              issues = (outcome[1] as unknown[]).map(formatIssue).filter((issue) => issue.length > 0)
+            }
+          } else {
+            isValid = Boolean(outcome)
+          }
+        } catch (error) {
+          isValid = false
+          issues = [error instanceof Error ? error.message : String(error)]
+        }
+      }
+      if (isValid === false && issues.length === 0 && Array.isArray(record.validationIssues)) {
+        issues = (record.validationIssues as unknown[]).map(formatIssue).filter((issue) => issue.length > 0)
+      }
+      const innerBlocks = Array.isArray(record.innerBlocks) ? (record.innerBlocks as unknown[]).map(validateNode) : []
+      return { name, isValid, issues, innerBlocks }
+    }
+
+    const parsed = wpBlocks.parse(content)
+    const nodes = Array.isArray(parsed) ? parsed.map(validateNode) : []
+    return { nodes, validationProvider: input.provider, contentSource, blockTypesRegistered }
+  }, { content: options.content, provider: options.provider })
+}
+
+export async function runEditorValidateBlocksCommand({
+  artifactRoot,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
+  const args = spec.args ?? []
+  const target = editorOpenTargetFromArgs(args)
+  const content = await editorValidateContentFromArgs(args)
+  const provider = editorValidateProviderFromArgs(args)
+  const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const { preview, networkPolicy } = topology
+  const targetUrl = topology.resolveUrl(target.url)
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-validate-blocks", operation: "editor-validate-blocks" })
+
+  const errors: BrowserProbeErrorRecord[] = []
+  const startedAt = now()
+  const browser = await launchChromiumBrowser()
+  let finalUrl = targetUrl
+  let viewport: BrowserProbeViewport | null = null
+  let authSummary: BrowserProbeAuthSummary | undefined
+  let validation: EditorBlockValidation | undefined
+  let pendingError: Error | undefined
+  let artifact: BrowserArtifact | undefined
+
+  try {
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-validate-blocks", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    viewport = await browserProbeViewport(page)
+    attachBrowserCaptureListeners({
+      captureConsole: false,
+      captureErrors: true,
+      captureNetwork: false,
+      consoleMessages: [],
+      errors,
+      network: [],
+      page,
+    })
+
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: waitTimeoutMs })
+    finalUrl = page.url()
+    await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
+    await waitForEditorBlocksRuntime(page, waitTimeoutMs)
+    finalUrl = page.url()
+    validation = await validateEditorBlocks(page, { content, provider })
+  } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    errors.push(serializeBrowserError("probe-error", error))
+  } finally {
+    await browser.close()
+
+    const summary: BrowserEditorValidateBlocksSummary | undefined = validation
+      ? {
+          schema: "wp-codebox/editor-validate-blocks/v1",
+          totalBlocks: validation.result.total_blocks,
+          validBlocks: validation.result.valid_blocks,
+          invalidBlocks: validation.result.invalid_blocks,
+          validationMethod: "wp.blocks.validateBlock",
+          validationProvider: validation.result.validation_provider,
+          contentSource: validation.contentSource,
+          blockTypesRegistered: validation.blockTypesRegistered,
+        }
+      : undefined
+
+    await artifactSession.writeJson("validateBlocks", "editor-validate-blocks.json", {
+      schema: "wp-codebox/editor-validate-blocks/v1",
+      target,
+      requestedUrl: targetUrl,
+      preview,
+      ...topology.origins,
+      finalUrl,
+      provider,
+      contentSource: validation?.contentSource,
+      blockTypesRegistered: validation?.blockTypesRegistered,
+      startedAt,
+      finishedAt: now(),
+      result: validation?.result,
+    })
+
+    artifact = {
+      artifactType: "editor-validate-blocks",
+      requestedUrl: targetUrl,
+      url: targetUrl,
+      preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...topology.origins,
+      files: {
+        validateBlocks: "files/browser/editor-validate-blocks.json",
+        summary: "files/browser/editor-validate-blocks-summary.json",
+      },
+      summary: {
+        consoleMessages: 0,
+        errors: errors.length,
+        finalUrl,
+        htmlSnapshot: false,
+        ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
+        auth: authSummary,
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+        networkEvents: 0,
+        replayability: "diagnostic-only",
+        screenshot: false,
+        editorValidateBlocks: summary ?? {
+          schema: "wp-codebox/editor-validate-blocks/v1",
+          totalBlocks: 0,
+          validBlocks: 0,
+          invalidBlocks: 0,
+          validationMethod: "wp.blocks.validateBlock",
+          validationProvider: provider,
+          contentSource: typeof content === "string" ? "argument" : "edited-post-content",
+          blockTypesRegistered: 0,
+        },
+        viewport,
+      },
+    } as BrowserArtifact
+
+    await artifactSession.writeJson("summary", "editor-validate-blocks-summary.json", {
+      schema: "wp-codebox/editor-validate-blocks/v1",
+      target,
+      requestedUrl: targetUrl,
+      preview,
+      ...topology.origins,
+      finalUrl,
+      startedAt,
+      finishedAt: now(),
+      files: artifact.files,
+      viewport,
+      summary: artifact.summary,
+    })
+  }
+
+  if (pendingError) {
+    throw new BrowserCommandArtifactError(`wordpress.editor-validate-blocks failed: ${pendingError.message}`, artifact)
+  }
+  if (!validation) {
+    throw new BrowserCommandArtifactError("wordpress.editor-validate-blocks failed: block validation did not complete", artifact)
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify(validation.result, null, 2)}\n`,
+  }
+}
+
+async function waitForEditorBlocksRuntime(page: import("playwright").Page, timeoutMs: number): Promise<void> {
+  await page.waitForFunction(() => {
+    const wpBlocks = (window as unknown as { wp?: { blocks?: { parse?: unknown; getBlockTypes?: () => unknown[] } } }).wp?.blocks
+    if (!wpBlocks || typeof wpBlocks.parse !== "function") {
+      return false
+    }
+    const blockTypes = typeof wpBlocks.getBlockTypes === "function" ? wpBlocks.getBlockTypes() : []
+    return Array.isArray(blockTypes) && blockTypes.length > 0
+  }, undefined, { timeout: timeoutMs })
 }

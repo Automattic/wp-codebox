@@ -45,6 +45,7 @@ interface PlaygroundCommandRuntime {
   runVisualCompare(spec: ExecutionSpec): Promise<string>
   runEditorOpen(spec: ExecutionSpec): Promise<string>
   runEditorActions(spec: ExecutionSpec): Promise<string>
+  runEditorValidateBlocks(spec: ExecutionSpec): Promise<string>
 }
 
 export function playgroundRuntimeCommandIds(): string[] {

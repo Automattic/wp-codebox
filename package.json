@@ -105,6 +105,7 @@
     "test:runtime-php-snippets": "tsx tests/runtime-php-snippets.test.ts",
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
+    "test:editor-validate-blocks": "tsx tests/editor-validate-blocks.test.ts",
     "test:artifact-result-envelope": "tsx tests/artifact-result-envelope.test.ts",
     "test:artifact-reference-dtos": "tsx tests/artifact-reference-dtos.test.ts",
     "test:artifact-path-primitives": "tsx tests/artifact-path-primitives.test.ts",

@@ -3,12 +3,12 @@ import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestF
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
-export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
+export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserEditorValidateBlocksArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
 
 export type BrowserArtifactType = BrowserArtifact["artifactType"]
 
 export interface BrowserArtifactBase {
-  artifactType: "probe" | "actions" | "editor-open" | "editor-actions" | "scenario" | "visual-compare"
+  artifactType: "probe" | "actions" | "editor-open" | "editor-actions" | "editor-validate-blocks" | "scenario" | "visual-compare"
   requestedUrl: string
   url: string
   preview: BrowserProbePreviewRouting
@@ -44,6 +44,12 @@ export interface BrowserEditorActionsArtifact extends BrowserArtifactBase {
   summary: BrowserArtifactSummary & { actions: number; steps: number }
 }
 
+export interface BrowserEditorValidateBlocksArtifact extends BrowserArtifactBase {
+  artifactType: "editor-validate-blocks"
+  files: BrowserArtifactFiles & { summary: string; validateBlocks: string }
+  summary: BrowserArtifactSummary & { editorValidateBlocks: BrowserEditorValidateBlocksSummary }
+}
+
 export interface BrowserScenarioArtifact extends BrowserArtifactBase {
   artifactType: "scenario"
   files: BrowserArtifactFiles & { summary: string }
@@ -59,6 +65,7 @@ export interface BrowserArtifactFiles {
   actions?: string
   editorState?: string
   editorValidity?: string
+  validateBlocks?: string
   steps?: string
   checkpoints?: string
   console?: string
@@ -121,6 +128,7 @@ export interface BrowserArtifactSummary {
     storesAvailable: boolean
   }
   editorValidity?: BrowserEditorValiditySummary
+  editorValidateBlocks?: BrowserEditorValidateBlocksSummary
   editorReadiness?: BrowserEditorReadinessSummary
   editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
@@ -180,6 +188,17 @@ export interface BrowserEditorValiditySummary {
   warningCount: number
   selectors: string[]
   messages: string[]
+}
+
+export interface BrowserEditorValidateBlocksSummary {
+  schema: "wp-codebox/editor-validate-blocks/v1"
+  totalBlocks: number
+  validBlocks: number
+  invalidBlocks: number
+  validationMethod: "wp.blocks.validateBlock"
+  validationProvider: string
+  contentSource: "argument" | "edited-post-content"
+  blockTypesRegistered: number
 }
 
 export interface BrowserEditorReadinessSummary {
@@ -978,6 +997,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   actions: { kind: "browser-actions", contentType: "application/x-ndjson", redact: true },
   editorState: { kind: "browser-editor-state", contentType: "application/json", redact: true },
   editorValidity: { kind: "browser-editor-validity", contentType: "application/json", redact: true },
+  validateBlocks: { kind: "browser-editor-validate-blocks", contentType: "application/json", redact: true },
   steps: { kind: "browser-steps", contentType: "application/x-ndjson", redact: true },
   checkpoints: { kind: "browser-checkpoints", contentType: "application/x-ndjson", redact: true },
   console: { kind: "browser-console", contentType: "application/x-ndjson", redact: true },

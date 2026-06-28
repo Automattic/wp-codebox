@@ -17,6 +17,7 @@ const WORDPRESS_ADMIN_AUTH_ARG_COMMANDS = new Set([
 const WORDPRESS_ADMIN_AUTH_REQUIRED_COMMANDS = new Set([
   "wordpress.editor-open",
   "wordpress.editor-actions",
+  "wordpress.editor-validate-blocks",
 ])
 
 export function commandWordPressAdminAuthRequirement(command: ExecutionResult): WordPressAdminAuthCommandRequirement | undefined {

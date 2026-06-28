@@ -7,7 +7,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
-import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
+import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
@@ -879,6 +879,27 @@ class PlaygroundRuntime implements Runtime {
     let result: Awaited<ReturnType<typeof runEditorActionsCommand>>
     try {
       result = await runEditorActionsCommand({
+        artifactRoot: this.artifactRoot,
+        runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+        runtimeSpec: this.spec,
+        server,
+        spec,
+      })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
+    this.browserProbes.push(result.artifact)
+    return result.output
+  }
+
+  async runEditorValidateBlocks(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    let result: Awaited<ReturnType<typeof runEditorValidateBlocksCommand>>
+    try {
+      result = await runEditorValidateBlocksCommand({
         artifactRoot: this.artifactRoot,
         runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
         runtimeSpec: this.spec,

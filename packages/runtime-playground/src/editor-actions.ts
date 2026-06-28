@@ -53,6 +53,24 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   return { url: `/wp-admin/post-new.php?post_type=${encodeURIComponent(postType)}`, kind: "post-new", postType, waitSelector }
 }
 
+export const EDITOR_VALIDATE_BLOCKS_DEFAULT_PROVIDER = "wordpress-block-editor"
+
+export async function editorValidateContentFromArgs(args: string[]): Promise<string | undefined> {
+  const inline = argValue(args, "content")
+  if (typeof inline === "string") {
+    return inline
+  }
+  const file = argValue(args, "content-file")?.trim()
+  if (file) {
+    return readFile(resolveCommandPath(file), "utf8")
+  }
+  return undefined
+}
+
+export function editorValidateProviderFromArgs(args: string[]): string {
+  return argValue(args, "validation-provider")?.trim() || EDITOR_VALIDATE_BLOCKS_DEFAULT_PROVIDER
+}
+
 export async function editorActionStepsFromArgs(args: string[]): Promise<EditorActionStep[]> {
   const stepsRaw = argValue(args, "steps-json")?.trim()
   if (!stepsRaw) {
