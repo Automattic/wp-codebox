@@ -27,6 +27,7 @@ require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
 require_once __DIR__ . '/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/class-wp-codebox-agent-task-ability-descriptors.php';
+require_once __DIR__ . '/class-wp-codebox-runtime-ability-descriptors.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 require_once __DIR__ . '/class-wp-codebox-browser-contained-site-service.php';
 
@@ -361,50 +362,28 @@ final class WP_Codebox_Abilities {
 			);
 
 			$run_agent_task_ability = WP_Codebox_Agent_Task_Ability_Descriptors::run_agent_task( $agent_task_descriptor_context );
+			$runtime_descriptor_context = array(
+				'runtime_task_request_schema'                    => self::runtime_task_request_schema(),
+				'runtime_task_result_schema'                     => self::runtime_task_result_schema(),
+				'wordpress_workload_run_request_schema'          => self::wordpress_workload_run_request_schema(),
+				'wordpress_workload_run_result_schema'           => self::wordpress_workload_run_result_schema(),
+				'fuzz_suite_request_schema'                      => self::fuzz_suite_request_schema(),
+				'fuzz_suite_result_schema'                       => self::fuzz_suite_result_schema(),
+				'fuzz_suite_runner_capabilities_contract'        => self::fuzz_suite_runner_capabilities_contract(),
+				'fuzz_suite_supported_runner_capabilities'       => self::fuzz_suite_supported_runner_capabilities(),
+				'fuzz_suite_runtime_backed_execution_contract'   => self::fuzz_suite_runtime_backed_execution_contract(),
+				'fuzz_runner_capabilities_schema'                => self::fuzz_runner_capabilities_schema(),
+				'runtime_package_task_schema'                    => self::runtime_package_task_schema(),
+				'runtime_package_result_schema'                  => self::runtime_package_result_schema(),
+			);
 
 			wp_register_ability( 'wp-codebox/run-agent-task', $run_agent_task_ability );
 
-			wp_register_ability(
-				'wp-codebox/run-runtime-task',
-				array(
-					'label'               => 'Run Runtime Task',
-					'description'         => 'Run a runtime task through the WP Codebox boundary and return a stable wp-codebox result envelope.',
-					'category'            => 'wp-codebox',
-					'input_schema'        => self::runtime_task_request_schema(),
-					'output_schema'       => self::runtime_task_result_schema(),
-					'execute_callback'    => array( self::class, 'run_runtime_task' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-task' ),
-				)
-			);
+			wp_register_ability( 'wp-codebox/run-runtime-task', WP_Codebox_Runtime_Ability_Descriptors::run_runtime_task( $runtime_descriptor_context ) );
 
-			wp_register_ability(
-				'wp-codebox/run-wordpress-workload',
-				array(
-					'label'               => 'Run WordPress Workload',
-					'description'         => 'Run a safe recipe-backed WordPress workload and return step results, diagnostics, and artifact references without accepting raw PHP or shell input.',
-					'category'            => 'wp-codebox',
-					'input_schema'        => self::wordpress_workload_run_request_schema(),
-					'output_schema'       => self::wordpress_workload_run_result_schema(),
-					'execute_callback'    => array( self::class, 'run_wordpress_workload' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
-				)
-			);
+			wp_register_ability( 'wp-codebox/run-wordpress-workload', WP_Codebox_Runtime_Ability_Descriptors::run_wordpress_workload( $runtime_descriptor_context ) );
 
-			wp_register_ability(
-				'wp-codebox/run-fuzz-suite',
-				array(
-					'label'               => 'Run Fuzz Suite',
-					'description'         => 'Run safe PHP in-process WordPress fuzz-suite cases against this disposable runtime and return structured case results plus artifact references. Runtime-backed execution is available through the public wp-codebox CLI or TypeScript facade, not this ability callback.',
-					'category'            => 'wp-codebox',
-					'input_schema'        => self::fuzz_suite_request_schema(),
-					'output_schema'       => self::fuzz_suite_result_schema(),
-					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner_capabilities' => self::fuzz_suite_runner_capabilities_contract(), 'supported_runner_capabilities' => self::fuzz_suite_supported_runner_capabilities(), 'runtime_backed_execution' => self::fuzz_suite_runtime_backed_execution_contract(), 'runner_capabilities_schema' => self::fuzz_runner_capabilities_schema() ),
-				)
-			);
+			wp_register_ability( 'wp-codebox/run-fuzz-suite', WP_Codebox_Runtime_Ability_Descriptors::run_fuzz_suite( $runtime_descriptor_context ) );
 
 			$run_agent_task_batch_ability = WP_Codebox_Agent_Task_Ability_Descriptors::run_agent_task_batch( $agent_task_descriptor_context );
 
@@ -414,33 +393,9 @@ final class WP_Codebox_Abilities {
 
 			wp_register_ability( 'wp-codebox/run-agent-task-fanout', $run_agent_task_fanout_ability );
 
-			wp_register_ability(
-				'wp-codebox/resolve-runtime-requirements',
-				array(
-					'label'               => 'Resolve Runtime Requirements',
-					'description'         => 'Resolve runtime/provider readiness without creating a session or invoking a runtime package.',
-					'category'            => 'wp-codebox',
-					'input_schema'        => array( 'type' => 'object' ),
-					'output_schema'       => array( 'type' => 'object' ),
-					'execute_callback'    => array( self::class, 'resolve_runtime_requirements' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/resolve-runtime-requirements' ),
-				)
-			);
+			wp_register_ability( 'wp-codebox/resolve-runtime-requirements', WP_Codebox_Runtime_Ability_Descriptors::resolve_runtime_requirements() );
 
-			wp_register_ability(
-				'wp-codebox/run-runtime-package',
-				array(
-					'label'               => 'Run Runtime Package',
-					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured backend ability adapter.',
-					'category'            => 'wp-codebox',
-					'input_schema'        => self::runtime_package_task_schema(),
-					'output_schema'       => self::runtime_package_result_schema(),
-					'execute_callback'    => array( self::class, 'run_runtime_package' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-package', 'backend_adapter' => 'agents-api-runtime-package' ),
-				)
-			);
+			wp_register_ability( 'wp-codebox/run-runtime-package', WP_Codebox_Runtime_Ability_Descriptors::run_runtime_package( $runtime_descriptor_context ) );
 
 			wp_register_ability(
 				'wp-codebox/request-host-delegation',

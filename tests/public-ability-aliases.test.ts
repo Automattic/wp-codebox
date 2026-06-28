@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
 const taskDescriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-agent-task-ability-descriptors.php", "utf8")
+const runtimeDescriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-ability-descriptors.php", "utf8")
 const descriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php", "utf8")
 const schemasPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-schemas.php", "utf8")
 const apiPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-api.php", "utf8")
@@ -23,7 +24,7 @@ for (const removedAlias of ["wp-codebox/run-sandbox-task", "wp-codebox/run-sandb
 }
 
 assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-task'/)
-assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_task'\s*\)/)
+assert.match(runtimeDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'run_runtime_task'\s*\)/)
 assert.match(schemasPhp, /'schema'\s*=>\s*array\(\s*'type'\s*=>\s*'string',\s*'const'\s*=>\s*'wp-codebox\/runtime-task-request\/v1'\s*\)/)
 assert.match(schemasPhp, /'schema'\s*=>\s*array\(\s*'type'\s*=>\s*'string',\s*'const'\s*=>\s*'wp-codebox\/runtime-task-result\/v1'\s*\)/)
 
@@ -42,10 +43,10 @@ for (const removedAlias of ["wp-codebox/create-sandbox-session", "wp-codebox/cre
 }
 
 assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-package'/)
-assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_package'\s*\)/)
-assert.match(abilitiesPhp, /'canonical_ability'\s*=>\s*'wp-codebox\/run-runtime-package'/)
+assert.match(runtimeDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'run_runtime_package'\s*\)/)
+assert.match(runtimeDescriptorsPhp, /'canonical_ability'\s*=>\s*'wp-codebox\/run-runtime-package'/)
 assert.doesNotMatch(abilitiesPhp, /wp_register_ability\(\s*'agents\/run-runtime-package'/)
-assert.doesNotMatch(abilitiesPhp + descriptorsPhp, /wp_register_ability\(\s*'(?:agents|datamachine|data-machine-code)\//i)
-assert.doesNotMatch(descriptorsPhp + apiPhp, /'(?:agents|datamachine|data-machine-code)\/[a-z0-9._/-]+'\s*=>/i)
+assert.doesNotMatch(abilitiesPhp + descriptorsPhp + runtimeDescriptorsPhp, /wp_register_ability\(\s*'(?:agents|datamachine|data-machine-code)\//i)
+assert.doesNotMatch(descriptorsPhp + runtimeDescriptorsPhp + apiPhp, /'(?:agents|datamachine|data-machine-code)\/[a-z0-9._/-]+'\s*=>/i)
 
 console.log("public canonical abilities ok")
