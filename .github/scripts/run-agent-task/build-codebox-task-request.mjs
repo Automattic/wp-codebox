@@ -53,7 +53,7 @@ const request = {
     provider: process.env.PROVIDER || "openai",
     name: process.env.MODEL || "gpt-5.5",
   },
-  runner_workspace: parseJson("RUNNER_WORKSPACE", {}, "object"),
+  runner_workspace: parseJson("RUNNER_WORKSPACE_CONFIG", {}, "object"),
   validation_dependencies: process.env.VALIDATION_DEPENDENCIES || "",
   context_repositories: parseJson("CONTEXT_REPOSITORIES", [], "array"),
   verification_commands: parseJson("VERIFICATION_COMMANDS", [], "array"),
