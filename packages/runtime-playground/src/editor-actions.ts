@@ -1,10 +1,22 @@
 import { readFile } from "node:fs/promises"
-import { resolveCommandPath } from "@automattic/wp-codebox-core"
+import { resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { argValue } from "./commands.js"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import type { PlaygroundCliServer } from "./preview-server.js"
+import { cleanWpCliOutput } from "./wp-cli-command-handlers.js"
+
+// Callback shape every editor command already holds for running PHP/WP-CLI inside
+// the sandbox (the same one used to mint admin auth cookies).
+export type RunPlaygroundCommand = (
+  command: string,
+  server: PlaygroundCliServer,
+  options: { code: string } | { scriptPath: string },
+) => Promise<PlaygroundRunResponse>
 
 export interface EditorOpenTarget {
   url: string
-  kind: "post" | "post-new" | "site" | "url"
+  kind: "post" | "post-new" | "site" | "url" | "front-page"
   postId?: number
   postType?: string
   waitSelector: string
@@ -31,6 +43,16 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   if (target === "site") {
     return { url: "/wp-admin/site-editor.php", kind: "site", waitSelector }
   }
+  // The site's static front page (`page_on_front`). Its concrete post id is only
+  // known at runtime — e.g. after an importer materializes pages and points
+  // `page_on_front` at the imported home page — so the URL is resolved against
+  // the running WordPress by `resolveEditorOpenTargetUrl` before navigation,
+  // turning into `post.php?post=<page_on_front>&action=edit`. This lets a recipe
+  // open and validate the actual imported front page without knowing its id when
+  // the recipe is built.
+  if (target === "front-page") {
+    return { url: "", kind: "front-page", waitSelector }
+  }
 
   const postType = argValue(args, "post-type")?.trim() || "post"
   if (!/^[a-zA-Z0-9_-]+$/.test(postType)) {
@@ -47,10 +69,72 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   }
 
   if (target !== "post-new") {
-    throw new Error(`wordpress.editor-open target supports post-new, site, or url=<path-or-url>: ${target}`)
+    throw new Error(`wordpress.editor-open target supports post-new, site, front-page, or url=<path-or-url>: ${target}`)
   }
 
   return { url: `/wp-admin/post-new.php?post_type=${encodeURIComponent(postType)}`, kind: "post-new", postType, waitSelector }
+}
+
+// Resolve an editor-open target that can only be pinned to a concrete editor URL
+// at runtime. Today that is `kind: "front-page"`, which asks the running
+// WordPress for its static front page (`page_on_front`) and rewrites the target
+// to `post.php?post=<id>&action=edit` so the editor opens the real page. Targets
+// that already carry a concrete URL (post, post-new, site, url) are returned
+// unchanged. Throws when `front-page` is requested but the site has no static
+// front page configured (`show_on_front` is not `page`, or `page_on_front` is
+// unset) — that is a real misconfiguration the caller must surface, not paper
+// over by silently opening an empty editor.
+export async function resolveEditorOpenTarget(
+  target: EditorOpenTarget,
+  context: {
+    command: string
+    runPlaygroundCommand?: RunPlaygroundCommand
+    runtimeSpec?: RuntimeCreateSpec
+    server: PlaygroundCliServer
+  },
+): Promise<EditorOpenTarget> {
+  if (target.kind !== "front-page") {
+    return target
+  }
+  const { command, runPlaygroundCommand, runtimeSpec, server } = context
+  if (!runPlaygroundCommand) {
+    throw new Error(`${command} target=front-page requires Playground PHP command support`)
+  }
+  if (!runtimeSpec) {
+    throw new Error(`${command} target=front-page requires a runtime spec`)
+  }
+
+  const resolveCommand = `${command}.resolve-front-page`
+  const response = await runPlaygroundCommand(resolveCommand, server, {
+    code: bootstrapPhpCode(runtimeSpec, frontPagePostIdPhpCode(), []),
+  })
+  assertPlaygroundResponseOk(resolveCommand, response)
+
+  const frontPageId = Number.parseInt(cleanWpCliOutput(response.text).trim(), 10)
+  if (!Number.isInteger(frontPageId) || frontPageId <= 0) {
+    throw new Error(
+      `${command} target=front-page found no static front page: WordPress has show_on_front != "page" or page_on_front is unset. Configure a static front page (e.g. an importer that sets page_on_front) before validating the front page.`,
+    )
+  }
+
+  return {
+    ...target,
+    kind: "post",
+    postId: frontPageId,
+    url: `/wp-admin/post.php?post=${frontPageId}&action=edit`,
+  }
+}
+
+// PHP that echoes the static front page id, or `0` when the site is not
+// configured to show a static page on the front.
+function frontPagePostIdPhpCode(): string {
+  return `
+$front_page_id = 0;
+if ( 'page' === get_option( 'show_on_front' ) ) {
+    $front_page_id = (int) get_option( 'page_on_front' );
+}
+echo $front_page_id;
+`
 }
 
 export const EDITOR_VALIDATE_BLOCKS_DEFAULT_PROVIDER = "wordpress-block-editor"
