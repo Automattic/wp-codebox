@@ -446,10 +446,14 @@ try {
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), true)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), true)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), true)
+  // Default runtime substrate is agents-api + the bundled wp-codebox plugin only.
+  // Data Machine / Data Machine Code are no longer mounted by default; they are
+  // provisioned only when a caller passes them explicitly (see the explicit
+  // component_contracts recipe below).
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), false)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), false)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "profile-provider"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.providers.some((component) => component.slug === "profile-provider"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "profile-component"), true)
@@ -460,8 +464,8 @@ try {
   const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "wordpress-plugin"), true)
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "agents-api"), true)
-  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), true)
-  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), true)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), false)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), false)
 
   const recipe = buildAgentTaskRecipe({
     goal: "Verify extra plugin propagation",
