@@ -14,7 +14,7 @@ export type BrowserProbeProfileDefinition = {
 
 export const BROWSER_PROBE_BROWSER_VALUES = ["chromium"] as const
 
-export const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
+export const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "websocket", "performance", "memory", "screenshot"] as const
 export const BROWSER_PROBE_CHROMIUM_PROFILE_IDS = ["desktop-chrome", "mobile-chrome", "low-end-mobile-slow-4g"] as const
 export const BROWSER_PROBE_THROTTLE_PROFILE_IDS = ["low-end-mobile-slow-4g"] as const
 

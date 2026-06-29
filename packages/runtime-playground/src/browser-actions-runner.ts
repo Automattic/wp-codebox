@@ -4,7 +4,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError, isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkRecord, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { captureBrowserDomSnapshot, type BrowserDomSnapshotArtifact } from "./browser-dom-snapshot.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
@@ -13,7 +13,7 @@ import { serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
-import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
+import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserProbeWebSocketSummary, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { positiveIntegerArg } from "./command-args.js"
 import { argValue, commaListArg, durationArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -82,8 +82,8 @@ export async function runBrowserActionsCommand({
   const capture = runPlan.capture
 
   for (const item of capture) {
-    if (!["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"].includes(item)) {
-      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, screenshot, dom-snapshot: ${item}`)
+    if (!["steps", "console", "errors", "html", "network", "websocket", "screenshot", "dom-snapshot"].includes(item)) {
+      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, websocket, screenshot, dom-snapshot: ${item}`)
     }
   }
 
@@ -103,6 +103,7 @@ export async function runBrowserActionsCommand({
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
   const network: BrowserProbeNetworkRecord[] = []
+  const webSockets: BrowserProbeWebSocketRecord[] = []
   const networkTasks: Array<Promise<void>> = []
   const screenshotPath = artifactSession.absolutePath("screenshot.png")
   const startedAt = now()
@@ -156,11 +157,13 @@ export async function runBrowserActionsCommand({
       captureConsole: capture.has("console"),
       captureErrors: capture.has("errors"),
       captureNetwork: true,
+      captureWebSocket: capture.has("websocket"),
       consoleMessages,
       errors,
       network,
       networkTasks,
       page,
+      webSockets,
     })
 
     for (const [index, step] of steps.entries()) {
@@ -276,6 +279,9 @@ export async function runBrowserActionsCommand({
       await artifactSession.writeJson("requestCoverage", "request-coverage.json", browserRequestCoverageArtifact(network, startedAt))
       await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
+    if (capture.has("websocket")) {
+      await artifactSession.writeJson("websocket", "websocket.json", browserProbeWebSocketArtifact(webSockets, startedAt))
+    }
 
     const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
       artifactPath: "files/browser/redirect-diagnostics.json",
@@ -317,6 +323,7 @@ export async function runBrowserActionsCommand({
 		...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
 		...(capture.has("network") ? { requestCoverage: "files/browser/request-coverage.json" } : {}),
 		...(capture.has("network") ? { waterfall: "files/browser/waterfall.json" } : {}),
+        ...(capture.has("websocket") ? { websocket: "files/browser/websocket.json" } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
@@ -336,6 +343,7 @@ export async function runBrowserActionsCommand({
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
+        ...(capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(webSockets) } : {}),
         ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         replayability: browserProbeReplayability(capture),

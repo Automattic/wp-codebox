@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { redactString, resolveCommandPath, type BrowserInteractionStep, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { normalizeBrowserStorageStatePayload, type BrowserStorageStateImportSummary } from "./browser-auth-storage-state.js"
-import type { BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeWaterfallArtifact, BrowserProbeWaterfallEntry, BrowserRedirectDiagnosticsSummary, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeWaterfallArtifact, BrowserProbeWaterfallEntry, BrowserProbeWebSocketArtifact, BrowserProbeWebSocketRecord, BrowserProbeWebSocketSummary, BrowserRedirectDiagnosticsSummary, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { phpBrowserWordPressDiagnosticsPlugin } from "./php-snippets.js"
@@ -123,6 +123,29 @@ export function browserProbeWaterfallArtifact(network: BrowserProbeNetworkRecord
   }
 }
 
+export function browserProbeWebSocketArtifact(webSockets: BrowserProbeWebSocketRecord[], startedAt: string): BrowserProbeWebSocketArtifact {
+  return {
+    schema: "wp-codebox/browser-websocket/v1",
+    version: 1,
+    capturedAt: now(),
+    startedAt,
+    summary: browserProbeWebSocketSummary(webSockets),
+    sockets: webSockets,
+  }
+}
+
+export function browserProbeWebSocketSummary(webSockets: BrowserProbeWebSocketRecord[]): BrowserProbeWebSocketSummary {
+  return {
+    sockets: webSockets.length,
+    closed: webSockets.filter((record) => Boolean(record.closedAt)).length,
+    errors: webSockets.reduce((total, record) => total + finiteNumber(record.errors, 0), 0),
+    framesSent: webSockets.reduce((total, record) => total + finiteNumber(record.framesSent, 0), 0),
+    framesReceived: webSockets.reduce((total, record) => total + finiteNumber(record.framesReceived, 0), 0),
+    bytesSent: webSockets.reduce((total, record) => total + finiteNumber(record.bytesSent, 0), 0),
+    bytesReceived: webSockets.reduce((total, record) => total + finiteNumber(record.bytesReceived, 0), 0),
+  }
+}
+
 function browserProbeWaterfallEntry(record: BrowserProbeNetworkRecord): BrowserProbeWaterfallEntry {
   const timings = browserProbeWaterfallTimings(record.timing ?? {})
   const startedDateTime = browserProbeWaterfallStartedDateTime(record)
@@ -232,6 +255,7 @@ export function browserProbeArtifactRefs(browserFilesDirectory: string, capture:
   memory: boolean
   network: boolean
   waterfall: boolean
+  websocket: boolean
   performance: boolean
   redirectDiagnostics: boolean
   screenshot?: string
@@ -246,6 +270,7 @@ export function browserProbeArtifactRefs(browserFilesDirectory: string, capture:
     ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
     ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.waterfall ? { waterfall: { path: `${browserFilesDirectory}/waterfall.json`, kind: "json" as const } } : {}),
+    ...(input.websocket ? { websocket: { path: `${browserFilesDirectory}/websocket.json`, kind: "json" as const } } : {}),
     ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
     ...(input.redirectDiagnostics ? { redirectDiagnostics: { path: `${browserFilesDirectory}/redirect-diagnostics.json`, kind: "json" as const } } : {}),
     review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
@@ -860,7 +885,7 @@ export function sha256(contents: Buffer): string {
   return createHash("sha256").update(contents).digest("hex")
 }
 
-export type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
+export type BrowserProbeProgressSource = "navigation" | "network" | "websocket" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
 
 export class BrowserProbeTerminalFailureError extends Error {
   readonly code = "browser-probe-terminal-failure"

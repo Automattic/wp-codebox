@@ -110,7 +110,9 @@ export interface ArtifactReviewBrowserSummary {
     lifecycle?: string
     network?: string
     waterfall?: string
+    websocket?: string
     networkEvents?: number
+    webSockets?: ArtifactReviewBrowserWebSocketSummary
     checkpoints?: string
     memory?: string
     performance?: string
@@ -141,6 +143,16 @@ export interface ArtifactReviewBrowserSummary {
     wordpressDiagnostics?: ArtifactReviewBrowserWordPressDiagnosticsSummary
     summaryFile?: string
   }>
+}
+
+export interface ArtifactReviewBrowserWebSocketSummary {
+  sockets: number
+  closed: number
+  errors: number
+  framesSent: number
+  framesReceived: number
+  bytesSent: number
+  bytesReceived: number
 }
 
 export interface ArtifactReviewBrowserRedirectDiagnosticsSummary {
