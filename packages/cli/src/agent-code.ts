@@ -151,9 +151,18 @@ function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agen
         $owner_id = 1;
     }
 
+    $configured_provider = (string) ($agent_input['provider'] ?? '');
+    $configured_model = (string) ($agent_input['model'] ?? '');
+    // The Agents API default chat handler resolves provider/model from the
+    // registered agent's default config under the canonical 'provider'/'model'
+    // keys, so the native (no-Data-Machine) loop can run from agent config alone
+    // when a request omits them. 'default_provider'/'default_model' are retained
+    // for runtime adapters that read that shape.
     $default_config = array_filter(array(
-        'default_provider' => (string) ($agent_input['provider'] ?? ''),
-        'default_model' => (string) ($agent_input['model'] ?? ''),
+        'provider' => $configured_provider,
+        'model' => $configured_model,
+        'default_provider' => $configured_provider,
+        'default_model' => $configured_model,
     ), static fn($value): bool => '' !== $value);
 
     $registry = WP_Agents_Registry::get_instance();

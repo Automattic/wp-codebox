@@ -195,7 +195,10 @@ return $ability->execute( $input );
 }
 
 function wp_codebox_browser_runtime_prepare_input( array $payload, array $invocation, string $session_id, array $runtime_tool_declarations, array $ability_tools, array $allowed_tool_ids, array $sandbox_tool_ids ): array {
-$agent = sanitize_key( (string) ( $payload['agent'] ?? 'wp-codebox-sandbox' ) );
+$agent = sanitize_key( (string) ( $payload['agent'] ?? '' ) );
+if ( '' === $agent ) {
+	$agent = 'wp-codebox-sandbox';
+}
 $message = (string) ( $payload['message'] ?? ( $payload['task_input']['goal'] ?? '' ) );
 $artifact_environment = function_exists( 'wp_codebox_browser_artifact_environment' ) ? wp_codebox_browser_artifact_environment( $payload ) : array();
 $artifact_contract_schema = (string) ( $artifact_environment['contract']['schema'] ?? '' );

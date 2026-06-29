@@ -72,6 +72,7 @@ require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifact-ability-service.php';
 require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
+require_once __DIR__ . '/src/class-wp-codebox-runtime-package-executor.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 require_once __DIR__ . '/src/class-wp-codebox-api.php';
 
@@ -86,6 +87,8 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 // this on `wp_abilities_api_init` — the same signal the plugin's own abilities
 // register on — so the registry is never touched before it is initialized.
 add_action( 'wp_abilities_api_init', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ) );
+add_action( 'wp_abilities_api_init', array( WP_Codebox_Runtime_Package_Executor::class, 'register_runtime_provider' ) );
+add_action( 'wp_agents_api_init', array( WP_Codebox_Agents_API_Adapter::class, 'register_sandbox_agent' ) );
 add_action( 'plugins_loaded', array( WP_Codebox_Php_Ai_Client_Browser_Provider_Adapter::class, 'register' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();

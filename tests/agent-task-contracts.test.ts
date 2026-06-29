@@ -437,6 +437,10 @@ try {
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), true)
+  // Default runtime substrate is agents-api + the bundled wp-codebox plugin only.
+  // Data Machine / Data Machine Code are no longer mounted by default; they are
+  // provisioned only when a caller passes them explicitly (see the explicit
+  // component_contracts recipe below).
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), false)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), false)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), false)

@@ -1,0 +1,26 @@
+{
+  "name": "Store Idea Artifact Pipeline",
+  "schema_version": 1,
+  "slug": "store-idea-artifact-pipeline",
+  "steps": [
+    {
+      "step_config": {
+        "execution_order": 0,
+        "completion_assertions": {
+          "required_artifact_outputs": [
+            {
+              "output_key": "concept_packet",
+              "schema": "wp-site-generator/ConceptPacket/v1",
+              "artifact": "ConceptPacket"
+            }
+          ]
+        },
+        "label": "Generate ConceptPacket",
+        "step_type": "ai",
+        "system_prompt": "You are the Store Idea Agent. Generate one distinct commerce store concept. Call emit_typed_artifact with output_key=concept_packet, schema=wp-site-generator/ConceptPacket/v1, artifact=ConceptPacket, and payload=<ConceptPacket>."
+      },
+      "step_position": 0,
+      "step_type": "ai"
+    }
+  ]
+}

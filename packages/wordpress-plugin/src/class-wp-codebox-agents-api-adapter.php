@@ -36,6 +36,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	private const RUNTIME_BUNDLE_IMPORT_FILTER = 'wp_agent_runtime_import_bundle';
 	private const RUNTIME_RESOLVED_TOOLS_FILTER = 'wp_agent_runtime_resolved_tools';
 	private const CHAT_RUNTIME_PRINCIPAL_PERMISSION_FILTER = 'agents_chat_runtime_principal_permission';
+	private const SANDBOX_AGENT = 'wp-codebox-sandbox';
 
 	private const RESPONSE_SCHEMAS = array(
 		self::CHAT                 => 'wp-codebox/agent-chat-result/v1',
@@ -130,7 +131,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	}
 
 	public static function register_runtime_profiles(): void {
-		if ( ! function_exists( 'add_filter' ) || ! self::should_register_adapter() ) {
+		if ( ! function_exists( 'add_filter' ) ) {
 			return;
 		}
 
@@ -164,7 +165,29 @@ final class WP_Codebox_Agents_API_Adapter {
 				'public_label' => 'Codebox agent runtime',
 				'public_kind'  => 'runtime-profile',
 				'capabilities' => array( 'codebox.runtime-package' ),
-				'default'      => true,
+				'default'      => false,
+			)
+		);
+	}
+
+	public static function register_sandbox_agent(): void {
+		if ( ! function_exists( 'wp_register_agent' ) ) {
+			return;
+		}
+		if ( function_exists( 'wp_has_agent' ) && wp_has_agent( self::SANDBOX_AGENT ) ) {
+			return;
+		}
+
+		wp_register_agent(
+			self::SANDBOX_AGENT,
+			array(
+				'label'       => 'WP Codebox Sandbox',
+				'description' => 'Default runtime agent for executing WP Codebox tasks inside disposable sandbox environments.',
+				'meta'        => array(
+					'source_plugin'  => 'wp-codebox',
+					'source_type'    => 'plugin-default',
+					'source_package' => 'wp-codebox',
+				),
 			)
 		);
 	}
@@ -219,7 +242,11 @@ final class WP_Codebox_Agents_API_Adapter {
 			}
 		}
 
-		$agent = sanitize_key( (string) ( $payload['agent'] ?? $input['agent'] ?? 'wp-codebox-sandbox' ) );
+		$agent = sanitize_key( (string) ( $payload['agent'] ?? $input['agent'] ?? '' ) );
+		if ( '' === $agent ) {
+			$agent = self::SANDBOX_AGENT;
+		}
+		$input['agent'] = $agent;
 		$input['principal'] = array(
 			'acting_user_id'     => 0,
 			'effective_agent_id' => $agent,

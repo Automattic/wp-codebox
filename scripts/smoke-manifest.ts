@@ -140,6 +140,7 @@ export const smokeGroups = {
       tsxSmoke("agent-runtime-ability-tools-smoke"),
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       phpSmoke("php-public-api-facade-smoke"),
+      npmScript("test:agent-no-data-machine-loop"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
       phpSmoke("php-agents-api-execution-targets-smoke"),
