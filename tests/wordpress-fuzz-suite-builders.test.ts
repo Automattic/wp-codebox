@@ -87,12 +87,12 @@ const generatedPostInvalid = generatedRestSuite.cases.find((fuzzCase) => fuzzCas
 assert.equal(generatedPostInvalid?.target?.kind, "runtime-action")
 assert.deepEqual(generatedPostInvalid?.input, { type: "rest_request", method: "POST", path: "/example/v1/items", bodyJson: { title: 12345, count: "not-a-number" }, session: "admin" })
 assert.deepEqual(generatedPostInvalid?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" })
-assert.deepEqual(generatedPostInvalid?.mutation, { intent: "write", destructive: false, intensity: "medium", resetRequired: true })
+assert.deepEqual(generatedPostInvalid?.mutation, { intent: "write", destructive: false, intensity: "medium" })
 assert.equal((generatedPostInvalid?.metadata?.safety as Record<string, unknown> | undefined)?.executable, true)
 
 const generatedDeleteInvalid = generatedRestSuite.cases.find((fuzzCase) => fuzzCase.id === "rest-delete-example-v1-items-p-id-d-0-invalid-type")
 assert.deepEqual(generatedDeleteInvalid?.input, { type: "rest_request", method: "DELETE", path: "/example/v1/items/not-a-number", bodyJson: { force: "not-a-boolean" }, session: "admin" })
-assert.deepEqual(generatedDeleteInvalid?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
+assert.deepEqual(generatedDeleteInvalid?.mutation, { intent: "delete", destructive: true, intensity: "high" })
 assert.deepEqual(generatedDeleteInvalid?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "generated-rest-baseline" })
 assert.equal((generatedDeleteInvalid?.metadata?.safety as Record<string, unknown> | undefined)?.payloadFamily, "invalid-type")
 
@@ -206,14 +206,14 @@ const dbInsert = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-in
 assert.equal(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").options.mutation, "insert")
 assert.deepEqual(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").metadata.generatedMutation, { status: "candidate", fixtureBound: false, fixtureBinding: "unbound", preRead: false, affectedRows: "unknown" })
 assert.deepEqual(dbInsert?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "db-baseline" })
-assert.deepEqual(dbInsert?.mutation, { intent: "write", destructive: false, intensity: "medium", resetRequired: true })
+assert.deepEqual(dbInsert?.mutation, { intent: "write", destructive: false, intensity: "medium" })
 assert.deepEqual(dbInsert?.metadata?.generatedMutation, { status: "candidate", fixtureBound: false, fixtureBinding: "unbound", preRead: false, affectedRows: "unknown" })
 const dbDelete = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-delete-demo")
-assert.deepEqual(dbDelete?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
+assert.deepEqual(dbDelete?.mutation, { intent: "delete", destructive: true, intensity: "high" })
 
 const databaseCoveragePlan = databaseInventoryToCoveragePlan(databaseInventory)
 assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 12, generated: 12, executable: 6, executed: 0, skipped: 6, untested: 0 })
 assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "external_table_not_fuzzed"), true)
-assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "db_mutation_requires_reset_policy"), true)
+assert.equal(databaseCoveragePlan.skipped.some((entry) => entry.reason?.code === "db_mutation_requires_explicit_opt_in"), true)
 
 console.log("wordpress fuzz suite builders ok")

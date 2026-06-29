@@ -550,14 +550,14 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.fuzz-plugin-module-state",
-    description: "Emit a generic WordPress plugin module-state fuzz plan without executing module mutations unless a runtime provides stronger fixture and rollback support.",
+    description: "Emit a generic WordPress plugin module-state fuzz plan without executing module mutations unless a runtime declares explicit fixture or disposable sandbox support.",
     acceptedArgs: [
       { name: "external_dispatch", description: "Whether module-state fuzzing may trigger external dispatch. Defaults to false.", format: "boolean" },
       { name: "execute_mutations", description: "Whether module-state mutations should execute. Generic Playground support is declared-plan only.", format: "boolean" },
       { name: "mutation_mode", description: "Requested mutation mode, such as declared_plan.", format: "string" },
       { name: "connected_state_required_for_mutation", description: "Whether connected/disconnected fixture state is required before mutation execution.", format: "boolean" },
       { name: "runtime_isolation_required_for_mutation", description: "Whether isolated runtime proof is required before mutation execution.", format: "boolean" },
-      { name: "rollback_required", description: "Whether rollback artifacts are required before mutation execution.", format: "boolean" },
+      { name: "disposable_sandbox_required", description: "Whether mutation execution requires an explicit disposable sandbox boundary.", format: "boolean" },
     ],
     outputShape: "wp-codebox/wordpress-plugin-module-state-plan/v1 JSON with declared mutation mode, safeguards, planned actions, skip reasons, diagnostics, and artifact refs.",
     outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-plugin-module-state-plan/v1", {

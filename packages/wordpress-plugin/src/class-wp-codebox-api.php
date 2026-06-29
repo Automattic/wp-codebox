@@ -160,26 +160,31 @@ final class WP_Codebox_API {
 				),
 			),
 			'resetModes'                  => array(
-				array( 'id' => 'none', 'supported' => true, 'requiredForMutationIntents' => array( 'read' ), 'artifactKinds' => array() ),
-				array( 'id' => 'checkpoint-per-case', 'supported' => true, 'requiredForMutationIntents' => array( 'write', 'delete', 'destructive' ), 'artifactKinds' => array( 'mutation-isolation-artifact', 'delete-boundary-artifact' ) ),
-				array( 'id' => 'restore-snapshot', 'supported' => false, 'requiredForMutationIntents' => array(), 'artifactKinds' => array() ),
+				array( 'id' => 'none', 'supported' => true, 'optionalForMutationIntents' => array( 'read', 'write', 'delete', 'destructive' ), 'artifactKinds' => array() ),
+				array( 'id' => 'checkpoint-per-case', 'supported' => true, 'optionalForMutationIntents' => array( 'write', 'delete', 'destructive' ), 'artifactKinds' => array( 'mutation-isolation-artifact', 'delete-boundary-artifact' ) ),
+				array( 'id' => 'restore-snapshot', 'supported' => false, 'optionalForMutationIntents' => array( 'write', 'delete', 'destructive' ), 'artifactKinds' => array() ),
 			),
 			'artifactExpectations'        => array(
 				array( 'id' => 'fuzz-suite-result', 'required' => true, 'schema' => 'wp-codebox/fuzz-suite-result/v1', 'producedBy' => array( 'run-fuzz-suite' ), 'description' => 'Every fuzz run returns a structured suite result envelope with case summaries, diagnostics, and artifact references.' ),
-				array( 'id' => 'mutation-isolation-artifact', 'required' => true, 'schema' => 'wp-codebox/mutation-isolation-artifact/v1', 'producedBy' => array( 'rest-mutation:post', 'rest-mutation:put', 'rest-mutation:patch' ), 'description' => 'Mutating REST coverage records the fixture opt-in and reset boundary used to isolate the mutation.' ),
-				array( 'id' => 'delete-boundary-artifact', 'required' => true, 'schema' => 'wp-codebox/delete-boundary-artifact/v1', 'producedBy' => array( 'rest-mutation:delete' ), 'description' => 'Delete coverage records the explicit delete boundary artifact instead of advertising raw delete support.' ),
+				array( 'id' => 'mutation-isolation-artifact', 'required' => true, 'schema' => 'wp-codebox/mutation-isolation-artifact/v1', 'producedBy' => array( 'rest-mutation:post', 'rest-mutation:put', 'rest-mutation:patch' ), 'description' => 'Mutating REST coverage records the explicit fixture or disposable sandbox boundary and artifact evidence for the mutation.' ),
+				array( 'id' => 'delete-boundary-artifact', 'required' => true, 'schema' => 'wp-codebox/delete-boundary-artifact/v1', 'producedBy' => array( 'rest-mutation:delete' ), 'description' => 'Delete coverage records the explicit delete boundary artifact inside a disposable sandbox instead of advertising unbounded raw delete support.' ),
 			),
 			'destructiveModeRequirements' => array(
 				'supported'                 => true,
 				'destructiveMutationIntent' => 'destructive',
-				'requiredResetModes'        => array( 'checkpoint-per-case' ),
+				'requiredSandboxBoundary'   => array(
+					'disposable'            => true,
+					'destructivePermission' => true,
+					'teardown'              => 'discard',
+				),
+				'optionalResetModes'        => array( 'checkpoint-per-case', 'restore-snapshot' ),
 				'requiredArtifacts'         => array( 'mutation-isolation-artifact', 'delete-boundary-artifact' ),
 				'deleteBoundaryCapability'  => 'delete-boundary-artifact',
 				'rawDeleteCapability'       => null,
 			),
 			'unsupportedCapabilities'     => array(
 				array( 'id' => 'raw-delete', 'reason' => 'WordPress fuzz runtime delete coverage is only supported through explicit delete-boundary artifacts.', 'replacement' => 'delete-boundary-artifact' ),
-				array( 'id' => 'restore-snapshot-reset', 'reason' => 'Snapshot restore is not part of the public WordPress fuzz runtime contract.', 'replacement' => 'checkpoint-per-case' ),
+				array( 'id' => 'restore-snapshot-reset', 'reason' => 'Snapshot restore is an optional reset convenience, not destructive fuzz correctness proof.', 'replacement' => 'disposable-sandbox-boundary' ),
 				array( 'id' => 'private-runtime-probing', 'reason' => 'Consumers must read this descriptor instead of probing private runtime commands or implementation capabilities.' ),
 			),
 			'hbex'                        => array(

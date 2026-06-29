@@ -226,7 +226,7 @@ assert.deepEqual(restoredExternalSnapshotRefs, ["artifact:baseline/files/runtime
 const snapshotRestoreResult = await executeWordPressFuzzSuite(episodeWithSnapshotRestore, fuzzSuiteContract({
   id: "same-runtime-snapshot-suite-run",
   resetPolicy: { mode: "restore-snapshot", snapshotRef: "snapshot-baseline" },
-  cases: [{ id: "destructive-rest", target: { kind: "rest", id: "/wp/v2/posts/123" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } }],
+  cases: [{ id: "destructive-rest", target: { kind: "rest", id: "/wp/v2/posts/123" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high" } }],
 }))
 assert.equal(snapshotRestoreResult.status, "passed")
 assert.equal(snapshotRestoreResult.cases[0]?.reset?.status, "passed")
@@ -281,6 +281,6 @@ assert.equal(proof.mutation.command, "wordpress.rest-request")
 assert.equal(proof.restore.command, "wp-codebox.checkpoint-restore")
 assert.equal(proof.diff.status, "clean-after-restore")
 assert.equal(proof.runtimeBoundary.destroy.status, "destroyed")
-assert.throws(() => sandboxIsolationProof({ ...proof, runtimeBoundary: { ...proof.runtimeBoundary, destroy: { status: "failed" } as never } }), /runtimeBoundary\.destroy\.status=destroyed/)
+assert.throws(() => sandboxIsolationProof({ ...proof, runtimeBoundary: { ...proof.runtimeBoundary, destroy: { status: "failed" } as never } }), /runtimeBoundary\.destroy\.status destroyed or discarded/)
 
 console.log("playground public runtime primitives ok")

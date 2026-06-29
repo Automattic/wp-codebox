@@ -492,9 +492,7 @@ assert.equal(publicApi.sandboxIsolationProof({
   status: "passed",
   baseline: { status: "created", command: "wp-codebox.checkpoint-create" },
   mutation: { status: "mutated", command: "wordpress.rest-request" },
-  restore: { status: "restored", command: "wp-codebox.checkpoint-restore" },
-  diff: { status: "clean-after-restore", changed: true },
-  runtimeBoundary: { backend: "wordpress-playground", environment: "wordpress", disposable: true, hostAccess: "declared-mounts-only", destroy: { status: "destroyed" } },
+  runtimeBoundary: { backend: "wordpress-playground", environment: "wordpress", disposable: true, hostAccess: "declared-mounts-only", destroy: { status: "discarded" } },
   artifacts: [{ path: "files/sandbox-isolation/proof.json", kind: "sandbox-isolation-proof" }],
 }).schema, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
@@ -505,7 +503,8 @@ assert.equal(wordpressFuzzDescriptor.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCH
 assert.equal(wordpressFuzzDescriptor.publicSurfaces.phpFacade, "WP_Codebox_API::wordpress_fuzz_runtime_contract()")
 assert.equal(wordpressFuzzDescriptor.publicSurfaces.ability, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
 assert.equal(wordpressFuzzDescriptor.publicSurfaces.nodeCli, "wp-codebox fuzz descriptor --format=json")
-assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.requiredResetModes, ["checkpoint-per-case"])
+assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.requiredSandboxBoundary, { disposable: true, destructivePermission: true, teardown: "discard" })
+assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.optionalResetModes, ["checkpoint-per-case", "restore-snapshot"])
 assert.equal(wordpressFuzzDescriptor.destructiveModeRequirements.rawDeleteCapability, null)
 assert.equal(wordpressFuzzDescriptor.actionFamilies.some((family) => family.runtimeActionTypes.includes("crud_operation")), true)
 assert.equal(wordpressFuzzDescriptor.resetModes.some((mode) => mode.id === "restore-snapshot" && mode.supported === false), true)

@@ -56,8 +56,6 @@ export interface FuzzSuiteMutationIntent {
   intent?: FuzzSuiteMutationIntentKind
   destructive?: boolean
   intensity?: FuzzSuiteMutationIntensity
-  resetRequired?: boolean
-  reset_required?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -163,7 +161,7 @@ export interface WordPressFuzzActionFamily {
 export interface WordPressFuzzResetMode {
   id: FuzzSuiteResetMode
   supported: boolean
-  requiredForMutationIntents: FuzzSuiteMutationIntentKind[]
+  optionalForMutationIntents: FuzzSuiteMutationIntentKind[]
   artifactKinds: string[]
 }
 
@@ -178,7 +176,12 @@ export interface WordPressFuzzArtifactExpectation {
 export interface WordPressFuzzDestructiveModeRequirements {
   supported: boolean
   destructiveMutationIntent: "destructive"
-  requiredResetModes: FuzzSuiteResetMode[]
+  requiredSandboxBoundary: {
+    disposable: true
+    destructivePermission: true
+    teardown: "discard"
+  }
+  optionalResetModes: FuzzSuiteResetMode[]
   requiredArtifacts: string[]
   deleteBoundaryCapability: string
   rawDeleteCapability: null
@@ -296,19 +299,19 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
     {
       id: "none",
       supported: true,
-      requiredForMutationIntents: ["read"],
+      optionalForMutationIntents: ["read", "write", "delete", "destructive"],
       artifactKinds: [],
     },
     {
       id: "checkpoint-per-case",
       supported: true,
-      requiredForMutationIntents: ["write", "delete", "destructive"],
+      optionalForMutationIntents: ["write", "delete", "destructive"],
       artifactKinds: ["mutation-isolation-artifact", "delete-boundary-artifact"],
     },
     {
       id: "restore-snapshot",
       supported: false,
-      requiredForMutationIntents: [],
+      optionalForMutationIntents: ["write", "delete", "destructive"],
       artifactKinds: [],
     },
   ],
@@ -325,20 +328,25 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       required: true,
       schema: "wp-codebox/mutation-isolation-artifact/v1",
       producedBy: ["rest-mutation:post", "rest-mutation:put", "rest-mutation:patch"],
-      description: "Mutating REST coverage records the fixture opt-in and reset boundary used to isolate the mutation.",
+      description: "Mutating REST coverage records the explicit fixture or disposable sandbox boundary and artifact evidence for the mutation.",
     },
     {
       id: "delete-boundary-artifact",
       required: true,
       schema: "wp-codebox/delete-boundary-artifact/v1",
       producedBy: ["rest-mutation:delete"],
-      description: "Delete coverage records the explicit delete boundary artifact instead of advertising raw delete support.",
+      description: "Delete coverage records the explicit delete boundary artifact inside a disposable sandbox instead of advertising unbounded raw delete support.",
     },
   ],
   destructiveModeRequirements: {
     supported: true,
     destructiveMutationIntent: "destructive",
-    requiredResetModes: ["checkpoint-per-case"],
+    requiredSandboxBoundary: {
+      disposable: true,
+      destructivePermission: true,
+      teardown: "discard",
+    },
+    optionalResetModes: ["checkpoint-per-case", "restore-snapshot"],
     requiredArtifacts: ["mutation-isolation-artifact", "delete-boundary-artifact"],
     deleteBoundaryCapability: "delete-boundary-artifact",
     rawDeleteCapability: null,
@@ -351,8 +359,8 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
     },
     {
       id: "restore-snapshot-reset",
-      reason: "Snapshot restore is not part of the public WordPress fuzz runtime contract.",
-      replacement: "checkpoint-per-case",
+      reason: "Snapshot restore is an optional reset convenience, not destructive fuzz correctness proof.",
+      replacement: "disposable-sandbox-boundary",
     },
     {
       id: "private-runtime-probing",

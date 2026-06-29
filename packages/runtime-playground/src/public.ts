@@ -846,8 +846,21 @@ export function executeWordPressFuzzSuite(
   const commandExecutor = createWordPressFuzzSuiteCommandExecutor(episode)
   const runtimeActionExecutor = createWordPressFuzzSuiteRuntimeActionExecutor(episode)
   const runtimeWorkloadExecutor = createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode)
+  const playgroundSuite = {
+    ...suite,
+    metadata: stripUndefined({
+      ...suite.metadata,
+      disposableSandboxBoundary: recordValue(suite.metadata?.disposableSandboxBoundary) ?? {
+        disposable: true,
+        destructivePermission: true,
+        teardown: "discard",
+        backend: "wordpress-playground",
+        hostAccess: "declared-mounts-only",
+      },
+    }),
+  }
 
-  return executeFuzzSuite(suite, {
+  return executeFuzzSuite(playgroundSuite, {
     ...options,
     executor: async (spec) => {
       const execution = await commandExecutor.execute(spec)
