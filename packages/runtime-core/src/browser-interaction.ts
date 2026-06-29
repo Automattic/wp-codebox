@@ -1,6 +1,8 @@
 import { isPlainObject } from "./object-utils.js"
+import type { JsonValue } from "./host-tool-registry.js"
 
 export const BROWSER_INTERACTION_SCRIPT_SCHEMA = "wp-codebox/browser-interaction-script/v1" as const
+export const BROWSER_TOOL_VERIFIER_RESULT_SCHEMA = "wp-codebox/browser-tool-verifier-result/v1" as const
 
 /**
  * Backend-agnostic browser interaction step contract (issue #310).
@@ -27,6 +29,7 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
   "assertObservation",
   "screenshot",
   "capture",
+  "callTool",
 ] as const
 
 export type BrowserInteractionStepKind = typeof BROWSER_INTERACTION_STEP_KINDS[number]
@@ -85,6 +88,33 @@ export interface BrowserInteractionStep {
   duration?: string
   /** Per-step timeout override (e.g. 5s). */
   timeout?: string
+  /** Caller-provided host tool command name for `callTool`. */
+  tool?: string
+  /** JSON input passed to the caller-provided host tool. */
+  input?: JsonValue
+}
+
+export interface BrowserToolVerifierInputSummary {
+  type: "null" | "boolean" | "number" | "string" | "array" | "object"
+  keys?: string[]
+  itemCount?: number
+}
+
+export interface BrowserToolVerifierResult {
+  schema: typeof BROWSER_TOOL_VERIFIER_RESULT_SCHEMA
+  status: "unsupported" | "ok" | "error"
+  step: { index: number; kind: "callTool"; tool: string }
+  tool: string
+  inputSummary: BrowserToolVerifierInputSummary
+  result?: JsonValue
+  error?: { code: string; message: string }
+  evidence: {
+    redaction: { policy: "required"; sensitive: true; reason: string }
+    rawInputSerialized: false
+    rawSecretsSerialized: false
+  }
+  startedAt: string
+  finishedAt: string
 }
 
 export interface BrowserRandomWalkContract {
@@ -125,6 +155,19 @@ function isBrowserInteractionDragTarget(value: unknown): value is BrowserInterac
   if (!isPlainObject(value)) return false
   if (typeof value.selector === "string" && value.selector.length > 0) return true
   return typeof value.x === "number" && typeof value.y === "number"
+}
+
+export function browserToolVerifierInputSummary(input: JsonValue): BrowserToolVerifierInputSummary {
+  if (input === null) return { type: "null" }
+  if (Array.isArray(input)) return { type: "array", itemCount: input.length }
+  if (typeof input === "object") return { type: "object", keys: Object.keys(input).sort() }
+  return { type: inputType(input) }
+}
+
+function inputType(input: string | number | boolean): "string" | "number" | "boolean" {
+  if (typeof input === "string") return "string"
+  if (typeof input === "number") return "number"
+  return "boolean"
 }
 
 /**
@@ -218,6 +261,16 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
       case "screenshot":
       case "capture":
         break
+      case "callTool":
+        if (typeof step.tool !== "string" || !/^[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*$/i.test(step.tool)) {
+          issues.push({ index, message: "callTool step requires tool as a stable canonical tool id such as client/search_docs" })
+        }
+        if (!Object.prototype.hasOwnProperty.call(step, "input")) {
+          issues.push({ index, message: "callTool step requires input" })
+        } else if (!isJsonValue(step.input)) {
+          issues.push({ index, message: "callTool step input must be JSON-serializable" })
+        }
+        break
     }
 
     steps.push(step)
@@ -237,6 +290,24 @@ function isBrowserInteractionObservationAssertion(raw: string): boolean {
   if (value.startsWith("request-count-by-host:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-host:".length).trim())
   if (value.startsWith("request-count-by-type:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-type:".length).trim())
   return false
+}
+
+/** Exact caller-provided tool command names referenced by `callTool` steps. */
+export function browserInteractionScriptToolCalls(steps: readonly BrowserInteractionStep[]): string[] {
+  return [...new Set(steps.filter((step) => step.kind === "callTool" && typeof step.tool === "string").map((step) => step.tool as string))].sort()
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return Number.isFinite(value as number) || typeof value !== "number"
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue)
+  }
+  if (!isPlainObject(value)) {
+    return false
+  }
+  return Object.values(value).every(isJsonValue)
 }
 
 export function browserRandomWalkContract(input: Record<string, unknown>): BrowserRandomWalkContract {
