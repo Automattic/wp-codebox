@@ -189,7 +189,7 @@ export function normalizeTypedArtifactDTO(input: unknown, defaults: NormalizeTyp
   const type = stringValue(entry.type) || defaults.type || ""
   if (!name || !type) return undefined
 
-  const artifact = typedArtifactFile(entry.artifact, defaults)
+  const artifact = typedArtifactFile(entry.artifact ?? entry, defaults)
   const hasPayload = "payload" in entry
   if (!artifact && !hasPayload) return undefined
 

@@ -28,6 +28,7 @@ final class WP_Codebox_CLI_Command {
 		\WP_CLI::add_command( 'codebox run-wordpress-workload', array( $command, 'run_wordpress_workload' ) );
 		\WP_CLI::add_command( 'codebox run-runtime-package', array( $command, 'run_runtime_package' ) );
 		\WP_CLI::add_command( 'codebox resolve-runtime-requirements', array( $command, 'resolve_runtime_requirements' ) );
+		\WP_CLI::add_command( 'codebox wordpress-fuzz-runtime-contract', array( $command, 'wordpress_fuzz_runtime_contract' ) );
 		\WP_CLI::add_command( 'codebox run-fuzz-suite', array( $command, 'run_fuzz_suite' ) );
 	}
 
@@ -189,6 +190,17 @@ final class WP_Codebox_CLI_Command {
 	public function resolve_runtime_requirements( array $args, array $assoc_args ): void {
 		unset( $args );
 		$this->emit( WP_Codebox_API::resolve_runtime_requirements( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Print the public WordPress fuzz runtime descriptor contract.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function wordpress_fuzz_runtime_contract( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::wordpress_fuzz_runtime_contract(), $assoc_args );
 	}
 
 	/**

@@ -3,7 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { fuzzRunnerReadinessContract, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { fuzzRunnerReadinessContract, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { createWordPressEpisode, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -44,6 +44,25 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   })
   const { schema: _schema, ...resultFields } = result
   writeJson({ schema: FUZZ_SUITE_RESULT_SCHEMA, ...resultFields })
+  return 0
+}
+
+export async function runFuzzDescriptorCommand(args: string[]): Promise<number> {
+  if (isHelp(args)) {
+    printFuzzDescriptorHelp()
+    return 0
+  }
+
+  const { options, positionals } = parseCommandOptions(args, new Set(["--json"]))
+  if (positionals.length > 0) {
+    throw new Error(`Invalid argument: ${positionals[0]}`)
+  }
+  for (const name of options.keys()) {
+    if (!["--format", "--json"].includes(name)) {
+      throw new Error(`Unknown option: ${name}`)
+    }
+  }
+  writeJson(wordpressFuzzRuntimeContract())
   return 0
 }
 
@@ -609,6 +628,10 @@ function writeJson(value: unknown): void {
 
 function printFuzzSuiteHelp(): void {
   process.stdout.write(`Usage: wp-codebox run-fuzz-suite --input-file <path> [--format=json] [--dry-run] [--runner-mode=simple|runtime-backed]\n\nRuns a wp-codebox/fuzz-suite/v1 JSON payload through the public fuzz-suite runner.\n`)
+}
+
+function printFuzzDescriptorHelp(): void {
+  process.stdout.write("Usage: wp-codebox fuzz descriptor [--format=json]\n\nPrints the public wp-codebox/wordpress-fuzz-runtime-contract/v1 descriptor for orchestrator consumers.\n")
 }
 
 function printFuzzReadinessHelp(): void {

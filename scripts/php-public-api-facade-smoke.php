@@ -239,7 +239,22 @@ expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor['schema'], 'Expected 
 expect( 'available' === $descriptor['readiness']['status'], 'Expected descriptor readiness status.' );
 expect( in_array( 'runtime-requirements:resolve', $descriptor['capabilities'], true ), 'Expected runtime requirements capability.' );
 expect( 'wp-codebox/resolve-runtime-requirements' === $descriptor['abilities']['runtimeRequirements']['resolve'], 'Expected runtime requirements ability in descriptor.' );
+expect( 'wp-codebox/wordpress-fuzz-runtime-contract/v1' === $descriptor['wordpressFuzzRuntimeContract']['schema'], 'Expected nested WordPress fuzz runtime contract.' );
 expect( 'wp-codebox/runtime-contract-manifest/v1' === $descriptor['contractManifest']['schema'], 'Expected nested runtime contract manifest.' );
+
+$fuzz_runtime_contract = WP_Codebox_API::wordpress_fuzz_runtime_contract();
+expect( 'wp-codebox/wordpress-fuzz-runtime-contract/v1' === $fuzz_runtime_contract['schema'], 'Expected WordPress fuzz runtime contract schema.' );
+expect( 'WP_Codebox_API::wordpress_fuzz_runtime_contract()' === $fuzz_runtime_contract['publicSurfaces']['phpFacade'], 'Expected PHP facade public surface.' );
+expect( 'wp-codebox/run-fuzz-suite' === $fuzz_runtime_contract['publicSurfaces']['ability'], 'Expected ability public surface.' );
+expect( 'wp codebox wordpress-fuzz-runtime-contract' === $fuzz_runtime_contract['publicSurfaces']['wpCli'], 'Expected WP-CLI public surface.' );
+expect( null === $fuzz_runtime_contract['destructiveModeRequirements']['rawDeleteCapability'], 'Expected raw delete to be explicitly unsupported.' );
+expect( in_array( 'checkpoint-per-case', $fuzz_runtime_contract['destructiveModeRequirements']['requiredResetModes'], true ), 'Expected destructive mode reset requirement.' );
+expect( 'wp-codebox/delete-boundary-artifact/v1' === $fuzz_runtime_contract['hbex']['schemaIds']['deleteBoundaryArtifact'], 'Expected HBEX delete boundary schema id.' );
+expect( in_array( 'private-runtime-probing', array_column( $fuzz_runtime_contract['unsupportedCapabilities'], 'id' ), true ), 'Expected explicit unsupported probing capability.' );
+
+$fuzz_contract_ability = WP_Codebox_API::execute_ability( 'wp-codebox/wordpress-fuzz-runtime-contract', array( 'ignored' => true ) );
+expect( is_array( $fuzz_contract_ability ), 'Expected WordPress fuzz runtime contract ability facade result.' );
+expect( 'wp-codebox/wordpress-fuzz-runtime-contract/v1' === $fuzz_contract_ability['schema'], 'Expected WordPress fuzz runtime contract ability schema.' );
 
 $descriptor_ability = WP_Codebox_API::execute_ability( 'wp-codebox/runtime-descriptor', array( 'ignored' => true ) );
 expect( is_array( $descriptor_ability ), 'Expected descriptor ability facade result.' );

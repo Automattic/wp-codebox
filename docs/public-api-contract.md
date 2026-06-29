@@ -154,6 +154,43 @@ caller requests required coverage, pass `requireCoverage: true`; unsupported
 required capabilities fail closed with `status: "error"` instead of looking like a
 successful structured skip.
 
+### WordPress fuzz runtime contract
+
+HBEX and other orchestrator consumers should read the versioned public descriptor
+`wp-codebox/wordpress-fuzz-runtime-contract/v1` instead of probing runtime commands
+or private implementation details. The same descriptor is exposed through:
+
+- PHP: `WP_Codebox_API::wordpress_fuzz_runtime_contract()`
+- Ability discovery metadata on `wp-codebox/run-fuzz-suite`
+- WP-CLI: `wp codebox wordpress-fuzz-runtime-contract --format=json`
+- Node CLI: `wp-codebox fuzz descriptor --format=json`
+- TypeScript: `wordpressFuzzRuntimeContract()` from `@automattic/wp-codebox-core/contracts`
+
+The descriptor enumerates explicit action families, reset modes, artifact
+expectations, destructive-mode requirements, unsupported capabilities, and HBEX
+schema ids. Unsupported features are declared as data in
+`unsupportedCapabilities`; consumers should not infer support by trying commands.
+
+The public destructive contract is bounded: destructive fuzz coverage requires
+`checkpoint-per-case` reset mode plus `mutation-isolation-artifact` and
+`delete-boundary-artifact` evidence. Raw delete capability is intentionally
+`null`; delete coverage is represented by the explicit `delete-boundary-artifact`
+contract.
+
+HBEX schema ids advertised by the descriptor include:
+
+- `wp-codebox/wordpress-fuzz-runtime-contract/v1`
+- `wp-codebox/fuzz-suite/v1`
+- `wp-codebox/fuzz-suite-result/v1`
+- `wp-codebox/fuzz-runner-capabilities/v1`
+- `wp-codebox/fuzz-runner-readiness/v1`
+- `wp-codebox/fuzz-coverage-plan/v1`
+- `wp-codebox/fuzz-fixture-plan/v1`
+- `wp-codebox/rest-mutation-fixture-opt-in/v1`
+- `wp-codebox/mutation-isolation-artifact/v1`
+- `wp-codebox/delete-boundary-artifact/v1`
+- `wp-codebox/wordpress-workload-run/v1`
+
 TypeScript callers running through the public Codebox contract should build fuzz
 suites with `@automattic/wp-codebox-core/contracts`. Use `wp-codebox/run-fuzz-suite`
 or `WP_Codebox_API` for in-process WordPress ability coverage, and use the public

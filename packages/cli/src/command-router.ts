@@ -13,6 +13,7 @@ const cliCommandRoutes = {
   "run-fuzz-suite": "runFuzzSuite",
   "run-wordpress-workload": "runWordPressWorkload",
   fuzz: {
+    descriptor: "fuzzDescriptor",
     readiness: "fuzzReadiness",
     capabilities: "fuzzReadiness",
   },

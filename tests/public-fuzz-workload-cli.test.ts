@@ -9,10 +9,12 @@ process.env.WP_CODEBOX_NO_JSPI_RESPAWN = "1"
 
 const help = await captureStdout(async () => {
   assert.equal(await runCli(["run-fuzz-suite", "--help"]), 0)
+  assert.equal(await runCli(["fuzz", "descriptor", "--help"]), 0)
   assert.equal(await runCli(["fuzz", "readiness", "--help"]), 0)
   assert.equal(await runCli(["run-wordpress-workload", "--help"]), 0)
 })
 assert.match(help, /run-fuzz-suite/)
+assert.match(help, /fuzz descriptor/)
 assert.match(help, /fuzz readiness/)
 assert.match(help, /run-wordpress-workload/)
 assert.match(help, /--input-file/)
@@ -38,6 +40,19 @@ return static function ( array $input, array $args ): array {
     );
 };
   `, "utf8")
+
+  const descriptorOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["fuzz", "descriptor", "--format=json"]), 0)
+  })
+  const descriptorJson = JSON.parse(descriptorOutput)
+  assert.equal(descriptorJson.schema, "wp-codebox/wordpress-fuzz-runtime-contract/v1")
+  assert.equal(descriptorJson.publicSurfaces.nodeCli, "wp-codebox fuzz descriptor --format=json")
+  assert.equal(descriptorJson.publicSurfaces.wpCli, "wp codebox wordpress-fuzz-runtime-contract")
+  assert.equal(descriptorJson.actionFamilies.some((family: { commands: string[] }) => family.commands.includes("wordpress.rest-request")), true)
+  assert.deepEqual(descriptorJson.destructiveModeRequirements.requiredResetModes, ["checkpoint-per-case"])
+  assert.equal(descriptorJson.destructiveModeRequirements.rawDeleteCapability, null)
+  assert.equal(descriptorJson.unsupportedCapabilities.some((capability: { id: string }) => capability.id === "private-runtime-probing"), true)
+  assert.equal(descriptorJson.hbex.schemaIds.deleteBoundaryArtifact, "wp-codebox/delete-boundary-artifact/v1")
 
   const readinessOutput = await captureStdout(async () => {
     assert.equal(await runCli(["fuzz", "readiness", "--format=json"]), 0)

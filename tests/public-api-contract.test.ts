@@ -37,6 +37,7 @@ import {
   FUZZ_RUNNER_READINESS_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
+  WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
   REST_MUTATION_FIXTURE_OPT_IN_SCHEMA,
   DELETE_BOUNDARY_ARTIFACT_SCHEMA,
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
@@ -50,6 +51,7 @@ import {
   fuzzCoveragePlanContract,
   fuzzFixturePlanContract,
   fuzzRunnerReadinessContract,
+  wordpressFuzzRuntimeContract,
   TASK_INPUT_JSON_SCHEMA,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
@@ -391,6 +393,11 @@ assert.match(docs, /ability is an in-process WordPress ability only/)
 assert.match(docs, /supported_by_this_ability: false/)
 assert.match(docs, /ability_execution_mode: "php-in-process-only"/)
 assert.match(docs, /wp-codebox run-fuzz-suite --runner-mode=runtime-backed/)
+assert.match(docs, /wp-codebox\/wordpress-fuzz-runtime-contract\/v1/)
+assert.match(docs, /WP_Codebox_API::wordpress_fuzz_runtime_contract\(\)/)
+assert.match(docs, /wp-codebox fuzz descriptor --format=json/)
+assert.match(docs, /unsupportedCapabilities/)
+assert.match(docs, /delete-boundary-artifact/)
 assert.match(docs, /executeWordPressFuzzSuite/)
 assert.match(docs, /manifest intentionally excludes backend handler bindings/)
 assert.doesNotMatch(docs + pluginReadme, /\bData Machine\b|\bData Machine Code\b|\bAgents API\b|\bWordPress Playground\b|generic Data Machine inputs/)
@@ -456,6 +463,8 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzRunnerReadiness, FUZZ_RUNNER_READINESS_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.wordpressFuzzRuntimeContract, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
 assert.equal(runtimeContractManifest().providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
@@ -475,6 +484,19 @@ assert.equal(publicApi.deleteBoundaryArtifact({ operation: "rest_request", targe
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(fuzzFixturePlanContract({ id: "fixture-plan-boundary" }).schema, FUZZ_FIXTURE_PLAN_SCHEMA)
 assert.equal(fuzzRunnerReadinessContract(publicApi.RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES).schema, FUZZ_RUNNER_READINESS_SCHEMA)
+const wordpressFuzzDescriptor = wordpressFuzzRuntimeContract()
+assert.equal(wordpressFuzzDescriptor.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.phpFacade, "WP_Codebox_API::wordpress_fuzz_runtime_contract()")
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.ability, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.nodeCli, "wp-codebox fuzz descriptor --format=json")
+assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.requiredResetModes, ["checkpoint-per-case"])
+assert.equal(wordpressFuzzDescriptor.destructiveModeRequirements.rawDeleteCapability, null)
+assert.equal(wordpressFuzzDescriptor.actionFamilies.some((family) => family.runtimeActionTypes.includes("crud_operation")), true)
+assert.equal(wordpressFuzzDescriptor.resetModes.some((mode) => mode.id === "restore-snapshot" && mode.supported === false), true)
+assert.equal(wordpressFuzzDescriptor.artifactExpectations.some((artifact) => artifact.schema === "wp-codebox/delete-boundary-artifact/v1" && artifact.required), true)
+assert.equal(wordpressFuzzDescriptor.unsupportedCapabilities.some((capability) => capability.id === "private-runtime-probing"), true)
+assert.equal(wordpressFuzzDescriptor.hbex.schemaIds.descriptor, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
+assert.equal(publicApi.runtimeDescriptor().wordpressFuzzRuntimeContract.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
 assert.equal(publicApi.restMutationFixtureOptInContract({ id: "rest-mutation-opt-in", route: "/example/v1/items", methods: ["post", "DELETE"] }).schema, REST_MUTATION_FIXTURE_OPT_IN_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({

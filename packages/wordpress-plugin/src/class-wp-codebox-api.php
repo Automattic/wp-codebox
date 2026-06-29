@@ -12,8 +12,9 @@ defined( 'ABSPATH' ) || exit;
  */
 final class WP_Codebox_API {
 
-	private const RUNTIME_DESCRIPTOR_SCHEMA        = 'wp-codebox/runtime-descriptor/v1';
-	private const RUNTIME_CONTRACT_MANIFEST_SCHEMA = 'wp-codebox/runtime-contract-manifest/v1';
+	private const RUNTIME_DESCRIPTOR_SCHEMA                 = 'wp-codebox/runtime-descriptor/v1';
+	private const RUNTIME_CONTRACT_MANIFEST_SCHEMA          = 'wp-codebox/runtime-contract-manifest/v1';
+	private const WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA    = 'wp-codebox/wordpress-fuzz-runtime-contract/v1';
 
 	/** @var string[] */
 	private const PUBLIC_RUNTIME_CAPABILITIES = array(
@@ -43,6 +44,7 @@ final class WP_Codebox_API {
 	/** @var array<string,string> */
 	private const ABILITY_METHODS = array(
 		'wp-codebox/runtime-descriptor'                     => 'runtime_descriptor',
+		'wp-codebox/wordpress-fuzz-runtime-contract'        => 'wordpress_fuzz_runtime_contract',
 		'wp-codebox/run-agent-task'                         => 'run_agent_task',
 		'wp-codebox/run-agent-task-batch'                   => 'run_agent_task_batch',
 		'wp-codebox/run-agent-task-fanout'                  => 'run_agent_task_fanout',
@@ -113,7 +115,96 @@ final class WP_Codebox_API {
 			),
 			'capabilities'     => self::PUBLIC_RUNTIME_CAPABILITIES,
 			'abilities'        => self::runtime_abilities(),
+			'wordpressFuzzRuntimeContract' => self::wordpress_fuzz_runtime_contract(),
 			'contractManifest' => self::runtime_contract_manifest(),
+		);
+	}
+
+	/** @param array<string,mixed> $input Ignored descriptor input. @return array<string,mixed> */
+	public static function wordpress_fuzz_runtime_contract( array $input = array() ): array {
+		unset( $input );
+
+		return array(
+			'schema'                      => self::WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
+			'version'                     => 1,
+			'runtime'                     => array(
+				'id'          => 'wp-codebox',
+				'environment' => 'wordpress',
+			),
+			'publicSurfaces'              => array(
+				'phpFacade'  => 'WP_Codebox_API::wordpress_fuzz_runtime_contract()',
+				'ability'    => 'wp-codebox/run-fuzz-suite',
+				'wpCli'      => 'wp codebox wordpress-fuzz-runtime-contract',
+				'nodeCli'    => 'wp-codebox fuzz descriptor --format=json',
+				'typescript' => '@automattic/wp-codebox-core/contracts',
+			),
+			'actionFamilies'              => array(
+				array(
+					'id'                 => 'ability-http-rest-read',
+					'label'              => 'Ability, HTTP, and REST read coverage',
+					'targetKinds'        => array( 'ability', 'http', 'rest' ),
+					'runtimeActionTypes' => array(),
+					'commands'           => array( 'wordpress.ability', 'wordpress.http-request', 'wordpress.rest-request' ),
+					'mutationIntents'    => array( 'read' ),
+					'supported'          => true,
+				),
+				array(
+					'id'                 => 'runtime-browser-admin',
+					'label'              => 'Runtime browser, admin page, editor, and page coverage',
+					'targetKinds'        => array( 'runtime', 'runtime-action' ),
+					'runtimeActionTypes' => array( 'admin_page', 'browser', 'browser_probe', 'editor_open', 'page', 'random_walk', 'sequence' ),
+					'commands'           => array( 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.editor-open', 'wordpress.fuzz-admin-pages', 'wordpress.page', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load' ),
+					'mutationIntents'    => array( 'read', 'write' ),
+					'supported'          => true,
+				),
+				array(
+					'id'                 => 'runtime-wordpress-operations',
+					'label'              => 'WordPress CLI, PHP, REST, CRUD, and database operation coverage',
+					'targetKinds'        => array( 'command', 'runtime', 'runtime-action' ),
+					'runtimeActionTypes' => array( 'crud_operation', 'db_operation', 'php', 'rest_request', 'wp_cli' ),
+					'commands'           => array( 'wordpress.collect-workload-result', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.inventory-plugin-module-options-tables', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.wp-cli' ),
+					'mutationIntents'    => array( 'read', 'write', 'delete', 'destructive' ),
+					'supported'          => true,
+				),
+			),
+			'resetModes'                  => array(
+				array( 'id' => 'none', 'supported' => true, 'requiredForMutationIntents' => array( 'read' ), 'artifactKinds' => array() ),
+				array( 'id' => 'checkpoint-per-case', 'supported' => true, 'requiredForMutationIntents' => array( 'write', 'delete', 'destructive' ), 'artifactKinds' => array( 'mutation-isolation-artifact', 'delete-boundary-artifact' ) ),
+				array( 'id' => 'restore-snapshot', 'supported' => false, 'requiredForMutationIntents' => array(), 'artifactKinds' => array() ),
+			),
+			'artifactExpectations'        => array(
+				array( 'id' => 'fuzz-suite-result', 'required' => true, 'schema' => 'wp-codebox/fuzz-suite-result/v1', 'producedBy' => array( 'run-fuzz-suite' ), 'description' => 'Every fuzz run returns a structured suite result envelope with case summaries, diagnostics, and artifact references.' ),
+				array( 'id' => 'mutation-isolation-artifact', 'required' => true, 'schema' => 'wp-codebox/mutation-isolation-artifact/v1', 'producedBy' => array( 'rest-mutation:post', 'rest-mutation:put', 'rest-mutation:patch' ), 'description' => 'Mutating REST coverage records the fixture opt-in and reset boundary used to isolate the mutation.' ),
+				array( 'id' => 'delete-boundary-artifact', 'required' => true, 'schema' => 'wp-codebox/delete-boundary-artifact/v1', 'producedBy' => array( 'rest-mutation:delete' ), 'description' => 'Delete coverage records the explicit delete boundary artifact instead of advertising raw delete support.' ),
+			),
+			'destructiveModeRequirements' => array(
+				'supported'                 => true,
+				'destructiveMutationIntent' => 'destructive',
+				'requiredResetModes'        => array( 'checkpoint-per-case' ),
+				'requiredArtifacts'         => array( 'mutation-isolation-artifact', 'delete-boundary-artifact' ),
+				'deleteBoundaryCapability'  => 'delete-boundary-artifact',
+				'rawDeleteCapability'       => null,
+			),
+			'unsupportedCapabilities'     => array(
+				array( 'id' => 'raw-delete', 'reason' => 'WordPress fuzz runtime delete coverage is only supported through explicit delete-boundary artifacts.', 'replacement' => 'delete-boundary-artifact' ),
+				array( 'id' => 'restore-snapshot-reset', 'reason' => 'Snapshot restore is not part of the public WordPress fuzz runtime contract.', 'replacement' => 'checkpoint-per-case' ),
+				array( 'id' => 'private-runtime-probing', 'reason' => 'Consumers must read this descriptor instead of probing private runtime commands or implementation capabilities.' ),
+			),
+			'hbex'                        => array(
+				'schemaIds' => array(
+					'descriptor'                 => self::WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
+					'fuzzSuite'                  => 'wp-codebox/fuzz-suite/v1',
+					'fuzzSuiteResult'            => 'wp-codebox/fuzz-suite-result/v1',
+					'fuzzRunnerCapabilities'     => 'wp-codebox/fuzz-runner-capabilities/v1',
+					'fuzzRunnerReadiness'        => 'wp-codebox/fuzz-runner-readiness/v1',
+					'fuzzCoveragePlan'           => 'wp-codebox/fuzz-coverage-plan/v1',
+					'fuzzFixturePlan'            => 'wp-codebox/fuzz-fixture-plan/v1',
+					'restMutationFixtureOptIn'   => 'wp-codebox/rest-mutation-fixture-opt-in/v1',
+					'mutationIsolationArtifact'  => 'wp-codebox/mutation-isolation-artifact/v1',
+					'deleteBoundaryArtifact'     => 'wp-codebox/delete-boundary-artifact/v1',
+					'wordpressWorkloadRun'       => 'wp-codebox/wordpress-workload-run/v1',
+				),
+			),
 		);
 	}
 
@@ -243,6 +334,9 @@ final class WP_Codebox_API {
 				'fuzzCoveragePlan'    => 'wp-codebox/fuzz-coverage-plan/v1',
 				'fuzzSuite'           => 'wp-codebox/fuzz-suite/v1',
 				'fuzzSuiteResult'     => 'wp-codebox/fuzz-suite-result/v1',
+				'fuzzRunnerCapabilities' => 'wp-codebox/fuzz-runner-capabilities/v1',
+				'fuzzRunnerReadiness' => 'wp-codebox/fuzz-runner-readiness/v1',
+				'wordpressFuzzRuntimeContract' => self::WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
 				'blockExerciseResult' => 'wp-codebox/wordpress-block-exercise-result/v1',
 			),
 		);

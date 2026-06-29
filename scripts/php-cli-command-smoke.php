@@ -110,6 +110,7 @@ $expected_commands = array(
 	'codebox run-wordpress-workload',
 	'codebox run-runtime-package',
 	'codebox resolve-runtime-requirements',
+	'codebox wordpress-fuzz-runtime-contract',
 	'codebox run-fuzz-suite',
 );
 
@@ -125,6 +126,16 @@ expect( is_array( $descriptor_output ), 'Expected JSON output for runtime descri
 expect( 'wp-codebox/runtime-descriptor/v1' === $descriptor_output['schema'], 'Runtime descriptor command must emit descriptor schema.' );
 expect( in_array( 'contract-manifest:read', $descriptor_output['capabilities'], true ), 'Runtime descriptor command must include contract manifest capability.' );
 expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Runtime descriptor command must not dispatch through backend abilities.' );
+
+WP_CLI::$lines = array();
+WP_Codebox_Abilities::$calls = array();
+WP_CLI::$commands['codebox wordpress-fuzz-runtime-contract']( array(), array() );
+$fuzz_contract_output = json_decode( WP_CLI::$lines[0] ?? '', true );
+expect( is_array( $fuzz_contract_output ), 'Expected JSON output for WordPress fuzz runtime contract command.' );
+expect( 'wp-codebox/wordpress-fuzz-runtime-contract/v1' === $fuzz_contract_output['schema'], 'WordPress fuzz runtime contract command must emit descriptor schema.' );
+expect( null === $fuzz_contract_output['destructiveModeRequirements']['rawDeleteCapability'], 'WordPress fuzz runtime contract must explicitly reject raw delete capability.' );
+expect( 'wp-codebox/delete-boundary-artifact/v1' === $fuzz_contract_output['hbex']['schemaIds']['deleteBoundaryArtifact'], 'WordPress fuzz runtime contract must include HBEX delete boundary schema id.' );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'WordPress fuzz runtime contract command must not dispatch through backend abilities.' );
 
 function run_cli_command( string $command, array $args = array(), array $assoc_args = array() ): array {
 	WP_CLI::$lines = array();

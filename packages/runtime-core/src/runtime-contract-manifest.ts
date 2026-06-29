@@ -4,7 +4,7 @@ import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, validateFanoutAggregationOutput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
 import { FUZZ_COVERAGE_PLAN_SCHEMA } from "./fuzz-coverage-plan-contracts.js"
-import { FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA } from "./fuzz-suite-contracts.js"
+import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, FUZZ_RUNNER_READINESS_SCHEMA, FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA, wordpressFuzzRuntimeContract, type WordPressFuzzRuntimeContract } from "./fuzz-suite-contracts.js"
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
 import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
@@ -191,6 +191,9 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     fuzzCoveragePlan: FUZZ_COVERAGE_PLAN_SCHEMA,
     fuzzSuite: FUZZ_SUITE_SCHEMA,
     fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
+    fuzzRunnerCapabilities: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
+    fuzzRunnerReadiness: FUZZ_RUNNER_READINESS_SCHEMA,
+    wordpressFuzzRuntimeContract: WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
     blockExerciseResult: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
   },
 } as const
@@ -220,6 +223,7 @@ export interface RuntimeDescriptor {
   }
   capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  wordpressFuzzRuntimeContract: WordPressFuzzRuntimeContract
   contractManifest: RuntimeContractManifest
 }
 
@@ -248,6 +252,7 @@ export function runtimeDescriptor(): RuntimeDescriptor {
     },
     capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    wordpressFuzzRuntimeContract: wordpressFuzzRuntimeContract(),
     contractManifest: runtimeContractManifest(),
   }
 }
