@@ -25,6 +25,8 @@ import {
   normalizeThemeCheckOutput,
   pageLoadInputFromArgs,
   pageLoadPhpCode,
+  cacheChurnObservationInputFromArgs,
+  cacheChurnObservationPhpCode,
   restPerformanceObservationInputFromArgs,
   restPerformanceObservationPhpCode,
   phpunitRunCode,
@@ -665,6 +667,24 @@ export async function runRestPerformanceObservationCommand({
   input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand("wordpress.rest-performance-observation", server, { code: bootstrapPhpCode(runtimeSpec, restPerformanceObservationPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-performance-observation", response)
+  return response.text
+}
+
+export async function runCacheChurnObservationCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = cacheChurnObservationInputFromArgs(spec.args ?? [])
+  input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
+  const response = await runPlaygroundCommand("wordpress.cache-churn-observation", server, { code: bootstrapPhpCode(runtimeSpec, cacheChurnObservationPhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.cache-churn-observation", response)
   return response.text
 }
 

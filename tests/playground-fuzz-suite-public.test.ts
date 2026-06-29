@@ -47,7 +47,7 @@ const episode = {
     }
     const restMethod = action.args?.find((arg) => arg.startsWith("method="))?.replace(/^method=/, "") ?? "GET"
     const commandPayloads: Record<string, Record<string, unknown>> = {
-      "wordpress.rest-request": restMethod === "DELETE" ? { path: "/wp/v2/posts/123", route: "/wp/v2/posts/123", status: 200, timing: { durationMs: 45 }, performance: { database: { queryCount: 3, writeSet: [{ table: "wp_posts", operation: "delete", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 0, object: { kind: "post", id: 123 }, key: "wp_posts:delete:123" }], repeatedWrites: [], writeSetTruncated: false } } } : { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
+      "wordpress.rest-request": restMethod === "DELETE" ? { path: "/wp/v2/posts/123", route: "/wp/v2/posts/123", status: 200, timing: { durationMs: 45 }, performance: { database: { queryCount: 3, writeSet: [{ table: "wp_posts", operation: "delete", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 0, object: { kind: "post", id: 123 }, key: "wp_posts:delete:123" }], repeatedWrites: [], writeSetTruncated: false } } } : { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 }, database: { status: "captured", queryCount: 3, totalTimeMs: 7.5, fingerprints: [{ fingerprint: "select * from wp_posts where id = ?", count: 2, totalTimeMs: 5, caller: "WP_Query->get_posts" }, { fingerprint: "select option_value from wp_options where option_name = ?", count: 1, totalTimeMs: 2.5 }] } },
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 }, metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "db_operation", target: "wp_fuzz", entries: [{ table: "wp_fuzz", operation: "update", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 1, resource: { table: "wp_fuzz", identifiers: { id: 1 } }, key: "wp_fuzz:update:1" }], repeatedWrites: [], totals: { writes: 1, rowsAffected: 1, tables: 1, repeatedWriteKeys: 0 } } } },
       "wordpress.crud-operation": { item: { id: 123 }, status: "ok", metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "crud_operation", target: "post:123", entries: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }, { table: "wp_postmeta", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_postmeta:update:123" }], repeatedWrites: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }], totals: { writes: 2, rowsAffected: 2, tables: 2, repeatedWriteKeys: 1 } } } },
@@ -157,11 +157,14 @@ assert.equal(result.cases[7]?.artifactRefs?.some((ref) => ref.path === "workload
 assert.equal(steps.some((step) => step.args?.[0]?.includes("rest-db-query-profiler")), true)
 assert.equal(steps.some((step) => step.args?.[0]?.includes("woocommerce")), true)
 assert.equal(result.artifactRefs.some((ref) => ["wordpress-hotspots", "fuzz-observation-set", "fuzz-hotspot-set", "fuzz-suite-result"].includes(ref.kind)), false)
-const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } } } | undefined
+const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } }; queryObservations?: { persisted?: boolean; count?: number; metadata?: { schema?: string }; observations?: Array<{ caseId?: string; queryCount?: number }> } } | undefined
 assert.equal(metadataArtifacts?.fuzzResult?.persisted, false)
 assert.equal(metadataArtifacts?.wordpressHotspots?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
 assert.equal(metadataArtifacts?.fuzzObservationSet?.metadata?.schema, "wp-codebox/fuzz-observation-set/v1")
 assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fuzz-hotspot-set/v1")
+assert.equal(metadataArtifacts?.queryObservations?.persisted, false)
+assert.equal(metadataArtifacts?.queryObservations?.metadata?.schema, "wp-codebox/query-observation/v1")
+assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "rest" && item.queryCount === 3), true)
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
@@ -174,9 +177,10 @@ try {
     cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }, { id: "durable-delete", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" }, mutation: { intent: "delete", destructive: true } }],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
-    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
+    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; artifactRefs?: Array<{ path?: string; kind?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
     fuzzResult?: { persisted?: boolean; path?: string }
     wordpressHotspots?: { persisted?: boolean; path?: string }
+    queryObservations?: { persisted?: boolean; count?: number; observations?: Array<{ ref?: { path?: string }; caseId?: string; queryCount?: number }> }
   } | undefined
   assert.equal(durableArtifacts?.fuzzBundle?.schema, "wp-codebox/fuzz-artifact-bundle/v1")
   assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "unsupported")
@@ -184,6 +188,8 @@ try {
   assert.match(durableArtifacts?.fuzzBundle?.minimize?.reason ?? "", /not implemented/)
   assert.equal(durableArtifacts?.fuzzResult?.persisted, true)
   assert.equal(durableArtifacts?.wordpressHotspots?.persisted, true)
+  assert.equal(durableArtifacts?.queryObservations?.persisted, true)
+  assert.equal(durableArtifacts?.queryObservations?.count, 1)
   assert.equal(durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.caseId, "durable-rest")
 
   const resultArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.resultRef?.path ?? ""), "utf8"))
@@ -193,6 +199,7 @@ try {
   const durableWriteSetPath = durableResult.cases[1]?.artifactRefs?.find((ref) => ref.kind === "wordpress-db-write-set")?.path
   assert.ok(durableWriteSetPath)
   const durableWriteSet = JSON.parse(await readFile(join(artifactRoot, durableWriteSetPath), "utf8"))
+  const queryObservationArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.queryObservations?.observations?.[0]?.ref?.path ?? ""), "utf8"))
   assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
   assert.equal(replayArtifact.case.id, "durable-rest")
@@ -200,6 +207,11 @@ try {
   assert.equal(hotspotArtifact.schema, "wp-codebox/wordpress-hotspots/v1")
   assert.equal(durableWriteSet.schema, "wp-codebox/wordpress-db-write-set/v1")
   assert.equal(durableWriteSet.entries[0].operation, "delete")
+  assert.equal(queryObservationArtifact.schema, "wp-codebox/query-observation/v1")
+  assert.equal(queryObservationArtifact.caseId, "durable-rest")
+  assert.equal(queryObservationArtifact.queryCount, 3)
+  assert.equal(queryObservationArtifact.duplicateGroups[0]?.count, 2)
+  assert.equal(queryObservationArtifact.tables.some((table: { name?: string }) => table.name === "wp_posts"), true)
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
 }

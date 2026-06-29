@@ -16,13 +16,15 @@ export function wordpressQueryRecorderPhp(): string {
         }
         $fingerprint = wp_codebox_query_recorder_fingerprint( $sql, (int) ( $recorder['lengthLimit'] ?? 500 ) );
         $key = hash( 'sha256', $fingerprint );
+        $operation = wp_codebox_query_recorder_operation( $fingerprint );
+        $tables = wp_codebox_query_recorder_tables( $fingerprint, $operation );
         ++$recorder['queryCount'];
         if ( ! isset( $recorder['fingerprints'][ $key ] ) ) {
             if ( count( $recorder['fingerprints'] ) >= (int) ( $recorder['fingerprintLimit'] ?? 50 ) ) {
                 $recorder['truncated'] = true;
                 return;
             }
-            $recorder['fingerprints'][ $key ] = array_filter( array( 'fingerprint' => $fingerprint, 'count' => 0, 'sampleMs' => null, 'totalTimeMs' => null, 'caller' => is_string( $caller ) ? substr( $caller, 0, 240 ) : null ), static fn( $value ) => null !== $value );
+            $recorder['fingerprints'][ $key ] = array_filter( array( 'fingerprint' => $fingerprint, 'hash' => $key, 'count' => 0, 'operation' => $operation, 'tables' => $tables, 'sampleMs' => null, 'totalTimeMs' => null, 'caller' => is_string( $caller ) ? substr( $caller, 0, 240 ) : null ), static fn( $value ) => null !== $value );
         }
         ++$recorder['fingerprints'][ $key ]['count'];
         if ( null !== $elapsed_ms ) {
@@ -72,6 +74,33 @@ export function wordpressQueryRecorderPhp(): string {
             }
         }
         return null;
+    }
+
+    function wp_codebox_query_recorder_operation( $fingerprint ) {
+        $operation = strtolower( strtok( trim( (string) $fingerprint ), " \t\n\r\0\x0B" ) ?: '' );
+        return in_array( $operation, array( 'select', 'insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'truncate' ), true ) ? $operation : 'other';
+    }
+
+    function wp_codebox_query_recorder_tables( $fingerprint, $operation ) {
+        $tables = array();
+        $patterns = array(
+            '/\bfrom\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\bjoin\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\binto\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\bupdate\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\btable\s+\`?([a-zA-Z0-9_]+)\`?/i',
+        );
+        foreach ( $patterns as $pattern ) {
+            if ( preg_match_all( $pattern, (string) $fingerprint, $matches ) ) {
+                foreach ( (array) ( $matches[1] ?? array() ) as $table ) {
+                    $table = (string) $table;
+                    if ( '' !== $table && ! isset( $tables[ $table ] ) ) {
+                        $tables[ $table ] = array( 'name' => $table, 'source' => 'fingerprint', 'operation' => $operation );
+                    }
+                }
+            }
+        }
+        return array_values( $tables );
     }
 
     function wp_codebox_query_recorder_start( $id, $fingerprint_limit = 50, $length_limit = 500 ) {
