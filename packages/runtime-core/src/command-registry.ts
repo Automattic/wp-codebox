@@ -3,6 +3,7 @@ import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHE
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
+import { WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS, WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA, WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA } from "./wordpress-admin-action-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
@@ -722,6 +723,28 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to discovered prefixed WordPress tables, allowlisted to described columns, and capped row counts; generic writes are rejected.",
     recipe: true,
     handler: { kind: "playground", method: "runDbOperation" },
+  },
+  {
+    id: "wordpress.admin-action",
+    description: "Execute a declared destructive WordPress admin action inside the disposable runtime boundary and emit structured mutation evidence. Supports generic admin-hook, AJAX, and admin-post families; editor and browser random-walk families are explicitly described as unsupported here.",
+    acceptedArgs: [
+      { name: "action-json", description: "wp-codebox/wordpress-admin-action/v1 object with family, hook/action, optional method/query/body/user, and destructiveBoundary.", required: true, format: "JSON object" },
+      { name: "destructive-boundary-json", description: "Optional destructive boundary object when action-json omits destructiveBoundary. Must set disposableRuntime=true, destructive=true, artifactPolicy=capture, teardown=discard-runtime.", format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/wordpress-admin-action-result/v1 JSON with disposable destructive boundary, explicit supported/unsupported family descriptors, executed hook metadata, diagnostics, errors, artifacts, and performance observation.",
+    outputSchema: {
+      id: WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA,
+      jsonSchema: {
+        ...WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA,
+        properties: {
+          ...WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA.properties,
+          familyDescriptors: { const: WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS },
+        },
+      },
+    },
+    policyRequirement: "Runtime policy commands must include wordpress.admin-action. The action must include the disposable destructive boundary proof because this command may mutate the contained WordPress runtime.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminAction" },
   },
   {
     id: "wordpress.bench",

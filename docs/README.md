@@ -48,6 +48,9 @@ unless this index says otherwise.
   packaging and invocation.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
   shape without making benchmark scoring a core runtime concern.
+- [WordPress admin action contract](./wordpress-admin-action-contract.md)
+  documents disposable destructive admin/AJAX/admin-post execution and explicit
+  unsupported editor/browser random-walk descriptors.
 
 ## Example Consumer Integration Notes
 
