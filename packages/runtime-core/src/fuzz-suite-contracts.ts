@@ -377,6 +377,7 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       fuzzCoveragePlan: "wp-codebox/fuzz-coverage-plan/v1",
       fuzzFixturePlan: "wp-codebox/fuzz-fixture-plan/v1",
       restMutationFixtureOptIn: "wp-codebox/rest-mutation-fixture-opt-in/v1",
+      restMutationGeneratedFixtures: "wp-codebox/rest-mutation-generated-fixtures/v1",
       mutationIsolationArtifact: "wp-codebox/mutation-isolation-artifact/v1",
       deleteBoundaryArtifact: "wp-codebox/delete-boundary-artifact/v1",
       wordpressWorkloadRun: "wp-codebox/wordpress-workload-run/v1",

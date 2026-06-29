@@ -39,6 +39,7 @@ import {
   FUZZ_SUITE_SCHEMA,
   WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
   REST_MUTATION_FIXTURE_OPT_IN_SCHEMA,
+  REST_MUTATION_GENERATED_FIXTURES_SCHEMA,
   DELETE_BOUNDARY_ARTIFACT_SCHEMA,
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
   SANDBOX_ISOLATION_PROOF_SCHEMA,
@@ -206,6 +207,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
+  "./wordpress-admin-action-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
@@ -511,8 +513,10 @@ assert.equal(wordpressFuzzDescriptor.resetModes.some((mode) => mode.id === "rest
 assert.equal(wordpressFuzzDescriptor.artifactExpectations.some((artifact) => artifact.schema === "wp-codebox/delete-boundary-artifact/v1" && artifact.required), true)
 assert.equal(wordpressFuzzDescriptor.unsupportedCapabilities.some((capability) => capability.id === "private-runtime-probing"), true)
 assert.equal(wordpressFuzzDescriptor.hbex.schemaIds.descriptor, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
+assert.equal(wordpressFuzzDescriptor.hbex.schemaIds.restMutationGeneratedFixtures, REST_MUTATION_GENERATED_FIXTURES_SCHEMA)
 assert.equal(publicApi.runtimeDescriptor().wordpressFuzzRuntimeContract.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
 assert.equal(publicApi.restMutationFixtureOptInContract({ id: "rest-mutation-opt-in", route: "/example/v1/items", methods: ["post", "DELETE"] }).schema, REST_MUTATION_FIXTURE_OPT_IN_SCHEMA)
+assert.equal(publicApi.restMutationGeneratedFixturesContract({ id: "rest-mutation-generated", route: { route: "/example/v1/items", namespace: "example/v1", methods: ["POST"], argNames: [], endpoints: [{ methods: ["POST"], permission: { mode: "callback" }, args: [] }] } }).schema, REST_MUTATION_GENERATED_FIXTURES_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({
   suite: { id: "ability-boundary" },
