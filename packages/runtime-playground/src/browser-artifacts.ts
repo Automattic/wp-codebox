@@ -82,6 +82,7 @@ export interface BrowserArtifactFiles {
   screenshot?: string
   domSnapshots?: string[]
   verifierResults?: string[]
+  actionCorpus?: string
   sourceScreenshot?: string | string[]
   candidateScreenshot?: string | string[]
   diffScreenshot?: string | string[]
@@ -154,6 +155,14 @@ export interface BrowserArtifactSummary {
     status: "unsupported" | "ok" | "error"
     artifact: string
   }>
+  actionCorpus?: {
+    schema: "wp-codebox/browser-action-corpus/v1"
+    seed: string
+    descriptorsDiscovered: number
+    descriptorsSelected: number
+    stepsPlanned: number
+    artifact: string
+  }
   networkPolicy?: BrowserProbeNetworkPolicySummary
   previewProxy?: PlaygroundPreviewProxyDiagnostics
   lifecycle?: BrowserProbeLifecycleSummary
@@ -1068,6 +1077,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
   verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },
+  actionCorpus: { kind: "browser-action-corpus", contentType: "application/json", redact: true },
   sourceScreenshot: { kind: "browser-visual-source-screenshot", contentType: "image/png", redact: false },
   candidateScreenshot: { kind: "browser-visual-candidate-screenshot", contentType: "image/png", redact: false },
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
