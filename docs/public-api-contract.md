@@ -187,9 +187,20 @@ HBEX schema ids advertised by the descriptor include:
 - `wp-codebox/fuzz-coverage-plan/v1`
 - `wp-codebox/fuzz-fixture-plan/v1`
 - `wp-codebox/rest-mutation-fixture-opt-in/v1`
+- `wp-codebox/rest-mutation-generated-fixtures/v1`
 - `wp-codebox/mutation-isolation-artifact/v1`
 - `wp-codebox/delete-boundary-artifact/v1`
 - `wp-codebox/wordpress-workload-run/v1`
+
+Generic mutating REST fixture generation is exposed as the public
+`wp-codebox/rest-mutation-generated-fixtures/v1` contract through
+`restMutationGeneratedFixturesContract()`. It derives bounded disposable sandbox
+payload fixtures from route schemas, optional existing collection samples, and
+typed generators. Generated operations carry explicit `confidence`, `sources`,
+`bounded`, `semanticValidity`, and `unsupportedReasons` metadata. The contract
+does not claim complete semantic validity; unsupported bindings remain data in
+the `unsupported` list, and callers pass the returned opt-ins into fuzz-suite
+builders when they accept those generated fixtures for a disposable Codebox run.
 
 TypeScript callers running through the public Codebox contract should build fuzz
 suites with `@automattic/wp-codebox-core/contracts`. Use `wp-codebox/run-fuzz-suite`

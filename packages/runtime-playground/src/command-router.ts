@@ -19,6 +19,7 @@ interface PlaygroundCommandRuntime {
   runServerPageLoad(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runRestPerformanceObservation(spec: ExecutionSpec): Promise<string>
+  runCacheChurnObservation(spec: ExecutionSpec): Promise<string>
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageInventory(spec: ExecutionSpec): Promise<string>
