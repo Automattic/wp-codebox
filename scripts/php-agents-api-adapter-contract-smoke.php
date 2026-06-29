@@ -94,10 +94,13 @@ assert( 'codebox-agent-runtime' === $early_providers['agents-api-adapter']['id']
 assert( 'Codebox agent runtime' === $early_providers['agents-api-adapter']['label'] );
 assert( 'runtime-profile' === $early_providers['agents-api-adapter']['kind'] );
 assert( array( 'codebox.runtime-package' ) === $early_providers['agents-api-adapter']['capabilities'] );
-assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
+assert( '' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 $early_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
 assert( is_wp_error( $early_runtime_package ) );
-assert( 'wp_codebox_agents_api_ability_unavailable' === $early_runtime_package->get_error_code() );
+assert( 'wp_codebox_runtime_provider_default_missing' === $early_runtime_package->get_error_code() );
+$early_adapter_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider' => 'agents-api-adapter', 'package' => array( 'id' => 'example' ) ) );
+assert( is_wp_error( $early_adapter_runtime_package ) );
+assert( 'wp_codebox_agents_api_ability_unavailable' === $early_adapter_runtime_package->get_error_code() );
 
 $GLOBALS['wp_codebox_test_abilities'][ $names['chat'] ]                = new WP_Ability( array( 'schema' => 'agents-api/chat-result/v1', 'raw' => array( 'schema' => 'agents-api.chat-result' ) ) );
 $GLOBALS['wp_codebox_test_abilities'][ $names['run_task'] ]            = new WP_Ability( array( 'schema' => 'agents-api/task-result/v1' ) );
@@ -193,15 +196,24 @@ assert( true === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_pack
 assert( 1200000 === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['time_budget_ms'] );
 assert( array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000 ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['options'] );
 
+$default_chat_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
+	array( 'client_context' => array() ),
+	array( 'agent' => '' ),
+	array( 'type' => 'ability', 'name' => 'agents/chat' ),
+	'codebox-session'
+);
+assert( 'wp-codebox-sandbox' === $default_chat_browser_input['agent'] );
+assert( 'wp-codebox-sandbox' === $default_chat_browser_input['principal']['effective_agent_id'] );
+
 $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
 	array(
-		'agent'          => 'example-agent',
+		'agent'          => '',
 		'provider'       => 'codex',
 		'model'          => 'gpt-5.5',
 		'client_context' => array(),
 	),
 	array(
-		'agent'      => 'example-agent',
+		'agent'      => '',
 		'task_input' => array(
 			'runtime_task' => array(
 				'kind'    => 'bundle',
@@ -221,6 +233,8 @@ assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) 
 assert( array( 'id' => 'example-artifact-flow' ) === $runtime_package_browser_input['workflow'] );
 assert( array( 'wait_for_completion' => true ) === $runtime_package_browser_input['input'] );
 assert( 'runtime' === $runtime_package_browser_input['principal']['auth_source'] );
+assert( 'wp-codebox-sandbox' === $runtime_package_browser_input['agent'] );
+assert( 'wp-codebox-sandbox' === $runtime_package_browser_input['principal']['effective_agent_id'] );
 
 $package_with_workspace_relative_runtime_package = $adapter->run_runtime_package(
 	array(
@@ -248,12 +262,11 @@ WP_Codebox_Agents_API_Adapter::register_runtime_provider();
 $providers = WP_Codebox_Runtime_Provider_Registry::providers();
 assert( isset( $providers['agents-api-adapter'] ) );
 assert( 'codebox-agent-runtime' === $providers['agents-api-adapter']['id'] );
-assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
+assert( '' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 
 $default_registered_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
-assert( ! is_wp_error( $default_registered_runtime_package ) );
-assert( 'codebox-agent-runtime' === $default_registered_runtime_package['runtime_provider']['id'] );
-assert( false === str_contains( json_encode( $default_registered_runtime_package['runtime_provider'] ), 'agents-api' ) );
+assert( is_wp_error( $default_registered_runtime_package ) );
+assert( 'wp_codebox_runtime_provider_default_missing' === $default_registered_runtime_package->get_error_code() );
 
 $runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider_id' => 'agents-api-adapter', 'package' => array( 'id' => 'example' ) ) );
 assert( ! is_wp_error( $runtime_package ) );

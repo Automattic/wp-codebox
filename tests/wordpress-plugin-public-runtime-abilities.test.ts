@@ -7,6 +7,8 @@ const schemasPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebo
 const executionPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php", "utf8")
 const fuzzSuiteRunnerPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-fuzz-suite-runner.php", "utf8")
 const runtimePackageServicePhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-package-service.php", "utf8")
+const runtimePackageExecutorPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-package-executor.php", "utf8")
+const agentsApiAdapterPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php", "utf8")
 
 assert.match(abilitiesPhp, /add_action\(\s*'wp_abilities_api_init',\s*array\(\s*\$this,\s*'register_when_abilities_api_is_ready'\s*\)\s*\)/, "WP Codebox must defer ability registration until the Abilities API is ready")
 assert.match(abilitiesPhp, /function register_when_abilities_api_is_ready\(\): void/, "deferred ability registration callback must be present")
@@ -51,6 +53,15 @@ assert.match(runtimePackageServicePhp, /function normalize_task_input\( array \$
 assert.match(runtimePackageServicePhp, /function legacy_task_input\( array \$input \)/)
 assert.match(runtimePackageServicePhp, /function normalize_result\( array \$result, array \$task \)/)
 assert.match(runtimePackageServicePhp, /WP_Codebox_Runtime_Provider_Registry::invoke\( \$task \)/)
+assert.match(runtimePackageExecutorPhp, /final class WP_Codebox_Runtime_Package_Executor/)
+assert.match(runtimePackageExecutorPhp, /WP_Codebox_Runtime_Provider_Registry::register\([\s\S]{0,500}'codebox-runtime-package'/)
+assert.match(runtimePackageExecutorPhp, /function import_package_bundle\( array \$task \)/)
+assert.match(runtimePackageExecutorPhp, /function execute_workflow\( array \$task \)/)
+assert.match(runtimePackageExecutorPhp, /function load_package_workflow\( array \$task, array \$workflow \)/)
+assert.match(runtimePackageExecutorPhp, /\/flows\/.*safe_slug\( \$workflow_id \).*\.json/s)
+assert.match(runtimePackageExecutorPhp, /\/pipelines\/.*safe_slug\( \$pipeline_slug \).*\.json/s)
+assert.doesNotMatch(runtimePackageExecutorPhp, /agents\/run-runtime-package|Data Machine|Homeboy|WPSG|wp-site-generator/i)
+assert.match(agentsApiAdapterPhp, /'default'\s*=>\s*false/)
 assert.match(executionPhp, /unsafe_execution_fields/)
 assert.match(executionPhp, /collect_unsafe_execution_fields/)
 assert.match(executionPhp, /'code', 'php', 'php_code', 'raw_code', 'eval', 'shell'/)
@@ -87,6 +98,6 @@ assert.match(fuzzSuiteRunnerPhp, /'commands'[\s\S]{0,900}wordpress\.plugin-state
 assert.match(fuzzSuiteRunnerPhp, /WP_CODEBOX_FUZZ_WORKLOAD_ROOT/)
 assert.doesNotMatch(executionPhp, /wp_codebox_fuzz_suite_runner_unavailable/)
 
-assert.doesNotMatch(abilitiesPhp + runtimeDescriptorsPhp + schemasPhp + executionPhp + fuzzSuiteRunnerPhp + runtimePackageServicePhp, /WooCommerce|Jetpack|Data Machine/i)
+assert.doesNotMatch(abilitiesPhp + runtimeDescriptorsPhp + schemasPhp + executionPhp + fuzzSuiteRunnerPhp + runtimePackageServicePhp + runtimePackageExecutorPhp, /WooCommerce|Jetpack|Data Machine/i)
 
 console.log("wordpress plugin public runtime abilities contract ok")
