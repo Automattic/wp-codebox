@@ -25,6 +25,8 @@ import {
   normalizeThemeCheckOutput,
   pageLoadInputFromArgs,
   pageLoadPhpCode,
+  cacheChurnObservationInputFromArgs,
+  cacheChurnObservationPhpCode,
   restPerformanceObservationInputFromArgs,
   restPerformanceObservationPhpCode,
   phpunitRunCode,
@@ -36,9 +38,13 @@ import {
   runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
+  runtimeAdminActionInventoryPhpCode,
   runtimeInventoryPhpCode,
+  type RuntimeInventorySurface,
   runtimeDiscoveryPhpCode,
   runtimeDiscoverySurfacesFromArgs,
+  wordpressExecutionActionInputFromArgs,
+  wordpressExecutionActionPhpCode,
   pluginSetupInputFromArgs,
   themeCheckRunCode,
   themeSetupInputFromArgs,
@@ -112,6 +118,25 @@ export async function runPhpCommand({
     diagnostics: parsed.diagnostics,
     artifactRefs: [artifact],
   })
+}
+
+export async function runWordPressExecutionActionCommand({
+  command,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  command: "wordpress.invoke-hook" | "wordpress.invoke-cron-event"
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = wordpressExecutionActionInputFromArgs(spec.args ?? [], command)
+  const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, wordpressExecutionActionPhpCode(input, command), spec.args ?? []) })
+  assertPlaygroundResponseOk(command, response)
+  return response.text
 }
 
 interface RunPhpDiagnosticsPayload {
@@ -668,6 +693,24 @@ export async function runRestPerformanceObservationCommand({
   return response.text
 }
 
+export async function runCacheChurnObservationCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = cacheChurnObservationInputFromArgs(spec.args ?? [])
+  input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
+  const response = await runPlaygroundCommand("wordpress.cache-churn-observation", server, { code: bootstrapPhpCode(runtimeSpec, cacheChurnObservationPhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.cache-churn-observation", response)
+  return response.text
+}
+
 export async function runRuntimeDiscoveryCommand({
   runPlaygroundCommand,
   runtimeSpec,
@@ -698,9 +741,27 @@ export async function runRuntimeInventoryCommand({
   runtimeSpec: RuntimeCreateSpec
   schema: string
   server: PlaygroundCliServer
-  surface: "rest" | "admin" | "database" | "frontend"
+  surface: RuntimeInventorySurface
 }): Promise<string> {
   const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
+  assertPlaygroundResponseOk(command, response)
+  return response.text
+}
+
+export async function runAdminActionInventoryCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const maxPages = argValue(spec.args ?? [], "max-pages") !== undefined ? positiveIntegerArg(spec.args ?? [], "max-pages", 25) : positiveIntegerArg(spec.args ?? [], "max_pages", 25)
+  const command = "wordpress.admin-action-inventory"
+  const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeAdminActionInventoryPhpCode(maxPages), []) })
   assertPlaygroundResponseOk(command, response)
   return response.text
 }

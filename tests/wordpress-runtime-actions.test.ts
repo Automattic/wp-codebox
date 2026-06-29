@@ -3,12 +3,16 @@ import { fuzzSuiteContract, runFuzzSuite } from "../packages/runtime-core/src/in
 import {
   collectWordPressArtifacts,
   createWordPressFuzzSuiteRuntimeActionExecutor,
+  describeWordPressExecutionSurfaces,
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
   inventoryWordPressAdminPages,
   inventoryWordPressFrontendUrls,
   inventoryWordPressRestRoutes,
+  invokeWordPressCronEvent,
+  invokeWordPressHook,
+  invokeWordPressWpCli,
   renderWordPressBlock,
   exerciseWordPressBlock,
   loadWordPressAdminPage,
@@ -79,6 +83,10 @@ await discoverWordPressRuntime(fakeEpisode, { surfaces: ["rest", "admin"], timeo
 await inventoryWordPressRestRoutes(fakeEpisode)
 await inventoryWordPressAdminPages(fakeEpisode)
 await inventoryWordPressFrontendUrls(fakeEpisode)
+await describeWordPressExecutionSurfaces(fakeEpisode)
+await invokeWordPressWpCli(fakeEpisode, { command: "option get siteurl", mutates: false })
+await invokeWordPressHook(fakeEpisode, { hook: "wp_codebox_test_hook", args: ["demo"], mutates: true, capability: "manage_options", destructiveBoundary: "disposable-runtime" })
+await invokeWordPressCronEvent(fakeEpisode, { hook: "wp_codebox_test_cron", operation: "schedule-single", timestamp: 1770000000, args: ["demo"], mutates: true })
 await runWordPressCrudOperation(fakeEpisode, { operation: "read", resource: { kind: "post", type: "page", id: 42 } })
 await readWordPressDatabase(fakeEpisode, { resource: { table: "posts", identifiers: { ID: 42 } }, query: { limit: 1 } })
 await renderWordPressBlock(fakeEpisode, { blockName: "core/paragraph", attrs: { align: "wide" }, content: "Hello" })
@@ -102,6 +110,10 @@ assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.rest-route-inventory",
   "wordpress.admin-page-inventory",
   "wordpress.frontend-url-inventory",
+  "wordpress.execution-surfaces",
+  "wordpress.invoke-wp-cli",
+  "wordpress.invoke-hook",
+  "wordpress.invoke-cron-event",
   "wordpress.crud-operation",
   "wordpress.db-operation",
   "wordpress.block-render",
@@ -127,14 +139,18 @@ assert.deepEqual(calls[11], { command: "wordpress.runtime-discovery", args: ["su
 assert.deepEqual(calls[12]?.args, [])
 assert.deepEqual(calls[13]?.args, [])
 assert.deepEqual(calls[14]?.args, [])
-assert.equal(JSON.parse(calls[15]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
-assert.equal(JSON.parse(calls[15]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
-assert.equal(JSON.parse(calls[16]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
-assert.equal(JSON.parse(calls[16]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
-assert.deepEqual(calls[17]?.args, ["block-name=core/paragraph", 'attrs-json={"align":"wide"}', "content=Hello", "mode=render"])
-assert.deepEqual(calls[18]?.args, ["block-name=core/latest-posts", 'attrs-json={"postsToShow":3}', "mode=serialize-parse"])
-assert.deepEqual(calls[19]?.args, ["path=edit.php?post_type=page", "user=admin", 'capture-json={"queries":true}'])
-assert.deepEqual(calls[20]?.args, ["path=/sample-page/", "query-json={\"preview\":true}"])
+assert.deepEqual(calls[15]?.args, [])
+assert.deepEqual(calls[16]?.args, ["command=option get siteurl", "mutates=false"])
+assert.deepEqual(calls[17]?.args, ["hook=wp_codebox_test_hook", 'args-json=["demo"]', "mutates=true", "capability=manage_options", "destructive-boundary=disposable-runtime"])
+assert.deepEqual(calls[18]?.args, ["hook=wp_codebox_test_cron", "operation=schedule-single", 'args-json=["demo"]', "timestamp=1770000000", "mutates=true"])
+assert.equal(JSON.parse(calls[19]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(JSON.parse(calls[19]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.equal(JSON.parse(calls[20]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
+assert.equal(JSON.parse(calls[20]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.deepEqual(calls[21]?.args, ["block-name=core/paragraph", 'attrs-json={"align":"wide"}', "content=Hello", "mode=render"])
+assert.deepEqual(calls[22]?.args, ["block-name=core/latest-posts", 'attrs-json={"postsToShow":3}', "mode=serialize-parse"])
+assert.deepEqual(calls[23]?.args, ["path=edit.php?post_type=page", "user=admin", 'capture-json={"queries":true}'])
+assert.deepEqual(calls[24]?.args, ["path=/sample-page/", "query-json={\"preview\":true}"])
 assert.equal(adminObservation.performance?.schema, "wp-codebox/performance-observation/v1")
 assert.equal(pageObservation.performance?.target, "/sample-page/")
 
@@ -181,13 +197,15 @@ const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
     { id: "page", input: { type: "page", path: "/sample-page/" } },
     { id: "crud", input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
     { id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "wp-codebox-fuzz-missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update" } } },
+    { id: "hook", input: { type: "wordpress_hook", hook: "wp_codebox_test_hook", args: ["demo"], mutates: true, capability: "manage_options" } },
+    { id: "cron", input: { type: "wordpress_cron_event", hook: "wp_codebox_test_cron", operation: "run-hook", args: ["demo"], mutates: true } },
   ],
 }), {
   runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(fakeEpisode),
   resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
 })
 assert.equal(runtimeActionFuzzResult.status, "passed")
-assert.deepEqual(runtimeActionFuzzResult.summary, { total: 7, passed: 7, failed: 0, error: 0, skipped: 0 })
+assert.deepEqual(runtimeActionFuzzResult.summary, { total: 9, passed: 9, failed: 0, error: 0, skipped: 0 })
 assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-actions",
   "wordpress.browser-actions",
@@ -196,6 +214,8 @@ assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-probe",
   "wordpress.crud-operation",
   "wordpress.db-operation",
+  "wordpress.invoke-hook",
+  "wordpress.invoke-cron-event",
 ])
 assert.equal((runtimeActionFuzzResult.cases[1]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "random_walk")
 assert.equal((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactKind, "mutation-isolation")

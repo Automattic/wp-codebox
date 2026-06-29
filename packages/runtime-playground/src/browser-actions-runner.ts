@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserActionCorpusDescriptor, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -39,6 +39,7 @@ export interface BrowserActionsRunPlan {
   authRequest?: { userId: number }
   storageStateImport?: BrowserStorageStateImport
   maxDomSnapshotElements: number
+  actionCorpus?: BrowserActionCorpusContract
 }
 
 interface BrowserRunPlan {
@@ -127,6 +128,8 @@ export async function runBrowserActionsCommand({
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
   let wordpressDiagnosticsReady = false
+  let actionCorpusArtifact: BrowserActionCorpusArtifact | undefined
+  let actionCorpusSummary: BrowserArtifact["summary"]["actionCorpus"] | undefined
 
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
@@ -171,7 +174,47 @@ export async function runBrowserActionsCommand({
       webSockets,
     })
 
-    for (const [index, step] of steps.entries()) {
+    if (runPlan.actionCorpus) {
+      if (!steps.some((step) => step.kind === "navigate") && runPlan.actionCorpus.startUrl) {
+        steps.unshift({ kind: "navigate", url: runPlan.actionCorpus.startUrl, waitFor: "domcontentloaded" })
+      }
+      if (steps[0]?.kind === "navigate") {
+        const navigateStep = steps.shift()!
+        const navigateStartedAt = now()
+        const navigateStartedAtMs = Date.now()
+        try {
+          await executeBrowserInteractionStep(page, navigateStep, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
+            await artifactSession.writeGenerated("screenshot", fileName, write)
+            return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
+          })
+          finalUrl = page.url()
+          requestedUrl = resolveBrowserPreviewUrl((navigateStep.url ?? "").trim(), preview.effectiveOrigin)
+          stepRecords.push(browserStepRecord(0, navigateStep, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}))
+        } catch (error) {
+          const serialized = serializeBrowserError("probe-error", error)
+          errors.push(serialized)
+          stepRecords.push(browserStepRecord(0, navigateStep, "failed", navigateStartedAt, navigateStartedAtMs, page.url(), { error: serialized }))
+          throw error
+        }
+      }
+      const descriptors = await discoverBrowserActionCorpusDescriptors(page)
+      actionCorpusArtifact = browserActionCorpusArtifact(runPlan.actionCorpus, descriptors, now())
+      await artifactSession.writeJson("actionCorpus", "action-corpus.json", actionCorpusArtifact)
+      const corpusSteps = actionCorpusArtifact.plan.steps
+      steps.unshift(...corpusSteps)
+      actionCorpusSummary = {
+        schema: BROWSER_ACTION_CORPUS_SCHEMA,
+        seed: actionCorpusArtifact.contract.seed,
+        descriptorsDiscovered: actionCorpusArtifact.plan.observations.descriptorsDiscovered,
+        descriptorsSelected: actionCorpusArtifact.plan.observations.descriptorsSelected,
+        stepsPlanned: actionCorpusArtifact.plan.observations.stepsPlanned,
+        artifact: "files/browser/action-corpus.json",
+      }
+    }
+
+    const stepIndexOffset = stepRecords.length
+    for (const [loopIndex, step] of steps.entries()) {
+      const index = loopIndex + stepIndexOffset
       const recordStartedAt = now()
       const recordStartedAtMs = Date.now()
       // Total-script timeout: stop before starting a step that would exceed the budget.
@@ -351,6 +394,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
+        ...(actionCorpusArtifact ? { actionCorpus: "files/browser/action-corpus.json" } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
@@ -366,6 +410,7 @@ export async function runBrowserActionsCommand({
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         ...(verifierResults.length > 0 ? { verifierResults } : {}),
+        ...(actionCorpusSummary ? { actionCorpus: actionCorpusSummary } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
         ...(capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(webSockets) } : {}),
@@ -402,6 +447,7 @@ export async function runBrowserActionsCommand({
       ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       ...(verifierResults.length > 0 ? { verifierResults } : {}),
+      ...(actionCorpusArtifact ? { actionCorpus: actionCorpusArtifact.plan } : {}),
       viewport,
       summary: artifact.summary,
     })
@@ -547,7 +593,79 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
+    actionCorpus: browserActionCorpusFromArgs(args),
   }
+}
+
+function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContract | undefined {
+  const raw = argValue(args, "action-corpus-json")
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  return browserActionCorpusContract(parsed)
+}
+
+async function discoverBrowserActionCorpusDescriptors(page: Page): Promise<BrowserActionCorpusDescriptor[]> {
+  return await page.evaluate(() => {
+    const descriptors: BrowserActionCorpusDescriptor[] = []
+    const cssEscape = (value: string) => {
+      const escapeFn = (globalThis as typeof globalThis & { CSS?: { escape?: (raw: string) => string } }).CSS?.escape
+      return escapeFn ? escapeFn(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&")
+    }
+    const text = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim().slice(0, 120)
+    const selectorFor = (element: Element) => {
+      const id = element.getAttribute("id")
+      if (id) return `#${cssEscape(id)}`
+      const name = element.getAttribute("name")
+      if (name) return `${element.tagName.toLowerCase()}[name="${cssEscape(name)}"]`
+      const aria = element.getAttribute("aria-label")
+      if (aria) return `${element.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`
+      const type = element.getAttribute("type")
+      return `${element.tagName.toLowerCase()}${type ? `[type="${cssEscape(type)}"]` : ""}:nth-of-type(${Array.from(element.parentElement?.children || []).filter((child) => child.tagName === element.tagName).indexOf(element) + 1})`
+    }
+    const labelFor = (element: Element) => {
+      const labelledBy = element.getAttribute("aria-labelledby")
+      if (labelledBy) {
+        const labelled = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent).filter(Boolean).join(" ")
+        if (text(labelled)) return text(labelled)
+      }
+      const aria = text(element.getAttribute("aria-label"))
+      if (aria) return aria
+      const id = element.getAttribute("id")
+      const label = id ? document.querySelector(`label[for="${cssEscape(id)}"]`) : null
+      if (label && text(label.textContent)) return text(label.textContent)
+      return text(element.textContent)
+    }
+    const descriptorId = (kind: string, element: Element) => `${kind}:${selectorFor(element)}:${element.getAttribute("name") || ""}:${labelFor(element)}`
+    const visible = (element: Element) => {
+      const htmlElement = element as HTMLElement
+      const style = window.getComputedStyle(htmlElement)
+      const rect = htmlElement.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
+    }
+    document.querySelectorAll("a[href], button, input, textarea, select").forEach((element) => {
+      if (!visible(element)) return
+      const tag = element.tagName.toLowerCase()
+      const input = element as HTMLInputElement
+      const kind = tag === "a" ? "link" : tag === "button" ? "button" : tag === "textarea" ? "textarea" : tag === "select" ? "select" : "input"
+      const selector = selectorFor(element)
+      const descriptor: BrowserActionCorpusDescriptor = {
+        id: descriptorId(kind, element),
+        kind,
+        selector,
+        label: labelFor(element),
+        name: element.getAttribute("name") || undefined,
+        role: element.getAttribute("role") || undefined,
+        type: input.type || element.getAttribute("type") || undefined,
+        formId: (element as HTMLInputElement).form?.id || undefined,
+        href: tag === "a" ? (element as HTMLAnchorElement).href : undefined,
+        disabled: Boolean((element as HTMLButtonElement).disabled),
+        readonly: Boolean(input.readOnly),
+        optionValues: tag === "select" ? Array.from((element as HTMLSelectElement).options).map((option) => option.value).filter(Boolean) : undefined,
+      }
+      descriptors.push(descriptor)
+    })
+    return descriptors
+  })
 }
 
 async function captureBrowserActionDomSnapshot({

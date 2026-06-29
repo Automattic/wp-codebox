@@ -1,17 +1,22 @@
 export const WORDPRESS_RUNTIME_DISCOVERY_SCHEMA = "wp-codebox/wordpress-runtime-discovery/v1" as const
 export const WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA = "wp-codebox/wordpress-rest-route-inventory/v1" as const
 export const WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA = "wp-codebox/wordpress-admin-page-inventory/v1" as const
+export const WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA = "wp-codebox/wordpress-admin-action-inventory/v1" as const
 export const WORDPRESS_DATABASE_INVENTORY_SCHEMA = "wp-codebox/wordpress-db-inventory/v1" as const
 export const WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA = "wp-codebox/wordpress-frontend-url-inventory/v1" as const
+export const WORDPRESS_EXECUTION_SURFACES_SCHEMA = "wp-codebox/wordpress-execution-surfaces/v1" as const
+export const WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA = "wp-codebox/wordpress-execution-action-result/v1" as const
 
 export type WordPressRuntimeInventoryCommand =
   | "wordpress.rest-route-inventory"
   | "wordpress.inventory-rest-routes"
   | "wordpress.admin-page-inventory"
+  | "wordpress.admin-action-inventory"
   | "wordpress.inventory-database"
   | "wordpress.frontend-url-inventory"
+  | "wordpress.execution-surfaces"
 
-export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth"
+export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth" | "execution"
 
 export interface WordPressRuntimeDiscoveryResult {
   schema: typeof WORDPRESS_RUNTIME_DISCOVERY_SCHEMA
@@ -24,6 +29,7 @@ export interface WordPressRuntimeDiscoveryResult {
   frontend?: WordPressFrontendRouteDiscovery
   blocks?: WordPressBlockEditorTargetDiscovery
   auth?: WordPressRuntimeAuthDiscovery
+  execution?: WordPressExecutionSurfaceDiscovery
   diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
 }
 
@@ -106,6 +112,24 @@ export interface WordPressAdminPageInventory {
   diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
 }
 
+export interface WordPressAdminActionInventory {
+  schema: typeof WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA
+  command: "wordpress.admin-action-inventory"
+  status: "ok" | "unsupported"
+  adminUrl: string
+  menuLoaded: boolean
+  user?: WordPressAdminDiscoveryUserContext
+  pages: WordPressAdminActionPageDescriptor[]
+  actions: WordPressAdminPageInteractionDescriptor[]
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+  redaction: { samplePayloadValues: "redacted"; nonceValues: "redacted" }
+}
+
+export interface WordPressAdminActionPageDescriptor extends WordPressAdminPageDescriptor {
+  forms: WordPressAdminPageInteractionDescriptor[]
+  actions: WordPressAdminPageInteractionDescriptor[]
+}
+
 export interface WordPressAdminDiscoveryUserContext {
   isLoggedIn: boolean
   id: number
@@ -130,6 +154,12 @@ export interface WordPressAdminPageInteractionDescriptor {
   method?: string
   selector?: string
   action?: string
+  actionUrl?: string
+  actionFamily?: "admin-post" | "admin-ajax" | "admin-page" | "external" | string
+  submitButtons?: WordPressAdminSubmitButtonDescriptor[]
+  inputs?: WordPressAdminFieldDescriptor[]
+  samplePayload?: Record<string, unknown>
+  bulkActions?: WordPressAdminBulkActionDescriptor[]
   fields?: Record<string, unknown>
   capability?: string
   nonceAction?: string
@@ -137,6 +167,27 @@ export interface WordPressAdminPageInteractionDescriptor {
   nonceField?: string
   nonce_field?: string
   safety?: Record<string, unknown>
+}
+
+export interface WordPressAdminFieldDescriptor {
+  name: string
+  tag: "input" | "select" | "textarea" | string
+  type?: string
+  valuePresent?: boolean
+  valueRedacted?: boolean
+  options?: string[]
+}
+
+export interface WordPressAdminSubmitButtonDescriptor {
+  name?: string
+  valuePresent?: boolean
+  valueRedacted?: boolean
+  label?: string
+}
+
+export interface WordPressAdminBulkActionDescriptor {
+  controlName: string
+  actions: string[]
 }
 
 export interface WordPressDatabaseSchemaDiscovery {
@@ -232,6 +283,68 @@ export interface WordPressFrontendUrlDescriptor {
   source: "home" | "rewrite-rule"
   pattern?: string
   query?: string
+}
+
+export interface WordPressExecutionSurfaceDiscovery {
+  schema: typeof WORDPRESS_EXECUTION_SURFACES_SCHEMA
+  command: "wordpress.execution-surfaces"
+  status: "ok" | "unsupported"
+  surfaces: WordPressExecutionSurfaceDescriptor[]
+  unsupported: WordPressExecutionUnsupportedCapability[]
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+}
+
+export type WordPressExecutionSurfaceKind = "wp-cli" | "hook" | "cron"
+
+export interface WordPressExecutionSurfaceDescriptor {
+  kind: WordPressExecutionSurfaceKind
+  command: "wordpress.invoke-wp-cli" | "wordpress.invoke-hook" | "wordpress.invoke-cron-event"
+  supported: boolean
+  executable: boolean
+  discovery: WordPressExecutionCapabilitySupport
+  counting: WordPressExecutionCapabilitySupport
+  invocation: WordPressExecutionInvocationSupport
+  scheduling?: WordPressExecutionCapabilitySupport
+  safety: WordPressExecutionSafetyBoundary
+}
+
+export interface WordPressExecutionCapabilitySupport {
+  supported: boolean
+  reason?: string
+}
+
+export interface WordPressExecutionInvocationSupport extends WordPressExecutionCapabilitySupport {
+  argumentEncoding: "argv-json" | "args-json" | "command-string"
+  resultSchema: typeof WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA
+}
+
+export interface WordPressExecutionSafetyBoundary {
+  mutates: "declared-by-caller"
+  requiresMutationDeclaration: boolean
+  capabilityField: "capability"
+  destructiveBoundaryField: "destructive-boundary"
+  defaultDestructiveBoundary: "disposable-runtime"
+  rollbackRequired: false
+}
+
+export interface WordPressExecutionUnsupportedCapability {
+  surface: WordPressExecutionSurfaceKind
+  capability: "discovery" | "counting" | "scheduling"
+  reason: string
+}
+
+export interface WordPressExecutionActionResult {
+  schema: typeof WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA
+  command: "wordpress.invoke-wp-cli" | "wordpress.invoke-hook" | "wordpress.invoke-cron-event"
+  status: "ok" | "unsupported" | "error"
+  target: Record<string, unknown>
+  safety: WordPressExecutionSafetyBoundary & {
+    mutates: boolean
+    capability?: string
+    destructiveBoundary: string
+  }
+  result: Record<string, unknown>
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
 }
 
 export interface WordPressRewriteRuleDescriptor {

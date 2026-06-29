@@ -6,6 +6,7 @@ import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-a
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
+import { WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND, WORDPRESS_DB_WRITE_SET_SCHEMA } from "./wordpress-db-write-set-contracts.js"
 
 export interface FuzzSuiteCommandExecutor {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
@@ -284,6 +285,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
             },
             mutationIsolation: recordValue(observation.data.mutationIsolationArtifact),
             deleteBoundary: recordValue(observation.data.deleteBoundaryArtifact),
+            dbWriteSet: recordValue(observation.data.dbWriteSetArtifact),
           }),
         })
       } catch (error) {
@@ -861,6 +863,23 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "wordpress_hook" || input.payload.type === "wordpress_cron_event") {
+        const hook = stringField(input.payload, "hook")
+        if (!hook) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, `Expected ${input.payload.type} runtime-action input hook.`, { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        const command = input.payload.type === "wordpress_hook" ? "wordpress.invoke-hook" : "wordpress.invoke-cron-event"
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command,
+            args: runtimeWordPressExecutionActionArgs(input.payload),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: stripUndefined({ adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: command, mutates: input.payload.mutates === true }),
+        }
+      }
+
       if (input.payload.type === "wordpress_crud_operation") {
         return unsupportedTargetAdapterResolution(fuzzCase, target, "Runtime-action type wordpress_crud_operation has been renamed to crud_operation.", { adapterKind: "runtime-action", actionType: input.payload.type })
       }
@@ -1355,6 +1374,18 @@ function runtimePageLoadArgs(input: Record<string, unknown>): string[] {
   ].filter((arg): arg is string => Boolean(arg))
 }
 
+function runtimeWordPressExecutionActionArgs(input: Record<string, unknown>): string[] {
+  return [
+    optionalStringArg("hook", input.hook),
+    optionalStringArg("operation", input.operation),
+    Array.isArray(input.args) ? `args-json=${JSON.stringify(input.args)}` : undefined,
+    optionalNumberArg("timestamp", input.timestamp),
+    typeof input.mutates === "boolean" ? `mutates=${input.mutates ? "true" : "false"}` : undefined,
+    optionalStringArg("capability", input.capability),
+    optionalStringArg("destructive-boundary", input.destructive_boundary ?? input.destructiveBoundary),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
 function runtimeActionTimeoutMs(input: Record<string, unknown>, fallback: number | undefined): number | undefined {
   const timeoutMs = input.timeout_ms ?? input.timeoutMs ?? fallback
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) ? timeoutMs : undefined
@@ -1375,14 +1406,25 @@ function fuzzSuiteRuntimeActionArtifactRefs(observation: RuntimeActionObservatio
 }
 
 function fuzzSuiteRuntimeActionMutationArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] {
-  const artifacts = [recordValue(observation.data.mutationIsolationArtifact), recordValue(observation.data.deleteBoundaryArtifact)]
-  return artifacts.flatMap((artifact) => {
+  const artifacts = [recordValue(observation.data.mutationIsolationArtifact), recordValue(observation.data.deleteBoundaryArtifact), recordValue(observation.data.dbWriteSetArtifact)]
+  return artifacts.flatMap((artifact): FuzzSuiteArtifactRef[] => {
     if (!artifact) return []
     if (artifact.persisted !== true) return []
     const path = typeof artifact?.artifactPath === "string" ? artifact.artifactPath : undefined
     const schema = typeof artifact?.schema === "string" ? artifact.schema : undefined
-    if (!path || (schema !== MUTATION_ISOLATION_ARTIFACT_SCHEMA && schema !== DELETE_BOUNDARY_ARTIFACT_SCHEMA)) {
+    if (!path || (schema !== MUTATION_ISOLATION_ARTIFACT_SCHEMA && schema !== DELETE_BOUNDARY_ARTIFACT_SCHEMA && schema !== WORDPRESS_DB_WRITE_SET_SCHEMA)) {
       return []
+    }
+    if (schema === WORDPRESS_DB_WRITE_SET_SCHEMA) {
+      return [stripUndefined({
+        path,
+        kind: WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND,
+        contentType: "application/json",
+        sha256: typeof artifact.sha256 === "string" ? artifact.sha256 : undefined,
+        bytes: typeof artifact.bytes === "number" ? artifact.bytes : undefined,
+        name: WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND,
+        metadata: { schema, tables: recordValue(artifact.totals)?.tables, writes: recordValue(artifact.totals)?.writes, repeatedWriteKeys: recordValue(artifact.totals)?.repeatedWriteKeys },
+      })]
     }
     return [stripUndefined({
       path,

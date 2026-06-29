@@ -21,7 +21,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs, materializePlaygroundStagedInputs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, runCacheChurnObservationCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1050,6 +1050,46 @@ class PlaygroundRuntime implements Runtime {
     return cleanWpCliOutput(response.text)
   }
 
+  async runInvokeWpCli(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const command = wpCliCommandFromArgs(spec.args ?? [])
+    const argv = shellArgv(command)
+    if (argv[0] === "wp") {
+      argv.shift()
+    }
+    if (argv.length === 0) {
+      throw new Error("wordpress.invoke-wp-cli requires a non-empty command")
+    }
+    const response = await this.runWpCliCommand(server, argv)
+    const exitCode = response.exitCode ?? 0
+    const mutates = stringArg(spec.args ?? [], "mutates") === "true"
+    const capability = stringArg(spec.args ?? [], "capability")
+    const destructiveBoundary = stringArg(spec.args ?? [], "destructive-boundary") ?? "disposable-runtime"
+    const safety = {
+      mutates,
+      requiresMutationDeclaration: true,
+      capabilityField: "capability",
+      ...(capability ? { capability } : {}),
+      destructiveBoundaryField: "destructive-boundary",
+      destructiveBoundary,
+      defaultDestructiveBoundary: "disposable-runtime",
+      rollbackRequired: false,
+    }
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-execution-action-result/v1",
+      command: "wordpress.invoke-wp-cli",
+      status: exitCode === 0 ? "ok" : "error",
+      target: { argv, command: argv.join(" ") },
+      safety,
+      result: {
+        exitCode,
+        stdout: cleanWpCliOutput(response.text),
+        stderr: response.errors ?? "",
+      },
+      diagnostics: exitCode === 0 ? [] : [{ surface: "execution", code: "wp-cli-failed", message: response.errors || response.text || "WP-CLI command failed." }],
+    }, null, 2)}\n`
+  }
+
   async runWordPressSession(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const resolution = resolveWordPressActionAuthUser(spec.args ?? [], this.spec)
@@ -1464,6 +1504,16 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
+  async runCacheChurnObservation(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runCacheChurnObservationCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
   async runRuntimeDiscovery(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runRuntimeDiscoveryCommand({
@@ -1486,6 +1536,40 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
+  async runExecutionSurfaces(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeInventoryCommand({
+      command: spec.command,
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      schema: "wp-codebox/wordpress-execution-surfaces/v1",
+      server,
+      surface: "execution",
+    })
+  }
+
+  async runInvokeHook(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runWordPressExecutionActionCommand({
+      command: "wordpress.invoke-hook",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
+  async runInvokeCronEvent(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runWordPressExecutionActionCommand({
+      command: "wordpress.invoke-cron-event",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
   async runAdminPageInventory(): Promise<string> {
     const server = await this.bootPlayground()
     return runRuntimeInventoryCommand({
@@ -1495,6 +1579,16 @@ class PlaygroundRuntime implements Runtime {
       schema: "wp-codebox/wordpress-admin-page-inventory/v1",
       server,
       surface: "admin",
+    })
+  }
+
+  async runAdminActionInventory(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runAdminActionInventoryCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
     })
   }
 
