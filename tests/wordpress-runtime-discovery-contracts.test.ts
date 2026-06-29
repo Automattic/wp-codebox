@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import {
   WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
   WORDPRESS_DATABASE_INVENTORY_SCHEMA,
+  WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA,
+  WORDPRESS_EXECUTION_SURFACES_SCHEMA,
   WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
@@ -10,6 +12,8 @@ import {
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   type WordPressAdminPageInventory,
   type WordPressDatabaseInventory,
+  type WordPressExecutionActionResult,
+  type WordPressExecutionSurfaceDiscovery,
   type WordPressFrontendUrlInventory,
   type WordPressRestRouteInventory,
   type WordPressRuntimeDiscoveryResult,
@@ -17,18 +21,19 @@ import {
 import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 import { getCommandDefinition, runtimeCommandDefinitions } from "../packages/runtime-core/src/command-registry.js"
 import { runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs, runtimeInventoryPhpCode } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
+import { wordpressExecutionActionInputFromArgs, wordpressExecutionActionPhpCode } from "../packages/runtime-playground/src/wordpress-execution-command-handlers.js"
 import { runPhpJson } from "../scripts/test-kit.js"
 
 const result: WordPressRuntimeDiscoveryResult = {
   schema: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   command: "wordpress.runtime-discovery",
   status: "ok",
-  surfaces: ["rest", "admin", "database", "frontend", "blocks", "auth"],
+  surfaces: ["rest", "admin", "database", "frontend", "blocks", "auth", "execution"],
   diagnostics: [],
 }
 
 assert.equal(result.schema, "wp-codebox/wordpress-runtime-discovery/v1")
-assert.deepEqual(runtimeDiscoverySurfacesFromArgs([]), ["rest", "admin", "database", "frontend", "blocks", "auth"])
+assert.deepEqual(runtimeDiscoverySurfacesFromArgs([]), ["rest", "admin", "database", "frontend", "blocks", "auth", "execution"])
 assert.deepEqual(runtimeDiscoverySurfacesFromArgs(["surface=rest,blocks,rest"]), ["rest", "blocks"])
 assert.throws(() => runtimeDiscoverySurfacesFromArgs(["surface=woocommerce"]), /unsupported: woocommerce/)
 
@@ -99,11 +104,30 @@ const databaseInventory: WordPressDatabaseInventory = {
   totals: { tableCount: 1, rowCount: 1, columnCount: 1, indexCount: 1, dataBytes: 256, indexBytes: 256, totalBytes: 512 },
   diagnostics: [],
 }
+const executionSurfaces: WordPressExecutionSurfaceDiscovery = {
+  schema: WORDPRESS_EXECUTION_SURFACES_SCHEMA,
+  command: "wordpress.execution-surfaces",
+  status: "ok",
+  surfaces: [{
+    kind: "hook",
+    command: "wordpress.invoke-hook",
+    supported: true,
+    executable: true,
+    discovery: { supported: false, reason: "hook_discovery_not_declared" },
+    counting: { supported: false, reason: "hook_counting_not_declared" },
+    invocation: { supported: true, argumentEncoding: "args-json", resultSchema: WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA },
+    safety: { mutates: "declared-by-caller", requiresMutationDeclaration: true, capabilityField: "capability", destructiveBoundaryField: "destructive-boundary", defaultDestructiveBoundary: "disposable-runtime", rollbackRequired: false },
+  }],
+  unsupported: [{ surface: "hook", capability: "discovery", reason: "hook_discovery_not_declared" }],
+  diagnostics: [],
+}
 
 assert.equal(restInventory.schema, "wp-codebox/wordpress-rest-route-inventory/v1")
 assert.equal(adminInventory.schema, "wp-codebox/wordpress-admin-page-inventory/v1")
 assert.equal(databaseInventory.schema, "wp-codebox/wordpress-db-inventory/v1")
 assert.equal(frontendInventory.schema, "wp-codebox/wordpress-frontend-url-inventory/v1")
+assert.equal(executionSurfaces.schema, "wp-codebox/wordpress-execution-surfaces/v1")
+assert.equal(executionSurfaces.surfaces[0]?.invocation.resultSchema, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA)
 
 const inventoryDefinitions = [
   ["wordpress.rest-route-inventory", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
@@ -111,6 +135,10 @@ const inventoryDefinitions = [
   ["wordpress.admin-page-inventory", "runAdminPageInventory", WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA],
   ["wordpress.inventory-database", "runDatabaseInventory", WORDPRESS_DATABASE_INVENTORY_SCHEMA],
   ["wordpress.frontend-url-inventory", "runFrontendUrlInventory", WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA],
+  ["wordpress.execution-surfaces", "runExecutionSurfaces", WORDPRESS_EXECUTION_SURFACES_SCHEMA],
+  ["wordpress.invoke-wp-cli", "runInvokeWpCli", WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA],
+  ["wordpress.invoke-hook", "runInvokeHook", WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA],
+  ["wordpress.invoke-cron-event", "runInvokeCronEvent", WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA],
 ] as const
 
 for (const [command, method, schema] of inventoryDefinitions) {
@@ -125,6 +153,8 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restRou
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.adminPageInventory, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.databaseInventory, WORDPRESS_DATABASE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.frontendUrlInventory, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.executionSurfaces, WORDPRESS_EXECUTION_SURFACES_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.executionActionResult, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
 
@@ -256,6 +286,44 @@ assert.equal(databaseDiscovered.tables[1]?.dataBytes, 256)
 assert.equal(databaseDiscovered.tables[1]?.indexBytes, 128)
 assert.equal(databaseDiscovered.tables[1]?.totalBytes, 384)
 assert.deepEqual(databaseDiscovered.totals, { tableCount: 2, rowCount: 24, columnCount: 2, indexCount: 2, dataBytes: 512, indexBytes: 256, totalBytes: 768 })
+
+const executionDiscoveryPhp = runtimeDiscoveryPhpCode(["execution"]).replace(/^<\?php\n/, "")
+const executionDiscovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+${executionDiscoveryPhp}
+`)
+assert.equal(executionDiscovered.execution?.schema, WORDPRESS_EXECUTION_SURFACES_SCHEMA)
+assert.equal(executionDiscovered.execution?.surfaces.find((surface) => surface.kind === "wp-cli")?.invocation.supported, true)
+assert.equal(executionDiscovered.execution?.surfaces.find((surface) => surface.kind === "hook")?.discovery.supported, false)
+assert.equal(executionDiscovered.execution?.surfaces.find((surface) => surface.kind === "cron")?.scheduling?.supported, true)
+
+const executionInventoryPhp = runtimeInventoryPhpCode("execution", "wordpress.execution-surfaces", WORDPRESS_EXECUTION_SURFACES_SCHEMA).replace(/^<\?php\n/, "")
+const executionInventory = await runPhpJson<WordPressExecutionSurfaceDiscovery>(`
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+${executionInventoryPhp}
+`)
+assert.equal(executionInventory.command, "wordpress.execution-surfaces")
+assert.equal(executionInventory.unsupported.some((capability) => capability.surface === "hook" && capability.capability === "counting"), true)
+
+const hookInput = wordpressExecutionActionInputFromArgs(["hook=wp_codebox_test_hook", 'args-json=["demo"]', "mutates=true", "capability=read"], "wordpress.invoke-hook")
+const hookPhp = wordpressExecutionActionPhpCode(hookInput, "wordpress.invoke-hook").replace(/^<\?php\n/, "")
+const hookResult = await runPhpJson<WordPressExecutionActionResult>(`
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function current_user_can( $capability ) { return $capability === 'read'; }
+$GLOBALS['wp_codebox_test_did_action'] = array();
+$GLOBALS['wp_codebox_test_hook_seen'] = array();
+function add_action( $hook, $callback ) { $GLOBALS['wp_codebox_test_callback'] = $callback; }
+function did_action( $hook ) { return $GLOBALS['wp_codebox_test_did_action'][$hook] ?? 0; }
+function do_action_ref_array( $hook, $args ) { $GLOBALS['wp_codebox_test_did_action'][$hook] = ($GLOBALS['wp_codebox_test_did_action'][$hook] ?? 0) + 1; $GLOBALS['wp_codebox_test_callback'](...$args); }
+add_action( 'wp_codebox_test_hook', function ( $value ) { $GLOBALS['wp_codebox_test_hook_seen'][] = $value; } );
+${hookPhp}
+`)
+assert.equal(hookResult.schema, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA)
+assert.equal(hookResult.command, "wordpress.invoke-hook")
+assert.equal(hookResult.status, "ok")
+assert.equal(hookResult.safety.mutates, true)
+assert.equal(hookResult.safety.capability, "read")
+assert.equal(hookResult.result.didActionDelta, 1)
 
 const adminDiscoveryPhp = runtimeDiscoveryPhpCode(["admin"]).replace(/^<\?php\n/, "")
 assert.match(adminDiscoveryPhp, /wp-admin\/menu\.php/)

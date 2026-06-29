@@ -1,9 +1,9 @@
 import { commaListArg } from "./command-args.js"
 
-export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth"
-export type RuntimeInventorySurface = "rest" | "admin" | "database" | "frontend"
+export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth" | "execution"
+export type RuntimeInventorySurface = "rest" | "admin" | "database" | "frontend" | "execution"
 
-const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks", "auth"] as const satisfies readonly RuntimeDiscoverySurface[]
+const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks", "auth", "execution"] as const satisfies readonly RuntimeDiscoverySurface[]
 
 export function runtimeDiscoverySurfacesFromArgs(args: string[]): RuntimeDiscoverySurface[] {
   const requested = commaListArg(args, "surface")
@@ -381,6 +381,68 @@ function runtime_discovery_block_attribute_value($value, int $depth = 0) {
         $bounded[$key] = runtime_discovery_block_attribute_value($item, $depth + 1);
     }
     return $bounded;
+}
+
+function runtime_discovery_execution(): array {
+    $safety = array(
+        'mutates' => 'declared-by-caller',
+        'requiresMutationDeclaration' => true,
+        'capabilityField' => 'capability',
+        'destructiveBoundaryField' => 'destructive-boundary',
+        'defaultDestructiveBoundary' => 'disposable-runtime',
+        'rollbackRequired' => false,
+    );
+    $result_schema = 'wp-codebox/wordpress-execution-action-result/v1';
+    return array(
+        'payload' => array(
+            'schema' => 'wp-codebox/wordpress-execution-surfaces/v1',
+            'command' => 'wordpress.execution-surfaces',
+            'status' => 'ok',
+            'surfaces' => array(
+                array(
+                    'kind' => 'wp-cli',
+                    'command' => 'wordpress.invoke-wp-cli',
+                    'supported' => true,
+                    'executable' => true,
+                    'discovery' => array('supported' => false, 'reason' => 'wp_cli_command_discovery_not_declared'),
+                    'counting' => array('supported' => false, 'reason' => 'wp_cli_command_counting_not_declared'),
+                    'invocation' => array('supported' => true, 'argumentEncoding' => 'command-string', 'resultSchema' => $result_schema),
+                    'safety' => $safety,
+                ),
+                array(
+                    'kind' => 'hook',
+                    'command' => 'wordpress.invoke-hook',
+                    'supported' => true,
+                    'executable' => true,
+                    'discovery' => array('supported' => false, 'reason' => 'hook_discovery_not_declared'),
+                    'counting' => array('supported' => false, 'reason' => 'hook_counting_not_declared'),
+                    'invocation' => array('supported' => true, 'argumentEncoding' => 'args-json', 'resultSchema' => $result_schema),
+                    'safety' => $safety,
+                ),
+                array(
+                    'kind' => 'cron',
+                    'command' => 'wordpress.invoke-cron-event',
+                    'supported' => true,
+                    'executable' => true,
+                    'discovery' => array('supported' => false, 'reason' => 'cron_event_discovery_not_declared'),
+                    'counting' => array('supported' => false, 'reason' => 'cron_event_counting_not_declared'),
+                    'invocation' => array('supported' => true, 'argumentEncoding' => 'args-json', 'resultSchema' => $result_schema),
+                    'scheduling' => array('supported' => true),
+                    'safety' => $safety,
+                ),
+            ),
+            'unsupported' => array(
+                array('surface' => 'wp-cli', 'capability' => 'discovery', 'reason' => 'wp_cli_command_discovery_not_declared'),
+                array('surface' => 'wp-cli', 'capability' => 'counting', 'reason' => 'wp_cli_command_counting_not_declared'),
+                array('surface' => 'hook', 'capability' => 'discovery', 'reason' => 'hook_discovery_not_declared'),
+                array('surface' => 'hook', 'capability' => 'counting', 'reason' => 'hook_counting_not_declared'),
+                array('surface' => 'cron', 'capability' => 'discovery', 'reason' => 'cron_event_discovery_not_declared'),
+                array('surface' => 'cron', 'capability' => 'counting', 'reason' => 'cron_event_counting_not_declared'),
+            ),
+            'diagnostics' => array(),
+        ),
+        'diagnostics' => array(),
+    );
 }
 
 $runtime_discovery_result = array(

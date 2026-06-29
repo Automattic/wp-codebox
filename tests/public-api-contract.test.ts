@@ -206,6 +206,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
+  "./wordpress-admin-action-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",

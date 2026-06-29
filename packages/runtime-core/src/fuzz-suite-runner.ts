@@ -861,6 +861,23 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "wordpress_hook" || input.payload.type === "wordpress_cron_event") {
+        const hook = stringField(input.payload, "hook")
+        if (!hook) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, `Expected ${input.payload.type} runtime-action input hook.`, { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        const command = input.payload.type === "wordpress_hook" ? "wordpress.invoke-hook" : "wordpress.invoke-cron-event"
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command,
+            args: runtimeWordPressExecutionActionArgs(input.payload),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: stripUndefined({ adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: command, mutates: input.payload.mutates === true }),
+        }
+      }
+
       if (input.payload.type === "wordpress_crud_operation") {
         return unsupportedTargetAdapterResolution(fuzzCase, target, "Runtime-action type wordpress_crud_operation has been renamed to crud_operation.", { adapterKind: "runtime-action", actionType: input.payload.type })
       }
@@ -1352,6 +1369,18 @@ function runtimePageLoadArgs(input: Record<string, unknown>): string[] {
     optionalStringArg("user", input.user),
     optionalStringArg("session", input.session),
     csvArg("capture-diagnostics", input.capture_diagnostics ?? input.captureDiagnostics),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function runtimeWordPressExecutionActionArgs(input: Record<string, unknown>): string[] {
+  return [
+    optionalStringArg("hook", input.hook),
+    optionalStringArg("operation", input.operation),
+    Array.isArray(input.args) ? `args-json=${JSON.stringify(input.args)}` : undefined,
+    optionalNumberArg("timestamp", input.timestamp),
+    typeof input.mutates === "boolean" ? `mutates=${input.mutates ? "true" : "false"}` : undefined,
+    optionalStringArg("capability", input.capability),
+    optionalStringArg("destructive-boundary", input.destructive_boundary ?? input.destructiveBoundary),
   ].filter((arg): arg is string => Boolean(arg))
 }
 

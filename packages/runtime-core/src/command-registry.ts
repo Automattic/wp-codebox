@@ -5,7 +5,7 @@ import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from 
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS, WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA, WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA } from "./wordpress-admin-action-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
-import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, WORDPRESS_EXECUTION_SURFACES_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
 
 export type CommandHandlerBinding =
@@ -291,6 +291,21 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runWpCli" },
   },
   {
+    id: "wordpress.invoke-wp-cli",
+    description: "Invoke one declared WP-CLI command through the public WordPress execution primitive and return a structured result with caller-declared mutation boundary metadata.",
+    acceptedArgs: [
+      { name: "command", description: "WP-CLI command line, with or without the leading wp token.", required: true, format: "string" },
+      { name: "mutates", description: "Whether the caller expects the command to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability boundary associated with the invocation.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with WP-CLI argv, stdout/stderr, exit code, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-wp-cli.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeWpCli" },
+  },
+  {
     id: "wordpress.export-browser-storage-state",
     description: "Export reusable Playwright browser storageState JSON for a generic WordPress fixture user and record reviewer-safe metadata.",
     acceptedArgs: [
@@ -508,7 +523,7 @@ export const commandRegistry = [
     id: "wordpress.runtime-discovery",
     description: "Discover product-neutral WordPress runtime surfaces using registered WordPress APIs and bounded summaries.",
     acceptedArgs: [
-      { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks" },
+      { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks,auth,execution" },
     ],
     outputShape: "wp-codebox/wordpress-runtime-discovery/v1 JSON with selected REST routes, admin pages, database schema, frontend rewrite routes, and block/editor target summaries.",
     outputSchema: objectEnvelopeSchema(WORDPRESS_RUNTIME_DISCOVERY_SCHEMA, {
@@ -518,11 +533,56 @@ export const commandRegistry = [
       database: { type: "object" },
       frontend: { type: "object" },
       blocks: { type: "object" },
+      execution: { type: "object" },
       diagnostics: { type: "array" },
     }),
     policyRequirement: "Runtime policy commands must include wordpress.runtime-discovery.",
     recipe: true,
     handler: { kind: "playground", method: "runRuntimeDiscovery" },
+  },
+  {
+    id: "wordpress.execution-surfaces",
+    description: "Describe public WordPress-generic execution surfaces for fuzz mapping without probing runtime behavior.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-execution-surfaces/v1 JSON declaring WP-CLI, hook/action, and cron invocation support plus explicitly unsupported discovery/counting sub-capabilities.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_SURFACES_SCHEMA, { surfaces: { type: "array" }, unsupported: { type: "array" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.execution-surfaces.",
+    recipe: true,
+    handler: { kind: "playground", method: "runExecutionSurfaces" },
+  },
+  {
+    id: "wordpress.invoke-hook",
+    description: "Invoke one WordPress hook/action with JSON arguments through do_action_ref_array() and return a structured result with declared mutation/capability boundary fields.",
+    acceptedArgs: [
+      { name: "hook", description: "WordPress hook/action name to invoke.", required: true, format: "hook name" },
+      { name: "args-json", description: "JSON array of hook arguments. Defaults to an empty array.", format: "JSON array" },
+      { name: "mutates", description: "Whether the caller expects the hook to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability checked with current_user_can() before invocation.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with hook, args count, did_action delta, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-hook.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeHook" },
+  },
+  {
+    id: "wordpress.invoke-cron-event",
+    description: "Invoke a WordPress cron hook immediately or schedule one single event with explicit caller-declared mutation/capability boundary fields.",
+    acceptedArgs: [
+      { name: "hook", description: "Cron hook name to invoke or schedule.", required: true, format: "hook name" },
+      { name: "operation", description: "run-hook invokes the hook immediately; schedule-single schedules a single event. Defaults to run-hook.", format: "run-hook|schedule-single" },
+      { name: "args-json", description: "JSON array of cron event arguments. Defaults to an empty array.", format: "JSON array" },
+      { name: "timestamp", description: "Unix timestamp used with operation=schedule-single. Defaults to now.", format: "positive integer" },
+      { name: "mutates", description: "Whether the caller expects the event to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability checked with current_user_can() before invocation or scheduling.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with cron hook operation, schedule/invocation result, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-cron-event.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeCronEvent" },
   },
   {
     id: "wordpress.rest-route-inventory",

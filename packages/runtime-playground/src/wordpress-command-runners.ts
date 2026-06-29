@@ -37,8 +37,11 @@ import {
   restRequestInputFromArgs,
   restRequestPhpCode,
   runtimeInventoryPhpCode,
+  type RuntimeInventorySurface,
   runtimeDiscoveryPhpCode,
   runtimeDiscoverySurfacesFromArgs,
+  wordpressExecutionActionInputFromArgs,
+  wordpressExecutionActionPhpCode,
   pluginSetupInputFromArgs,
   themeCheckRunCode,
   themeSetupInputFromArgs,
@@ -112,6 +115,25 @@ export async function runPhpCommand({
     diagnostics: parsed.diagnostics,
     artifactRefs: [artifact],
   })
+}
+
+export async function runWordPressExecutionActionCommand({
+  command,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  command: "wordpress.invoke-hook" | "wordpress.invoke-cron-event"
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = wordpressExecutionActionInputFromArgs(spec.args ?? [], command)
+  const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, wordpressExecutionActionPhpCode(input, command), spec.args ?? []) })
+  assertPlaygroundResponseOk(command, response)
+  return response.text
 }
 
 interface RunPhpDiagnosticsPayload {
@@ -698,7 +720,7 @@ export async function runRuntimeInventoryCommand({
   runtimeSpec: RuntimeCreateSpec
   schema: string
   server: PlaygroundCliServer
-  surface: "rest" | "admin" | "database" | "frontend"
+  surface: RuntimeInventorySurface
 }): Promise<string> {
   const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
   assertPlaygroundResponseOk(command, response)
