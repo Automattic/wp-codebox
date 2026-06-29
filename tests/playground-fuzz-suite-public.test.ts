@@ -164,14 +164,15 @@ try {
     cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
-    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
+    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; operation?: string; metadata?: Record<string, unknown> } }
     fuzzResult?: { persisted?: boolean; path?: string }
     wordpressHotspots?: { persisted?: boolean; path?: string }
   } | undefined
   assert.equal(durableArtifacts?.fuzzBundle?.schema, "wp-codebox/fuzz-artifact-bundle/v1")
-  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "unsupported")
+  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "supported")
   assert.equal(durableArtifacts?.fuzzBundle?.minimize?.inputKind, "fuzz-replay-case")
-  assert.match(durableArtifacts?.fuzzBundle?.minimize?.reason ?? "", /not implemented/)
+  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.operation, "fuzz-minimize-case")
+  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.metadata?.supportedReplayShape, "runtime-action sequence replay")
   assert.equal(durableArtifacts?.fuzzResult?.persisted, true)
   assert.equal(durableArtifacts?.wordpressHotspots?.persisted, true)
   assert.equal(durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.caseId, "durable-rest")

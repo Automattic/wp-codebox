@@ -124,6 +124,7 @@ ability identifiers:
 - `wp-codebox/run-runtime-package`
 - `wp-codebox/run-wordpress-workload`
 - `wp-codebox/run-fuzz-suite`
+- `wp-codebox/fuzz-minimize-case`
 
 The manifest intentionally excludes backend handler bindings such as agent
 execution substrate ability names, runtime command handlers, legacy aliases, and
@@ -197,6 +198,16 @@ or `WP_Codebox_API` for in-process WordPress ability coverage, and use the publi
 `wp-codebox run-fuzz-suite --runner-mode=runtime-backed` CLI path or
 `@automattic/wp-codebox-playground/public executeWordPressFuzzSuite` when the suite
 needs browser, editor, page, CRUD, runtime, or runtime-action coverage.
+
+`wp-codebox/fuzz-minimize-case` is the public minimization operation for durable
+fuzz replay artifacts. The first supported slice accepts
+`wp-codebox/fuzz-replay-case-input/v1` records with `replay.sequence.steps` and an
+original failed/error case, then replays candidate runtime-action subsequences
+through the same public fuzz-suite runner contract. The operation returns
+`wp-codebox/fuzz-minimize-case-result/v1` with `status: "reduced"`, `"unchanged"`,
+or `"blocked"`; non-sequence replay records return a blocker diagnostic instead of
+unsupported metadata or fake reductions. The Node CLI path is
+`wp-codebox fuzz-minimize-case --input-file <replay-case.json> --format=json`.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`

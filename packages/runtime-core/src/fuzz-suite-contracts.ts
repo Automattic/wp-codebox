@@ -375,6 +375,8 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       fuzzRunnerCapabilities: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
       fuzzRunnerReadiness: FUZZ_RUNNER_READINESS_SCHEMA,
       fuzzCoveragePlan: "wp-codebox/fuzz-coverage-plan/v1",
+      fuzzMinimizeCaseInput: "wp-codebox/fuzz-minimize-case-input/v1",
+      fuzzMinimizeCaseResult: "wp-codebox/fuzz-minimize-case-result/v1",
       fuzzFixturePlan: "wp-codebox/fuzz-fixture-plan/v1",
       restMutationFixtureOptIn: "wp-codebox/rest-mutation-fixture-opt-in/v1",
       mutationIsolationArtifact: "wp-codebox/mutation-isolation-artifact/v1",
@@ -424,6 +426,7 @@ export interface FuzzMinimizeCapabilityContract {
   schema: typeof FUZZ_MINIMIZE_CAPABILITY_SCHEMA
   status: "supported" | "unsupported"
   inputKind: "fuzz-replay-case" | (string & {})
+  operation?: string
   reason?: string
   requiredArtifacts?: string[]
   metadata?: Record<string, unknown>
@@ -578,6 +581,17 @@ export function fuzzMinimizeUnsupportedCapability(input: { reason: string; requi
     status: "unsupported" as const,
     inputKind: "fuzz-replay-case" as const,
     reason: input.reason,
+    requiredArtifacts: input.requiredArtifacts,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzMinimizeSupportedCapability(input: { operation: string; requiredArtifacts?: string[]; metadata?: Record<string, unknown> }): FuzzMinimizeCapabilityContract {
+  return stripUndefined({
+    schema: FUZZ_MINIMIZE_CAPABILITY_SCHEMA,
+    status: "supported" as const,
+    inputKind: "fuzz-replay-case" as const,
+    operation: input.operation,
     requiredArtifacts: input.requiredArtifacts,
     metadata: input.metadata,
   })
