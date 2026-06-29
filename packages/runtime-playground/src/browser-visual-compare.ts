@@ -69,6 +69,13 @@ interface VisualCompareComparisonMetrics {
   mismatchPixels?: number
   totalPixels?: number
   dimensionMismatch?: boolean
+  // Dimension-fair signals: overlap region only (the trustworthy ratio) plus the
+  // canvas-size delta surfaced separately rather than smeared into mismatchRatio.
+  overlapMismatchRatio?: number
+  overlapMismatchPixels?: number
+  overlapPixels?: number
+  dimensionDeltaPixels?: number
+  dimensionDeltaRatio?: number
 }
 
 interface VisualCompareComparisonSummary extends VisualCompareComparisonMetrics {
@@ -85,6 +92,7 @@ interface VisualCompareBaselineDelta {
   delta: {
     status?: { baseline?: string; current: string; changed: boolean }
     mismatchRatio?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
+    overlapMismatchRatio?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
     mismatchPixels?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
     totalPixels?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
     dimensionMismatch?: { baseline: boolean; current: boolean; changed: boolean }
@@ -100,7 +108,7 @@ export interface BlocksEngineVisualParityReport {
   viewports: Array<{ id: string; label?: string; width: number; height: number; device_scale_factor?: number; source_screenshot_path?: string; target_screenshot_path?: string; diff_screenshot_path?: string }>
   matches: Array<{ kind: "generic"; source_selector: string; target_selector: string; confidence: number; viewport_id?: string; selector_evidence?: Record<string, unknown> }>
   computed_style_deltas?: Array<{ property: string; severity: "none" | "info" | "warning" | "error" | "critical"; viewport_id?: string; source_selector?: string; target_selector?: string; source_value?: unknown; target_value?: unknown; delta?: unknown }>
-  visual_diff?: { available: boolean; mismatch_percent?: number; mismatch_pixels?: number; total_pixels?: number; threshold?: number; diff_screenshot_path?: string; by_viewport?: Array<{ viewport_id: string; mismatch_percent?: number; mismatch_pixels?: number; diff_screenshot_path?: string }> }
+  visual_diff?: { available: boolean; mismatch_percent?: number; mismatch_pixels?: number; total_pixels?: number; overlap_mismatch_percent?: number; overlap_mismatch_pixels?: number; overlap_pixels?: number; dimension_delta_pixels?: number; threshold?: number; diff_screenshot_path?: string; by_viewport?: Array<{ viewport_id: string; mismatch_percent?: number; overlap_mismatch_percent?: number; mismatch_pixels?: number; diff_screenshot_path?: string }> }
   findings: Array<{ id: string; severity: "none" | "info" | "warning" | "error" | "critical"; category: "visual" | "layout" | "style" | "dom" | "interaction" | "content" | "asset" | "accessibility"; summary: string; viewport_id?: string; visual_diff?: { viewport_id: string; mismatch_percent?: number; mismatch_pixels?: number; diff_screenshot_path?: string }; recommendation_ids?: string[] }>
   recommendations: Array<{ id: string; priority: "low" | "medium" | "high" | "blocking"; summary: string; rationale?: string; finding_ids?: string[] }>
   metadata?: Record<string, unknown>
@@ -171,6 +179,10 @@ export function blocksEngineVisualParityReportFromVisualCompare(input: {
       ...(typeof input.comparison?.mismatchRatio === "number" ? { mismatch_percent: input.comparison.mismatchRatio * 100 } : {}),
       ...(typeof input.comparison?.mismatchPixels === "number" ? { mismatch_pixels: input.comparison.mismatchPixels } : {}),
       ...(typeof input.comparison?.totalPixels === "number" ? { total_pixels: input.comparison.totalPixels } : {}),
+      ...(typeof input.comparison?.overlapMismatchRatio === "number" ? { overlap_mismatch_percent: input.comparison.overlapMismatchRatio * 100 } : {}),
+      ...(typeof input.comparison?.overlapMismatchPixels === "number" ? { overlap_mismatch_pixels: input.comparison.overlapMismatchPixels } : {}),
+      ...(typeof input.comparison?.overlapPixels === "number" ? { overlap_pixels: input.comparison.overlapPixels } : {}),
+      ...(typeof input.comparison?.dimensionDeltaPixels === "number" ? { dimension_delta_pixels: input.comparison.dimensionDeltaPixels } : {}),
       ...(typeof input.options?.threshold === "number" ? { threshold: input.options.threshold } : {}),
       ...(stringFileRef(diffScreenshot) ? { diff_screenshot_path: stringFileRef(diffScreenshot) } : {}),
       by_viewport: completeComparisons.map((comparison, index) => blocksEngineVisualParityDiffViewport(comparison, index)).filter((viewport): viewport is NonNullable<NonNullable<BlocksEngineVisualParityReport["visual_diff"]>["by_viewport"]>[number] => Boolean(viewport)),
@@ -228,6 +240,7 @@ function blocksEngineVisualParityDiffViewport(input: { name?: string; viewport?:
   return {
     viewport_id: viewport.id,
     ...(typeof input.comparison.mismatchRatio === "number" ? { mismatch_percent: input.comparison.mismatchRatio * 100 } : {}),
+    ...(typeof input.comparison.overlapMismatchRatio === "number" ? { overlap_mismatch_percent: input.comparison.overlapMismatchRatio * 100 } : {}),
     ...(typeof input.comparison.mismatchPixels === "number" ? { mismatch_pixels: input.comparison.mismatchPixels } : {}),
     ...(stringFileRef(input.files?.diffScreenshot) ? { diff_screenshot_path: stringFileRef(input.files?.diffScreenshot) } : {}),
   }
@@ -365,6 +378,10 @@ async function runVisualComparePairCommand({
       if (blockExternalRequests) {
         await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin)
       }
+      // Determinism applies to BOTH source and candidate: the init script runs on
+      // every navigation of this shared page, so source and candidate are captured
+      // under identical reveal/animation conditions.
+      await installVisualCompareDeterministicReveal(page)
       viewport = await browserProbeViewport(page)
       try {
         let sourceCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
@@ -554,6 +571,11 @@ async function runVisualComparePairCommand({
         mismatchRatio: comparison.mismatchRatio,
         mismatchPixels: comparison.mismatchPixels,
         totalPixels: comparison.totalPixels,
+        overlapMismatchRatio: comparison.overlapMismatchRatio,
+        overlapMismatchPixels: comparison.overlapMismatchPixels,
+        overlapPixels: comparison.overlapPixels,
+        dimensionDeltaPixels: comparison.dimensionDeltaPixels,
+        dimensionDeltaRatio: comparison.dimensionDeltaRatio,
         dimensionMismatch: comparison.dimensionMismatch,
         ...(explanation ? { explanation: files.visualExplanation } : {}),
         blocksEngineVisualParity: files.blocksEngineVisualParity,
@@ -658,6 +680,7 @@ function visualCompareMatrixArtifact(
         mismatchRatio: matrixSummary.metrics.maxMismatchRatio,
         mismatchPixels: matrixSummary.metrics.maxMismatchPixels,
         totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + (entry.comparison?.totalPixels ?? 0), 0),
+        overlapMismatchRatio: matrixSummary.metrics.maxOverlapMismatchRatio,
         dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison?.dimensionMismatch === true),
         explanation: matrixSummary.files.summary,
         ...(matrixSummary.files.blocksEngineVisualParity ? { blocksEngineVisualParity: matrixSummary.files.blocksEngineVisualParity } : {}),
@@ -921,8 +944,10 @@ async function writeVisualCompareMatrixSummary(
   const allComparisons = [...comparisons, ...failedEntries]
   const mismatchRatios = comparisons.map((entry) => entry.comparison.mismatchRatio)
   const mismatchPixels = comparisons.map((entry) => entry.comparison.mismatchPixels)
+  const overlapMismatchRatios = comparisons.map((entry) => entry.comparison.overlapMismatchRatio).filter((value): value is number => typeof value === "number")
   const maxMismatchRatio = mismatchRatios.length > 0 ? Math.max(...mismatchRatios) : 0
   const maxMismatchPixels = mismatchPixels.length > 0 ? Math.max(...mismatchPixels) : 0
+  const maxOverlapMismatchRatio = overlapMismatchRatios.length > 0 ? Math.max(...overlapMismatchRatios) : 0
   const matrixComplete = complete && failedEntries.length === 0
   const matrixSummary: VisualCompareMatrixSummary = {
     schema: "wp-codebox/visual-compare-matrix/v1",
@@ -942,6 +967,8 @@ async function writeVisualCompareMatrixSummary(
       different: comparisons.filter((entry) => entry.status !== "identical").length,
       maxMismatchRatio,
       meanMismatchRatio: mismatchRatios.length > 0 ? mismatchRatios.reduce((total, value) => total + value, 0) / mismatchRatios.length : 0,
+      maxOverlapMismatchRatio,
+      meanOverlapMismatchRatio: overlapMismatchRatios.length > 0 ? overlapMismatchRatios.reduce((total, value) => total + value, 0) / overlapMismatchRatios.length : 0,
       maxMismatchPixels,
       meanMismatchPixels: mismatchPixels.length > 0 ? mismatchPixels.reduce((total, value) => total + value, 0) / mismatchPixels.length : 0,
     },
@@ -1034,7 +1061,7 @@ interface VisualComparePairSummary {
   options: Record<string, unknown>
   viewport: BrowserProbeViewport | null
   files: Record<string, string>
-  comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean }
+  comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean; overlapMismatchRatio?: number; overlapMismatchPixels?: number; overlapPixels?: number; dimensionDeltaPixels?: number; dimensionDeltaRatio?: number }
 }
 
 interface VisualCompareMissingInput {
@@ -1102,6 +1129,8 @@ interface VisualCompareMatrixSummary {
     different: number
     maxMismatchRatio: number
     meanMismatchRatio: number
+    maxOverlapMismatchRatio: number
+    meanOverlapMismatchRatio: number
     maxMismatchPixels: number
     meanMismatchPixels: number
   }
@@ -1281,6 +1310,9 @@ function visualCompareBaselineDelta(baseline: VisualCompareComparisonSummary, cu
   if (typeof baseline.mismatchRatio === "number" && typeof currentComparison.mismatchRatio === "number") {
     delta.mismatchRatio = visualCompareNumericDelta(baseline.mismatchRatio, currentComparison.mismatchRatio)
   }
+  if (typeof baseline.overlapMismatchRatio === "number" && typeof currentComparison.overlapMismatchRatio === "number") {
+    delta.overlapMismatchRatio = visualCompareNumericDelta(baseline.overlapMismatchRatio, currentComparison.overlapMismatchRatio)
+  }
   if (typeof baseline.mismatchPixels === "number" && typeof currentComparison.mismatchPixels === "number") {
     delta.mismatchPixels = visualCompareNumericDelta(baseline.mismatchPixels, currentComparison.mismatchPixels)
   }
@@ -1359,11 +1391,14 @@ function visualCompareRecord(input: unknown): VisualCompareComparisonSummary | u
   const mismatchRatio = typeof record.mismatchRatio === "number" ? record.mismatchRatio : undefined
   const mismatchPixels = typeof record.mismatchPixels === "number" ? record.mismatchPixels : undefined
   const totalPixels = typeof record.totalPixels === "number" ? record.totalPixels : undefined
+  const overlapMismatchRatio = typeof record.overlapMismatchRatio === "number" ? record.overlapMismatchRatio : undefined
+  const overlapMismatchPixels = typeof record.overlapMismatchPixels === "number" ? record.overlapMismatchPixels : undefined
+  const overlapPixels = typeof record.overlapPixels === "number" ? record.overlapPixels : undefined
   const dimensionMismatch = typeof record.dimensionMismatch === "boolean" ? record.dimensionMismatch : undefined
-  if (!status && mismatchRatio === undefined && mismatchPixels === undefined && totalPixels === undefined && dimensionMismatch === undefined) {
+  if (!status && mismatchRatio === undefined && mismatchPixels === undefined && totalPixels === undefined && dimensionMismatch === undefined && overlapMismatchRatio === undefined) {
     return undefined
   }
-  return { status, mismatchRatio, mismatchPixels, totalPixels, dimensionMismatch }
+  return { status, mismatchRatio, mismatchPixels, totalPixels, overlapMismatchRatio, overlapMismatchPixels, overlapPixels, dimensionMismatch }
 }
 
 function visualCompareEndpoint(input: unknown): VisualCompareComparisonSummary["source"] | undefined {
@@ -1455,28 +1490,174 @@ async function installVisualCompareOfflineIsolation(page: Page, previewOrigin: s
   })
 }
 
+// A static full-page screenshot never scrolls the document, so any content gated
+// behind a scroll/IntersectionObserver entrance reveal (a near-universal pattern,
+// e.g. `.reveal { opacity: 0 }` toggled to a visible class once the element enters
+// the viewport) stays at its hidden initial state below the fold. The imported
+// WordPress candidate typically renders that content statically visible (the reveal
+// scripts/styles are not carried through the transform), so comparing a scroll-gated
+// source against a static candidate counts the entire below-the-fold region as a
+// false pixel diff that has nothing to do with real visual parity.
+//
+// Programmatic scrolling alone is an unreliable trigger under headless capture
+// (IntersectionObserver delivery is throttled/batched and frequently fires for only
+// a fraction of off-screen elements), so this stubs `IntersectionObserver` via an
+// init script that runs before any page script: every observed element is reported
+// as intersecting on the next microtask. That deterministically drives the page's
+// OWN reveal logic for ALL elements regardless of scroll position, with no
+// fixture-specific selectors or class names. The init script persists across this
+// shared page's navigations, so source and candidate are treated identically; on a
+// page with no IntersectionObserver-gated reveals it is a harmless no-op.
+async function installVisualCompareDeterministicReveal(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const NativeIntersectionObserver = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
+    if (typeof NativeIntersectionObserver !== "function") {
+      return
+    }
+    class ImmediateIntersectionObserver {
+      private readonly callback: (entries: unknown[], observer: unknown) => void
+      constructor(callback: (entries: unknown[], observer: unknown) => void) {
+        this.callback = callback
+      }
+      observe(target: Element): void {
+        const rect = typeof target.getBoundingClientRect === "function" ? target.getBoundingClientRect() : ({} as DOMRect)
+        const entry = {
+          target,
+          isIntersecting: true,
+          intersectionRatio: 1,
+          boundingClientRect: rect,
+          intersectionRect: rect,
+          rootBounds: null,
+          time: 0,
+        }
+        Promise.resolve().then(() => {
+          try {
+            this.callback([entry], this)
+          } catch {
+            // Ignore reveal-callback errors so capture stays deterministic.
+          }
+        })
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): unknown[] {
+        return []
+      }
+    }
+    try {
+      ;(globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = ImmediateIntersectionObserver
+    } catch {
+      // If the global is read-only, leave the native observer in place.
+    }
+  })
+}
+
+// Complements the IntersectionObserver reveal trigger by walking the full document
+// height before capture. This drives genuine scroll-position-driven effects (lazy
+// media, sticky headers) and lets any triggered reveals settle, then returns to the
+// origin so the full-page capture is deterministic. Bounded by a guard so it can
+// never loop. Applied IDENTICALLY to source and candidate.
+async function settleVisualComparePageForCapture(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+    const documentHeight = (): number => Math.max(
+      document.body?.scrollHeight ?? 0,
+      document.body?.offsetHeight ?? 0,
+      document.documentElement?.scrollHeight ?? 0,
+      document.documentElement?.offsetHeight ?? 0,
+      document.documentElement?.clientHeight ?? 0,
+    )
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1)
+    const step = Math.max(1, Math.floor(viewportHeight * 0.8))
+    let position = 0
+    let guard = 0
+    // Walk the full document height in viewport-sized steps, pausing for a frame at
+    // each so IntersectionObserver callbacks (and lazy content) fire as they would
+    // under a real scroll. `documentHeight()` is re-read each iteration because
+    // reveals can grow the page.
+    while (position < documentHeight() - viewportHeight && guard < 2000) {
+      position += step
+      window.scrollTo(0, position)
+      await nextFrame()
+      await sleep(16)
+      guard += 1
+    }
+    window.scrollTo(0, documentHeight())
+    await nextFrame()
+    await sleep(32)
+    // Return to the origin so the full-page screenshot starts from a deterministic
+    // top-of-document position regardless of how far the reveal walk scrolled.
+    window.scrollTo(0, 0)
+    await nextFrame()
+    await sleep(16)
+  })
+}
+
+// Navigate with a bounded per-attempt timeout and one transient-failure retry.
+//
+// The fixture-matrix source page is served by the SAME in-sandbox WordPress origin
+// as the candidate (rigs #565 staged it into the uploads path, fixing the original
+// "unserved path" hang). The residual reliability problem is transient resource
+// contention: a disposable sandbox running Playground + a headless browser can be
+// slow to serve the first byte of a large staged page under load, and a single
+// `page.goto` allowed to consume the entire 120s wall surfaces as an opaque
+// `source-capture exceeded 120000ms`. Capping each attempt well under the wall and
+// retrying once turns a transient slow first response into a clean recovery while
+// still failing loudly (re-throwing the last error) when serving is genuinely
+// broken — it does not mask a real serving bug. External resources are already
+// blocked (`block-external-requests`), so navigation never waits on unreachable
+// hosts regardless of `waitFor`.
+async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil: "domcontentloaded" | "load" | "networkidle", wallTimeoutMs: number): Promise<void> {
+  // Reserve roughly half the wall for the navigation budget, split across two
+  // attempts, leaving the remainder for the settle/dom-snapshot/screenshot phases.
+  const navBudgetMs = Math.max(15_000, Math.min(wallTimeoutMs, 90_000))
+  const attempts = 2
+  const perAttemptTimeoutMs = Math.max(5_000, Math.floor(navBudgetMs / attempts))
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await page.goto(targetUrl, { waitUntil, timeout: perAttemptTimeoutMs })
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt >= attempts) {
+        break
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`wordpress.visual-compare navigation failed: ${String(lastError)}`)
+}
+
 async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+    await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor.startsWith("selector:")) {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+    await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible", timeout: timeoutMs })
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
-    await page.goto(targetUrl, { waitUntil: waitFor, timeout: timeoutMs })
+    await gotoVisualCompareTarget(page, targetUrl, waitFor, timeoutMs)
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
+  // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
+  // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
+  // fully-revealed page state. Identical treatment for source and candidate.
+  await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  await page.screenshot({ path: outputPath, fullPage, timeout: timeoutMs })
+  // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
+  // to their final state and freezes infinite ones to a deterministic frame, so the
+  // capture does not depend on transition timing. Applied to both sides equally.
+  await page.screenshot({ path: outputPath, fullPage, timeout: timeoutMs, animations: "disabled" })
   return { finalUrl: page.url(), domSnapshot }
 }
 
@@ -1639,7 +1820,7 @@ function roundVisualDelta(value: number): number {
   return Math.round(value * 100) / 100
 }
 
-async function comparePngFiles(sourcePath: string, candidatePath: string, diffPath: string, options: { threshold: number; includeAA: boolean; maxRegions: number }): Promise<{
+export async function comparePngFiles(sourcePath: string, candidatePath: string, diffPath: string, options: { threshold: number; includeAA: boolean; maxRegions: number }): Promise<{
   source: { width: number; height: number }
   candidate: { width: number; height: number }
   diff: { width: number; height: number }
@@ -1648,6 +1829,11 @@ async function comparePngFiles(sourcePath: string, candidatePath: string, diffPa
   mismatchPixels: number
   totalPixels: number
   mismatchRatio: number
+  overlapMismatchPixels: number
+  overlapPixels: number
+  overlapMismatchRatio: number
+  dimensionDeltaPixels: number
+  dimensionDeltaRatio: number
   regions: VisualCompareMismatchRegion[]
 }> {
   const source = PNG.sync.read(await readFile(sourcePath))
@@ -1658,9 +1844,39 @@ async function comparePngFiles(sourcePath: string, candidatePath: string, diffPa
   const sourceCanvas = visualCompareCanvas(source, width, height)
   const candidateCanvas = visualCompareCanvas(candidate, width, height)
   const diff = new PNG({ width, height })
+  // RAW mismatch over the union canvas: both images are padded out to the max
+  // width/height, so when dimensions differ the padded band (one side real content,
+  // the other transparent fill) is counted as mismatch. This figure is dominated by
+  // the canvas-size delta and is NOT a faithful visual-fidelity signal — it is kept
+  // only for backward compatibility and as the raw denominator.
   const mismatchPixels = pixelmatch(sourceCanvas.data, candidateCanvas.data, diff.data, width, height, { threshold: options.threshold, includeAA: options.includeAA })
   await writeFile(diffPath, PNG.sync.write(diff))
   const dimensionMismatch = source.width !== candidate.width || source.height !== candidate.height
+
+  // FAIR (dimension-normalized) mismatch over the common overlap region only: the
+  // largest rectangle present in BOTH renders (min width × min height). Cropping
+  // both images to that rectangle and running pixelmatch over it removes the
+  // canvas-size band entirely, so the ratio reflects real visual difference where
+  // the two pages actually overlap and is ~0 for a faithful import even when total
+  // page height/width differs slightly. This is the trustworthy iteration signal.
+  const overlapPixels = overlap.width * overlap.height
+  let overlapMismatchPixels = 0
+  if (overlapPixels > 0) {
+    if (!dimensionMismatch) {
+      // Same dimensions: the union canvas IS the overlap, so reuse the raw count
+      // instead of paying for a second pixelmatch pass.
+      overlapMismatchPixels = mismatchPixels
+    } else {
+      const sourceOverlap = cropVisualCompareCanvas(source, overlap.width, overlap.height)
+      const candidateOverlap = cropVisualCompareCanvas(candidate, overlap.width, overlap.height)
+      overlapMismatchPixels = pixelmatch(sourceOverlap.data, candidateOverlap.data, undefined, overlap.width, overlap.height, { threshold: options.threshold, includeAA: options.includeAA })
+    }
+  }
+  const totalPixels = width * height
+  // Pixels that exist in only one render because the canvases differ in size. This
+  // is the dimension delta reported as a SEPARATE signal alongside the fair ratio,
+  // rather than being smeared into a single mismatch number.
+  const dimensionDeltaPixels = totalPixels - overlapPixels
 
   return {
     source: { width: source.width, height: source.height },
@@ -1669,10 +1885,30 @@ async function comparePngFiles(sourcePath: string, candidatePath: string, diffPa
     dimensionMismatch,
     ...(dimensionMismatch ? { dimensionDrift: visualCompareDimensionDrift(source, candidate) } : {}),
     mismatchPixels,
-    totalPixels: width * height,
-    mismatchRatio: width * height > 0 ? mismatchPixels / (width * height) : 0,
+    totalPixels,
+    mismatchRatio: totalPixels > 0 ? mismatchPixels / totalPixels : 0,
+    overlapMismatchPixels,
+    overlapPixels,
+    overlapMismatchRatio: overlapPixels > 0 ? overlapMismatchPixels / overlapPixels : 0,
+    dimensionDeltaPixels,
+    dimensionDeltaRatio: totalPixels > 0 ? dimensionDeltaPixels / totalPixels : 0,
     regions: visualCompareMismatchRegions(diff, options.maxRegions, overlap),
   }
+}
+
+// Crop an image to the top-left `width`×`height` rectangle (the shared overlap
+// origin). Both source and candidate are anchored at (0,0) — the document origin —
+// so cropping to the common min dimensions compares the same on-page region.
+function cropVisualCompareCanvas(image: PNG, width: number, height: number): PNG {
+  const canvas = new PNG({ width, height })
+  const copyHeight = Math.min(height, image.height)
+  const copyWidthBytes = Math.min(width, image.width) << 2
+  for (let y = 0; y < copyHeight; y += 1) {
+    const sourceStart = (image.width * y) << 2
+    const targetStart = (width * y) << 2
+    image.data.copy(canvas.data, targetStart, sourceStart, sourceStart + copyWidthBytes)
+  }
+  return canvas
 }
 
 function visualCompareCanvas(image: PNG, width: number, height: number): PNG {
