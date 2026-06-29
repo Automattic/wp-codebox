@@ -171,6 +171,7 @@ const beforeFuzzCalls = calls.length
 const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
   id: "wordpress-episode-runtime-actions",
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "runtime-actions-baseline" },
+  metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: true, teardown: "discard", backend: "wordpress-playground", hostAccess: "declared-mounts-only" } },
   target: { kind: "runtime-action" },
   cases: [
     { id: "browser", input: { type: "browser", operation: "capture", capture: ["html"] } },
@@ -179,7 +180,7 @@ const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
     { id: "admin", input: { type: "admin_page", path: "plugins.php" } },
     { id: "page", input: { type: "page", path: "/sample-page/" } },
     { id: "crud", input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
-    { id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "wp-codebox-fuzz-missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update", bounded: true } } },
+    { id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "wp-codebox-fuzz-missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update" } } },
   ],
 }), {
   runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(fakeEpisode),
@@ -194,14 +195,10 @@ assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-probe",
   "wordpress.browser-probe",
   "wordpress.crud-operation",
-  "wp-codebox.checkpoint-create",
-  "wordpress.run-php",
   "wordpress.db-operation",
-  "wordpress.run-php",
-  "wp-codebox.checkpoint-restore",
-  "wordpress.run-php",
 ])
 assert.equal((runtimeActionFuzzResult.cases[1]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "random_walk")
 assert.equal((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactKind, "mutation-isolation")
+assert.equal(((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.sandboxBoundary as Record<string, unknown> | undefined)?.destructivePermission, true)
 
 console.log("wordpress runtime actions ok")

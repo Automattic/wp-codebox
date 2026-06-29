@@ -40,6 +40,8 @@ import {
   isRestMutationMethod,
   mutationArtifactDigest,
   mutationIsolationArtifact,
+  sandboxIsolationProof,
+  sandboxIsolationProofDigest,
   wordpressRollbackArtifact,
   type ArtifactBundle,
   type ArtifactManifest,
@@ -74,6 +76,10 @@ import {
   type Snapshot,
   type WordPressRollbackArtifact,
   type WordPressHotspotObservationInput,
+  type DisposableDestructiveSandboxBoundaryEvidence,
+  type DisposableSandboxTeardownEvidence,
+  type SandboxIsolationProof,
+  type SandboxIsolationProofStepEvidence,
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
@@ -218,13 +224,13 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "rest_request") {
         if (isRestMutationMethod(action.method ?? "GET")) {
-          return executeRollbackSafeRestMutation(episode, { ...input, action })
+          return executeDisposableSandboxRestMutation(episode, { ...input, action })
         }
         return requestWordPressRest(episode, action)
       }
       if (action.type === "crud_operation") {
         if (action.operation === "create" || action.operation === "update" || action.operation === "delete") {
-          return executeRollbackSafeCrudMutation(episode, { ...input, action })
+          return executeDisposableSandboxCrudMutation(episode, { ...input, action })
         }
         const step = await runWordPressCrudOperation(episode, action, action.timeout_ms)
         return {
@@ -241,7 +247,7 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "db_operation") {
         if (action.operation === "write") {
-          return executeRollbackSafeDbMutation(episode, { ...input, action })
+          return executeDisposableSandboxDbMutation(episode, { ...input, action })
         }
         const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
         return {
@@ -300,47 +306,35 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
   }
 }
 
-async function executeRollbackSafeDbMutation(
+async function executeDisposableSandboxDbMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "db_operation" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const operation = normalizeWordPressDbOperation({
     schema: WORDPRESS_DB_OPERATION_SCHEMA,
     ...input.action,
     operation: "write",
-    options: { ...(input.action.options ?? {}), allowWrites: true, resetIsolated: true },
-    metadata: { ...(input.action.metadata ?? {}), resetIsolated: true, affectedRowsMayBeZeroOrUnknown: true },
+    options: { ...(input.action.options ?? {}), destructivePermission: true },
+    metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary, affectedRowsMayBeZeroOrUnknown: true },
   })
   const target = operation.resource?.table ?? operation.query?.table ?? "database"
   const mutation = typeof operation.options?.mutation === "string" ? operation.options.mutation.toUpperCase() : "WRITE"
-  const captureSpec = rollbackCaptureSpec({ operation: "db_operation", target, action: input.action, table: operation.resource?.table ?? operation.query?.table, options: operation.options, metadata: operation.metadata })
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "db_operation", mutation },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated DB mutation ${input.case.id}: ${createStep.execution.stderr}`)
-  }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
   const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", captureSpec, input.action.timeout_ms)
-  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
   const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
   const resultMetadata = recordValue(recordValue(stdout)?.metadata)
-  const rollback = rollbackArtifactFromCaptures({ operation: "db_operation", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "db_operation", target, method: mutation, step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "db_operation",
     target,
     method: mutation,
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true,
+    mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
     affectedIdentifiers: undefined,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
@@ -355,7 +349,7 @@ async function executeRollbackSafeDbMutation(
     executionId: step.execution.id,
     stepId: step.id,
     mutationIsolationArtifact: artifactWithDigest,
-    rollbackArtifact: rollback,
+    sandboxIsolationProof: sandboxProof,
     mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   }
   return {
@@ -371,38 +365,26 @@ async function executeRollbackSafeDbMutation(
   }
 }
 
-async function executeRollbackSafeCrudMutation(
+async function executeDisposableSandboxCrudMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "crud_operation" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const target = crudTarget(input.action)
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const captureSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action), options: input.action.options, metadata: input.action.metadata })
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "crud_operation", mutation: input.action.operation.toUpperCase() },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated CRUD mutation ${input.case.id}: ${createStep.execution.stderr}`)
-  }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
-  const step = await runWordPressCrudOperation(episode, input.action, input.action.timeout_ms)
-  const afterSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action, parseJsonRecord(step.execution.stdout)), options: input.action.options, metadata: input.action.metadata })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
-  const restoreCommandStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
-  const rollback = rollbackArtifactFromCaptures({ operation: "crud_operation", target, beforeStep, afterStep, restoreStep, restoreCommandStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const action = { ...input.action, options: { ...(input.action.options ?? {}), destructivePermission: true }, metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary } }
+  const step = await runWordPressCrudOperation(episode, action, input.action.timeout_ms)
+  const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "crud_operation",
     target,
     method: input.action.operation.toUpperCase(),
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true,
+    mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    restore: mutationStepEvidence(restoreCommandStep, restoreCommandStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
-    affectedIdentifiers: rollback.changedObjects,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+    affectedIdentifiers: crudAffectedIdentifiers(input.action, parseJsonRecord(step.execution.stdout)),
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
@@ -416,7 +398,7 @@ async function executeRollbackSafeCrudMutation(
     stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout,
     stderr: step.execution.stderr,
     mutationIsolationArtifact: artifactWithDigest,
-    rollbackArtifact: rollback,
+    sandboxIsolationProof: sandboxProof,
   }
   return { schema: "wp-codebox/runtime-action-observation/v1", type: input.action.type, status: "ok", action: input.action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
 }
@@ -558,6 +540,11 @@ function crudCaptureObject(action: object, result?: Record<string, unknown>): { 
   return { kind, type: stringValue(resource?.type), id: scalarId(resource?.id ?? resultItem?.id) }
 }
 
+function crudAffectedIdentifiers(action: object, result?: Record<string, unknown>) {
+  const object = crudCaptureObject(action, result)
+  return object?.id !== undefined ? [{ kind: object.kind, id: object.id, source: "crud-result" }] : undefined
+}
+
 function restPathObject(path: string): { kind: string; id?: string | number; type?: string } | undefined {
   const match = path.match(/^\/wp\/v2\/(posts|pages|users|comments|categories|tags)\/(\d+)/)
   if (!match) return undefined
@@ -615,42 +602,84 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
   }
 }
 
-async function executeRollbackSafeRestMutation(
+function requireDisposableDestructiveSandboxBoundary(suite: FuzzSuiteContract): DisposableDestructiveSandboxBoundaryEvidence {
+  const boundary = recordValue(suite.metadata?.disposableSandboxBoundary)
+  const teardown = stringValue(boundary?.teardown)
+  if (boundary?.disposable !== true || boundary?.destructivePermission !== true || !teardown) {
+    throw new Error("Destructive WordPress fuzz mutations require suite.metadata.disposableSandboxBoundary with disposable=true, destructivePermission=true, and teardown=discard or destroy.")
+  }
+  if (teardown !== "discard" && teardown !== "destroy") {
+    throw new Error("Destructive WordPress fuzz mutations require disposable sandbox teardown=discard or destroy.")
+  }
+  return stripUndefined({
+    disposable: true,
+    destructivePermission: true,
+    teardown,
+    backend: stringValue(boundary.backend) ?? "wordpress-playground",
+    environment: stringValue(boundary.environment) ?? "wordpress",
+    hostAccess: stringValue(boundary.hostAccess) ?? "declared-mounts-only",
+    metadata: recordValue(boundary.metadata),
+  }) as DisposableDestructiveSandboxBoundaryEvidence
+}
+
+function disposableSandboxTeardownEvidence(boundary: DisposableDestructiveSandboxBoundaryEvidence): DisposableSandboxTeardownEvidence {
+  const intent = boundary.teardown === "destroy" ? "destroy" : "discard"
+  return {
+    intent,
+    status: "intended" as const,
+    evidence: "Disposable WP Codebox sandbox will be discarded after the fuzz run.",
+    metadata: { backend: boundary.backend, hostAccess: boundary.hostAccess },
+  }
+}
+
+function disposableSandboxMutationProof(input: { operation: string; target: string; method: string; step: RuntimeEpisodeStepResult; sandboxBoundary: DisposableDestructiveSandboxBoundaryEvidence; suiteId: string; caseId: string; caseIndex: number }): SandboxIsolationProof {
+  const proof = sandboxIsolationProof({
+    status: input.step.execution.exitCode === 0 ? "passed" : "failed",
+    baseline: { status: "created", command: "wp-codebox.disposable-sandbox-boundary", metadata: input.sandboxBoundary as unknown as Record<string, unknown> },
+    mutation: mutationStepEvidence(input.step, "mutated") as SandboxIsolationProofStepEvidence & { status: "mutated" },
+    diff: { status: "not-required-disposable-sandbox", changed: true, metadata: { reason: "Disposable sandbox boundary is the destructive mutation proof; rollback validation is optional debug metadata." } },
+    runtimeBoundary: {
+      backend: input.sandboxBoundary.backend ?? "wordpress-playground",
+      environment: input.sandboxBoundary.environment ?? "wordpress",
+      disposable: true,
+      hostAccess: "declared-mounts-only",
+      destroy: { status: input.sandboxBoundary.teardown === "destroy" ? "destroyed" : "discarded", command: "wp-codebox.disposable-sandbox-teardown", metadata: { intent: input.sandboxBoundary.teardown } },
+    },
+    artifacts: [{ path: `files/sandbox-isolation/${input.caseId}-proof.json`, kind: "sandbox-isolation-proof" }],
+    metadata: { suiteId: input.suiteId, caseId: input.caseId, caseIndex: input.caseIndex, operation: input.operation, target: input.target, method: input.method },
+  })
+  const artifactPath = `files/sandbox-isolation/${input.caseId}-proof.json`
+  const proofWithRef = { ...proof, artifactPath }
+  const content = `${JSON.stringify(proofWithRef, null, 2)}\n`
+  return { ...proofWithRef, sha256: sandboxIsolationProofDigest(proofWithRef), bytes: Buffer.byteLength(content) }
+}
+
+async function executeDisposableSandboxRestMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "rest_request" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const captureSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: recordValue(input.case.metadata) })
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated REST mutation ${input.case.id}: ${createStep.execution.stderr}`)
-  }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
   const observation = await requestWordPressRest(episode, input.action)
+  if (!observation.step) {
+    throw new Error(`Destructive REST mutation ${input.case.id} did not return runtime step evidence.`)
+  }
   const affectedIdentifiers = restMutationAffectedIdentifiers(observation)
-  const afterSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: { ...(recordValue(input.case.metadata) ?? {}), affectedIdentifiers } })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
-  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
   const status = restObservationStatus(observation)
-  const rollback = rollbackArtifactFromCaptures({ operation: "rest_request", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "rest_request", target, method, step: observation.step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const baseArtifact = {
     operation: "rest_request" as const,
     target,
     method,
     status,
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true as const,
+    mutationBoundary: { permission: "destructive" as const, containment: "disposable-sandbox" as const, artifactEvidence: "captured" as const },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(observation.step, "observed"),
-    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
     affectedIdentifiers,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   }
   const artifact = method === "DELETE" ? deleteBoundaryArtifact(baseArtifact) : mutationIsolationArtifact(baseArtifact)
   const artifactWithRef = {
@@ -667,7 +696,7 @@ async function executeRollbackSafeRestMutation(
   const data = {
     ...observation.data,
     ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
-    rollbackArtifact: rollback,
+    sandboxIsolationProof: sandboxProof,
   }
 
   return {

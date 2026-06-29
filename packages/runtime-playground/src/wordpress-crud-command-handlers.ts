@@ -38,9 +38,9 @@ function wp_codebox_crud_error( $operation, $code, $message ) {
     ) );
 }
 
-function wp_codebox_crud_write_allowed( $operation ) {
+function wp_codebox_crud_destructive_permission( $operation ) {
     $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
-    return ! empty( $options['allowWrites'] ) || ! empty( $options['allow_writes'] );
+    return ! empty( $options['destructivePermission'] ) || ! empty( $options['destructive_permission'] );
 }
 
 function wp_codebox_crud_is_dry_run( $operation ) {
@@ -52,8 +52,8 @@ function wp_codebox_crud_require_write_guard( $operation ) {
     if ( wp_codebox_crud_is_dry_run( $operation ) ) {
         return null;
     }
-    if ( ! wp_codebox_crud_write_allowed( $operation ) ) {
-        return wp_codebox_crud_error( $operation, 'write-guard-required', 'Create, update, and delete operations require options.allowWrites=true. Use options.dryRun=true to preview effects without writing.' );
+    if ( ! wp_codebox_crud_destructive_permission( $operation ) ) {
+        return wp_codebox_crud_error( $operation, 'destructive-permission-required', 'Create, update, and delete operations require options.destructivePermission=true inside an explicit disposable sandbox boundary. Use options.dryRun=true to preview effects without writing.' );
     }
     return null;
 }
@@ -255,14 +255,9 @@ function wp_codebox_db_limit( $operation ) {
     return max( 1, min( 100, $limit ) );
 }
 
-function wp_codebox_db_write_allowed( $operation ) {
+function wp_codebox_db_destructive_permission( $operation ) {
     $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
-    return ! empty( $options['allowWrites'] ) || ! empty( $options['allow_writes'] );
-}
-
-function wp_codebox_db_write_bounded( $operation ) {
-    $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
-    return ! empty( $options['bounded'] );
+    return ! empty( $options['destructivePermission'] ) || ! empty( $options['destructive_permission'] );
 }
 
 function wp_codebox_db_write_mutation( $operation ) {
@@ -352,8 +347,8 @@ function wp_codebox_emit_db_result( $operation ) {
 
     try {
         if ( $verb === 'write' ) {
-            if ( ! wp_codebox_db_write_allowed( $operation ) || ! wp_codebox_db_write_bounded( $operation ) ) {
-                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'db-write-guard-required', 'DB writes require options.allowWrites=true and options.bounded=true.' ) );
+            if ( ! wp_codebox_db_destructive_permission( $operation ) ) {
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'db-destructive-permission-required', 'DB writes require options.destructivePermission=true inside an explicit disposable sandbox boundary.' ) );
                 return;
             }
             $table = wp_codebox_db_resolve_table( $operation );
@@ -366,7 +361,7 @@ function wp_codebox_emit_db_result( $operation ) {
             $values = wp_codebox_db_safe_values( isset( $query['values'] ) ? $query['values'] : array(), $allowed_columns );
             $where = wp_codebox_db_safe_values( isset( $query['where'] ) ? $query['where'] : array(), $allowed_columns );
             $affected = 0;
-            $diagnostics = array( array( 'code' => 'reset-isolated-db-mutation', 'message' => 'DB mutation executed through reset-isolated fuzz runtime; affected rows may be zero or unknown.', 'severity' => 'info' ) );
+            $diagnostics = array( array( 'code' => 'disposable-sandbox-db-mutation', 'message' => 'DB mutation executed inside an explicitly disposable fuzz sandbox; affected rows may be zero or unknown.', 'severity' => 'info' ) );
             if ( $mutation === 'insert' && count( $values ) > 0 ) {
                 $result = $wpdb->insert( $table['name'], $values );
                 $affected = $result === false ? null : (int) $wpdb->rows_affected;

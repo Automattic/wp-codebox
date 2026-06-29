@@ -1,6 +1,6 @@
 # WordPress CRUD and DB Operation Contracts
 
-WP Codebox exposes two generic WordPress operation commands for runtimes that need bounded WordPress state access without product-specific adapters.
+WP Codebox exposes two generic WordPress operation commands for runtimes that need WordPress state access without product-specific adapters.
 
 ## `wordpress.crud-operation`
 
@@ -18,9 +18,9 @@ Supported resource kinds in the Playground backend:
 
 Write guardrails:
 
-- `create`, `update`, and `delete` require `options.allowWrites=true`.
+- `create`, `update`, and `delete` require `options.destructivePermission=true` inside an explicit disposable sandbox boundary.
 - `options.dryRun=true` validates and returns planned effects without applying writes.
-- Missing write approval returns `status=error` with `write-guard-required`.
+- Missing destructive permission returns `status=error` with `destructive-permission-required`.
 
 ## `wordpress.db-operation`
 
@@ -35,8 +35,8 @@ Foundational supported operations:
 
 DB write guardrails:
 
-- `write` returns `status=error` with `db-write-unsupported`.
-- Generic DB writes are intentionally not implemented; callers should use `wordpress.crud-operation` with explicit write approval for bounded WordPress core API writes.
+- `write` requires `options.destructivePermission=true` inside an explicit disposable sandbox boundary.
+- Missing destructive permission returns `status=error` with `db-destructive-permission-required`.
 
 Read guardrails:
 

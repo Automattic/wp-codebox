@@ -841,11 +841,11 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
       if (input.payload.type === "db_operation") {
         try {
           const rawOperation = normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, ...input.payload, operation: input.payload.operation ?? "read" })
-          const resetPolicyAllowsMutation = rawOperation.operation === "write" ? fuzzSuiteResetPolicyAllowsMutation(suite, fuzzCase) : undefined
-          const operation = resetPolicyAllowsMutation ? normalizeWordPressDbOperation({
+          const disposableSandboxBoundary = rawOperation.operation === "write" ? fuzzSuiteDisposableSandboxBoundary(suite) : undefined
+          const operation = disposableSandboxBoundary ? normalizeWordPressDbOperation({
             ...rawOperation,
-            options: { ...(rawOperation.options ?? {}), allowWrites: true, resetIsolated: true },
-            metadata: { ...(rawOperation.metadata ?? {}), resetIsolated: true, affectedRowsMayBeZeroOrUnknown: true },
+            options: { ...(rawOperation.options ?? {}), destructivePermission: true },
+            metadata: { ...(rawOperation.metadata ?? {}), disposableSandboxBoundary, affectedRowsMayBeZeroOrUnknown: true },
           }) : rawOperation
           return {
             status: "supported",
@@ -854,7 +854,7 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
               args: [`operation-json=${JSON.stringify(operation)}`],
               timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
             }) as ExecutionSpec,
-            metadata: stripUndefined({ adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.db-operation", resetPolicyAllowsMutation }),
+            metadata: stripUndefined({ adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.db-operation", disposableSandboxBoundary }),
           }
         } catch (error) {
           return unsupportedInputAdapterResolution(fuzzCase, target, error instanceof Error ? error.message : String(error), { adapterKind: "runtime-action", actionType: input.payload.type })

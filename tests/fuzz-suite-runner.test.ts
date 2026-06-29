@@ -517,7 +517,7 @@ const commandBackedDbWrite = await runFuzzSuite(fuzzSuiteContract({
   metadata: { disposableSandboxBoundary },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "db-baseline" },
   target: { kind: "runtime-action" },
-  cases: [{ id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update", bounded: true } } }],
+  cases: [{ id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update" } } }],
 }), {
   resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
   executor: async (spec) => {
@@ -528,7 +528,8 @@ const commandBackedDbWrite = await runFuzzSuite(fuzzSuiteContract({
 assert.equal(commandBackedDbWrite.status, "passed")
 assert.equal(commandBackedDbWrite.cases[0]?.target?.kind, "runtime-action")
 assert.equal(dbWriteOperation?.operation, "write")
-assert.deepEqual((dbWriteOperation?.options as Record<string, unknown> | undefined)?.allowWrites, true)
+assert.deepEqual((dbWriteOperation?.options as Record<string, unknown> | undefined)?.destructivePermission, true)
+assert.deepEqual(((dbWriteOperation?.metadata as Record<string, unknown> | undefined)?.disposableSandboxBoundary as Record<string, unknown> | undefined)?.destructivePermission, true)
 assert.deepEqual((dbWriteOperation?.metadata as Record<string, unknown> | undefined)?.affectedRowsMayBeZeroOrUnknown, true)
 
 const restMatrix = wordpressRestMatrixContract({

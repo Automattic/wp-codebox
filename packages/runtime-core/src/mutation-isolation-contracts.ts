@@ -18,6 +18,10 @@ export interface MutationIsolationArtifact {
   target: string
   method: string
   status?: number
+  sandboxBoundary?: DisposableDestructiveSandboxBoundaryEvidence
+  destructivePermission?: true
+  mutationBoundary?: MutationBoundaryEvidence
+  teardown?: DisposableSandboxTeardownEvidence
   checkpointName?: string
   beforeCheckpoint?: MutationIsolationStepEvidence
   afterObservation?: MutationIsolationStepEvidence
@@ -29,6 +33,29 @@ export interface MutationIsolationArtifact {
   sha256?: string
   bytes?: number
   generatedAt: string
+  metadata?: Record<string, unknown>
+}
+
+export interface DisposableDestructiveSandboxBoundaryEvidence {
+  disposable: true
+  destructivePermission: true
+  teardown: "discard" | "destroy" | (string & {})
+  backend?: string
+  environment?: string
+  hostAccess?: "declared-mounts-only" | (string & {})
+  metadata?: Record<string, unknown>
+}
+
+export interface MutationBoundaryEvidence {
+  permission: "destructive"
+  containment: "disposable-sandbox"
+  artifactEvidence: "captured"
+}
+
+export interface DisposableSandboxTeardownEvidence {
+  intent: "discard" | "destroy"
+  status: "intended" | "discarded" | "destroyed" | (string & {})
+  evidence?: string
   metadata?: Record<string, unknown>
 }
 
