@@ -1078,6 +1078,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "url", description: "Initial preview path or absolute URL to visit when the script omits an initial navigate step.", format: "path or URL" },
       { name: "steps-json", description: "Ordered interaction script: navigate, click, fill, type, press, drag, hover, select, waitFor, evaluate, expect, screenshot, and capture steps. waitFor and screenshot steps support generic painted-readiness waits: painted, frame-painted:<iframe-selector>, and frame-url-painted:<url-fragment>.", format: "JSON array (inline or @<path>)" },
+      { name: "action-corpus-json", description: "Optional wp-codebox/browser-action-corpus/v1 object. The runtime loads the start URL, discovers visible links, buttons, inputs, textareas, and selects, creates deterministic seeded fill/click/select steps from stable descriptors, and writes replayable corpus artifacts.", format: "JSON object" },
       { name: "step-timeout", description: "Per-step timeout applied to each interaction step.", format: "duration, e.g. 5s or 500ms" },
       { name: "timeout", description: "Total-script timeout bounding the whole interaction run.", format: "duration, e.g. 30s or 1500ms" },
       { name: "auth", description: "Optional in-memory browser authentication mode. Use wordpress-admin to bootstrap WordPress admin cookies from PHP without writing token-bearing storage-state artifacts.", format: "wordpress-admin" },
@@ -1086,7 +1087,7 @@ export const commandRegistry = [
       { name: "capture", description: "Comma-separated artifacts to capture after interactions.", format: "steps,console,errors,html,network,screenshot,dom-snapshot" },
       { name: "max-dom-snapshot-elements", description: "Maximum visible elements captured in each screenshot sidecar DOM/style snapshot; defaults to 160.", format: "positive integer" },
     ],
-    outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
+    outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), optional action-corpus.json replay artifacts, named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-actions. The evaluate step additionally requires wordpress.browser-actions.evaluate.",
     validation: browserActionsValidation,
     recipe: true,
