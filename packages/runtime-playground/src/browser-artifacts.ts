@@ -80,6 +80,7 @@ export interface BrowserArtifactFiles {
   review?: string
   screenshot?: string
   domSnapshots?: string[]
+  verifierResults?: string[]
   sourceScreenshot?: string | string[]
   candidateScreenshot?: string | string[]
   diffScreenshot?: string | string[]
@@ -146,6 +147,11 @@ export interface BrowserArtifactSummary {
     elementCount: number
     capturedElements: number
     truncated: boolean
+  }>
+  verifierResults?: Array<{
+    step: { index: number; kind: "callTool"; tool: string }
+    status: "unsupported" | "ok" | "error"
+    artifact: string
   }>
   networkPolicy?: BrowserProbeNetworkPolicySummary
   previewProxy?: PlaygroundPreviewProxyDiagnostics
@@ -765,6 +771,7 @@ export interface BrowserStepRecord {
   target?: BrowserStepScreenshotTarget
   screenshot?: string
   screenshotFallback?: BrowserStepScreenshotFallback
+  verifierResult?: string
   finalUrl?: string
   error?: BrowserProbeErrorRecord
 }
@@ -1017,6 +1024,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
+  verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },
   sourceScreenshot: { kind: "browser-visual-source-screenshot", contentType: "image/png", redact: false },
   candidateScreenshot: { kind: "browser-visual-candidate-screenshot", contentType: "image/png", redact: false },
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },

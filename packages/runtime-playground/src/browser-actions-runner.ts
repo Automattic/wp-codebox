@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, assertRuntimeCommandAllowed, browserInteractionScriptToolCalls, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -79,6 +79,9 @@ export async function runBrowserActionsCommand({
   if (browserInteractionScriptUsesEvaluate(steps)) {
     assertRuntimeCommandAllowed("wordpress.browser-actions.evaluate", runtimeSpec.policy)
   }
+  for (const tool of browserInteractionScriptToolCalls(steps)) {
+    assertRuntimeCommandAllowed(tool, runtimeSpec.policy)
+  }
 
   const capture = runPlan.capture
 
@@ -117,6 +120,7 @@ export async function runBrowserActionsCommand({
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
   const domSnapshots: Array<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> = []
+  const verifierResults: NonNullable<BrowserArtifact["summary"]["verifierResults"]> = []
   let viewport: BrowserProbeViewport | null = null
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
@@ -177,6 +181,18 @@ export async function runBrowserActionsCommand({
         break
       }
       try {
+        if (step.kind === "callTool") {
+          const result = browserToolVerifierUnsupportedResult(step, index, recordStartedAt)
+          const fileName = `verifier-step-${index}.json`
+          await artifactSession.writeJson("verifierResults", fileName, result)
+          const artifactPath = artifactSession.path(fileName)
+          verifierResults.push({ step: result.step, status: result.status, artifact: artifactPath })
+          const serialized = serializeBrowserError("probe-error", new Error(result.error?.message ?? "wordpress.browser-actions callTool is unsupported"))
+          errors.push(serialized)
+          stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath, error: serialized }))
+          pendingError = new Error(result.error?.message ?? "wordpress.browser-actions callTool is unsupported")
+          break
+        }
         const outcome = step.kind === "assertObservation"
           ? { assertion: executeBrowserObservationAssertion(step, consoleMessages, errors, network) }
           : await withBrowserCommandLiveness({
@@ -323,6 +339,7 @@ export async function runBrowserActionsCommand({
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
+        ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
@@ -337,6 +354,7 @@ export async function runBrowserActionsCommand({
         ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
+        ...(verifierResults.length > 0 ? { verifierResults } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
         ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
@@ -371,6 +389,7 @@ export async function runBrowserActionsCommand({
       },
       ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
+      ...(verifierResults.length > 0 ? { verifierResults } : {}),
       viewport,
       summary: artifact.summary,
     })
@@ -398,6 +417,32 @@ export async function runBrowserActionsCommand({
       summary: artifact.summary,
       steps: stepRecords,
     }, null, 2)}\n`,
+  }
+}
+
+export function browserToolVerifierUnsupportedResult(step: BrowserInteractionStep, index: number, startedAt: string): BrowserToolVerifierResult {
+  const tool = typeof step.tool === "string" ? step.tool : "unknown/unknown"
+  return {
+    schema: BROWSER_TOOL_VERIFIER_RESULT_SCHEMA,
+    status: "unsupported",
+    step: { index, kind: "callTool", tool },
+    tool,
+    inputSummary: browserToolVerifierInputSummary(step.input ?? null),
+    error: {
+      code: "browser-call-tool-bridge-unavailable",
+      message: "wordpress.browser-actions validated a callTool step, but this runtime does not yet expose a host-tool execution bridge inside browser automation.",
+    },
+    evidence: {
+      redaction: {
+        policy: "required",
+        sensitive: true,
+        reason: "Browser verifier artifacts can include caller tool names, input shapes, URLs, page state, or external verification diagnostics.",
+      },
+      rawInputSerialized: false,
+      rawSecretsSerialized: false,
+    },
+    startedAt,
+    finishedAt: now(),
   }
 }
 

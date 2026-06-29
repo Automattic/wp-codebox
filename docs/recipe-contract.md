@@ -482,6 +482,29 @@ and the redaction flag.
 }
 ```
 
+Browser interaction scripts support a generic `callTool` verifier step shape for
+caller-owned external checks:
+
+```json
+{
+  "kind": "callTool",
+  "tool": "client/check_status",
+  "input": { "url": "https://example.test/status", "expected": "ready" }
+}
+```
+
+`tool` is the exact caller-provided host tool command name and must be allowed by
+runtime policy using that same command name. `input` must be JSON-serializable.
+WP Codebox treats this as transport and evidence only; callers own the tool and
+any external system behavior. The current Playground browser-actions runtime
+validates and policy-checks `callTool`, then records a redaction-required
+`wp-codebox/browser-tool-verifier-result/v1` artifact with input shape metadata
+and an `unsupported` status because the host-tool execution bridge is not yet
+available inside browser automation. Raw input values and secrets are not
+serialized into that verifier artifact. Polling fields are intentionally not part
+of this narrow primitive yet; callers should model repeated checks outside the
+browser script until the execution bridge lands.
+
 ## Fixture Browser Auth Storage State
 
 Hosts that need an authenticated browser session for a disposable WordPress
