@@ -1,0 +1,30 @@
+{
+  "agent": {
+    "agent_config": {
+      "description": "Generates distinct commerce store concepts.",
+      "mode_models": {
+        "chat": { "provider": "openai", "model": "gpt-5.5" },
+        "pipeline": { "provider": "openai", "model": "gpt-5.5" }
+      }
+    },
+    "label": "Store Idea Agent",
+    "slug": "store-idea-agent"
+  },
+  "agent_package": {
+    "meta": {
+      "exported_by": "wp-site-generator",
+      "source_package": "wp-site-generator",
+      "source_type": "runtime-agent-package"
+    },
+    "slug": "store-idea-agent",
+    "version": "1"
+  },
+  "bundle_slug": "store-idea-agent",
+  "bundle_version": "1",
+  "included": {
+    "flows": ["store-idea-artifact-flow"],
+    "memory": ["agent/SOUL.md"],
+    "pipelines": ["store-idea-artifact-pipeline"]
+  },
+  "schema_version": 1
+}

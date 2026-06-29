@@ -1,0 +1,38 @@
+{
+  "max_items": [],
+  "name": "Store Idea Artifact",
+  "pipeline_slug": "store-idea-artifact-pipeline",
+  "schedule": "manual",
+  "schema_version": 1,
+  "slug": "store-idea-artifact-flow",
+  "steps": [
+    {
+      "disabled_tools": ["list_github_issues", "github_issue_publish"],
+      "handler_configs": [],
+      "prompt_queue": [
+        {
+          "prompt": "Industry: open. Generate one distinct, buildable store concept as a ConceptPacket typed artifact with output_key=concept_packet and schema wp-site-generator/ConceptPacket/v1."
+        }
+      ],
+      "queue_mode": "static",
+      "step_position": 0,
+      "step_type": "ai"
+    },
+    {
+      "disabled_tools": [],
+      "enabled": true,
+      "handler_configs": {
+        "typed_artifact": {
+          "output_key": "concept_packet",
+          "schema": "wp-site-generator/ConceptPacket/v1",
+          "artifact": "ConceptPacket"
+        }
+      },
+      "handler_slugs": ["typed_artifact"],
+      "prompt_queue": [],
+      "queue_mode": "static",
+      "step_position": 1,
+      "step_type": "publish"
+    }
+  ]
+}

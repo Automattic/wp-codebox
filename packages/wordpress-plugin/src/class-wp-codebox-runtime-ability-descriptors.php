@@ -86,13 +86,13 @@ final class WP_Codebox_Runtime_Ability_Descriptors {
 	public static function run_runtime_package( array $context ): array {
 		return array(
 			'label'               => 'Run Runtime Package',
-			'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured backend ability adapter.',
+			'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured runtime provider.',
 			'category'            => 'wp-codebox',
 			'input_schema'        => $context['runtime_package_task_schema'],
 			'output_schema'       => $context['runtime_package_result_schema'],
 			'execute_callback'    => array( WP_Codebox_Abilities::class, 'run_runtime_package' ),
 			'permission_callback' => array( WP_Codebox_Abilities::class, 'can_run_agent_task' ),
-			'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-package', 'backend_adapter' => 'agents-api-runtime-package' ),
+			'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-package', 'backend_adapter' => 'codebox-runtime-package' ),
 		);
 	}
 }
