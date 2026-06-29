@@ -307,7 +307,16 @@ function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "b
 function phpIniContent(entries: Record<string, string>): string {
   const lines = [
     "auto_prepend_file=/internal/shared/auto_prepend_file.php",
-    "memory_limit=256M",
+    // Runtime memory ceiling for all in-sandbox PHP, including artifact
+    // collection. The collect_artifacts phase reads declared/typed artifacts and
+    // runtime snapshot files into memory and base64-encodes them
+    // (file_get_contents + base64_encode + wp_json_encode each hold a copy, so a
+    // single file costs ~2.3x its size in PHP heap). At the old 256M a heavy
+    // fixture could exhaust the limit mid-collection and emit a hard PHP fatal,
+    // sinking the whole batch. 512M keeps collection bounded well below the 2000M
+    // upload/post ceilings already configured below, without uncapping memory.
+    // Recipes can still raise this per-runtime via pluginRuntime.php.iniEntries.
+    "memory_limit=512M",
     "ignore_repeated_errors = 1",
     "error_reporting = E_ALL",
     "display_errors = 1",
