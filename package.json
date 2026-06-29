@@ -108,6 +108,7 @@
     "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:fanout-aggregation-contract-parity": "tsx tests/fanout-aggregation-contract-parity.test.ts",
     "test:runtime-php-snippets": "tsx tests/runtime-php-snippets.test.ts",
+    "test:agent-no-data-machine-loop": "tsx tests/agent-no-data-machine-loop.test.ts",
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
     "test:editor-validate-blocks": "tsx tests/editor-validate-blocks.test.ts",
