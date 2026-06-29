@@ -3,7 +3,7 @@ import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
-import { browserCommandLivenessPolicy, isBrowserCommandLivenessError } from "./browser-liveness.js"
+import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
@@ -232,6 +232,10 @@ export async function runSingleBrowserProbeCommand({
   const stallTimeoutMs = runPlan.stallTimeoutMs
   const wallTimeoutMs = runPlan.wallTimeoutMs
   const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs, idleTimeoutMs: stallTimeoutMs })
+  // Diagnostic providers run external playground commands (e.g. browser-diagnostics-setup) that
+  // can wedge under runtime contention. Bound them with the same wall budget as navigation so a
+  // stuck provider fails fast with a clear error instead of riding the recipe-level timeout.
+  const diagnosticsTimeoutMs = wallTimeoutMs > 0 ? wallTimeoutMs : livenessPolicy.idleTimeoutMs
   const lifecycleSelectors = runPlan.lifecycleSelectors
   const assertions = runPlan.assertions
   const activeDiagnosticProviders = runPlan.diagnosticProviders ?? diagnosticProviders ?? []
@@ -347,7 +351,16 @@ export async function runSingleBrowserProbeCommand({
       await page.addInitScript(prePageScript)
     }
     for (const provider of activeDiagnosticProviders) {
-      diagnosticSetupResults.set(provider.id, await provider.setup({ command, runPlaygroundCommand, server }))
+      const setupResult = await runBoundedBrowserDiagnostic({
+        command,
+        phase: `diagnostics-setup:${provider.id}`,
+        operation: provider.setup({ command, runPlaygroundCommand, server }),
+        timeoutMs: diagnosticsTimeoutMs,
+        onError: (error) => errors.push(serializeBrowserError("probe-error", error)),
+      })
+      if (setupResult.ok) {
+        diagnosticSetupResults.set(provider.id, setupResult.value)
+      }
     }
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
@@ -523,14 +536,21 @@ export async function runSingleBrowserProbeCommand({
     }
     const diagnostics: BrowserProbeCollectedDiagnostic[] = []
     for (const provider of activeDiagnosticProviders) {
-      const diagnostic = await provider.collect({
-        artifactPath: `${browserFilesDirectory}/${provider.id}-diagnostics.json`,
+      const collected = await runBoundedBrowserDiagnostic({
         command,
-        network,
-        runPlaygroundCommand,
-        server,
-        setupResult: diagnosticSetupResults.get(provider.id),
+        phase: `diagnostics-collect:${provider.id}`,
+        operation: provider.collect({
+          artifactPath: `${browserFilesDirectory}/${provider.id}-diagnostics.json`,
+          command,
+          network,
+          runPlaygroundCommand,
+          server,
+          setupResult: diagnosticSetupResults.get(provider.id),
+        }),
+        timeoutMs: diagnosticsTimeoutMs,
+        onError: (error) => errors.push(serializeBrowserError("probe-error", error)),
       })
+      const diagnostic = collected.ok ? collected.value : undefined
       if (diagnostic) {
         diagnostics.push(diagnostic)
         await artifactSession.writeJson(diagnostic.key, diagnostic.fileName, diagnostic.artifact)
@@ -611,6 +631,47 @@ async function closeBrowserBestEffort(browser: import("playwright").Browser): Pr
       timeout.unref()
     }),
   ])
+}
+
+export type BoundedBrowserDiagnosticResult<T> = { ok: true; value: T } | { ok: false; error: Error }
+
+/**
+ * Runs a best-effort browser diagnostic provider operation under a bounded wall timeout.
+ *
+ * Diagnostic providers shell out to playground commands (e.g. wordpress.browser-diagnostics-setup)
+ * that can wedge under runtime contention. Without a bound, a stuck provider rides the recipe-level
+ * timeout — observed as wordpress.capture-html hanging for the full recipe budget while the sibling
+ * navigation path failed fast. This wraps the operation so it fails fast with a clear, non-empty
+ * liveness error that is surfaced through onError as a non-fatal probe error rather than aborting
+ * the capture. The discriminated result distinguishes a legitimately resolved value (including
+ * undefined or false) from a timeout/failure.
+ */
+export async function runBoundedBrowserDiagnostic<T>({
+  command,
+  phase,
+  operation,
+  timeoutMs,
+  onError,
+}: {
+  command: string
+  phase: string
+  operation: Promise<T>
+  timeoutMs: number
+  onError: (error: Error) => void
+}): Promise<BoundedBrowserDiagnosticResult<T>> {
+  try {
+    const value = await withBrowserCommandLiveness({
+      command,
+      phase,
+      operation,
+      policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 },
+    })
+    return { ok: true, value }
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error(String(error))
+    onError(normalized)
+    return { ok: false, error: normalized }
+  }
 }
 
 function browserProbeProfileIds(args: string[]): string[] {

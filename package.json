@@ -124,6 +124,7 @@
     "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
     "test:browser-artifact-session": "tsx tests/browser-artifact-session.test.ts",
     "test:browser-diagnostic-providers": "tsx tests/browser-diagnostic-providers.test.ts",
+    "test:browser-capture-html-diagnostics-reliability": "tsx tests/browser-capture-html-diagnostics-reliability.test.ts",
     "test:browser-provider-permissions": "tsx tests/browser-provider-permissions.test.ts",
     "test:browser-provider-bridge-inheritance": "tsx tests/browser-provider-bridge-inheritance.test.ts",
     "test:fixture-auth-storage-state": "tsx tests/fixture-auth-storage-state.test.ts",

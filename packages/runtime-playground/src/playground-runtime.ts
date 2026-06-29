@@ -859,7 +859,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runHtmlCaptureCommand>>
     try {
-      result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+      result = await runHtmlCaptureCommand({ abortSignal: this.activeExecutionSignal, artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)

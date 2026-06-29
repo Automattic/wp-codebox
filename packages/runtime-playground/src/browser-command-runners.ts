@@ -15,6 +15,7 @@ export { wordpressAdminAuthCookiePhpCode } from "./browser-probe-support.js"
 export { runVisualCompareCommand } from "./browser-visual-compare.js"
 
 export async function runHtmlCaptureCommand(input: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   runtimeSpec: RuntimeCreateSpec
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
