@@ -202,6 +202,7 @@
     "test:wordpress-runtime-actions": "tsx tests/wordpress-runtime-actions.test.ts",
     "test:wordpress-action-auth-contract": "tsx tests/wordpress-action-auth-contract.test.ts",
     "test:wordpress-hotspots-contracts": "tsx tests/wordpress-hotspots-contracts.test.ts",
+    "test:cache-churn-observation-contracts": "tsx tests/cache-churn-observation-contracts.test.ts",
     "test:wordpress-db-contracts": "tsx tests/wordpress-db-contracts.test.ts",
     "test:browser-sdk-facade": "tsx tests/browser-sdk-facade.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
