@@ -1,7 +1,7 @@
 import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
@@ -11,7 +11,7 @@ import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT,
 import { argValue, commaListArg, durationArg, strictBooleanArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
+import { browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { BrowserProbeSessionResultBuilder, browserProbeCaptureSelection } from "./browser-probe-session-result-builder.js"
 
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
@@ -246,6 +246,7 @@ export async function runSingleBrowserProbeCommand({
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
   const network: BrowserProbeNetworkRecord[] = []
+  const webSockets: BrowserProbeWebSocketRecord[] = []
   const networkTasks: Array<Promise<void>> = []
   const checkpoints: BrowserProbeCheckpointRecord[] = []
   const screenshotPath = artifactSession.absolutePath("screenshot.png")
@@ -355,6 +356,7 @@ export async function runSingleBrowserProbeCommand({
       captureConsole: captureSelection.console,
       captureErrors: captureSelection.errors,
       captureNetwork: true,
+      captureWebSocket: capture.has("websocket"),
       consoleMessages,
       errors,
       network,
@@ -362,7 +364,9 @@ export async function runSingleBrowserProbeCommand({
       onConsole: () => progress.mark("console"),
       onNetwork: () => progress.mark("network"),
       onPageError: () => progress.mark("pageerror"),
+      onWebSocket: () => progress.mark("websocket"),
       page,
+      webSockets,
     })
 
     const previewReadinessError = browserPreviewReadinessError(preview)
@@ -491,6 +495,9 @@ export async function runSingleBrowserProbeCommand({
       await artifactSession.writeJson("requestCoverage", "request-coverage.json", browserRequestCoverageArtifact(network, startedAt))
       await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
+    if (capture.has("websocket")) {
+      await artifactSession.writeJson("websocket", "websocket.json", browserProbeWebSocketArtifact(webSockets, startedAt))
+    }
     if (checkpoints.length > 0) {
       await artifactSession.writeJsonLines("checkpoints", "checkpoints.jsonl", checkpoints)
     }
@@ -570,6 +577,7 @@ export async function runSingleBrowserProbeCommand({
       topologyOrigins: topology.origins,
       viewport,
       waitFor,
+      webSockets,
       windowLocationOrigin,
       wordpressDiagnostics: wordpressDiagnostics ? { summary: wordpressDiagnostics.summary } : undefined,
     })

@@ -3,7 +3,8 @@ import { resolve } from "node:path"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
 import { browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
-import { browserRequestCoverageArtifact } from "../packages/runtime-playground/src/browser-probe-support.js"
+import { browserWebSocketPayloadBytes, createBrowserWebSocketRecord } from "../packages/runtime-playground/src/browser-capture-session.js"
+import { browserProbeWebSocketArtifact, browserRequestCoverageArtifact } from "../packages/runtime-playground/src/browser-probe-support.js"
 import { assertJsonFile, assertTextFile, withTempDir } from "../scripts/test-kit.js"
 
 await withTempDir("wp-codebox-browser-artifact-session-", async (artifactRoot) => {
@@ -16,6 +17,7 @@ await session.writeText("html", "snapshot.html", "<html><body>secret</body></htm
 await session.writeJsonLines("console", "console.jsonl", [{ type: "log", text: "visible" }])
 await session.writeJson("requestCoverage", "request-coverage.json", { schema: "wp-codebox/browser-request-coverage/v1", totals: { requests: 1 } })
 await session.writeJson("waterfall", "waterfall.json", { schema: "wp-codebox/browser-waterfall/v1", log: { entries: [] } })
+await session.writeJson("websocket", "websocket.json", { schema: "wp-codebox/browser-websocket/v1", summary: { sockets: 0 } })
 await session.writeJson("summary", "summary.json", { schema: "wp-codebox/browser-probe/v1", ok: true })
 await session.writeBuffer("screenshot", "screenshot.png", Buffer.from([0, 1, 2]))
 
@@ -46,6 +48,10 @@ assert.equal(files.get("files/browser/waterfall.json")?.kind, "browser-waterfall
 assert.equal(files.get("files/browser/waterfall.json")?.contentType, "application/json")
 assert.equal(files.get("files/browser/waterfall.json")?.redaction?.policy, "required")
 
+assert.equal(files.get("files/browser/websocket.json")?.kind, "browser-websocket")
+assert.equal(files.get("files/browser/websocket.json")?.contentType, "application/json")
+assert.equal(files.get("files/browser/websocket.json")?.redaction?.policy, "required")
+
 assert.equal(files.get("files/browser/screenshot.png")?.kind, "browser-screenshot")
 assert.equal(files.get("files/browser/screenshot.png")?.contentType, "image/png")
 assert.deepEqual(files.get("files/browser/screenshot.png")?.redaction, { policy: "none", sensitive: false })
@@ -66,10 +72,11 @@ const review = browserReviewSummary([{
   requestedUrl: "https://example.test/",
   url: "https://example.test/",
   preview: { requestedMode: "local", effectiveMode: "local", localOrigin: "https://example.test", effectiveOrigin: "https://example.test", diagnostics: [] },
-  files: { network: "files/browser/network.jsonl", waterfall: "files/browser/waterfall.json", summary: "files/browser/summary.json" },
-  summary: { consoleMessages: 0, errors: 0, finalUrl: "https://example.test/", htmlSnapshot: false, networkEvents: 1, replayability: "partial", screenshot: false, viewport: null },
+  files: { network: "files/browser/network.jsonl", waterfall: "files/browser/waterfall.json", websocket: "files/browser/websocket.json", summary: "files/browser/summary.json" },
+  summary: { consoleMessages: 0, errors: 0, finalUrl: "https://example.test/", htmlSnapshot: false, networkEvents: 1, webSockets: { sockets: 1, closed: 1, errors: 0, framesSent: 1, framesReceived: 1, bytesSent: 4, bytesReceived: 2 }, replayability: "partial", screenshot: false, viewport: null },
 } satisfies BrowserArtifact])
 assert.equal(review?.probes[0]?.waterfall, "files/browser/waterfall.json")
+assert.equal(review?.probes[0]?.websocket, "files/browser/websocket.json")
 })
 
 const requestCoverage = browserRequestCoverageArtifact([{
@@ -99,3 +106,15 @@ assert.equal(requestCoverage.byResourceType.fetch.responses, 1)
 assert.equal(requestCoverage.byMethod.POST.failures, 1)
 assert.equal(requestCoverage.requests[0].url, "https://example.test/wp-json/wp/v2/posts?search=[redacted]#[redacted]")
 assert.equal(requestCoverage.requests[1].url, "https://api.example.test/submit?token=[redacted]")
+
+const webSocketRecord = createBrowserWebSocketRecord("wss://example.test/socket?token=secret#debug", "2026-01-01T00:00:00.000Z")
+webSocketRecord.framesSent += 1
+webSocketRecord.bytesSent += browserWebSocketPayloadBytes("ping")
+webSocketRecord.framesReceived += 1
+webSocketRecord.bytesReceived += browserWebSocketPayloadBytes(Buffer.from([1, 2]))
+webSocketRecord.closedAt = "2026-01-01T00:00:01.000Z"
+const webSocketArtifact = browserProbeWebSocketArtifact([webSocketRecord], "2026-01-01T00:00:00.000Z")
+
+assert.equal(webSocketArtifact.schema, "wp-codebox/browser-websocket/v1")
+assert.equal(webSocketArtifact.sockets[0]?.url, "wss://example.test/socket?token=[redacted]#[redacted]")
+assert.deepEqual(webSocketArtifact.summary, { sockets: 1, closed: 1, errors: 0, framesSent: 1, framesReceived: 1, bytesSent: 4, bytesReceived: 2 })

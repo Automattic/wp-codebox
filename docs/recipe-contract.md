@@ -616,6 +616,11 @@ short-lived in-memory cookies from the disposable WordPress sandbox; `storage-st
 imports caller-provided reusable state. Supplying both is rejected with structured
 storage-state diagnostics rather than silently preferring one source.
 
+Browser commands accept `capture=websocket` to write a generic
+`browser-websocket` artifact. The artifact records safe connection metadata only:
+redacted websocket URLs, open/close/error timestamps, frame counts, and aggregate
+sent/received byte counts. Frame payloads are not written.
+
 ## Recipe Output Evidence
 
 `recipe-run --json` returns `wp-codebox/recipe-run/v1`. Browser command sidecars
