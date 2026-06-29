@@ -3,8 +3,8 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { fuzzRunnerReadinessContract, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
-import { createWordPressEpisode, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
+import { fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { createWordPressEpisode, createWordPressFuzzSuiteRuntimeActionExecutor, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -45,6 +45,41 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   })
   const { schema: _schema, ...resultFields } = result
   writeJson({ schema: FUZZ_SUITE_RESULT_SCHEMA, ...resultFields })
+  return 0
+}
+
+export async function runFuzzMinimizeCaseCommand(args: string[]): Promise<number> {
+  if (isHelp(args)) {
+    printFuzzMinimizeCaseHelp()
+    return 0
+  }
+
+  const options = await parsePublicRuntimeCommandOptions(args)
+  if (options.dryRun) {
+    writeJson({ schema: "wp-codebox/fuzz-minimize-case-result/v1", status: "blocked", caseId: stringValue(objectOption(options.input.case)?.id) ?? "replay-case", originalSteps: 0, minimizedSteps: 0, diagnostics: [{ severity: "error", code: "fuzz_minimize_case_dry_run_not_executable", message: "fuzz-minimize-case requires real replay execution; dry-run cannot prove that a case is reduced." }], attempts: [] })
+    return 0
+  }
+
+  const requirements = fuzzSuiteRuntimeRequirements(options.input)
+  const episode = await createWordPressEpisode({
+    runtime: {
+      environment: { kind: "wordpress", name: "WordPress", blueprint: objectOption(requirements?.blueprint) ?? { steps: [] } },
+      policy: { network: "allow", filesystem: "sandbox", commands: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands ?? [], secrets: "none", approvals: "never" },
+      runtimeEnv: runtimeRequirementEnv(undefined, requirements?.runtime_env, requirements?.bench_env),
+      artifactsDirectory: options.artifactsDirectory,
+      metadata: { public_cli_command: "fuzz-minimize-case" },
+    },
+  })
+  try {
+    const runtimeActionExecutor = createWordPressFuzzSuiteRuntimeActionExecutor(episode)
+    const result = await minimizeFuzzCase({ replayCase: options.input }, {
+      runtimeActionExecutor,
+      metadata: { public_cli_command: "fuzz-minimize-case" },
+    })
+    writeJson(result)
+  } finally {
+    await episode.close()
+  }
   return 0
 }
 
@@ -641,6 +676,10 @@ function printFuzzSuiteHelp(): void {
 
 function printFuzzDescriptorHelp(): void {
   process.stdout.write("Usage: wp-codebox fuzz descriptor [--format=json]\n\nPrints the public wp-codebox/wordpress-fuzz-runtime-contract/v1 descriptor for orchestrator consumers.\n")
+}
+
+function printFuzzMinimizeCaseHelp(): void {
+  process.stdout.write(`Usage: wp-codebox fuzz-minimize-case --input-file <path> [--format=json] [--dry-run]\n\nMinimizes a wp-codebox/fuzz-replay-case-input/v1 runtime-action sequence by replaying candidate subsequences through the public fuzz-suite runner.\n`)
 }
 
 function printFuzzReadinessHelp(): void {

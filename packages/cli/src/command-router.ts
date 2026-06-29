@@ -11,6 +11,7 @@ const cliCommandRoutes = {
   "agent-task-run": "agentTaskRun",
   "run-agent-task": "agentTaskRun",
   "run-fuzz-suite": "runFuzzSuite",
+  "fuzz-minimize-case": "fuzzMinimizeCase",
   "run-wordpress-workload": "runWordPressWorkload",
   fuzz: {
     descriptor: "fuzzDescriptor",

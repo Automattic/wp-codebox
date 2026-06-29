@@ -36,7 +36,7 @@ import {
   queryObservationArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
   fuzzArtifactBundleContract,
-  fuzzMinimizeUnsupportedCapability,
+  fuzzMinimizeSupportedCapability,
   fuzzReplayCaseRef,
   invokeWordPressCronEvent,
   invokeWordPressHook,
@@ -1186,7 +1186,7 @@ async function writeFuzzArtifactBundle(input: {
     caseResultStreamRef: caseResultStream.ref,
     replayCaseRefs,
     hotspotRefs: [wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref],
-    minimize: fuzzMinimizeUnsupportedCapability({ reason: "Fuzz case minimization is not implemented by this runner contract yet.", requiredArtifacts: replayCaseRefs.map((ref) => ref.path) }),
+    minimize: fuzzMinimizeSupportedCapability({ operation: "fuzz-minimize-case", requiredArtifacts: replayCaseRefs.map((ref) => ref.path), metadata: { supportedReplayShape: "runtime-action sequence replay" } }),
     artifactRefs,
     metadata: { storage: stripUndefined({ schema: storage.schema, pathPrefix: storage.pathPrefix, publicUrlRoot: storage.publicUrlRoot }) },
   })
