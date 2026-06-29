@@ -21,7 +21,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs, materializePlaygroundStagedInputs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, runCacheChurnObservationCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1504,6 +1504,16 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
+  async runCacheChurnObservation(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runCacheChurnObservationCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
   async runRuntimeDiscovery(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runRuntimeDiscoveryCommand({
@@ -1569,6 +1579,16 @@ class PlaygroundRuntime implements Runtime {
       schema: "wp-codebox/wordpress-admin-page-inventory/v1",
       server,
       surface: "admin",
+    })
+  }
+
+  async runAdminActionInventory(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runAdminActionInventoryCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
     })
   }
 

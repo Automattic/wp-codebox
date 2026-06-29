@@ -48,6 +48,9 @@ unless this index says otherwise.
   packaging and invocation.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
   shape without making benchmark scoring a core runtime concern.
+- [Query observation contract](./query-observation-contract.md) documents
+  `wp-codebox/query-observation/v1` SQL/query artifacts for fuzz and runtime
+  scale-waste discovery.
 - [WordPress admin action contract](./wordpress-admin-action-contract.md)
   documents disposable destructive admin/AJAX/admin-post execution and explicit
   unsupported editor/browser random-walk descriptors.

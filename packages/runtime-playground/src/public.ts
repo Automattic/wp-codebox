@@ -9,6 +9,7 @@ import {
   artifactStoragePath,
   resolveArtifactPath,
   WORDPRESS_HOTSPOTS_SCHEMA,
+  QUERY_OBSERVATION_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
   createWordPressRuntimeCheckpoint,
@@ -32,6 +33,7 @@ import {
   normalizeWordPressDbOperation,
   visitWordPressPage,
   wordpressHotspotsArtifact,
+  queryObservationArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
   fuzzArtifactBundleContract,
   fuzzMinimizeUnsupportedCapability,
@@ -47,6 +49,9 @@ import {
   sandboxIsolationProof,
   sandboxIsolationProofDigest,
   wordpressRollbackArtifact,
+  wordpressDbWriteSetArtifact,
+  WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND,
+  WORDPRESS_DB_WRITE_SET_SCHEMA,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
@@ -80,10 +85,16 @@ import {
   type Snapshot,
   type WordPressRollbackArtifact,
   type WordPressHotspotObservationInput,
+  type QueryObservationArtifact,
+  type QueryObservationFingerprint,
+  type QueryObservationOperation,
+  type QueryObservationTableRef,
   type DisposableDestructiveSandboxBoundaryEvidence,
   type DisposableSandboxTeardownEvidence,
   type SandboxIsolationProof,
   type SandboxIsolationProofStepEvidence,
+  type WordPressDbWriteSetArtifact,
+  type WordPressDbWriteSetEntry,
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
@@ -155,6 +166,10 @@ export {
   type WordPressHotspotEntry,
   type WordPressHotspotIdentifier,
   type WordPressHotspotMetric,
+  type QueryObservationArtifact,
+  type QueryObservationFingerprint,
+  type QueryObservationDuplicateGroup,
+  type QueryObservationTableRef,
 } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundRuntimeBackendOptions } from "./playground-runtime.js"
@@ -395,6 +410,7 @@ async function executeDisposableSandboxDbMutation(
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "db_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     operation,
     mappedCommand: step.execution.command,
@@ -405,6 +421,7 @@ async function executeDisposableSandboxDbMutation(
     executionId: step.execution.id,
     stepId: step.id,
     mutationIsolationArtifact: artifactWithDigest,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
     mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   }
@@ -429,6 +446,7 @@ async function executeDisposableSandboxCrudMutation(
   const target = crudTarget(input.action)
   const action = { ...input.action, options: { ...(input.action.options ?? {}), destructivePermission: true }, metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary } }
   const step = await runWordPressCrudOperation(episode, action, input.action.timeout_ms)
+  const stdout = parseJsonRecord(step.execution.stdout)
   const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "crud_operation",
@@ -439,21 +457,23 @@ async function executeDisposableSandboxCrudMutation(
     mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
     teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    affectedIdentifiers: crudAffectedIdentifiers(input.action, parseJsonRecord(step.execution.stdout)),
+    affectedIdentifiers: crudAffectedIdentifiers(input.action, stdout),
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "crud_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     stepId: step.id,
     executionId: step.execution.id,
     mappedCommand: step.execution.command,
     args: step.execution.args,
     exitCode: step.execution.exitCode,
-    stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout,
+    stdout: stdout ?? step.execution.stdout,
     stderr: step.execution.stderr,
     mutationIsolationArtifact: artifactWithDigest,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
   }
   return { schema: "wp-codebox/runtime-action-observation/v1", type: input.action.type, status: "ok", action: input.action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
@@ -649,6 +669,54 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
+function dbWriteSetArtifactFromCommandResult(input: { result: unknown; suiteId: string; caseId: string; action: string; target: string; artifactPath: string; artifactRefs?: FuzzSuiteArtifactRef[] }): (WordPressDbWriteSetArtifact & { artifactPath: string; persisted: false; sha256: string; bytes: number }) | undefined {
+  const result = recordValue(input.result)
+  const stdout = recordValue(result?.stdout)
+  const metadata = recordValue(result?.metadata)
+  const stdoutMetadata = recordValue(stdout?.metadata)
+  const performance = recordValue(result?.performance ?? stdout?.performance)
+  const database = recordValue(performance?.database)
+  const candidate = recordValue(metadata?.dbWriteSet ?? metadata?.db_write_set ?? stdoutMetadata?.dbWriteSet ?? stdoutMetadata?.db_write_set ?? result?.dbWriteSet ?? result?.db_write_set ?? stdout?.dbWriteSet ?? stdout?.db_write_set ?? database?.dbWriteSet ?? database?.db_write_set)
+  const entries = dbWriteSetEntries(candidate?.entries ?? database?.writeSet ?? database?.write_set)
+  if (entries.length === 0) return undefined
+  const repeatedWrites = dbWriteSetEntries(candidate?.repeatedWrites ?? candidate?.repeated_writes ?? database?.repeatedWrites ?? database?.repeated_writes).filter((entry) => (entry.repeatedWritesToSameKey ?? 0) > 1)
+  const artifact = wordpressDbWriteSetArtifact({
+    suiteId: input.suiteId,
+    caseId: input.caseId,
+    action: input.action,
+    target: input.target,
+    entries,
+    repeatedWrites,
+    artifactRefs: input.artifactRefs,
+    metadata: stripUndefined({ source: "runtime-command-result", resultStatus: stringValue(result?.status), command: stringValue(result?.command), queryCount: typeof database?.queryCount === "number" ? database.queryCount : undefined, writeSetTruncated: candidate?.metadata ? recordValue(candidate.metadata)?.writeSetTruncated : database?.writeSetTruncated }),
+  })
+  const artifactWithRef = { ...artifact, artifactPath: input.artifactPath, persisted: false as const }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  return { ...artifactWithRef, sha256: createHash("sha256").update(content).digest("hex"), bytes: Buffer.byteLength(content) }
+}
+
+function dbWriteSetEntries(value: unknown): WordPressDbWriteSetEntry[] {
+  return arrayValue(value).flatMap((item) => {
+    const entry = recordValue(item)
+    const table = stringValue(entry?.table)
+    const operation = stringValue(entry?.operation)?.toLowerCase()
+    if (!table || (operation !== "insert" && operation !== "update" && operation !== "delete" && operation !== "replace")) return []
+    return [stripUndefined({
+      table,
+      operation: operation as WordPressDbWriteSetEntry["operation"],
+      rowsAffected: nullableNumber(entry?.rowsAffected ?? entry?.rows_affected),
+      rowCountBefore: nullableNumber(entry?.rowCountBefore ?? entry?.row_count_before),
+      rowCountAfter: nullableNumber(entry?.rowCountAfter ?? entry?.row_count_after),
+      resource: recordValue(entry?.resource),
+      object: recordValue(entry?.object) as WordPressDbWriteSetEntry["object"],
+      key: stringValue(entry?.key),
+      repeatedWritesToSameKey: typeof entry?.repeatedWritesToSameKey === "number" ? entry.repeatedWritesToSameKey : (typeof entry?.repeated_writes_to_same_key === "number" ? entry.repeated_writes_to_same_key : undefined),
+      source: recordValue(entry?.source),
+      metadata: recordValue(entry?.metadata),
+    })]
+  })
+}
+
 export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteCommandExecutor {
   return {
     async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
@@ -717,7 +785,7 @@ async function executeDisposableSandboxRestMutation(
   const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
-  const observation = await requestWordPressRest(episode, input.action)
+  const observation = await requestWordPressRest(episode, { ...input.action, capture: { ...(input.action.capture ?? {}), queries: true }, enableQueryCapture: true })
   if (!observation.step) {
     throw new Error(`Destructive REST mutation ${input.case.id} did not return runtime step evidence.`)
   }
@@ -749,9 +817,11 @@ async function executeDisposableSandboxRestMutation(
     sha256: mutationArtifactDigest(artifactWithRef),
     bytes: Buffer.byteLength(content),
   }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: observation.data, suiteId: input.suite.id, caseId: input.case.id, action: "rest_request", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: observation.step ? fuzzSuiteStepArtifactRefs(observation.step) : undefined })
   const data = {
     ...observation.data,
     ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
   }
 
@@ -993,13 +1063,15 @@ async function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelo
   const content = `${JSON.stringify(artifact, null, 2)}\n`
   const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
   const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
+  const queryObservations = queryObservationArtifactsFromFuzzResult(result)
   const durableBundle = options.artifactStorage
-    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
+    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, queryObservations, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
     : undefined
   const artifactMetadata = {
     wordpressHotspots: durableBundle?.wordpressHotspots ?? inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
     fuzzObservationSet: durableBundle?.fuzzObservationSet ?? inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
     fuzzHotspotSet: durableBundle?.fuzzHotspotSet ?? inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
+    queryObservations: durableBundle?.queryObservations ?? inlineQueryObservationMetadata(queryObservations),
     fuzzBundle: durableBundle?.contract,
   }
   const artifactRefs = dedupeFuzzSuiteArtifactRefs([...(result.artifactRefs ?? []), ...(durableBundle?.artifactRefs ?? [])])
@@ -1028,6 +1100,7 @@ async function writeFuzzArtifactBundle(input: {
   artifact: unknown
   observationSet: unknown
   hotspotSet: unknown
+  queryObservations: QueryObservationArtifact[]
   content: string
   observationContent: string
   hotspotContent: string
@@ -1045,10 +1118,30 @@ async function writeFuzzArtifactBundle(input: {
   const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
   const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
   const replayCaseRefs: FuzzReplayCaseRef[] = []
+  const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
 
   artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
 
+  for (const [index, observation] of input.queryObservations.entries()) {
+    const path = `files/query-observations/${safeArtifactSegment(observation.caseId ?? "case")}-${index + 1}.json`
+    const content = `${JSON.stringify(observation, null, 2)}\n`
+    const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "query-observation", QUERY_OBSERVATION_SCHEMA, content, observation)
+    artifactRefs.push(written.ref)
+    queryObservationArtifacts.push(queryObservationArtifactMetadata(observation, written.ref))
+  }
+
   for (const fuzzCase of input.result.cases) {
+    const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
+    const caseArtifactRefs = [...(fuzzCase.artifactRefs ?? [])]
+    if (dbWriteSet) {
+      const path = `files/db-write-sets/${safeArtifactSegment(fuzzCase.id)}.json`
+      const content = `${JSON.stringify({ ...dbWriteSet, artifactPath: path, persisted: true }, null, 2)}\n`
+      const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND, WORDPRESS_DB_WRITE_SET_SCHEMA, content, dbWriteSet)
+      artifactRefs.push(written.ref)
+      caseArtifactRefs.push(written.ref)
+      fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
+      fuzzCase.metadata = { ...fuzzCase.metadata, dbWriteSet: { ...dbWriteSet, artifactPath: written.ref.path, persisted: true, sha256: written.ref.sha256, bytes: written.ref.bytes } }
+    }
     const replayInput = {
       schema: "wp-codebox/fuzz-replay-case-input/v1",
       suite: input.result.suite,
@@ -1104,6 +1197,13 @@ async function writeFuzzArtifactBundle(input: {
     wordpressHotspots: wordpressHotspots.metadata,
     fuzzObservationSet: fuzzObservationSet.metadata,
     fuzzHotspotSet: fuzzHotspotSet.metadata,
+    queryObservations: {
+      kind: "query-observation-set",
+      persisted: true,
+      count: queryObservationArtifacts.length,
+      metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" },
+      observations: queryObservationArtifacts,
+    },
     writeResult: async (content: string) => {
       const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, resultPath, "fuzz-suite-result", input.result.schema, content, undefined)
       contract.resultRef = written.ref
@@ -1135,6 +1235,137 @@ function fuzzArtifactRef(storage: RuntimeArtifactStorageDescriptor, bundlePath: 
     name: kind,
     metadata: stripUndefined({ storage: "runtime-artifact-layout", publicUrl: storage.publicUrlRoot ? `${storage.publicUrlRoot}/${artifactPath}` : undefined }),
   })
+}
+
+function queryObservationArtifactsFromFuzzResult(result: FuzzSuiteResultEnvelope): QueryObservationArtifact[] {
+  return result.cases.flatMap((fuzzCase) => {
+    const execution = recordValue(fuzzCase.metadata?.execution)
+    const executionResult = recordValue(execution?.result)
+    const json = recordValue(executionResult?.json)
+    const command = stringValue(execution?.command)
+    const target = fuzzCase.target?.id ?? fuzzCase.target?.entrypoint ?? stringValue(json?.path ?? json?.route ?? json?.url)
+    const direct = queryObservationFromDatabaseRecord({ result, fuzzCase, command, target, database: recordValue(recordValue(json?.performance)?.database) ?? recordValue(json?.database) ?? recordValue(json?.metrics), source: "fuzz-case-execution" })
+    return [direct, ...queryObservationsFromBenchResult({ result, fuzzCase, command, target, json })].filter((item): item is QueryObservationArtifact => Boolean(item))
+  })
+}
+
+function queryObservationFromDatabaseRecord(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; database?: Record<string, unknown>; source: string }): QueryObservationArtifact | undefined {
+  const database = input.database
+  if (!database) return undefined
+  const queryCount = numberValue(database.queryCount ?? database.query_count ?? database.queries)
+  const totalTimeMs = nullableNumber(database.totalTimeMs ?? database.total_time_ms ?? database.queryTimeMs ?? database.query_time_ms)
+  const fingerprints = arrayValue(database.fingerprints ?? database.queryFingerprints ?? database.query_fingerprints).flatMap(normalizeQueryFingerprint)
+  if (queryCount === undefined && totalTimeMs === undefined && fingerprints.length === 0) return undefined
+  return queryObservationArtifact({
+    generatedAt: new Date().toISOString(),
+    source: input.source,
+    suiteId: input.result.suite.id,
+    caseId: input.fuzzCase.id,
+    actionId: stringValue(recordValue(input.fuzzCase.metadata?.replay)?.executionId),
+    command: input.command,
+    target: input.target,
+    status: stringValue(database.status) === "unavailable" ? "unavailable" : "captured",
+    reason: stringValue(database.reason),
+    queryCount,
+    totalTimeMs,
+    fingerprints,
+    artifactRefs: input.fuzzCase.artifactRefs?.map((ref) => ({ path: ref.path, kind: ref.kind, contentType: ref.contentType, sha256: ref.sha256, bytes: ref.bytes, name: ref.name, metadata: ref.metadata })),
+    metadata: { runner: "wp-codebox", timingStatus: stringValue(database.timingStatus ?? database.timing_status), timingReason: stringValue(database.timingReason ?? database.timing_reason) },
+  })
+}
+
+function queryObservationsFromBenchResult(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; json?: Record<string, unknown> }): QueryObservationArtifact[] {
+  if (input.json?.schema !== "wp-codebox/bench-results/v1") return []
+  const out: QueryObservationArtifact[] = []
+  for (const scenario of arrayValue(input.json.scenarios)) {
+    const scenarioRecord = recordValue(scenario)
+    const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
+    if (profile?.schema !== "wp-codebox/wordpress-rest-db-query-profile/v1") continue
+    for (const profileCase of arrayValue(profile.cases)) {
+      const caseRecord = recordValue(profileCase)
+      const summary = recordValue(caseRecord?.summary)
+      const database = {
+        status: "captured",
+        queryCount: numberValue(summary?.query_count),
+        totalTimeMs: numberValue(summary?.total_time_ms),
+        fingerprints: arrayValue(caseRecord?.queries ?? caseRecord?.fingerprints ?? caseRecord?.samples),
+      }
+      const observation = queryObservationFromDatabaseRecord({
+        result: input.result,
+        fuzzCase: input.fuzzCase,
+        command: input.command ?? "wordpress.run-workload",
+        target: stringValue(caseRecord?.path) ?? stringValue(caseRecord?.route) ?? input.target,
+        database,
+        source: "rest-db-query-profiler",
+      })
+      if (observation) {
+        out.push({ ...observation, metadata: { ...observation.metadata, scenarioId: stringValue(scenarioRecord?.id), profileCaseId: stringValue(caseRecord?.case_id) } })
+      }
+    }
+  }
+  return out
+}
+
+function normalizeQueryFingerprint(value: unknown): QueryObservationFingerprint[] {
+  const record = recordValue(value)
+  if (!record) return []
+  const fingerprint = stringValue(record.fingerprint ?? record.sql ?? record.query)
+  if (!fingerprint) return []
+  const operation = normalizeQueryOperation(stringValue(record.operation) ?? queryOperationFromFingerprint(fingerprint))
+  return [{
+    fingerprint,
+    hash: stringValue(record.hash),
+    count: numberValue(record.count) ?? 1,
+    operation,
+    tables: normalizeQueryTables(record.tables, operation, fingerprint),
+    sampleMs: nullableNumber(record.sampleMs ?? record.sample_ms),
+    totalTimeMs: nullableNumber(record.totalTimeMs ?? record.total_time_ms),
+    caller: stringValue(record.caller ?? record.source),
+    rowCount: nullableNumber(record.rowCount ?? record.row_count),
+    rowsAffected: nullableNumber(record.rowsAffected ?? record.rows_affected ?? record.affectedRows ?? record.affected_rows),
+  }]
+}
+
+function normalizeQueryTables(input: unknown, operation: QueryObservationOperation | undefined, fingerprint: string): QueryObservationTableRef[] {
+  const fromInput = arrayValue(input).flatMap((item): QueryObservationTableRef[] => {
+    const record = recordValue(item)
+    const name = typeof item === "string" ? item : stringValue(record?.name ?? record?.table)
+    return name ? [{ name, source: (stringValue(record?.source) as QueryObservationTableRef["source"] | undefined) ?? "recorder", operation: normalizeQueryOperation(stringValue(record?.operation)) ?? operation }] : []
+  })
+  return fromInput.length > 0 ? fromInput : queryTablesFromFingerprint(fingerprint, operation)
+}
+
+function queryTablesFromFingerprint(fingerprint: string, operation: QueryObservationOperation | undefined): QueryObservationTableRef[] {
+  const tables = new Set<string>()
+  for (const pattern of [/\bfrom\s+`?([a-zA-Z0-9_]+)`?/gi, /\bjoin\s+`?([a-zA-Z0-9_]+)`?/gi, /\binto\s+`?([a-zA-Z0-9_]+)`?/gi, /\bupdate\s+`?([a-zA-Z0-9_]+)`?/gi, /\btable\s+`?([a-zA-Z0-9_]+)`?/gi]) {
+    for (const match of fingerprint.matchAll(pattern)) {
+      if (match[1]) tables.add(match[1])
+    }
+  }
+  return [...tables].map((name) => ({ name, source: "fingerprint" as const, operation }))
+}
+
+function queryOperationFromFingerprint(fingerprint: string): QueryObservationOperation | undefined {
+  return normalizeQueryOperation(fingerprint.trim().split(/\s+/, 1)[0])
+}
+
+function normalizeQueryOperation(value: string | undefined): QueryObservationOperation | undefined {
+  const operation = value?.toLowerCase()
+  return operation && ["select", "insert", "update", "delete", "replace", "create", "alter", "drop", "truncate"].includes(operation) ? operation as QueryObservationOperation : operation ? "other" : undefined
+}
+
+function queryObservationArtifactMetadata(observation: QueryObservationArtifact, ref: FuzzSuiteArtifactRef): Record<string, unknown> {
+  return stripUndefined({ caseId: observation.caseId, actionId: observation.actionId, command: observation.command, target: observation.target, queryCount: observation.queryCount, totalTimeMs: observation.totalTimeMs, ref })
+}
+
+function inlineQueryObservationMetadata(observations: QueryObservationArtifact[]): Record<string, unknown> {
+  return {
+    kind: "query-observation-set",
+    persisted: false,
+    count: observations.length,
+    metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
+    observations: observations.map((observation) => stripUndefined({ caseId: observation.caseId, actionId: observation.actionId, command: observation.command, target: observation.target, queryCount: observation.queryCount, totalTimeMs: observation.totalTimeMs })),
+  }
 }
 
 function pushHotspotObservation(out: WordPressHotspotObservationInput[], observation: PerformanceObservation | undefined, artifactRefs: FuzzSuiteArtifactRef[] = [], metadata: Record<string, unknown> = {}): void {
@@ -1473,6 +1704,10 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function nullableNumber(value: unknown): number | null | undefined {
+  return value === null ? null : numberValue(value)
 }
 
 function numericRecord(value: Record<string, unknown>): Record<string, number> | undefined {
