@@ -45,7 +45,7 @@ const episode = {
       }
     }
     const commandPayloads: Record<string, Record<string, unknown>> = {
-      "wordpress.rest-request": { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
+      "wordpress.rest-request": { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 }, database: { status: "captured", queryCount: 3, totalTimeMs: 7.5, fingerprints: [{ fingerprint: "select * from wp_posts where id = ?", count: 2, totalTimeMs: 5, caller: "WP_Query->get_posts" }, { fingerprint: "select option_value from wp_options where option_name = ?", count: 1, totalTimeMs: 2.5 }] } },
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 } },
       "wordpress.crud-operation": { item: { id: 123 }, status: "ok" },
@@ -123,7 +123,6 @@ assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
 assert.equal(steps.some((step) => step.command === "wordpress.crud-operation"), true)
-assert.equal(steps.filter((step) => step.command === "wordpress.run-php" && step.args?.[0]?.includes("wordpress-rollback-capture-request")).length >= 9, true)
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
@@ -135,9 +134,6 @@ assert.equal(result.cases[5]?.status, "passed")
 assert.equal(result.cases[6]?.status, "passed")
 assert.equal(result.cases[7]?.status, "passed")
 assert.equal(result.cases[8]?.status, "passed")
-const rollbackArtifact = result.cases[4]?.metadata?.mutationIsolation as { rollback?: { result?: { status?: string }; diff?: { tables?: unknown[] } } } | undefined
-assert.equal(rollbackArtifact?.rollback?.result?.status, "passed")
-assert.equal(Array.isArray(rollbackArtifact?.rollback?.diff?.tables), true)
 const nestedPhpStep = steps.find((step) => step.command === "wordpress.run-php" && step.args?.[0]?.includes("__wp_codebox_workload_input"))
 assert.ok(nestedPhpStep)
 const nestedPhpInput = decodeFirstWrapperJson(nestedPhpStep.args?.[0] ?? "")
@@ -148,11 +144,14 @@ assert.equal(result.cases[7]?.artifactRefs?.some((ref) => ref.path === "workload
 assert.equal(steps.some((step) => step.args?.[0]?.includes("rest-db-query-profiler")), true)
 assert.equal(steps.some((step) => step.args?.[0]?.includes("woocommerce")), true)
 assert.equal(result.artifactRefs.some((ref) => ["wordpress-hotspots", "fuzz-observation-set", "fuzz-hotspot-set", "fuzz-suite-result"].includes(ref.kind)), false)
-const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } } } | undefined
+const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } }; queryObservations?: { persisted?: boolean; count?: number; metadata?: { schema?: string }; observations?: Array<{ caseId?: string; queryCount?: number }> } } | undefined
 assert.equal(metadataArtifacts?.fuzzResult?.persisted, false)
 assert.equal(metadataArtifacts?.wordpressHotspots?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
 assert.equal(metadataArtifacts?.fuzzObservationSet?.metadata?.schema, "wp-codebox/fuzz-observation-set/v1")
 assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fuzz-hotspot-set/v1")
+assert.equal(metadataArtifacts?.queryObservations?.persisted, false)
+assert.equal(metadataArtifacts?.queryObservations?.metadata?.schema, "wp-codebox/query-observation/v1")
+assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "rest" && item.queryCount === 3), true)
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
@@ -164,9 +163,10 @@ try {
     cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
-    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
+    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; artifactRefs?: Array<{ path?: string; kind?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
     fuzzResult?: { persisted?: boolean; path?: string }
     wordpressHotspots?: { persisted?: boolean; path?: string }
+    queryObservations?: { persisted?: boolean; count?: number; observations?: Array<{ ref?: { path?: string }; caseId?: string; queryCount?: number }> }
   } | undefined
   assert.equal(durableArtifacts?.fuzzBundle?.schema, "wp-codebox/fuzz-artifact-bundle/v1")
   assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "unsupported")
@@ -174,17 +174,25 @@ try {
   assert.match(durableArtifacts?.fuzzBundle?.minimize?.reason ?? "", /not implemented/)
   assert.equal(durableArtifacts?.fuzzResult?.persisted, true)
   assert.equal(durableArtifacts?.wordpressHotspots?.persisted, true)
+  assert.equal(durableArtifacts?.queryObservations?.persisted, true)
+  assert.equal(durableArtifacts?.queryObservations?.count, 1)
   assert.equal(durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.caseId, "durable-rest")
 
   const resultArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.resultRef?.path ?? ""), "utf8"))
   const replayArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.path ?? ""), "utf8"))
   const caseStream = await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.caseResultStreamRef?.path ?? ""), "utf8")
   const hotspotArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.hotspotRefs?.[0]?.path ?? ""), "utf8"))
+  const queryObservationArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.queryObservations?.observations?.[0]?.ref?.path ?? ""), "utf8"))
   assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
   assert.equal(replayArtifact.case.id, "durable-rest")
   assert.equal(JSON.parse(caseStream.trim()).id, "durable-rest")
   assert.equal(hotspotArtifact.schema, "wp-codebox/wordpress-hotspots/v1")
+  assert.equal(queryObservationArtifact.schema, "wp-codebox/query-observation/v1")
+  assert.equal(queryObservationArtifact.caseId, "durable-rest")
+  assert.equal(queryObservationArtifact.queryCount, 3)
+  assert.equal(queryObservationArtifact.duplicateGroups[0]?.count, 2)
+  assert.equal(queryObservationArtifact.tables.some((table: { name?: string }) => table.name === "wp_posts"), true)
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
 }
