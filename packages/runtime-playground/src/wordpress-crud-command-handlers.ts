@@ -43,6 +43,52 @@ function wp_codebox_crud_destructive_permission( $operation ) {
     return ! empty( $options['destructivePermission'] ) || ! empty( $options['destructive_permission'] );
 }
 
+function wp_codebox_crud_sandbox_boundary( $operation ) {
+    $metadata = isset( $operation['metadata'] ) && is_array( $operation['metadata'] ) ? $operation['metadata'] : array();
+    $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
+    foreach ( array( $metadata['disposableSandboxBoundary'] ?? null, $metadata['disposable_sandbox_boundary'] ?? null, $options['sandboxBoundary'] ?? null, $options['sandbox_boundary'] ?? null ) as $boundary ) {
+        if ( is_array( $boundary ) ) {
+            return $boundary;
+        }
+    }
+    return array();
+}
+
+function wp_codebox_crud_has_sandbox_boundary( $operation ) {
+    $boundary = wp_codebox_crud_sandbox_boundary( $operation );
+    if ( empty( $boundary ) ) {
+        return false;
+    }
+    $disposable = ! empty( $boundary['disposable'] );
+    $permission = ! empty( $boundary['destructivePermission'] ) || ! empty( $boundary['destructive_permission'] );
+    $teardown = isset( $boundary['teardown'] ) ? (string) $boundary['teardown'] : '';
+    return $disposable && $permission && in_array( $teardown, array( 'discard', 'destroy', 'reset' ), true );
+}
+
+function wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item = null ) {
+    if ( ! in_array( $verb, array( 'create', 'update', 'delete' ), true ) ) {
+        return array();
+    }
+    $artifact_kind = $verb === 'delete' ? 'delete-boundary-artifact' : 'mutation-isolation-artifact';
+    $schema = $verb === 'delete' ? 'wp-codebox/delete-boundary-artifact/v1' : 'wp-codebox/mutation-isolation-artifact/v1';
+    $payload = array(
+        'schema' => $schema,
+        'operation' => 'wordpress.crud-operation',
+        'mutation' => $verb,
+        'resource' => $resource,
+        'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ),
+        'destructivePermission' => wp_codebox_crud_destructive_permission( $operation ),
+        'result' => $item,
+    );
+    return array( array(
+        'name' => $artifact_kind,
+        'kind' => $artifact_kind,
+        'path' => 'files/wordpress-crud/' . $artifact_kind . '.json',
+        'contentType' => 'application/json',
+        'payload' => $payload,
+    ) );
+}
+
 function wp_codebox_crud_is_dry_run( $operation ) {
     $options = isset( $operation['options'] ) && is_array( $operation['options'] ) ? $operation['options'] : array();
     return ! empty( $options['dryRun'] ) || ! empty( $options['dry_run'] );
@@ -54,6 +100,9 @@ function wp_codebox_crud_require_write_guard( $operation ) {
     }
     if ( ! wp_codebox_crud_destructive_permission( $operation ) ) {
         return wp_codebox_crud_error( $operation, 'destructive-permission-required', 'Create, update, and delete operations require options.destructivePermission=true inside an explicit disposable sandbox boundary. Use options.dryRun=true to preview effects without writing.' );
+    }
+    if ( ! wp_codebox_crud_has_sandbox_boundary( $operation ) ) {
+        return wp_codebox_crud_error( $operation, 'sandbox-boundary-required', 'Create, update, and delete operations require metadata.disposableSandboxBoundary with disposable=true, destructivePermission=true, and teardown=discard/destroy/reset.' );
     }
     return null;
 }
@@ -70,6 +119,41 @@ function wp_codebox_crud_resource_id( $operation ) {
 
 function wp_codebox_crud_emit_result( $result ) {
     echo wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+}
+
+function wp_codebox_crud_post_type_item( $post_type ) {
+    return array(
+        'name' => (string) ( $post_type->name ?? '' ),
+        'label' => (string) ( $post_type->label ?? '' ),
+        'public' => (bool) ( $post_type->public ?? false ),
+        'show_in_rest' => (bool) ( $post_type->show_in_rest ?? false ),
+        'rest_base' => (string) ( $post_type->rest_base ?? '' ),
+        'hierarchical' => (bool) ( $post_type->hierarchical ?? false ),
+        'supports' => get_all_post_type_supports( (string) ( $post_type->name ?? '' ) ),
+    );
+}
+
+function wp_codebox_crud_taxonomy_item( $taxonomy ) {
+    return array(
+        'name' => (string) ( $taxonomy->name ?? '' ),
+        'label' => (string) ( $taxonomy->label ?? '' ),
+        'public' => (bool) ( $taxonomy->public ?? false ),
+        'show_in_rest' => (bool) ( $taxonomy->show_in_rest ?? false ),
+        'rest_base' => (string) ( $taxonomy->rest_base ?? '' ),
+        'hierarchical' => (bool) ( $taxonomy->hierarchical ?? false ),
+        'object_type' => array_values( array_map( 'strval', (array) ( $taxonomy->object_type ?? array() ) ) ),
+    );
+}
+
+function wp_codebox_crud_setting_item( $setting, $name = '' ) {
+    return array(
+        'name' => (string) ( $setting['name'] ?? $name ),
+        'type' => (string) ( $setting['type'] ?? '' ),
+        'group' => (string) ( $setting['group'] ?? '' ),
+        'description' => (string) ( $setting['description'] ?? '' ),
+        'show_in_rest' => (bool) ( $setting['show_in_rest'] ?? false ),
+        'default' => $setting['default'] ?? null,
+    );
 }
 
 function wp_codebox_emit_crud_result( $operation ) {
@@ -110,7 +194,23 @@ function wp_codebox_emit_crud_result( $operation ) {
             $post_data = array_merge( $data, $id ? array( 'ID' => (int) $id ) : array() );
             $result_id = $verb === 'create' ? wp_insert_post( $post_data, true ) : ( $verb === 'update' ? wp_update_post( $post_data, true ) : wp_delete_post( (int) $id, ! empty( $query['force'] ) ) );
             if ( is_wp_error( $result_id ) ) throw new RuntimeException( $result_id->get_error_message() );
-            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_post( (int) $result_id, ARRAY_A ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            $item = $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_post( (int) $result_id, ARRAY_A );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $item, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
+            return;
+        }
+
+        if ( $kind === 'post_type' ) {
+            $post_types = get_post_types( array(), 'objects' );
+            if ( $verb === 'list' ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'items' => array_values( array_map( 'wp_codebox_crud_post_type_item', $post_types ) ) ) ) );
+                return;
+            }
+            if ( $verb === 'read' ) {
+                $name = (string) ( $resource['id'] ?? $resource['type'] ?? '' );
+                wp_codebox_crud_emit_result( isset( $post_types[ $name ] ) ? wp_codebox_crud_result( $operation, 'ok', array( 'item' => wp_codebox_crud_post_type_item( $post_types[ $name ] ) ) ) : wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'unsupported-resource-mutation', 'message' => 'Post type descriptors are read-only generic WordPress runtime resources.', 'severity' => 'warning' ) ) ) ) );
+                return;
+            }
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'unsupported-resource-mutation', 'message' => 'Post type create/update/delete requires product plugin code and is outside generic WordPress core CRUD.', 'severity' => 'warning' ) ) ) ) );
             return;
         }
 
@@ -129,7 +229,22 @@ function wp_codebox_emit_crud_result( $operation ) {
             }
             $result = $verb === 'create' ? wp_insert_term( (string) ( $data['name'] ?? '' ), $taxonomy, $data ) : ( $verb === 'update' ? wp_update_term( (int) $id, $taxonomy, $data ) : wp_delete_term( (int) $id, $taxonomy ) );
             if ( is_wp_error( $result ) ) throw new RuntimeException( $result->get_error_message() );
-            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $result, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $result, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $result ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
+            return;
+        }
+
+        if ( $kind === 'taxonomy' ) {
+            $taxonomies = get_taxonomies( array(), 'objects' );
+            if ( $verb === 'list' ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'items' => array_values( array_map( 'wp_codebox_crud_taxonomy_item', $taxonomies ) ) ) ) );
+                return;
+            }
+            if ( $verb === 'read' ) {
+                $name = (string) ( $resource['id'] ?? $resource['type'] ?? '' );
+                wp_codebox_crud_emit_result( isset( $taxonomies[ $name ] ) ? wp_codebox_crud_result( $operation, 'ok', array( 'item' => wp_codebox_crud_taxonomy_item( $taxonomies[ $name ] ) ) ) : wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'unsupported-resource-mutation', 'message' => 'Taxonomy descriptors are read-only generic WordPress runtime resources.', 'severity' => 'warning' ) ) ) ) );
+                return;
+            }
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'unsupported-resource-mutation', 'message' => 'Taxonomy create/update/delete requires product plugin code and is outside generic WordPress core CRUD.', 'severity' => 'warning' ) ) ) ) );
             return;
         }
 
@@ -168,7 +283,8 @@ function wp_codebox_emit_crud_result( $operation ) {
             $parent_post_id = isset( $data['post_parent'] ) ? (int) $data['post_parent'] : 0;
             $result_id = $verb === 'create' ? wp_insert_attachment( $attachment_data, $file, $parent_post_id, true ) : ( $verb === 'update' ? wp_update_post( $attachment_data, true ) : wp_delete_attachment( (int) $id, ! empty( $query['force'] ) ) );
             if ( is_wp_error( $result_id ) ) throw new RuntimeException( $result_id->get_error_message() );
-            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_post( (int) $result_id, ARRAY_A ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            $item = $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_post( (int) $result_id, ARRAY_A );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $item, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
             return;
         }
 
@@ -186,7 +302,8 @@ function wp_codebox_emit_crud_result( $operation ) {
             if ( $verb === 'delete' && ! function_exists( 'wp_delete_user' ) ) require_once ABSPATH . 'wp-admin/includes/user.php';
             $result_id = $verb === 'create' ? wp_insert_user( $data ) : ( $verb === 'update' ? wp_update_user( array_merge( $data, array( 'ID' => (int) $id ) ) ) : wp_delete_user( (int) $id ) );
             if ( is_wp_error( $result_id ) ) throw new RuntimeException( $result_id->get_error_message() );
-            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => array( 'id' => $result_id ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            $item = array( 'id' => $result_id );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $item, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
             return;
         }
 
@@ -203,7 +320,42 @@ function wp_codebox_emit_crud_result( $operation ) {
             }
             $value = array_key_exists( 'value', $data ) ? $data['value'] : null;
             $ok = $verb === 'create' ? add_option( $name, $value ) : ( $verb === 'update' ? update_option( $name, $value ) : delete_option( $name ) );
-            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => array( 'name' => $name, 'changed' => (bool) $ok ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            $item = array( 'name' => $name, 'changed' => (bool) $ok );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $item, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
+            return;
+        }
+
+        if ( $kind === 'setting' ) {
+            if ( ! function_exists( 'get_registered_settings' ) ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'settings-api-unavailable', 'message' => 'WordPress Settings API registry is unavailable in this runtime.', 'severity' => 'warning' ) ) ) ) );
+                return;
+            }
+            $settings = get_registered_settings();
+            if ( $verb === 'list' ) {
+                $items = array();
+                foreach ( $settings as $setting_name => $setting ) {
+                    $items[] = wp_codebox_crud_setting_item( $setting, (string) $setting_name );
+                }
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'items' => $items ) ) );
+                return;
+            }
+            $name = (string) ( $resource['id'] ?? $data['name'] ?? '' );
+            if ( $name === '' || ! isset( $settings[ $name ] ) ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_error( $operation, 'not-found', 'Registered setting not found.' ) );
+                return;
+            }
+            if ( $verb === 'read' ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => array_merge( wp_codebox_crud_setting_item( $settings[ $name ], $name ), array( 'value' => get_option( $name, null ) ) ) ) ) );
+                return;
+            }
+            if ( $verb === 'create' ) {
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'unsupported', array( 'diagnostics' => array( array( 'code' => 'unsupported-resource-mutation', 'message' => 'Setting registration is code-owned; use option update for stored values or read registered setting descriptors.', 'severity' => 'warning' ) ) ) ) );
+                return;
+            }
+            $value = array_key_exists( 'value', $data ) ? $data['value'] : null;
+            $ok = $verb === 'update' ? update_option( $name, $value ) : delete_option( $name );
+            $item = array( 'name' => $name, 'changed' => (bool) $ok );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $item, 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ), 'artifactRefs' => wp_codebox_crud_mutation_artifact_refs( $operation, $resource, $verb, $item ), 'metadata' => array( 'sandboxBoundary' => wp_codebox_crud_sandbox_boundary( $operation ) ) ) ) );
             return;
         }
 

@@ -11,6 +11,7 @@ import {
 } from "../packages/runtime-core/src/index.js"
 import { getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
 import { wordpressCrudOperationPhpCode, wordpressDbOperationPhpCode } from "../packages/runtime-playground/src/wordpress-crud-command-handlers.js"
+import { runPhpJson } from "../scripts/test-kit.js"
 
 const operation = normalizeWordPressCrudOperation({
   schema: WORDPRESS_CRUD_OPERATION_SCHEMA,
@@ -67,9 +68,45 @@ assert.match(crudPhp, /wp_insert_comment/)
 assert.match(crudPhp, /wp_insert_attachment/)
 assert.match(crudPhp, /wp_insert_user/)
 assert.match(crudPhp, /add_option/)
+assert.match(crudPhp, /get_post_types/)
+assert.match(crudPhp, /get_taxonomies/)
+assert.match(crudPhp, /get_registered_settings/)
 assert.match(crudPhp, /add_metadata/)
 assert.match(crudPhp, /options\.destructivePermission=true/)
 assert.match(crudPhp, /options\.dryRun=true/)
+assert.match(crudPhp, /sandbox-boundary-required/)
+assert.match(crudPhp, /mutation-isolation-artifact/)
+assert.match(crudPhp, /delete-boundary-artifact/)
+
+const phpPrelude = `
+function wp_json_encode($data, $flags = 0) { return json_encode($data, $flags); }
+function get_all_post_type_supports($post_type) { return array('title' => true, 'editor' => true); }
+function get_post_types($args = array(), $output = 'names') { return array('page' => (object) array('name' => 'page', 'label' => 'Pages', 'public' => true, 'show_in_rest' => true, 'rest_base' => 'pages', 'hierarchical' => true)); }
+function get_taxonomies($args = array(), $output = 'names') { return array('category' => (object) array('name' => 'category', 'label' => 'Categories', 'public' => true, 'show_in_rest' => true, 'rest_base' => 'categories', 'hierarchical' => true, 'object_type' => array('post'))); }
+function get_registered_settings() { return array('posts_per_page' => array('type' => 'integer', 'group' => 'reading', 'description' => 'Posts per page', 'show_in_rest' => true, 'default' => 10)); }
+function get_option($name, $default = null) { return $GLOBALS['wp_codebox_options'][$name] ?? $default; }
+function update_option($name, $value) { $GLOBALS['wp_codebox_options'][$name] = $value; return true; }
+function delete_option($name) { unset($GLOBALS['wp_codebox_options'][$name]); return true; }
+`
+const postTypeRead = await runPhpJson<Record<string, any>>(`${phpPrelude}\n${wordpressCrudOperationPhpCode(normalizeWordPressCrudOperation({ operation: "read", resource: { kind: "post_type", id: "page" } }))}`)
+assert.equal(postTypeRead.status, "ok")
+assert.equal(postTypeRead.item.name, "page")
+assert.equal(postTypeRead.item.supports.title, true)
+
+const taxonomyList = await runPhpJson<Record<string, any>>(`${phpPrelude}\n${wordpressCrudOperationPhpCode(normalizeWordPressCrudOperation({ operation: "list", resource: { kind: "taxonomy" } }))}`)
+assert.equal(taxonomyList.status, "ok")
+assert.equal(taxonomyList.items[0].name, "category")
+assert.deepEqual(taxonomyList.items[0].object_type, ["post"])
+
+const settingGuard = await runPhpJson<Record<string, any>>(`${phpPrelude}\n${wordpressCrudOperationPhpCode(normalizeWordPressCrudOperation({ operation: "update", resource: { kind: "setting", id: "posts_per_page" }, data: { value: 12 }, options: { destructivePermission: true } }))}`)
+assert.equal(settingGuard.status, "error")
+assert.equal(settingGuard.errors[0].code, "sandbox-boundary-required")
+
+const settingUpdate = await runPhpJson<Record<string, any>>(`${phpPrelude}\n${wordpressCrudOperationPhpCode(normalizeWordPressCrudOperation({ operation: "update", resource: { kind: "setting", id: "posts_per_page" }, data: { value: 12 }, options: { destructivePermission: true }, metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: true, teardown: "discard", backend: "wordpress-playground" } } }))}`)
+assert.equal(settingUpdate.status, "ok")
+assert.equal(settingUpdate.item.name, "posts_per_page")
+assert.equal(settingUpdate.artifactRefs[0].kind, "mutation-isolation-artifact")
+assert.equal(settingUpdate.artifactRefs[0].payload.sandboxBoundary.backend, "wordpress-playground")
 
 assert.throws(() => normalizeWordPressCrudOperation({ operation: "publish", resource: { kind: "post" } }), /operation must be create, read, update, delete, or list/)
 assert.throws(() => normalizeWordPressCrudOperation({ operation: "read", resource: { kind: "post", identifiers: { nested: {} } } }), /identifiers\.nested must be a scalar value/)
