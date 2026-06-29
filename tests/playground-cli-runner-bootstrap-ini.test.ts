@@ -70,7 +70,11 @@ try {
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   const sharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
   assert.equal(typeof sharedMount, "string")
-  assert.match(await readFile(join(sharedMount as string, "php.ini"), "utf8"), /opcache\.file_cache = \/tmp\/opcache/)
+  const sharedPhpIni = await readFile(join(sharedMount as string, "php.ini"), "utf8")
+  assert.match(sharedPhpIni, /opcache\.file_cache = \/tmp\/opcache/)
+  // The runtime default memory ceiling stays high enough for collect_artifacts to
+  // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
+  assert.match(sharedPhpIni, /memory_limit=512M/)
   assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /<\?php/)
   assert.equal((await stat(join(sharedMount as string, "mu-plugins"))).isDirectory(), true)
   assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
