@@ -4,7 +4,9 @@ import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
+  ArtifactBundleWriter,
   artifactFileDigest,
+  artifactStoragePath,
   resolveArtifactPath,
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
@@ -30,6 +32,10 @@ import {
   visitWordPressPage,
   wordpressHotspotsArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
+  fuzzArtifactBundleContract,
+  fuzzMinimizeUnsupportedCapability,
+  fuzzReplayCaseRef,
+  runtimeArtifactStorageDescriptor,
   deleteBoundaryArtifact,
   isRestMutationMethod,
   mutationArtifactDigest,
@@ -45,6 +51,7 @@ import {
   type FuzzSuiteContract,
   type FuzzSuiteArtifactRef,
   type FuzzSuiteCaseResetResult,
+  type FuzzReplayCaseRef,
   type FuzzSuiteResetExecutor,
   type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
@@ -54,6 +61,8 @@ import {
   type ObservationSpec,
   type PerformanceObservation,
   type Runtime,
+  type RuntimeArtifactStorageDescriptor,
+  type RuntimeArtifactStorageInput,
   type RuntimeActionObservation,
   type RuntimeCreateSpec,
   type RuntimeEpisode,
@@ -161,6 +170,7 @@ export interface WordPressPageLoadActionOptions {
 
 export interface WordPressFuzzSuiteExecutionOptions extends Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities"> {
   artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+  artifactStorage?: RuntimeArtifactStorageInput | RuntimeArtifactStorageDescriptor
 }
 type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
 
@@ -868,10 +878,10 @@ export function executeWordPressFuzzSuite(
       runnerMode: "runtime-backed",
       runtimeBackend: "wordpress-playground",
     },
-  }).then((result) => resultWithWordPressHotspotsArtifact(result, hotspotObservations))
+  }).then((result) => resultWithWordPressHotspotsArtifact(result, hotspotObservations, options))
 }
 
-function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): FuzzSuiteResultEnvelope {
+async function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[], options: WordPressFuzzSuiteExecutionOptions = {}): Promise<FuzzSuiteResultEnvelope> {
   const artifact = wordpressHotspotsArtifact({
     generatedAt: new Date().toISOString(),
     source: "executeWordPressFuzzSuite",
@@ -885,18 +895,22 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
   const content = `${JSON.stringify(artifact, null, 2)}\n`
   const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
   const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
+  const durableBundle = options.artifactStorage
+    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
+    : undefined
   const artifactMetadata = {
-    wordpressHotspots: inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
-    fuzzObservationSet: inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
-    fuzzHotspotSet: inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
+    wordpressHotspots: durableBundle?.wordpressHotspots ?? inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
+    fuzzObservationSet: durableBundle?.fuzzObservationSet ?? inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
+    fuzzHotspotSet: durableBundle?.fuzzHotspotSet ?? inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
+    fuzzBundle: durableBundle?.contract,
   }
-  const artifactRefs = dedupeFuzzSuiteArtifactRefs(result.artifactRefs)
+  const artifactRefs = dedupeFuzzSuiteArtifactRefs([...(result.artifactRefs ?? []), ...(durableBundle?.artifactRefs ?? [])])
   const linkedMetadataArtifacts = {
     ...(recordValue(result.metadata?.artifacts) ?? {}),
     ...artifactMetadata,
   }
   const resultArtifactContent = `${JSON.stringify({ ...result, artifactRefs, metadata: { ...result.metadata, artifacts: linkedMetadataArtifacts } }, null, 2)}\n`
-  const resultMetadata = inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
+  const resultMetadata = durableBundle ? await durableBundle.writeResult(resultArtifactContent) : inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
 
   return {
     ...result,
@@ -909,6 +923,120 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
       },
     },
   }
+}
+
+async function writeFuzzArtifactBundle(input: {
+  result: FuzzSuiteResultEnvelope
+  artifact: unknown
+  observationSet: unknown
+  hotspotSet: unknown
+  content: string
+  observationContent: string
+  hotspotContent: string
+  artifactStorage: RuntimeArtifactStorageInput | RuntimeArtifactStorageDescriptor
+}) {
+  const storage = runtimeArtifactStorageDescriptor(input.artifactStorage)
+  const bundlePath = `fuzz/${safeArtifactSegment(input.result.suite.id)}`
+  const bundleDirectory = resolveArtifactPath(storage.root, [storage.pathPrefix, bundlePath].filter(Boolean).join("/")).absolutePath
+  const writer = new ArtifactBundleWriter(bundleDirectory)
+  const artifactRefs: FuzzSuiteArtifactRef[] = []
+
+  const wordpressHotspots = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/wordpress-hotspots.json", "wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, input.content, input.artifact)
+  const fuzzObservationSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-observations.json", "fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", input.observationContent, input.observationSet)
+  const fuzzHotspotSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-hotspots.json", "fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", input.hotspotContent, input.hotspotSet)
+  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
+  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
+  const replayCaseRefs: FuzzReplayCaseRef[] = []
+
+  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
+
+  for (const fuzzCase of input.result.cases) {
+    const replayInput = {
+      schema: "wp-codebox/fuzz-replay-case-input/v1",
+      suite: input.result.suite,
+      case: fuzzCase,
+      replay: recordValue(fuzzCase.metadata?.replay),
+      artifactRefs: fuzzCase.artifactRefs ?? [],
+      reset: fuzzCase.reset,
+    }
+    const content = `${JSON.stringify(replayInput, null, 2)}\n`
+    const path = `files/replay-cases/${safeArtifactSegment(fuzzCase.id)}.json`
+    const replayArtifact = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "fuzz-replay-case", "wp-codebox/fuzz-replay-case-input/v1", content, replayInput)
+    artifactRefs.push(replayArtifact.ref)
+    replayCaseRefs.push(fuzzReplayCaseRef({
+      caseId: fuzzCase.id,
+      path: replayArtifact.ref.path,
+      sha256: replayArtifact.ref.sha256,
+      bytes: replayArtifact.ref.bytes,
+      target: fuzzCase.target,
+      status: fuzzCase.status,
+      metadata: { storage: "runtime-artifact-layout" },
+    }))
+  }
+
+  const createdAt = new Date().toISOString()
+  const manifestInput: ArtifactManifest = {
+    id: `${input.result.suite.id}-fuzz-artifacts`,
+    contentDigest: { algorithm: "sha256", inputs: [], value: "0".repeat(64) },
+    createdAt,
+    runtime: { id: "wordpress-playground", backend: "wordpress-playground", environment: { kind: "wordpress", name: "WordPress" }, createdAt, status: "created" },
+    files: [],
+  }
+  const manifest = await writer.writeManifest(manifestInput)
+  const manifestRef = fuzzArtifactRef(storage, bundlePath, "manifest.json", "manifest", "application/json", manifest.files.find((file) => file.path === "manifest.json")?.sha256.value)
+  artifactRefs.push(manifestRef)
+
+  const resultPath = "result/fuzz-suite-result.json"
+  const contract = fuzzArtifactBundleContract({
+    suiteId: input.result.suite.id,
+    path: artifactStoragePath(storage, bundlePath),
+    manifestPath: manifestRef.path,
+    resultRef: fuzzArtifactRef(storage, bundlePath, resultPath, "fuzz-suite-result", "application/json"),
+    caseResultStreamRef: caseResultStream.ref,
+    replayCaseRefs,
+    hotspotRefs: [wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref],
+    minimize: fuzzMinimizeUnsupportedCapability({ reason: "Fuzz case minimization is not implemented by this runner contract yet.", requiredArtifacts: replayCaseRefs.map((ref) => ref.path) }),
+    artifactRefs,
+    metadata: { storage: stripUndefined({ schema: storage.schema, pathPrefix: storage.pathPrefix, publicUrlRoot: storage.publicUrlRoot }) },
+  })
+
+  return {
+    contract,
+    artifactRefs,
+    wordpressHotspots: wordpressHotspots.metadata,
+    fuzzObservationSet: fuzzObservationSet.metadata,
+    fuzzHotspotSet: fuzzHotspotSet.metadata,
+    writeResult: async (content: string) => {
+      const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, resultPath, "fuzz-suite-result", input.result.schema, content, undefined)
+      contract.resultRef = written.ref
+      await writer.writeManifest(manifest)
+      return written.metadata
+    },
+  }
+}
+
+async function writeFuzzJsonArtifact(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, path: string, kind: string, schema: string, content: string, value?: unknown, contentType = "application/json") {
+  await writer.write(path, content, { kind, contentType, provenance: { source: "executeWordPressFuzzSuite", operation: kind } })
+  const digest = artifactFileDigest(content)
+  const bytes = Buffer.byteLength(content)
+  const ref = fuzzArtifactRef(storage, bundlePath, path, kind, contentType, digest.value, bytes)
+  return {
+    ref,
+    metadata: stripUndefined({ ...ref, name: kind, persisted: true, metadata: { schema, source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" }, value }),
+  }
+}
+
+function fuzzArtifactRef(storage: RuntimeArtifactStorageDescriptor, bundlePath: string, path: string, kind: string, contentType: string, sha256?: string, bytes?: number): FuzzSuiteArtifactRef {
+  const artifactPath = artifactStoragePath(storage, [bundlePath, path].filter(Boolean).join("/"))
+  return stripUndefined({
+    path: artifactPath,
+    kind,
+    contentType,
+    sha256,
+    bytes,
+    name: kind,
+    metadata: stripUndefined({ storage: "runtime-artifact-layout", publicUrl: storage.publicUrlRoot ? `${storage.publicUrlRoot}/${artifactPath}` : undefined }),
+  })
 }
 
 function pushHotspotObservation(out: WordPressHotspotObservationInput[], observation: PerformanceObservation | undefined, artifactRefs: FuzzSuiteArtifactRef[] = [], metadata: Record<string, unknown> = {}): void {

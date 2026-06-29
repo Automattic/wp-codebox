@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 
 import { fuzzSuiteContract, type RuntimeEpisodeStepResult } from "../packages/runtime-core/src/public.js"
 import { createWordPressFuzzSuiteCommandExecutor, executeWordPressFuzzSuite } from "../packages/runtime-playground/src/public.js"
@@ -153,6 +156,38 @@ assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fu
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
+
+const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-artifacts-"))
+try {
+  const durableResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
+    id: "runtime-backed-durable-suite",
+    cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }],
+  }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
+  const durableArtifacts = durableResult.metadata?.artifacts as {
+    fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
+    fuzzResult?: { persisted?: boolean; path?: string }
+    wordpressHotspots?: { persisted?: boolean; path?: string }
+  } | undefined
+  assert.equal(durableArtifacts?.fuzzBundle?.schema, "wp-codebox/fuzz-artifact-bundle/v1")
+  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "unsupported")
+  assert.equal(durableArtifacts?.fuzzBundle?.minimize?.inputKind, "fuzz-replay-case")
+  assert.match(durableArtifacts?.fuzzBundle?.minimize?.reason ?? "", /not implemented/)
+  assert.equal(durableArtifacts?.fuzzResult?.persisted, true)
+  assert.equal(durableArtifacts?.wordpressHotspots?.persisted, true)
+  assert.equal(durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.caseId, "durable-rest")
+
+  const resultArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.resultRef?.path ?? ""), "utf8"))
+  const replayArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.path ?? ""), "utf8"))
+  const caseStream = await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.caseResultStreamRef?.path ?? ""), "utf8")
+  const hotspotArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.hotspotRefs?.[0]?.path ?? ""), "utf8"))
+  assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
+  assert.equal(replayArtifact.case.id, "durable-rest")
+  assert.equal(JSON.parse(caseStream.trim()).id, "durable-rest")
+  assert.equal(hotspotArtifact.schema, "wp-codebox/wordpress-hotspots/v1")
+} finally {
+  await rm(artifactRoot, { recursive: true, force: true })
+}
 
 const phaseSteps: Array<{ command: string; args?: string[]; metadata?: Record<string, unknown> }> = []
 const phaseEpisode = {
