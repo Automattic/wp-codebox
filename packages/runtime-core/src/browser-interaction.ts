@@ -24,6 +24,7 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
   "waitFor",
   "evaluate",
   "expect",
+  "assertObservation",
   "screenshot",
   "capture",
 ] as const
@@ -70,6 +71,8 @@ export interface BrowserInteractionStep {
   expression?: string
   /** Optional expected value an `evaluate` result must deep-equal to assert. */
   assert?: unknown
+  /** Observation assertion for captured browser runtime evidence. */
+  assertion?: string
   /** Expected locator state for `expect`. */
   state?: BrowserInteractionExpectState
   /** Optional screenshot name for `screenshot`; screenshot steps may also use waitFor for painted-readiness waits before capture. */
@@ -205,6 +208,13 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
           issues.push({ index, message: `expect step state must be one of ${BROWSER_INTERACTION_EXPECT_STATES.join(", ")}` })
         }
         break
+      case "assertObservation":
+        if (typeof step.assertion !== "string" || step.assertion.trim().length === 0) {
+          issues.push({ index, message: "assertObservation step requires assertion" })
+        } else if (!isBrowserInteractionObservationAssertion(step.assertion)) {
+          issues.push({ index, message: "assertObservation supports no-console-errors, no-page-errors, request-count-by-host:<host><op><number>, and request-count-by-type:<type><op><number>" })
+        }
+        break
       case "screenshot":
       case "capture":
         break
@@ -219,6 +229,14 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
 /** True when an interaction script contains at least one policy-gated evaluate step. */
 export function browserInteractionScriptUsesEvaluate(steps: readonly BrowserInteractionStep[]): boolean {
   return steps.some((step) => step.kind === "evaluate")
+}
+
+function isBrowserInteractionObservationAssertion(raw: string): boolean {
+  const value = raw.trim()
+  if (value === "no-console-errors" || value === "no-page-errors") return true
+  if (value.startsWith("request-count-by-host:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-host:".length).trim())
+  if (value.startsWith("request-count-by-type:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-type:".length).trim())
+  return false
 }
 
 export function browserRandomWalkContract(input: Record<string, unknown>): BrowserRandomWalkContract {

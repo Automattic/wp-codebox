@@ -715,6 +715,27 @@ Supported assertion forms are the current command contract:
 Prefix an assertion with `advisory:` to record a failing assertion without
 failing the command.
 
+`wordpress.browser-actions` can assert over observations captured by prior action
+steps with an `assertObservation` step. Supported observation assertions are:
+
+- `no-console-errors`
+- `no-page-errors`
+- `request-count-by-host:<host><op><number>`
+- `request-count-by-type:<type><op><number>`
+
+Failed `assertObservation` steps are recorded in the action step records and
+assertion summary, and they fail the browser-actions command.
+
+```json
+{
+  "command": "wordpress.browser-actions",
+  "args": [
+    "url=/",
+    "steps-json=[{\"kind\":\"waitFor\",\"waitFor\":\"networkidle\"},{\"kind\":\"assertObservation\",\"assertion\":\"request-count-by-host:example.test<=2\"},{\"kind\":\"assertObservation\",\"assertion\":\"no-console-errors\"}]"
+  ]
+}
+```
+
 Do not use `assert=script:passed equals true`. That syntax is not supported by
 the current WP Codebox browser assertion contract. Use `wordpress.browser-actions`
 with an `evaluate` step and `assert` value when a page script must prove state:

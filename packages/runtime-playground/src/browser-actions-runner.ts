@@ -10,6 +10,7 @@ import { captureBrowserDomSnapshot, type BrowserDomSnapshotArtifact } from "./br
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { serializeBrowserError } from "./browser-metrics.js"
+import { executeBrowserObservationAssertion } from "./browser-observation-assertions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
@@ -176,15 +177,17 @@ export async function runBrowserActionsCommand({
         break
       }
       try {
-        const outcome = await withBrowserCommandLiveness({
-          command: "wordpress.browser-actions",
-          phase: `step ${index} (${step.kind})`,
-          operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
-            await artifactSession.writeGenerated("screenshot", fileName, write)
-            return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
-          }),
-          policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
-        })
+        const outcome = step.kind === "assertObservation"
+          ? { assertion: executeBrowserObservationAssertion(step, consoleMessages, errors, network) }
+          : await withBrowserCommandLiveness({
+            command: "wordpress.browser-actions",
+            phase: `step ${index} (${step.kind})`,
+            operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
+              await artifactSession.writeGenerated("screenshot", fileName, write)
+              return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
+            }),
+            policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
+          })
         finalUrl = page.url()
         if (step.kind === "navigate") {
           requestedUrl = resolveBrowserPreviewUrl((step.url ?? "").trim(), preview.effectiveOrigin)

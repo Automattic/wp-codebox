@@ -126,6 +126,8 @@ export async function executeBrowserInteractionStep(
       const passed = await browserExpectState(page, selector, state, timeout)
       return { assertion: { kind: "expect", selector, state, passed } }
     }
+    case "assertObservation":
+      return {}
     case "screenshot": {
       const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
