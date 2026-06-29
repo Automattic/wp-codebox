@@ -11,7 +11,7 @@ export type WordPressRuntimeInventoryCommand =
   | "wordpress.inventory-database"
   | "wordpress.frontend-url-inventory"
 
-export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
+export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth"
 
 export interface WordPressRuntimeDiscoveryResult {
   schema: typeof WORDPRESS_RUNTIME_DISCOVERY_SCHEMA
@@ -23,6 +23,7 @@ export interface WordPressRuntimeDiscoveryResult {
   database?: WordPressDatabaseSchemaDiscovery
   frontend?: WordPressFrontendRouteDiscovery
   blocks?: WordPressBlockEditorTargetDiscovery
+  auth?: WordPressRuntimeAuthDiscovery
   diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
 }
 
@@ -266,4 +267,28 @@ export interface WordPressEditorPostTypeDescriptor {
   label: string
   restBase: string
   editorUrl: string
+}
+
+export interface WordPressRuntimeAuthDiscovery {
+  schema: "wp-codebox/wordpress-auth-discovery/v1"
+  actions: WordPressRuntimeAuthActionDescriptor[]
+  capabilities: {
+    fixtureUsers: boolean
+    userSessions: boolean
+    browserStorageStateArtifacts: boolean
+    restNonce: boolean
+    actionNonce: boolean
+  }
+  resultRedaction: {
+    cookies: "artifact-ref-only"
+    nonces: "redacted-in-summary"
+  }
+}
+
+export interface WordPressRuntimeAuthActionDescriptor {
+  command: "wordpress.session" | "wordpress.nonce" | "wordpress.action-auth"
+  purpose: string
+  acceptedSelectors: string[]
+  artifactKinds: string[]
+  redactionRequired: boolean
 }

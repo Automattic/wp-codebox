@@ -26,6 +26,7 @@ import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
+import { wordpressActionAuthNoncePhpCode, wordpressFixtureUserWithoutPassword, wordpressUserSessionFromCommandArgs, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 import type {
   ArtifactBundle,
   ArtifactManifestFile,
@@ -1048,6 +1049,112 @@ class PlaygroundRuntime implements Runtime {
     return cleanWpCliOutput(response.text)
   }
 
+  async runWordPressSession(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const resolution = resolveWordPressActionAuthUser(spec.args ?? [], this.spec)
+    const browserUrls = stringListArg(spec.args ?? [], "browser-urls") ?? [this.spec.preview?.publicUrl ?? server.serverUrl]
+    const outputDirectory = wordpressAuthOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
+    const artifacts = await this.writeWordPressAuthStorageStateArtifacts("wordpress.session", server, outputDirectory, browserUrls, resolution)
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-session/v1",
+      status: "resolved",
+      command: "wordpress.session",
+      session: resolution.metadata,
+      redaction: { cookies: "artifact-ref-only" },
+      artifacts: { ...artifacts.paths, redactionRequired: { storageState: true, summary: false } },
+      artifactRefs: artifacts.refs,
+    }, null, 2)}\n`
+  }
+
+  async runWordPressNonce(spec: ExecutionSpec): Promise<string> {
+    return this.runWordPressActionAuthResult("wordpress.nonce", spec, false)
+  }
+
+  async runWordPressActionAuth(spec: ExecutionSpec): Promise<string> {
+    return this.runWordPressActionAuthResult("wordpress.action-auth", spec, true)
+  }
+
+  private async runWordPressActionAuthResult(command: "wordpress.nonce" | "wordpress.action-auth", spec: ExecutionSpec, includeStorageState: boolean): Promise<string> {
+    const server = await this.bootPlayground()
+    const resolution = resolveWordPressActionAuthUser(spec.args ?? [], this.spec)
+    const action = stringArg(spec.args ?? [], "action") ?? "wp_rest"
+    const outputDirectory = wordpressAuthOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
+    const noncePayload = await this.resolveWordPressNonceArtifact(command, server, outputDirectory, action, resolution)
+    const storageArtifacts = includeStorageState
+      ? await this.writeWordPressAuthStorageStateArtifacts(command, server, outputDirectory, stringListArg(spec.args ?? [], "browser-urls") ?? [this.spec.preview?.publicUrl ?? server.serverUrl], resolution)
+      : undefined
+
+    return `${JSON.stringify({
+      schema: command === "wordpress.nonce" ? "wp-codebox/wordpress-nonce/v1" : "wp-codebox/wordpress-action-auth/v1",
+      status: "resolved",
+      command,
+      session: resolution.metadata,
+      nonces: {
+        action,
+        actionNonce: { present: true, redacted: true },
+        restNonce: { action: "wp_rest", present: true, redacted: true },
+      },
+      redaction: { cookies: "artifact-ref-only", nonces: "redacted-in-summary" },
+      artifacts: { auth: noncePayload.path, ...(storageArtifacts?.paths ?? {}), redactionRequired: { auth: true, storageState: Boolean(storageArtifacts), summary: false } },
+      artifactRefs: [noncePayload.ref, ...(storageArtifacts?.refs ?? [])],
+    }, null, 2)}\n`
+  }
+
+  private async resolveWordPressNonceArtifact(command: string, server: PlaygroundCliServer, outputDirectory: string, action: string, resolution: WordPressUserSessionResolution): Promise<{ path: string; ref: RuntimeEpisodeTraceRef }> {
+    const code = wordpressActionAuthNoncePhpCode(command, action, resolution)
+    const response = await this.runPlaygroundCommand(command, server, { code: bootstrapPhpCode(this.spec, code, []) })
+    assertPlaygroundResponseOk(command, response)
+    const secret = JSON.parse(response.text) as Record<string, unknown>
+    const authPath = join(outputDirectory, "action-auth.json")
+    const artifactPath = artifactRelativePath(this.artifactRoot, authPath)
+    const contents = `${JSON.stringify(secret, null, 2)}\n`
+    await mkdir(outputDirectory, { recursive: true })
+    await writeFile(authPath, contents)
+    return {
+      path: artifactPath,
+      ref: { kind: command === "wordpress.nonce" ? "wordpress-nonce" : "wordpress-action-auth", id: `${command}:action-auth`, path: artifactPath, digest: { algorithm: "sha256", value: sha256(Buffer.from(contents, "utf8")) } },
+    }
+  }
+
+  private async writeWordPressAuthStorageStateArtifacts(command: string, server: PlaygroundCliServer, outputDirectory: string, browserUrls: string[], resolution: WordPressUserSessionResolution): Promise<{ paths: { storageState: string; summary: string }; refs: RuntimeEpisodeTraceRef[] }> {
+    const response = await this.runPlaygroundCommand(command, server, { code: bootstrapPhpCode(this.spec, wordpressFixtureUserStorageStatePhpCode({ browserUrls, user: wordpressFixtureUserWithoutPassword(resolution.user) }), []) })
+    assertPlaygroundResponseOk(command, response)
+    const payload = JSON.parse(response.text) as Record<string, unknown>
+    const normalized = normalizeBrowserStorageStatePayload(payload, "inline")
+    if (normalized.summary.status !== "ready") {
+      throw new Error(`${command} could not resolve browser storage state: ${JSON.stringify(normalized.summary.diagnostics)}`)
+    }
+
+    const storageStatePath = join(outputDirectory, "storage-state.json")
+    const summaryPath = join(outputDirectory, "summary.json")
+    const storageStateArtifactPath = artifactRelativePath(this.artifactRoot, storageStatePath)
+    const summaryArtifactPath = artifactRelativePath(this.artifactRoot, summaryPath)
+    const exportedUser = payload.user && typeof payload.user === "object" && !Array.isArray(payload.user) ? payload.user as Record<string, unknown> : {}
+    const summary = {
+      schema: "wp-codebox/wordpress-auth-summary/v1",
+      command,
+      status: "resolved",
+      session: resolution.metadata,
+      user: storageStateUserSummary(exportedUser),
+      storageState: normalized.summary,
+      redaction: { cookies: "artifact-ref-only" },
+      artifacts: { storageState: storageStateArtifactPath, summary: summaryArtifactPath },
+    }
+    const storageStateJson = `${JSON.stringify(normalized.storageState, null, 2)}\n`
+    const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
+    await mkdir(outputDirectory, { recursive: true })
+    await writeFile(storageStatePath, storageStateJson)
+    await writeFile(summaryPath, summaryJson)
+    return {
+      paths: { storageState: storageStateArtifactPath, summary: summaryArtifactPath },
+      refs: [
+        { kind: "browser-storage-state", id: `${command}:storage-state`, path: storageStateArtifactPath, digest: { algorithm: "sha256", value: sha256(Buffer.from(storageStateJson, "utf8")) } },
+        { kind: "browser-storage-state-summary", id: `${command}:storage-state-summary`, path: summaryArtifactPath, digest: { algorithm: "sha256", value: sha256(Buffer.from(summaryJson, "utf8")) } },
+      ],
+    }
+  }
+
   async runExportBrowserStorageState(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const outputDirectory = storageStateOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
@@ -1754,6 +1861,42 @@ function storageStateOutputDirectory(artifactRoot: string, requested: string | u
   }
 
   return join(artifactRoot, relativePath)
+}
+
+function wordpressAuthOutputDirectory(artifactRoot: string, requested: string | undefined): string {
+  const relativePath = requested?.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "files/wordpress-auth"
+  if (relativePath.length === 0 || relativePath.includes("..")) {
+    throw new Error("wordpress auth output-dir must be a relative path inside the runtime artifact root")
+  }
+
+  return join(artifactRoot, relativePath)
+}
+
+function resolveWordPressActionAuthUser(args: string[], runtimeSpec: RuntimeCreateSpec): WordPressUserSessionResolution {
+  const recipeResolution = wordpressUserSessionFromCommandArgs(args, runtimeSpec)
+  if (recipeResolution) {
+    return recipeResolution
+  }
+
+  const role = stringArg(args, "role") ?? "administrator"
+  const normalizedRole = role.replace(/[^a-z0-9_-]/gi, "").toLowerCase()
+  if (!normalizedRole) {
+    throw new Error("wordpress auth role must be a non-empty WordPress role slug")
+  }
+
+  return {
+    source: "user",
+    name: `role:${normalizedRole}`,
+    user: { name: `role:${normalizedRole}`, username: `wp-codebox-${normalizedRole}`, role: normalizedRole, email: `wp-codebox-${normalizedRole}@example.test` },
+    metadata: {
+      schema: "wp-codebox/wordpress-user-session/v1",
+      source: "user",
+      name: `role:${normalizedRole}`,
+      user: { name: `role:${normalizedRole}`, username: `wp-codebox-${normalizedRole}`, email: `wp-codebox-${normalizedRole}@example.test`, role: normalizedRole },
+      artifacts: [],
+      redactionRequired: false,
+    },
+  }
 }
 
 function artifactRelativePath(artifactRoot: string, absolutePath: string): string {

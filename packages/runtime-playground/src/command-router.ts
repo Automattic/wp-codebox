@@ -9,6 +9,9 @@ interface PlaygroundCommandRuntime {
   runCommandAgent(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runPhp(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runWpCli(spec: ExecutionSpec): Promise<string>
+  runWordPressSession(spec: ExecutionSpec): Promise<string>
+  runWordPressNonce(spec: ExecutionSpec): Promise<string>
+  runWordPressActionAuth(spec: ExecutionSpec): Promise<string>
   runExportBrowserStorageState(spec: ExecutionSpec): Promise<string>
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>

@@ -1,9 +1,9 @@
 import { commaListArg } from "./command-args.js"
 
-export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
+export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks" | "auth"
 export type RuntimeInventorySurface = "rest" | "admin" | "database" | "frontend"
 
-const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks"] as const satisfies readonly RuntimeDiscoverySurface[]
+const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks", "auth"] as const satisfies readonly RuntimeDiscoverySurface[]
 
 export function runtimeDiscoverySurfacesFromArgs(args: string[]): RuntimeDiscoverySurface[] {
   const requested = commaListArg(args, "surface")
@@ -320,6 +320,49 @@ function runtime_discovery_blocks(): array {
     }
 
     return array('payload' => array('schema' => 'wp-codebox/wordpress-block-editor-target-discovery/v1', 'blocks' => $blocks, 'editorPostTypes' => $post_types), 'diagnostics' => array());
+}
+
+function runtime_discovery_auth(): array {
+    return array(
+        'payload' => array(
+            'schema' => 'wp-codebox/wordpress-auth-discovery/v1',
+            'actions' => array(
+                array(
+                    'command' => 'wordpress.session',
+                    'purpose' => 'Resolve a declared fixture user or named user session and produce reviewer-safe session metadata plus optional redaction-required browser storage-state artifacts.',
+                    'acceptedSelectors' => array('user', 'session'),
+                    'artifactKinds' => array('browser-storage-state', 'browser-storage-state-summary'),
+                    'redactionRequired' => true,
+                ),
+                array(
+                    'command' => 'wordpress.nonce',
+                    'purpose' => 'Resolve a WordPress nonce for an explicit action in the selected fixture user or session context.',
+                    'acceptedSelectors' => array('action', 'user', 'session'),
+                    'artifactKinds' => array('wordpress-nonce'),
+                    'redactionRequired' => true,
+                ),
+                array(
+                    'command' => 'wordpress.action-auth',
+                    'purpose' => 'Resolve a fixture user/session, action nonce, REST nonce, and optional browser storage-state artifact for destructive runtime actions.',
+                    'acceptedSelectors' => array('action', 'user', 'session'),
+                    'artifactKinds' => array('wordpress-action-auth', 'browser-storage-state', 'browser-storage-state-summary'),
+                    'redactionRequired' => true,
+                ),
+            ),
+            'capabilities' => array(
+                'fixtureUsers' => true,
+                'userSessions' => true,
+                'browserStorageStateArtifacts' => true,
+                'restNonce' => function_exists('wp_create_nonce'),
+                'actionNonce' => function_exists('wp_create_nonce'),
+            ),
+            'resultRedaction' => array(
+                'cookies' => 'artifact-ref-only',
+                'nonces' => 'redacted-in-summary',
+            ),
+        ),
+        'diagnostics' => array(),
+    );
 }
 
 function runtime_discovery_block_attribute_value($value, int $depth = 0) {

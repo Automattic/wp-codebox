@@ -103,6 +103,11 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
 const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
 const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"] as const
+const wordpressAuthArtifactProperties = {
+  auth: { type: "string" },
+  storageState: { type: "string" },
+  summary: { type: "string" },
+}
 
 const browserProbeValidation: CommandValidationDescriptor = {
   requiredArgs: [
@@ -193,6 +198,55 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include command-agent-run and the target command.",
     recipe: true,
     handler: { kind: "playground", method: "runCommandAgent" },
+  },
+  {
+    id: "wordpress.session",
+    description: "Resolve a declared WordPress fixture user or named user session and return reviewer-safe session metadata plus optional redaction-required browser storage-state artifacts.",
+    acceptedArgs: [
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "browser-urls", description: "Optional comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies when storage-state output is requested.", format: "comma-separated URLs" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-session/v1 JSON with redacted session summary, fixture user metadata, and artifact refs only for secret cookie material.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-session/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.session.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressSession" },
+  },
+  {
+    id: "wordpress.nonce",
+    description: "Resolve a WordPress nonce for an explicit action in a declared fixture user or named session context and return only redacted nonce metadata.",
+    acceptedArgs: [
+      { name: "action", description: "WordPress nonce action to resolve. Defaults to wp_rest.", format: "string" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before creating the nonce.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before creating the nonce.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-nonce/v1 JSON with nonce presence, action, user summary, and redaction-required artifact refs without exposing nonce values in stdout.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-nonce/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.nonce.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressNonce" },
+  },
+  {
+    id: "wordpress.action-auth",
+    description: "Resolve WordPress user/session auth, action nonce, REST nonce, and optional browser storage-state artifact for destructive runtime actions.",
+    acceptedArgs: [
+      { name: "action", description: "WordPress action nonce to resolve. Defaults to wp_rest.", format: "string" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "browser-urls", description: "Optional comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies.", format: "comma-separated URLs" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-action-auth/v1 JSON with explicit auth/session/nonce capability resolution and only redaction-required artifact refs for secret cookie and nonce values.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-action-auth/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.action-auth.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressActionAuth" },
   },
   {
     id: "wordpress.run-php",

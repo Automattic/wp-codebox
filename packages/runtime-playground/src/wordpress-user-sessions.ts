@@ -116,6 +116,30 @@ if ( ! in_array( $sandbox_role, (array) $sandbox_wp_user->roles, true ) ) {
 wp_set_current_user( $sandbox_user_id );`
 }
 
+export function wordpressActionAuthNoncePhpCode(command: string, action: string, resolution: WordPressUserSessionResolution): string {
+  return `${wordpressFixtureUserPhpCode(wordpressFixtureUserWithoutPassword(resolution.user))}
+$wp_codebox_action_auth_action = ${JSON.stringify(action)};
+$wp_codebox_action_auth_payload = array(
+    'schema' => 'wp-codebox/wordpress-action-auth-secret/v1',
+    'command' => ${JSON.stringify(command)},
+    'user' => array(
+        'id' => get_current_user_id(),
+        'role' => ${JSON.stringify(resolution.metadata.user.role)},
+    ),
+    'nonces' => array(
+        'action' => $wp_codebox_action_auth_action,
+        'actionNonce' => wp_create_nonce( $wp_codebox_action_auth_action ),
+        'restNonce' => wp_create_nonce( 'wp_rest' ),
+    ),
+);
+echo wp_json_encode($wp_codebox_action_auth_payload, JSON_UNESCAPED_SLASHES);`
+}
+
+export function wordpressFixtureUserWithoutPassword(user: WordPressFixtureUserSpec): WordPressFixtureUserSpec {
+  const { password: _password, ...safeUser } = user
+  return safeUser
+}
+
 function wordpressUserSessionResolution(source: "user" | "session", name: string, user: Record<string, unknown>, artifacts: unknown[]): WordPressUserSessionResolution {
   const normalizedUser = normalizeFixtureUser(user)
   const normalizedArtifacts = artifacts.filter(isRecord).map((artifact) => ({

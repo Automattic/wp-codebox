@@ -23,12 +23,12 @@ const result: WordPressRuntimeDiscoveryResult = {
   schema: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   command: "wordpress.runtime-discovery",
   status: "ok",
-  surfaces: ["rest", "admin", "database", "frontend", "blocks"],
+  surfaces: ["rest", "admin", "database", "frontend", "blocks", "auth"],
   diagnostics: [],
 }
 
 assert.equal(result.schema, "wp-codebox/wordpress-runtime-discovery/v1")
-assert.deepEqual(runtimeDiscoverySurfacesFromArgs([]), ["rest", "admin", "database", "frontend", "blocks"])
+assert.deepEqual(runtimeDiscoverySurfacesFromArgs([]), ["rest", "admin", "database", "frontend", "blocks", "auth"])
 assert.deepEqual(runtimeDiscoverySurfacesFromArgs(["surface=rest,blocks,rest"]), ["rest", "blocks"])
 assert.throws(() => runtimeDiscoverySurfacesFromArgs(["surface=woocommerce"]), /unsupported: woocommerce/)
 
