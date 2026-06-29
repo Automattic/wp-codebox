@@ -77,7 +77,7 @@ const REST_MUTATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:runtime-action", "runtime-action:rest_request", "rest-mutation:fixture-opt-in"],
   targetKinds: ["runtime-action"],
   runtimeActionTypes: ["rest_request"],
-  commands: ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore"],
+  commands: ["wordpress.rest-request"],
 }
 
 const ADMIN_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
@@ -259,7 +259,7 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
     executable,
     safeMethod,
     planned: !executable,
-    reason: executable ? undefined : safeMethod ? "route_requires_discovered_parameters" : payloadFamily && !options.restGeneratedMutationResetPolicy ? "mutating_rest_method_requires_reset_policy" : "mutating_rest_method_requires_explicit_opt_in",
+    reason: executable ? undefined : safeMethod ? "route_requires_discovered_parameters" : "mutating_rest_method_requires_explicit_opt_in",
     requiredArgs: requiredArgs.length ? requiredArgs : undefined,
     generatedParameters: concreteInput?.generatedParameters,
     payloadFamily,
@@ -268,7 +268,7 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
 
   return stripUndefined({
     id: `${restRouteCaseId(route.route, normalizedMethod, endpointIndex)}${payloadFamily ? `-${slugify(payloadFamily)}` : ""}`,
-    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Rollback-isolated WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
+    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Disposable sandbox WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
     input: concreteInput ? restInputForCase(concreteInput, !safeMethod) : undefined,
     resetPolicy: !safeMethod ? (mutationOptIn ? mutationOptIn.rollbackPolicy ?? mutationOptIn.rollback_policy : options.restGeneratedMutationResetPolicy) : undefined,
@@ -313,7 +313,7 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
 
   return stripUndefined({
     id: restRouteCaseId(route.route, normalizedMethod, endpointIndex),
-    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Rollback-isolated WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
+    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Disposable sandbox WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
     input: concreteInput ? restInputForCase(concreteInput, !safeMethod) : undefined,
     reason,
@@ -591,9 +591,9 @@ function restNumericBoundarySample(arg: WordPressRestRouteArgDescriptor | undefi
 
 function restGeneratedMutationIntent(method: string): FuzzSuiteMutationIntent {
   if (method === "DELETE") {
-    return { intent: "delete", destructive: true, intensity: "high", resetRequired: true }
+    return { intent: "delete", destructive: true, intensity: "high" }
   }
-  return { intent: "write", destructive: false, intensity: "medium", resetRequired: true }
+  return { intent: "write", destructive: false, intensity: "medium" }
 }
 
 function escapeRegExp(value: string): string {
@@ -671,7 +671,7 @@ function adminPageInteractionFuzzSuiteCase(page: WordPressAdminPageDescriptor, i
     description: `${mutates ? "Plan" : "Exercise"} ${interaction.kind} on ${page.pageTitle || page.menuTitle}`,
     input: mutates ? undefined : { args: [...pageLoadArgs(path, pageLoad.surface, options), `interaction=${interaction.kind}`, `interactionId=${adminInteractionId(interaction)}`] },
     resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
-    mutation: mutates ? { intent: "write", destructive: false, intensity: "medium", resetRequired: true } : undefined,
+    mutation: mutates ? { intent: "write", destructive: false, intensity: "medium" } : undefined,
     metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, path, interaction, capability: interaction.capability ?? page.capability, nonce: interaction.nonceAction ?? interaction.nonce_action, pageLoadMode: pageLoad.mode, safety: { executable: !mutates, mutates, reason: mutates ? "admin_interaction_requires_runtime_form_execution" : undefined }, requiredRunnerCapabilities: pageLoad.requiredRunnerCapabilities }),
   })
 }
@@ -760,8 +760,8 @@ function databaseTableFuzzSuiteCase(table: WordPressDatabaseTableDescriptor, pla
     description: `${plan.label} ${table.baseName || table.name}`,
     input: executable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
     resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
-    mutation: mutates ? { intent: plan.operation === "delete" ? "delete" : "write", destructive: plan.operation === "delete", intensity: plan.operation === "delete" ? "high" : "medium", resetRequired: true } : undefined,
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" }, generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined }),
+    mutation: mutates ? { intent: plan.operation === "delete" ? "delete" : "write", destructive: plan.operation === "delete", intensity: plan.operation === "delete" ? "high" : "medium" } : undefined,
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_explicit_opt_in" }, generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined }),
   })
 }
 
@@ -778,7 +778,7 @@ function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor, 
     target: DB_OPERATION_TARGET,
     description: `${plan.label} ${table.baseName || table.name}`,
     input: executable && mutationExecutable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
-    reason: !executable ? { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." } : !mutationExecutable ? { code: "db_mutation_requires_reset_policy", message: "Generated database mutations require an explicit reset policy before execution." } : undefined,
+    reason: !executable ? { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." } : !mutationExecutable ? { code: "db_mutation_requires_explicit_opt_in", message: "Generated database mutations require explicit disposable sandbox or fixture opt-in before execution." } : undefined,
     metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata(), generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined }),
   })
 }

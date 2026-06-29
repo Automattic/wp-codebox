@@ -248,7 +248,8 @@ expect( 'WP_Codebox_API::wordpress_fuzz_runtime_contract()' === $fuzz_runtime_co
 expect( 'wp-codebox/run-fuzz-suite' === $fuzz_runtime_contract['publicSurfaces']['ability'], 'Expected ability public surface.' );
 expect( 'wp codebox wordpress-fuzz-runtime-contract' === $fuzz_runtime_contract['publicSurfaces']['wpCli'], 'Expected WP-CLI public surface.' );
 expect( null === $fuzz_runtime_contract['destructiveModeRequirements']['rawDeleteCapability'], 'Expected raw delete to be explicitly unsupported.' );
-expect( in_array( 'checkpoint-per-case', $fuzz_runtime_contract['destructiveModeRequirements']['requiredResetModes'], true ), 'Expected destructive mode reset requirement.' );
+expect( true === $fuzz_runtime_contract['destructiveModeRequirements']['requiredSandboxBoundary']['disposable'], 'Expected destructive mode disposable sandbox boundary.' );
+expect( in_array( 'checkpoint-per-case', $fuzz_runtime_contract['destructiveModeRequirements']['optionalResetModes'], true ), 'Expected checkpoint reset to be optional.' );
 expect( 'wp-codebox/delete-boundary-artifact/v1' === $fuzz_runtime_contract['hbex']['schemaIds']['deleteBoundaryArtifact'], 'Expected HBEX delete boundary schema id.' );
 expect( in_array( 'private-runtime-probing', array_column( $fuzz_runtime_contract['unsupportedCapabilities'], 'id' ), true ), 'Expected explicit unsupported probing capability.' );
 

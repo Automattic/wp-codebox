@@ -195,7 +195,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
 
     const mutationGate = target ? fuzzSuiteCaseMutationGate(suite, fuzzCase, target, runtimeAction?.status === "valid" ? runtimeAction.action : undefined) : undefined
     if (mutationGate && !mutationGate.allowed) {
-      const diagnostic: FuzzSuiteDiagnostic = { severity: "warning", code: "fuzz_suite_reset_policy_required", caseId: fuzzCase.id, target, message: "Fuzz suite case is mutating or destructive and requires a reset policy before execution.", metadata: mutationGate.metadata }
+      const diagnostic: FuzzSuiteDiagnostic = { severity: "warning", code: "fuzz_suite_disposable_sandbox_boundary_required", caseId: fuzzCase.id, target, message: "Fuzz suite case is mutating or destructive and requires an explicit disposable sandbox boundary before execution.", metadata: mutationGate.metadata }
       diagnostics.push(diagnostic)
       cases.push({ id: fuzzCase.id, status: "skipped", success: false, target, reset, skipReason: diagnostic.code, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }) })
       continue
@@ -1124,13 +1124,14 @@ function fuzzSuiteCaseMutationGate(suite: FuzzSuiteContract, fuzzCase: FuzzSuite
   const classification = action ? fuzzSuiteRuntimeActionMutationClassification(action) : fuzzSuiteCaseMutationClassification(fuzzCase, target)
   if (!classification.mutates) return undefined
   const resetPolicyAllowsMutation = fuzzSuiteResetPolicyAllowsMutation(suite, fuzzCase)
+  const disposableSandboxBoundary = fuzzSuiteDisposableSandboxBoundary(suite)
   const mutationOptIn = action?.type === "rest_request" && isRestMutationMethod(action.method ?? "GET") ? fuzzSuiteRestMutationOptIn(suite, fuzzCase, action as unknown as Record<string, unknown>) : undefined
-  return { allowed: Boolean(resetPolicyAllowsMutation || mutationOptIn), metadata: stripUndefined({ ...classification.metadata, mutationSkipped: !resetPolicyAllowsMutation && !mutationOptIn, resetPolicyRequired: true, resetPolicyAllowsMutation, restMutationFixtureOptIn: mutationOptIn, requiredContract: action?.type === "rest_request" ? "wp-codebox/rest-mutation-fixture-opt-in/v1" : undefined }) }
+  return { allowed: Boolean(disposableSandboxBoundary || mutationOptIn), metadata: stripUndefined({ ...classification.metadata, mutationSkipped: !disposableSandboxBoundary && !mutationOptIn, disposableSandboxBoundaryRequired: !disposableSandboxBoundary && !mutationOptIn, disposableSandboxBoundary, resetPolicyAllowsMutation, resetMode: resetPolicyAllowsMutation ? fuzzSuiteCaseResetPolicy(suite, fuzzCase).mode : undefined, restMutationFixtureOptIn: mutationOptIn, requiredContract: action?.type === "rest_request" ? "wp-codebox/rest-mutation-fixture-opt-in/v1 or explicit disposable sandbox boundary" : "explicit disposable sandbox boundary" }) }
 }
 
 function fuzzSuiteCaseMutationClassification(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef): { mutates: boolean; metadata: Record<string, unknown> } {
   const mutation = fuzzCase.mutation ?? (typeof fuzzCase.mutation_intent === "object" ? fuzzCase.mutation_intent : undefined)
-  const mutates = mutation?.resetRequired === true || mutation?.reset_required === true || mutation?.destructive === true || ["write", "delete", "destructive"].includes(String(mutation?.intent ?? ""))
+  const mutates = mutation?.destructive === true || ["write", "delete", "destructive"].includes(String(mutation?.intent ?? ""))
   return { mutates, metadata: stripUndefined({ targetKind: target.kind, mutation }) }
 }
 
@@ -1153,34 +1154,11 @@ function fuzzSuiteRuntimeActionMutationClassification(action: RuntimeAction): { 
 
 function fuzzSuiteRuntimeActionObservationDiagnostics(observation: RuntimeActionObservation, fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef, metadata: Record<string, unknown> = {}): FuzzSuiteDiagnostic[] {
   const exitCode = observation.step?.execution.exitCode
-  const mutationArtifact = recordValue(observation.data.mutationIsolationArtifact) ?? recordValue(observation.data.deleteBoundaryArtifact)
-  const restore = recordValue(mutationArtifact?.restore)
-  const rollback = recordValue(observation.data.rollbackArtifact) ?? recordValue(mutationArtifact?.rollback)
-  const restoreExitCode = typeof restore?.exitCode === "number" ? restore.exitCode : undefined
   const diagnostics: FuzzSuiteDiagnostic[] = []
   if (exitCode !== undefined && exitCode !== 0) {
     diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_failed", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} exited with ${exitCode}.`, metadata: stripUndefined({ ...metadata, executionId: observation.step?.execution.id, stderr: observation.step?.execution.stderr, actionType: observation.type }) })
   }
-  if (restoreExitCode !== undefined && restoreExitCode !== 0) {
-    diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_restore_failed", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} rollback restore exited with ${restoreExitCode}.`, metadata: stripUndefined({ ...metadata, restore, actionType: observation.type }) })
-  }
-  if (rollback) {
-    const result = recordValue(rollback.result)
-    if (result?.status !== "passed" || result?.restored !== true) {
-      diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_rollback_validation_failed", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} rollback evidence did not validate restore parity.`, metadata: stripUndefined({ ...metadata, rollbackResult: result, rollbackDiagnostics: rollback.diagnostics, actionType: observation.type }) })
-    }
-  } else if (restore || isRollbackEvidenceRequired(observation)) {
-    diagnostics.push({ severity: "error", code: "fuzz_suite_runtime_action_rollback_evidence_missing", caseId: fuzzCase.id, target, message: `Runtime action ${observation.type} did not produce required rollback evidence.`, metadata: stripUndefined({ ...metadata, actionType: observation.type }) })
-  }
   return diagnostics
-}
-
-function isRollbackEvidenceRequired(observation: RuntimeActionObservation): boolean {
-  const action = recordValue(observation.action)
-  if (observation.type === "rest_request") return isRestMutationMethod(action?.method ?? "GET")
-  if (observation.type === "db_operation") return action?.operation === "write"
-  if (observation.type === "crud_operation") return action?.operation === "create" || action?.operation === "update" || action?.operation === "delete"
-  return false
 }
 
 function fuzzSuiteUnsupportedDiagnostic(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef | undefined): FuzzSuiteDiagnostic {
@@ -1470,6 +1448,18 @@ function fuzzSuiteResetPolicyAllowsMutation(suite: FuzzSuiteContract, fuzzCase: 
   return fuzzSuiteCaseResetPolicy(suite, fuzzCase).mode !== "none"
 }
 
+function fuzzSuiteDisposableSandboxBoundary(suite: FuzzSuiteContract): Record<string, unknown> | undefined {
+  const boundary = recordValue(suite.metadata?.disposableSandboxBoundary)
+    ?? recordValue(suite.metadata?.sandboxBoundary)
+    ?? recordValue(suite.metadata?.runtimeBoundary)
+  const destructivePermission = boundary?.destructivePermission === true || boundary?.destructive === true || boundary?.allowsDestructive === true
+  const teardown = boundary?.teardown === "discard" || boundary?.discard === true || recordValue(boundary?.destroy)?.status === "destroyed"
+  if (boundary?.disposable === true && destructivePermission && teardown) {
+    return boundary
+  }
+  return undefined
+}
+
 function restMutationOptInMatches(optIn: Record<string, unknown>, method: string, path: string | undefined): boolean {
   if (optIn.schema !== "wp-codebox/rest-mutation-fixture-opt-in/v1") return false
   const methods = arrayRecordsOrStrings(optIn.methods).map((candidate) => String(candidate).toUpperCase())
@@ -1481,8 +1471,7 @@ function restMutationOptInMatches(optIn: Record<string, unknown>, method: string
 function restMutationOptInHasExecutionPolicy(optIn: Record<string, unknown>): boolean {
   const fixturePlan = recordValue(optIn.fixturePlan) ?? recordValue(optIn.fixture_plan)
   const fixturePlanRef = typeof optIn.fixturePlanRef === "string" ? optIn.fixturePlanRef : typeof optIn.fixture_plan_ref === "string" ? optIn.fixture_plan_ref : undefined
-  const rollbackPolicy = recordValue(optIn.rollbackPolicy) ?? recordValue(optIn.rollback_policy)
-  return Boolean((fixturePlan || fixturePlanRef) && recordValue(optIn.auth) && rollbackPolicy)
+  return Boolean((fixturePlan || fixturePlanRef) && recordValue(optIn.auth))
 }
 
 function restRoutePatternMatches(route: string, path: string): boolean {

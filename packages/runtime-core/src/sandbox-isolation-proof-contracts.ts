@@ -6,8 +6,8 @@ export const SANDBOX_ISOLATION_PROOF_SCHEMA = "wp-codebox/sandbox-isolation-proo
 export const SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND = "sandbox-isolation-proof" as const
 
 export type SandboxIsolationProofStatus = "passed" | "failed"
-export type SandboxIsolationProofLifecycleStatus = "created" | "mutated" | "restored" | "destroyed" | "failed"
-export type SandboxIsolationProofDiffStatus = "clean-after-restore" | "dirty-after-restore" | "not-validated"
+export type SandboxIsolationProofLifecycleStatus = "created" | "mutated" | "restored" | "destroyed" | "discarded" | "failed"
+export type SandboxIsolationProofDiffStatus = "clean-after-restore" | "dirty-after-restore" | "not-validated" | "not-required-disposable-sandbox"
 
 export interface SandboxIsolationProofStepEvidence {
   status: SandboxIsolationProofLifecycleStatus
@@ -44,7 +44,7 @@ export interface SandboxIsolationProofRuntimeBoundary {
   environment: "wordpress" | (string & {})
   disposable: true
   hostAccess: "declared-mounts-only"
-  destroy: SandboxIsolationProofStepEvidence & { status: "destroyed" }
+  destroy: SandboxIsolationProofStepEvidence & { status: "destroyed" | "discarded" }
   metadata?: Record<string, unknown>
 }
 
@@ -55,8 +55,8 @@ export interface SandboxIsolationProof {
   status: SandboxIsolationProofStatus
   baseline: SandboxIsolationProofStepEvidence & { status: "created" }
   mutation: SandboxIsolationProofStepEvidence & { status: "mutated" }
-  restore: SandboxIsolationProofStepEvidence & { status: "restored" | "failed" }
-  diff: SandboxIsolationProofDiffEvidence
+  restore?: SandboxIsolationProofStepEvidence & { status: "restored" | "failed" }
+  diff?: SandboxIsolationProofDiffEvidence
   runtimeBoundary: SandboxIsolationProofRuntimeBoundary
   artifacts: SandboxIsolationProofArtifactRef[]
   generatedAt: string
@@ -73,8 +73,6 @@ export const SANDBOX_ISOLATION_PROOF_REQUIRED_ARTIFACT_FIELDS = [
   "status",
   "baseline",
   "mutation",
-  "restore",
-  "diff",
   "runtimeBoundary",
   "runtimeBoundary.destroy",
   "artifacts",
@@ -99,15 +97,14 @@ export function sandboxIsolationProofDigest(proof: SandboxIsolationProof): strin
 function assertSandboxIsolationProofInput(input: Omit<SandboxIsolationProof, "schema" | "artifactKind" | "version" | "generatedAt"> & { generatedAt?: string }): void {
   if (input.baseline?.status !== "created") throw new Error("Sandbox isolation proof requires baseline.status=created")
   if (input.mutation?.status !== "mutated") throw new Error("Sandbox isolation proof requires mutation.status=mutated")
-  if (input.restore?.status !== "restored" && input.restore?.status !== "failed") throw new Error("Sandbox isolation proof requires restore.status restored or failed")
+  if (input.restore && input.restore.status !== "restored" && input.restore.status !== "failed") throw new Error("Sandbox isolation proof restore.status must be restored or failed when restore evidence is supplied")
   if (!hasStepEvidence(input.baseline)) throw new Error("Sandbox isolation proof requires baseline command or execution evidence")
   if (!hasStepEvidence(input.mutation)) throw new Error("Sandbox isolation proof requires mutation command or execution evidence")
-  if (!hasStepEvidence(input.restore)) throw new Error("Sandbox isolation proof requires restore command or execution evidence")
-  if (!input.diff || typeof input.diff.changed !== "boolean") throw new Error("Sandbox isolation proof requires a diff evidence object")
-  if (input.status === "passed" && (input.restore.status !== "restored" || input.diff.status !== "clean-after-restore")) throw new Error("Sandbox isolation proof status=passed requires restored state and clean-after-restore diff")
+  if (input.restore && !hasStepEvidence(input.restore)) throw new Error("Sandbox isolation proof restore evidence requires command or execution evidence")
+  if (input.diff && typeof input.diff.changed !== "boolean") throw new Error("Sandbox isolation proof diff evidence requires a changed boolean")
   if (!input.runtimeBoundary || input.runtimeBoundary.disposable !== true) throw new Error("Sandbox isolation proof requires a disposable runtime boundary")
   if (input.runtimeBoundary.hostAccess !== "declared-mounts-only") throw new Error("Sandbox isolation proof requires declared-mounts-only host access")
-  if (input.runtimeBoundary.destroy?.status !== "destroyed") throw new Error("Sandbox isolation proof requires runtimeBoundary.destroy.status=destroyed")
+  if (input.runtimeBoundary.destroy?.status !== "destroyed" && input.runtimeBoundary.destroy?.status !== "discarded") throw new Error("Sandbox isolation proof requires runtimeBoundary.destroy.status destroyed or discarded")
   if (!Array.isArray(input.artifacts) || input.artifacts.length === 0) throw new Error("Sandbox isolation proof requires artifact refs")
   for (const artifact of input.artifacts) {
     if (!artifact.path || !artifact.kind) throw new Error("Sandbox isolation proof artifact refs require path and kind")

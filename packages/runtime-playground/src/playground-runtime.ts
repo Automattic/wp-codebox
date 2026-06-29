@@ -1414,11 +1414,11 @@ class PlaygroundRuntime implements Runtime {
       safeguards: {
         connectedStateRequiredForMutation: args.get("connected_state_required_for_mutation") === "true" || args.get("connected-state-required-for-mutation") === "true",
         runtimeIsolationRequiredForMutation: args.get("runtime_isolation_required_for_mutation") === "true" || args.get("runtime-isolation-required-for-mutation") === "true",
-        rollbackRequired: args.get("rollback_required") === "true" || args.get("rollback-required") === "true",
+        disposableSandboxRequired: args.get("disposable_sandbox_required") === "true" || args.get("disposable-sandbox-required") === "true",
       },
       plannedActions: [],
       skipReasons: executeMutations ? ["mutation_execution_unsupported"] : [],
-      diagnostics: executeMutations ? [{ code: "mutation-execution-unsupported", message: "wordpress.fuzz-plugin-module-state only supports declared planning until explicit fixture and rollback artifacts are provided.", severity: "warning" }] : [],
+      diagnostics: executeMutations ? [{ code: "mutation-execution-unsupported", message: "wordpress.fuzz-plugin-module-state only supports declared planning until explicit fixture or disposable sandbox boundaries are provided.", severity: "warning" }] : [],
       artifactRefs: [],
     }, null, 2)}\n`
   }
