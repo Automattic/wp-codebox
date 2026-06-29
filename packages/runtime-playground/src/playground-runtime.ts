@@ -8,6 +8,7 @@ import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
 import { adminFuzzInputFromArgs, adminFuzzPhpCode } from "./admin-fuzz-command-handlers.js"
+import { adminActionInputFromArgs, adminActionPhpCode } from "./admin-action-command-handlers.js"
 import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runEditorValidateBlocksCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
@@ -1502,6 +1503,14 @@ class PlaygroundRuntime implements Runtime {
     const input = adminFuzzInputFromArgs(spec.args ?? [], this.spec)
     const response = await this.runPlaygroundCommand("wordpress.fuzz-admin-pages", server, { code: bootstrapPhpCode(this.spec, adminFuzzPhpCode(input), spec.args ?? []) })
     assertPlaygroundResponseOk("wordpress.fuzz-admin-pages", response)
+    return response.text
+  }
+
+  async runAdminAction(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const action = adminActionInputFromArgs(spec.args ?? [])
+    const response = await this.runPlaygroundCommand("wordpress.admin-action", server, { code: bootstrapPhpCode(this.spec, adminActionPhpCode(action), spec.args ?? []) })
+    assertPlaygroundResponseOk("wordpress.admin-action", response)
     return response.text
   }
 

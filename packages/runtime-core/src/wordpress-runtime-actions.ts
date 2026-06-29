@@ -5,6 +5,7 @@ import { runFuzzSuite, type FuzzSuiteRunOptions } from "./fuzz-suite-runner.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation, type WordPressDbOperation, type WordPressDbVerb } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation, type WordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { normalizeWordPressBlockExerciseInput, type WordPressBlockExerciseInput } from "./wordpress-block-exercise-contracts.js"
+import { normalizeWordPressAdminActionContract, type WordPressAdminActionContract } from "./wordpress-admin-action-contracts.js"
 import type { PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runWordPressRestMatrix, type WordPressRestMatrixContract, type WordPressRestMatrixResultEnvelope } from "./rest-matrix-contracts.js"
 import type { ArtifactBundle, Runtime, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeStepResult } from "./runtime-contracts.js"
@@ -85,6 +86,7 @@ export type WordPressDatabaseReadOptions = Omit<WordPressDbOperation, "schema" |
 }
 
 export type WordPressBlockExerciseOptions = Partial<WordPressBlockExerciseInput> & { blockName: string }
+export type WordPressAdminActionOptions = Partial<WordPressAdminActionContract> & { family: WordPressAdminActionContract["family"] }
 
 export interface WordPressPageLoadOptions {
   path?: string
@@ -215,6 +217,10 @@ export function renderWordPressBlock(episode: WordPressRuntimeActionEpisode, inp
 
 export function exerciseWordPressBlock(episode: WordPressRuntimeActionEpisode, input: WordPressBlockExerciseOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.block-exercise", blockExerciseArgs(normalizeWordPressBlockExerciseInput(input)), timeoutMs)
+}
+
+export function executeWordPressAdminAction(episode: WordPressRuntimeActionEpisode, action: WordPressAdminActionOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.admin-action", [`action-json=${JSON.stringify(normalizeWordPressAdminActionContract(action))}`], timeoutMs)
 }
 
 export function loadWordPressAdminPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageLoadOptions = {}): Promise<RuntimeEpisodeStepResult> {
