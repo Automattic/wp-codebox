@@ -174,6 +174,11 @@ export interface BrowserArtifactSummary {
     mismatchRatio?: number
     mismatchPixels?: number
     totalPixels?: number
+    overlapMismatchRatio?: number
+    overlapMismatchPixels?: number
+    overlapPixels?: number
+    dimensionDeltaPixels?: number
+    dimensionDeltaRatio?: number
     dimensionMismatch?: boolean
     explanation?: string
     blocksEngineVisualParity?: string
