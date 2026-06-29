@@ -303,6 +303,7 @@ async function runVisualComparePairCommand({
   const visualTimeoutMs = durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs)
   const requestedViewport = viewportArg(args, "viewport")
   const fullPage = strictBooleanArg(args, "full-page", true)
+  const maxFullPageHeight = positiveIntegerArg(args, "max-full-page-height", VISUAL_COMPARE_MAX_FULL_PAGE_HEIGHT_PX)
   const threshold = numberArg(args, "threshold", 0.1)
   const includeAA = strictBooleanArg(args, "include-aa", false)
   const maxRegions = positiveIntegerArg(args, "max-regions", 8)
@@ -365,7 +366,7 @@ async function runVisualComparePairCommand({
       startedAt,
       source: sourceSummary(),
       candidate: candidateSummary(),
-      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
       preview,
       viewport,
     })
@@ -389,7 +390,7 @@ async function runVisualComparePairCommand({
           sourceCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "source-capture",
-            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -404,7 +405,7 @@ async function runVisualComparePairCommand({
           candidateCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "candidate-capture",
-            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -421,16 +422,16 @@ async function runVisualComparePairCommand({
           startedAt,
           source: sourceSummary(),
           candidate: candidateSummary(),
-          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
           preview,
           viewport,
-          message: errorMessage(error),
+          message: visualCompareErrorDetail(error),
           copiedFiles: {
             ...(await fileExists(sourcePath) ? { sourceScreenshot: `${artifactPathPrefix}/source.png` } : {}),
             ...(await fileExists(candidatePath) ? { candidateScreenshot: `${artifactPathPrefix}/candidate.png` } : {}),
           },
         })
-        throw new BrowserCommandArtifactError(`wordpress.visual-compare failed during capture: ${errorMessage(error)}`, visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
+        throw new BrowserCommandArtifactError(`wordpress.visual-compare failed during capture: ${visualCompareErrorDetail(error)}`, visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
       }
     } finally {
       await browser.close()
@@ -455,7 +456,7 @@ async function runVisualComparePairCommand({
         startedAt,
         source: sourceSummary(),
         candidate: candidateSummary(),
-        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
         preview,
         viewport,
         missingInputs,
@@ -525,7 +526,7 @@ async function runVisualComparePairCommand({
     status,
     source: sourceSummary(),
     candidate: candidateSummary(),
-    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
       : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
@@ -1629,7 +1630,79 @@ async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil:
   throw lastError instanceof Error ? lastError : new Error(`wordpress.visual-compare navigation failed: ${String(lastError)}`)
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
+// A full-page screenshot of a very tall document forces the renderer to allocate a
+// single backing bitmap covering the ENTIRE scroll height (width × height × 4 bytes).
+// For pathologically tall pages (tens of thousands of px) that bitmap alone is hundreds
+// of MB and the capture can crash/close the renderer target — historically surfacing as
+// an opaque, empty screenshot failure. Clamp the captured height to a documented cap,
+// applied IDENTICALLY to source and candidate so the dimension-fair overlap semantics
+// (both renders anchored at the document origin, cropped to the shared min height) are
+// preserved. Normal 5–6k px pages render far below the cap and are unaffected.
+const VISUAL_COMPARE_MAX_FULL_PAGE_HEIGHT_PX = 20_000
+
+// errorMessage() returns an empty string when a thrown Error carries no message — which
+// is exactly what a crashed/closed renderer target tends to produce — and previously
+// surfaced as an opaque empty `capture-failed` diagnostic with no actionable signal.
+// Always produce a non-empty, descriptive detail so the failure summary names a real
+// cause.
+export function visualCompareErrorDetail(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message?.trim()
+    if (message) {
+      return message
+    }
+    const name = error.name?.trim()
+    return name ? `${name} (no message)` : "Error (no message)"
+  }
+  if (error === undefined) {
+    return "unknown error (undefined)"
+  }
+  if (error === null) {
+    return "unknown error (null)"
+  }
+  const text = String(error).trim()
+  return text || "unknown error"
+}
+
+// Take the page screenshot with a bounded per-attempt timeout, one transient-failure
+// retry, an always-non-empty error on final failure, and a height clamp for
+// pathologically tall pages. The clamp computes the document content size and, when it
+// exceeds the cap, captures a top-anchored `clip` of the full content width × capped
+// height instead of a `fullPage` capture — identical treatment for source and candidate.
+async function captureVisualComparePageScreenshot(page: Page, outputPath: string, options: { fullPage: boolean; timeoutMs: number; maxFullPageHeightPx: number }): Promise<void> {
+  let clamp: { width: number; height: number; fullHeight: number } | undefined
+  if (options.fullPage && options.maxFullPageHeightPx > 0) {
+    const metrics = await page.evaluate(() => ({
+      width: Math.max(document.documentElement?.scrollWidth ?? 0, document.body?.scrollWidth ?? 0, window.innerWidth || 0, 1),
+      height: Math.max(document.documentElement?.scrollHeight ?? 0, document.body?.scrollHeight ?? 0, window.innerHeight || 0, 1),
+    }))
+    if (metrics.height > options.maxFullPageHeightPx) {
+      clamp = { width: Math.max(1, Math.round(metrics.width)), height: options.maxFullPageHeightPx, fullHeight: Math.round(metrics.height) }
+    }
+  }
+
+  const attempts = 2
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      if (clamp) {
+        await page.screenshot({ path: outputPath, fullPage: false, clip: { x: 0, y: 0, width: clamp.width, height: clamp.height }, timeout: options.timeoutMs, animations: "disabled" })
+      } else {
+        await page.screenshot({ path: outputPath, fullPage: options.fullPage, timeout: options.timeoutMs, animations: "disabled" })
+      }
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt >= attempts) {
+        break
+      }
+    }
+  }
+  const where = clamp ? ` (clamped ${clamp.width}x${clamp.height} of full height ${clamp.fullHeight})` : options.fullPage ? " (full-page)" : ""
+  throw new Error(`wordpress.visual-compare screenshot failed after ${attempts} attempt(s)${where}: ${visualCompareErrorDetail(lastError)}`)
+}
+
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
     await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     if (durationMs > 0) {
@@ -1657,7 +1730,7 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
   // to their final state and freezes infinite ones to a deterministic frame, so the
   // capture does not depend on transition timing. Applied to both sides equally.
-  await page.screenshot({ path: outputPath, fullPage, timeout: timeoutMs, animations: "disabled" })
+  await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
   return { finalUrl: page.url(), domSnapshot }
 }
 
@@ -1967,30 +2040,64 @@ function visualCompareMismatchRegions(diff: PNG, maxRegions: number, bounds: { w
 }
 
 function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, visited: Uint8Array, bounds: { width: number; height: number }): VisualCompareMismatchRegion {
-  const stack: Array<[number, number]> = [[startX, startY]]
+  // Use a flat numeric stack of pixel indices (`y * width + x`) instead of `[x, y]`
+  // tuple arrays, and mark each pixel visited at PUSH time so it is enqueued at most
+  // once. The previous implementation pushed four heap-allocated 2-element arrays per
+  // visited pixel and only marked visited at POP time, so the live stack could hold up
+  // to ~4× the mismatched-pixel count as tiny arrays. For a tall page with a high
+  // mismatch ratio (the SSI gate routinely sees tens of millions of differing pixels,
+  // e.g. a ~0.945 raw ratio over a 1280×6000 union) that grew the JS heap into the
+  // multi-GB range and OOM'd old-space. A `number[]` of indices costs ~8 bytes/entry
+  // and, with mark-at-push, the live frontier is bounded by the region perimeter rather
+  // than its area. Region geometry/pixel counts are identical to the old walk.
+  const stride = diff.width
+  const startIndex = startY * stride + startX
+  visited[startIndex] = 1
+  const stack: number[] = [startIndex]
   let minX = startX
   let maxX = startX
   let minY = startY
   let maxY = startY
   let pixels = 0
   while (stack.length > 0) {
-    const [x, y] = stack.pop() ?? [0, 0]
-    if (x < 0 || y < 0 || x >= bounds.width || y >= bounds.height) {
-      continue
-    }
-    const index = y * diff.width + x
-    if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
-      continue
-    }
-    visited[index] = 1
+    const index = stack.pop() as number
+    const x = index % stride
+    const y = (index - x) / stride
     pixels += 1
-    minX = Math.min(minX, x)
-    maxX = Math.max(maxX, x)
-    minY = Math.min(minY, y)
-    maxY = Math.max(maxY, y)
-    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1])
+    if (x < minX) {
+      minX = x
+    }
+    if (x > maxX) {
+      maxX = x
+    }
+    if (y < minY) {
+      minY = y
+    }
+    if (y > maxY) {
+      maxY = y
+    }
+    if (x + 1 < bounds.width) {
+      visualCompareEnqueueNeighbor(diff, visited, stack, index + 1, x + 1, y)
+    }
+    if (x - 1 >= 0) {
+      visualCompareEnqueueNeighbor(diff, visited, stack, index - 1, x - 1, y)
+    }
+    if (y + 1 < bounds.height) {
+      visualCompareEnqueueNeighbor(diff, visited, stack, index + stride, x, y + 1)
+    }
+    if (y - 1 >= 0) {
+      visualCompareEnqueueNeighbor(diff, visited, stack, index - stride, x, y - 1)
+    }
   }
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, pixels }
+}
+
+function visualCompareEnqueueNeighbor(diff: PNG, visited: Uint8Array, stack: number[], index: number, x: number, y: number): void {
+  if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
+    return
+  }
+  visited[index] = 1
+  stack.push(index)
 }
 
 function visualCompareSegmentLargeRegion(diff: PNG, region: VisualCompareMismatchRegion, maxRegions: number): VisualCompareMismatchRegion[] {
