@@ -43,6 +43,9 @@ import {
   sandboxIsolationProof,
   sandboxIsolationProofDigest,
   wordpressRollbackArtifact,
+  wordpressDbWriteSetArtifact,
+  WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND,
+  WORDPRESS_DB_WRITE_SET_SCHEMA,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
@@ -80,6 +83,8 @@ import {
   type DisposableSandboxTeardownEvidence,
   type SandboxIsolationProof,
   type SandboxIsolationProofStepEvidence,
+  type WordPressDbWriteSetArtifact,
+  type WordPressDbWriteSetEntry,
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
@@ -339,6 +344,7 @@ async function executeDisposableSandboxDbMutation(
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "db_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     operation,
     mappedCommand: step.execution.command,
@@ -349,6 +355,7 @@ async function executeDisposableSandboxDbMutation(
     executionId: step.execution.id,
     stepId: step.id,
     mutationIsolationArtifact: artifactWithDigest,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
     mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   }
@@ -373,6 +380,7 @@ async function executeDisposableSandboxCrudMutation(
   const target = crudTarget(input.action)
   const action = { ...input.action, options: { ...(input.action.options ?? {}), destructivePermission: true }, metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary } }
   const step = await runWordPressCrudOperation(episode, action, input.action.timeout_ms)
+  const stdout = parseJsonRecord(step.execution.stdout)
   const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "crud_operation",
@@ -383,21 +391,23 @@ async function executeDisposableSandboxCrudMutation(
     mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
     teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    affectedIdentifiers: crudAffectedIdentifiers(input.action, parseJsonRecord(step.execution.stdout)),
+    affectedIdentifiers: crudAffectedIdentifiers(input.action, stdout),
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "crud_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     stepId: step.id,
     executionId: step.execution.id,
     mappedCommand: step.execution.command,
     args: step.execution.args,
     exitCode: step.execution.exitCode,
-    stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout,
+    stdout: stdout ?? step.execution.stdout,
     stderr: step.execution.stderr,
     mutationIsolationArtifact: artifactWithDigest,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
   }
   return { schema: "wp-codebox/runtime-action-observation/v1", type: input.action.type, status: "ok", action: input.action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
@@ -593,6 +603,59 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
+function dbWriteSetArtifactFromCommandResult(input: { result: unknown; suiteId: string; caseId: string; action: string; target: string; artifactPath: string; artifactRefs?: FuzzSuiteArtifactRef[] }): (WordPressDbWriteSetArtifact & { artifactPath: string; persisted: false; sha256: string; bytes: number }) | undefined {
+  const result = recordValue(input.result)
+  const stdout = recordValue(result?.stdout)
+  const metadata = recordValue(result?.metadata)
+  const stdoutMetadata = recordValue(stdout?.metadata)
+  const performance = recordValue(result?.performance ?? stdout?.performance)
+  const database = recordValue(performance?.database)
+  const candidate = recordValue(metadata?.dbWriteSet ?? metadata?.db_write_set ?? stdoutMetadata?.dbWriteSet ?? stdoutMetadata?.db_write_set ?? result?.dbWriteSet ?? result?.db_write_set ?? stdout?.dbWriteSet ?? stdout?.db_write_set ?? database?.dbWriteSet ?? database?.db_write_set)
+  const entries = dbWriteSetEntries(candidate?.entries ?? database?.writeSet ?? database?.write_set)
+  if (entries.length === 0) return undefined
+  const repeatedWrites = dbWriteSetEntries(candidate?.repeatedWrites ?? candidate?.repeated_writes ?? database?.repeatedWrites ?? database?.repeated_writes).filter((entry) => (entry.repeatedWritesToSameKey ?? 0) > 1)
+  const artifact = wordpressDbWriteSetArtifact({
+    suiteId: input.suiteId,
+    caseId: input.caseId,
+    action: input.action,
+    target: input.target,
+    entries,
+    repeatedWrites,
+    artifactRefs: input.artifactRefs,
+    metadata: stripUndefined({ source: "runtime-command-result", resultStatus: stringValue(result?.status), command: stringValue(result?.command), queryCount: typeof database?.queryCount === "number" ? database.queryCount : undefined, writeSetTruncated: candidate?.metadata ? recordValue(candidate.metadata)?.writeSetTruncated : database?.writeSetTruncated }),
+  })
+  const artifactWithRef = { ...artifact, artifactPath: input.artifactPath, persisted: false as const }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  return { ...artifactWithRef, sha256: createHash("sha256").update(content).digest("hex"), bytes: Buffer.byteLength(content) }
+}
+
+function dbWriteSetEntries(value: unknown): WordPressDbWriteSetEntry[] {
+  return arrayValue(value).flatMap((item) => {
+    const entry = recordValue(item)
+    const table = stringValue(entry?.table)
+    const operation = stringValue(entry?.operation)?.toLowerCase()
+    if (!table || (operation !== "insert" && operation !== "update" && operation !== "delete" && operation !== "replace")) return []
+    return [stripUndefined({
+      table,
+      operation: operation as WordPressDbWriteSetEntry["operation"],
+      rowsAffected: nullableNumber(entry?.rowsAffected ?? entry?.rows_affected),
+      rowCountBefore: nullableNumber(entry?.rowCountBefore ?? entry?.row_count_before),
+      rowCountAfter: nullableNumber(entry?.rowCountAfter ?? entry?.row_count_after),
+      resource: recordValue(entry?.resource),
+      object: recordValue(entry?.object) as WordPressDbWriteSetEntry["object"],
+      key: stringValue(entry?.key),
+      repeatedWritesToSameKey: typeof entry?.repeatedWritesToSameKey === "number" ? entry.repeatedWritesToSameKey : (typeof entry?.repeated_writes_to_same_key === "number" ? entry.repeated_writes_to_same_key : undefined),
+      source: recordValue(entry?.source),
+      metadata: recordValue(entry?.metadata),
+    })]
+  })
+}
+
+function nullableNumber(value: unknown): number | null | undefined {
+  if (value === null) return null
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
 export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteCommandExecutor {
   return {
     async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
@@ -661,7 +724,7 @@ async function executeDisposableSandboxRestMutation(
   const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
-  const observation = await requestWordPressRest(episode, input.action)
+  const observation = await requestWordPressRest(episode, { ...input.action, capture: { ...(input.action.capture ?? {}), queries: true }, enableQueryCapture: true })
   if (!observation.step) {
     throw new Error(`Destructive REST mutation ${input.case.id} did not return runtime step evidence.`)
   }
@@ -693,9 +756,11 @@ async function executeDisposableSandboxRestMutation(
     sha256: mutationArtifactDigest(artifactWithRef),
     bytes: Buffer.byteLength(content),
   }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: observation.data, suiteId: input.suite.id, caseId: input.case.id, action: "rest_request", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: observation.step ? fuzzSuiteStepArtifactRefs(observation.step) : undefined })
   const data = {
     ...observation.data,
     ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
     sandboxIsolationProof: sandboxProof,
   }
 
@@ -993,6 +1058,17 @@ async function writeFuzzArtifactBundle(input: {
   artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
 
   for (const fuzzCase of input.result.cases) {
+    const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
+    const caseArtifactRefs = [...(fuzzCase.artifactRefs ?? [])]
+    if (dbWriteSet) {
+      const path = `files/db-write-sets/${safeArtifactSegment(fuzzCase.id)}.json`
+      const content = `${JSON.stringify({ ...dbWriteSet, artifactPath: path, persisted: true }, null, 2)}\n`
+      const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND, WORDPRESS_DB_WRITE_SET_SCHEMA, content, dbWriteSet)
+      artifactRefs.push(written.ref)
+      caseArtifactRefs.push(written.ref)
+      fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
+      fuzzCase.metadata = { ...fuzzCase.metadata, dbWriteSet: { ...dbWriteSet, artifactPath: written.ref.path, persisted: true, sha256: written.ref.sha256, bytes: written.ref.bytes } }
+    }
     const replayInput = {
       schema: "wp-codebox/fuzz-replay-case-input/v1",
       suite: input.result.suite,

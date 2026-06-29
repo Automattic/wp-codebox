@@ -99,6 +99,8 @@ $wp_codebox_query_count = (int) ( $wp_codebox_query_report['queryCount'] ?? 0 );
 $wp_codebox_query_total_ms = isset( $wp_codebox_query_report['totalTimeMs'] ) ? (float) $wp_codebox_query_report['totalTimeMs'] : null;
 $wp_codebox_fingerprints = is_array( $wp_codebox_query_report['fingerprints'] ?? null ) ? $wp_codebox_query_report['fingerprints'] : array();
 $wp_codebox_repeated_queries = is_array( $wp_codebox_query_report['repeatedQueries'] ?? null ) ? $wp_codebox_query_report['repeatedQueries'] : array();
+$wp_codebox_write_set = is_array( $wp_codebox_query_report['writeSet'] ?? null ) ? $wp_codebox_query_report['writeSet'] : array();
+$wp_codebox_repeated_writes = is_array( $wp_codebox_query_report['repeatedWrites'] ?? null ) ? $wp_codebox_query_report['repeatedWrites'] : array();
 $wp_codebox_performance = array(
     'schema' => 'wp-codebox/performance-observation/v1',
     'command' => 'wordpress.rest-request',
@@ -127,6 +129,9 @@ $wp_codebox_performance = array(
         'timingReason' => $wp_codebox_query_timing_reason,
         'fingerprints' => $wp_codebox_fingerprints,
         'repeatedQueries' => $wp_codebox_repeated_queries,
+        'writeSet' => $wp_codebox_write_set,
+        'repeatedWrites' => $wp_codebox_repeated_writes,
+        'writeSetTruncated' => ! empty( $wp_codebox_query_report['writeSetTruncated'] ),
     ),
     'hooks' => array( 'status' => 'unsupported', 'reason' => 'hook_timing_not_instrumented', 'timings' => array() ),
     'network' => array( 'status' => 'unsupported', 'reason' => 'in_process_rest_request' ),

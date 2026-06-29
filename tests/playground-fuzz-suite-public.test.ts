@@ -7,6 +7,7 @@ import { fuzzSuiteContract, type RuntimeEpisodeStepResult } from "../packages/ru
 import { createWordPressFuzzSuiteCommandExecutor, executeWordPressFuzzSuite } from "../packages/runtime-playground/src/public.js"
 
 const steps: Array<{ command: string; args?: string[]; observation?: unknown }> = []
+const disposableSandboxBoundary = { disposable: true, destructivePermission: true, teardown: "discard", hostAccess: "declared-mounts-only" }
 let checkpointState: Record<string, unknown> | undefined
 let runtimeState = wordpressState("baseline")
 const episode = {
@@ -44,11 +45,12 @@ const episode = {
         runtimeState.objects[`post:${operation.resource?.id}`] = { exists: true, value: { ID: operation.resource?.id, post_title: operation.data?.post_title ?? "mutated" }, meta: [] }
       }
     }
+    const restMethod = action.args?.find((arg) => arg.startsWith("method="))?.replace(/^method=/, "") ?? "GET"
     const commandPayloads: Record<string, Record<string, unknown>> = {
-      "wordpress.rest-request": { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
+      "wordpress.rest-request": restMethod === "DELETE" ? { path: "/wp/v2/posts/123", route: "/wp/v2/posts/123", status: 200, timing: { durationMs: 45 }, performance: { database: { queryCount: 3, writeSet: [{ table: "wp_posts", operation: "delete", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 0, object: { kind: "post", id: 123 }, key: "wp_posts:delete:123" }], repeatedWrites: [], writeSetTruncated: false } } } : { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
-      "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 } },
-      "wordpress.crud-operation": { item: { id: 123 }, status: "ok" },
+      "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 }, metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "db_operation", target: "wp_fuzz", entries: [{ table: "wp_fuzz", operation: "update", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 1, resource: { table: "wp_fuzz", identifiers: { id: 1 } }, key: "wp_fuzz:update:1" }], repeatedWrites: [], totals: { writes: 1, rowsAffected: 1, tables: 1, repeatedWriteKeys: 0 } } } },
+      "wordpress.crud-operation": { item: { id: 123 }, status: "ok", metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "crud_operation", target: "post:123", entries: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }, { table: "wp_postmeta", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_postmeta:update:123" }], repeatedWrites: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }], totals: { writes: 2, rowsAffected: 2, tables: 2, repeatedWriteKeys: 1 } } } },
       "wordpress.run-php": runPhpCode.includes("wordpress-rollback-capture-request") ? rollbackCapturePayload(runPhpCode) : runPhpCode.includes("rest-db-query-profiler") ? {
         schema: "wp-codebox/bench-results/v1",
         scenarios: [{
@@ -103,6 +105,7 @@ assert.deepEqual(steps[0]?.observation, { type: "command-result" })
 
 const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
   id: "runtime-backed-suite",
+  metadata: { disposableSandboxBoundary },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "fuzz-baseline", fixtureRefs: ["fixtures/store.json"] },
   cases: [
     { id: "rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } },
@@ -123,7 +126,6 @@ assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
 assert.equal(steps.some((step) => step.command === "wordpress.crud-operation"), true)
-assert.equal(steps.filter((step) => step.command === "wordpress.run-php" && step.args?.[0]?.includes("wordpress-rollback-capture-request")).length >= 9, true)
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
@@ -135,9 +137,16 @@ assert.equal(result.cases[5]?.status, "passed")
 assert.equal(result.cases[6]?.status, "passed")
 assert.equal(result.cases[7]?.status, "passed")
 assert.equal(result.cases[8]?.status, "passed")
-const rollbackArtifact = result.cases[4]?.metadata?.mutationIsolation as { rollback?: { result?: { status?: string }; diff?: { tables?: unknown[] } } } | undefined
-assert.equal(rollbackArtifact?.rollback?.result?.status, "passed")
-assert.equal(Array.isArray(rollbackArtifact?.rollback?.diff?.tables), true)
+const restWriteSet = result.cases[1]?.metadata?.dbWriteSet as { schema?: string; entries?: Array<{ table?: string; operation?: string }>; artifactPath?: string } | undefined
+assert.equal(restWriteSet?.schema, "wp-codebox/wordpress-db-write-set/v1")
+assert.deepEqual(restWriteSet?.entries?.map((entry) => [entry.table, entry.operation]), [["wp_posts", "delete"]])
+assert.equal(restWriteSet?.artifactPath, "files/db-write-sets/destructive-rest.json")
+const dbWriteSet = result.cases[4]?.metadata?.dbWriteSet as { entries?: Array<{ rowCountBefore?: number; rowCountAfter?: number }>; totals?: { rowsAffected?: number } } | undefined
+assert.deepEqual(dbWriteSet?.entries?.[0], { table: "wp_fuzz", operation: "update", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 1, resource: { table: "wp_fuzz", identifiers: { id: 1 } }, key: "wp_fuzz:update:1" })
+assert.equal(dbWriteSet?.totals?.rowsAffected, 1)
+const crudWriteSet = result.cases[5]?.metadata?.dbWriteSet as { repeatedWrites?: unknown[]; totals?: { repeatedWriteKeys?: number } } | undefined
+assert.equal(crudWriteSet?.repeatedWrites?.length, 1)
+assert.equal(crudWriteSet?.totals?.repeatedWriteKeys, 1)
 const nestedPhpStep = steps.find((step) => step.command === "wordpress.run-php" && step.args?.[0]?.includes("__wp_codebox_workload_input"))
 assert.ok(nestedPhpStep)
 const nestedPhpInput = decodeFirstWrapperJson(nestedPhpStep.args?.[0] ?? "")
@@ -161,7 +170,8 @@ const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-artifacts-"))
 try {
   const durableResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     id: "runtime-backed-durable-suite",
-    cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }],
+    metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: true, teardown: "discard", hostAccess: "declared-mounts-only" } },
+    cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }, { id: "durable-delete", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" }, mutation: { intent: "delete", destructive: true } }],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
     fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; minimize?: { status?: string; inputKind?: string; reason?: string } }
@@ -180,11 +190,16 @@ try {
   const replayArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.path ?? ""), "utf8"))
   const caseStream = await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.caseResultStreamRef?.path ?? ""), "utf8")
   const hotspotArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.hotspotRefs?.[0]?.path ?? ""), "utf8"))
+  const durableWriteSetPath = durableResult.cases[1]?.artifactRefs?.find((ref) => ref.kind === "wordpress-db-write-set")?.path
+  assert.ok(durableWriteSetPath)
+  const durableWriteSet = JSON.parse(await readFile(join(artifactRoot, durableWriteSetPath), "utf8"))
   assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
   assert.equal(replayArtifact.case.id, "durable-rest")
-  assert.equal(JSON.parse(caseStream.trim()).id, "durable-rest")
+  assert.equal(JSON.parse(caseStream.trim().split("\n")[0] ?? "{}").id, "durable-rest")
   assert.equal(hotspotArtifact.schema, "wp-codebox/wordpress-hotspots/v1")
+  assert.equal(durableWriteSet.schema, "wp-codebox/wordpress-db-write-set/v1")
+  assert.equal(durableWriteSet.entries[0].operation, "delete")
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
 }
