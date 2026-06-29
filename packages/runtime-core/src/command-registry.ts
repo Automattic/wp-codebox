@@ -5,6 +5,7 @@ import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from 
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS, WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA, WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA } from "./wordpress-admin-action-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
+import { CACHE_CHURN_OBSERVATION_SCHEMA } from "./cache-churn-observation.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
 
@@ -503,6 +504,34 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.rest-performance-observation.",
     recipe: true,
     handler: { kind: "playground", method: "runRestPerformanceObservation" },
+  },
+  {
+    id: "wordpress.cache-churn-observation",
+    description: "Execute one in-process WordPress REST request and emit a cache/transient/options churn observation for destructive fuzzing correlation.",
+    acceptedArgs: [
+      { name: "method", description: "HTTP method for the REST request; defaults to GET.", format: "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS" },
+      { name: "path", description: "REST route path, with or without the /wp-json prefix.", required: true, format: "REST route path" },
+      { name: "params-json", description: "Optional request parameters object.", format: "JSON object" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before running the REST request.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before running the REST request.", format: "fixture user name" },
+      { name: "sample-limit", description: "Maximum option/transient names to include per section; defaults to 100.", format: "positive integer" },
+      { name: "case-id", description: "Optional fuzz case id copied into observation correlation metadata.", format: "string" },
+      { name: "action-id", description: "Optional fuzz action id copied into observation correlation metadata.", format: "string" },
+      { name: "correlation-id", description: "Optional external correlation id copied into observation correlation metadata.", format: "string" },
+    ],
+    outputShape: "wp-codebox/cache-churn-observation/v1 JSON with transient/site-transient set/get/delete counts, option add/update/delete/get and autoload churn, unsupported object-cache reason fields, and optional case/action correlation.",
+    outputSchema: objectEnvelopeSchema(CACHE_CHURN_OBSERVATION_SCHEMA, {
+      artifactKind: { const: "cache-churn-observation" },
+      transients: { type: "object" },
+      siteTransients: { type: "object" },
+      options: { type: "object" },
+      objectCache: { type: "object" },
+      correlation: { type: "object" },
+      metadata: { type: "object" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.cache-churn-observation.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCacheChurnObservation" },
   },
   {
     id: "wordpress.runtime-discovery",

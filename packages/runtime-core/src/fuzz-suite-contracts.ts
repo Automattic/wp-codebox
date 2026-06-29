@@ -239,6 +239,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "db_operation",
     "rest-mutation:fixture-opt-in",
     "mutation-isolation-artifact",
+    "cache-churn-observation",
     "delete-boundary-artifact",
     "rest-mutation:post:mutation-isolation-artifact",
     "rest-mutation:put:mutation-isolation-artifact",
@@ -248,7 +249,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
   runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "sequence", "wp_cli"],
-  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.fuzz-admin-pages", "wordpress.fuzz-plugin-module-state", "wordpress.http-request", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
+  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.cache-churn-observation", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.fuzz-admin-pages", "wordpress.fuzz-plugin-module-state", "wordpress.http-request", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
 }
 
@@ -290,7 +291,7 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       label: "WordPress CLI, PHP, REST, CRUD, and database operation coverage",
       targetKinds: ["command", "runtime", "runtime-action"],
       runtimeActionTypes: ["crud_operation", "db_operation", "php", "rest_request", "wp_cli"],
-      commands: ["wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.wp-cli"],
+      commands: ["wordpress.cache-churn-observation", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.wp-cli"],
       mutationIntents: ["read", "write", "delete", "destructive"],
       supported: true,
     },
@@ -337,6 +338,13 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       producedBy: ["rest-mutation:delete"],
       description: "Delete coverage records the explicit delete boundary artifact inside a disposable sandbox instead of advertising unbounded raw delete support.",
     },
+    {
+      id: "cache-churn-observation",
+      required: false,
+      schema: "wp-codebox/cache-churn-observation/v1",
+      producedBy: ["wordpress.cache-churn-observation"],
+      description: "Optional destructive fuzzing evidence that correlates a case/action with transient, site transient, option, autoload, and explicitly unsupported object-cache churn fields.",
+    },
   ],
   destructiveModeRequirements: {
     supported: true,
@@ -379,6 +387,7 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       restMutationFixtureOptIn: "wp-codebox/rest-mutation-fixture-opt-in/v1",
       mutationIsolationArtifact: "wp-codebox/mutation-isolation-artifact/v1",
       deleteBoundaryArtifact: "wp-codebox/delete-boundary-artifact/v1",
+      cacheChurnObservation: "wp-codebox/cache-churn-observation/v1",
       wordpressWorkloadRun: "wp-codebox/wordpress-workload-run/v1",
     },
   },
