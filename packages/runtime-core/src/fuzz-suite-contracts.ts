@@ -5,6 +5,9 @@ export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
 export const FUZZ_RUNNER_CAPABILITIES_SCHEMA = "wp-codebox/fuzz-runner-capabilities/v1" as const
 export const FUZZ_RUNNER_READINESS_SCHEMA = "wp-codebox/fuzz-runner-readiness/v1" as const
+export const FUZZ_ARTIFACT_BUNDLE_SCHEMA = "wp-codebox/fuzz-artifact-bundle/v1" as const
+export const FUZZ_REPLAY_CASE_REF_SCHEMA = "wp-codebox/fuzz-replay-case-ref/v1" as const
+export const FUZZ_MINIMIZE_CAPABILITY_SCHEMA = "wp-codebox/fuzz-minimize-capability/v1" as const
 
 export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
@@ -200,6 +203,42 @@ export interface FuzzSuiteArtifactRef {
   metadata?: Record<string, unknown>
 }
 
+export interface FuzzReplayCaseRef {
+  schema: typeof FUZZ_REPLAY_CASE_REF_SCHEMA
+  caseId: string
+  path: string
+  kind: "fuzz-replay-case" | (string & {})
+  contentType: "application/json" | (string & {})
+  sha256?: string
+  bytes?: number
+  target?: FuzzSuiteTargetRef
+  status?: FuzzSuiteCaseStatus
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzMinimizeCapabilityContract {
+  schema: typeof FUZZ_MINIMIZE_CAPABILITY_SCHEMA
+  status: "supported" | "unsupported"
+  inputKind: "fuzz-replay-case" | (string & {})
+  reason?: string
+  requiredArtifacts?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzArtifactBundleContract {
+  schema: typeof FUZZ_ARTIFACT_BUNDLE_SCHEMA
+  suiteId: string
+  path: string
+  manifestPath: string
+  resultRef: FuzzSuiteArtifactRef
+  caseResultStreamRef: FuzzSuiteArtifactRef
+  replayCaseRefs: FuzzReplayCaseRef[]
+  hotspotRefs: FuzzSuiteArtifactRef[]
+  minimize: FuzzMinimizeCapabilityContract
+  artifactRefs: FuzzSuiteArtifactRef[]
+  metadata?: Record<string, unknown>
+}
+
 export interface FuzzSuiteCaseResult {
   id: string
   status: FuzzSuiteCaseStatus
@@ -310,6 +349,48 @@ export function fuzzSuiteResultEnvelope(input: {
     cases,
     diagnostics,
     artifactRefs,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzReplayCaseRef(input: Omit<FuzzReplayCaseRef, "schema" | "kind" | "contentType"> & Partial<Pick<FuzzReplayCaseRef, "kind" | "contentType">>): FuzzReplayCaseRef {
+  return stripUndefined({
+    schema: FUZZ_REPLAY_CASE_REF_SCHEMA,
+    caseId: input.caseId,
+    path: input.path,
+    kind: input.kind ?? "fuzz-replay-case",
+    contentType: input.contentType ?? "application/json",
+    sha256: input.sha256,
+    bytes: input.bytes,
+    target: input.target,
+    status: input.status,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzMinimizeUnsupportedCapability(input: { reason: string; requiredArtifacts?: string[]; metadata?: Record<string, unknown> }): FuzzMinimizeCapabilityContract {
+  return stripUndefined({
+    schema: FUZZ_MINIMIZE_CAPABILITY_SCHEMA,
+    status: "unsupported" as const,
+    inputKind: "fuzz-replay-case" as const,
+    reason: input.reason,
+    requiredArtifacts: input.requiredArtifacts,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzArtifactBundleContract(input: Omit<FuzzArtifactBundleContract, "schema">): FuzzArtifactBundleContract {
+  return stripUndefined({
+    schema: FUZZ_ARTIFACT_BUNDLE_SCHEMA,
+    suiteId: input.suiteId,
+    path: input.path,
+    manifestPath: input.manifestPath,
+    resultRef: input.resultRef,
+    caseResultStreamRef: input.caseResultStreamRef,
+    replayCaseRefs: input.replayCaseRefs,
+    hotspotRefs: input.hotspotRefs,
+    minimize: input.minimize,
+    artifactRefs: input.artifactRefs,
     metadata: input.metadata,
   })
 }
