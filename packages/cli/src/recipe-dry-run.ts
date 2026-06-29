@@ -3,6 +3,7 @@ import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validate
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
+import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -65,6 +66,7 @@ export interface RecipePlan {
   fixtureDatabases: RecipeDryRunFixtureDatabase[]
   siteSeeds: RecipeDryRunSiteSeed[]
   stagedFiles: RecipeDryRunStagedFile[]
+  externalServices: RecipeExternalServiceBoundarySummary[]
   probes: RecipeDryRunProbe[]
   secretEnv: Array<{ name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
   policy: RuntimePolicy & {
@@ -432,6 +434,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
     fixtureDatabases,
     siteSeeds,
     stagedFiles,
+    externalServices: recipeExternalServiceBoundarySummaries(recipe),
     probes,
     secretEnv: secretEnvSummary.map(recipeDryRunSecretEnvEntry),
     policy: {

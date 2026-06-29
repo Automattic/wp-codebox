@@ -8,6 +8,7 @@ import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, 
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
@@ -272,7 +273,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
-      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts))
@@ -295,7 +296,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
-      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -413,7 +414,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }))
       if (artifacts) {
         const collectedArtifacts = artifacts
-        browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+        browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
           if (declaredArtifacts.length === 0) {
@@ -774,6 +775,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
           workspaces: args.workspaceMounts.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: workspace.metadata })),
           stagedFiles: args.stagedFiles.map(recipeRunStagedFile),
           secretEnv: args.recipe.inputs?.secretEnv ?? [],
+          externalServices: recipeExternalServiceBoundarySummaries(args.recipe),
         },
         artifacts: args.recipe.artifacts ?? {},
       },
@@ -1165,6 +1167,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
         stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        externalServices: recipeExternalServiceBoundarySummaries(recipe),
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
       },
@@ -1195,6 +1198,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
         stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        externalServices: recipeExternalServiceBoundarySummaries(recipe),
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
       },

@@ -8,6 +8,7 @@ import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTU
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
+import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -227,6 +228,11 @@ export interface RecipeRunAttestation {
     count: number
     secrets: Array<{ name: string; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
     redaction: "names-only"
+  }
+  externalServices: {
+    schema: "wp-codebox/external-service-boundaries-attestation/v1"
+    boundaries: RecipeExternalServiceBoundarySummary[]
+    redaction: "secret-env-names-only"
   }
   evidenceRefs: {
     workspacePolicyResult?: RunAttestationEvidenceRef
@@ -1315,6 +1321,11 @@ async function buildRecipeRunAttestation(args: {
       count: args.secretEnv.filter((entry) => entry.status === "available").length,
       secrets: [...args.secretEnv].sort((a, b) => a.name.localeCompare(b.name)),
       redaction: "names-only",
+    },
+    externalServices: {
+      schema: "wp-codebox/external-service-boundaries-attestation/v1",
+      boundaries: recipeExternalServiceBoundarySummaries(args.recipe),
+      redaction: "secret-env-names-only",
     },
     evidenceRefs: stripUndefined({
       workspacePolicyResult: workspacePolicyRef,

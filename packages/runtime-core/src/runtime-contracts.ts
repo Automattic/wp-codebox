@@ -112,6 +112,25 @@ export interface WorkspaceRecipeMount {
   metadata?: Record<string, unknown>
 }
 
+export type WorkspaceRecipeExternalServiceEnvironment = "local" | "fixture" | "staging" | "production" | "external"
+export type WorkspaceRecipeExternalServiceWrites = "forbidden" | "record-only" | "allowed-with-approval"
+export type WorkspaceRecipeExternalServiceRedactionPolicy = "metadata-only" | "redact-fields" | "omit"
+
+export interface WorkspaceRecipeExternalServiceBoundary {
+  id: string
+  label?: string
+  environment: WorkspaceRecipeExternalServiceEnvironment
+  allowedHosts?: string[]
+  blockedHosts?: string[]
+  writes: WorkspaceRecipeExternalServiceWrites
+  secretEnv?: string[]
+  redaction?: {
+    policy: WorkspaceRecipeExternalServiceRedactionPolicy
+    fields?: string[]
+  }
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeRuntimeStack {
   mounts?: WorkspaceRecipeMount[]
 }
@@ -558,6 +577,7 @@ export interface WorkspaceRecipe {
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
     runtimeEnv?: Record<string, string>
     secretEnv?: string[]
+    externalServices?: WorkspaceRecipeExternalServiceBoundary[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
     fixtureUsers?: WorkspaceRecipeFixtureUser[]

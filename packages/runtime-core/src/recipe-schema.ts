@@ -171,6 +171,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
           },
+          externalServices: {
+            type: "array",
+            description: "Declared external service boundaries used for reviewer-safe browser and recipe evidence correlation. Secret material is represented by environment variable names only.",
+            items: { $ref: "#/$defs/externalServiceBoundary" },
+          },
           pluginRuntime: { $ref: "#/$defs/pluginRuntime" },
           fixtureDatabases: {
             type: "array",
@@ -509,6 +514,30 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      externalServiceBoundary: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "environment", "writes"],
+        properties: {
+          id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          label: { type: "string" },
+          environment: { enum: ["local", "fixture", "staging", "production", "external"] },
+          allowedHosts: { type: "array", items: { type: "string" } },
+          blockedHosts: { type: "array", items: { type: "string" } },
+          writes: { enum: ["forbidden", "record-only", "allowed-with-approval"] },
+          secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+          redaction: {
+            type: "object",
+            additionalProperties: false,
+            required: ["policy"],
+            properties: {
+              policy: { enum: ["metadata-only", "redact-fields", "omit"] },
+              fields: { type: "array", items: { type: "string" } },
+            },
+          },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

@@ -83,6 +83,7 @@ top-level fields:
 - `dependency_overlays`
 - `runtimeEnv`
 - `secretEnv`
+- `externalServices`
 - `pluginRuntime`
 - `fixtureDatabases`
 - `fixtureUsers`
@@ -103,6 +104,47 @@ imports.
 Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
 artifact contracts. WP Codebox materializes declared repositories as sandbox
 workspace mounts; callers own the policy that decides which artifacts to pass.
+
+## External Service Boundaries
+
+Use `inputs.externalServices` to declare reviewer-safe boundaries for services a
+recipe may observe while collecting browser or runtime evidence. The primitive is
+product-neutral: it names the boundary, classifies the environment, declares host
+sets, records the write policy, and lists secret environment variable names
+without serializing secret values.
+
+```json
+{
+  "inputs": {
+    "externalServices": [
+      {
+        "id": "checkout-staging",
+        "label": "Checkout staging API",
+        "environment": "staging",
+        "allowedHosts": ["api.example.test"],
+        "blockedHosts": ["api.example.com"],
+        "writes": "record-only",
+        "secretEnv": ["CHECKOUT_API_TOKEN"],
+        "redaction": {
+          "policy": "redact-fields",
+          "fields": ["authorization", "set-cookie"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Supported `environment` values are `local`, `fixture`, `staging`, `production`,
+and `external`. Supported `writes` values are `forbidden`, `record-only`, and
+`allowed-with-approval`. Supported redaction policies are `metadata-only`,
+`redact-fields`, and `omit`.
+
+Dry-run plans, run attestations, failure diagnostics, and browser evidence expose
+only the declared boundary metadata and secret env names. When browser evidence
+contains network-policy host observations, WP Codebox adds a safe correlation
+summary from observed hosts to declared boundary ids where host names match
+`allowedHosts` or `blockedHosts`.
 
 ## Extra Plugins
 
