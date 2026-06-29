@@ -40,6 +40,7 @@ import {
   REST_MUTATION_FIXTURE_OPT_IN_SCHEMA,
   DELETE_BOUNDARY_ARTIFACT_SCHEMA,
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
+  SANDBOX_ISOLATION_PROOF_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
   WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
@@ -193,6 +194,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./runtime-policy.js",
   "./runtime-preset-registry.js",
   "./sandbox-tool-policy.js",
+  "./sandbox-isolation-proof-contracts.js",
   "./source-root-preparation.js",
   "./structured-artifacts.js",
   "./task-input.js",
@@ -224,6 +226,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./runtime-contract-manifest.js",
   "./runtime-package-contracts.js",
   "./runtime-package-execution.js",
+  "./sandbox-isolation-proof-contracts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
   "./wordpress-db-contracts.js",
@@ -261,6 +264,7 @@ for (const contractArea of [
   "Performance observation",
   "WordPress hotspot artifacts",
   "Fuzz suite",
+  "Sandbox isolation proof",
   "Artifacts",
   "Run results",
   "Inspect",
@@ -287,6 +291,7 @@ for (const publicModule of [
   "./wordpress-hotspots-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
+  "./sandbox-isolation-proof-contracts.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
@@ -447,6 +452,7 @@ assert.equal(codeboxPublicContractPrimitive("runtimeProfile").schemas.profile, R
 assert.equal(codeboxPublicContractPrimitive("task").schemas.headlessResult, "wp-codebox/headless-agent-task-result/v1")
 assert.equal(codeboxPublicContractPrimitive("agent").abilities.runTask, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask.run)
 assert.equal(codeboxPublicContractPrimitive("artifact").schemas.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("fuzzing").schemas.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(codeboxPublicContractPrimitive("credential").redacted, true)
 assert.deepEqual(codeboxPublicContractPrimitives().task.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask)
 assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
@@ -457,6 +463,7 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
 assert.equal(runtimeContractManifest().providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
@@ -466,12 +473,21 @@ assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ART
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(normalizeRuntimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
-assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) })?.artifact.kind, "typed-artifact")
+assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", artifact: { path: "files/report.json", sha256: "a".repeat(64) } })?.artifact.kind, "typed-artifact")
 assert.equal(normalizePreviewReviewerAccess(undefined).status, "unavailable")
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
 assert.equal(publicApi.mutationIsolationArtifact({ operation: "rest_request", target: "/wp/v2/posts", method: "POST" }).schema, MUTATION_ISOLATION_ARTIFACT_SCHEMA)
 assert.equal(publicApi.deleteBoundaryArtifact({ operation: "rest_request", target: "/wp/v2/posts/1", method: "DELETE" }).schema, DELETE_BOUNDARY_ARTIFACT_SCHEMA)
+assert.equal(publicApi.sandboxIsolationProof({
+  status: "passed",
+  baseline: { status: "created", command: "wp-codebox.checkpoint-create" },
+  mutation: { status: "mutated", command: "wordpress.rest-request" },
+  restore: { status: "restored", command: "wp-codebox.checkpoint-restore" },
+  diff: { status: "clean-after-restore", changed: true },
+  runtimeBoundary: { backend: "wordpress-playground", environment: "wordpress", disposable: true, hostAccess: "declared-mounts-only", destroy: { status: "destroyed" } },
+  artifacts: [{ path: "files/sandbox-isolation/proof.json", kind: "sandbox-isolation-proof" }],
+}).schema, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(fuzzFixturePlanContract({ id: "fixture-plan-boundary" }).schema, FUZZ_FIXTURE_PLAN_SCHEMA)
 assert.equal(fuzzRunnerReadinessContract(publicApi.RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES).schema, FUZZ_RUNNER_READINESS_SCHEMA)

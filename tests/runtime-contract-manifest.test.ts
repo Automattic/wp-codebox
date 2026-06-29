@@ -57,6 +57,7 @@ import {
   RUNTIME_PROFILE_SCHEMA,
   RUNTIME_DESCRIPTOR_SCHEMA,
   RUNTIME_RUN_RESULT_SCHEMA,
+  SANDBOX_ISOLATION_PROOF_SCHEMA,
   TYPED_ARTIFACT_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
@@ -142,6 +143,7 @@ assert.equal(manifest.schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_P
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
 assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)
@@ -177,6 +179,7 @@ assert.equal(descriptor.readiness.publicApi, true)
 assert.equal(descriptor.readiness.contractManifest, true)
 assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
 assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
+assert.ok(descriptor.capabilities.includes("wordpress-runtime:sandbox-isolation-proof"))
 assert.deepEqual(descriptor.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 assert.deepEqual(descriptor.contractManifest, manifest)
 
@@ -186,6 +189,7 @@ assert.equal(codeboxPublicContractPrimitive("runtimeProfile").schemas.profile, R
 assert.equal(codeboxPublicContractPrimitive("task").schemas.headlessRequest, "wp-codebox/headless-agent-task-request/v1")
 assert.equal(codeboxPublicContractPrimitive("agent").schemas.workload, AGENT_RUNTIME_WORKLOAD_SCHEMA)
 assert.equal(codeboxPublicContractPrimitive("artifact").schemas.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("fuzzing").schemas.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(codeboxPublicContractPrimitive("credential").schemas.preflight, "wp-codebox/provider-credential-preflight/v1")
 assert.equal(codeboxPublicContractPrimitive("credential").redacted, true)
 
