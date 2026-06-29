@@ -538,14 +538,17 @@ caller-owned external checks:
 `tool` is the exact caller-provided host tool command name and must be allowed by
 runtime policy using that same command name. `input` must be JSON-serializable.
 WP Codebox treats this as transport and evidence only; callers own the tool and
-any external system behavior. The current Playground browser-actions runtime
-validates and policy-checks `callTool`, then records a redaction-required
-`wp-codebox/browser-tool-verifier-result/v1` artifact with input shape metadata
-and an `unsupported` status because the host-tool execution bridge is not yet
-available inside browser automation. Raw input values and secrets are not
-serialized into that verifier artifact. Polling fields are intentionally not part
-of this narrow primitive yet; callers should model repeated checks outside the
-browser script until the execution bridge lands.
+any external system behavior. The Playground browser-actions runtime validates
+and policy-checks `callTool`; when the caller provides a matching host tool via
+`RuntimeCreateSpec.hostTools`, Codebox executes it through the generic host-tool
+transport and records the `wp-codebox/host-tool-result/v1` result inside a
+redaction-required `wp-codebox/browser-tool-verifier-result/v1` artifact. When no
+host-tool registry or matching tool is available, or runtime policy does not
+allow the exact tool command, Codebox records stable `unsupported` verifier
+evidence instead of executing the step. Raw input values and secrets are not
+serialized into unsupported verifier artifacts. Polling fields are intentionally
+not part of this narrow primitive yet; callers should model repeated checks
+outside the browser script.
 
 ## Fixture Browser Auth Storage State
 
