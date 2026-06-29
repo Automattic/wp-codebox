@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, assertRuntimeCommandAllowed, browserInteractionScriptToolCalls, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -23,6 +23,10 @@ import type { Page } from "playwright"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
+
+interface HostToolLookup {
+  get(name: string): ReturnType<HostToolRegistry["get"]>
+}
 
 export interface BrowserActionsRunPlan {
   initialUrl?: string
@@ -79,10 +83,6 @@ export async function runBrowserActionsCommand({
   if (browserInteractionScriptUsesEvaluate(steps)) {
     assertRuntimeCommandAllowed("wordpress.browser-actions.evaluate", runtimeSpec.policy)
   }
-  for (const tool of browserInteractionScriptToolCalls(steps)) {
-    assertRuntimeCommandAllowed(tool, runtimeSpec.policy)
-  }
-
   const capture = runPlan.capture
 
   for (const item of capture) {
@@ -185,15 +185,19 @@ export async function runBrowserActionsCommand({
       }
       try {
         if (step.kind === "callTool") {
-          const result = browserToolVerifierUnsupportedResult(step, index, recordStartedAt)
+          const result = await browserToolVerifierResult(step, index, recordStartedAt, runtimeSpec)
           const fileName = `verifier-step-${index}.json`
           await artifactSession.writeJson("verifierResults", fileName, result)
           const artifactPath = artifactSession.path(fileName)
           verifierResults.push({ step: result.step, status: result.status, artifact: artifactPath })
-          const serialized = serializeBrowserError("probe-error", new Error(result.error?.message ?? "wordpress.browser-actions callTool is unsupported"))
+          if (result.status === "ok") {
+            stepRecords.push(browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath }))
+            continue
+          }
+          const serialized = serializeBrowserError("probe-error", new Error(result.error?.message ?? "wordpress.browser-actions callTool verifier failed"))
           errors.push(serialized)
           stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { verifierResult: artifactPath, error: serialized }))
-          pendingError = new Error(result.error?.message ?? "wordpress.browser-actions callTool is unsupported")
+          pendingError = new Error(result.error?.message ?? "wordpress.browser-actions callTool verifier failed")
           break
         }
         const outcome = step.kind === "assertObservation"
@@ -430,6 +434,69 @@ export async function runBrowserActionsCommand({
 
 export function browserToolVerifierUnsupportedResult(step: BrowserInteractionStep, index: number, startedAt: string): BrowserToolVerifierResult {
   const tool = typeof step.tool === "string" ? step.tool : "unknown/unknown"
+  return browserToolVerifierUnsupportedResultWithError(step, index, startedAt, "browser-call-tool-bridge-unavailable", "wordpress.browser-actions validated a callTool step, but this runtime does not expose a host-tool execution bridge inside browser automation.")
+}
+
+export async function browserToolVerifierResult(step: BrowserInteractionStep, index: number, startedAt: string, runtimeSpec: RuntimeCreateSpec): Promise<BrowserToolVerifierResult> {
+  const tool = typeof step.tool === "string" ? step.tool : "unknown/unknown"
+  const input = step.input ?? null
+  const registry = hostToolLookupFromRuntimeSpec(runtimeSpec)
+
+  try {
+    assertRuntimeCommandAllowed(tool, runtimeSpec.policy)
+  } catch (error) {
+    return browserToolVerifierUnsupportedResultWithError(step, index, startedAt, "browser-call-tool-policy-denied", error instanceof Error ? error.message : String(error))
+  }
+
+  if (!registry) {
+    return browserToolVerifierUnsupportedResult(step, index, startedAt)
+  }
+
+  const definition = registry.get(tool)
+  if (!definition) {
+    return browserToolVerifierUnsupportedResultWithError(step, index, startedAt, "browser-call-tool-unregistered", `wordpress.browser-actions callTool requested an unregistered host tool: ${tool}`)
+  }
+
+  const result = await executeHostTool(definition, input, {
+    tool,
+    policyCommand: tool,
+    metadata: { browserActionStep: index },
+  })
+
+  return {
+    schema: BROWSER_TOOL_VERIFIER_RESULT_SCHEMA,
+    status: result.status,
+    step: { index, kind: "callTool", tool },
+    tool,
+    inputSummary: browserToolVerifierInputSummary(input),
+    result: result as unknown as JsonValue,
+    ...(result.status === "error" ? { error: { code: result.error.code, message: result.error.message } } : {}),
+    evidence: browserToolVerifierEvidence(),
+    startedAt,
+    finishedAt: now(),
+  }
+}
+
+function hostToolLookupFromRuntimeSpec(runtimeSpec: RuntimeCreateSpec): HostToolLookup | undefined {
+  const hostTools = runtimeSpec.hostTools as unknown
+  if (hostTools instanceof HostToolRegistry) {
+    return hostTools
+  }
+  if (Array.isArray(hostTools)) {
+    return createHostToolRegistry(hostTools as HostToolDefinition[])
+  }
+  if (isHostToolLookup(hostTools)) {
+    return hostTools
+  }
+  return undefined
+}
+
+function isHostToolLookup(value: unknown): value is HostToolLookup {
+  return Boolean(value) && typeof value === "object" && typeof (value as { get?: unknown }).get === "function"
+}
+
+function browserToolVerifierUnsupportedResultWithError(step: BrowserInteractionStep, index: number, startedAt: string, code: string, message: string): BrowserToolVerifierResult {
+  const tool = typeof step.tool === "string" ? step.tool : "unknown/unknown"
   return {
     schema: BROWSER_TOOL_VERIFIER_RESULT_SCHEMA,
     status: "unsupported",
@@ -437,20 +504,24 @@ export function browserToolVerifierUnsupportedResult(step: BrowserInteractionSte
     tool,
     inputSummary: browserToolVerifierInputSummary(step.input ?? null),
     error: {
-      code: "browser-call-tool-bridge-unavailable",
-      message: "wordpress.browser-actions validated a callTool step, but this runtime does not yet expose a host-tool execution bridge inside browser automation.",
+      code,
+      message,
     },
-    evidence: {
-      redaction: {
-        policy: "required",
-        sensitive: true,
-        reason: "Browser verifier artifacts can include caller tool names, input shapes, URLs, page state, or external verification diagnostics.",
-      },
-      rawInputSerialized: false,
-      rawSecretsSerialized: false,
-    },
+    evidence: browserToolVerifierEvidence(),
     startedAt,
     finishedAt: now(),
+  }
+}
+
+function browserToolVerifierEvidence(): BrowserToolVerifierResult["evidence"] {
+  return {
+    redaction: {
+      policy: "required",
+      sensitive: true,
+      reason: "Browser verifier artifacts can include caller tool names, input shapes, URLs, page state, host-tool outputs, or external verification diagnostics.",
+    },
+    rawInputSerialized: false,
+    rawSecretsSerialized: false,
   }
 }
 
