@@ -605,6 +605,8 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     }
   }
 
+  validateRecipeExternalServiceBoundaries(recipe, addIssue)
+
   for (const [name, value] of Object.entries(recipe.inputs?.runtimeEnv ?? {})) {
     if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
       addIssue("invalid-runtime-env", `$.inputs.runtimeEnv.${name}`, `Runtime environment variable names must match /^[A-Z_][A-Z0-9_]*$/: ${name}`)
@@ -637,6 +639,32 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
   }
 
   return issues
+}
+
+function validateRecipeExternalServiceBoundaries(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
+  const seenIds = new Set<string>()
+  for (const [index, boundary] of (recipe.inputs?.externalServices ?? []).entries()) {
+    const path = `$.inputs.externalServices[${index}]`
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(boundary.id)) {
+      addIssue("invalid-external-service-id", `${path}.id`, `External service boundary ids must be stable identifiers: ${boundary.id}`)
+    }
+    if (seenIds.has(boundary.id)) {
+      addIssue("duplicate-external-service-id", `${path}.id`, `External service boundary ids must be unique: ${boundary.id}`)
+    }
+    seenIds.add(boundary.id)
+
+    for (const [hostIndex, host] of [...(boundary.allowedHosts ?? []), ...(boundary.blockedHosts ?? [])].entries()) {
+      if (!/^[a-z0-9.-]+(?::\d+)?$/i.test(host)) {
+        addIssue("invalid-external-service-host", `${path}.${hostIndex < (boundary.allowedHosts ?? []).length ? "allowedHosts" : "blockedHosts"}[${hostIndex < (boundary.allowedHosts ?? []).length ? hostIndex : hostIndex - (boundary.allowedHosts ?? []).length}]`, `External service hosts must be hostnames with optional ports: ${host}`)
+      }
+    }
+
+    for (const [secretIndex, name] of (boundary.secretEnv ?? []).entries()) {
+      if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+        addIssue("invalid-external-service-secret-env", `${path}.secretEnv[${secretIndex}]`, `External service secret environment variable names must match /^[A-Z_][A-Z0-9_]*$/: ${name}`)
+      }
+    }
+  }
 }
 
 async function validateRecipeDistribution(distribution: WorkspaceRecipeDistribution | undefined, recipeDirectory: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {

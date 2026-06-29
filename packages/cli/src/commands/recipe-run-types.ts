@@ -1,6 +1,7 @@
 import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
+import type { RecipeExternalServiceBoundaryHostCorrelation } from "../recipe-external-services.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 
@@ -201,6 +202,7 @@ export interface RecipeBrowserEvidence {
   summaryFile?: RecipeBrowserEvidenceFileRef
   files: Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]>
   summary?: unknown
+  externalServiceBoundaries?: RecipeExternalServiceBoundaryHostCorrelation
   scriptResult?: unknown
 }
 
