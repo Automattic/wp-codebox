@@ -76,6 +76,16 @@ export const CODEBOX_PUBLIC_CONTRACT_PRIMITIVES = {
       typedArtifactIndex: RUNTIME_CONTRACT_NORMALIZERS.typedArtifactIndex,
     },
   },
+  fuzzing: {
+    abilities: {
+      runFuzzSuite: CODEBOX_PUBLIC_RUNTIME_ABILITIES.wordpressRuntime.runFuzzSuite,
+    },
+    schemas: {
+      fuzzSuite: RUNTIME_CONTRACT_SCHEMAS.wordpressRuntime.fuzzSuite,
+      fuzzSuiteResult: RUNTIME_CONTRACT_SCHEMAS.wordpressRuntime.fuzzSuiteResult,
+      sandboxIsolationProof: RUNTIME_CONTRACT_SCHEMAS.wordpressRuntime.sandboxIsolationProof,
+    },
+  },
   credential: {
     schemas: {
       requirements: RUNTIME_CONTRACT_SCHEMAS.runtimeProvider.credentialRequirements,
