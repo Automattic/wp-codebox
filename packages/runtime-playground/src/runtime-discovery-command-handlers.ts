@@ -207,6 +207,231 @@ function runtime_discovery_admin(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-admin-page-discovery/v1', 'adminUrl' => admin_url(), 'menuLoaded' => $menu_loaded, 'user' => $user_context, 'pages' => $pages), 'diagnostics' => $diagnostics);
 }
 
+function runtime_discovery_admin_action_inventory(int $max_pages = 25): array {
+    $admin = runtime_discovery_admin();
+    $payload = $admin['payload'];
+    $diagnostics = (array) $admin['diagnostics'];
+    $pages = array();
+    $actions = array();
+    $count = 0;
+
+    foreach ((array) ($payload['pages'] ?? array()) as $page) {
+        if (!is_array($page)) {
+            continue;
+        }
+        $page['forms'] = array();
+        $page['actions'] = array();
+        if (($page['canAccess'] ?? null) === false || $count >= $max_pages) {
+            $pages[] = $page;
+            continue;
+        }
+        $html = runtime_discovery_render_admin_page_html((string) ($page['canonicalUrl'] ?? ''), (string) ($page['menuSlug'] ?? ''));
+        foreach (runtime_discovery_admin_action_descriptors_from_html($html, $page) as $descriptor) {
+            $page['forms'][] = $descriptor;
+            $page['actions'][] = $descriptor;
+            $actions[] = $descriptor;
+        }
+        $pages[] = $page;
+        $count++;
+    }
+
+    return array(
+        'schema' => 'wp-codebox/wordpress-admin-action-inventory/v1',
+        'command' => 'wordpress.admin-action-inventory',
+        'status' => empty($diagnostics) ? 'ok' : 'unsupported',
+        'adminUrl' => (string) ($payload['adminUrl'] ?? admin_url()),
+        'menuLoaded' => (bool) ($payload['menuLoaded'] ?? false),
+        'user' => $payload['user'] ?? null,
+        'pages' => $pages,
+        'actions' => $actions,
+        'diagnostics' => $diagnostics,
+        'redaction' => array('samplePayloadValues' => 'redacted', 'nonceValues' => 'redacted'),
+    );
+}
+
+function runtime_discovery_render_admin_page_html(string $url, string $menu_slug): string {
+    $parts = parse_url($url);
+    $path = is_array($parts) ? (string) ($parts['path'] ?? '') : '';
+    $query = array();
+    if (is_array($parts) && isset($parts['query'])) {
+        parse_str((string) $parts['query'], $query);
+    }
+    $_GET = $query;
+    $_REQUEST = $query;
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $_SERVER['REQUEST_URI'] = $path . (empty($query) ? '' : '?' . http_build_query($query));
+    ob_start();
+    try {
+        do_action('load-' . basename($path === '' ? $menu_slug : $path));
+        if ($menu_slug !== '') {
+            do_action($menu_slug);
+        }
+    } catch (Throwable $throwable) {
+        echo '';
+    }
+    return (string) ob_get_clean();
+}
+
+function runtime_discovery_admin_action_descriptors_from_html(string $html, array $page): array {
+    if (trim($html) === '') {
+        return array();
+    }
+    $dom = new DOMDocument();
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="utf-8" ?>' . $html, LIBXML_NOWARNING | LIBXML_NOERROR);
+    libxml_clear_errors();
+    $xpath = new DOMXPath($dom);
+    $forms = array();
+    $index = 0;
+    foreach ($xpath->query('//form') ?: array() as $form) {
+        if (!$form instanceof DOMElement) {
+            continue;
+        }
+        $method = strtoupper(trim($form->getAttribute('method')) ?: 'GET');
+        $action_url = runtime_discovery_admin_form_action_url($form->getAttribute('action'), (string) ($page['canonicalUrl'] ?? ''));
+        $fields = runtime_discovery_admin_form_fields($xpath, $form);
+        $submit_buttons = runtime_discovery_admin_form_submit_buttons($xpath, $form);
+        $bulk_actions = runtime_discovery_admin_form_bulk_actions($fields);
+        $nonce = runtime_discovery_admin_form_nonce($fields);
+        $sample_payload = array();
+        foreach ($fields as $field) {
+            if (($field['name'] ?? '') !== '') {
+                $sample_payload[(string) $field['name']] = '[redacted]';
+            }
+        }
+        $descriptor = array(
+            'id' => substr(hash('sha256', implode('|', array((string) ($page['menuSlug'] ?? ''), (string) ($page['canonicalUrl'] ?? ''), (string) $index, $method, $action_url))), 0, 16),
+            'kind' => 'form',
+            'selector' => 'form:nth-of-type(' . ($index + 1) . ')',
+            'method' => $method,
+            'action' => $action_url,
+            'actionUrl' => $action_url,
+            'actionFamily' => runtime_discovery_admin_action_family($action_url),
+            'fields' => $sample_payload,
+            'inputs' => $fields,
+            'submitButtons' => $submit_buttons,
+            'bulkActions' => $bulk_actions,
+            'samplePayload' => $sample_payload,
+            'capability' => (string) ($page['capability'] ?? ''),
+            'safety' => array('mode' => 'descriptor-only', 'executes' => false),
+        );
+        if ($nonce !== null) {
+            $descriptor['nonceField'] = $nonce['name'];
+            $descriptor['nonceAction'] = $nonce['action'];
+        }
+        $forms[] = $descriptor;
+        $index++;
+    }
+    return $forms;
+}
+
+function runtime_discovery_admin_form_action_url(string $action, string $base): string {
+    if ($action === '') {
+        return $base;
+    }
+    if (preg_match('#^https?://#i', $action)) {
+        return runtime_discovery_redact_url($action);
+    }
+    if (str_starts_with($action, '/')) {
+        return runtime_discovery_redact_url(home_url($action));
+    }
+    $base_dir = preg_replace('#/[^/]*$#', '/', $base);
+    return runtime_discovery_redact_url($base_dir . $action);
+}
+
+function runtime_discovery_admin_form_fields(DOMXPath $xpath, DOMElement $form): array {
+    $fields = array();
+    foreach ($xpath->query('.//input|.//select|.//textarea', $form) ?: array() as $node) {
+        if (!$node instanceof DOMElement || !$node->hasAttribute('name')) {
+            continue;
+        }
+        $field = array('name' => $node->getAttribute('name'), 'tag' => strtolower($node->tagName));
+        if ($node->hasAttribute('type')) {
+            $field['type'] = strtolower($node->getAttribute('type'));
+        }
+        if ($node->hasAttribute('value')) {
+            $field['valuePresent'] = true;
+            $field['valueRedacted'] = true;
+        }
+        if (strtolower($node->tagName) === 'select') {
+            $options = array();
+            foreach ($xpath->query('.//option', $node) ?: array() as $option) {
+                if ($option instanceof DOMElement) {
+                    $value = $option->hasAttribute('value') ? $option->getAttribute('value') : trim($option->textContent);
+                    if ($value !== '') {
+                        $options[] = $value;
+                    }
+                }
+            }
+            $field['options'] = array_slice(array_values(array_unique($options)), 0, 25);
+        }
+        $fields[] = $field;
+    }
+    return $fields;
+}
+
+function runtime_discovery_admin_form_submit_buttons(DOMXPath $xpath, DOMElement $form): array {
+    $buttons = array();
+    foreach ($xpath->query('.//button[@type="submit"]|.//input[@type="submit"]|.//input[@type="button"]', $form) ?: array() as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $button = array();
+        if ($node->hasAttribute('name')) {
+            $button['name'] = $node->getAttribute('name');
+        }
+        if ($node->hasAttribute('value')) {
+            $button['valuePresent'] = true;
+            $button['valueRedacted'] = true;
+        }
+        $label = trim($node->textContent) ?: ($node->hasAttribute('value') ? '[redacted]' : '');
+        if ($label !== '') {
+            $button['label'] = substr($label, 0, 120);
+        }
+        $buttons[] = $button;
+    }
+    return $buttons;
+}
+
+function runtime_discovery_admin_form_bulk_actions(array $fields): array {
+    $bulk = array();
+    foreach ($fields as $field) {
+        $name = (string) ($field['name'] ?? '');
+        if (($name === 'action' || $name === 'action2') && isset($field['options']) && is_array($field['options'])) {
+            $actions = array_values(array_filter(array_map('strval', $field['options']), static fn($value) => $value !== '' && $value !== '-1'));
+            if (!empty($actions)) {
+                $bulk[] = array('controlName' => $name, 'actions' => $actions);
+            }
+        }
+    }
+    return $bulk;
+}
+
+function runtime_discovery_admin_form_nonce(array $fields): ?array {
+    foreach ($fields as $field) {
+        $name = (string) ($field['name'] ?? '');
+        if ($name === '_wpnonce' || str_contains(strtolower($name), 'nonce')) {
+            return array('name' => $name, 'action' => 'unknown');
+        }
+    }
+    return null;
+}
+
+function runtime_discovery_admin_action_family(string $url): string {
+    $path = (string) (parse_url($url, PHP_URL_PATH) ?: '');
+    if (str_ends_with($path, '/admin-post.php') || str_ends_with($path, 'admin-post.php')) {
+        return 'admin-post';
+    }
+    if (str_ends_with($path, '/admin-ajax.php') || str_ends_with($path, 'admin-ajax.php')) {
+        return 'admin-ajax';
+    }
+    return str_contains($path, '/wp-admin/') ? 'admin-page' : 'external';
+}
+
+function runtime_discovery_redact_url(string $url): string {
+    return preg_replace('/([?&][^=]*(?:token|secret|nonce|_wpnonce|authorization|password|passwd|pwd|key|signature|sig)[^=]*=)[^&#]+/i', '$1[redacted]', $url) ?? $url;
+}
+
 function runtime_discovery_admin_page(string $menu_slug, string $title, string $capability, string $parent_slug = ''): array {
     $page = array(
         'menuSlug' => $menu_slug,
@@ -473,4 +698,11 @@ if ('${surface}' === 'database') {
 }
 
 echo wp_json_encode($runtime_inventory_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+export function runtimeAdminActionInventoryPhpCode(maxPages = 25): string {
+  return `<?php
+${runtimeDiscoveryPhpCode(["admin"]).replace(/^<\?php\n/, "").replace(/\$runtime_discovery_result = array\([\s\S]*?echo wp_json_encode\(\$runtime_discovery_result, JSON_PRETTY_PRINT \| JSON_UNESCAPED_SLASHES\);$/, "")}
+
+echo wp_json_encode(runtime_discovery_admin_action_inventory(${Math.max(1, Math.floor(maxPages))}), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }

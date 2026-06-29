@@ -24,6 +24,7 @@ The inventory commands expose narrower public contracts for fuzzing target disco
 
 - `wordpress.rest-route-inventory` returns `wp-codebox/wordpress-rest-route-inventory/v1` with registered REST route descriptors and namespaces.
 - `wordpress.admin-page-inventory` returns `wp-codebox/wordpress-admin-page-inventory/v1` with already-loaded admin menu descriptors. If admin menu globals are unavailable, `status` remains structured and diagnostics include `admin-menu-not-loaded`.
+- `wordpress.admin-action-inventory` returns `wp-codebox/wordpress-admin-action-inventory/v1` with descriptor-only admin forms/actions discovered from accessible admin page output: methods, action URLs, admin-post/admin-ajax/admin-page candidates, nonce field names, named inputs/selects/textareas, submit buttons, list-table bulk action controls, stable descriptor IDs, and redacted sample payload shapes. It does not submit forms or execute actions.
 - `wordpress.inventory-database` returns `wp-codebox/wordpress-db-inventory/v1` with the database prefix, table descriptors, bounded column descriptors, indexes, row/byte totals, and best-effort table status. It does not read row data.
 - `wordpress.frontend-url-inventory` returns `wp-codebox/wordpress-frontend-url-inventory/v1` with home URL, rewrite-rule URL seeds, rewrite rules, and public query vars. This is a seed list, not a crawler result.
 

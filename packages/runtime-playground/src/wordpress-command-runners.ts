@@ -36,6 +36,7 @@ import {
   runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
+  runtimeAdminActionInventoryPhpCode,
   runtimeInventoryPhpCode,
   runtimeDiscoveryPhpCode,
   runtimeDiscoverySurfacesFromArgs,
@@ -701,6 +702,24 @@ export async function runRuntimeInventoryCommand({
   surface: "rest" | "admin" | "database" | "frontend"
 }): Promise<string> {
   const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
+  assertPlaygroundResponseOk(command, response)
+  return response.text
+}
+
+export async function runAdminActionInventoryCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const maxPages = argValue(spec.args ?? [], "max-pages") !== undefined ? positiveIntegerArg(spec.args ?? [], "max-pages", 25) : positiveIntegerArg(spec.args ?? [], "max_pages", 25)
+  const command = "wordpress.admin-action-inventory"
+  const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeAdminActionInventoryPhpCode(maxPages), []) })
   assertPlaygroundResponseOk(command, response)
   return response.text
 }

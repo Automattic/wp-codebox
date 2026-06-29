@@ -5,7 +5,7 @@ import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from 
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS, WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA, WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA } from "./wordpress-admin-action-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
-import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
 
 export type CommandHandlerBinding =
@@ -566,6 +566,26 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.admin-page-inventory.",
     recipe: true,
     handler: { kind: "playground", method: "runAdminPageInventory" },
+  },
+  {
+    id: "wordpress.admin-action-inventory",
+    description: "Discover descriptor-only WordPress admin forms, submit controls, named inputs, nonce fields, admin-post/admin-ajax candidates, and list-table bulk actions from accessible admin page output.",
+    acceptedArgs: [
+      { name: "max-pages", description: "Maximum accessible admin menu pages to render for form/action descriptors. Defaults to 25.", format: "positive integer" },
+      { name: "max_pages", description: "Alias for max-pages.", format: "positive integer" },
+    ],
+    outputShape: "wp-codebox/wordpress-admin-action-inventory/v1 JSON with admin page descriptors, form/action descriptors, redacted sample payload shapes, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA, {
+      adminUrl: { type: "string" },
+      menuLoaded: { type: "boolean" },
+      pages: { type: "array" },
+      actions: { type: "array" },
+      diagnostics: { type: "array" },
+      redaction: { type: "object" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.admin-action-inventory.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminActionInventory" },
   },
   {
     id: "wordpress.fuzz-admin-pages",

@@ -22,6 +22,7 @@ interface PlaygroundCommandRuntime {
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageInventory(spec: ExecutionSpec): Promise<string>
+  runAdminActionInventory(spec: ExecutionSpec): Promise<string>
   runFuzzAdminPages(spec: ExecutionSpec): Promise<string>
   runAdminAction(spec: ExecutionSpec): Promise<string>
   runFuzzPluginModuleState(spec: ExecutionSpec): Promise<string>

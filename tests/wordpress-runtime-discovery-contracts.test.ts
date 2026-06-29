@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 
 import {
   WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
+  WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA,
   WORDPRESS_DATABASE_INVENTORY_SCHEMA,
   WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
@@ -9,6 +10,7 @@ import {
   WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   type WordPressAdminPageInventory,
+  type WordPressAdminActionInventory,
   type WordPressDatabaseInventory,
   type WordPressFrontendUrlInventory,
   type WordPressRestRouteInventory,
@@ -16,7 +18,7 @@ import {
 } from "../packages/runtime-core/src/index.js"
 import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 import { getCommandDefinition, runtimeCommandDefinitions } from "../packages/runtime-core/src/command-registry.js"
-import { runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs, runtimeInventoryPhpCode } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
+import { runtimeAdminActionInventoryPhpCode, runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs, runtimeInventoryPhpCode } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
 import { runPhpJson } from "../scripts/test-kit.js"
 
 const result: WordPressRuntimeDiscoveryResult = {
@@ -67,6 +69,18 @@ const adminInventory: WordPressAdminPageInventory = {
   pages: [],
   diagnostics: [],
 }
+const adminActionInventory: WordPressAdminActionInventory = {
+  schema: WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA,
+  command: "wordpress.admin-action-inventory",
+  status: "ok",
+  adminUrl: "https://example.com/wp-admin/",
+  menuLoaded: true,
+  user: { isLoggedIn: true, id: 7, roles: ["administrator"] },
+  pages: [],
+  actions: [],
+  diagnostics: [],
+  redaction: { samplePayloadValues: "redacted", nonceValues: "redacted" },
+}
 const frontendInventory: WordPressFrontendUrlInventory = {
   schema: WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   command: "wordpress.frontend-url-inventory",
@@ -102,6 +116,7 @@ const databaseInventory: WordPressDatabaseInventory = {
 
 assert.equal(restInventory.schema, "wp-codebox/wordpress-rest-route-inventory/v1")
 assert.equal(adminInventory.schema, "wp-codebox/wordpress-admin-page-inventory/v1")
+assert.equal(adminActionInventory.schema, "wp-codebox/wordpress-admin-action-inventory/v1")
 assert.equal(databaseInventory.schema, "wp-codebox/wordpress-db-inventory/v1")
 assert.equal(frontendInventory.schema, "wp-codebox/wordpress-frontend-url-inventory/v1")
 
@@ -109,6 +124,7 @@ const inventoryDefinitions = [
   ["wordpress.rest-route-inventory", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
   ["wordpress.inventory-rest-routes", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
   ["wordpress.admin-page-inventory", "runAdminPageInventory", WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA],
+  ["wordpress.admin-action-inventory", "runAdminActionInventory", WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA],
   ["wordpress.inventory-database", "runDatabaseInventory", WORDPRESS_DATABASE_INVENTORY_SCHEMA],
   ["wordpress.frontend-url-inventory", "runFrontendUrlInventory", WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA],
 ] as const
@@ -123,6 +139,7 @@ for (const [command, method, schema] of inventoryDefinitions) {
 
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restRouteInventory, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.adminPageInventory, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.adminActionInventory, WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.databaseInventory, WORDPRESS_DATABASE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.frontendUrlInventory, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
@@ -294,6 +311,62 @@ assert.equal(pluginPage?.canAccess, true)
 const importPage = adminDiscovered.admin?.pages.find((page) => page.menuSlug === "demo-import")
 assert.equal(importPage?.canonicalUrl, "https://example.com/wp-admin/tools.php?page=demo-import")
 assert.equal(importPage?.canAccess, false)
+
+const adminActionInventoryPhp = runtimeAdminActionInventoryPhpCode(5).replace(/^<\?php\n/, "")
+const adminActionsDiscovered = await runPhpJson<WordPressAdminActionInventory>(`
+class WP_User {
+    public $ID = 7;
+    public $roles = array( 'administrator' );
+}
+function is_user_logged_in() { return true; }
+function wp_get_current_user() { return new WP_User(); }
+function current_user_can( $capability ) { return $capability === 'manage_options'; }
+function admin_url( $path = '' ) { return 'https://example.com/wp-admin/' . ltrim( $path, '/' ); }
+function home_url( $path = '' ) { return 'https://example.com/' . ltrim( $path, '/' ); }
+function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function add_action( $hook, $callback, $priority = 10, $accepted_args = 1 ) { $GLOBALS['wp_codebox_actions'][$hook][] = $callback; }
+function do_action( $hook, ...$args ) {
+    foreach ( (array) ( $GLOBALS['wp_codebox_actions'][$hook] ?? array() ) as $callback ) {
+        $callback( ...$args );
+    }
+}
+$GLOBALS['menu'] = array(
+    array( 'Demo Plugin', 'manage_options', 'demo-plugin' ),
+);
+$GLOBALS['submenu'] = array();
+add_action( 'demo-plugin', static function() {
+    ?>
+    <form id="demo-form" method="post" action="admin-post.php?token=secret-token">
+        <input type="hidden" name="action" value="demo_save" />
+        <input type="hidden" name="_wpnonce" value="secret-nonce" />
+        <input type="text" name="title" value="Sensitive title" />
+        <select name="mode"><option value="draft">Draft</option><option value="publish">Publish</option></select>
+        <textarea name="notes">private notes</textarea>
+        <select name="action2"><option value="-1">Bulk actions</option><option value="delete">Delete</option><option value="export">Export</option></select>
+        <button type="submit" name="submit" value="save">Save</button>
+    </form>
+    <?php
+} );
+${adminActionInventoryPhp}
+`)
+
+assert.equal(adminActionsDiscovered.schema, WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA)
+assert.equal(adminActionsDiscovered.command, "wordpress.admin-action-inventory")
+assert.equal(adminActionsDiscovered.status, "ok")
+assert.equal(adminActionsDiscovered.redaction.samplePayloadValues, "redacted")
+const discoveredAdminAction = adminActionsDiscovered.actions[0]
+assert.equal(discoveredAdminAction?.kind, "form")
+assert.equal(discoveredAdminAction?.method, "POST")
+assert.equal(discoveredAdminAction?.actionFamily, "admin-post")
+assert.equal(discoveredAdminAction?.actionUrl, "https://example.com/wp-admin/admin-post.php?token=[redacted]")
+assert.equal(discoveredAdminAction?.nonceField, "_wpnonce")
+assert.equal(discoveredAdminAction?.samplePayload?.title, "[redacted]")
+assert.equal(discoveredAdminAction?.samplePayload?._wpnonce, "[redacted]")
+assert.deepEqual(discoveredAdminAction?.bulkActions, [{ controlName: "action2", actions: ["delete", "export"] }])
+assert.equal(discoveredAdminAction?.inputs?.some((input) => input.name === "mode" && input.tag === "select" && input.options?.includes("publish")), true)
+assert.deepEqual(discoveredAdminAction?.submitButtons?.[0], { name: "submit", valuePresent: true, valueRedacted: true, label: "Save" })
+assert.equal(adminActionsDiscovered.pages[0]?.forms[0]?.id, discoveredAdminAction?.id)
 
 const blockDiscoveryPhp = runtimeDiscoveryPhpCode(["blocks"]).replace(/^<\?php\n/, "")
 const blocksDiscovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
