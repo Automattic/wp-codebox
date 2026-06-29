@@ -153,6 +153,58 @@ try {
   assert.match(gitResult.patch, /\+\/\/ edited by agent/)
   assert.match(gitResult.patch, /deleted file mode 100644/)
 
+  // A runner that materializes its own dependency checkouts into the target
+  // repo working tree (e.g. the homeboy-extensions full-run runner clones deps
+  // under `.ci/`) supplies `metadata.artifactExcludePaths` so its untracked
+  // materialization does not masquerade as agent changes in the captured
+  // workspace patch. Genuine agent edits outside the excluded prefix are still
+  // captured.
+  const excludeRepo = join(root, "exclude-repo")
+  await mkdir(join(excludeRepo, "docs"), { recursive: true })
+  await execFileAsync("git", ["-C", excludeRepo, "init", "-q"])
+  await execFileAsync("git", ["-C", excludeRepo, "config", "user.email", "smoke@wp-codebox.test"])
+  await execFileAsync("git", ["-C", excludeRepo, "config", "user.name", "wp-codebox smoke"])
+  await writeFile(join(excludeRepo, "docs", "README.md"), "# Docs\n\nbefore\n")
+  await execFileAsync("git", ["-C", excludeRepo, "add", "."])
+  await execFileAsync("git", ["-C", excludeRepo, "commit", "-q", "-m", "baseline"])
+
+  // The agent makes a real change inside the target repo.
+  await writeFile(join(excludeRepo, "docs", "README.md"), "# Docs\n\nafter the agent edit\n")
+  // The runner materializes untracked dependency checkouts under `.ci/` (these
+  // would otherwise flood the patch as thousands of "added" files).
+  await mkdir(join(excludeRepo, ".ci", "homeboy-extensions", "lib"), { recursive: true })
+  await writeFile(join(excludeRepo, ".ci", "homeboy-extensions", "index.js"), "module.exports = {}\n")
+  await writeFile(join(excludeRepo, ".ci", "homeboy-extensions", "lib", "runner.js"), "// dependency checkout\n")
+  await mkdir(join(excludeRepo, ".ci", "wp-codebox"), { recursive: true })
+  await writeFile(join(excludeRepo, ".ci", "wp-codebox", "package.json"), "{}\n")
+
+  const excludeResult = await captureMountDiffs(artifactRoot, filesDirectory, [
+    {
+      type: "directory",
+      source: excludeRepo,
+      target: "/workspace/build-with-wordpress",
+      mode: "readwrite",
+      metadata: {
+        kind: "homeboy-runtime-workspace",
+        workspace_slug: "build-with-wordpress",
+        artifactExcludePaths: [".ci/**"],
+      },
+    },
+  ], new ArtifactRedactor())
+  const excludeChanged = new Map(excludeResult.changedFiles.files.map((file) => [file.relativePath, file]))
+
+  // The real agent change is captured.
+  assert.equal(excludeChanged.get("docs/README.md")?.status, "modified")
+  assert.match(excludeResult.patch, /diff --git a\/workspace\/build-with-wordpress\/docs\/README\.md b\/workspace\/build-with-wordpress\/docs\/README\.md/)
+  assert.match(excludeResult.patch, /\+after the agent edit/)
+  // None of the runner's `.ci/**` materialization leaks into the change set.
+  for (const relativePath of excludeChanged.keys()) {
+    assert.equal(relativePath.startsWith(".ci/"), false, `unexpected .ci path in change set: ${relativePath}`)
+  }
+  assert.equal(excludeResult.changedFiles.files.length, 1)
+  assert.doesNotMatch(excludeResult.patch, /\.ci\//)
+  console.log(`PASS: workspace diff excluded runner .ci/** materialization while retaining docs/README.md (changed files: ${excludeResult.changedFiles.files.length})`)
+
   const vfsBackedRepo = join(root, "vfs-backed-repo")
   await mkdir(vfsBackedRepo, { recursive: true })
   await execFileAsync("git", ["-C", vfsBackedRepo, "init", "-q"])
