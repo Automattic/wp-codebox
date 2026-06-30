@@ -23,6 +23,9 @@ import {
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+  CODEBOX_PUBLIC_RUNTIME_COMMANDS,
+  CODEBOX_PUBLIC_RUNTIME_READINESS,
+  CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES,
   CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY,
   CODEBOX_RUN_AGENT_TASK_ABILITY,
   CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
@@ -32,6 +35,7 @@ import {
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  FUZZ_RUNNER_READINESS_SCHEMA,
   FUZZ_COVERAGE_PLAN_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
@@ -82,6 +86,9 @@ assert.equal(manifest.schema, RUNTIME_CONTRACT_MANIFEST_SCHEMA)
 assert.equal(manifest.version, 1)
 assert.deepEqual(manifest.schemas, RUNTIME_CONTRACT_SCHEMAS)
 assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
+assert.deepEqual(manifest.commands, CODEBOX_PUBLIC_RUNTIME_COMMANDS)
+assert.deepEqual(manifest.capabilities, CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES)
+assert.deepEqual(manifest.readiness, CODEBOX_PUBLIC_RUNTIME_READINESS)
 
 assert.equal(manifest.schemas.agentTask.runRequest, AGENT_TASK_RUN_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
@@ -151,6 +158,17 @@ assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_
 assert.equal(manifest.abilities.runtimeRequirements.resolve, CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
+assert.equal(manifest.commands.wordpressRuntime.runWorkload, "run-wordpress-workload")
+assert.equal(manifest.commands.wordpressRuntime.runFuzzSuite, "run-fuzz-suite")
+assert.equal(manifest.capabilities.wordpressRuntime.commands.runWorkload, "run-wordpress-workload")
+assert.equal(manifest.capabilities.wordpressRuntime.commands.runFuzzSuite, "run-fuzz-suite")
+assert.equal(manifest.capabilities.wordpressRuntime.capabilities.commands?.includes("wordpress.run-workload"), true)
+assert.equal(manifest.capabilities.wordpressRuntime.runner_modes["runtime-backed"], true)
+assert.equal(manifest.readiness.wordpressRuntime.schema, FUZZ_RUNNER_READINESS_SCHEMA)
+assert.equal(manifest.readiness.wordpressRuntime.status, "ready")
+assert.equal(manifest.readiness.wordpressRuntime.mode, "runtime-backed")
+assert.equal(manifest.readiness.wordpressRuntime.entrypoint, "run-fuzz-suite --runner-mode=runtime-backed")
+assert.equal(manifest.readiness.wordpressRuntime.capabilities.commands?.includes("wordpress.run-workload"), true)
 assert.equal(manifest.providerRuntime.schema, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
 assert.deepEqual(manifest.providerRuntime.tasks, PROVIDER_RUNTIME_TASK_NAMES)
 assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")

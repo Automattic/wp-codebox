@@ -4,7 +4,7 @@ import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, validateFanoutAggregationOutput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
 import { FUZZ_COVERAGE_PLAN_SCHEMA } from "./fuzz-coverage-plan-contracts.js"
-import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, FUZZ_RUNNER_READINESS_SCHEMA, FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA, wordpressFuzzRuntimeContract, type WordPressFuzzRuntimeContract } from "./fuzz-suite-contracts.js"
+import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, FUZZ_RUNNER_READINESS_SCHEMA, FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA, fuzzRunnerReadinessContract, wordpressFuzzRuntimeContract, type WordPressFuzzRuntimeContract } from "./fuzz-suite-contracts.js"
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
 import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
@@ -73,6 +73,27 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
     runWorkload: CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
     runFuzzSuite: CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_COMMANDS = {
+  wordpressRuntime: {
+    runWorkload: "run-wordpress-workload",
+    runFuzzSuite: "run-fuzz-suite",
+  },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES = {
+  wordpressRuntime: {
+    commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS.wordpressRuntime,
+    capabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+    runner_modes: {
+      "runtime-backed": true,
+    },
+  },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_READINESS = {
+  wordpressRuntime: fuzzRunnerReadinessContract(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES),
 } as const
 
 export const RUNTIME_CONTRACT_SCHEMAS = {
@@ -215,6 +236,9 @@ export interface RuntimeContractManifest {
   version: 1
   schemas: typeof RUNTIME_CONTRACT_SCHEMAS
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  commands: typeof CODEBOX_PUBLIC_RUNTIME_COMMANDS
+  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES
+  readiness: typeof CODEBOX_PUBLIC_RUNTIME_READINESS
   providerRuntime: ReturnType<typeof providerRuntimeInvocationContract>
 }
 
@@ -242,6 +266,9 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     version: 1,
     schemas: RUNTIME_CONTRACT_SCHEMAS,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS,
+    capabilities: CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES,
+    readiness: CODEBOX_PUBLIC_RUNTIME_READINESS,
     providerRuntime: providerRuntimeInvocationContract(),
   }
 }
