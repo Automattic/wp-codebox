@@ -2,6 +2,7 @@ import { basename, dirname, resolve } from "node:path"
 import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
+import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./commands/recipe-run-artifacts-mount-guard.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
 import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
@@ -253,6 +254,19 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
   try {
     const recipeDirectory = dirname(recipePath)
     const recipe = await loadWorkspaceRecipe(recipePath)
+    const artifactMountConflict = recipeArtifactsMountConflict(recipe, recipeDirectory, options.artifactsDirectory ?? recipe.artifacts?.directory)
+    if (artifactMountConflict) {
+      return {
+        success: false,
+        schema: "wp-codebox/recipe-run-dry-run/v1",
+        recipePath,
+        dryRun: true,
+        valid: false,
+        validation: { issues: [] },
+        error: serializeError(new RecipeArtifactsMountConflictError(artifactMountConflict)),
+      }
+    }
+
     const issues = await validateWorkspaceRecipe(recipe, recipePath)
 
     if (issues.length > 0) {
