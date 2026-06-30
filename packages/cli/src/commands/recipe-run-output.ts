@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises"
-import type { RuntimeRunRecord } from "@automattic/wp-codebox-core"
+import type { RecipeRunSummary, RuntimeRunRecord } from "@automattic/wp-codebox-core"
 import { serializeError } from "../output.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
@@ -96,6 +96,51 @@ function hasTerminalRecipePhaseFailure(output: RecipeRunOutput): boolean {
 
 export async function writeRecipeJsonOutput(output: unknown): Promise<void> {
   await writeStdout(`${JSON.stringify(output, null, 2)}\n`)
+}
+
+export async function writeRecipeSummaryHumanOutput(summary: RecipeRunSummary): Promise<void> {
+  const lines: string[] = []
+  const metadata = summary.metadata ?? {}
+  const artifactBundle = summary.refs.artifact_bundles[0]
+  lines.push("WP Codebox recipe summary")
+  lines.push(`Status: ${summary.status}`)
+  if (typeof metadata.recipe_path === "string") lines.push(`Recipe: ${metadata.recipe_path}`)
+  if (summary.failed_phase) lines.push(`Failed phase: ${summary.failed_phase}`)
+  if (summary.failure_summary) lines.push(`Failure: ${oneLine(summary.failure_summary)}`)
+  if (typeof metadata.run_id === "string" || typeof metadata.run_status === "string") lines.push(`Run: ${metadata.run_id ?? "unknown"}${metadata.run_status ? ` (${metadata.run_status})` : ""}`)
+  if (typeof metadata.runtime_id === "string" || typeof metadata.runtime_status === "string") lines.push(`Runtime: ${metadata.runtime_id ?? "unknown"}${metadata.runtime_status ? ` (${metadata.runtime_status})` : ""}`)
+  if (typeof metadata.artifact_directory === "string") lines.push(`Artifacts: ${metadata.artifact_directory}`)
+  else if (artifactBundle?.path) lines.push(`Artifacts: ${artifactBundle.path}`)
+  if (summary.runtime_access?.preview_url || summary.runtime_access?.public_url || summary.runtime_access?.site_url) lines.push(`Preview: ${summary.runtime_access.preview_url || summary.runtime_access.public_url || summary.runtime_access.site_url}`)
+
+  lines.push(`Commands: ${summary.commands.length}`)
+  for (const command of summary.commands) {
+    const status = command.exit_code === undefined ? command.status : `${command.status} exit=${command.exit_code}`
+    const phase = command.recipe_phase ? ` phase=${command.recipe_phase}` : ""
+    lines.push(`- #${command.index + 1} ${status}${phase}: ${oneLine(command.command)}`)
+    if (command.stderr_tail && command.status !== "succeeded") lines.push(`  stderr: ${tailLines(command.stderr_tail)}`)
+    if (command.stdout_tail && command.status !== "succeeded") lines.push(`  stdout: ${tailLines(command.stdout_tail)}`)
+  }
+
+  const diagnostics = summary.diagnostics.slice(0, 5)
+  if (diagnostics.length > 0) {
+    lines.push(`Diagnostics: ${summary.diagnostics.length}`)
+    for (const diagnostic of diagnostics) {
+      const code = typeof diagnostic.code === "string" ? `${diagnostic.code}: ` : ""
+      const message = typeof diagnostic.message === "string" ? diagnostic.message : JSON.stringify(diagnostic)
+      lines.push(`- ${code}${oneLine(message)}`)
+    }
+  }
+
+  await writeStdout(`${lines.join("\n")}\n`)
+}
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function tailLines(value: string, maxLines = 6): string {
+  return value.split(/\r?\n/).filter(Boolean).slice(-maxLines).map(oneLine).join(" | ")
 }
 
 function writeStdout(contents: string): Promise<void> {

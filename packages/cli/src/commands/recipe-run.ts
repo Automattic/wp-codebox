@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -21,7 +21,7 @@ import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts
 import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput, writeRecipeSummaryHumanOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
@@ -41,6 +41,19 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
 
   try {
+    if (options.summary) {
+      const { result } = await captureStdout(execute)
+      const output = interruptedRecipeOutput(result, interruption)
+      const summary = normalizeRecipeRunSummary(output)
+      if (options.json) await writeRecipeJsonOutput(summary)
+      else await writeRecipeSummaryHumanOutput(summary)
+      interruption?.propagateIfInterrupted()
+      exitAfterRecipeRunTimeout(output)
+      exitAfterPlaygroundCliBootFailure(output)
+      exitAfterTerminalRecipePhaseFailure(output)
+      return output.success ? 0 : 1
+    }
+
     if (!options.json) {
       const output = interruptedRecipeOutput(await execute(), interruption)
       printRecipeHumanOutput(output)
@@ -598,12 +611,13 @@ function distributionRuntimeEnv(recipe: WorkspaceRecipe): Record<string, string>
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
+  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
   if (parsed.positionals.length > 0) {
     throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
   }
   const options: Partial<RecipeRunOptions> = {
     json: parsed.options.get("--json") === true,
+    summary: parsed.options.get("--summary") === true || parsed.options.get("--summary-only") === true,
     dryRun: parsed.options.get("--dry-run") === true,
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
     previewLeaseRequested: parsed.options.get("--preview-lease") === true,

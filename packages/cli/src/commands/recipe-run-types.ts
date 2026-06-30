@@ -21,6 +21,7 @@ export interface RecipeRunOptions {
   previewLeaseFile?: string
   timeoutMs: number
   json: boolean
+  summary: boolean
   dryRun: boolean
 }
 
