@@ -16,17 +16,13 @@ native git + GitHub agent-tool surface so it no longer depends on DMC.
    `agents-api`** into the sandbox WordPress as default runtime components.
    `data-machine-code` is what supplies the agent's `workspace_*` /
    `create_github_*` tools.
-2. Inside the sandbox, the agent runs through the Agents API conversation loop
-   (`agents-api/.../class-wp-agent-conversation-loop.php`). Tool calls are
+2. Inside the sandbox, the agent runs through the configured agent conversation loop. Tool calls are
    executed by a `WP_Agent_Tool_Executor` passed in `$options['tool_executor']`.
    The default executor (`WP_Agent_Ability_Tool_Executor`) dispatches
    `tool_name → wp_get_ability(tool_name)->execute()` via
    `WP_Agent_Ability_Dispatcher`.
-3. Those abilities are DMC's `datamachine-code/workspace-*` and
-   `datamachine-code/*-github-*` abilities
-   (`data-machine-code/inc/Abilities/WorkspaceAbilities.php`,
-   `GitHubAbilities.php`), which shell out to `git` / call the GitHub API on the
-   workspace checkout.
+3. Those abilities are DMC workspace and GitHub abilities, which shell out to
+   `git` / call the GitHub API on the workspace checkout.
 4. Host-side, `wp-codebox`'s `WP_Codebox_Runner_Workspace_Adapter` already
    delegates runner-workspace *operations* to host abilities through the
    `wp_codebox_runner_workspace_backend` filter — but that is host orchestration
@@ -40,9 +36,8 @@ is the clean injection point.
 
 ### Agents API executor contract (reused)
 
-`agents-api/src/Tools/class-wp-agent-tool-executor.php` defines
-`WP_Agent_Tool_Executor::executeWP_Agent_Tool_Call($tool_call, $tool_definition,
-$context)`. We implement it with `WP_Codebox_Runner_Workspace_Executor`
+The agent tool executor contract defines
+`executeWP_Agent_Tool_Call($tool_call, $tool_definition, $context)`. We implement it with `WP_Codebox_Runner_Workspace_Executor`
 (target id `wp-codebox/runner-workspace`), which maps tool names to a native
 engine bound to the resolved workspace root. Root resolution mirrors how the
 adapter already reads `client_context` (`default_workspace.target` /

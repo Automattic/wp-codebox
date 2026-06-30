@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
-import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
@@ -178,12 +178,16 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   }
 
   for (const plugin of recipeExtraPlugins(recipe)) {
-    if (!plugin.source) {
-      throw new Error(`Recipe extra_plugins entries must include source: ${recipePath}`)
+    if (!plugin.source && !plugin.sourcePath) {
+      throw new Error(`Recipe extra_plugins entries must include source or sourcePath: ${recipePath}`)
     }
 
     if (plugin.slug && !/^[a-z0-9][a-z0-9-_]*$/i.test(plugin.slug)) {
       throw new Error(`Recipe extra_plugins slug must be a plugin-directory slug: ${recipePath}`)
+    }
+
+    if (plugin.mountSlug && !/^[a-z0-9][a-z0-9-_]*$/i.test(plugin.mountSlug)) {
+      throw new Error(`Recipe extra_plugins mountSlug must be a plugin-directory slug: ${recipePath}`)
     }
 
     if (plugin.loadAs && plugin.loadAs !== "plugin" && plugin.loadAs !== "mu-plugin") {
@@ -523,17 +527,31 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
   for (const [index, plugin] of recipeExtraPlugins(recipe).entries()) {
     const path = `$.inputs.extra_plugins[${index}]`
+    let sourceRef: string
+    try {
+      sourceRef = recipeExtraPluginSource(plugin)
+    } catch (error) {
+      addIssue("missing-source", `${path}.source`, error instanceof Error ? error.message : String(error))
+      continue
+    }
     let source: ReturnType<typeof recipeSource>
     try {
-      source = recipeSource(plugin.source, plugin.sha256)
+      source = recipeSource(sourceRef, plugin.sha256)
     } catch (error) {
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
     }
     const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
-    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
-    const pluginSource = source.type === "local" ? resolve(recipeDirectory, plugin.source) : undefined
-    const pluginMountedSource = source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : undefined
+    let sourceSubpath = ""
+    try {
+      sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    } catch (error) {
+      addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+    const pluginSource = source.type === "local" ? resolve(recipeDirectory, sourceRef) : undefined
+    const sourceRootPath = resolve(recipeDirectory, sourceRoot)
+    const pluginMountedSource = source.type === "local" ? resolve(sourceRootPath, sourceSubpath) : undefined
     let slug: string
     try {
       slug = recipeExtraPluginSlug(plugin)
@@ -547,11 +565,18 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     if (pluginSource) {
       await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
     }
-    if (sourceRoot !== plugin.source) {
+    if (sourceRoot !== sourceRef) {
       await validateExistingDirectory(resolve(recipeDirectory, sourceRoot), `${path}.sourceRoot`, addIssue)
     }
+    if (pluginMountedSource && !pluginMountedSource.startsWith(`${sourceRootPath}/`) && pluginMountedSource !== sourceRootPath) {
+      addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, "Plugin source subdirectory must stay inside the source root.")
+      continue
+    }
+    if (sourceSubpath && pluginMountedSource) {
+      await validateExistingDirectory(pluginMountedSource, `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, addIssue)
+    }
 
-    if (!pluginFile.startsWith(`${slug}/`)) {
+    if (!/^[^/][^:]*\.php$/.test(pluginFile) || pluginFile.includes("..") || !pluginFile.startsWith(`${slug}/`)) {
       addIssue("invalid-plugin-file", `${path}.pluginFile`, `Plugin file must be relative to the mounted plugin slug (${slug}/...).`)
       continue
     }

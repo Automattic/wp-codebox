@@ -5,7 +5,7 @@ import { serializeError } from "./output.js"
 import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./commands/recipe-run-artifacts-mount-guard.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
 import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
-import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
+import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 
@@ -583,9 +583,10 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   const steps: Array<Promise<RecipeDryRunStep>> = []
   const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRef = recipeExtraPluginSource(plugin)
     const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     return {
-      source: plugin.source,
+      source: sourceRef,
       slug,
       target: pluginTarget(slug, plugin.loadAs ?? "plugin"),
       pluginFile: await resolveRecipeExtraPluginFile(plugin, recipeDirectory),
@@ -676,13 +677,14 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRef = recipeExtraPluginSource(plugin)
     const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const source = recipeSource(sourceRoot, plugin.sha256)
     const provenance = recipeSourceProvenance(source, recipeDirectory)
     return {
       source: source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : source.resolvedUrl,
-      sourceRef: plugin.source,
+      sourceRef,
       sourceRoot,
       sourceSubpath,
       sourceType: source.type,

@@ -149,8 +149,11 @@ summary from observed hosts to declared boundary ids where host names match
 ## Extra Plugins
 
 `inputs.extra_plugins` mounts additional WordPress plugins before workflow steps
-run. Each entry requires `source` and may include `slug`, `pluginFile`,
-`activate`, `loadAs`, and `sha256`.
+run. Each entry requires `source` or `sourcePath` and may include `sourceSubdir`,
+`mountSlug`, `pluginFile`, `activate`, `loadAs`, and `sha256`. `sourcePath` is
+the source root, `sourceSubdir` is an optional plugin directory below that root,
+`mountSlug` is the WordPress plugin directory, and `pluginFile` is relative to
+the mounted plugin slug.
 
 ```json
 {
@@ -167,6 +170,12 @@ run. Each entry requires `source` and may include `slug`, `pluginFile`,
         "pluginFile": "caller-runtime-substrate/caller-runtime-substrate.php",
         "activate": false,
         "loadAs": "mu-plugin"
+      },
+      {
+        "sourcePath": "../monorepo",
+        "sourceSubdir": "plugins/example-plugin",
+        "mountSlug": "example-plugin",
+        "pluginFile": "example-plugin/example-plugin.php"
       }
     ]
   }

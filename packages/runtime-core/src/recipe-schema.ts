@@ -752,16 +752,22 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       extraPlugin: {
         type: "object",
         additionalProperties: false,
-        required: ["source"],
+        anyOf: [{ required: ["source"] }, { required: ["sourcePath"] }],
         properties: {
           source: {
             type: "string",
             description: "Local plugin directory path, WordPress.org plugin zip URL, or generic HTTPS zip URL.",
           },
+          sourcePath: {
+            type: "string",
+            description: "Local source root path. Use sourceSubdir when the plugin lives below this root in a monorepo.",
+          },
           sourceRoot: { type: "string" },
           sourceSubpath: { type: "string" },
+          sourceSubdir: { type: "string" },
           originalSource: { type: "string" },
           slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          mountSlug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
           pluginFile: { type: "string" },
           activate: { type: "boolean" },
           loadAs: { enum: ["plugin", "mu-plugin"] },
