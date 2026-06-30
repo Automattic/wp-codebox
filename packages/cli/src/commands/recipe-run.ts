@@ -20,6 +20,7 @@ import { createRecipeRunContext } from "./recipe-run-context.js"
 import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
 import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
+import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./recipe-run-artifacts-mount-guard.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
@@ -79,6 +80,11 @@ export async function runRecipeValidateCommand(args: string[]): Promise<number> 
 }
 
 async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
+  const mountConflictFailure = await recipeArtifactsMountConflictFailure(options)
+  if (mountConflictFailure) {
+    return mountConflictFailure
+  }
+
   const context = await createRecipeRunContext(options)
   const { recipePath, recipeDirectory, recipe, configuredArtifactsDirectory, runRegistry, artifactPointer, startedAtMs } = context
   let { runRecord } = context
@@ -492,6 +498,25 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     })
   } finally {
     cancellationWatcher?.dispose()
+  }
+}
+
+async function recipeArtifactsMountConflictFailure(options: RecipeRunOptions): Promise<RecipeRunOutput | undefined> {
+  const recipePath = resolve(options.recipePath)
+  const recipeDirectory = dirname(recipePath)
+  const recipe = await loadWorkspaceRecipe(recipePath)
+  const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
+  const conflict = recipeArtifactsMountConflict(recipe, recipeDirectory, configuredArtifactsDirectory)
+  if (!conflict) {
+    return undefined
+  }
+
+  return {
+    success: false,
+    schema: "wp-codebox/recipe-run/v1",
+    recipePath,
+    executions: [],
+    error: serializeError(new RecipeArtifactsMountConflictError(conflict)),
   }
 }
 
