@@ -160,7 +160,11 @@ final class WP_Codebox_Host_Runtime_Config_Builder {
 	public function component_plugins( array $paths ): array {
 		$plugins = array();
 		foreach ( $paths as $index => $contract ) {
-			$path = (string) ( $contract['path'] ?? '' );
+			$path = trim( (string) ( $contract['path'] ?? $contract['source'] ?? '' ) );
+			$source_path = trim( (string) ( $contract['sourcePath'] ?? $contract['source_path'] ?? '' ) );
+			if ( '' === $path ) {
+				$path = $source_path;
+			}
 			if ( '' === $path ) {
 				continue;
 			}
@@ -169,26 +173,37 @@ final class WP_Codebox_Host_Runtime_Config_Builder {
 			$load_as  = (string) ( $contract['loadAs'] ?? 'mu-plugin' );
 			$activate = (bool) ( $contract['activate'] ?? false );
 
-			$plugins[] = array(
-				'source'   => $path,
-				'slug'     => $slug,
-				'activate' => $activate,
-				'loadAs'   => $load_as,
-				'metadata' => array(
-					'componentContract' => array_filter(
-						array(
-							'index'         => $index,
-							'slug'          => $slug,
-							'requestedPath' => $path,
-							'originalPath'  => isset( $contract['original_path'] ) ? (string) $contract['original_path'] : ( isset( $contract['originalPath'] ) ? (string) $contract['originalPath'] : '' ),
-							'preparedPath'  => $path,
-							'loadAs'        => $load_as,
-							'activate'      => $activate,
-						),
-						static fn( mixed $value ): bool => '' !== $value
+			$plugin = array_filter(
+				array(
+					'source'        => '' === $source_path ? $path : '',
+					'sourcePath'    => $source_path,
+					'sourceRoot'    => trim( (string) ( $contract['sourceRoot'] ?? $contract['source_root'] ?? '' ) ),
+					'sourceSubdir'  => trim( (string) ( $contract['sourceSubdir'] ?? $contract['source_subdir'] ?? '' ) ),
+					'sourceSubpath' => trim( (string) ( $contract['sourceSubpath'] ?? $contract['source_subpath'] ?? '' ) ),
+					'slug'          => $slug,
+					'mountSlug'     => trim( (string) ( $contract['mountSlug'] ?? $contract['mount_slug'] ?? '' ) ),
+					'pluginFile'    => trim( (string) ( $contract['pluginFile'] ?? $contract['plugin_file'] ?? '' ) ),
+					'activate'      => $activate,
+					'loadAs'        => $load_as,
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			);
+
+			$plugin['metadata'] = array(
+				'componentContract' => array_filter(
+					array(
+						'index'         => $index,
+						'slug'          => $slug,
+						'requestedPath' => $path,
+						'originalPath'  => isset( $contract['original_path'] ) ? (string) $contract['original_path'] : ( isset( $contract['originalPath'] ) ? (string) $contract['originalPath'] : '' ),
+						'preparedPath'  => $path,
+						'loadAs'        => $load_as,
+						'activate'      => $activate,
 					),
+					static fn( mixed $value ): bool => '' !== $value
 				),
 			);
+			$plugins[] = $plugin;
 		}
 
 		return $plugins;

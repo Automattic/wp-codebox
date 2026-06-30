@@ -39,6 +39,37 @@ await withTempDir("wp-codebox-nested-extra-plugin-", async (recipeDirectory) => 
   assert.equal((await stat(join(plugin.source, "example-plugin.php"))).isFile(), true)
 })
 
+await withTempDir("wp-codebox-nested-extra-plugin-source-path-", async (recipeDirectory) => {
+  const sourceRoot = join(recipeDirectory, "source-root")
+  await mkdir(join(sourceRoot, "plugins", "example", "includes"), { recursive: true })
+  await writeFile(join(sourceRoot, "plugins", "example", "example.php"), "<?php\n/* Plugin Name: Example */\n")
+
+  const recipe: WorkspaceRecipe = {
+    schema: "wp-codebox/workspace-recipe/v1",
+    inputs: {
+      extra_plugins: [{
+        sourcePath: "source-root",
+        sourceSubdir: "plugins/example",
+        mountSlug: "example",
+        pluginFile: "example/example.php",
+      }],
+    },
+    workflow: { steps: [{ command: "inspect-mounted-inputs" }] },
+  }
+
+  assertWorkspaceRecipeJsonSchema(recipe)
+  assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json")), [])
+
+  const [plugin] = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+  assert.ok(plugin)
+  assert.equal(plugin.slug, "example")
+  assert.equal(plugin.target, "/wordpress/wp-content/plugins/example")
+  assert.equal(plugin.pluginFile, "example/example.php")
+  assert.equal(plugin.metadata?.sourceRoot, "source-root")
+  assert.equal(plugin.metadata?.sourceSubpath, "plugins/example")
+  assert.equal((await stat(join(plugin.source, "example.php"))).isFile(), true)
+})
+
 await withTempDir("wp-codebox-nested-extra-plugin-invalid-", async (recipeDirectory) => {
   const repo = join(recipeDirectory, "repo")
   await mkdir(join(repo, "plugins", "nested-plugin"), { recursive: true })
