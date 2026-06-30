@@ -121,6 +121,20 @@ export interface FuzzRunnerReadinessContract {
   capabilities: FuzzRunnerCapabilitiesContract
   operationKinds: string[]
   unsupportedRequiredCapabilities: string[]
+  disposable?: boolean
+  isolation?: {
+    runtime_backed: true
+    disposable: true
+    sandboxed: true
+  }
+  guardrails?: {
+    external_side_effect_guardrail: true
+    external_http_guardrail: true
+  }
+  artifacts?: {
+    artifact_export: true
+  }
+  destructiveModeRequirements?: WordPressFuzzDestructiveModeRequirements
   metadata?: Record<string, unknown>
 }
 
@@ -224,6 +238,10 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "target:runtime",
     "target:runtime-action",
     "runtime",
+    "disposable-runtime",
+    "runtime-isolation",
+    "disposable-sandbox-boundary",
+    "destructive-permission",
     "runtime-action:admin_page",
     "runtime-action:browser",
     "runtime-action:browser_probe",
@@ -243,6 +261,10 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "mutation-isolation-artifact",
     "cache-churn-observation",
     "delete-boundary-artifact",
+    "sandbox-isolation-proof",
+    "external-http-guardrail",
+    "external-side-effect-guardrail",
+    "artifact-export",
     "wordpress-db-write-set-artifact",
     "rest-mutation:post:mutation-isolation-artifact",
     "rest-mutation:put:mutation-isolation-artifact",
@@ -673,6 +695,13 @@ export function fuzzRunnerReadinessContract(input: FuzzSuiteRunnerCapabilities, 
     capabilities,
     operationKinds: capabilities.operationKinds ?? [],
     unsupportedRequiredCapabilities,
+    ...(input.mode === "runtime-backed" ? {
+      disposable: true,
+      isolation: { runtime_backed: true, disposable: true, sandboxed: true } as const,
+      guardrails: { external_side_effect_guardrail: true, external_http_guardrail: true } as const,
+      artifacts: { artifact_export: true } as const,
+      destructiveModeRequirements: WORDPRESS_FUZZ_RUNTIME_CONTRACT.destructiveModeRequirements,
+    } : {}),
     metadata: input.metadata,
   })
 }
