@@ -40,6 +40,9 @@ export interface ArtifactReferenceFileInput {
   path?: string
   kind?: string
   contentType?: string
+  content_type?: string
+  mimeType?: string
+  mime?: string
   sha256?: string | ArtifactReferenceDigestInput
   digest?: string | ArtifactReferenceDigestInput
   viewer?: ArtifactViewerMetadata
@@ -278,7 +281,7 @@ function browserSessionRuntimeAccess(session: Record<string, unknown>): RuntimeA
 }
 
 export function normalizeArtifactContentType(input: ArtifactReferenceFileInput | undefined, fallback = "application/octet-stream"): string {
-  const contentType = input?.contentType
+  const contentType = input?.contentType ?? input?.content_type ?? input?.mimeType ?? input?.mime
   return typeof contentType === "string" && contentType.trim().length > 0 ? contentType : fallback
 }
 
