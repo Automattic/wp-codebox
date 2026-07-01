@@ -124,4 +124,38 @@ assert.equal(typedJsonPathExecution.exitCode, 0)
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
 assert.ok(executed[0]?.args?.includes("plugin-slug=woocommerce"))
 
+executed.length = 0
+const directJsonWorkload: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-php", args: ["code=echo 'json workload';"] }] })}`] }],
+  },
+}
+assertWorkspaceRecipeJsonSchema(directJsonWorkload, { recipeCommandIds: ["wordpress.run-workload", "wordpress.run-php"] })
+const directJsonExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: directJsonWorkload.workflow.steps[0]! }, process.cwd())
+const directJsonResult = JSON.parse(directJsonExecution.stdout)
+assert.equal(directJsonExecution.command, "wordpress.run-workload")
+assert.equal(directJsonExecution.exitCode, 0)
+assert.equal(directJsonResult.schema, "wp-codebox/wordpress-workload-run-result/v1")
+assert.equal(directJsonResult.steps, 1)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
+executed.length = 0
+const nestedJsonWorkloadSuite = fuzzSuiteContract({
+  id: "nested-json-workload-suite",
+  cases: [{
+    id: "json-workload-case",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-php", args: ["code=echo 'nested json workload';"] }] })}`] }],
+    },
+  }],
+})
+const nestedJsonExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(nestedJsonWorkloadSuite)}`] } }, process.cwd())
+const nestedJsonResult = JSON.parse(nestedJsonExecution.stdout)
+assert.equal(nestedJsonExecution.exitCode, 0)
+assert.equal(nestedJsonResult.status, "passed")
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
 console.log("nested fuzz suite recipe command ok")
