@@ -24,6 +24,8 @@ import {
 import { browserPreviewAuthCookieUrls, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 assert.deepEqual(trustedBrowserSessionOrigin("http://localhost:8881/path?x=1"), {
   schema: "wp-codebox/trusted-browser-session-origin/v1",
   origin: "http://localhost:8881",
@@ -146,6 +148,41 @@ try {
   await closeHttpServer(targetServer)
 }
 assert.equal(disposed, true)
+
+let hangingRequestReached: (() => void) | undefined
+const hangingRequest = new Promise<void>((resolve) => {
+  hangingRequestReached = resolve
+})
+const hangingTargetServer = createServer((request, response) => {
+  if (request.url === "/hang") {
+    hangingRequestReached?.()
+    return
+  }
+
+  response.end("ok")
+})
+const hangingTargetServerUrl = await listenLocalHttpServer(hangingTargetServer)
+const abortableProxy = await withPreviewProxy({
+  playground: { async run() { return { text: "" } } },
+  serverUrl: hangingTargetServerUrl,
+  async [Symbol.asyncDispose]() {},
+} satisfies PlaygroundCliServer, 0)
+try {
+  const controller = new AbortController()
+  const abortedRequest = fetch(`${abortableProxy.serverUrl}/hang`, { signal: controller.signal }).catch((error) => error)
+  await hangingRequest
+  controller.abort()
+  await abortedRequest
+
+  const nextRequest = await Promise.race([
+    fetch(`${abortableProxy.serverUrl}/ok`).then((response) => response.text()),
+    wait(500).then(() => "timed-out"),
+  ])
+  assert.equal(nextRequest, "ok", "aborted preview requests must release the serialized upstream proxy slot")
+} finally {
+  await abortableProxy[Symbol.asyncDispose]()
+  await closeHttpServer(hangingTargetServer)
+}
 
 const phase = materializationPhaseResult({
   phase: "persist-browser-artifacts",
