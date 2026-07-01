@@ -282,25 +282,34 @@ async function hostMountFilesForVfs(mount: MountSpec): Promise<{ files: HostMoun
 
 async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""): Promise<Array<{ relativePath: string; contentsBase64: string }>> {
   const files: Array<{ relativePath: string; contentsBase64: string }> = []
-  let entries
-  try {
-    entries = await readdir(join(directory, relativeDirectory), { withFileTypes: true })
-  } catch {
-    return files
+  const pending = [relativeDirectory]
+
+  while (pending.length > 0) {
+    const currentDirectory = pending.pop() ?? ""
+    let entries
+    try {
+      entries = await readdir(join(directory, currentDirectory), { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
+        continue
+      }
+      const relativePath = currentDirectory ? `${currentDirectory}/${entry.name}` : entry.name
+      const absolutePath = join(directory, relativePath)
+      if (entry.isDirectory()) {
+        pending.push(relativePath)
+        continue
+      }
+      if (!entry.isFile()) {
+        continue
+      }
+      files.push({ relativePath, contentsBase64: (await readFile(absolutePath)).toString("base64") })
+    }
   }
 
-  for (const entry of entries) {
-    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
-    const absolutePath = join(directory, relativePath)
-    if (entry.isDirectory()) {
-      files.push(...await hostMountDirectoryFiles(directory, relativePath))
-      continue
-    }
-    if (!entry.isFile()) {
-      continue
-    }
-    files.push({ relativePath, contentsBase64: (await readFile(absolutePath)).toString("base64") })
-  }
   return files
 }
 
