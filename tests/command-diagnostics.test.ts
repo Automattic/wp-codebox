@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { createWorkspaceRecipeJsonSchema, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, normalizeCommandDiagnosticsCaptureSpec } from "../packages/runtime-core/src/index.js"
 import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.js"
 
@@ -51,6 +54,15 @@ assert.deepEqual(workloadSpec, {
   ],
   diagnostics: undefined,
 })
+
+const workloadDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-workload-json-"))
+try {
+  await writeFile(join(workloadDirectory, "workload.json"), workloadJson)
+  const workloadFileSpec = await recipeExecutionSpec({ command: "wordpress.run-workload", args: ["workload-json=workload.json"] }, workloadDirectory)
+  assert.deepEqual(workloadFileSpec, workloadSpec)
+} finally {
+  await rm(workloadDirectory, { recursive: true, force: true })
+}
 
 const phpWorkloadSpec = await recipeExecutionSpec({ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/workload.php"] }, process.cwd())
 assert.equal(phpWorkloadSpec.command, "wordpress.run-php")

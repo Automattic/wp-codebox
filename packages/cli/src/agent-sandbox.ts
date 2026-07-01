@@ -109,7 +109,7 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
 
 export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<ExecutionSpec & { args: string[] }> {
   if (step.command === "wordpress.run-workload") {
-    return await wordpressRunWorkloadExecutionSpec(step)
+    return await wordpressRunWorkloadExecutionSpec(step, recipeDirectory)
   }
 
   if (step.command === "wp-codebox.agent-runtime-probe") {
@@ -162,16 +162,16 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   return { command: step.command, args: [...(step.args ?? []), ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
 }
 
-async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number]): Promise<ExecutionSpec & { args: string[] }> {
+async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<ExecutionSpec & { args: string[] }> {
   const args = step.args ?? []
   const workloadJson = commandArgValue(args, "workload-json")
   if (workloadJson) {
-    JSON.parse(workloadJson)
+    const workloadInput = await wordpressWorkloadJsonInput(workloadJson, recipeDirectory)
     return {
       command: "wordpress.ability",
       args: [
         "name=wp-codebox/run-wordpress-workload",
-        `input=${workloadJson}`,
+        `input=${workloadInput}`,
         "expected-result-schema=\"wp-codebox/wordpress-workload-run-result/v1\"",
       ],
       diagnostics: step.diagnostics,
@@ -181,7 +181,7 @@ async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow
   const path = parsedArgs.path ?? parsedArgs.file
   const type = parsedArgs.type?.toLowerCase() ?? (path?.toLowerCase().endsWith(".php") ? "php" : undefined)
   if (type !== "php") {
-    throw new Error(`wordpress.run-workload recipe steps currently require type=php; received args=${JSON.stringify(args)}`)
+    throw new Error(`wordpress.run-workload recipe steps require workload-json=<json-or-file> or type=php; received args=${JSON.stringify(args)}`)
   }
   if (!path) {
     throw new Error("wordpress.run-workload recipe steps require path=<php-file> or file=<php-file>")
@@ -195,6 +195,23 @@ async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow
   const callableLoader = encodedSource ? `$__wp_codebox_workload_file = tempnam(sys_get_temp_dir(), 'wp-codebox-workload-');\nif (false === $__wp_codebox_workload_file) { throw new RuntimeException('Unable to create temporary PHP workload file.'); }\nfile_put_contents($__wp_codebox_workload_file, base64_decode('${encodedSource}'));\n$__wp_codebox_workload_callable = require $__wp_codebox_workload_file;\nunlink($__wp_codebox_workload_file);` : `$__wp_codebox_workload_callable = require ${JSON.stringify(path)};`
   const code = `$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n${callableLoader}\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
   return { command: "wordpress.run-php", args: [`code=${code}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
+}
+
+async function wordpressWorkloadJsonInput(value: string, recipeDirectory: string): Promise<string> {
+  try {
+    parseCommandJsonObject(value, "workload-json")
+    return value
+  } catch (inlineError) {
+    const path = resolve(recipeDirectory, value)
+    let source: string
+    try {
+      source = await readFile(path, "utf8")
+    } catch {
+      throw inlineError
+    }
+    const workload = parseCommandJsonObject(source, `workload-json file ${value}`)
+    return JSON.stringify(workload)
+  }
 }
 
 async function readableTextFile(path: string): Promise<string | undefined> {
