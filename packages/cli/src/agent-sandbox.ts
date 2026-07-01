@@ -166,22 +166,15 @@ async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow
   const args = step.args ?? []
   const workloadJson = commandArgValue(args, "workload-json")
   if (workloadJson) {
-    const workload = JSON.parse(workloadJson) as Record<string, unknown>
-    const phases = [workload.before, workload.steps, workload.after].flatMap((value) => Array.isArray(value) ? value : [])
-    const commandStep = phases.find((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && (entry as Record<string, unknown>).command === "wordpress.run-workload") as Record<string, unknown> | undefined
-    if (commandStep) {
-      const nestedArgs = Array.isArray(commandStep.args) ? commandStep.args.map(String) : []
-      return await wordpressRunWorkloadExecutionSpec({ command: "wordpress.run-workload", args: nestedArgs, diagnostics: step.diagnostics })
-    }
-    if (phases.some((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && typeof (entry as Record<string, unknown>).type === "string")) {
-      return {
-        command: "wordpress.bench",
-        args: [
-          `plugin-slug=${wordpressWorkloadPluginSlug(workload)}`,
-          `workloads-json=${JSON.stringify([{ id: typeof workload.id === "string" ? workload.id : "wordpress-workload", run: phases, metadata: workload.metadata }])}`,
-        ],
-        diagnostics: step.diagnostics,
-      }
+    JSON.parse(workloadJson)
+    return {
+      command: "wordpress.ability",
+      args: [
+        "name=wp-codebox/run-wordpress-workload",
+        `input=${workloadJson}`,
+        "expected-result-schema=\"wp-codebox/wordpress-workload-run-result/v1\"",
+      ],
+      diagnostics: step.diagnostics,
     }
   }
   const parsedArgs = commandArgsRecord(args)
@@ -222,22 +215,6 @@ function commandArgsRecord(args: string[]): Record<string, string> {
     if (key) parsed[key] = value
   }
   return parsed
-}
-
-function wordpressWorkloadPluginSlug(workload: Record<string, unknown>): string {
-  const metadata = recordValue(workload.metadata)
-  const explicit = stringValue(workload.pluginSlug) ?? stringValue(workload.plugin_slug) ?? stringValue(metadata?.plugin_slug)
-  if (explicit) return explicit
-  const activation = stringValue(recordValue(recordValue(recordValue(metadata?.intent)?.plugin)?.activation)?.entrypoint) ?? stringValue(recordValue(recordValue(metadata?.intent)?.plugin)?.activation)
-  return activation?.split("/")[0]?.trim() || "wordpress"
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
 export function agentRuntimeMetadata(options: AgentRuntimeProbeOptions, runtimeMetadata: (artifactsDirectory: string | undefined, wpVersion: string) => Record<string, unknown>, defaultWordPressVersion: string): Record<string, unknown> {

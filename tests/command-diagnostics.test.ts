@@ -36,3 +36,22 @@ assert.deepEqual(withCapture, {
   args: ["code=echo 'ok';", "capture-diagnostics=wpdb-queries", "diagnostics-max-items=1", "diagnostics-max-bytes=128"],
   diagnostics: { capture: ["wpdb-queries"], maxItems: 1, maxBytes: 128 },
 })
+
+const workloadJson = JSON.stringify({
+  schema: "wp-codebox/wordpress-workload-run/v1",
+  steps: [{ command: "wordpress.rest-request", args: ["path=/wp/v2/types"] }],
+})
+const workloadSpec = await recipeExecutionSpec({ command: "wordpress.run-workload", args: [`workload-json=${workloadJson}`] }, process.cwd())
+assert.deepEqual(workloadSpec, {
+  command: "wordpress.ability",
+  args: [
+    "name=wp-codebox/run-wordpress-workload",
+    `input=${workloadJson}`,
+    "expected-result-schema=\"wp-codebox/wordpress-workload-run-result/v1\"",
+  ],
+  diagnostics: undefined,
+})
+
+const phpWorkloadSpec = await recipeExecutionSpec({ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/workload.php"] }, process.cwd())
+assert.equal(phpWorkloadSpec.command, "wordpress.run-php")
+assert.match(phpWorkloadSpec.args[0] ?? "", /require "\/tmp\/workload\.php"/)
