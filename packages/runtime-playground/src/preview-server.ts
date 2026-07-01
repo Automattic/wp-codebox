@@ -160,12 +160,18 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
   return new Promise((resolve) => {
     let settled = false
+    let targetResponse: IncomingMessage | undefined
     const settle = () => {
       if (settled) {
         return
       }
       settled = true
       resolve()
+    }
+    const abortUpstream = () => {
+      targetRequest.destroy()
+      targetResponse?.destroy()
+      settle()
     }
 
     const targetRequest = httpRequest(
@@ -177,15 +183,16 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         path: incoming.url ?? "/",
         headers: proxyRequestHeaders(incoming.headers),
       },
-      (targetResponse) => {
-        outgoing.writeHead(targetResponse.statusCode ?? 502, targetResponse.statusMessage, proxyResponseHeaders(targetResponse.headers))
-        targetResponse.on("error", (error) => {
+      (response) => {
+        targetResponse = response
+        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers))
+        response.on("error", (error) => {
           outgoing.destroy(error)
           settle()
         })
         outgoing.on("finish", settle)
         outgoing.on("close", settle)
-        targetResponse.pipe(outgoing)
+        response.pipe(outgoing)
       },
     )
 
@@ -194,9 +201,10 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       settle()
     })
     incoming.on("error", () => {
-      targetRequest.destroy()
-      settle()
+      abortUpstream()
     })
+    outgoing.on("error", abortUpstream)
+    outgoing.on("close", abortUpstream)
     incoming.pipe(targetRequest)
   })
 }
