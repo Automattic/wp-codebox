@@ -132,6 +132,7 @@
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:command-router": "tsx tests/command-router.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
+    "smoke:cli-version": "tsx scripts/cli-version-smoke.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-agent-outcome-classifier": "php scripts/php-agent-outcome-classifier-smoke.php",

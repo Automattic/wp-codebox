@@ -299,6 +299,7 @@ export function printHelp(): void {
   const recipeCommandIds = listCliRecipeCommandDefinitions().map((command) => command.id)
 
   console.log(`Usage:
+  wp-codebox version
   wp-codebox commands [--json]
   wp-codebox runtime descriptor [--json]
   wp-codebox schema recipe [--json]
@@ -450,6 +451,10 @@ Discovery:
   commands             Print supported runtime and recipe command metadata.
   runtime descriptor   Print public runtime readiness, capabilities, ability names, and contract manifest.
   schema recipe        Print the wp-codebox/workspace-recipe/v1 JSON Schema.
+
+Version:
+  version | --version | -v
+                       Print the wp-codebox CLI version (read from the CLI package.json) and exit.
 
 Recipe commands:
 ${recipeCommandIds.map((id) => `  ${id}`).join("\n")}
