@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { DELETE_BOUNDARY_ARTIFACT_KIND, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult, type Snapshot } from "../packages/runtime-core/src/public.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND, sandboxIsolationProof, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult, type Snapshot } from "../packages/runtime-core/src/public.js"
 import {
   createWordPressFuzzSuiteResetExecutor,
   createWordPressRuntimeCheckpoint,
@@ -16,6 +16,7 @@ import {
 } from "../packages/runtime-playground/src/public.js"
 
 const steps: Array<{ command: string; args?: string[]; timeoutMs?: number; observation?: unknown }> = []
+let rollbackCaptureIndex = 0
 const episode = {
   async reset() {
     return {
@@ -32,7 +33,9 @@ const episode = {
     const path = action.args?.find((arg) => arg.startsWith("path="))?.slice("path=".length)
     const stdout = action.command === "wordpress.rest-request" && method === "DELETE"
       ? JSON.stringify({ method, path, route: path, status: 200, body: { deleted: true, previous: { id: 123 } } })
-      : JSON.stringify({ ok: true })
+      : action.command === "wordpress.run-php"
+        ? JSON.stringify(rollbackCapture(++rollbackCaptureIndex))
+        : JSON.stringify({ ok: true })
     return {
       id: `step-${index}`,
       index,
@@ -58,6 +61,23 @@ const episode = {
       executionRef: { kind: "execution", id: `execution-${index}` },
     }
   },
+}
+
+function rollbackCapture(index: number): Record<string, unknown> {
+  const phase = index % 3 === 2 ? "after" : index % 3 === 0 ? "restore" : "before"
+  return {
+    schema: "wp-codebox/wordpress-rollback-capture/v1",
+    phase,
+    target: "/wp/v2/posts/123",
+    options: {},
+    tables: {},
+    objects: {
+      "post:123": phase === "after"
+        ? { exists: false, post: null }
+        : { exists: true, post: { ID: 123, post_type: "post", post_title: "Baseline" } },
+    },
+    diagnostics: [],
+  }
 }
 const restoredSnapshotRefs: string[] = []
 const restoredExternalSnapshotRefs: string[] = []
@@ -206,7 +226,7 @@ assert.deepEqual(restoredExternalSnapshotRefs, ["artifact:baseline/files/runtime
 const snapshotRestoreResult = await executeWordPressFuzzSuite(episodeWithSnapshotRestore, fuzzSuiteContract({
   id: "same-runtime-snapshot-suite-run",
   resetPolicy: { mode: "restore-snapshot", snapshotRef: "snapshot-baseline" },
-  cases: [{ id: "destructive-rest", target: { kind: "rest", id: "/wp/v2/posts/123" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } }],
+  cases: [{ id: "destructive-rest", target: { kind: "rest", id: "/wp/v2/posts/123" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high" } }],
 }))
 assert.equal(snapshotRestoreResult.status, "passed")
 assert.equal(snapshotRestoreResult.cases[0]?.reset?.status, "passed")
@@ -232,16 +252,52 @@ const mutationResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContrac
   cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", restMutationFixtureOptIn: deleteOptIn } }],
 }))
 assert.equal(mutationResult.status, "passed")
-assert.deepEqual(steps.slice(beforeMutationStepCount).map((step) => step.command), ["wp-codebox.checkpoint-create", "wordpress.rest-request", "wp-codebox.checkpoint-restore"])
-assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
-assert.equal(mutationResult.artifactRefs.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
+assert.deepEqual(steps.slice(beforeMutationStepCount).map((step) => step.command), ["wordpress.rest-request"])
 const deleteBoundary = mutationResult.cases[0]?.metadata?.deleteBoundary as Record<string, unknown> | undefined
 assert.equal(mutationResult.cases[0]?.metadata?.mutationIsolation, undefined)
 assert.equal(deleteBoundary?.schema, "wp-codebox/delete-boundary-artifact/v1")
 assert.equal(deleteBoundary?.method, "DELETE")
 assert.equal(deleteBoundary?.target, "/wp/v2/posts/123")
 assert.equal(deleteBoundary?.status, 200)
-assert.equal((deleteBoundary?.restore as Record<string, unknown> | undefined)?.status, "passed")
-assert.equal((deleteBoundary?.restore as Record<string, unknown> | undefined)?.command, "wp-codebox.checkpoint-restore")
+assert.equal(deleteBoundary?.artifactKind, DELETE_BOUNDARY_ARTIFACT_KIND)
+assert.equal(deleteBoundary?.artifactPath, "files/delete-boundaries/delete-post.json")
+assert.equal(deleteBoundary?.persisted, false)
+assert.equal((deleteBoundary?.sandboxBoundary as Record<string, unknown> | undefined)?.disposable, true)
+assert.equal((deleteBoundary?.sandboxBoundary as Record<string, unknown> | undefined)?.destructivePermission, true)
+assert.equal((deleteBoundary?.teardown as Record<string, unknown> | undefined)?.intent, "discard")
+assert.equal(deleteBoundary?.rollback, undefined)
+assert.equal(deleteBoundary?.restore, undefined)
+assert.equal(deleteBoundary?.checkpointName, undefined)
+const proof = (deleteBoundary?.metadata as Record<string, unknown> | undefined)?.sandboxIsolationProof as ReturnType<typeof sandboxIsolationProof> | undefined
+assert.ok(proof)
+assert.equal(proof?.schema, "wp-codebox/sandbox-isolation-proof/v1")
+assert.equal(proof?.artifactKind, SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND)
+assert.equal(proof?.baseline.command, "wp-codebox.disposable-sandbox-boundary")
+assert.equal(proof?.mutation.command, "wordpress.rest-request")
+assert.equal(proof?.diff?.status, "not-required-disposable-sandbox")
+assert.equal(proof?.runtimeBoundary.destroy.status, "discarded")
+assert.equal(proof?.artifactPath, "files/sandbox-isolation/delete-post-proof.json")
+const invalidProof = sandboxIsolationProof({
+  status: "passed",
+  baseline: { status: "created", command: "wp-codebox.disposable-sandbox-boundary" },
+  mutation: { status: "mutated", command: "wordpress.rest-request" },
+  runtimeBoundary: { backend: "wordpress-playground", environment: "wordpress", disposable: true, hostAccess: "declared-mounts-only", destroy: { status: "destroyed", metadata: { source: "runtime.destroyed lifecycle event" } } },
+  artifacts: [{ path: "files/sandbox-isolation/delete-post-proof.json", kind: SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND }],
+  metadata: { suiteId: "mutation-suite-run", caseId: "delete-post" },
+})
+assert.equal(invalidProof.schema, "wp-codebox/sandbox-isolation-proof/v1")
+assert.equal(proof.schema, "wp-codebox/sandbox-isolation-proof/v1")
+assert.throws(() => sandboxIsolationProof({ ...invalidProof, runtimeBoundary: { ...invalidProof.runtimeBoundary, destroy: { status: "failed" } as never } }), /runtimeBoundary\.destroy\.status destroyed or discarded/)
+
+const beforeDeniedMutationStepCount = steps.length
+const deniedMutationResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
+  id: "mutation-suite-denied",
+  metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: false, teardown: "discard" } },
+  cases: [{ id: "delete-post-denied", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", restMutationFixtureOptIn: deleteOptIn } }],
+}))
+assert.equal(deniedMutationResult.status, "error")
+assert.equal(deniedMutationResult.cases[0]?.status, "error")
+assert.match(deniedMutationResult.cases[0]?.diagnostics?.[0]?.message ?? "", /disposableSandboxBoundary/)
+assert.deepEqual(steps.slice(beforeDeniedMutationStepCount).map((step) => step.command), [])
 
 console.log("playground public runtime primitives ok")

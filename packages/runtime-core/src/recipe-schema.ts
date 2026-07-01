@@ -171,6 +171,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
           },
+          externalServices: {
+            type: "array",
+            description: "Declared external service boundaries used for reviewer-safe browser and recipe evidence correlation. Secret material is represented by environment variable names only.",
+            items: { $ref: "#/$defs/externalServiceBoundary" },
+          },
           pluginRuntime: { $ref: "#/$defs/pluginRuntime" },
           fixtureDatabases: {
             type: "array",
@@ -512,6 +517,30 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
+      externalServiceBoundary: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "environment", "writes"],
+        properties: {
+          id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          label: { type: "string" },
+          environment: { enum: ["local", "fixture", "staging", "production", "external"] },
+          allowedHosts: { type: "array", items: { type: "string" } },
+          blockedHosts: { type: "array", items: { type: "string" } },
+          writes: { enum: ["forbidden", "record-only", "allowed-with-approval"] },
+          secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+          redaction: {
+            type: "object",
+            additionalProperties: false,
+            required: ["policy"],
+            properties: {
+              policy: { enum: ["metadata-only", "redact-fields", "omit"] },
+              fields: { type: "array", items: { type: "string" } },
+            },
+          },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
       runtimeStack: {
         type: "object",
         additionalProperties: false,
@@ -723,16 +752,22 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       extraPlugin: {
         type: "object",
         additionalProperties: false,
-        required: ["source"],
+        anyOf: [{ required: ["source"] }, { required: ["sourcePath"] }],
         properties: {
           source: {
             type: "string",
             description: "Local plugin directory path, WordPress.org plugin zip URL, or generic HTTPS zip URL.",
           },
+          sourcePath: {
+            type: "string",
+            description: "Local source root path. Use sourceSubdir when the plugin lives below this root in a monorepo.",
+          },
           sourceRoot: { type: "string" },
           sourceSubpath: { type: "string" },
+          sourceSubdir: { type: "string" },
           originalSource: { type: "string" },
           slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          mountSlug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
           pluginFile: { type: "string" },
           activate: { type: "boolean" },
           loadAs: { enum: ["plugin", "mu-plugin"] },

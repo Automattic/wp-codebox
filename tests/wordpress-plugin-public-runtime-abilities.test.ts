@@ -9,6 +9,7 @@ const fuzzSuiteRunnerPhp = await readFile("packages/wordpress-plugin/src/class-w
 const runtimePackageServicePhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-package-service.php", "utf8")
 const runtimePackageExecutorPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-package-executor.php", "utf8")
 const agentsApiAdapterPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php", "utf8")
+const pluginMainPhp = await readFile("packages/wordpress-plugin/wp-codebox.php", "utf8")
 
 assert.match(abilitiesPhp, /add_action\(\s*'wp_abilities_api_init',\s*array\(\s*\$this,\s*'register_when_abilities_api_is_ready'\s*\)\s*\)/, "WP Codebox must defer ability registration until the Abilities API is ready")
 assert.match(abilitiesPhp, /function register_when_abilities_api_is_ready\(\): void/, "deferred ability registration callback must be present")
@@ -92,6 +93,8 @@ assert.match(fuzzSuiteRunnerPhp, /'ability_execution_mode'\s*=>\s*'php-in-proces
 assert.match(fuzzSuiteRunnerPhp, /'supported_by_this_ability'\s*=>\s*false/)
 assert.match(runtimeDescriptorsPhp, /'supported_runner_capabilities'\s*=>\s*\$context\['fuzz_suite_supported_runner_capabilities'\]/)
 assert.match(runtimeDescriptorsPhp, /'runtime_backed_execution'\s*=>\s*\$context\['fuzz_suite_runtime_backed_execution_contract'\]/)
+assert.match(runtimeDescriptorsPhp, /'wordpress_fuzz_runtime_contract'\s*=>\s*WP_Codebox_API::wordpress_fuzz_runtime_contract\(\)/)
+assert.ok(pluginMainPhp.indexOf("class-wp-codebox-api.php") < pluginMainPhp.indexOf("class-wp-codebox-abilities.php"), "API facade must load before ability descriptors reference it")
 assert.match(fuzzSuiteRunnerPhp, /wordpress\.ensure-plugin-active/)
 assert.match(fuzzSuiteRunnerPhp, /'commands'[\s\S]{0,900}wordpress\.ensure-plugin-active/)
 assert.match(fuzzSuiteRunnerPhp, /'commands'[\s\S]{0,900}wordpress\.plugin-state/)

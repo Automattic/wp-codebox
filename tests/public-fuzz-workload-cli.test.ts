@@ -9,10 +9,12 @@ process.env.WP_CODEBOX_NO_JSPI_RESPAWN = "1"
 
 const help = await captureStdout(async () => {
   assert.equal(await runCli(["run-fuzz-suite", "--help"]), 0)
+  assert.equal(await runCli(["fuzz", "descriptor", "--help"]), 0)
   assert.equal(await runCli(["fuzz", "readiness", "--help"]), 0)
   assert.equal(await runCli(["run-wordpress-workload", "--help"]), 0)
 })
 assert.match(help, /run-fuzz-suite/)
+assert.match(help, /fuzz descriptor/)
 assert.match(help, /fuzz readiness/)
 assert.match(help, /run-wordpress-workload/)
 assert.match(help, /--input-file/)
@@ -39,6 +41,20 @@ return static function ( array $input, array $args ): array {
 };
   `, "utf8")
 
+  const descriptorOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["fuzz", "descriptor", "--format=json"]), 0)
+  })
+  const descriptorJson = JSON.parse(descriptorOutput)
+  assert.equal(descriptorJson.schema, "wp-codebox/wordpress-fuzz-runtime-contract/v1")
+  assert.equal(descriptorJson.publicSurfaces.nodeCli, "wp-codebox fuzz descriptor --format=json")
+  assert.equal(descriptorJson.publicSurfaces.wpCli, "wp codebox wordpress-fuzz-runtime-contract")
+  assert.equal(descriptorJson.actionFamilies.some((family: { commands: string[] }) => family.commands.includes("wordpress.rest-request")), true)
+  assert.deepEqual(descriptorJson.destructiveModeRequirements.requiredSandboxBoundary, { disposable: true, destructivePermission: true, teardown: "discard" })
+  assert.deepEqual(descriptorJson.destructiveModeRequirements.optionalResetModes, ["checkpoint-per-case", "restore-snapshot"])
+  assert.equal(descriptorJson.destructiveModeRequirements.rawDeleteCapability, null)
+  assert.equal(descriptorJson.unsupportedCapabilities.some((capability: { id: string }) => capability.id === "private-runtime-probing"), true)
+  assert.equal(descriptorJson.hbex.schemaIds.deleteBoundaryArtifact, "wp-codebox/delete-boundary-artifact/v1")
+
   const readinessOutput = await captureStdout(async () => {
     assert.equal(await runCli(["fuzz", "readiness", "--format=json"]), 0)
   })
@@ -50,6 +66,13 @@ return static function ( array $input, array $args ): array {
   assert.deepEqual(readinessJson.operationKinds, ["read", "crud", "mutation-isolation", "delete-boundary"])
   assert.equal(readinessJson.capabilities.capabilities.includes("delete"), false)
   assert.equal(readinessJson.capabilities.capabilities.includes("delete-boundary-artifact"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("disposable-runtime"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("runtime-isolation"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("disposable-sandbox-boundary"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("destructive-permission"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("sandbox-isolation-proof"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("external-side-effect-guardrail"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("artifact-export"), true)
   assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:post:mutation-isolation-artifact"), true)
   assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:put:mutation-isolation-artifact"), true)
   assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:patch:mutation-isolation-artifact"), true)
@@ -60,6 +83,11 @@ return static function ( array $input, array $args ): array {
   assert.equal(readinessJson.capabilities.commands.includes("wordpress.inventory-plugin-module-options-tables"), true)
   assert.equal(readinessJson.capabilities.commands.includes("wordpress.collect-workload-result"), true)
   assert.equal(readinessJson.capabilities.runtimeActionTypes.includes("editor_insert_save"), false)
+  assert.equal(readinessJson.disposable, true)
+  assert.deepEqual(readinessJson.isolation, { runtime_backed: true, disposable: true, sandboxed: true })
+  assert.deepEqual(readinessJson.guardrails, { external_side_effect_guardrail: true, external_http_guardrail: true })
+  assert.deepEqual(readinessJson.artifacts, { artifact_export: true })
+  assert.deepEqual(readinessJson.destructiveModeRequirements.requiredSandboxBoundary, { disposable: true, destructivePermission: true, teardown: "discard" })
 
   const fuzzInput = join(directory, "fuzz.json")
   await writeFile(fuzzInput, JSON.stringify({
@@ -80,7 +108,7 @@ return static function ( array $input, array $args ): array {
     id: "public-cli-runtime-suite",
     metadata: {
       runtime_requirements: {
-        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", source_subpath: "sample-plugin", activate: true }],
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", activate: true }],
         component_contracts: [{ slug: "sample-plugin", path: samplePluginSource, loadAs: "plugin" }],
         runtime_env: { SAMPLE_ENV: "1" },
       },

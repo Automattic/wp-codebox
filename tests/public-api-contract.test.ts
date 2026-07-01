@@ -37,9 +37,12 @@ import {
   FUZZ_RUNNER_READINESS_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
+  WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
   REST_MUTATION_FIXTURE_OPT_IN_SCHEMA,
+  REST_MUTATION_GENERATED_FIXTURES_SCHEMA,
   DELETE_BOUNDARY_ARTIFACT_SCHEMA,
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
+  SANDBOX_ISOLATION_PROOF_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
   WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
@@ -50,6 +53,7 @@ import {
   fuzzCoveragePlanContract,
   fuzzFixturePlanContract,
   fuzzRunnerReadinessContract,
+  wordpressFuzzRuntimeContract,
   TASK_INPUT_JSON_SCHEMA,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
@@ -159,6 +163,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./fixture-import-primitives.js",
   "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",
+  "./fuzz-case-minimizer.js",
   "./fuzz-suite-contracts.js",
   "./fuzz-suite-runner.js",
   "./rest-matrix-contracts.js",
@@ -172,6 +177,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./mutation-isolation-contracts.js",
   "./parent-tool-bridge.js",
   "./performance-observation.js",
+  "./query-observation-contracts.js",
   "./recipe-builders.js",
   "./recipe-run-summary.js",
   "./recipe-schema.js",
@@ -193,6 +199,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./runtime-policy.js",
   "./runtime-preset-registry.js",
   "./sandbox-tool-policy.js",
+  "./sandbox-isolation-proof-contracts.js",
   "./source-root-preparation.js",
   "./structured-artifacts.js",
   "./task-input.js",
@@ -202,8 +209,10 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
+  "./wordpress-admin-action-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
+  "./wordpress-db-write-set-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
   "./wordpress-runtime-discovery-coverage-plan.js",
@@ -217,15 +226,20 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./command-registry.js",
   "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",
+  "./fuzz-case-minimizer.js",
   "./fuzz-suite-contracts.js",
   "./mutation-isolation-contracts.js",
   "./performance-observation.js",
+  "./cache-churn-observation.js",
+  "./query-observation-contracts.js",
   "./rest-matrix-contracts.js",
   "./runtime-contract-manifest.js",
   "./runtime-package-contracts.js",
   "./runtime-package-execution.js",
+  "./sandbox-isolation-proof-contracts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
+  "./wordpress-admin-action-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
   "./wordpress-hotspots-contracts.js",
@@ -261,6 +275,7 @@ for (const contractArea of [
   "Performance observation",
   "WordPress hotspot artifacts",
   "Fuzz suite",
+  "Sandbox isolation proof",
   "Artifacts",
   "Run results",
   "Inspect",
@@ -287,6 +302,7 @@ for (const publicModule of [
   "./wordpress-hotspots-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
+  "./sandbox-isolation-proof-contracts.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
@@ -391,6 +407,11 @@ assert.match(docs, /ability is an in-process WordPress ability only/)
 assert.match(docs, /supported_by_this_ability: false/)
 assert.match(docs, /ability_execution_mode: "php-in-process-only"/)
 assert.match(docs, /wp-codebox run-fuzz-suite --runner-mode=runtime-backed/)
+assert.match(docs, /wp-codebox\/wordpress-fuzz-runtime-contract\/v1/)
+assert.match(docs, /WP_Codebox_API::wordpress_fuzz_runtime_contract\(\)/)
+assert.match(docs, /wp-codebox fuzz descriptor --format=json/)
+assert.match(docs, /unsupportedCapabilities/)
+assert.match(docs, /delete-boundary-artifact/)
 assert.match(docs, /executeWordPressFuzzSuite/)
 assert.match(docs, /manifest intentionally excludes backend handler bindings/)
 assert.doesNotMatch(docs + pluginReadme, /\bData Machine\b|\bData Machine Code\b|\bAgents API\b|\bWordPress Playground\b|generic Data Machine inputs/)
@@ -447,6 +468,7 @@ assert.equal(codeboxPublicContractPrimitive("runtimeProfile").schemas.profile, R
 assert.equal(codeboxPublicContractPrimitive("task").schemas.headlessResult, "wp-codebox/headless-agent-task-result/v1")
 assert.equal(codeboxPublicContractPrimitive("agent").abilities.runTask, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask.run)
 assert.equal(codeboxPublicContractPrimitive("artifact").schemas.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(codeboxPublicContractPrimitive("fuzzing").schemas.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(codeboxPublicContractPrimitive("credential").redacted, true)
 assert.deepEqual(codeboxPublicContractPrimitives().task.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES.agentTask)
 assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
@@ -456,7 +478,10 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzRunnerReadiness, FUZZ_RUNNER_READINESS_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.wordpressFuzzRuntimeContract, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.blockExerciseResult, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.sandboxIsolationProof, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
 assert.equal(runtimeContractManifest().providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
@@ -466,16 +491,45 @@ assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ART
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(normalizeRuntimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
-assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) })?.artifact.kind, "typed-artifact")
+assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", artifact: { path: "files/report.json", sha256: "a".repeat(64) } })?.artifact.kind, "typed-artifact")
 assert.equal(normalizePreviewReviewerAccess(undefined).status, "unavailable")
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
 assert.equal(publicApi.mutationIsolationArtifact({ operation: "rest_request", target: "/wp/v2/posts", method: "POST" }).schema, MUTATION_ISOLATION_ARTIFACT_SCHEMA)
 assert.equal(publicApi.deleteBoundaryArtifact({ operation: "rest_request", target: "/wp/v2/posts/1", method: "DELETE" }).schema, DELETE_BOUNDARY_ARTIFACT_SCHEMA)
+assert.equal(publicApi.sandboxIsolationProof({
+  status: "passed",
+  baseline: { status: "created", command: "wp-codebox.checkpoint-create" },
+  mutation: { status: "mutated", command: "wordpress.rest-request" },
+  runtimeBoundary: { backend: "wordpress-playground", environment: "wordpress", disposable: true, hostAccess: "declared-mounts-only", destroy: { status: "discarded" } },
+  artifacts: [{ path: "files/sandbox-isolation/proof.json", kind: "sandbox-isolation-proof" }],
+}).schema, SANDBOX_ISOLATION_PROOF_SCHEMA)
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(fuzzFixturePlanContract({ id: "fixture-plan-boundary" }).schema, FUZZ_FIXTURE_PLAN_SCHEMA)
-assert.equal(fuzzRunnerReadinessContract(publicApi.RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES).schema, FUZZ_RUNNER_READINESS_SCHEMA)
+const runtimeBackedFuzzReadiness = fuzzRunnerReadinessContract(publicApi.RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES)
+assert.equal(runtimeBackedFuzzReadiness.schema, FUZZ_RUNNER_READINESS_SCHEMA)
+assert.equal(runtimeBackedFuzzReadiness.disposable, true)
+assert.deepEqual(runtimeBackedFuzzReadiness.destructiveModeRequirements?.requiredSandboxBoundary, { disposable: true, destructivePermission: true, teardown: "discard" })
+assert.equal(runtimeBackedFuzzReadiness.capabilities.capabilities.includes("disposable-runtime"), true)
+assert.equal(runtimeBackedFuzzReadiness.capabilities.capabilities.includes("external-side-effect-guardrail"), true)
+assert.equal(runtimeBackedFuzzReadiness.capabilities.capabilities.includes("artifact-export"), true)
+const wordpressFuzzDescriptor = wordpressFuzzRuntimeContract()
+assert.equal(wordpressFuzzDescriptor.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.phpFacade, "WP_Codebox_API::wordpress_fuzz_runtime_contract()")
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.ability, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
+assert.equal(wordpressFuzzDescriptor.publicSurfaces.nodeCli, "wp-codebox fuzz descriptor --format=json")
+assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.requiredSandboxBoundary, { disposable: true, destructivePermission: true, teardown: "discard" })
+assert.deepEqual(wordpressFuzzDescriptor.destructiveModeRequirements.optionalResetModes, ["checkpoint-per-case", "restore-snapshot"])
+assert.equal(wordpressFuzzDescriptor.destructiveModeRequirements.rawDeleteCapability, null)
+assert.equal(wordpressFuzzDescriptor.actionFamilies.some((family) => family.runtimeActionTypes.includes("crud_operation")), true)
+assert.equal(wordpressFuzzDescriptor.resetModes.some((mode) => mode.id === "restore-snapshot" && mode.supported === false), true)
+assert.equal(wordpressFuzzDescriptor.artifactExpectations.some((artifact) => artifact.schema === "wp-codebox/delete-boundary-artifact/v1" && artifact.required), true)
+assert.equal(wordpressFuzzDescriptor.unsupportedCapabilities.some((capability) => capability.id === "private-runtime-probing"), true)
+assert.equal(wordpressFuzzDescriptor.hbex.schemaIds.descriptor, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
+assert.equal(wordpressFuzzDescriptor.hbex.schemaIds.restMutationGeneratedFixtures, REST_MUTATION_GENERATED_FIXTURES_SCHEMA)
+assert.equal(publicApi.runtimeDescriptor().wordpressFuzzRuntimeContract.schema, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA)
 assert.equal(publicApi.restMutationFixtureOptInContract({ id: "rest-mutation-opt-in", route: "/example/v1/items", methods: ["post", "DELETE"] }).schema, REST_MUTATION_FIXTURE_OPT_IN_SCHEMA)
+assert.equal(publicApi.restMutationGeneratedFixturesContract({ id: "rest-mutation-generated", route: { route: "/example/v1/items", namespace: "example/v1", methods: ["POST"], argNames: [], endpoints: [{ methods: ["POST"], permission: { mode: "callback" }, args: [] }] } }).schema, REST_MUTATION_GENERATED_FIXTURES_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({
   suite: { id: "ability-boundary" },

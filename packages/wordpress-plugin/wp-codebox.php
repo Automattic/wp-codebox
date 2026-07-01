@@ -73,8 +73,8 @@ require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifact-ability-service.php';
 require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-package-executor.php';
-require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 require_once __DIR__ . '/src/class-wp-codebox-api.php';
+require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once __DIR__ . '/src/class-wp-codebox-cli-command.php';

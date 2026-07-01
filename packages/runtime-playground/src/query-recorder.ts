@@ -16,13 +16,15 @@ export function wordpressQueryRecorderPhp(): string {
         }
         $fingerprint = wp_codebox_query_recorder_fingerprint( $sql, (int) ( $recorder['lengthLimit'] ?? 500 ) );
         $key = hash( 'sha256', $fingerprint );
+        $operation = wp_codebox_query_recorder_operation( $fingerprint );
+        $tables = wp_codebox_query_recorder_tables( $fingerprint, $operation );
         ++$recorder['queryCount'];
         if ( ! isset( $recorder['fingerprints'][ $key ] ) ) {
             if ( count( $recorder['fingerprints'] ) >= (int) ( $recorder['fingerprintLimit'] ?? 50 ) ) {
                 $recorder['truncated'] = true;
                 return;
             }
-            $recorder['fingerprints'][ $key ] = array_filter( array( 'fingerprint' => $fingerprint, 'count' => 0, 'sampleMs' => null, 'totalTimeMs' => null, 'caller' => is_string( $caller ) ? substr( $caller, 0, 240 ) : null ), static fn( $value ) => null !== $value );
+            $recorder['fingerprints'][ $key ] = array_filter( array( 'fingerprint' => $fingerprint, 'hash' => $key, 'count' => 0, 'operation' => $operation, 'tables' => $tables, 'sampleMs' => null, 'totalTimeMs' => null, 'caller' => is_string( $caller ) ? substr( $caller, 0, 240 ) : null ), static fn( $value ) => null !== $value );
         }
         ++$recorder['fingerprints'][ $key ]['count'];
         if ( null !== $elapsed_ms ) {
@@ -34,6 +36,71 @@ export function wordpressQueryRecorderPhp(): string {
         if ( is_string( $caller ) && '' !== $caller && empty( $recorder['fingerprints'][ $key ]['caller'] ) ) {
             $recorder['fingerprints'][ $key ]['caller'] = substr( $caller, 0, 240 );
         }
+        wp_codebox_query_recorder_add_write_record( $recorder, $sql, $fingerprint, $caller );
+    }
+
+    function wp_codebox_query_recorder_add_write_record( &$recorder, $sql, $fingerprint, $caller = null ) {
+        $parsed = wp_codebox_query_recorder_parse_write( $sql );
+        if ( null === $parsed ) {
+            return;
+        }
+        $key = $parsed['table'] . ':' . $parsed['operation'] . ':' . hash( 'sha256', $fingerprint );
+        $recorder['writeCounts'][ $key ] = (int) ( $recorder['writeCounts'][ $key ] ?? 0 ) + 1;
+        if ( count( $recorder['writeSet'] ) >= (int) ( $recorder['writeLimit'] ?? 100 ) ) {
+            $recorder['writeSetTruncated'] = true;
+            return;
+        }
+        $recorder['writeSet'][] = array_filter( array(
+            'table' => $parsed['table'],
+            'operation' => $parsed['operation'],
+            'rowsAffected' => null,
+            'key' => $key,
+            'repeatedWritesToSameKey' => $recorder['writeCounts'][ $key ],
+            'source' => array_filter( array( 'fingerprint' => $fingerprint, 'caller' => is_string( $caller ) ? substr( $caller, 0, 240 ) : null ), static fn( $value ) => null !== $value ),
+        ), static fn( $value ) => null !== $value );
+    }
+
+    function wp_codebox_query_recorder_parse_write( $sql ) {
+        $sql = trim( (string) $sql );
+        $patterns = array(
+            'insert' => '/^INSERT\\s+(?:IGNORE\\s+)?INTO\\s+\\x60?([A-Za-z0-9_]+)\\x60?/i',
+            'replace' => '/^REPLACE\\s+INTO\\s+\\x60?([A-Za-z0-9_]+)\\x60?/i',
+            'update' => '/^UPDATE\\s+\\x60?([A-Za-z0-9_]+)\\x60?\\s+SET\\b/i',
+            'delete' => '/^DELETE\\s+FROM\\s+\\x60?([A-Za-z0-9_]+)\\x60?/i',
+        );
+        foreach ( $patterns as $operation => $pattern ) {
+            if ( preg_match( $pattern, $sql, $matches ) && ! empty( $matches[1] ) ) {
+                return array( 'operation' => $operation, 'table' => (string) $matches[1] );
+            }
+        }
+        return null;
+    }
+
+    function wp_codebox_query_recorder_operation( $fingerprint ) {
+        $operation = strtolower( strtok( trim( (string) $fingerprint ), " \t\n\r\0\x0B" ) ?: '' );
+        return in_array( $operation, array( 'select', 'insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'truncate' ), true ) ? $operation : 'other';
+    }
+
+    function wp_codebox_query_recorder_tables( $fingerprint, $operation ) {
+        $tables = array();
+        $patterns = array(
+            '/\bfrom\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\bjoin\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\binto\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\bupdate\s+\`?([a-zA-Z0-9_]+)\`?/i',
+            '/\btable\s+\`?([a-zA-Z0-9_]+)\`?/i',
+        );
+        foreach ( $patterns as $pattern ) {
+            if ( preg_match_all( $pattern, (string) $fingerprint, $matches ) ) {
+                foreach ( (array) ( $matches[1] ?? array() ) as $table ) {
+                    $table = (string) $table;
+                    if ( '' !== $table && ! isset( $tables[ $table ] ) ) {
+                        $tables[ $table ] = array( 'name' => $table, 'source' => 'fingerprint', 'operation' => $operation );
+                    }
+                }
+            }
+        }
+        return array_values( $tables );
     }
 
     function wp_codebox_query_recorder_start( $id, $fingerprint_limit = 50, $length_limit = 500 ) {
@@ -71,6 +138,10 @@ export function wordpressQueryRecorderPhp(): string {
             'truncated' => false,
             'fingerprintLimit' => $fingerprint_limit,
             'lengthLimit' => $length_limit,
+            'writeSet' => array(),
+            'writeCounts' => array(),
+            'writeSetTruncated' => false,
+            'writeLimit' => 100,
             'timingSupported' => $timing_supported,
             'timingReason' => $timing_supported ? null : 'wpdb_save_queries_unavailable',
             'queryStart' => $query_start,
@@ -110,6 +181,8 @@ export function wordpressQueryRecorderPhp(): string {
         $fingerprints = array_values( is_array( $recorder['fingerprints'] ?? null ) ? $recorder['fingerprints'] : array() );
         usort( $fingerprints, static fn( $a, $b ) => ( (float) ( $b['totalTimeMs'] ?? -1 ) <=> (float) ( $a['totalTimeMs'] ?? -1 ) ) ?: ( (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 ) ) ?: strcmp( (string) ( $a['fingerprint'] ?? '' ), (string) ( $b['fingerprint'] ?? '' ) ) );
         $repeated = array_values( array_filter( $fingerprints, static fn( $query ) => isset( $query['count'] ) && $query['count'] > 1 ) );
+        $write_set = array_values( is_array( $recorder['writeSet'] ?? null ) ? $recorder['writeSet'] : array() );
+        $repeated_writes = array_values( array_filter( $write_set, static fn( $write ) => (int) ( $write['repeatedWritesToSameKey'] ?? 0 ) > 1 ) );
         return array(
             'status' => 'captured',
             'reason' => ! empty( $recorder['truncated'] ) ? 'query_fingerprint_limit_reached' : null,
@@ -119,6 +192,9 @@ export function wordpressQueryRecorderPhp(): string {
             'timingReason' => ! empty( $recorder['timingSupported'] ) ? null : ( $recorder['timingReason'] ?? 'wpdb_save_queries_unavailable' ),
             'fingerprints' => $fingerprints,
             'repeatedQueries' => $repeated,
+            'writeSet' => $write_set,
+            'repeatedWrites' => $repeated_writes,
+            'writeSetTruncated' => ! empty( $recorder['writeSetTruncated'] ),
         );
     }
 }

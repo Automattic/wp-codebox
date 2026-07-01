@@ -13,7 +13,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeActionSequenceAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeActionSequenceAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction | RuntimeWordPressHookAction | RuntimeWordPressCronEventAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -172,6 +172,28 @@ export interface RuntimeWordPressThemeSetupAction {
   timeout_ms?: number
 }
 
+export interface RuntimeWordPressHookAction {
+  type: "wordpress_hook"
+  hook: string
+  args?: unknown[]
+  mutates?: boolean
+  capability?: string
+  destructive_boundary?: string
+  timeout_ms?: number
+}
+
+export interface RuntimeWordPressCronEventAction {
+  type: "wordpress_cron_event"
+  hook: string
+  operation?: "run-hook" | "schedule-single"
+  args?: unknown[]
+  timestamp?: number
+  mutates?: boolean
+  capability?: string
+  destructive_boundary?: string
+  timeout_ms?: number
+}
+
 export interface RuntimeActionAdapterPolicy {
   mounts?: MountSpec[]
   writableRoots?: string[]
@@ -266,6 +288,14 @@ export async function runRuntimeAction(
     return runRuntimeMappedCommandAction(episode, action, "wordpress.theme-setup")
   }
 
+  if (action.type === "wordpress_hook") {
+    return runRuntimeMappedCommandAction(episode, action, "wordpress.invoke-hook")
+  }
+
+  if (action.type === "wordpress_cron_event") {
+    return runRuntimeMappedCommandAction(episode, action, "wordpress.invoke-cron-event")
+  }
+
   return runRuntimeFilesystemAction(episode, action, policy)
 }
 
@@ -333,7 +363,7 @@ async function runRuntimeWpCliAction(episode: RuntimeEpisode, action: RuntimeWpC
   })
 }
 
-async function runRuntimeMappedCommandAction(episode: RuntimeEpisode, action: RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction, command: string): Promise<RuntimeActionObservation> {
+async function runRuntimeMappedCommandAction(episode: RuntimeEpisode, action: RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction | RuntimeWordPressHookAction | RuntimeWordPressCronEventAction, command: string): Promise<RuntimeActionObservation> {
   const step = await episode.step(
     {
       kind: "command",
@@ -365,6 +395,9 @@ function actionArgs(action: object): string[] {
   return Object.entries(action).flatMap(([key, value]) => {
     if (value === undefined || key === "type" || key === "timeout_ms") {
       return []
+    }
+    if (key === "args" && Array.isArray(value)) {
+      return [`args-json=${JSON.stringify(value)}`]
     }
     return [`${key.replace(/_/g, "-")}=${String(value)}`]
   })

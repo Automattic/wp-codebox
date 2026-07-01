@@ -5,6 +5,10 @@ export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
 export const FUZZ_RUNNER_CAPABILITIES_SCHEMA = "wp-codebox/fuzz-runner-capabilities/v1" as const
 export const FUZZ_RUNNER_READINESS_SCHEMA = "wp-codebox/fuzz-runner-readiness/v1" as const
+export const FUZZ_ARTIFACT_BUNDLE_SCHEMA = "wp-codebox/fuzz-artifact-bundle/v1" as const
+export const FUZZ_REPLAY_CASE_REF_SCHEMA = "wp-codebox/fuzz-replay-case-ref/v1" as const
+export const FUZZ_MINIMIZE_CAPABILITY_SCHEMA = "wp-codebox/fuzz-minimize-capability/v1" as const
+export const WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA = "wp-codebox/wordpress-fuzz-runtime-contract/v1" as const
 
 export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
@@ -52,8 +56,6 @@ export interface FuzzSuiteMutationIntent {
   intent?: FuzzSuiteMutationIntentKind
   destructive?: boolean
   intensity?: FuzzSuiteMutationIntensity
-  resetRequired?: boolean
-  reset_required?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -119,7 +121,90 @@ export interface FuzzRunnerReadinessContract {
   capabilities: FuzzRunnerCapabilitiesContract
   operationKinds: string[]
   unsupportedRequiredCapabilities: string[]
+  disposable?: boolean
+  isolation?: {
+    runtime_backed: true
+    disposable: true
+    sandboxed: true
+  }
+  guardrails?: {
+    external_side_effect_guardrail: true
+    external_http_guardrail: true
+  }
+  artifacts?: {
+    artifact_export: true
+  }
+  destructiveModeRequirements?: WordPressFuzzDestructiveModeRequirements
   metadata?: Record<string, unknown>
+}
+
+export interface WordPressFuzzRuntimeContract {
+  schema: typeof WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA
+  version: 1
+  runtime: {
+    id: "wp-codebox"
+    environment: "wordpress"
+  }
+  publicSurfaces: {
+    phpFacade: string
+    ability: string
+    wpCli: string
+    nodeCli: string
+    typescript: string
+  }
+  actionFamilies: WordPressFuzzActionFamily[]
+  resetModes: WordPressFuzzResetMode[]
+  artifactExpectations: WordPressFuzzArtifactExpectation[]
+  destructiveModeRequirements: WordPressFuzzDestructiveModeRequirements
+  unsupportedCapabilities: WordPressFuzzUnsupportedCapability[]
+  hbex: {
+    schemaIds: Record<string, string>
+  }
+}
+
+export interface WordPressFuzzActionFamily {
+  id: string
+  label: string
+  targetKinds: string[]
+  runtimeActionTypes: string[]
+  commands: string[]
+  mutationIntents: FuzzSuiteMutationIntentKind[]
+  supported: boolean
+}
+
+export interface WordPressFuzzResetMode {
+  id: FuzzSuiteResetMode
+  supported: boolean
+  optionalForMutationIntents: FuzzSuiteMutationIntentKind[]
+  artifactKinds: string[]
+}
+
+export interface WordPressFuzzArtifactExpectation {
+  id: string
+  required: boolean
+  schema: string
+  producedBy: string[]
+  description: string
+}
+
+export interface WordPressFuzzDestructiveModeRequirements {
+  supported: boolean
+  destructiveMutationIntent: "destructive"
+  requiredSandboxBoundary: {
+    disposable: true
+    destructivePermission: true
+    teardown: "discard"
+  }
+  optionalResetModes: FuzzSuiteResetMode[]
+  requiredArtifacts: string[]
+  deleteBoundaryCapability: string
+  rawDeleteCapability: null
+}
+
+export interface WordPressFuzzUnsupportedCapability {
+  id: string
+  reason: string
+  replacement?: string
 }
 
 export interface FuzzRunnerRequiredCapabilities {
@@ -153,6 +238,10 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "target:runtime",
     "target:runtime-action",
     "runtime",
+    "disposable-runtime",
+    "runtime-isolation",
+    "disposable-sandbox-boundary",
+    "destructive-permission",
     "runtime-action:admin_page",
     "runtime-action:browser",
     "runtime-action:browser_probe",
@@ -165,10 +254,18 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "runtime-action:rest_request",
     "runtime-action:sequence",
     "runtime-action:wp_cli",
+    "runtime-action:wordpress_hook",
+    "runtime-action:wordpress_cron_event",
     "db_operation",
     "rest-mutation:fixture-opt-in",
     "mutation-isolation-artifact",
+    "cache-churn-observation",
     "delete-boundary-artifact",
+    "sandbox-isolation-proof",
+    "external-http-guardrail",
+    "external-side-effect-guardrail",
+    "artifact-export",
+    "wordpress-db-write-set-artifact",
     "rest-mutation:post:mutation-isolation-artifact",
     "rest-mutation:put:mutation-isolation-artifact",
     "rest-mutation:patch:mutation-isolation-artifact",
@@ -176,9 +273,164 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   ],
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
-  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "sequence", "wp_cli"],
-  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.fuzz-admin-pages", "wordpress.fuzz-plugin-module-state", "wordpress.http-request", "wordpress.inventory-plugin-module-options-tables", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
+  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "random_walk", "rest_request", "sequence", "wp_cli", "wordpress_hook", "wordpress_cron_event"],
+  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.cache-churn-observation", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.execution-surfaces", "wordpress.fuzz-admin-pages", "wordpress.fuzz-plugin-module-state", "wordpress.http-request", "wordpress.inventory-plugin-module-options-tables", "wordpress.invoke-cron-event", "wordpress.invoke-hook", "wordpress.invoke-wp-cli", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
+}
+
+export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
+  schema: WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
+  version: 1,
+  runtime: {
+    id: "wp-codebox",
+    environment: "wordpress",
+  },
+  publicSurfaces: {
+    phpFacade: "WP_Codebox_API::wordpress_fuzz_runtime_contract()",
+    ability: "wp-codebox/run-fuzz-suite",
+    wpCli: "wp codebox wordpress-fuzz-runtime-contract",
+    nodeCli: "wp-codebox fuzz descriptor --format=json",
+    typescript: "@automattic/wp-codebox-core/contracts",
+  },
+  actionFamilies: [
+    {
+      id: "ability-http-rest-read",
+      label: "Ability, HTTP, and REST read coverage",
+      targetKinds: ["ability", "http", "rest"],
+      runtimeActionTypes: [],
+      commands: ["wordpress.ability", "wordpress.http-request", "wordpress.rest-request"],
+      mutationIntents: ["read"],
+      supported: true,
+    },
+    {
+      id: "runtime-browser-admin",
+      label: "Runtime browser, admin page, editor, and page coverage",
+      targetKinds: ["runtime", "runtime-action"],
+      runtimeActionTypes: ["admin_page", "browser", "browser_probe", "editor_open", "page", "random_walk", "sequence"],
+      commands: ["wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.editor-open", "wordpress.fuzz-admin-pages", "wordpress.page", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load"],
+      mutationIntents: ["read", "write"],
+      supported: true,
+    },
+    {
+      id: "runtime-wordpress-operations",
+      label: "WordPress CLI, PHP, REST, CRUD, and database operation coverage",
+      targetKinds: ["command", "runtime", "runtime-action"],
+      runtimeActionTypes: ["crud_operation", "db_operation", "php", "rest_request", "wp_cli", "wordpress_hook", "wordpress_cron_event"],
+      commands: ["wordpress.cache-churn-observation", "wordpress.collect-workload-result", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.execution-surfaces", "wordpress.inventory-plugin-module-options-tables", "wordpress.invoke-cron-event", "wordpress.invoke-hook", "wordpress.invoke-wp-cli", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.wp-cli"],
+      mutationIntents: ["read", "write", "delete", "destructive"],
+      supported: true,
+    },
+  ],
+  resetModes: [
+    {
+      id: "none",
+      supported: true,
+      optionalForMutationIntents: ["read", "write", "delete", "destructive"],
+      artifactKinds: [],
+    },
+    {
+      id: "checkpoint-per-case",
+      supported: true,
+      optionalForMutationIntents: ["write", "delete", "destructive"],
+      artifactKinds: ["mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set"],
+    },
+    {
+      id: "restore-snapshot",
+      supported: false,
+      optionalForMutationIntents: ["write", "delete", "destructive"],
+      artifactKinds: [],
+    },
+  ],
+  artifactExpectations: [
+    {
+      id: "fuzz-suite-result",
+      required: true,
+      schema: FUZZ_SUITE_RESULT_SCHEMA,
+      producedBy: ["run-fuzz-suite"],
+      description: "Every fuzz run returns a structured suite result envelope with case summaries, diagnostics, and artifact references.",
+    },
+    {
+      id: "mutation-isolation-artifact",
+      required: true,
+      schema: "wp-codebox/mutation-isolation-artifact/v1",
+      producedBy: ["rest-mutation:post", "rest-mutation:put", "rest-mutation:patch"],
+      description: "Mutating REST coverage records the explicit fixture or disposable sandbox boundary and artifact evidence for the mutation.",
+    },
+    {
+      id: "delete-boundary-artifact",
+      required: true,
+      schema: "wp-codebox/delete-boundary-artifact/v1",
+      producedBy: ["rest-mutation:delete"],
+      description: "Delete coverage records the explicit delete boundary artifact inside a disposable sandbox instead of advertising unbounded raw delete support.",
+    },
+    {
+      id: "wordpress-db-write-set",
+      required: true,
+      schema: "wp-codebox/wordpress-db-write-set/v1",
+      producedBy: ["rest-mutation", "crud-operation", "db-operation", "admin-action"],
+      description: "Destructive fuzz cases emit per-case database write ledgers for relative write-amplification and hotspot discovery.",
+    },
+    {
+      id: "cache-churn-observation",
+      required: false,
+      schema: "wp-codebox/cache-churn-observation/v1",
+      producedBy: ["wordpress.cache-churn-observation"],
+      description: "Optional destructive fuzzing evidence that correlates a case/action with transient, site transient, option, autoload, and explicitly unsupported object-cache churn fields.",
+    },
+  ],
+  destructiveModeRequirements: {
+    supported: true,
+    destructiveMutationIntent: "destructive",
+    requiredSandboxBoundary: {
+      disposable: true,
+      destructivePermission: true,
+      teardown: "discard",
+    },
+    optionalResetModes: ["checkpoint-per-case", "restore-snapshot"],
+    requiredArtifacts: ["mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set"],
+    deleteBoundaryCapability: "delete-boundary-artifact",
+    rawDeleteCapability: null,
+  },
+  unsupportedCapabilities: [
+    {
+      id: "raw-delete",
+      reason: "WordPress fuzz runtime delete coverage is only supported through explicit delete-boundary artifacts.",
+      replacement: "delete-boundary-artifact",
+    },
+    {
+      id: "restore-snapshot-reset",
+      reason: "Snapshot restore is an optional reset convenience, not destructive fuzz correctness proof.",
+      replacement: "disposable-sandbox-boundary",
+    },
+    {
+      id: "private-runtime-probing",
+      reason: "Consumers must read this descriptor instead of probing private runtime commands or implementation capabilities.",
+    },
+  ],
+  hbex: {
+    schemaIds: {
+      descriptor: WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
+      fuzzSuite: FUZZ_SUITE_SCHEMA,
+      fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
+      fuzzRunnerCapabilities: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
+      fuzzRunnerReadiness: FUZZ_RUNNER_READINESS_SCHEMA,
+      fuzzCoveragePlan: "wp-codebox/fuzz-coverage-plan/v1",
+      fuzzMinimizeCaseInput: "wp-codebox/fuzz-minimize-case-input/v1",
+      fuzzMinimizeCaseResult: "wp-codebox/fuzz-minimize-case-result/v1",
+      fuzzFixturePlan: "wp-codebox/fuzz-fixture-plan/v1",
+      restMutationFixtureOptIn: "wp-codebox/rest-mutation-fixture-opt-in/v1",
+      restMutationGeneratedFixtures: "wp-codebox/rest-mutation-generated-fixtures/v1",
+      mutationIsolationArtifact: "wp-codebox/mutation-isolation-artifact/v1",
+      deleteBoundaryArtifact: "wp-codebox/delete-boundary-artifact/v1",
+      wordpressDbWriteSet: "wp-codebox/wordpress-db-write-set/v1",
+      cacheChurnObservation: "wp-codebox/cache-churn-observation/v1",
+      wordpressWorkloadRun: "wp-codebox/wordpress-workload-run/v1",
+    },
+  },
+}
+
+export function wordpressFuzzRuntimeContract(): WordPressFuzzRuntimeContract {
+  return WORDPRESS_FUZZ_RUNTIME_CONTRACT
 }
 
 export interface FuzzSuiteDiagnostic {
@@ -197,6 +449,43 @@ export interface FuzzSuiteArtifactRef {
   sha256?: string
   bytes?: number
   name?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzReplayCaseRef {
+  schema: typeof FUZZ_REPLAY_CASE_REF_SCHEMA
+  caseId: string
+  path: string
+  kind: "fuzz-replay-case" | (string & {})
+  contentType: "application/json" | (string & {})
+  sha256?: string
+  bytes?: number
+  target?: FuzzSuiteTargetRef
+  status?: FuzzSuiteCaseStatus
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzMinimizeCapabilityContract {
+  schema: typeof FUZZ_MINIMIZE_CAPABILITY_SCHEMA
+  status: "supported" | "unsupported"
+  inputKind: "fuzz-replay-case" | (string & {})
+  operation?: string
+  reason?: string
+  requiredArtifacts?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzArtifactBundleContract {
+  schema: typeof FUZZ_ARTIFACT_BUNDLE_SCHEMA
+  suiteId: string
+  path: string
+  manifestPath: string
+  resultRef: FuzzSuiteArtifactRef
+  caseResultStreamRef: FuzzSuiteArtifactRef
+  replayCaseRefs: FuzzReplayCaseRef[]
+  hotspotRefs: FuzzSuiteArtifactRef[]
+  minimize: FuzzMinimizeCapabilityContract
+  artifactRefs: FuzzSuiteArtifactRef[]
   metadata?: Record<string, unknown>
 }
 
@@ -314,6 +603,59 @@ export function fuzzSuiteResultEnvelope(input: {
   })
 }
 
+export function fuzzReplayCaseRef(input: Omit<FuzzReplayCaseRef, "schema" | "kind" | "contentType"> & Partial<Pick<FuzzReplayCaseRef, "kind" | "contentType">>): FuzzReplayCaseRef {
+  return stripUndefined({
+    schema: FUZZ_REPLAY_CASE_REF_SCHEMA,
+    caseId: input.caseId,
+    path: input.path,
+    kind: input.kind ?? "fuzz-replay-case",
+    contentType: input.contentType ?? "application/json",
+    sha256: input.sha256,
+    bytes: input.bytes,
+    target: input.target,
+    status: input.status,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzMinimizeUnsupportedCapability(input: { reason: string; requiredArtifacts?: string[]; metadata?: Record<string, unknown> }): FuzzMinimizeCapabilityContract {
+  return stripUndefined({
+    schema: FUZZ_MINIMIZE_CAPABILITY_SCHEMA,
+    status: "unsupported" as const,
+    inputKind: "fuzz-replay-case" as const,
+    reason: input.reason,
+    requiredArtifacts: input.requiredArtifacts,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzMinimizeSupportedCapability(input: { operation: string; requiredArtifacts?: string[]; metadata?: Record<string, unknown> }): FuzzMinimizeCapabilityContract {
+  return stripUndefined({
+    schema: FUZZ_MINIMIZE_CAPABILITY_SCHEMA,
+    status: "supported" as const,
+    inputKind: "fuzz-replay-case" as const,
+    operation: input.operation,
+    requiredArtifacts: input.requiredArtifacts,
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzArtifactBundleContract(input: Omit<FuzzArtifactBundleContract, "schema">): FuzzArtifactBundleContract {
+  return stripUndefined({
+    schema: FUZZ_ARTIFACT_BUNDLE_SCHEMA,
+    suiteId: input.suiteId,
+    path: input.path,
+    manifestPath: input.manifestPath,
+    resultRef: input.resultRef,
+    caseResultStreamRef: input.caseResultStreamRef,
+    replayCaseRefs: input.replayCaseRefs,
+    hotspotRefs: input.hotspotRefs,
+    minimize: input.minimize,
+    artifactRefs: input.artifactRefs,
+    metadata: input.metadata,
+  })
+}
+
 export function fuzzSuiteRequiredRunnerCapabilities(suite: FuzzSuiteContract): string[] {
   const metadata = fuzzSuiteMetadata(suite)
   const required = recordField(metadata, "requiredRunnerCapabilities") ?? recordField(metadata, "required_runner_capabilities")
@@ -353,6 +695,13 @@ export function fuzzRunnerReadinessContract(input: FuzzSuiteRunnerCapabilities, 
     capabilities,
     operationKinds: capabilities.operationKinds ?? [],
     unsupportedRequiredCapabilities,
+    ...(input.mode === "runtime-backed" ? {
+      disposable: true,
+      isolation: { runtime_backed: true, disposable: true, sandboxed: true } as const,
+      guardrails: { external_side_effect_guardrail: true, external_http_guardrail: true } as const,
+      artifacts: { artifact_export: true } as const,
+      destructiveModeRequirements: WORDPRESS_FUZZ_RUNTIME_CONTRACT.destructiveModeRequirements,
+    } : {}),
     metadata: input.metadata,
   })
 }

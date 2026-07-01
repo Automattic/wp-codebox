@@ -256,7 +256,7 @@ export function browserProbeReplayability(capture: Set<string>): BrowserProbeRep
     return "artifact-backed"
   }
 
-  if (capture.has("html") || capture.has("screenshot") || capture.has("network")) {
+  if (capture.has("html") || capture.has("screenshot") || capture.has("network") || capture.has("websocket")) {
     return "partial"
   }
 

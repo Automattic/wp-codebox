@@ -14,6 +14,7 @@ const result = await runPhpJson<{
     inputs: { secretEnv: string[]; runtimeEnv: Record<string, string>; extra_plugins: Array<{ slug: string }> }
     workflow: { steps: Array<{ args: string[] }> }
   }
+  nested_component_plugins: unknown[]
 }>(`
 define('ABSPATH', ${phpStringLiteral(repoRoot)});
 class WP_Error {
@@ -39,6 +40,7 @@ function apply_filters( $hook, $value, ...$args ) {
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-profile-resolver.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-host-runtime-config-builder.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php`)};
 
 $legacy_adapter_calls = array();
@@ -126,8 +128,17 @@ $recipe = json_decode( file_get_contents( $result['path'] ), true );
 unlink( $result['path'] );
 $preset_recipe = json_decode( file_get_contents( $preset_result['path'] ), true );
 unlink( $preset_result['path'] );
+$runtime_config_builder = new WP_Codebox_Host_Runtime_Config_Builder();
+$nested_component_plugins = $runtime_config_builder->component_plugins( array( array(
+	'sourcePath' => '/workspace/repo',
+	'sourceSubdir' => 'plugins/example',
+	'mountSlug' => 'example',
+	'pluginFile' => 'example/example.php',
+	'loadAs' => 'plugin',
+	'activate' => true,
+) ) );
 
-echo json_encode( array( 'legacy_adapter_calls' => $legacy_adapter_calls, 'recipe' => $recipe, 'preset_result' => $preset_result, 'preset_recipe' => $preset_recipe ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'legacy_adapter_calls' => $legacy_adapter_calls, 'recipe' => $recipe, 'preset_result' => $preset_result, 'preset_recipe' => $preset_recipe, 'nested_component_plugins' => $nested_component_plugins ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.deepEqual(result.legacy_adapter_calls, [])
@@ -140,6 +151,16 @@ assert.deepEqual(result.recipe.inputs.extra_plugins, [
   { source: "/components/demo-plugin", slug: "demo-plugin", activate: true, loadAs: "plugin" },
   { source: "/plugins/planned-provider", slug: "planned-provider", activate: false },
 ])
+assert.deepEqual(result.nested_component_plugins[0], {
+  sourcePath: "/workspace/repo",
+  sourceSubdir: "plugins/example",
+  slug: "repo",
+  mountSlug: "example",
+  pluginFile: "example/example.php",
+  activate: true,
+  loadAs: "plugin",
+  metadata: { componentContract: { index: 0, slug: "repo", requestedPath: "/workspace/repo", preparedPath: "/workspace/repo", loadAs: "plugin", activate: true } },
+})
 assert.equal(result.recipe.workflow.steps[0].command, "wp-codebox.agent-sandbox-run")
 assert.ok(result.recipe.workflow.steps[0].args.includes("agent=planned-agent"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("mode=planned-mode"))

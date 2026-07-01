@@ -83,6 +83,7 @@ top-level fields:
 - `dependency_overlays`
 - `runtimeEnv`
 - `secretEnv`
+- `externalServices`
 - `pluginRuntime`
 - `fixtureDatabases`
 - `fixtureUsers`
@@ -104,11 +105,55 @@ Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
 artifact contracts. WP Codebox materializes declared repositories as sandbox
 workspace mounts; callers own the policy that decides which artifacts to pass.
 
+## External Service Boundaries
+
+Use `inputs.externalServices` to declare reviewer-safe boundaries for services a
+recipe may observe while collecting browser or runtime evidence. The primitive is
+product-neutral: it names the boundary, classifies the environment, declares host
+sets, records the write policy, and lists secret environment variable names
+without serializing secret values.
+
+```json
+{
+  "inputs": {
+    "externalServices": [
+      {
+        "id": "checkout-staging",
+        "label": "Checkout staging API",
+        "environment": "staging",
+        "allowedHosts": ["api.example.test"],
+        "blockedHosts": ["api.example.com"],
+        "writes": "record-only",
+        "secretEnv": ["CHECKOUT_API_TOKEN"],
+        "redaction": {
+          "policy": "redact-fields",
+          "fields": ["authorization", "set-cookie"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Supported `environment` values are `local`, `fixture`, `staging`, `production`,
+and `external`. Supported `writes` values are `forbidden`, `record-only`, and
+`allowed-with-approval`. Supported redaction policies are `metadata-only`,
+`redact-fields`, and `omit`.
+
+Dry-run plans, run attestations, failure diagnostics, and browser evidence expose
+only the declared boundary metadata and secret env names. When browser evidence
+contains network-policy host observations, WP Codebox adds a safe correlation
+summary from observed hosts to declared boundary ids where host names match
+`allowedHosts` or `blockedHosts`.
+
 ## Extra Plugins
 
 `inputs.extra_plugins` mounts additional WordPress plugins before workflow steps
-run. Each entry requires `source` and may include `slug`, `pluginFile`,
-`activate`, `loadAs`, and `sha256`.
+run. Each entry requires `source` or `sourcePath` and may include `sourceSubdir`,
+`mountSlug`, `pluginFile`, `activate`, `loadAs`, and `sha256`. `sourcePath` is
+the source root, `sourceSubdir` is an optional plugin directory below that root,
+`mountSlug` is the WordPress plugin directory, and `pluginFile` is relative to
+the mounted plugin slug.
 
 ```json
 {
@@ -125,6 +170,12 @@ run. Each entry requires `source` and may include `slug`, `pluginFile`,
         "pluginFile": "caller-runtime-substrate/caller-runtime-substrate.php",
         "activate": false,
         "loadAs": "mu-plugin"
+      },
+      {
+        "sourcePath": "../monorepo",
+        "sourceSubdir": "plugins/example-plugin",
+        "mountSlug": "example-plugin",
+        "pluginFile": "example-plugin/example-plugin.php"
       }
     ]
   }
@@ -482,6 +533,32 @@ and the redaction flag.
 }
 ```
 
+Browser interaction scripts support a generic `callTool` verifier step shape for
+caller-owned external checks:
+
+```json
+{
+  "kind": "callTool",
+  "tool": "client/check_status",
+  "input": { "url": "https://example.test/status", "expected": "ready" }
+}
+```
+
+`tool` is the exact caller-provided host tool command name and must be allowed by
+runtime policy using that same command name. `input` must be JSON-serializable.
+WP Codebox treats this as transport and evidence only; callers own the tool and
+any external system behavior. The Playground browser-actions runtime validates
+and policy-checks `callTool`; when the caller provides a matching host tool via
+`RuntimeCreateSpec.hostTools`, Codebox executes it through the generic host-tool
+transport and records the `wp-codebox/host-tool-result/v1` result inside a
+redaction-required `wp-codebox/browser-tool-verifier-result/v1` artifact. When no
+host-tool registry or matching tool is available, or runtime policy does not
+allow the exact tool command, Codebox records stable `unsupported` verifier
+evidence instead of executing the step. Raw input values and secrets are not
+serialized into unsupported verifier artifacts. Polling fields are intentionally
+not part of this narrow primitive yet; callers should model repeated checks
+outside the browser script.
+
 ## Fixture Browser Auth Storage State
 
 Hosts that need an authenticated browser session for a disposable WordPress
@@ -550,6 +627,11 @@ Use one browser authentication source per command. `auth=wordpress-admin` create
 short-lived in-memory cookies from the disposable WordPress sandbox; `storage-state`
 imports caller-provided reusable state. Supplying both is rejected with structured
 storage-state diagnostics rather than silently preferring one source.
+
+Browser commands accept `capture=websocket` to write a generic
+`browser-websocket` artifact. The artifact records safe connection metadata only:
+redacted websocket URLs, open/close/error timestamps, frame counts, and aggregate
+sent/received byte counts. Frame payloads are not written.
 
 ## Recipe Output Evidence
 
@@ -714,6 +796,27 @@ Supported assertion forms are the current command contract:
 
 Prefix an assertion with `advisory:` to record a failing assertion without
 failing the command.
+
+`wordpress.browser-actions` can assert over observations captured by prior action
+steps with an `assertObservation` step. Supported observation assertions are:
+
+- `no-console-errors`
+- `no-page-errors`
+- `request-count-by-host:<host><op><number>`
+- `request-count-by-type:<type><op><number>`
+
+Failed `assertObservation` steps are recorded in the action step records and
+assertion summary, and they fail the browser-actions command.
+
+```json
+{
+  "command": "wordpress.browser-actions",
+  "args": [
+    "url=/",
+    "steps-json=[{\"kind\":\"waitFor\",\"waitFor\":\"networkidle\"},{\"kind\":\"assertObservation\",\"assertion\":\"request-count-by-host:example.test<=2\"},{\"kind\":\"assertObservation\",\"assertion\":\"no-console-errors\"}]"
+  ]
+}
+```
 
 Do not use `assert=script:passed equals true`. That syntax is not supported by
 the current WP Codebox browser assertion contract. Use `wordpress.browser-actions`

@@ -1,9 +1,9 @@
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { BrowserPreviewTopology } from "./browser-preview-routing.js"
-import { addBrowserProbeNetworkCount, browserProbeArtifactRefs, createBrowserProbeProgressTracker, now, requestHost, safeBrowserProbeUrl, sortBrowserProbeNetworkCounts } from "./browser-probe-support.js"
+import { addBrowserProbeNetworkCount, browserProbeArtifactRefs, browserProbeWebSocketSummary, createBrowserProbeProgressTracker, now, requestHost, safeBrowserProbeUrl, sortBrowserProbeNetworkCounts } from "./browser-probe-support.js"
 import { browserProbeBenchMetrics } from "./browser-metrics.js"
 import { browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeReplayability } from "./browser-probe.js"
-import type { BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepAssertion, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserProbeWebSocketReviewSummary, BrowserRedirectDiagnosticsSummary, BrowserStepAssertion, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 
 export interface BrowserProbeCaptureSelection {
   console: boolean
@@ -73,6 +73,7 @@ export interface BrowserProbeSessionResultInput {
   topologyOrigins: BrowserPreviewTopology["origins"]
   viewport: BrowserProbeViewport | null
   waitFor: string
+  webSockets: BrowserProbeWebSocketRecord[]
   windowLocationOrigin?: string
   wordpressDiagnostics?: { summary: BrowserWordPressDiagnosticsSummary }
 }
@@ -105,6 +106,7 @@ export class BrowserProbeSessionResultBuilder {
         memory: Boolean(input.memoryArtifact),
         network: Boolean(files.network),
         waterfall: Boolean(files.waterfall),
+        websocket: Boolean(files.websocket),
         performance: Boolean(input.performanceArtifact),
         redirectDiagnostics: Boolean(input.redirectDiagnostics),
         screenshot: input.hashes.screenshotSha256,
@@ -118,6 +120,7 @@ export class BrowserProbeSessionResultBuilder {
       totalDurationMs: Date.now() - input.startedAtMs,
       viewport: input.viewport,
       waitFor: input.waitFor,
+      webSockets: input.webSockets,
       redirectDiagnostics: input.redirectDiagnostics?.summary,
       wordpressDiagnostics: input.wordpressDiagnostics?.summary,
     })
@@ -164,6 +167,7 @@ function browserProbeArtifactFileMap(input: BrowserProbeSessionResultInput): Bro
 		...(input.capture.has("network") || input.captureSelection?.networkForAssertions ? { network: `${input.browserFilesDirectory}/network.jsonl` } : {}),
 		...(input.capture.has("network") || input.captureSelection?.networkForAssertions ? { requestCoverage: `${input.browserFilesDirectory}/request-coverage.json` } : {}),
 		...(input.capture.has("network") || input.captureSelection?.networkForAssertions ? { waterfall: `${input.browserFilesDirectory}/waterfall.json` } : {}),
+    ...(input.capture.has("websocket") ? { websocket: `${input.browserFilesDirectory}/websocket.json` } : {}),
     ...(input.performanceArtifact ? { performance: `${input.browserFilesDirectory}/performance.json` } : {}),
     ...(input.redirectDiagnostics ? { redirectDiagnostics: `${input.browserFilesDirectory}/redirect-diagnostics.json` } : {}),
     review: `${input.browserFilesDirectory}/review.json`,
@@ -188,6 +192,7 @@ function browserProbeArtifactSummary(input: BrowserProbeSessionResultInput, asse
     ...(input.memoryArtifact ? { memory: input.memoryArtifact.peak } : {}),
     ...(input.memoryArtifact || input.performanceArtifact ? { metrics: browserProbeBenchMetrics(input.memoryArtifact, input.performanceArtifact) } : {}),
     networkEvents: input.network.length,
+    ...(input.capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(input.webSockets) } : {}),
     ...(input.performanceArtifact?.phaseMetrics ? { phaseMetrics: input.performanceArtifact.phaseMetrics } : {}),
     ...(input.performanceArtifact ? { performance: input.performanceArtifact.peak } : {}),
     progress: input.progress.summary(),
@@ -279,6 +284,7 @@ function browserProbeReviewSummary(input: {
   totalDurationMs: number
   viewport: BrowserProbeViewport | null
   waitFor: string
+  webSockets: BrowserProbeWebSocketRecord[]
   redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
 }): BrowserProbeReviewSummary {
@@ -343,6 +349,7 @@ function browserProbeReviewSummary(input: {
       probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
     },
     network: browserProbeNetworkReviewSummary(input.network, input.files.network, input.files.waterfall),
+    ...(input.files.websocket ? { webSockets: browserProbeWebSocketReviewSummary(input.webSockets, input.files.websocket) } : {}),
     ...(input.redirectDiagnostics ? { redirectDiagnostics: input.redirectDiagnostics } : {}),
     ...(input.wordpressDiagnostics ? { wordpressDiagnostics: input.wordpressDiagnostics } : {}),
     milestones: {
@@ -352,6 +359,18 @@ function browserProbeReviewSummary(input: {
       ...(input.files.checkpoints ? { artifact: input.files.checkpoints.path } : {}),
     },
     artifacts: input.files,
+  }
+}
+
+function browserProbeWebSocketReviewSummary(webSockets: BrowserProbeWebSocketRecord[], websocketArtifact?: BrowserProbeArtifactRef): BrowserProbeWebSocketReviewSummary {
+  if (!websocketArtifact) {
+    return { status: "not-captured", ...browserProbeWebSocketSummary([]) }
+  }
+
+  return {
+    status: "captured",
+    ...browserProbeWebSocketSummary(webSockets),
+    artifact: websocketArtifact,
   }
 }
 

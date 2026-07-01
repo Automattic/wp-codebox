@@ -5,6 +5,7 @@ import { runFuzzSuite, type FuzzSuiteRunOptions } from "./fuzz-suite-runner.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation, type WordPressDbOperation, type WordPressDbVerb } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation, type WordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { normalizeWordPressBlockExerciseInput, type WordPressBlockExerciseInput } from "./wordpress-block-exercise-contracts.js"
+import { normalizeWordPressAdminActionContract, type WordPressAdminActionContract } from "./wordpress-admin-action-contracts.js"
 import type { PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runWordPressRestMatrix, type WordPressRestMatrixContract, type WordPressRestMatrixResultEnvelope } from "./rest-matrix-contracts.js"
 import type { ArtifactBundle, Runtime, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeStepResult } from "./runtime-contracts.js"
@@ -35,6 +36,33 @@ export interface WordPressRuntimeDiscoveryOptions {
 
 export interface WordPressRuntimeInventoryOptions {
   timeoutMs?: number
+}
+
+export interface WordPressExecutionSurfaceOptions {
+  timeoutMs?: number
+}
+
+export interface WordPressExecutionMutationBoundaryOptions {
+  mutates?: boolean
+  capability?: string
+  destructiveBoundary?: string
+  timeoutMs?: number
+}
+
+export interface WordPressInvokeWpCliOptions extends WordPressExecutionMutationBoundaryOptions {
+  command: string
+}
+
+export interface WordPressInvokeHookOptions extends WordPressExecutionMutationBoundaryOptions {
+  hook: string
+  args?: unknown[]
+}
+
+export interface WordPressInvokeCronEventOptions extends WordPressExecutionMutationBoundaryOptions {
+  hook: string
+  operation?: "run-hook" | "schedule-single"
+  args?: unknown[]
+  timestamp?: number
 }
 
 export interface WordPressRestPerformanceObservationOptions {
@@ -85,6 +113,7 @@ export type WordPressDatabaseReadOptions = Omit<WordPressDbOperation, "schema" |
 }
 
 export type WordPressBlockExerciseOptions = Partial<WordPressBlockExerciseInput> & { blockName: string }
+export type WordPressAdminActionOptions = Partial<WordPressAdminActionContract> & { family: WordPressAdminActionContract["family"] }
 
 export interface WordPressPageLoadOptions {
   path?: string
@@ -200,6 +229,30 @@ export function inventoryWordPressFrontendUrls(episode: WordPressRuntimeActionEp
   return runWordPressCommand(episode, "wordpress.frontend-url-inventory", [], options.timeoutMs)
 }
 
+export function describeWordPressExecutionSurfaces(episode: WordPressRuntimeActionEpisode, options: WordPressExecutionSurfaceOptions = {}): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.execution-surfaces", [], options.timeoutMs)
+}
+
+export function invokeWordPressWpCli(episode: WordPressRuntimeActionEpisode, options: string | WordPressInvokeWpCliOptions): Promise<RuntimeEpisodeStepResult> {
+  const command = typeof options === "string" ? { command: options } : options
+  return runWordPressCommand(episode, "wordpress.invoke-wp-cli", executionBoundaryArgs([`command=${command.command}`], command), command.timeoutMs)
+}
+
+export function invokeWordPressHook(episode: WordPressRuntimeActionEpisode, options: string | WordPressInvokeHookOptions): Promise<RuntimeEpisodeStepResult> {
+  const hook = typeof options === "string" ? { hook: options } : options
+  return runWordPressCommand(episode, "wordpress.invoke-hook", executionBoundaryArgs([`hook=${hook.hook}`, ...(hook.args ? [`args-json=${JSON.stringify(hook.args)}`] : [])], hook), hook.timeoutMs)
+}
+
+export function invokeWordPressCronEvent(episode: WordPressRuntimeActionEpisode, options: string | WordPressInvokeCronEventOptions): Promise<RuntimeEpisodeStepResult> {
+  const event = typeof options === "string" ? { hook: options } : options
+  return runWordPressCommand(episode, "wordpress.invoke-cron-event", executionBoundaryArgs([
+    `hook=${event.hook}`,
+    ...(event.operation ? [`operation=${event.operation}`] : []),
+    ...(event.args ? [`args-json=${JSON.stringify(event.args)}`] : []),
+    ...(event.timestamp !== undefined ? [`timestamp=${event.timestamp}`] : []),
+  ], event), event.timeoutMs)
+}
+
 export function runWordPressCrudOperation(episode: WordPressRuntimeActionEpisode, operation: WordPressCrudOperationOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.crud-operation", [`operation-json=${JSON.stringify(normalizeWordPressCrudOperation({ schema: WORDPRESS_CRUD_OPERATION_SCHEMA, ...operation }))}`], timeoutMs)
 }
@@ -215,6 +268,10 @@ export function renderWordPressBlock(episode: WordPressRuntimeActionEpisode, inp
 
 export function exerciseWordPressBlock(episode: WordPressRuntimeActionEpisode, input: WordPressBlockExerciseOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.block-exercise", blockExerciseArgs(normalizeWordPressBlockExerciseInput(input)), timeoutMs)
+}
+
+export function executeWordPressAdminAction(episode: WordPressRuntimeActionEpisode, action: WordPressAdminActionOptions, timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.admin-action", [`action-json=${JSON.stringify(normalizeWordPressAdminActionContract(action))}`], timeoutMs)
 }
 
 export function loadWordPressAdminPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageLoadOptions = {}): Promise<RuntimeEpisodeStepResult> {
@@ -241,6 +298,15 @@ export type { RuntimeActionObservation }
 
 function runWordPressCommand(episode: WordPressRuntimeActionEpisode, command: string, args: string[], timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
   return episode.step({ kind: "command", command, args, ...(timeoutMs !== undefined ? { timeoutMs } : {}) }, { type: "command-result" })
+}
+
+function executionBoundaryArgs(args: string[], options: WordPressExecutionMutationBoundaryOptions): string[] {
+  return [
+    ...args,
+    ...(options.mutates !== undefined ? [`mutates=${options.mutates ? "true" : "false"}`] : []),
+    ...(options.capability ? [`capability=${options.capability}`] : []),
+    ...(options.destructiveBoundary ? [`destructive-boundary=${options.destructiveBoundary}`] : []),
+  ]
 }
 
 function runtimeCheckpointSnapshotScopeArgs(options: WordPressRuntimeCheckpointOptions): string[] {

@@ -4,12 +4,16 @@ import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
+  ArtifactBundleWriter,
   artifactFileDigest,
+  artifactStoragePath,
   resolveArtifactPath,
   WORDPRESS_HOTSPOTS_SCHEMA,
+  QUERY_OBSERVATION_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
   createWordPressRuntimeCheckpoint,
+  describeWordPressExecutionSurfaces,
   executeFuzzSuite,
   openWordPressAdminPage,
   openWordPressEditor,
@@ -29,12 +33,25 @@ import {
   normalizeWordPressDbOperation,
   visitWordPressPage,
   wordpressHotspotsArtifact,
+  queryObservationArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
+  fuzzArtifactBundleContract,
+  fuzzMinimizeSupportedCapability,
+  fuzzReplayCaseRef,
+  invokeWordPressCronEvent,
+  invokeWordPressHook,
+  invokeWordPressWpCli,
+  runtimeArtifactStorageDescriptor,
   deleteBoundaryArtifact,
   isRestMutationMethod,
   mutationArtifactDigest,
   mutationIsolationArtifact,
+  sandboxIsolationProof,
+  sandboxIsolationProofDigest,
   wordpressRollbackArtifact,
+  wordpressDbWriteSetArtifact,
+  WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND,
+  WORDPRESS_DB_WRITE_SET_SCHEMA,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
@@ -45,6 +62,7 @@ import {
   type FuzzSuiteContract,
   type FuzzSuiteArtifactRef,
   type FuzzSuiteCaseResetResult,
+  type FuzzReplayCaseRef,
   type FuzzSuiteResetExecutor,
   type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
@@ -54,6 +72,8 @@ import {
   type ObservationSpec,
   type PerformanceObservation,
   type Runtime,
+  type RuntimeArtifactStorageDescriptor,
+  type RuntimeArtifactStorageInput,
   type RuntimeActionObservation,
   type RuntimeCreateSpec,
   type RuntimeEpisode,
@@ -65,9 +85,20 @@ import {
   type Snapshot,
   type WordPressRollbackArtifact,
   type WordPressHotspotObservationInput,
+  type QueryObservationArtifact,
+  type QueryObservationFingerprint,
+  type QueryObservationOperation,
+  type QueryObservationTableRef,
+  type DisposableDestructiveSandboxBoundaryEvidence,
+  type DisposableSandboxTeardownEvidence,
+  type SandboxIsolationProof,
+  type SandboxIsolationProofStepEvidence,
+  type WordPressDbWriteSetArtifact,
+  type WordPressDbWriteSetEntry,
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
+  describeWordPressExecutionSurfaces,
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
@@ -77,6 +108,9 @@ export {
   inventoryWordPressDatabase,
   inventoryWordPressFrontendUrls,
   inventoryWordPressRestRoutes,
+  invokeWordPressCronEvent,
+  invokeWordPressHook,
+  invokeWordPressWpCli,
   listWordPressRuntimeCheckpoints,
   loadWordPressAdminPage,
   loadWordPressFrontendPage,
@@ -116,6 +150,10 @@ export {
   type WordPressRuntimeArtifactSource,
   type WordPressRuntimeDiscoveryOptions,
   type WordPressRuntimeDiscoveryCoveragePlanOptions,
+  type WordPressExecutionSurfaceOptions,
+  type WordPressInvokeCronEventOptions,
+  type WordPressInvokeHookOptions,
+  type WordPressInvokeWpCliOptions,
   type WordPressRuntimeInventoryOptions,
   type WordPressRestPerformanceObservationOptions,
   type WordPressRuntimeCheckpointListOptions,
@@ -128,6 +166,10 @@ export {
   type WordPressHotspotEntry,
   type WordPressHotspotIdentifier,
   type WordPressHotspotMetric,
+  type QueryObservationArtifact,
+  type QueryObservationFingerprint,
+  type QueryObservationDuplicateGroup,
+  type QueryObservationTableRef,
 } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundRuntimeBackendOptions } from "./playground-runtime.js"
@@ -161,6 +203,7 @@ export interface WordPressPageLoadActionOptions {
 
 export interface WordPressFuzzSuiteExecutionOptions extends Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities"> {
   artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+  artifactStorage?: RuntimeArtifactStorageInput | RuntimeArtifactStorageDescriptor
 }
 type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
 
@@ -208,13 +251,13 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "rest_request") {
         if (isRestMutationMethod(action.method ?? "GET")) {
-          return executeRollbackSafeRestMutation(episode, { ...input, action })
+          return executeDisposableSandboxRestMutation(episode, { ...input, action })
         }
         return requestWordPressRest(episode, action)
       }
       if (action.type === "crud_operation") {
         if (action.operation === "create" || action.operation === "update" || action.operation === "delete") {
-          return executeRollbackSafeCrudMutation(episode, { ...input, action })
+          return executeDisposableSandboxCrudMutation(episode, { ...input, action })
         }
         const step = await runWordPressCrudOperation(episode, action, action.timeout_ms)
         return {
@@ -231,9 +274,53 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "db_operation") {
         if (action.operation === "write") {
-          return executeRollbackSafeDbMutation(episode, { ...input, action })
+          return executeDisposableSandboxDbMutation(episode, { ...input, action })
         }
         const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { stepId: step.id, executionId: step.execution.id, mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: { algorithm: "sha256", value: step.execution.command },
+        }
+      }
+      if (action.type === "wordpress_hook") {
+        const step = await invokeWordPressHook(episode, {
+          hook: action.hook,
+          args: action.args,
+          mutates: action.mutates,
+          capability: action.capability,
+          destructiveBoundary: action.destructive_boundary,
+          timeoutMs: action.timeout_ms,
+        })
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { stepId: step.id, executionId: step.execution.id, mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: { algorithm: "sha256", value: step.execution.command },
+        }
+      }
+      if (action.type === "wordpress_cron_event") {
+        const step = await invokeWordPressCronEvent(episode, {
+          hook: action.hook,
+          operation: action.operation,
+          args: action.args,
+          timestamp: action.timestamp,
+          mutates: action.mutates,
+          capability: action.capability,
+          destructiveBoundary: action.destructive_boundary,
+          timeoutMs: action.timeout_ms,
+        })
         return {
           schema: "wp-codebox/runtime-action-observation/v1",
           type: action.type,
@@ -290,51 +377,40 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
   }
 }
 
-async function executeRollbackSafeDbMutation(
+async function executeDisposableSandboxDbMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "db_operation" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const operation = normalizeWordPressDbOperation({
     schema: WORDPRESS_DB_OPERATION_SCHEMA,
     ...input.action,
     operation: "write",
-    options: { ...(input.action.options ?? {}), allowWrites: true, resetIsolated: true },
-    metadata: { ...(input.action.metadata ?? {}), resetIsolated: true, affectedRowsMayBeZeroOrUnknown: true },
+    options: { ...(input.action.options ?? {}), destructivePermission: true },
+    metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary, affectedRowsMayBeZeroOrUnknown: true },
   })
   const target = operation.resource?.table ?? operation.query?.table ?? "database"
   const mutation = typeof operation.options?.mutation === "string" ? operation.options.mutation.toUpperCase() : "WRITE"
-  const captureSpec = rollbackCaptureSpec({ operation: "db_operation", target, action: input.action, table: operation.resource?.table ?? operation.query?.table, options: operation.options, metadata: operation.metadata })
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "db_operation", mutation },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated DB mutation ${input.case.id}: ${createStep.execution.stderr}`)
-  }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
   const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", captureSpec, input.action.timeout_ms)
-  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
   const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
   const resultMetadata = recordValue(recordValue(stdout)?.metadata)
-  const rollback = rollbackArtifactFromCaptures({ operation: "db_operation", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "db_operation", target, method: mutation, step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "db_operation",
     target,
     method: mutation,
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true,
+    mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
     affectedIdentifiers: undefined,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "db_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     operation,
     mappedCommand: step.execution.command,
@@ -345,7 +421,8 @@ async function executeRollbackSafeDbMutation(
     executionId: step.execution.id,
     stepId: step.id,
     mutationIsolationArtifact: artifactWithDigest,
-    rollbackArtifact: rollback,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
+    sandboxIsolationProof: sandboxProof,
     mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   }
   return {
@@ -361,52 +438,43 @@ async function executeRollbackSafeDbMutation(
   }
 }
 
-async function executeRollbackSafeCrudMutation(
+async function executeDisposableSandboxCrudMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "crud_operation" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const target = crudTarget(input.action)
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const captureSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action), options: input.action.options, metadata: input.action.metadata })
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "crud_operation", mutation: input.action.operation.toUpperCase() },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated CRUD mutation ${input.case.id}: ${createStep.execution.stderr}`)
-  }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
-  const step = await runWordPressCrudOperation(episode, input.action, input.action.timeout_ms)
-  const afterSpec = rollbackCaptureSpec({ operation: "crud_operation", target, action: input.action, object: crudCaptureObject(input.action, parseJsonRecord(step.execution.stdout)), options: input.action.options, metadata: input.action.metadata })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
-  const restoreCommandStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
-  const rollback = rollbackArtifactFromCaptures({ operation: "crud_operation", target, beforeStep, afterStep, restoreStep, restoreCommandStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const action = { ...input.action, options: { ...(input.action.options ?? {}), destructivePermission: true }, metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary } }
+  const step = await runWordPressCrudOperation(episode, action, input.action.timeout_ms)
+  const stdout = parseJsonRecord(step.execution.stdout)
+  const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "crud_operation",
     target,
     method: input.action.operation.toUpperCase(),
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true,
+    mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(step, "observed"),
-    restore: mutationStepEvidence(restoreCommandStep, restoreCommandStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
-    affectedIdentifiers: rollback.changedObjects,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+    affectedIdentifiers: crudAffectedIdentifiers(input.action, stdout),
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: stdout, suiteId: input.suite.id, caseId: input.case.id, action: "crud_operation", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: fuzzSuiteStepArtifactRefs(step) })
   const data = {
     stepId: step.id,
     executionId: step.execution.id,
     mappedCommand: step.execution.command,
     args: step.execution.args,
     exitCode: step.execution.exitCode,
-    stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout,
+    stdout: stdout ?? step.execution.stdout,
     stderr: step.execution.stderr,
     mutationIsolationArtifact: artifactWithDigest,
-    rollbackArtifact: rollback,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
+    sandboxIsolationProof: sandboxProof,
   }
   return { schema: "wp-codebox/runtime-action-observation/v1", type: input.action.type, status: "ok", action: input.action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
 }
@@ -548,6 +616,11 @@ function crudCaptureObject(action: object, result?: Record<string, unknown>): { 
   return { kind, type: stringValue(resource?.type), id: scalarId(resource?.id ?? resultItem?.id) }
 }
 
+function crudAffectedIdentifiers(action: object, result?: Record<string, unknown>) {
+  const object = crudCaptureObject(action, result)
+  return object?.id !== undefined ? [{ kind: object.kind, id: object.id, source: "crud-result" }] : undefined
+}
+
 function restPathObject(path: string): { kind: string; id?: string | number; type?: string } | undefined {
   const match = path.match(/^\/wp\/v2\/(posts|pages|users|comments|categories|tags)\/(\d+)/)
   if (!match) return undefined
@@ -596,6 +669,54 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
+function dbWriteSetArtifactFromCommandResult(input: { result: unknown; suiteId: string; caseId: string; action: string; target: string; artifactPath: string; artifactRefs?: FuzzSuiteArtifactRef[] }): (WordPressDbWriteSetArtifact & { artifactPath: string; persisted: false; sha256: string; bytes: number }) | undefined {
+  const result = recordValue(input.result)
+  const stdout = recordValue(result?.stdout)
+  const metadata = recordValue(result?.metadata)
+  const stdoutMetadata = recordValue(stdout?.metadata)
+  const performance = recordValue(result?.performance ?? stdout?.performance)
+  const database = recordValue(performance?.database)
+  const candidate = recordValue(metadata?.dbWriteSet ?? metadata?.db_write_set ?? stdoutMetadata?.dbWriteSet ?? stdoutMetadata?.db_write_set ?? result?.dbWriteSet ?? result?.db_write_set ?? stdout?.dbWriteSet ?? stdout?.db_write_set ?? database?.dbWriteSet ?? database?.db_write_set)
+  const entries = dbWriteSetEntries(candidate?.entries ?? database?.writeSet ?? database?.write_set)
+  if (entries.length === 0) return undefined
+  const repeatedWrites = dbWriteSetEntries(candidate?.repeatedWrites ?? candidate?.repeated_writes ?? database?.repeatedWrites ?? database?.repeated_writes).filter((entry) => (entry.repeatedWritesToSameKey ?? 0) > 1)
+  const artifact = wordpressDbWriteSetArtifact({
+    suiteId: input.suiteId,
+    caseId: input.caseId,
+    action: input.action,
+    target: input.target,
+    entries,
+    repeatedWrites,
+    artifactRefs: input.artifactRefs,
+    metadata: stripUndefined({ source: "runtime-command-result", resultStatus: stringValue(result?.status), command: stringValue(result?.command), queryCount: typeof database?.queryCount === "number" ? database.queryCount : undefined, writeSetTruncated: candidate?.metadata ? recordValue(candidate.metadata)?.writeSetTruncated : database?.writeSetTruncated }),
+  })
+  const artifactWithRef = { ...artifact, artifactPath: input.artifactPath, persisted: false as const }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  return { ...artifactWithRef, sha256: createHash("sha256").update(content).digest("hex"), bytes: Buffer.byteLength(content) }
+}
+
+function dbWriteSetEntries(value: unknown): WordPressDbWriteSetEntry[] {
+  return arrayValue(value).flatMap((item) => {
+    const entry = recordValue(item)
+    const table = stringValue(entry?.table)
+    const operation = stringValue(entry?.operation)?.toLowerCase()
+    if (!table || (operation !== "insert" && operation !== "update" && operation !== "delete" && operation !== "replace")) return []
+    return [stripUndefined({
+      table,
+      operation: operation as WordPressDbWriteSetEntry["operation"],
+      rowsAffected: nullableNumber(entry?.rowsAffected ?? entry?.rows_affected),
+      rowCountBefore: nullableNumber(entry?.rowCountBefore ?? entry?.row_count_before),
+      rowCountAfter: nullableNumber(entry?.rowCountAfter ?? entry?.row_count_after),
+      resource: recordValue(entry?.resource),
+      object: recordValue(entry?.object) as WordPressDbWriteSetEntry["object"],
+      key: stringValue(entry?.key),
+      repeatedWritesToSameKey: typeof entry?.repeatedWritesToSameKey === "number" ? entry.repeatedWritesToSameKey : (typeof entry?.repeated_writes_to_same_key === "number" ? entry.repeated_writes_to_same_key : undefined),
+      source: recordValue(entry?.source),
+      metadata: recordValue(entry?.metadata),
+    })]
+  })
+}
+
 export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteCommandExecutor {
   return {
     async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
@@ -605,42 +726,84 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
   }
 }
 
-async function executeRollbackSafeRestMutation(
+function requireDisposableDestructiveSandboxBoundary(suite: FuzzSuiteContract): DisposableDestructiveSandboxBoundaryEvidence {
+  const boundary = recordValue(suite.metadata?.disposableSandboxBoundary)
+  const teardown = stringValue(boundary?.teardown)
+  if (boundary?.disposable !== true || boundary?.destructivePermission !== true || !teardown) {
+    throw new Error("Destructive WordPress fuzz mutations require suite.metadata.disposableSandboxBoundary with disposable=true, destructivePermission=true, and teardown=discard or destroy.")
+  }
+  if (teardown !== "discard" && teardown !== "destroy") {
+    throw new Error("Destructive WordPress fuzz mutations require disposable sandbox teardown=discard or destroy.")
+  }
+  return stripUndefined({
+    disposable: true,
+    destructivePermission: true,
+    teardown,
+    backend: stringValue(boundary.backend) ?? "wordpress-playground",
+    environment: stringValue(boundary.environment) ?? "wordpress",
+    hostAccess: stringValue(boundary.hostAccess) ?? "declared-mounts-only",
+    metadata: recordValue(boundary.metadata),
+  }) as DisposableDestructiveSandboxBoundaryEvidence
+}
+
+function disposableSandboxTeardownEvidence(boundary: DisposableDestructiveSandboxBoundaryEvidence): DisposableSandboxTeardownEvidence {
+  const intent = boundary.teardown === "destroy" ? "destroy" : "discard"
+  return {
+    intent,
+    status: "intended" as const,
+    evidence: "Disposable WP Codebox sandbox will be discarded after the fuzz run.",
+    metadata: { backend: boundary.backend, hostAccess: boundary.hostAccess },
+  }
+}
+
+function disposableSandboxMutationProof(input: { operation: string; target: string; method: string; step: RuntimeEpisodeStepResult; sandboxBoundary: DisposableDestructiveSandboxBoundaryEvidence; suiteId: string; caseId: string; caseIndex: number }): SandboxIsolationProof {
+  const proof = sandboxIsolationProof({
+    status: input.step.execution.exitCode === 0 ? "passed" : "failed",
+    baseline: { status: "created", command: "wp-codebox.disposable-sandbox-boundary", metadata: input.sandboxBoundary as unknown as Record<string, unknown> },
+    mutation: mutationStepEvidence(input.step, "mutated") as SandboxIsolationProofStepEvidence & { status: "mutated" },
+    diff: { status: "not-required-disposable-sandbox", changed: true, metadata: { reason: "Disposable sandbox boundary is the destructive mutation proof; rollback validation is optional debug metadata." } },
+    runtimeBoundary: {
+      backend: input.sandboxBoundary.backend ?? "wordpress-playground",
+      environment: input.sandboxBoundary.environment ?? "wordpress",
+      disposable: true,
+      hostAccess: "declared-mounts-only",
+      destroy: { status: input.sandboxBoundary.teardown === "destroy" ? "destroyed" : "discarded", command: "wp-codebox.disposable-sandbox-teardown", metadata: { intent: input.sandboxBoundary.teardown } },
+    },
+    artifacts: [{ path: `files/sandbox-isolation/${input.caseId}-proof.json`, kind: "sandbox-isolation-proof" }],
+    metadata: { suiteId: input.suiteId, caseId: input.caseId, caseIndex: input.caseIndex, operation: input.operation, target: input.target, method: input.method },
+  })
+  const artifactPath = `files/sandbox-isolation/${input.caseId}-proof.json`
+  const proofWithRef = { ...proof, artifactPath }
+  const content = `${JSON.stringify(proofWithRef, null, 2)}\n`
+  return { ...proofWithRef, sha256: sandboxIsolationProofDigest(proofWithRef), bytes: Buffer.byteLength(content) }
+}
+
+async function executeDisposableSandboxRestMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "rest_request" }> },
 ): Promise<RuntimeActionObservation> {
+  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
-  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
-  const captureSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: recordValue(input.case.metadata) })
-  const createStep = await createWordPressRuntimeCheckpoint(episode, {
-    name: checkpointName,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
-  })
-  if (createStep.execution.exitCode !== 0) {
-    throw new Error(`Checkpoint create failed for rollback-isolated REST mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  const observation = await requestWordPressRest(episode, { ...input.action, capture: { ...(input.action.capture ?? {}), queries: true }, enableQueryCapture: true })
+  if (!observation.step) {
+    throw new Error(`Destructive REST mutation ${input.case.id} did not return runtime step evidence.`)
   }
-  const beforeStep = await captureWordPressRollbackState(episode, input.case.id, "before", captureSpec, input.action.timeout_ms)
-  const observation = await requestWordPressRest(episode, input.action)
   const affectedIdentifiers = restMutationAffectedIdentifiers(observation)
-  const afterSpec = rollbackCaptureSpec({ operation: "rest_request", target, action: input.action, metadata: { ...(recordValue(input.case.metadata) ?? {}), affectedIdentifiers } })
-  const afterStep = await captureWordPressRollbackState(episode, input.case.id, "after", afterSpec, input.action.timeout_ms)
-  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
-  const restoreCaptureStep = await captureWordPressRollbackState(episode, input.case.id, "restore", captureSpec, input.action.timeout_ms)
   const status = restObservationStatus(observation)
-  const rollback = rollbackArtifactFromCaptures({ operation: "rest_request", target, beforeStep, afterStep, restoreStep: restoreCaptureStep, restoreCommandStep: restoreStep, metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex } })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "rest_request", target, method, step: observation.step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const baseArtifact = {
     operation: "rest_request" as const,
     target,
     method,
     status,
-    checkpointName,
-    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    sandboxBoundary,
+    destructivePermission: true as const,
+    mutationBoundary: { permission: "destructive" as const, containment: "disposable-sandbox" as const, artifactEvidence: "captured" as const },
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
     afterObservation: mutationStepEvidence(observation.step, "observed"),
-    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
-    rollback,
     affectedIdentifiers,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
   }
   const artifact = method === "DELETE" ? deleteBoundaryArtifact(baseArtifact) : mutationIsolationArtifact(baseArtifact)
   const artifactWithRef = {
@@ -654,10 +817,12 @@ async function executeRollbackSafeRestMutation(
     sha256: mutationArtifactDigest(artifactWithRef),
     bytes: Buffer.byteLength(content),
   }
+  const dbWriteSetArtifact = dbWriteSetArtifactFromCommandResult({ result: observation.data, suiteId: input.suite.id, caseId: input.case.id, action: "rest_request", target, artifactPath: `files/db-write-sets/${input.case.id}.json`, artifactRefs: observation.step ? fuzzSuiteStepArtifactRefs(observation.step) : undefined })
   const data = {
     ...observation.data,
     ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
-    rollbackArtifact: rollback,
+    ...(dbWriteSetArtifact ? { dbWriteSetArtifact } : {}),
+    sandboxIsolationProof: sandboxProof,
   }
 
   return {
@@ -836,8 +1001,21 @@ export function executeWordPressFuzzSuite(
   const commandExecutor = createWordPressFuzzSuiteCommandExecutor(episode)
   const runtimeActionExecutor = createWordPressFuzzSuiteRuntimeActionExecutor(episode)
   const runtimeWorkloadExecutor = createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode)
+  const playgroundSuite = {
+    ...suite,
+    metadata: stripUndefined({
+      ...suite.metadata,
+      disposableSandboxBoundary: recordValue(suite.metadata?.disposableSandboxBoundary) ?? {
+        disposable: true,
+        destructivePermission: true,
+        teardown: "discard",
+        backend: "wordpress-playground",
+        hostAccess: "declared-mounts-only",
+      },
+    }),
+  }
 
-  return executeFuzzSuite(suite, {
+  return executeFuzzSuite(playgroundSuite, {
     ...options,
     executor: async (spec) => {
       const execution = await commandExecutor.execute(spec)
@@ -868,10 +1046,10 @@ export function executeWordPressFuzzSuite(
       runnerMode: "runtime-backed",
       runtimeBackend: "wordpress-playground",
     },
-  }).then((result) => resultWithWordPressHotspotsArtifact(result, hotspotObservations))
+  }).then((result) => resultWithWordPressHotspotsArtifact(result, hotspotObservations, options))
 }
 
-function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): FuzzSuiteResultEnvelope {
+async function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[], options: WordPressFuzzSuiteExecutionOptions = {}): Promise<FuzzSuiteResultEnvelope> {
   const artifact = wordpressHotspotsArtifact({
     generatedAt: new Date().toISOString(),
     source: "executeWordPressFuzzSuite",
@@ -885,18 +1063,24 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
   const content = `${JSON.stringify(artifact, null, 2)}\n`
   const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
   const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
+  const queryObservations = queryObservationArtifactsFromFuzzResult(result)
+  const durableBundle = options.artifactStorage
+    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, queryObservations, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
+    : undefined
   const artifactMetadata = {
-    wordpressHotspots: inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
-    fuzzObservationSet: inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
-    fuzzHotspotSet: inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
+    wordpressHotspots: durableBundle?.wordpressHotspots ?? inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
+    fuzzObservationSet: durableBundle?.fuzzObservationSet ?? inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
+    fuzzHotspotSet: durableBundle?.fuzzHotspotSet ?? inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
+    queryObservations: durableBundle?.queryObservations ?? inlineQueryObservationMetadata(queryObservations),
+    fuzzBundle: durableBundle?.contract,
   }
-  const artifactRefs = dedupeFuzzSuiteArtifactRefs(result.artifactRefs)
+  const artifactRefs = dedupeFuzzSuiteArtifactRefs([...(result.artifactRefs ?? []), ...(durableBundle?.artifactRefs ?? [])])
   const linkedMetadataArtifacts = {
     ...(recordValue(result.metadata?.artifacts) ?? {}),
     ...artifactMetadata,
   }
   const resultArtifactContent = `${JSON.stringify({ ...result, artifactRefs, metadata: { ...result.metadata, artifacts: linkedMetadataArtifacts } }, null, 2)}\n`
-  const resultMetadata = inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
+  const resultMetadata = durableBundle ? await durableBundle.writeResult(resultArtifactContent) : inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
 
   return {
     ...result,
@@ -908,6 +1092,279 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
         fuzzResult: resultMetadata,
       },
     },
+  }
+}
+
+async function writeFuzzArtifactBundle(input: {
+  result: FuzzSuiteResultEnvelope
+  artifact: unknown
+  observationSet: unknown
+  hotspotSet: unknown
+  queryObservations: QueryObservationArtifact[]
+  content: string
+  observationContent: string
+  hotspotContent: string
+  artifactStorage: RuntimeArtifactStorageInput | RuntimeArtifactStorageDescriptor
+}) {
+  const storage = runtimeArtifactStorageDescriptor(input.artifactStorage)
+  const bundlePath = `fuzz/${safeArtifactSegment(input.result.suite.id)}`
+  const bundleDirectory = resolveArtifactPath(storage.root, [storage.pathPrefix, bundlePath].filter(Boolean).join("/")).absolutePath
+  const writer = new ArtifactBundleWriter(bundleDirectory)
+  const artifactRefs: FuzzSuiteArtifactRef[] = []
+
+  const wordpressHotspots = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/wordpress-hotspots.json", "wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, input.content, input.artifact)
+  const fuzzObservationSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-observations.json", "fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", input.observationContent, input.observationSet)
+  const fuzzHotspotSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-hotspots.json", "fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", input.hotspotContent, input.hotspotSet)
+  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
+  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
+  const replayCaseRefs: FuzzReplayCaseRef[] = []
+  const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
+
+  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
+
+  for (const [index, observation] of input.queryObservations.entries()) {
+    const path = `files/query-observations/${safeArtifactSegment(observation.caseId ?? "case")}-${index + 1}.json`
+    const content = `${JSON.stringify(observation, null, 2)}\n`
+    const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "query-observation", QUERY_OBSERVATION_SCHEMA, content, observation)
+    artifactRefs.push(written.ref)
+    queryObservationArtifacts.push(queryObservationArtifactMetadata(observation, written.ref))
+  }
+
+  for (const fuzzCase of input.result.cases) {
+    const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
+    const caseArtifactRefs = [...(fuzzCase.artifactRefs ?? [])]
+    if (dbWriteSet) {
+      const path = `files/db-write-sets/${safeArtifactSegment(fuzzCase.id)}.json`
+      const content = `${JSON.stringify({ ...dbWriteSet, artifactPath: path, persisted: true }, null, 2)}\n`
+      const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND, WORDPRESS_DB_WRITE_SET_SCHEMA, content, dbWriteSet)
+      artifactRefs.push(written.ref)
+      caseArtifactRefs.push(written.ref)
+      fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
+      fuzzCase.metadata = { ...fuzzCase.metadata, dbWriteSet: { ...dbWriteSet, artifactPath: written.ref.path, persisted: true, sha256: written.ref.sha256, bytes: written.ref.bytes } }
+    }
+    const replayInput = {
+      schema: "wp-codebox/fuzz-replay-case-input/v1",
+      suite: input.result.suite,
+      case: fuzzCase,
+      replay: recordValue(fuzzCase.metadata?.replay),
+      artifactRefs: fuzzCase.artifactRefs ?? [],
+      reset: fuzzCase.reset,
+    }
+    const content = `${JSON.stringify(replayInput, null, 2)}\n`
+    const path = `files/replay-cases/${safeArtifactSegment(fuzzCase.id)}.json`
+    const replayArtifact = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "fuzz-replay-case", "wp-codebox/fuzz-replay-case-input/v1", content, replayInput)
+    artifactRefs.push(replayArtifact.ref)
+    replayCaseRefs.push(fuzzReplayCaseRef({
+      caseId: fuzzCase.id,
+      path: replayArtifact.ref.path,
+      sha256: replayArtifact.ref.sha256,
+      bytes: replayArtifact.ref.bytes,
+      target: fuzzCase.target,
+      status: fuzzCase.status,
+      metadata: { storage: "runtime-artifact-layout" },
+    }))
+  }
+
+  const createdAt = new Date().toISOString()
+  const manifestInput: ArtifactManifest = {
+    id: `${input.result.suite.id}-fuzz-artifacts`,
+    contentDigest: { algorithm: "sha256", inputs: [], value: "0".repeat(64) },
+    createdAt,
+    runtime: { id: "wordpress-playground", backend: "wordpress-playground", environment: { kind: "wordpress", name: "WordPress" }, createdAt, status: "created" },
+    files: [],
+  }
+  const manifest = await writer.writeManifest(manifestInput)
+  const manifestRef = fuzzArtifactRef(storage, bundlePath, "manifest.json", "manifest", "application/json", manifest.files.find((file) => file.path === "manifest.json")?.sha256.value)
+  artifactRefs.push(manifestRef)
+
+  const resultPath = "result/fuzz-suite-result.json"
+  const contract = fuzzArtifactBundleContract({
+    suiteId: input.result.suite.id,
+    path: artifactStoragePath(storage, bundlePath),
+    manifestPath: manifestRef.path,
+    resultRef: fuzzArtifactRef(storage, bundlePath, resultPath, "fuzz-suite-result", "application/json"),
+    caseResultStreamRef: caseResultStream.ref,
+    replayCaseRefs,
+    hotspotRefs: [wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref],
+    minimize: fuzzMinimizeSupportedCapability({ operation: "fuzz-minimize-case", requiredArtifacts: replayCaseRefs.map((ref) => ref.path), metadata: { supportedReplayShape: "runtime-action sequence replay" } }),
+    artifactRefs,
+    metadata: { storage: stripUndefined({ schema: storage.schema, pathPrefix: storage.pathPrefix, publicUrlRoot: storage.publicUrlRoot }) },
+  })
+
+  return {
+    contract,
+    artifactRefs,
+    wordpressHotspots: wordpressHotspots.metadata,
+    fuzzObservationSet: fuzzObservationSet.metadata,
+    fuzzHotspotSet: fuzzHotspotSet.metadata,
+    queryObservations: {
+      kind: "query-observation-set",
+      persisted: true,
+      count: queryObservationArtifacts.length,
+      metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" },
+      observations: queryObservationArtifacts,
+    },
+    writeResult: async (content: string) => {
+      const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, resultPath, "fuzz-suite-result", input.result.schema, content, undefined)
+      contract.resultRef = written.ref
+      await writer.writeManifest(manifest)
+      return written.metadata
+    },
+  }
+}
+
+async function writeFuzzJsonArtifact(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, path: string, kind: string, schema: string, content: string, value?: unknown, contentType = "application/json") {
+  await writer.write(path, content, { kind, contentType, provenance: { source: "executeWordPressFuzzSuite", operation: kind } })
+  const digest = artifactFileDigest(content)
+  const bytes = Buffer.byteLength(content)
+  const ref = fuzzArtifactRef(storage, bundlePath, path, kind, contentType, digest.value, bytes)
+  return {
+    ref,
+    metadata: stripUndefined({ ...ref, name: kind, persisted: true, metadata: { schema, source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" }, value }),
+  }
+}
+
+function fuzzArtifactRef(storage: RuntimeArtifactStorageDescriptor, bundlePath: string, path: string, kind: string, contentType: string, sha256?: string, bytes?: number): FuzzSuiteArtifactRef {
+  const artifactPath = artifactStoragePath(storage, [bundlePath, path].filter(Boolean).join("/"))
+  return stripUndefined({
+    path: artifactPath,
+    kind,
+    contentType,
+    sha256,
+    bytes,
+    name: kind,
+    metadata: stripUndefined({ storage: "runtime-artifact-layout", publicUrl: storage.publicUrlRoot ? `${storage.publicUrlRoot}/${artifactPath}` : undefined }),
+  })
+}
+
+function queryObservationArtifactsFromFuzzResult(result: FuzzSuiteResultEnvelope): QueryObservationArtifact[] {
+  return result.cases.flatMap((fuzzCase) => {
+    const execution = recordValue(fuzzCase.metadata?.execution)
+    const executionResult = recordValue(execution?.result)
+    const json = recordValue(executionResult?.json)
+    const command = stringValue(execution?.command)
+    const target = fuzzCase.target?.id ?? fuzzCase.target?.entrypoint ?? stringValue(json?.path ?? json?.route ?? json?.url)
+    const direct = queryObservationFromDatabaseRecord({ result, fuzzCase, command, target, database: recordValue(recordValue(json?.performance)?.database) ?? recordValue(json?.database) ?? recordValue(json?.metrics), source: "fuzz-case-execution" })
+    return [direct, ...queryObservationsFromBenchResult({ result, fuzzCase, command, target, json })].filter((item): item is QueryObservationArtifact => Boolean(item))
+  })
+}
+
+function queryObservationFromDatabaseRecord(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; database?: Record<string, unknown>; source: string }): QueryObservationArtifact | undefined {
+  const database = input.database
+  if (!database) return undefined
+  const queryCount = numberValue(database.queryCount ?? database.query_count ?? database.queries)
+  const totalTimeMs = nullableNumber(database.totalTimeMs ?? database.total_time_ms ?? database.queryTimeMs ?? database.query_time_ms)
+  const fingerprints = arrayValue(database.fingerprints ?? database.queryFingerprints ?? database.query_fingerprints).flatMap(normalizeQueryFingerprint)
+  if (queryCount === undefined && totalTimeMs === undefined && fingerprints.length === 0) return undefined
+  return queryObservationArtifact({
+    generatedAt: new Date().toISOString(),
+    source: input.source,
+    suiteId: input.result.suite.id,
+    caseId: input.fuzzCase.id,
+    actionId: stringValue(recordValue(input.fuzzCase.metadata?.replay)?.executionId),
+    command: input.command,
+    target: input.target,
+    status: stringValue(database.status) === "unavailable" ? "unavailable" : "captured",
+    reason: stringValue(database.reason),
+    queryCount,
+    totalTimeMs,
+    fingerprints,
+    artifactRefs: input.fuzzCase.artifactRefs?.map((ref) => ({ path: ref.path, kind: ref.kind, contentType: ref.contentType, sha256: ref.sha256, bytes: ref.bytes, name: ref.name, metadata: ref.metadata })),
+    metadata: { runner: "wp-codebox", timingStatus: stringValue(database.timingStatus ?? database.timing_status), timingReason: stringValue(database.timingReason ?? database.timing_reason) },
+  })
+}
+
+function queryObservationsFromBenchResult(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; json?: Record<string, unknown> }): QueryObservationArtifact[] {
+  if (input.json?.schema !== "wp-codebox/bench-results/v1") return []
+  const out: QueryObservationArtifact[] = []
+  for (const scenario of arrayValue(input.json.scenarios)) {
+    const scenarioRecord = recordValue(scenario)
+    const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
+    if (profile?.schema !== "wp-codebox/wordpress-rest-db-query-profile/v1") continue
+    for (const profileCase of arrayValue(profile.cases)) {
+      const caseRecord = recordValue(profileCase)
+      const summary = recordValue(caseRecord?.summary)
+      const database = {
+        status: "captured",
+        queryCount: numberValue(summary?.query_count),
+        totalTimeMs: numberValue(summary?.total_time_ms),
+        fingerprints: arrayValue(caseRecord?.queries ?? caseRecord?.fingerprints ?? caseRecord?.samples),
+      }
+      const observation = queryObservationFromDatabaseRecord({
+        result: input.result,
+        fuzzCase: input.fuzzCase,
+        command: input.command ?? "wordpress.run-workload",
+        target: stringValue(caseRecord?.path) ?? stringValue(caseRecord?.route) ?? input.target,
+        database,
+        source: "rest-db-query-profiler",
+      })
+      if (observation) {
+        out.push({ ...observation, metadata: { ...observation.metadata, scenarioId: stringValue(scenarioRecord?.id), profileCaseId: stringValue(caseRecord?.case_id) } })
+      }
+    }
+  }
+  return out
+}
+
+function normalizeQueryFingerprint(value: unknown): QueryObservationFingerprint[] {
+  const record = recordValue(value)
+  if (!record) return []
+  const fingerprint = stringValue(record.fingerprint ?? record.sql ?? record.query)
+  if (!fingerprint) return []
+  const operation = normalizeQueryOperation(stringValue(record.operation) ?? queryOperationFromFingerprint(fingerprint))
+  return [{
+    fingerprint,
+    hash: stringValue(record.hash),
+    count: numberValue(record.count) ?? 1,
+    operation,
+    tables: normalizeQueryTables(record.tables, operation, fingerprint),
+    sampleMs: nullableNumber(record.sampleMs ?? record.sample_ms),
+    totalTimeMs: nullableNumber(record.totalTimeMs ?? record.total_time_ms),
+    caller: stringValue(record.caller ?? record.source),
+    rowCount: nullableNumber(record.rowCount ?? record.row_count),
+    rowsAffected: nullableNumber(record.rowsAffected ?? record.rows_affected ?? record.affectedRows ?? record.affected_rows),
+  }]
+}
+
+function normalizeQueryTables(input: unknown, operation: QueryObservationOperation | undefined, fingerprint: string): QueryObservationTableRef[] {
+  const fromInput = arrayValue(input).flatMap((item): QueryObservationTableRef[] => {
+    const record = recordValue(item)
+    const name = typeof item === "string" ? item : stringValue(record?.name ?? record?.table)
+    return name ? [{ name, source: (stringValue(record?.source) as QueryObservationTableRef["source"] | undefined) ?? "recorder", operation: normalizeQueryOperation(stringValue(record?.operation)) ?? operation }] : []
+  })
+  return fromInput.length > 0 ? fromInput : queryTablesFromFingerprint(fingerprint, operation)
+}
+
+function queryTablesFromFingerprint(fingerprint: string, operation: QueryObservationOperation | undefined): QueryObservationTableRef[] {
+  const tables = new Set<string>()
+  for (const pattern of [/\bfrom\s+`?([a-zA-Z0-9_]+)`?/gi, /\bjoin\s+`?([a-zA-Z0-9_]+)`?/gi, /\binto\s+`?([a-zA-Z0-9_]+)`?/gi, /\bupdate\s+`?([a-zA-Z0-9_]+)`?/gi, /\btable\s+`?([a-zA-Z0-9_]+)`?/gi]) {
+    for (const match of fingerprint.matchAll(pattern)) {
+      if (match[1]) tables.add(match[1])
+    }
+  }
+  return [...tables].map((name) => ({ name, source: "fingerprint" as const, operation }))
+}
+
+function queryOperationFromFingerprint(fingerprint: string): QueryObservationOperation | undefined {
+  return normalizeQueryOperation(fingerprint.trim().split(/\s+/, 1)[0])
+}
+
+function normalizeQueryOperation(value: string | undefined): QueryObservationOperation | undefined {
+  const operation = value?.toLowerCase()
+  return operation && ["select", "insert", "update", "delete", "replace", "create", "alter", "drop", "truncate"].includes(operation) ? operation as QueryObservationOperation : operation ? "other" : undefined
+}
+
+function queryObservationArtifactMetadata(observation: QueryObservationArtifact, ref: FuzzSuiteArtifactRef): Record<string, unknown> {
+  return stripUndefined({ caseId: observation.caseId, actionId: observation.actionId, command: observation.command, target: observation.target, queryCount: observation.queryCount, totalTimeMs: observation.totalTimeMs, ref })
+}
+
+function inlineQueryObservationMetadata(observations: QueryObservationArtifact[]): Record<string, unknown> {
+  return {
+    kind: "query-observation-set",
+    persisted: false,
+    count: observations.length,
+    metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
+    observations: observations.map((observation) => stripUndefined({ caseId: observation.caseId, actionId: observation.actionId, command: observation.command, target: observation.target, queryCount: observation.queryCount, totalTimeMs: observation.totalTimeMs })),
   }
 }
 
@@ -1247,6 +1704,10 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function nullableNumber(value: unknown): number | null | undefined {
+  return value === null ? null : numberValue(value)
 }
 
 function numericRecord(value: Record<string, unknown>): Record<string, number> | undefined {

@@ -270,14 +270,15 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   const plugins: PreparedExtraPlugin[] = []
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRef = recipeExtraPluginSource(plugin)
     const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256)
     const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, plugin.source, resolved.source)
-    await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), plugin.source)
+    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, resolved.source)
+    await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), sourceRef)
     plugins.push({
       source: prepared.source,
       slug,
@@ -1338,41 +1339,62 @@ export function recipeSourceProvenance(source: ParsedRecipeSource, recipeDirecto
 }
 
 export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): string {
+  if (plugin.mountSlug) {
+    return plugin.mountSlug
+  }
+
   if (plugin.slug) {
     return plugin.slug
   }
 
-  const source = recipeSource(plugin.source, plugin.sha256)
+  const sourceRef = recipeExtraPluginSource(plugin)
+  const source = recipeSource(sourceRef, plugin.sha256)
   if (source.wporgSlug) {
     return source.wporgSlug
   }
 
   if (source.type !== "local") {
-    throw new Error(`External extra_plugins sources require slug when it cannot be inferred from a WordPress.org plugin URL: ${plugin.source}`)
+    throw new Error(`External extra_plugins sources require mountSlug or slug when it cannot be inferred from a WordPress.org plugin URL: ${sourceRef}`)
   }
 
-  return basename(resolve(plugin.source))
+  return basename(resolve(sourceRef))
+}
+
+export function recipeExtraPluginSource(plugin: WorkspaceRecipeExtraPlugin): string {
+  if (plugin.source !== undefined) {
+    return plugin.source
+  }
+  if (plugin.sourcePath !== undefined) {
+    return plugin.sourcePath
+  }
+  throw new Error("Recipe extra_plugins entries must include source or sourcePath")
 }
 
 export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory = "."): string {
+  if (plugin.sourcePath) {
+    return plugin.sourcePath
+  }
+
   if (plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
     return plugin.sourceRoot
   }
 
-  return plugin.originalSource ?? plugin.source
+  return plugin.originalSource ?? recipeExtraPluginSource(plugin)
 }
 
 export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
-  if (plugin.sourceSubpath && plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
-    return normalizeReviewerSafePath(plugin.sourceSubpath)
+  const explicitSubpath = plugin.sourceSubdir ?? plugin.sourceSubpath
+  if (explicitSubpath) {
+    return normalizeRecipeExtraPluginSourceSubpath(explicitSubpath)
   }
 
   const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
-  if (sourceRoot === plugin.source) {
+  const sourceRef = recipeExtraPluginSource(plugin)
+  if (sourceRoot === sourceRef) {
     return ""
   }
 
-  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, sourceRef))
   if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
     return ""
   }
@@ -1381,8 +1403,16 @@ export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugi
 }
 
 function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraPlugin, sourceRoot: string, recipeDirectory: string): boolean {
-  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, recipeExtraPluginSource(plugin)))
   return !relativePath.startsWith("..") && !isAbsolute(relativePath)
+}
+
+export function normalizeRecipeExtraPluginSourceSubpath(value: string): string {
+  const normalized = normalizeReviewerSafePath(value)
+  if (!normalized || normalized === "." || normalized.startsWith("../") || normalized.includes("/../") || isAbsolute(normalized)) {
+    throw new Error(`Recipe extra_plugins sourceSubdir/sourceSubpath must be a safe relative directory: ${value}`)
+  }
+  return normalized
 }
 
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
@@ -1416,11 +1446,12 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
     return plugin.pluginFile
   }
 
-  const source = recipeSource(plugin.source, plugin.sha256)
+  const sourceRef = recipeExtraPluginSource(plugin)
+  const source = recipeSource(sourceRef, plugin.sha256)
   if (source.type === "local") {
     const sourceRoot = resolve(recipeDirectory, recipeExtraPluginSourceRoot(plugin, recipeDirectory))
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
-    const pluginSource = sourceSubpath ? join(sourceRoot, sourceSubpath) : resolve(recipeDirectory, plugin.source)
+    const pluginSource = sourceSubpath ? join(sourceRoot, sourceSubpath) : resolve(recipeDirectory, sourceRef)
     return resolvePluginEntrypointContract({ source: pluginSource, slug, loadAs: plugin.loadAs }).pluginFile
   }
 

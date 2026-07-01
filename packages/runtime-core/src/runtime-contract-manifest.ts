@@ -4,7 +4,7 @@ import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, validateFanoutAggregationOutput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
 import { FUZZ_COVERAGE_PLAN_SCHEMA } from "./fuzz-coverage-plan-contracts.js"
-import { FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA } from "./fuzz-suite-contracts.js"
+import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, FUZZ_RUNNER_READINESS_SCHEMA, FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA, fuzzRunnerReadinessContract, wordpressFuzzRuntimeContract, type WordPressFuzzRuntimeContract } from "./fuzz-suite-contracts.js"
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
 import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
@@ -25,11 +25,14 @@ import {
   RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
 } from "./runner-workspace-publication.js"
-import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, WORDPRESS_EXECUTION_SURFACES_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
 import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
 import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SNAPSHOT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_APPLY_RESULT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_DELEGATION_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_EXPORT_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_MANIFEST_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_SOURCE_SCHEMA, BROWSER_CONTAINED_SITE_SYNC_VALIDATION_SCHEMA } from "./browser-contained-site-contracts.js"
+import { SANDBOX_ISOLATION_PROOF_SCHEMA } from "./sandbox-isolation-proof-contracts.js"
+import { CACHE_CHURN_OBSERVATION_SCHEMA } from "./cache-churn-observation.js"
+import { QUERY_OBSERVATION_SCHEMA } from "./query-observation-contracts.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/v1" as const
@@ -50,6 +53,7 @@ export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "runtime-requirements:resolve",
   "wordpress-runtime:workload",
   "wordpress-runtime:fuzz-suite",
+  "wordpress-runtime:sandbox-isolation-proof",
   "contract-manifest:read",
 ] as const
 
@@ -69,6 +73,27 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
     runWorkload: CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
     runFuzzSuite: CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_COMMANDS = {
+  wordpressRuntime: {
+    runWorkload: "run-wordpress-workload",
+    runFuzzSuite: "run-fuzz-suite",
+  },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES = {
+  wordpressRuntime: {
+    commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS.wordpressRuntime,
+    capabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+    runner_modes: {
+      "runtime-backed": true,
+    },
+  },
+} as const
+
+export const CODEBOX_PUBLIC_RUNTIME_READINESS = {
+  wordpressRuntime: fuzzRunnerReadinessContract(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES),
 } as const
 
 export const RUNTIME_CONTRACT_SCHEMAS = {
@@ -176,8 +201,11 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     result: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
     restRouteInventory: WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
     adminPageInventory: WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
+    adminActionInventory: WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA,
     databaseInventory: WORDPRESS_DATABASE_INVENTORY_SCHEMA,
     frontendUrlInventory: WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
+    executionSurfaces: WORDPRESS_EXECUTION_SURFACES_SCHEMA,
+    executionActionResult: WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA,
     restMatrix: WORDPRESS_REST_MATRIX_SCHEMA,
     restMatrixResult: WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   },
@@ -190,7 +218,13 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     fuzzCoveragePlan: FUZZ_COVERAGE_PLAN_SCHEMA,
     fuzzSuite: FUZZ_SUITE_SCHEMA,
     fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
+    fuzzRunnerCapabilities: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
+    fuzzRunnerReadiness: FUZZ_RUNNER_READINESS_SCHEMA,
+    wordpressFuzzRuntimeContract: WORDPRESS_FUZZ_RUNTIME_CONTRACT_SCHEMA,
+    cacheChurnObservation: CACHE_CHURN_OBSERVATION_SCHEMA,
+    queryObservation: QUERY_OBSERVATION_SCHEMA,
     blockExerciseResult: WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA,
+    sandboxIsolationProof: SANDBOX_ISOLATION_PROOF_SCHEMA,
   },
 } as const
 
@@ -202,6 +236,9 @@ export interface RuntimeContractManifest {
   version: 1
   schemas: typeof RUNTIME_CONTRACT_SCHEMAS
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  commands: typeof CODEBOX_PUBLIC_RUNTIME_COMMANDS
+  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES
+  readiness: typeof CODEBOX_PUBLIC_RUNTIME_READINESS
   providerRuntime: ReturnType<typeof providerRuntimeInvocationContract>
 }
 
@@ -219,6 +256,7 @@ export interface RuntimeDescriptor {
   }
   capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  wordpressFuzzRuntimeContract: WordPressFuzzRuntimeContract
   contractManifest: RuntimeContractManifest
 }
 
@@ -228,6 +266,9 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     version: 1,
     schemas: RUNTIME_CONTRACT_SCHEMAS,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS,
+    capabilities: CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES,
+    readiness: CODEBOX_PUBLIC_RUNTIME_READINESS,
     providerRuntime: providerRuntimeInvocationContract(),
   }
 }
@@ -247,6 +288,7 @@ export function runtimeDescriptor(): RuntimeDescriptor {
     },
     capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    wordpressFuzzRuntimeContract: wordpressFuzzRuntimeContract(),
     contractManifest: runtimeContractManifest(),
   }
 }

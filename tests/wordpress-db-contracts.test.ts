@@ -24,6 +24,6 @@ assert.match(php, /wp_codebox_db_resolve_table/)
 assert.match(php, /SELECT COUNT\(\*\) FROM/)
 assert.match(php, /SHOW INDEX FROM/)
 assert.match(php, /unsafe-table/)
-assert.match(php, /db-write-unsupported/)
+assert.match(php, /db-destructive-permission-required/)
 
 console.log("wordpress db contracts ok")

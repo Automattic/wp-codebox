@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { commandArgValue, parseCommandJson, parseCommandJsonObject, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type FuzzSuiteContract, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { correlateObservedHostsToExternalServiceBoundaries, recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -34,12 +35,12 @@ export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWork
   }
 }
 
-export async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[]): Promise<RecipeBrowserEvidence[]> {
+export async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[], recipe?: WorkspaceRecipe): Promise<RecipeBrowserEvidence[]> {
   const manifestFiles = await artifactManifestFilesByPath(artifacts)
-  return executions.flatMap((execution) => recipeBrowserEvidenceForExecution(execution, manifestFiles))
+  return executions.flatMap((execution) => recipeBrowserEvidenceForExecution(execution, manifestFiles, recipe))
 }
 
-function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence[] {
+function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, manifestFiles: Map<string, ArtifactManifestFile>, recipe: WorkspaceRecipe | undefined): RecipeBrowserEvidence[] {
   const command = execution.recipeCommand ?? execution.command
   if (!recipeCommandProducesBrowserEvidence(command)) {
     return []
@@ -52,16 +53,16 @@ function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, man
 
   if (Array.isArray(parsed.profiles)) {
     return parsed.profiles.flatMap((profile) => {
-      const profileEvidence = recipeBrowserEvidenceFromParsedExecution(execution, command, profile, manifestFiles)
+      const profileEvidence = recipeBrowserEvidenceFromParsedExecution(execution, command, profile, manifestFiles, recipe)
       return profileEvidence ? [profileEvidence] : []
     })
   }
 
-  const evidence = recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles)
+  const evidence = recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles, recipe)
   return evidence ? [evidence] : []
 }
 
-function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResult, command: string, parsed: Record<string, unknown>, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence | undefined {
+function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResult, command: string, parsed: Record<string, unknown>, manifestFiles: Map<string, ArtifactManifestFile>, recipe: WorkspaceRecipe | undefined): RecipeBrowserEvidence | undefined {
   const files = recipeBrowserEvidenceFiles(parsed.files, manifestFiles)
   const summaryFile = browserEvidenceFileRef(stringValue((parsed.files as Record<string, unknown> | undefined)?.summary), manifestFiles)
   if (Object.keys(files).length === 0 && !summaryFile) {
@@ -70,6 +71,9 @@ function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResu
 
   const summary = parsed.summary
   const summaryObject = isRecord(summary) ? summary : undefined
+  const networkPolicy = isRecord(summaryObject?.networkPolicy) ? summaryObject.networkPolicy : isRecord(parsed.networkPolicy) ? parsed.networkPolicy : undefined
+  const observedHosts = isRecord(networkPolicy?.hosts) ? networkPolicy.hosts : undefined
+  const externalServiceBoundaries = recipe ? correlateObservedHostsToExternalServiceBoundaries(observedHosts, recipeExternalServiceBoundarySummaries(recipe)) : undefined
   return stripUndefined({
     schema: "wp-codebox/recipe-browser-evidence/v1",
     phase: execution.recipePhase,
@@ -81,6 +85,7 @@ function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResu
     summaryFile,
     files,
     summary,
+    externalServiceBoundaries,
     scriptResult: summaryObject?.scriptResult,
   }) as RecipeBrowserEvidence
 }

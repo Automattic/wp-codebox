@@ -217,7 +217,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
 		$components = array();
 		foreach ( is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array() as $component ) {
-			if ( is_array( $component ) && '' !== trim( (string) ( $component['source'] ?? $component['path'] ?? '' ) ) ) {
+			if ( is_array( $component ) && '' !== trim( (string) ( $component['source'] ?? $component['sourcePath'] ?? $component['source_path'] ?? $component['path'] ?? '' ) ) ) {
 				$components[] = self::normalize_provider_plugin( $component );
 			}
 		}
@@ -230,7 +230,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
 		$plugins = array();
 		foreach ( is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() as $plugin ) {
-			if ( is_array( $plugin ) && '' !== trim( (string) ( $plugin['source'] ?? $plugin['path'] ?? '' ) ) ) {
+			if ( is_array( $plugin ) && '' !== trim( (string) ( $plugin['source'] ?? $plugin['sourcePath'] ?? $plugin['source_path'] ?? $plugin['path'] ?? '' ) ) ) {
 				$plugins[] = self::normalize_provider_plugin( $plugin );
 			}
 		}
@@ -241,14 +241,20 @@ final class WP_Codebox_Host_Recipe_Builder {
 	/** @param array<string,mixed> $plugin Provider plugin input. @return array<string,mixed> */
 	private static function normalize_provider_plugin( array $plugin ): array {
 		$source = trim( (string) ( $plugin['source'] ?? $plugin['path'] ?? '' ) );
+		$source_path = trim( (string) ( $plugin['sourcePath'] ?? $plugin['source_path'] ?? '' ) );
 		return array_filter(
 			array(
-				'source'     => $source,
-				'slug'       => trim( (string) ( $plugin['slug'] ?? basename( $source ) ) ),
-				'pluginFile' => trim( (string) ( $plugin['pluginFile'] ?? $plugin['plugin_file'] ?? '' ) ),
-				'activate'   => array_key_exists( 'activate', $plugin ) ? (bool) $plugin['activate'] : true,
-				'loadAs'     => trim( (string) ( $plugin['loadAs'] ?? $plugin['load_as'] ?? '' ) ),
-				'metadata'   => is_array( $plugin['metadata'] ?? null ) ? $plugin['metadata'] : array(),
+				'source'        => $source,
+				'sourcePath'    => $source_path,
+				'sourceRoot'    => trim( (string) ( $plugin['sourceRoot'] ?? $plugin['source_root'] ?? '' ) ),
+				'sourceSubdir'  => trim( (string) ( $plugin['sourceSubdir'] ?? $plugin['source_subdir'] ?? '' ) ),
+				'sourceSubpath' => trim( (string) ( $plugin['sourceSubpath'] ?? $plugin['source_subpath'] ?? '' ) ),
+				'slug'          => trim( (string) ( $plugin['slug'] ?? basename( '' !== $source ? $source : $source_path ) ) ),
+				'mountSlug'     => trim( (string) ( $plugin['mountSlug'] ?? $plugin['mount_slug'] ?? '' ) ),
+				'pluginFile'    => trim( (string) ( $plugin['pluginFile'] ?? $plugin['plugin_file'] ?? '' ) ),
+				'activate'      => array_key_exists( 'activate', $plugin ) ? (bool) $plugin['activate'] : true,
+				'loadAs'        => trim( (string) ( $plugin['loadAs'] ?? $plugin['load_as'] ?? '' ) ),
+				'metadata'      => is_array( $plugin['metadata'] ?? null ) ? $plugin['metadata'] : array(),
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);

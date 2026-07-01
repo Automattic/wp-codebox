@@ -16,6 +16,11 @@ const router = {
   },
   runFuzzSuite: async () => 0,
   runWordPressWorkload: async () => 0,
+  fuzzDescriptor: async (args: string[]) => {
+    calls.push(`fuzzDescriptor:${args.join(" ")}`)
+    return 5
+  },
+  fuzzReadiness: async () => 0,
   recipeValidate: async () => 0,
   recipeBuild: async () => 0,
   workspacePolicyCheck: async () => 0,
@@ -58,5 +63,10 @@ const runtimeDescriptorExitCode = await routeCliCommand(["runtime", "descriptor"
 
 assert.equal(runtimeDescriptorExitCode, 3)
 assert.deepEqual(calls, ["agentTaskRun:--input-file task.json --json", "runtimeDescriptor:--json"])
+
+const fuzzDescriptorExitCode = await routeCliCommand(["fuzz", "descriptor", "--json"], router)
+
+assert.equal(fuzzDescriptorExitCode, 5)
+assert.deepEqual(calls, ["agentTaskRun:--input-file task.json --json", "runtimeDescriptor:--json", "fuzzDescriptor:--json"])
 
 console.log("command-router contract passed")

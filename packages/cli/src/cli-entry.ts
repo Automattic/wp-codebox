@@ -10,7 +10,7 @@ import { runMaterializeReplayPackageCommand } from "./commands/replay-package.js
 import { runMcpRenderClientConfigsCommand } from "./commands/mcp.js"
 import { runPreviewLeaseReleaseCommand, runPreviewLeaseStatusCommand } from "./commands/preview-lease.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
-import { runFuzzReadinessCommand, runFuzzSuiteCommand, runWordPressWorkloadCommand } from "./commands/wordpress-runtime.js"
+import { runFuzzDescriptorCommand, runFuzzMinimizeCaseCommand, runFuzzReadinessCommand, runFuzzSuiteCommand, runWordPressWorkloadCommand } from "./commands/wordpress-runtime.js"
 import { runRunsArtifactsCommand, runRunsCancelCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runTargetProvisionCommand } from "./commands/target.js"
 import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
@@ -25,7 +25,9 @@ export async function runCli(args: string[]): Promise<number> {
     recipeRun: runRecipeRunCommand,
     agentTaskRun: runAgentTaskRunCommand,
     runFuzzSuite: runFuzzSuiteCommand,
+    fuzzMinimizeCase: runFuzzMinimizeCaseCommand,
     runWordPressWorkload: runWordPressWorkloadCommand,
+    fuzzDescriptor: runFuzzDescriptorCommand,
     fuzzReadiness: runFuzzReadinessCommand,
     recipeValidate: runRecipeValidateCommand,
     recipeBuild: runRecipeBuildCommand,

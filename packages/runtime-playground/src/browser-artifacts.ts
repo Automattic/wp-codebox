@@ -76,10 +76,13 @@ export interface BrowserArtifactFiles {
   network?: string
   requestCoverage?: string
   waterfall?: string
+  websocket?: string
   performance?: string
   review?: string
   screenshot?: string
   domSnapshots?: string[]
+  verifierResults?: string[]
+  actionCorpus?: string
   sourceScreenshot?: string | string[]
   candidateScreenshot?: string | string[]
   diffScreenshot?: string | string[]
@@ -147,6 +150,19 @@ export interface BrowserArtifactSummary {
     capturedElements: number
     truncated: boolean
   }>
+  verifierResults?: Array<{
+    step: { index: number; kind: "callTool"; tool: string }
+    status: "unsupported" | "ok" | "error"
+    artifact: string
+  }>
+  actionCorpus?: {
+    schema: "wp-codebox/browser-action-corpus/v1"
+    seed: string
+    descriptorsDiscovered: number
+    descriptorsSelected: number
+    stepsPlanned: number
+    artifact: string
+  }
   networkPolicy?: BrowserProbeNetworkPolicySummary
   previewProxy?: PlaygroundPreviewProxyDiagnostics
   lifecycle?: BrowserProbeLifecycleSummary
@@ -158,6 +174,7 @@ export interface BrowserArtifactSummary {
   memory?: BrowserProbeMemorySummary
   metrics?: Record<string, number>
   networkEvents: number
+  webSockets?: BrowserProbeWebSocketSummary
   phaseMetrics?: BrowserProbePhaseMetricsArtifact
   performance?: BrowserProbePerformanceSummary
   progress?: BrowserProbeProgressSummary
@@ -338,6 +355,7 @@ export interface BrowserProbeReviewSummary {
     probe: BrowserProbeIssueSummary
   }
   network: BrowserProbeNetworkReviewSummary
+  webSockets?: BrowserProbeWebSocketReviewSummary
   redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   milestones: BrowserProbeMilestoneSummary
@@ -372,6 +390,21 @@ export interface BrowserProbeNetworkCountSummary {
   responses: number
   failures: number
   transferSizeBytes: number
+}
+
+export interface BrowserProbeWebSocketSummary {
+  sockets: number
+  closed: number
+  errors: number
+  framesSent: number
+  framesReceived: number
+  bytesSent: number
+  bytesReceived: number
+}
+
+export interface BrowserProbeWebSocketReviewSummary extends BrowserProbeWebSocketSummary {
+  status: "captured" | "not-captured"
+  artifact?: BrowserProbeArtifactRef
 }
 
 export interface BrowserProbeMilestoneSummary {
@@ -485,7 +518,7 @@ export interface BrowserProbeProgressSummary {
   terminalFailure?: BrowserProbeTerminalFailure
 }
 
-export type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
+export type BrowserProbeProgressSource = "navigation" | "network" | "websocket" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
 
 export interface BrowserProbeTerminalFailure {
   message: string
@@ -765,6 +798,7 @@ export interface BrowserStepRecord {
   target?: BrowserStepScreenshotTarget
   screenshot?: string
   screenshotFallback?: BrowserStepScreenshotFallback
+  verifierResult?: string
   finalUrl?: string
   error?: BrowserProbeErrorRecord
 }
@@ -850,6 +884,28 @@ export interface BrowserProbeNetworkRecord {
   responseTextSha256?: string
   responseTextTruncated?: boolean
   failure?: ReturnType<Request["failure"]>
+}
+
+export interface BrowserProbeWebSocketRecord {
+  url: string
+  openedAt: string
+  closedAt?: string
+  lastFrameAt?: string
+  lastErrorAt?: string
+  framesSent: number
+  framesReceived: number
+  bytesSent: number
+  bytesReceived: number
+  errors: number
+}
+
+export interface BrowserProbeWebSocketArtifact {
+  schema: "wp-codebox/browser-websocket/v1"
+  version: 1
+  capturedAt: string
+  startedAt: string
+  summary: BrowserProbeWebSocketSummary
+  sockets: BrowserProbeWebSocketRecord[]
 }
 
 export interface BrowserProbeWaterfallArtifact {
@@ -941,7 +997,9 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       lifecycle: probe.files.lifecycle,
       network: probe.files.network,
       waterfall: probe.files.waterfall,
+      websocket: probe.files.websocket,
       networkEvents: probe.summary.networkEvents,
+      webSockets: probe.summary.webSockets,
       screenshot: probe.files.screenshot,
       domSnapshots: probe.files.domSnapshots,
       console: probe.files.console,
@@ -1013,10 +1071,13 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   network: { kind: "browser-network", contentType: "application/x-ndjson", redact: true },
   requestCoverage: { kind: "browser-request-coverage", contentType: "application/json", redact: true },
   waterfall: { kind: "browser-waterfall", contentType: "application/json", redact: true },
+  websocket: { kind: "browser-websocket", contentType: "application/json", redact: true },
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
+  verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },
+  actionCorpus: { kind: "browser-action-corpus", contentType: "application/json", redact: true },
   sourceScreenshot: { kind: "browser-visual-source-screenshot", contentType: "image/png", redact: false },
   candidateScreenshot: { kind: "browser-visual-candidate-screenshot", contentType: "image/png", redact: false },
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },

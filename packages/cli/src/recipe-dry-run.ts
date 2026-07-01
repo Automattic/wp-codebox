@@ -2,8 +2,10 @@ import { basename, dirname, resolve } from "node:path"
 import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
+import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./commands/recipe-run-artifacts-mount-guard.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
-import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
+import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
+import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 
@@ -65,6 +67,7 @@ export interface RecipePlan {
   fixtureDatabases: RecipeDryRunFixtureDatabase[]
   siteSeeds: RecipeDryRunSiteSeed[]
   stagedFiles: RecipeDryRunStagedFile[]
+  externalServices: RecipeExternalServiceBoundarySummary[]
   probes: RecipeDryRunProbe[]
   secretEnv: Array<{ name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
   policy: RuntimePolicy & {
@@ -251,6 +254,19 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
   try {
     const recipeDirectory = dirname(recipePath)
     const recipe = await loadWorkspaceRecipe(recipePath)
+    const artifactMountConflict = recipeArtifactsMountConflict(recipe, recipeDirectory, options.artifactsDirectory ?? recipe.artifacts?.directory)
+    if (artifactMountConflict) {
+      return {
+        success: false,
+        schema: "wp-codebox/recipe-run-dry-run/v1",
+        recipePath,
+        dryRun: true,
+        valid: false,
+        validation: { issues: [] },
+        error: serializeError(new RecipeArtifactsMountConflictError(artifactMountConflict)),
+      }
+    }
+
     const issues = await validateWorkspaceRecipe(recipe, recipePath)
 
     if (issues.length > 0) {
@@ -432,6 +448,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
     fixtureDatabases,
     siteSeeds,
     stagedFiles,
+    externalServices: recipeExternalServiceBoundarySummaries(recipe),
     probes,
     secretEnv: secretEnvSummary.map(recipeDryRunSecretEnvEntry),
     policy: {
@@ -566,9 +583,10 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   const steps: Array<Promise<RecipeDryRunStep>> = []
   const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRef = recipeExtraPluginSource(plugin)
     const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     return {
-      source: plugin.source,
+      source: sourceRef,
       slug,
       target: pluginTarget(slug, plugin.loadAs ?? "plugin"),
       pluginFile: await resolveRecipeExtraPluginFile(plugin, recipeDirectory),
@@ -659,13 +677,14 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRef = recipeExtraPluginSource(plugin)
     const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const source = recipeSource(sourceRoot, plugin.sha256)
     const provenance = recipeSourceProvenance(source, recipeDirectory)
     return {
       source: source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : source.resolvedUrl,
-      sourceRef: plugin.source,
+      sourceRef,
       sourceRoot,
       sourceSubpath,
       sourceType: source.type,

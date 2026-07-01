@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
@@ -19,8 +20,9 @@ import { createRecipeRunContext } from "./recipe-run-context.js"
 import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
 import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
+import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./recipe-run-artifacts-mount-guard.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput, writeRecipeSummaryHumanOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
@@ -40,6 +42,19 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
 
   try {
+    if (options.summary) {
+      const { result } = await captureStdout(execute)
+      const output = interruptedRecipeOutput(result, interruption)
+      const summary = normalizeRecipeRunSummary(output)
+      if (options.json) await writeRecipeJsonOutput(summary)
+      else await writeRecipeSummaryHumanOutput(summary)
+      interruption?.propagateIfInterrupted()
+      exitAfterRecipeRunTimeout(output)
+      exitAfterPlaygroundCliBootFailure(output)
+      exitAfterTerminalRecipePhaseFailure(output)
+      return output.success ? 0 : 1
+    }
+
     if (!options.json) {
       const output = interruptedRecipeOutput(await execute(), interruption)
       printRecipeHumanOutput(output)
@@ -78,6 +93,11 @@ export async function runRecipeValidateCommand(args: string[]): Promise<number> 
 }
 
 async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
+  const mountConflictFailure = await recipeArtifactsMountConflictFailure(options)
+  if (mountConflictFailure) {
+    return mountConflictFailure
+  }
+
   const context = await createRecipeRunContext(options)
   const { recipePath, recipeDirectory, recipe, configuredArtifactsDirectory, runRegistry, artifactPointer, startedAtMs } = context
   let { runRecord } = context
@@ -272,7 +292,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
-      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts))
@@ -295,7 +315,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
-      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -413,7 +433,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }))
       if (artifacts) {
         const collectedArtifacts = artifacts
-        browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+        browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
           if (declaredArtifacts.length === 0) {
@@ -491,6 +511,25 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     })
   } finally {
     cancellationWatcher?.dispose()
+  }
+}
+
+async function recipeArtifactsMountConflictFailure(options: RecipeRunOptions): Promise<RecipeRunOutput | undefined> {
+  const recipePath = resolve(options.recipePath)
+  const recipeDirectory = dirname(recipePath)
+  const recipe = await loadWorkspaceRecipe(recipePath)
+  const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
+  const conflict = recipeArtifactsMountConflict(recipe, recipeDirectory, configuredArtifactsDirectory)
+  if (!conflict) {
+    return undefined
+  }
+
+  return {
+    success: false,
+    schema: "wp-codebox/recipe-run/v1",
+    recipePath,
+    executions: [],
+    error: serializeError(new RecipeArtifactsMountConflictError(conflict)),
   }
 }
 
@@ -597,12 +636,13 @@ function distributionRuntimeEnv(recipe: WorkspaceRecipe): Record<string, string>
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
+  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
   if (parsed.positionals.length > 0) {
     throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
   }
   const options: Partial<RecipeRunOptions> = {
     json: parsed.options.get("--json") === true,
+    summary: parsed.options.get("--summary") === true || parsed.options.get("--summary-only") === true,
     dryRun: parsed.options.get("--dry-run") === true,
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
     previewLeaseRequested: parsed.options.get("--preview-lease") === true,
@@ -774,6 +814,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
           workspaces: args.workspaceMounts.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: workspace.metadata })),
           stagedFiles: args.stagedFiles.map(recipeRunStagedFile),
           secretEnv: args.recipe.inputs?.secretEnv ?? [],
+          externalServices: recipeExternalServiceBoundarySummaries(args.recipe),
         },
         artifacts: args.recipe.artifacts ?? {},
       },
@@ -1165,6 +1206,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
         stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        externalServices: recipeExternalServiceBoundarySummaries(recipe),
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
       },
@@ -1195,6 +1237,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
         stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        externalServices: recipeExternalServiceBoundarySummaries(recipe),
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
       },

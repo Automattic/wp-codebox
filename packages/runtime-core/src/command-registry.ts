@@ -3,8 +3,10 @@ import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHE
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_BLOCK_EXERCISE_RESULT_JSON_SCHEMA, WORDPRESS_BLOCK_EXERCISE_RESULT_SCHEMA } from "./wordpress-block-exercise-contracts.js"
+import { WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS, WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA, WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA } from "./wordpress-admin-action-contracts.js"
 import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
-import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { CACHE_CHURN_OBSERVATION_SCHEMA } from "./cache-churn-observation.js"
+import { WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, WORDPRESS_EXECUTION_SURFACES_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 import { FUZZ_SUITE_RESULT_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES } from "./fuzz-suite-contracts.js"
 
 export type CommandHandlerBinding =
@@ -103,6 +105,11 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
 const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
 const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"] as const
+const wordpressAuthArtifactProperties = {
+  auth: { type: "string" },
+  storageState: { type: "string" },
+  summary: { type: "string" },
+}
 
 const browserProbeValidation: CommandValidationDescriptor = {
   requiredArgs: [
@@ -195,6 +202,55 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runCommandAgent" },
   },
   {
+    id: "wordpress.session",
+    description: "Resolve a declared WordPress fixture user or named user session and return reviewer-safe session metadata plus optional redaction-required browser storage-state artifacts.",
+    acceptedArgs: [
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "browser-urls", description: "Optional comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies when storage-state output is requested.", format: "comma-separated URLs" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-session/v1 JSON with redacted session summary, fixture user metadata, and artifact refs only for secret cookie material.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-session/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.session.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressSession" },
+  },
+  {
+    id: "wordpress.nonce",
+    description: "Resolve a WordPress nonce for an explicit action in a declared fixture user or named session context and return only redacted nonce metadata.",
+    acceptedArgs: [
+      { name: "action", description: "WordPress nonce action to resolve. Defaults to wp_rest.", format: "string" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before creating the nonce.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before creating the nonce.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-nonce/v1 JSON with nonce presence, action, user summary, and redaction-required artifact refs without exposing nonce values in stdout.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-nonce/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.nonce.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressNonce" },
+  },
+  {
+    id: "wordpress.action-auth",
+    description: "Resolve WordPress user/session auth, action nonce, REST nonce, and optional browser storage-state artifact for destructive runtime actions.",
+    acceptedArgs: [
+      { name: "action", description: "WordPress action nonce to resolve. Defaults to wp_rest.", format: "string" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve.", format: "user session name" },
+      { name: "role", description: "WordPress role for an ephemeral fixture user when no named user or session is supplied.", format: "wordpress role" },
+      { name: "browser-urls", description: "Optional comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies.", format: "comma-separated URLs" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/wordpress-auth.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/wordpress-action-auth/v1 JSON with explicit auth/session/nonce capability resolution and only redaction-required artifact refs for secret cookie and nonce values.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-action-auth/v1", wordpressAuthArtifactProperties),
+    policyRequirement: "Runtime policy commands must include wordpress.action-auth.",
+    recipe: true,
+    handler: { kind: "playground", method: "runWordPressActionAuth" },
+  },
+  {
     id: "wordpress.run-php",
     description: "Run PHP against WordPress, bootstrapping wp-load.php unless bootstrap=none is supplied.",
     acceptedArgs: [
@@ -234,6 +290,21 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.wp-cli.",
     recipe: true,
     handler: { kind: "playground", method: "runWpCli" },
+  },
+  {
+    id: "wordpress.invoke-wp-cli",
+    description: "Invoke one declared WP-CLI command through the public WordPress execution primitive and return a structured result with caller-declared mutation boundary metadata.",
+    acceptedArgs: [
+      { name: "command", description: "WP-CLI command line, with or without the leading wp token.", required: true, format: "string" },
+      { name: "mutates", description: "Whether the caller expects the command to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability boundary associated with the invocation.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with WP-CLI argv, stdout/stderr, exit code, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-wp-cli.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeWpCli" },
   },
   {
     id: "wordpress.export-browser-storage-state",
@@ -450,10 +521,38 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runRestPerformanceObservation" },
   },
   {
+    id: "wordpress.cache-churn-observation",
+    description: "Execute one in-process WordPress REST request and emit a cache/transient/options churn observation for destructive fuzzing correlation.",
+    acceptedArgs: [
+      { name: "method", description: "HTTP method for the REST request; defaults to GET.", format: "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS" },
+      { name: "path", description: "REST route path, with or without the /wp-json prefix.", required: true, format: "REST route path" },
+      { name: "params-json", description: "Optional request parameters object.", format: "JSON object" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before running the REST request.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before running the REST request.", format: "fixture user name" },
+      { name: "sample-limit", description: "Maximum option/transient names to include per section; defaults to 100.", format: "positive integer" },
+      { name: "case-id", description: "Optional fuzz case id copied into observation correlation metadata.", format: "string" },
+      { name: "action-id", description: "Optional fuzz action id copied into observation correlation metadata.", format: "string" },
+      { name: "correlation-id", description: "Optional external correlation id copied into observation correlation metadata.", format: "string" },
+    ],
+    outputShape: "wp-codebox/cache-churn-observation/v1 JSON with transient/site-transient set/get/delete counts, option add/update/delete/get and autoload churn, unsupported object-cache reason fields, and optional case/action correlation.",
+    outputSchema: objectEnvelopeSchema(CACHE_CHURN_OBSERVATION_SCHEMA, {
+      artifactKind: { const: "cache-churn-observation" },
+      transients: { type: "object" },
+      siteTransients: { type: "object" },
+      options: { type: "object" },
+      objectCache: { type: "object" },
+      correlation: { type: "object" },
+      metadata: { type: "object" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.cache-churn-observation.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCacheChurnObservation" },
+  },
+  {
     id: "wordpress.runtime-discovery",
     description: "Discover product-neutral WordPress runtime surfaces using registered WordPress APIs and bounded summaries.",
     acceptedArgs: [
-      { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks" },
+      { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks,auth,execution" },
     ],
     outputShape: "wp-codebox/wordpress-runtime-discovery/v1 JSON with selected REST routes, admin pages, database schema, frontend rewrite routes, and block/editor target summaries.",
     outputSchema: objectEnvelopeSchema(WORDPRESS_RUNTIME_DISCOVERY_SCHEMA, {
@@ -463,11 +562,56 @@ export const commandRegistry = [
       database: { type: "object" },
       frontend: { type: "object" },
       blocks: { type: "object" },
+      execution: { type: "object" },
       diagnostics: { type: "array" },
     }),
     policyRequirement: "Runtime policy commands must include wordpress.runtime-discovery.",
     recipe: true,
     handler: { kind: "playground", method: "runRuntimeDiscovery" },
+  },
+  {
+    id: "wordpress.execution-surfaces",
+    description: "Describe public WordPress-generic execution surfaces for fuzz mapping without probing runtime behavior.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-execution-surfaces/v1 JSON declaring WP-CLI, hook/action, and cron invocation support plus explicitly unsupported discovery/counting sub-capabilities.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_SURFACES_SCHEMA, { surfaces: { type: "array" }, unsupported: { type: "array" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.execution-surfaces.",
+    recipe: true,
+    handler: { kind: "playground", method: "runExecutionSurfaces" },
+  },
+  {
+    id: "wordpress.invoke-hook",
+    description: "Invoke one WordPress hook/action with JSON arguments through do_action_ref_array() and return a structured result with declared mutation/capability boundary fields.",
+    acceptedArgs: [
+      { name: "hook", description: "WordPress hook/action name to invoke.", required: true, format: "hook name" },
+      { name: "args-json", description: "JSON array of hook arguments. Defaults to an empty array.", format: "JSON array" },
+      { name: "mutates", description: "Whether the caller expects the hook to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability checked with current_user_can() before invocation.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with hook, args count, did_action delta, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-hook.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeHook" },
+  },
+  {
+    id: "wordpress.invoke-cron-event",
+    description: "Invoke a WordPress cron hook immediately or schedule one single event with explicit caller-declared mutation/capability boundary fields.",
+    acceptedArgs: [
+      { name: "hook", description: "Cron hook name to invoke or schedule.", required: true, format: "hook name" },
+      { name: "operation", description: "run-hook invokes the hook immediately; schedule-single schedules a single event. Defaults to run-hook.", format: "run-hook|schedule-single" },
+      { name: "args-json", description: "JSON array of cron event arguments. Defaults to an empty array.", format: "JSON array" },
+      { name: "timestamp", description: "Unix timestamp used with operation=schedule-single. Defaults to now.", format: "positive integer" },
+      { name: "mutates", description: "Whether the caller expects the event to mutate WordPress state. Defaults to false.", format: "boolean" },
+      { name: "capability", description: "Optional WordPress capability checked with current_user_can() before invocation or scheduling.", format: "capability" },
+      { name: "destructive-boundary", description: "Declared destructive boundary. Defaults to disposable-runtime.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-execution-action-result/v1 JSON with cron hook operation, schedule/invocation result, diagnostics, and declared mutation/capability boundary fields.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA, { target: { type: "object" }, safety: { type: "object" }, result: { type: "object" }, diagnostics: { type: "array" } }),
+    policyRequirement: "Runtime policy commands must include wordpress.invoke-cron-event.",
+    recipe: true,
+    handler: { kind: "playground", method: "runInvokeCronEvent" },
   },
   {
     id: "wordpress.rest-route-inventory",
@@ -513,6 +657,26 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runAdminPageInventory" },
   },
   {
+    id: "wordpress.admin-action-inventory",
+    description: "Discover descriptor-only WordPress admin forms, submit controls, named inputs, nonce fields, admin-post/admin-ajax candidates, and list-table bulk actions from accessible admin page output.",
+    acceptedArgs: [
+      { name: "max-pages", description: "Maximum accessible admin menu pages to render for form/action descriptors. Defaults to 25.", format: "positive integer" },
+      { name: "max_pages", description: "Alias for max-pages.", format: "positive integer" },
+    ],
+    outputShape: "wp-codebox/wordpress-admin-action-inventory/v1 JSON with admin page descriptors, form/action descriptors, redacted sample payload shapes, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA, {
+      adminUrl: { type: "string" },
+      menuLoaded: { type: "boolean" },
+      pages: { type: "array" },
+      actions: { type: "array" },
+      diagnostics: { type: "array" },
+      redaction: { type: "object" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.admin-action-inventory.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminActionInventory" },
+  },
+  {
     id: "wordpress.fuzz-admin-pages",
     description: "Run a generic WordPress admin-page fuzz workload by loading the admin menu in an administrator context and returning bounded coverage data for follow-up phases.",
     acceptedArgs: [
@@ -550,14 +714,14 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.fuzz-plugin-module-state",
-    description: "Emit a generic WordPress plugin module-state fuzz plan without executing module mutations unless a runtime provides stronger fixture and rollback support.",
+    description: "Emit a generic WordPress plugin module-state fuzz plan without executing module mutations unless a runtime declares explicit fixture or disposable sandbox support.",
     acceptedArgs: [
       { name: "external_dispatch", description: "Whether module-state fuzzing may trigger external dispatch. Defaults to false.", format: "boolean" },
       { name: "execute_mutations", description: "Whether module-state mutations should execute. Generic Playground support is declared-plan only.", format: "boolean" },
       { name: "mutation_mode", description: "Requested mutation mode, such as declared_plan.", format: "string" },
       { name: "connected_state_required_for_mutation", description: "Whether connected/disconnected fixture state is required before mutation execution.", format: "boolean" },
       { name: "runtime_isolation_required_for_mutation", description: "Whether isolated runtime proof is required before mutation execution.", format: "boolean" },
-      { name: "rollback_required", description: "Whether rollback artifacts are required before mutation execution.", format: "boolean" },
+      { name: "disposable_sandbox_required", description: "Whether mutation execution requires an explicit disposable sandbox boundary.", format: "boolean" },
     ],
     outputShape: "wp-codebox/wordpress-plugin-module-state-plan/v1 JSON with declared mutation mode, safeguards, planned actions, skip reasons, diagnostics, and artifact refs.",
     outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-plugin-module-state-plan/v1", {
@@ -666,12 +830,12 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "operation-json", description: "Inline wp-codebox/wordpress-crud-operation/v1 operation envelope. The runtime normalizes schema, operation, resource, data, query, options, and metadata fields before execution.", required: true, format: "JSON object" },
     ],
-    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Writes require options.allowWrites=true or return status=error without applying effects; dry runs return planned effects only.",
+    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Writes require options.destructivePermission=true inside an explicit disposable sandbox boundary or return status=error without applying effects; dry runs return planned effects only.",
     outputSchema: {
       id: WORDPRESS_CRUD_RESULT_SCHEMA,
       jsonSchema: WORDPRESS_CRUD_RESULT_JSON_SCHEMA,
     },
-    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed for writes unless options.allowWrites=true or options.dryRun=true.",
+    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed for writes unless options.destructivePermission=true or options.dryRun=true.",
     recipe: true,
     handler: { kind: "playground", method: "runCrudOperation" },
   },
@@ -710,18 +874,40 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.db-operation",
-    description: "Execute a bounded generic WordPress database operation envelope for schema/table inspection, safe reads, and query summaries across discovered prefixed WordPress tables. Generic writes are explicitly rejected by the foundational contract.",
+    description: "Execute a generic WordPress database operation envelope for schema/table inspection, safe reads, query summaries, and explicitly permitted destructive writes inside a disposable sandbox boundary.",
     acceptedArgs: [
       { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, inspect, query-summary, and guarded write operations. Reads and inspections require a discovered prefixed table and described table columns.", required: true, format: "JSON object" },
     ],
-    outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Schema results classify tables as core, prefixed, or external where observable and may include bounded columns, indexes, and status metadata. Generic DB writes return status=error with db-write-unsupported.",
+    outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Schema results classify tables as core, prefixed, or external where observable and may include bounded columns, indexes, and status metadata. DB writes require options.destructivePermission=true inside an explicit disposable sandbox boundary.",
     outputSchema: {
       id: WORDPRESS_DB_RESULT_SCHEMA,
       jsonSchema: WORDPRESS_DB_RESULT_JSON_SCHEMA,
     },
-    policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to discovered prefixed WordPress tables, allowlisted to described columns, and capped row counts; generic writes are rejected.",
+    policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to discovered prefixed WordPress tables, allowlisted to described columns, and capped row counts; writes require an explicit disposable sandbox destructive permission.",
     recipe: true,
     handler: { kind: "playground", method: "runDbOperation" },
+  },
+  {
+    id: "wordpress.admin-action",
+    description: "Execute a declared destructive WordPress admin action inside the disposable runtime boundary and emit structured mutation evidence. Supports generic admin-hook, AJAX, and admin-post families; editor and browser random-walk families are explicitly described as unsupported here.",
+    acceptedArgs: [
+      { name: "action-json", description: "wp-codebox/wordpress-admin-action/v1 object with family, hook/action, optional method/query/body/user, and destructiveBoundary.", required: true, format: "JSON object" },
+      { name: "destructive-boundary-json", description: "Optional destructive boundary object when action-json omits destructiveBoundary. Must set disposableRuntime=true, destructive=true, artifactPolicy=capture, teardown=discard-runtime.", format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/wordpress-admin-action-result/v1 JSON with disposable destructive boundary, explicit supported/unsupported family descriptors, executed hook metadata, diagnostics, errors, artifacts, and performance observation.",
+    outputSchema: {
+      id: WORDPRESS_ADMIN_ACTION_RESULT_SCHEMA,
+      jsonSchema: {
+        ...WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA,
+        properties: {
+          ...WORDPRESS_ADMIN_ACTION_RESULT_JSON_SCHEMA.properties,
+          familyDescriptors: { const: WORDPRESS_ADMIN_ACTION_FAMILY_DESCRIPTORS },
+        },
+      },
+    },
+    policyRequirement: "Runtime policy commands must include wordpress.admin-action. The action must include the disposable destructive boundary proof because this command may mutate the contained WordPress runtime.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminAction" },
   },
   {
     id: "wordpress.bench",
@@ -968,7 +1154,10 @@ export const commandRegistry = [
       { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
       { name: "pre-page-script", description: "Optional JavaScript installed before navigation so page scripts can observe mocked browser/payment capabilities.", format: "JavaScript source" },
       { name: "script", description: "Optional page-side JavaScript to evaluate after navigation and before final capture.", format: "JavaScript function body" },
-      { name: "capture", description: "Comma-separated artifacts to capture; defaults to html,console,errors,network.", format: "console,errors,html,network,performance,memory,screenshot" },
+      { name: "capture", description: "Comma-separated artifacts to capture; defaults to html,console,errors,network. Use capture=html alone for a deterministic rendered-DOM snapshot with no rasterization (no screenshot).", format: "console,errors,html,network,performance,memory,screenshot" },
+      { name: "network-policy", description: "Browser preview network policy mode. Use block to abort external (non-preview-origin) requests so the captured rendered DOM is self-contained and deterministic (e.g. for static visual-parity capture).", format: "record|allow|block" },
+      { name: "allow-host", description: "External host allowed past a blocking browser preview network policy.", repeatable: true, format: "hostname" },
+      { name: "block-host", description: "External host explicitly blocked by the browser preview network policy.", repeatable: true, format: "hostname" },
     ],
     outputShape: "JSON summary plus files/browser/snapshot.html, console.jsonl, errors.jsonl, network.jsonl, and summary.json by default; optional screenshot/performance/memory artifacts when requested.",
     policyRequirement: "Runtime policy commands must include wordpress.capture-html.",
@@ -998,6 +1187,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "url", description: "Initial preview path or absolute URL to visit when the script omits an initial navigate step.", format: "path or URL" },
       { name: "steps-json", description: "Ordered interaction script: navigate, click, fill, type, press, drag, hover, select, waitFor, evaluate, expect, screenshot, and capture steps. waitFor and screenshot steps support generic painted-readiness waits: painted, frame-painted:<iframe-selector>, and frame-url-painted:<url-fragment>.", format: "JSON array (inline or @<path>)" },
+      { name: "action-corpus-json", description: "Optional wp-codebox/browser-action-corpus/v1 object. The runtime loads the start URL, discovers visible links, buttons, inputs, textareas, and selects, creates deterministic seeded fill/click/select steps from stable descriptors, and writes replayable corpus artifacts.", format: "JSON object" },
       { name: "step-timeout", description: "Per-step timeout applied to each interaction step.", format: "duration, e.g. 5s or 500ms" },
       { name: "timeout", description: "Total-script timeout bounding the whole interaction run.", format: "duration, e.g. 30s or 1500ms" },
       { name: "auth", description: "Optional in-memory browser authentication mode. Use wordpress-admin to bootstrap WordPress admin cookies from PHP without writing token-bearing storage-state artifacts.", format: "wordpress-admin" },
@@ -1006,7 +1196,7 @@ export const commandRegistry = [
       { name: "capture", description: "Comma-separated artifacts to capture after interactions.", format: "steps,console,errors,html,network,screenshot,dom-snapshot" },
       { name: "max-dom-snapshot-elements", description: "Maximum visible elements captured in each screenshot sidecar DOM/style snapshot; defaults to 160.", format: "positive integer" },
     ],
-    outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
+    outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), optional action-corpus.json replay artifacts, named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-actions. The evaluate step additionally requires wordpress.browser-actions.evaluate.",
     validation: browserActionsValidation,
     recipe: true,

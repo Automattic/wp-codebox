@@ -1,5 +1,20 @@
 import { spawn } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { wantsJsonOutput, writeJsonFailure } from "./output.js"
+
+const packageRequire = createRequire(import.meta.url)
+
+function readCliVersion(): string {
+  try {
+    const manifest = JSON.parse(readFileSync(packageRequire.resolve("../package.json"), "utf8")) as { version?: unknown }
+    return typeof manifest.version === "string" ? manifest.version : "0.0.0-unknown"
+  } catch {
+    return "0.0.0-unknown"
+  }
+}
+
+const CLI_VERSION = readCliVersion()
 
 type CliCommandHandler = (args: string[]) => Promise<number>
 
@@ -11,8 +26,10 @@ const cliCommandRoutes = {
   "agent-task-run": "agentTaskRun",
   "run-agent-task": "agentTaskRun",
   "run-fuzz-suite": "runFuzzSuite",
+  "fuzz-minimize-case": "fuzzMinimizeCase",
   "run-wordpress-workload": "runWordPressWorkload",
   fuzz: {
+    descriptor: "fuzzDescriptor",
     readiness: "fuzzReadiness",
     capabilities: "fuzzReadiness",
   },
@@ -97,6 +114,11 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
   if (!command || command === "help" || command === "--help" || command === "-h") {
     router.printHelp()
     return command ? 0 : 1
+  }
+
+  if (command === "--version" || command === "-v" || command === "version") {
+    console.log(CLI_VERSION)
+    return 0
   }
 
   const route = routeForCommand(command)

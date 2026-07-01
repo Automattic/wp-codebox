@@ -12,6 +12,7 @@ export interface BrowserStepOutcome {
   screenshot?: string
   screenshotIsDefault?: boolean
   screenshotFallback?: { reason: string; mode: "page-screenshot" }
+  verifierResult?: string
   error?: BrowserProbeErrorRecord
 }
 
@@ -126,6 +127,8 @@ export async function executeBrowserInteractionStep(
       const passed = await browserExpectState(page, selector, state, timeout)
       return { assertion: { kind: "expect", selector, state, passed } }
     }
+    case "assertObservation":
+      return {}
     case "screenshot": {
       const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
@@ -153,6 +156,8 @@ export async function executeBrowserInteractionStep(
     }
     case "capture":
       return {}
+    case "callTool":
+      throw new Error("wordpress.browser-actions callTool requires the host-tool execution bridge, which is not available in this browser step executor")
   }
 
   throw new Error(`wordpress.browser-actions step kind is not supported: ${step.kind}`)
@@ -378,6 +383,7 @@ export function browserStepRecord(
     ...(outcome.target ? { target: outcome.target } : {}),
     ...(outcome.screenshot ? { screenshot: outcome.screenshot } : {}),
     ...(outcome.screenshotFallback ? { screenshotFallback: outcome.screenshotFallback } : {}),
+    ...(outcome.verifierResult ? { verifierResult: outcome.verifierResult } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),
   }

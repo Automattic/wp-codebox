@@ -59,7 +59,7 @@ final class WP_Codebox_Runtime_Ability_Descriptors {
 			'output_schema'       => $context['fuzz_suite_result_schema'],
 			'execute_callback'    => array( WP_Codebox_Abilities::class, 'run_fuzz_suite' ),
 			'permission_callback' => array( WP_Codebox_Abilities::class, 'can_run_agent_task' ),
-			'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner_capabilities' => $context['fuzz_suite_runner_capabilities_contract'], 'supported_runner_capabilities' => $context['fuzz_suite_supported_runner_capabilities'], 'runtime_backed_execution' => $context['fuzz_suite_runtime_backed_execution_contract'], 'runner_capabilities_schema' => $context['fuzz_runner_capabilities_schema'] ),
+			'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'wordpress_fuzz_runtime_contract' => WP_Codebox_API::wordpress_fuzz_runtime_contract(), 'runner_capabilities' => $context['fuzz_suite_runner_capabilities_contract'], 'supported_runner_capabilities' => $context['fuzz_suite_supported_runner_capabilities'], 'runtime_backed_execution' => $context['fuzz_suite_runtime_backed_execution_contract'], 'runner_capabilities_schema' => $context['fuzz_runner_capabilities_schema'] ),
 		);
 	}
 

@@ -1,6 +1,8 @@
 import { isPlainObject } from "./object-utils.js"
+import type { JsonValue } from "./host-tool-registry.js"
 
 export const BROWSER_INTERACTION_SCRIPT_SCHEMA = "wp-codebox/browser-interaction-script/v1" as const
+export const BROWSER_TOOL_VERIFIER_RESULT_SCHEMA = "wp-codebox/browser-tool-verifier-result/v1" as const
 
 /**
  * Backend-agnostic browser interaction step contract (issue #310).
@@ -24,13 +26,17 @@ export const BROWSER_INTERACTION_STEP_KINDS = [
   "waitFor",
   "evaluate",
   "expect",
+  "assertObservation",
   "screenshot",
   "capture",
+  "callTool",
 ] as const
 
 export type BrowserInteractionStepKind = typeof BROWSER_INTERACTION_STEP_KINDS[number]
 
 export const BROWSER_RANDOM_WALK_SCHEMA = "wp-codebox/browser-random-walk/v1" as const
+export const BROWSER_ACTION_CORPUS_SCHEMA = "wp-codebox/browser-action-corpus/v1" as const
+export const BROWSER_ACTION_CORPUS_ARTIFACT_SCHEMA = "wp-codebox/browser-action-corpus-artifact/v1" as const
 
 export const BROWSER_RANDOM_WALK_CONTEXTS = ["browser", "admin", "editor"] as const
 export type BrowserRandomWalkContext = typeof BROWSER_RANDOM_WALK_CONTEXTS[number]
@@ -70,6 +76,8 @@ export interface BrowserInteractionStep {
   expression?: string
   /** Optional expected value an `evaluate` result must deep-equal to assert. */
   assert?: unknown
+  /** Observation assertion for captured browser runtime evidence. */
+  assertion?: string
   /** Expected locator state for `expect`. */
   state?: BrowserInteractionExpectState
   /** Optional screenshot name for `screenshot`; screenshot steps may also use waitFor for painted-readiness waits before capture. */
@@ -82,6 +90,33 @@ export interface BrowserInteractionStep {
   duration?: string
   /** Per-step timeout override (e.g. 5s). */
   timeout?: string
+  /** Caller-provided host tool command name for `callTool`. */
+  tool?: string
+  /** JSON input passed to the caller-provided host tool. */
+  input?: JsonValue
+}
+
+export interface BrowserToolVerifierInputSummary {
+  type: "null" | "boolean" | "number" | "string" | "array" | "object"
+  keys?: string[]
+  itemCount?: number
+}
+
+export interface BrowserToolVerifierResult {
+  schema: typeof BROWSER_TOOL_VERIFIER_RESULT_SCHEMA
+  status: "unsupported" | "ok" | "error"
+  step: { index: number; kind: "callTool"; tool: string }
+  tool: string
+  inputSummary: BrowserToolVerifierInputSummary
+  result?: JsonValue
+  error?: { code: string; message: string }
+  evidence: {
+    redaction: { policy: "required"; sensitive: true; reason: string }
+    rawInputSerialized: false
+    rawSecretsSerialized: false
+  }
+  startedAt: string
+  finishedAt: string
 }
 
 export interface BrowserRandomWalkContract {
@@ -107,6 +142,73 @@ export interface BrowserRandomWalkPlan {
   diagnostics: { code: string; message: string; metadata?: Record<string, unknown> }[]
 }
 
+export const BROWSER_ACTION_CORPUS_GENERATOR_KINDS = ["text", "email", "url", "search", "number", "password", "textarea", "checkbox", "radio", "select"] as const
+export type BrowserActionCorpusGeneratorKind = typeof BROWSER_ACTION_CORPUS_GENERATOR_KINDS[number]
+
+export type BrowserActionCorpusDescriptorKind = "link" | "button" | "input" | "textarea" | "select"
+
+export interface BrowserActionCorpusDescriptor {
+  id: string
+  kind: BrowserActionCorpusDescriptorKind
+  selector: string
+  label?: string
+  name?: string
+  role?: string
+  type?: string
+  formId?: string
+  href?: string
+  optionValues?: string[]
+  disabled?: boolean
+  readonly?: boolean
+}
+
+export interface BrowserActionCorpusContract {
+  schema: typeof BROWSER_ACTION_CORPUS_SCHEMA
+  context: BrowserRandomWalkContext
+  seed: string
+  maxSteps: number
+  startUrl?: string
+  includeFamilies: BrowserRandomWalkActionFamily[]
+  generatorPrefix: string
+  metadata?: Record<string, unknown>
+}
+
+export interface BrowserActionCorpusPlan {
+  schema: typeof BROWSER_ACTION_CORPUS_SCHEMA
+  status: "planned" | "empty"
+  context: BrowserRandomWalkContext
+  seed: string
+  maxSteps: number
+  startUrl?: string
+  descriptors: BrowserActionCorpusDescriptor[]
+  steps: BrowserInteractionStep[]
+  replay: {
+    schema: typeof BROWSER_ACTION_CORPUS_SCHEMA
+    seed: string
+    maxSteps: number
+    context: BrowserRandomWalkContext
+    startUrl?: string
+    descriptorIds: string[]
+    steps: BrowserInteractionStep[]
+  }
+  observations: {
+    descriptorsDiscovered: number
+    descriptorsSelected: number
+    stepsPlanned: number
+    fillSteps: number
+    clickSteps: number
+    selectSteps: number
+  }
+  diagnostics: { code: string; message: string; metadata?: Record<string, unknown> }[]
+}
+
+export interface BrowserActionCorpusArtifact {
+  schema: typeof BROWSER_ACTION_CORPUS_ARTIFACT_SCHEMA
+  contract: BrowserActionCorpusContract
+  plan: BrowserActionCorpusPlan
+  capturedAt: string
+}
+
 export interface BrowserInteractionStepValidationIssue {
   index: number
   message: string
@@ -122,6 +224,19 @@ function isBrowserInteractionDragTarget(value: unknown): value is BrowserInterac
   if (!isPlainObject(value)) return false
   if (typeof value.selector === "string" && value.selector.length > 0) return true
   return typeof value.x === "number" && typeof value.y === "number"
+}
+
+export function browserToolVerifierInputSummary(input: JsonValue): BrowserToolVerifierInputSummary {
+  if (input === null) return { type: "null" }
+  if (Array.isArray(input)) return { type: "array", itemCount: input.length }
+  if (typeof input === "object") return { type: "object", keys: Object.keys(input).sort() }
+  return { type: inputType(input) }
+}
+
+function inputType(input: string | number | boolean): "string" | "number" | "boolean" {
+  if (typeof input === "string") return "string"
+  if (typeof input === "number") return "number"
+  return "boolean"
 }
 
 /**
@@ -205,8 +320,25 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
           issues.push({ index, message: `expect step state must be one of ${BROWSER_INTERACTION_EXPECT_STATES.join(", ")}` })
         }
         break
+      case "assertObservation":
+        if (typeof step.assertion !== "string" || step.assertion.trim().length === 0) {
+          issues.push({ index, message: "assertObservation step requires assertion" })
+        } else if (!isBrowserInteractionObservationAssertion(step.assertion)) {
+          issues.push({ index, message: "assertObservation supports no-console-errors, no-page-errors, request-count-by-host:<host><op><number>, and request-count-by-type:<type><op><number>" })
+        }
+        break
       case "screenshot":
       case "capture":
+        break
+      case "callTool":
+        if (typeof step.tool !== "string" || !/^[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*$/i.test(step.tool)) {
+          issues.push({ index, message: "callTool step requires tool as a stable canonical tool id such as client/search_docs" })
+        }
+        if (!Object.prototype.hasOwnProperty.call(step, "input")) {
+          issues.push({ index, message: "callTool step requires input" })
+        } else if (!isJsonValue(step.input)) {
+          issues.push({ index, message: "callTool step input must be JSON-serializable" })
+        }
         break
     }
 
@@ -219,6 +351,32 @@ export function validateBrowserInteractionScript(input: unknown): BrowserInterac
 /** True when an interaction script contains at least one policy-gated evaluate step. */
 export function browserInteractionScriptUsesEvaluate(steps: readonly BrowserInteractionStep[]): boolean {
   return steps.some((step) => step.kind === "evaluate")
+}
+
+function isBrowserInteractionObservationAssertion(raw: string): boolean {
+  const value = raw.trim()
+  if (value === "no-console-errors" || value === "no-page-errors") return true
+  if (value.startsWith("request-count-by-host:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-host:".length).trim())
+  if (value.startsWith("request-count-by-type:")) return /^.+(>=|<=|==|!=|=|>|<)\s*\d+$/.test(value.slice("request-count-by-type:".length).trim())
+  return false
+}
+
+/** Exact caller-provided tool command names referenced by `callTool` steps. */
+export function browserInteractionScriptToolCalls(steps: readonly BrowserInteractionStep[]): string[] {
+  return [...new Set(steps.filter((step) => step.kind === "callTool" && typeof step.tool === "string").map((step) => step.tool as string))].sort()
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return Number.isFinite(value as number) || typeof value !== "number"
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue)
+  }
+  if (!isPlainObject(value)) {
+    return false
+  }
+  return Object.values(value).every(isJsonValue)
 }
 
 export function browserRandomWalkContract(input: Record<string, unknown>): BrowserRandomWalkContract {
@@ -282,6 +440,89 @@ export function planBrowserRandomWalk(input: Record<string, unknown>): BrowserRa
   }
 }
 
+export function browserActionCorpusContract(input: Record<string, unknown>): BrowserActionCorpusContract {
+  const context = normalizeBrowserRandomWalkContext(input.context)
+  const seed = typeof input.seed === "string" && input.seed.length > 0 ? input.seed : "browser-action-corpus"
+  return {
+    schema: BROWSER_ACTION_CORPUS_SCHEMA,
+    context,
+    seed,
+    maxSteps: normalizeBrowserRandomWalkMaxSteps(input.maxSteps ?? input.max_steps),
+    startUrl: typeof input.startUrl === "string" ? input.startUrl : typeof input.start_url === "string" ? input.start_url : defaultBrowserRandomWalkStartUrl(context),
+    includeFamilies: normalizeBrowserRandomWalkActionFamilies(input.includeFamilies ?? input.include_families),
+    generatorPrefix: typeof input.generatorPrefix === "string" && input.generatorPrefix.length > 0 ? input.generatorPrefix : "wp-codebox",
+    metadata: isPlainObject(input.metadata) ? input.metadata : undefined,
+  }
+}
+
+export function planBrowserActionCorpus(contractInput: Record<string, unknown> | BrowserActionCorpusContract, descriptorsInput: readonly BrowserActionCorpusDescriptor[]): BrowserActionCorpusPlan {
+  const contract = isBrowserActionCorpusContract(contractInput) ? contractInput : browserActionCorpusContract(contractInput)
+  const diagnostics: BrowserActionCorpusPlan["diagnostics"] = []
+  const descriptors = normalizeBrowserActionCorpusDescriptors(descriptorsInput)
+  const candidates = seededBrowserActionCorpusOrder(descriptors, contract.seed)
+  const steps: BrowserInteractionStep[] = []
+  const descriptorIds: string[] = []
+
+  for (const descriptor of candidates) {
+    if (steps.length >= contract.maxSteps) break
+    const planned = browserActionCorpusStep(descriptor, contract, steps.length)
+    if (!planned || !contract.includeFamilies.includes(planned.family)) continue
+    steps.push(planned.step)
+    descriptorIds.push(descriptor.id)
+  }
+
+  if (steps.length === 0) {
+    diagnostics.push({ code: "browser_action_corpus_no_steps", message: "No actionable controls produced executable seeded browser steps.", metadata: { descriptors: descriptors.length } })
+  }
+
+  const fillSteps = steps.filter((step) => step.kind === "fill" || step.kind === "press").length
+  const clickSteps = steps.filter((step) => step.kind === "click").length
+  const selectSteps = steps.filter((step) => step.kind === "select").length
+
+  return {
+    schema: BROWSER_ACTION_CORPUS_SCHEMA,
+    status: steps.length > 0 ? "planned" : "empty",
+    context: contract.context,
+    seed: contract.seed,
+    maxSteps: contract.maxSteps,
+    startUrl: contract.startUrl,
+    descriptors,
+    steps,
+    replay: {
+      schema: BROWSER_ACTION_CORPUS_SCHEMA,
+      seed: contract.seed,
+      maxSteps: contract.maxSteps,
+      context: contract.context,
+      startUrl: contract.startUrl,
+      descriptorIds,
+      steps,
+    },
+    observations: {
+      descriptorsDiscovered: descriptors.length,
+      descriptorsSelected: descriptorIds.length,
+      stepsPlanned: steps.length,
+      fillSteps,
+      clickSteps,
+      selectSteps,
+    },
+    diagnostics,
+  }
+}
+
+export function browserActionCorpusArtifact(contractInput: Record<string, unknown> | BrowserActionCorpusContract, descriptors: readonly BrowserActionCorpusDescriptor[], capturedAt: string): BrowserActionCorpusArtifact {
+  const contract = isBrowserActionCorpusContract(contractInput) ? contractInput : browserActionCorpusContract(contractInput)
+  return {
+    schema: BROWSER_ACTION_CORPUS_ARTIFACT_SCHEMA,
+    contract,
+    plan: planBrowserActionCorpus(contract, descriptors),
+    capturedAt,
+  }
+}
+
+function isBrowserActionCorpusContract(value: Record<string, unknown> | BrowserActionCorpusContract): value is BrowserActionCorpusContract {
+  return value.schema === BROWSER_ACTION_CORPUS_SCHEMA
+}
+
 function normalizeBrowserRandomWalkContext(value: unknown): BrowserRandomWalkContext {
   return (BROWSER_RANDOM_WALK_CONTEXTS as readonly string[]).includes(String(value)) ? value as BrowserRandomWalkContext : "browser"
 }
@@ -312,6 +553,67 @@ function browserRandomWalkStep(family: BrowserRandomWalkActionFamily, contract: 
   if (family === "select") return { kind: "select", selector: "select", value: "" }
   if (family === "capture") return { kind: "capture" }
   return undefined
+}
+
+function normalizeBrowserActionCorpusDescriptors(descriptors: readonly BrowserActionCorpusDescriptor[]): BrowserActionCorpusDescriptor[] {
+  const seen = new Set<string>()
+  const normalized: BrowserActionCorpusDescriptor[] = []
+  for (const descriptor of descriptors) {
+    if (!descriptor || typeof descriptor.selector !== "string" || descriptor.selector.length === 0 || typeof descriptor.id !== "string" || descriptor.id.length === 0) continue
+    if (descriptor.disabled || descriptor.readonly || seen.has(descriptor.id)) continue
+    seen.add(descriptor.id)
+    normalized.push({
+      id: descriptor.id,
+      kind: descriptor.kind,
+      selector: descriptor.selector,
+      ...(typeof descriptor.label === "string" && descriptor.label.length > 0 ? { label: descriptor.label } : {}),
+      ...(typeof descriptor.name === "string" && descriptor.name.length > 0 ? { name: descriptor.name } : {}),
+      ...(typeof descriptor.role === "string" && descriptor.role.length > 0 ? { role: descriptor.role } : {}),
+      ...(typeof descriptor.type === "string" && descriptor.type.length > 0 ? { type: descriptor.type.toLowerCase() } : {}),
+      ...(typeof descriptor.formId === "string" && descriptor.formId.length > 0 ? { formId: descriptor.formId } : {}),
+      ...(typeof descriptor.href === "string" && descriptor.href.length > 0 ? { href: descriptor.href } : {}),
+      ...(Array.isArray(descriptor.optionValues) ? { optionValues: descriptor.optionValues.filter((value) => typeof value === "string") } : {}),
+    })
+  }
+  return normalized
+}
+
+function seededBrowserActionCorpusOrder(descriptors: readonly BrowserActionCorpusDescriptor[], seed: string): BrowserActionCorpusDescriptor[] {
+  return [...descriptors].sort((a, b) => deterministicHash(`${seed}:${a.id}`) - deterministicHash(`${seed}:${b.id}`) || a.id.localeCompare(b.id))
+}
+
+function browserActionCorpusStep(descriptor: BrowserActionCorpusDescriptor, contract: BrowserActionCorpusContract, index: number): { family: BrowserRandomWalkActionFamily; step: BrowserInteractionStep } | undefined {
+  if (descriptor.kind === "select") {
+    const values = descriptor.optionValues?.filter((value) => value.length > 0) ?? []
+    if (values.length === 0) return undefined
+    return { family: "select", step: { kind: "select", selector: descriptor.selector, value: pickDeterministic(values, `${contract.seed}:${descriptor.id}`) } }
+  }
+  if (descriptor.kind === "textarea" || descriptor.kind === "input") {
+    const type = normalizeBrowserActionCorpusGeneratorKind(descriptor.kind === "textarea" ? "textarea" : descriptor.type)
+    if (type === "checkbox" || type === "radio") return { family: "click", step: { kind: "click", selector: descriptor.selector } }
+    return { family: "fill", step: { kind: "fill", selector: descriptor.selector, value: browserActionCorpusGeneratedValue(type, contract, descriptor, index) } }
+  }
+  if (descriptor.kind === "button") return { family: "click", step: { kind: "click", selector: descriptor.selector } }
+  if (descriptor.kind === "link") return { family: "click", step: { kind: "click", selector: descriptor.selector } }
+  return undefined
+}
+
+function normalizeBrowserActionCorpusGeneratorKind(value: unknown): BrowserActionCorpusGeneratorKind {
+  const normalized = String(value || "text").toLowerCase()
+  if ((BROWSER_ACTION_CORPUS_GENERATOR_KINDS as readonly string[]).includes(normalized)) return normalized as BrowserActionCorpusGeneratorKind
+  return "text"
+}
+
+function browserActionCorpusGeneratedValue(kind: BrowserActionCorpusGeneratorKind, contract: BrowserActionCorpusContract, descriptor: BrowserActionCorpusDescriptor, index: number): string {
+  const suffix = deterministicHash(`${contract.seed}:${descriptor.id}:${index}`).toString(36).slice(0, 8)
+  const prefix = contract.generatorPrefix.replace(/[^a-zA-Z0-9._-]+/g, "-") || "wp-codebox"
+  if (kind === "email") return `${prefix}-${suffix}@example.test`
+  if (kind === "url") return `https://example.test/${prefix}-${suffix}`
+  if (kind === "number") return String((deterministicHash(`${contract.seed}:${descriptor.id}`) % 900) + 100)
+  if (kind === "password") return `${prefix}-${suffix}-Passw0rd!`
+  if (kind === "search") return `${prefix} search ${suffix}`
+  if (kind === "textarea") return `${prefix} generated text ${suffix}`
+  return `${prefix}-${suffix}`
 }
 
 function pickDeterministic<T>(items: readonly T[], seed: string): T {
