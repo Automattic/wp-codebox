@@ -108,7 +108,7 @@ return static function ( array $input, array $args ): array {
     id: "public-cli-runtime-suite",
     metadata: {
       runtime_requirements: {
-        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", source_subpath: "sample-plugin", activate: true }],
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", activate: true }],
         component_contracts: [{ slug: "sample-plugin", path: samplePluginSource, loadAs: "plugin" }],
         runtime_env: { SAMPLE_ENV: "1" },
       },

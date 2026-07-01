@@ -167,6 +167,9 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
     if (workflowStep.step.command === "wp-codebox/run-fuzz-suite") {
       return withRecipeExecutionPhase(await executeRunFuzzSuiteRecipeCommand(runtime, workflowStep.step.args ?? [], recipeDirectory, sandboxWorkspace), workflowStep.phase, workflowStep.index, workflowStep.step.command)
     }
+    if (workflowStep.step.command === "wordpress.run-workload" && commandArgValue(workflowStep.step.args ?? [], "workload-json")) {
+      return withRecipeExecutionPhase(await executeWordPressRunWorkloadJsonRecipeCommand(runtime, workflowStep.step.args ?? [], recipeDirectory, sandboxWorkspace), workflowStep.phase, workflowStep.index, workflowStep.step.command)
+    }
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
     return {
       ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command),
@@ -181,6 +184,38 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
   }
 }
 
+async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, args: string[], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, suite?: FuzzSuiteContract, fuzzCase?: unknown): Promise<ExecutionResult> {
+  const startedAt = new Date().toISOString()
+  const workloadJson = commandArgValue(args, "workload-json")
+  if (!workloadJson) {
+    throw new Error("wordpress.run-workload requires workload-json=<json> for JSON workload execution")
+  }
+  const workload = parseCommandJsonObject(workloadJson, "workload-json")
+  const steps = [...workflowStepsFromWorkloadPhase(workload.before, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.steps, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.after, workload, suite, fuzzCase)]
+  const executions: ExecutionResult[] = []
+  for (const [index, step] of steps.entries()) {
+    const execution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace)
+    executions.push(execution)
+    if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
+      break
+    }
+  }
+  const failed = executions.find((execution) => execution.exitCode !== 0)
+  const payload = { schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0 }
+  return {
+    id: `wordpress-run-workload:${startedAt}`,
+    command: "wordpress.run-workload",
+    args,
+    exitCode: failed?.exitCode ?? 0,
+    stdout: `${JSON.stringify(payload)}\n`,
+    stderr: failed?.stderr ?? "",
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: payload },
+    startedAt,
+    finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
+    artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+  }
+}
+
 async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>): Promise<ExecutionResult> {
   const startedAt = new Date().toISOString()
   const suite = await fuzzSuiteFromRecipeCommandArgs(args, recipeDirectory)
@@ -188,29 +223,15 @@ async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[]
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     executor: async (spec) => runtime.execute(await recipeExecutionSpec(workflowStepFromExecutionSpec(spec), recipeDirectory, sandboxWorkspace)),
     runtimeWorkloadExecutor: async ({ suite, workload, case: fuzzCase }) => {
-      const steps = [...workflowStepsFromWorkloadPhase(workload.before, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.steps, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.after, workload, suite, fuzzCase)]
-      const workloadStartedAt = new Date().toISOString()
-      const executions: ExecutionResult[] = []
-      for (const step of steps) {
-        const execution = await runtime.execute(await recipeExecutionSpec(step, recipeDirectory, sandboxWorkspace))
-        executions.push(execution)
-        if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
-          break
-        }
-      }
-      const failed = executions.find((execution) => execution.exitCode !== 0)
-      const payload = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed?.exitCode ?? 0 }
+      const workloadJson = JSON.stringify(workload)
+      const execution = await executeWordPressRunWorkloadJsonRecipeCommand(runtime, [`workload-json=${workloadJson}`], recipeDirectory, sandboxWorkspace, suite, fuzzCase)
+      const parsed = parseCommandJsonObject(execution.stdout, "wordpress.run-workload stdout")
       return {
+        ...execution,
         id: `wordpress-run-workload-${fuzzCase.id}`,
-        command: "wordpress.run-workload",
-        args: [`steps=${steps.length}`],
-        exitCode: failed?.exitCode ?? 0,
-        stdout: `${JSON.stringify(payload)}\n`,
-        stderr: failed?.stderr ?? "",
-        result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: payload },
-        startedAt: workloadStartedAt,
-        finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
-        artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+        args: [`steps=${parsed.steps ?? 0}`],
+        stdout: `${JSON.stringify({ ...parsed, caseId: fuzzCase.id })}\n`,
+        result: { schema: "wp-codebox/runtime-command-result/v1", status: execution.exitCode === 0 ? "ok" : "error", json: { ...parsed, caseId: fuzzCase.id } },
       }
     },
     metadata: { public_recipe_command: "wp-codebox/run-fuzz-suite" },
@@ -242,7 +263,7 @@ async function fuzzSuiteFromRecipeCommandArgs(args: string[], recipeDirectory: s
   throw new Error("wp-codebox/run-fuzz-suite requires input-json=<suite> or input-file=<path>")
 }
 
-function workflowStepsFromWorkloadPhase(value: unknown, workload: Record<string, unknown>, suite: FuzzSuiteContract, fuzzCase: unknown): WorkspaceRecipe["workflow"]["steps"] {
+function workflowStepsFromWorkloadPhase(value: unknown, workload: Record<string, unknown>, suite: FuzzSuiteContract | undefined, fuzzCase: unknown): WorkspaceRecipe["workflow"]["steps"] {
   if (!Array.isArray(value)) {
     return []
   }
@@ -293,8 +314,8 @@ function stepArgMap(args: string[] | undefined): Record<string, string> {
   return parsed
 }
 
-function runtimeRequirementPluginSlug(suite: FuzzSuiteContract): string | undefined {
-  const requirements = objectValue(objectValue(suite.metadata)?.runtime_requirements)
+function runtimeRequirementPluginSlug(suite: FuzzSuiteContract | undefined): string | undefined {
+  const requirements = objectValue(objectValue(suite?.metadata)?.runtime_requirements)
   for (const key of ["extra_plugins", "component_contracts"]) {
     for (const plugin of arrayValue(requirements?.[key])) {
       const slug = objectValue(plugin)?.slug
