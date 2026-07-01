@@ -26,6 +26,8 @@ export interface WordPressPhpunitRecipeOptions {
   autoloadFile?: string
   projectAutoloadFile?: string
   testsDir?: string
+  testRoot?: string
+  phpunitXml?: string
   dependencyMounts?: string[]
   bootstrapFiles?: string[]
   phpunitArgs?: string[]
@@ -91,6 +93,8 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("autoload-file", options.autoloadFile ?? "/wp-codebox-vendor/autoload.php"),
           commandArg("project-autoload-file", options.projectAutoloadFile ?? ""),
           commandArg("tests-dir", options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"),
+          commandArg("test-root", options.testRoot ?? `${pluginTarget}/tests`),
+          commandArg("phpunit-xml", options.phpunitXml ?? `${pluginTarget}/phpunit.xml.dist`),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),
           commandJsonArg("phpunit-args-json", options.phpunitArgs ?? []),

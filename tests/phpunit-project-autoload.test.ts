@@ -20,6 +20,10 @@ const recipe = buildWordPressPhpunitRecipe({
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   projectAutoloadFile: woocommerceAutoload,
+  cwd: "/home/example/public_html",
+  testRoot: "/home/example/public_html/bin/tests/phpunit",
+  phpunitXml: "/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist",
+  mounts: [{ source: "/workspace/project-tests", target: "/home/example/public_html/bin/tests", mode: "readonly" }],
 })
 
 assert.deepEqual(recipe.inputs.extra_plugins, [{
@@ -33,17 +37,24 @@ assert.deepEqual(recipe.inputs.extra_plugins, [{
 
 assert.equal(recipeExtraPluginSourceSubpath(recipe.inputs.extra_plugins[0], "/tmp"), "plugins/woocommerce")
 assert.equal(recipePolicy(recipe).commands.includes("wordpress.run-php"), true)
+assert.deepEqual(recipe.inputs.mounts?.filter((mount) => mount.target === "/home/example/public_html/bin/tests"), [
+  { source: "/workspace/project-tests", target: "/home/example/public_html/bin/tests", mode: "readonly" },
+])
 
 assert.deepEqual(recipe.workflow.steps[0].args.filter((arg) => arg.includes("autoload-file=")), [
   "autoload-file=/wp-codebox-vendor/autoload.php",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
+assert.ok(recipe.workflow.steps[0].args.includes("cwd=/home/example/public_html"))
+assert.ok(recipe.workflow.steps[0].args.includes("test-root=/home/example/public_html/bin/tests/phpunit"))
+assert.ok(recipe.workflow.steps[0].args.includes("phpunit-xml=/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist"))
 
 const projectModeCode = phpunitRunCode({
   pluginSlug: "woocommerce",
   cwd: "/wordpress/wp-content/plugins/woocommerce",
   autoloadFile: woocommerceAutoload,
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+  testRoot: "/home/example/public_html/bin/tests/phpunit",
   phpunitXml: "/wordpress/wp-content/plugins/woocommerce/phpunit.xml.dist",
   selectedTestFile: "",
   changedTestFiles: [],
@@ -66,6 +77,8 @@ assert.ok(projectAutoloadIndex > projectBootstrapIndex)
 assert.ok(projectModeCode.includes("'autoload_required' => $bootstrap_mode !== 'project'"))
 assert.ok(projectModeCode.includes("$legacy_project_autoload_file = $autoload_file"))
 assert.ok(projectModeCode.includes("NOTICE:project bootstrap mode continuing without readable PHPUnit harness autoload"))
+assert.ok(projectModeCode.includes("$test_root = \"/home/example/public_html/bin/tests/phpunit\";"))
+assert.ok(projectModeCode.includes("pg_resolve_test_root"))
 
 const managedModeCode = phpunitRunCode({
   pluginSlug: "demo-plugin",

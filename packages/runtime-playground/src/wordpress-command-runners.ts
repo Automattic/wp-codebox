@@ -912,6 +912,7 @@ export async function runPhpunitCommand({
     autoloadFile: argValue(args, "autoload-file")?.trim() || "/wp-codebox-vendor/autoload.php",
     projectAutoloadFile: argValue(args, "project-autoload-file")?.trim() || "",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+    testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,
     phpunitXml: argValue(args, "phpunit-xml")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
     changedTestFiles: jsonArrayArg(args, "changed-tests-json"),

@@ -6,6 +6,7 @@ export interface PhpunitRunCodeOptions {
   autoloadFile: string
   projectAutoloadFile?: string
   testsDir: string
+  testRoot?: string
   phpunitXml: string
   selectedTestFile: string
   changedTestFiles: unknown[]
@@ -292,6 +293,7 @@ $pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
 $project_autoload_file = ${JSON.stringify(options.projectAutoloadFile ?? "")};
 $tests_dir = ${JSON.stringify(options.testsDir)};
+$test_root = ${JSON.stringify(options.testRoot || `/wordpress/wp-content/plugins/${options.pluginSlug}/tests`)};
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
 $phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitArgs))}, true);
@@ -577,12 +579,22 @@ function pg_resolve_runtime_cwd(string $cwd, string $plugin_path): string {
         $cwd = rtrim($plugin_path, '/') . '/' . ltrim($cwd, '/');
     }
     $real = realpath($cwd);
-    $plugin_real = realpath($plugin_path);
-    if ($real === false || $plugin_real === false || !is_dir($real)) {
+    if ($real === false || !is_dir($real)) {
         throw new RuntimeException('cwd is not a readable sandbox directory: ' . $cwd);
     }
-    if ($real !== $plugin_real && strpos($real, rtrim($plugin_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
-        throw new RuntimeException('cwd must resolve inside the mounted plugin directory: ' . $cwd);
+    return $real;
+}
+
+function pg_resolve_test_root(string $root, string $plugin_path): string {
+    $root = trim(str_replace('\\\\', '/', $root));
+    if ($root === '') {
+        $root = $plugin_path . '/tests';
+    } elseif ($root[0] !== '/') {
+        $root = rtrim($plugin_path, '/') . '/' . ltrim($root, '/');
+    }
+    $real = realpath($root);
+    if ($real === false || !is_dir($real)) {
+        throw new RuntimeException('test root is not a readable sandbox directory: ' . $root);
     }
     return $real;
 }
@@ -891,8 +903,10 @@ pg_install_diagnostics_handlers();
 pg_stage_begin('cwd');
 try {
     $runtime_cwd = pg_resolve_runtime_cwd($runtime_cwd, $plugin_path);
+    $test_root = pg_resolve_test_root($test_root, $plugin_path);
     chdir($runtime_cwd);
     pg_log('CWD:' . $runtime_cwd);
+    pg_log('TEST_ROOT:' . $test_root);
     pg_stage_ok('cwd');
 } catch (Throwable $e) {
     pg_stage_fail('cwd', $e);
@@ -1025,8 +1039,8 @@ ${phpunitConfigDiscoveryPhp({
     includeParseFailureDetail: true,
     loadedConfigMessage: "NOTICE:phpunit.xml.dist loaded from ",
     fallbackXmlDist: true,
-    restrictDirectoriesToTests: true,
-    basePathExpression: "dirname($test_dir_default)",
+    restrictDirectoriesToTests: !options.testRoot,
+    basePathExpression: "dirname($xml_path)",
     uniqueReturnValues: false,
     replaceDefaultMatchers: true,
   })}
@@ -1035,7 +1049,7 @@ ${phpunitDiscoveryPhp("wp_codebox_phpunit_discover", "pg_log")}
 
 pg_stage_begin('discover_tests');
 try {
-    $test_dir = $plugin_path . '/tests';
+    $test_dir = $test_root;
     if (!is_dir($test_dir)) {
         pg_log('NO_TEST_FILES');
         pg_log('NOTICE:tests directory not found at ' . $test_dir);
@@ -1044,9 +1058,9 @@ try {
     }
     list($directories, $suffixes, $prefixes, $excludes) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes);
-    $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $plugin_path);
+    $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
-        $selected_abs = $plugin_path . '/' . ltrim($selected_test_file, '/');
+        $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $test_dir . '/' . ltrim($selected_test_file, '/');
         if (!in_array($selected_abs, $test_files, true)) {
             $selected_real = realpath($selected_abs);
             $tests_real = realpath($test_dir);

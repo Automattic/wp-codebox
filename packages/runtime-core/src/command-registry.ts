@@ -952,6 +952,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "plugin-slug", description: "Plugin slug under wp-content/plugins.", format: "slug" },
       { name: "cwd", description: "Sandbox working directory for the PHPUnit process. Relative values resolve inside the mounted plugin directory; defaults to wp-content/plugins/<plugin-slug>.", format: "sandbox path" },
+      { name: "test-root", description: "Sandbox directory containing PHPUnit test files. Relative values resolve inside the mounted plugin directory; defaults to wp-content/plugins/<plugin-slug>/tests.", format: "sandbox path" },
       { name: "code", description: "Inline override PHP runner code.", format: "PHP string" },
       { name: "code-file", description: "Path to override PHP runner code.", format: "path" },
       { name: "autoload-file", description: "WP Codebox/PHPUnit harness autoload path inside the sandbox. In project bootstrap mode this is optional when the project bootstrap loads PHPUnit.", format: "sandbox path" },
