@@ -1595,6 +1595,23 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
   })
 }
 
+export interface VisualCompareNavigationPolicy {
+  attempts: number
+  navigationBudgetMs: number
+  perAttemptTimeoutMs: number
+}
+
+export function visualCompareNavigationPolicy(wallTimeoutMs: number): VisualCompareNavigationPolicy {
+  const normalizedWallTimeoutMs = Number.isFinite(wallTimeoutMs) && wallTimeoutMs > 0 ? wallTimeoutMs : browserCommandLivenessPolicy().wallTimeoutMs
+  const attempts = 2
+  const navigationBudgetMs = Math.max(10_000, Math.min(Math.floor(normalizedWallTimeoutMs / 2), 60_000))
+  return {
+    attempts,
+    navigationBudgetMs,
+    perAttemptTimeoutMs: Math.max(5_000, Math.floor(navigationBudgetMs / attempts)),
+  }
+}
+
 // Navigate with a bounded per-attempt timeout and one transient-failure retry.
 //
 // The fixture-matrix source page is served by the SAME in-sandbox WordPress origin
@@ -1610,24 +1627,25 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
 // blocked (`block-external-requests`), so navigation never waits on unreachable
 // hosts regardless of `waitFor`.
 async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil: "domcontentloaded" | "load" | "networkidle", wallTimeoutMs: number): Promise<void> {
-  // Reserve roughly half the wall for the navigation budget, split across two
-  // attempts, leaving the remainder for the settle/dom-snapshot/screenshot phases.
-  const navBudgetMs = Math.max(15_000, Math.min(wallTimeoutMs, 90_000))
-  const attempts = 2
-  const perAttemptTimeoutMs = Math.max(5_000, Math.floor(navBudgetMs / attempts))
+  // Reserve roughly half the wall for navigation, capped well below the overall
+  // visual-compare wall so a bad candidate route cannot consume the full 120s
+  // capture window before producing diagnostics.
+  const policy = visualCompareNavigationPolicy(wallTimeoutMs)
   let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
     try {
-      await page.goto(targetUrl, { waitUntil, timeout: perAttemptTimeoutMs })
+      await page.goto(targetUrl, { waitUntil, timeout: policy.perAttemptTimeoutMs })
       return
     } catch (error) {
       lastError = error
-      if (attempt >= attempts) {
+      if (attempt >= policy.attempts) {
         break
       }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(`wordpress.visual-compare navigation failed: ${String(lastError)}`)
+  const wrapped = new Error(`wordpress.visual-compare navigation failed for ${targetUrl} after ${policy.attempts} attempt(s) with ${policy.perAttemptTimeoutMs}ms per attempt (waitUntil=${waitUntil}): ${visualCompareErrorDetail(lastError)}`)
+  ;(wrapped as Error & { cause?: unknown }).cause = lastError
+  throw wrapped
 }
 
 // A full-page screenshot of a very tall document forces the renderer to allocate a

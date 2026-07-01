@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import { PNG } from "pngjs"
 
-import { comparePngFiles, visualCompareErrorDetail } from "../packages/runtime-playground/src/browser-visual-compare.js"
+import { comparePngFiles, visualCompareErrorDetail, visualCompareNavigationPolicy } from "../packages/runtime-playground/src/browser-visual-compare.js"
 
 // Build an opaque solid-color PNG. `fill` is [r,g,b].
 function solidPng(width: number, height: number, fill: [number, number, number]): PNG {
@@ -51,6 +51,23 @@ function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fil
   assert.ok(visualCompareErrorDetail({ weird: true }).trim().length > 0, "object must yield non-empty detail")
 }
 
+// 2. URL capture navigation is bounded below the overall visual-compare wall. The
+//    default 120s capture window must never be handed directly to `page.goto`; a bad
+//    candidate route should fail with navigation diagnostics while leaving wall time for
+//    failure summary artifacts.
+{
+  const policy = visualCompareNavigationPolicy(120_000)
+  assert.equal(policy.attempts, 2)
+  assert.equal(policy.navigationBudgetMs, 60_000)
+  assert.equal(policy.perAttemptTimeoutMs, 30_000)
+  assert.ok(policy.perAttemptTimeoutMs < 120_000, "page.goto timeout must stay below the visual-compare wall timeout")
+
+  const shortPolicy = visualCompareNavigationPolicy(12_000)
+  assert.equal(shortPolicy.attempts, 2)
+  assert.equal(shortPolicy.navigationBudgetMs, 10_000)
+  assert.equal(shortPolicy.perAttemptTimeoutMs, 5_000)
+}
+
 // Count pixels in a diff PNG whose RGB is nonzero — the exact predicate the region
 // detector uses (`visualCompareDiffPixel`). pixelmatch renders even unchanged pixels as
 // a dimmed grayscale of the original, so for a real (or solid) page this is typically the
@@ -67,7 +84,7 @@ function countDiffPixels(png: PNG): number {
   return count
 }
 
-// 2. The bounded flood-fill region detection runs the real comparePngFiles aggregation
+// 3. The bounded flood-fill region detection runs the real comparePngFiles aggregation
 //    over a large, tall, high-mismatch canvas — the exact shape that previously OOM'd
 //    old-space by pushing ~4× the diff-pixel count as [x,y] tuple arrays and marking
 //    visited only at pop time. The rewrite (flat numeric index stack, mark-at-push) must
