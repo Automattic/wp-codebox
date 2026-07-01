@@ -1307,6 +1307,24 @@ private static function execute_fuzz_suite_json_php_step( array $step, int $inde
 /** @param array<string,mixed> $step Step. @return array<string,mixed> */
 private static function execute_fuzz_suite_json_rest_db_query_profiler_step( array $step, int $index ): array {
 	$cases = is_array( $step['rest_request_cases'] ?? null ) ? $step['rest_request_cases'] : array();
+	if ( empty( $cases ) && isset( $step['request_cases'] ) && is_array( $step['request_cases'] ) ) {
+		$cases = $step['request_cases'];
+	}
+	if ( empty( $cases ) && isset( $step['rest_request_cases_source'] ) && is_array( $step['rest_request_cases_source'] ) ) {
+		$cases = self::fuzz_suite_rest_request_cases_from_source( $step['rest_request_cases_source'] );
+		if ( is_wp_error( $cases ) ) {
+			return self::failed_fuzz_suite_rest_db_query_profiler_step( $index, $cases->code, $cases->get_error_message() );
+		}
+		if ( empty( $cases ) ) {
+			return self::failed_fuzz_suite_rest_db_query_profiler_step( $index, 'wp_codebox_fuzz_rest_request_cases_source_empty', 'rest_request_cases_source did not resolve any request cases.' );
+		}
+	}
+	if ( empty( $cases ) && ( isset( $step['path'] ) || isset( $step['route'] ) ) ) {
+		$cases = array( $step );
+	}
+	if ( empty( $cases ) ) {
+		return self::failed_fuzz_suite_rest_db_query_profiler_step( $index, 'wp_codebox_fuzz_rest_db_query_profiler_cases_empty', 'rest-db-query-profiler requires at least one REST request case.' );
+	}
 	$requests = array();
 	$failed = 0;
 	foreach ( $cases as $case ) {
@@ -1323,6 +1341,7 @@ private static function execute_fuzz_suite_json_rest_db_query_profiler_step( arr
 	$total_queries        = array_sum( array_map( static fn( array $request ): int => (int) ( $request['queryCount'] ?? 0 ), $requests ) );
 	$query_fingerprints  = self::merge_fuzz_suite_query_fingerprints( $requests, (int) ( $step['fingerprintLimit'] ?? 50 ) );
 	$fingerprint_count   = count( $query_fingerprints );
+	$profile_artifact    = self::fuzz_suite_rest_db_query_profile_artifact( $requests, (int) ( $step['sampleLimit'] ?? 50 ), (int) ( $step['queryLengthLimit'] ?? 500 ) );
 	return array(
 		'type'        => 'rest-db-query-profiler',
 		'index'       => $index,
@@ -1330,8 +1349,100 @@ private static function execute_fuzz_suite_json_rest_db_query_profiler_step( arr
 		'status'      => 0 === $failed ? 'passed' : 'failed',
 		'observation' => array( 'metricPrefix' => (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ), 'requestCount' => count( $requests ), 'queryCount' => $total_queries, 'fingerprintCount' => $fingerprint_count ),
 		'metrics'     => array( (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.query_count' => $total_queries, (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.request_count' => count( $requests ), (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.fingerprint_count' => $fingerprint_count ),
+		'artifacts'   => array( 'rest-db-query-profile' => $profile_artifact ),
 		'requests'    => $requests,
 		'queryFingerprints' => $query_fingerprints,
+	);
+}
+
+private static function failed_fuzz_suite_rest_db_query_profiler_step( int $index, string $code, string $message ): array {
+	return array(
+		'type'        => 'rest-db-query-profiler',
+		'index'       => $index,
+		'success'     => false,
+		'status'      => 'failed',
+		'observation' => array( 'metricPrefix' => 'rest_db_query_profile', 'requestCount' => 0, 'queryCount' => 0, 'fingerprintCount' => 0 ),
+		'metrics'     => array( 'rest_db_query_profile.query_count' => 0, 'rest_db_query_profile.request_count' => 0, 'rest_db_query_profile.fingerprint_count' => 0 ),
+		'diagnostics' => array( self::fuzz_suite_diagnostic( 'error', $code, $message, array( 'step_index' => $index ) ) ),
+	);
+}
+
+/** @param array<string,mixed> $source Source. @return array<int,array<string,mixed>>|WP_Error */
+private static function fuzz_suite_rest_request_cases_from_source( array $source ): array|WP_Error {
+	$type = isset( $source['type'] ) && is_string( $source['type'] ) ? $source['type'] : '';
+	if ( 'artifact' !== $type ) {
+		return new WP_Error( 'wp_codebox_fuzz_rest_request_cases_source_type_invalid', 'rest_request_cases_source only supports artifact sources.' );
+	}
+
+	$root = getenv( 'WP_CODEBOX_BENCH_SHARED_STATE' );
+	if ( ! is_string( $root ) || '' === $root || ! is_dir( $root ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_rest_request_cases_source_root_unavailable', 'rest_request_cases_source artifact root is unavailable.' );
+	}
+
+	$artifact_globs     = isset( $source['artifact_globs'] ) && is_array( $source['artifact_globs'] ) ? $source['artifact_globs'] : array();
+	$max_route_cases    = isset( $source['maxRouteCases'] ) && is_numeric( $source['maxRouteCases'] ) ? max( 0, (int) $source['maxRouteCases'] ) : 100;
+	$max_artifact_bytes = isset( $source['maxArtifactBytes'] ) && is_numeric( $source['maxArtifactBytes'] ) ? max( 0, (int) $source['maxArtifactBytes'] ) : 1048576;
+	$expected_schema    = isset( $source['schema'] ) && is_string( $source['schema'] ) ? $source['schema'] : '';
+	$cases              = array();
+	if ( 0 === $max_route_cases ) {
+		return $cases;
+	}
+
+	foreach ( $artifact_globs as $artifact_glob ) {
+		if ( ! is_string( $artifact_glob ) || '' === $artifact_glob || str_starts_with( $artifact_glob, '/' ) || str_contains( $artifact_glob, '..' ) ) {
+			return new WP_Error( 'wp_codebox_fuzz_rest_request_cases_source_glob_invalid', 'rest_request_cases_source artifact_globs must be safe relative glob paths.' );
+		}
+		foreach ( glob( rtrim( $root, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . $artifact_glob ) ?: array() as $artifact_path ) {
+			if ( ! is_file( $artifact_path ) ) {
+				continue;
+			}
+			$bytes = filesize( $artifact_path );
+			if ( false === $bytes || $bytes > $max_artifact_bytes ) {
+				return new WP_Error( 'wp_codebox_fuzz_rest_request_cases_source_artifact_too_large', 'rest_request_cases_source artifact exceeds maxArtifactBytes.' );
+			}
+			$artifact = json_decode( (string) file_get_contents( $artifact_path ), true );
+			if ( ! is_array( $artifact ) ) {
+				return new WP_Error( 'wp_codebox_fuzz_rest_request_cases_source_json_invalid', 'rest_request_cases_source artifact is not valid JSON.' );
+			}
+			if ( '' !== $expected_schema && isset( $artifact['schema'] ) && $expected_schema !== $artifact['schema'] ) {
+				continue;
+			}
+			foreach ( isset( $artifact['cases'] ) && is_array( $artifact['cases'] ) ? $artifact['cases'] : array() as $request_case ) {
+				if ( ! is_array( $request_case ) ) {
+					continue;
+				}
+				$cases[] = $request_case;
+				if ( count( $cases ) >= $max_route_cases ) {
+					return $cases;
+				}
+			}
+		}
+	}
+
+	return $cases;
+}
+
+/** @param array<int,array<string,mixed>> $requests Requests. @return array<string,mixed> */
+private static function fuzz_suite_rest_db_query_profile_artifact( array $requests, int $sample_limit, int $query_length_limit ): array {
+	$cases = array();
+	$total_queries = 0;
+	foreach ( $requests as $index => $request ) {
+		$query_count = (int) ( $request['queryCount'] ?? 0 );
+		$total_queries += $query_count;
+		$cases[] = array(
+			'case_id' => (string) ( $request['id'] ?? 'case-' . $index ),
+			'method'  => (string) ( $request['method'] ?? 'GET' ),
+			'path'    => (string) ( $request['path'] ?? '' ),
+			'summary' => array( 'query_count' => $query_count, 'total_time_ms' => 0.0 ),
+			'samples' => is_array( $request['sampledQueries'] ?? null ) ? $request['sampledQueries'] : array(),
+			'queries' => is_array( $request['queryFingerprints'] ?? null ) ? $request['queryFingerprints'] : array(),
+		);
+	}
+
+	return array(
+		'schema'  => 'wp-codebox/wordpress-rest-db-query-profile/v1',
+		'summary' => array( 'case_count' => count( $cases ), 'query_count' => $total_queries, 'total_time_ms' => 0.0, 'sample_limit' => $sample_limit, 'query_length_limit' => $query_length_limit ),
+		'cases'   => $cases,
 	);
 }
 

@@ -1245,7 +1245,7 @@ function queryObservationArtifactsFromFuzzResult(result: FuzzSuiteResultEnvelope
     const command = stringValue(execution?.command)
     const target = fuzzCase.target?.id ?? fuzzCase.target?.entrypoint ?? stringValue(json?.path ?? json?.route ?? json?.url)
     const direct = queryObservationFromDatabaseRecord({ result, fuzzCase, command, target, database: recordValue(recordValue(json?.performance)?.database) ?? recordValue(json?.database) ?? recordValue(json?.metrics), source: "fuzz-case-execution" })
-    return [direct, ...queryObservationsFromBenchResult({ result, fuzzCase, command, target, json })].filter((item): item is QueryObservationArtifact => Boolean(item))
+    return [direct, ...queryObservationsFromRestDbProfiles({ result, fuzzCase, command, target, json }), ...queryObservationsFromPerformanceObservations({ result, fuzzCase, json })].filter((item): item is QueryObservationArtifact => Boolean(item))
   })
 }
 
@@ -1274,13 +1274,9 @@ function queryObservationFromDatabaseRecord(input: { result: FuzzSuiteResultEnve
   })
 }
 
-function queryObservationsFromBenchResult(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; json?: Record<string, unknown> }): QueryObservationArtifact[] {
-  if (input.json?.schema !== "wp-codebox/bench-results/v1") return []
+function queryObservationsFromRestDbProfiles(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; command?: string; target?: string; json?: Record<string, unknown> }): QueryObservationArtifact[] {
   const out: QueryObservationArtifact[] = []
-  for (const scenario of arrayValue(input.json.scenarios)) {
-    const scenarioRecord = recordValue(scenario)
-    const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
-    if (profile?.schema !== "wp-codebox/wordpress-rest-db-query-profile/v1") continue
+  for (const { profile, sourceId } of restDbQueryProfilesFromJson(input.json)) {
     for (const profileCase of arrayValue(profile.cases)) {
       const caseRecord = recordValue(profileCase)
       const summary = recordValue(caseRecord?.summary)
@@ -1299,11 +1295,46 @@ function queryObservationsFromBenchResult(input: { result: FuzzSuiteResultEnvelo
         source: "rest-db-query-profiler",
       })
       if (observation) {
-        out.push({ ...observation, metadata: { ...observation.metadata, scenarioId: stringValue(scenarioRecord?.id), profileCaseId: stringValue(caseRecord?.case_id) } })
+        out.push({ ...observation, metadata: { ...observation.metadata, sourceId, profileCaseId: stringValue(caseRecord?.case_id) } })
       }
     }
   }
   return out
+}
+
+function restDbQueryProfilesFromJson(json: Record<string, unknown> | undefined): Array<{ profile: Record<string, unknown>; sourceId?: string }> {
+  const profiles: Array<{ profile: Record<string, unknown>; sourceId?: string }> = []
+  if (json?.schema === "wp-codebox/bench-results/v1") {
+    for (const scenario of arrayValue(json.scenarios)) {
+      const scenarioRecord = recordValue(scenario)
+      const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
+      if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(scenarioRecord?.id) })
+    }
+  }
+  if (json?.schema === "wp-codebox/json-workload-result/v1") {
+    for (const step of arrayValue(json.steps)) {
+      const stepRecord = recordValue(step)
+      const profile = recordValue(recordValue(stepRecord?.artifacts)?.["rest-db-query-profile"])
+      if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(stepRecord?.type) })
+    }
+  }
+  return profiles
+}
+
+function queryObservationsFromPerformanceObservations(input: { result: FuzzSuiteResultEnvelope; fuzzCase: FuzzSuiteResultEnvelope["cases"][number]; json?: Record<string, unknown> }): QueryObservationArtifact[] {
+  return arrayValue(input.json?.observations).flatMap((item) => {
+    const observation = recordValue(item)
+    if (observation?.schema !== "wp-codebox/performance-observation/v1") return []
+    const queryObservation = queryObservationFromDatabaseRecord({
+      result: input.result,
+      fuzzCase: input.fuzzCase,
+      command: stringValue(observation.command),
+      target: stringValue(observation.target),
+      database: recordValue(observation.database),
+      source: stringValue(observation.source) ?? "performance-observation",
+    })
+    return queryObservation ? [queryObservation] : []
+  })
 }
 
 function normalizeQueryFingerprint(value: unknown): QueryObservationFingerprint[] {
@@ -1543,17 +1574,13 @@ function performanceObservationsFromWorkloadExecution(execution: ExecutionResult
   const raw = arrayValue(json?.observations ?? json?.performanceObservations ?? json?.performance_observations)
   return [
     ...raw.flatMap((item) => isPerformanceObservation(item) ? [item] : []),
-    ...performanceObservationsFromBenchResult(json, execution),
+    ...performanceObservationsFromRestDbProfiles(json, execution),
   ]
 }
 
-function performanceObservationsFromBenchResult(json: Record<string, unknown> | undefined, execution: ExecutionResult): PerformanceObservation[] {
-  if (json?.schema !== "wp-codebox/bench-results/v1") return []
+function performanceObservationsFromRestDbProfiles(json: Record<string, unknown> | undefined, execution: ExecutionResult): PerformanceObservation[] {
   const observations: PerformanceObservation[] = []
-  for (const scenario of arrayValue(json.scenarios)) {
-    const scenarioRecord = recordValue(scenario)
-    const profile = recordValue(recordValue(scenarioRecord?.artifacts)?.["rest-db-query-profile"])
-    if (profile?.schema !== "wp-codebox/wordpress-rest-db-query-profile/v1") continue
+  for (const { profile, sourceId } of restDbQueryProfilesFromJson(json)) {
     for (const profileCase of arrayValue(profile.cases)) {
       const caseRecord = recordValue(profileCase)
       const summary = recordValue(caseRecord?.summary)
@@ -1567,7 +1594,7 @@ function performanceObservationsFromBenchResult(json: Record<string, unknown> | 
         source: "rest-db-query-profiler",
         kind: "rest-request",
         database: queryCount !== undefined || totalTimeMs !== undefined ? { queryCount, totalTimeMs } : undefined,
-        metadata: { executionId: execution.id, scenarioId: stringValue(scenarioRecord?.id), caseId: stringValue(caseRecord?.case_id) },
+        metadata: { executionId: execution.id, sourceId, caseId: stringValue(caseRecord?.case_id) },
       }
       if (hasObservationMetrics(observation)) {
         observations.push(observation)

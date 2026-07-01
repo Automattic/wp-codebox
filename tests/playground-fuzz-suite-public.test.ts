@@ -52,9 +52,9 @@ const episode = {
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 }, metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "db_operation", target: "wp_fuzz", entries: [{ table: "wp_fuzz", operation: "update", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 1, resource: { table: "wp_fuzz", identifiers: { id: 1 } }, key: "wp_fuzz:update:1" }], repeatedWrites: [], totals: { writes: 1, rowsAffected: 1, tables: 1, repeatedWriteKeys: 0 } } } },
       "wordpress.crud-operation": { item: { id: 123 }, status: "ok", metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "crud_operation", target: "post:123", entries: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }, { table: "wp_postmeta", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_postmeta:update:123" }], repeatedWrites: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }], totals: { writes: 2, rowsAffected: 2, tables: 2, repeatedWriteKeys: 1 } } } },
       "wordpress.run-php": runPhpCode.includes("wordpress-rollback-capture-request") ? rollbackCapturePayload(runPhpCode) : runPhpCode.includes("rest-db-query-profiler") ? {
-        schema: "wp-codebox/bench-results/v1",
-        scenarios: [{
-          id: "typed-rest-profile",
+        schema: "wp-codebox/json-workload-result/v1",
+        steps: [{
+          type: "rest-db-query-profiler",
           artifacts: {
             "rest-db-query-profile": {
               schema: "wp-codebox/wordpress-rest-db-query-profile/v1",
@@ -165,6 +165,7 @@ assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fu
 assert.equal(metadataArtifacts?.queryObservations?.persisted, false)
 assert.equal(metadataArtifacts?.queryObservations?.metadata?.schema, "wp-codebox/query-observation/v1")
 assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "rest" && item.queryCount === 3), true)
+assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "typed-workload" && item.queryCount === 9), true)
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)

@@ -3,16 +3,33 @@ declare(strict_types=1);
 
 $wp_codebox_smoke_root = sys_get_temp_dir() . '/wp-codebox-fuzz-smoke-' . getmypid() . '/';
 mkdir( $wp_codebox_smoke_root . 'wp-admin/includes', 0777, true );
+mkdir( $wp_codebox_smoke_root . 'generated-rest-request-cases', 0777, true );
 register_shutdown_function(
 	static function () use ( $wp_codebox_smoke_root ): void {
 		@unlink( $wp_codebox_smoke_root . 'rest-db-query-profile.workload.json' );
+		@unlink( $wp_codebox_smoke_root . 'empty-rest-db-query-profile.workload.json' );
+		@unlink( $wp_codebox_smoke_root . 'generated-rest-request-cases/status.json' );
 		@unlink( $wp_codebox_smoke_root . 'closure-workload.php' );
 		@unlink( $wp_codebox_smoke_root . 'wp-admin/menu.php' );
 		@unlink( $wp_codebox_smoke_root . 'wp-admin/includes/admin.php' );
 		@rmdir( $wp_codebox_smoke_root . 'wp-admin/includes' );
 		@rmdir( $wp_codebox_smoke_root . 'wp-admin' );
+		@rmdir( $wp_codebox_smoke_root . 'generated-rest-request-cases' );
 		@rmdir( $wp_codebox_smoke_root );
 	}
+);
+putenv( 'WP_CODEBOX_BENCH_SHARED_STATE=' . $wp_codebox_smoke_root );
+file_put_contents(
+	$wp_codebox_smoke_root . 'generated-rest-request-cases/status.json',
+	json_encode(
+		array(
+			'schema' => 'wp-codebox/generated-rest-request-cases/v1',
+			'cases'  => array(
+				array( 'id' => 'status', 'method' => 'GET', 'path' => '/wp/v2/status', 'params' => array( 'per_page' => 1 ) ),
+			),
+		),
+		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+	)
 );
 file_put_contents( $wp_codebox_smoke_root . 'wp-admin/includes/admin.php', "<?php\n" );
 file_put_contents(
@@ -266,8 +283,12 @@ file_put_contents(
 					'metric-prefix'      => 'rest_db_query_profile',
 					'sampleLimit'        => 50,
 					'queryLengthLimit'   => 500,
-					'rest_request_cases' => array(
-						array( 'id' => 'status', 'method' => 'GET', 'path' => '/wp/v2/status', 'params' => array( 'per_page' => 1 ) ),
+					'rest_request_cases_source' => array(
+						'type'             => 'artifact',
+						'schema'           => 'wp-codebox/generated-rest-request-cases/v1',
+						'artifact_globs'   => array( 'generated-rest-request-cases/*.json' ),
+						'maxRouteCases'    => 80,
+						'maxArtifactBytes' => 1048576,
 					),
 				),
 				array(
@@ -280,6 +301,27 @@ file_put_contents(
 				),
 			),
 			'metadata' => array( 'runner' => 'wp-codebox', 'workload' => 'rest-db-query-profile' ),
+		),
+		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+	)
+);
+
+$empty_json_workload_path = $wp_codebox_smoke_root . 'empty-rest-db-query-profile.workload.json';
+file_put_contents(
+	$empty_json_workload_path,
+	wp_json_encode(
+		array(
+			'id'  => 'empty-rest-db-query-profile',
+			'run' => array(
+				array(
+					'type'                      => 'rest-db-query-profiler',
+					'rest_request_cases_source' => array(
+						'type'           => 'artifact',
+						'schema'         => 'wp-codebox/generated-rest-request-cases/v1',
+						'artifact_globs' => array( 'missing-rest-request-cases/*.json' ),
+					),
+				),
+			),
 		),
 		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
 	)
@@ -531,6 +573,10 @@ $workload_report = json_decode( file_get_contents( WP_CONTENT_DIR . '/uploads/wo
 assert( 'wp-codebox/json-workload-result/v1' === $workload_report['schema'] );
 assert( 4 === $workload_report['steps'][1]['observation']['queryCount'] );
 assert( 3 === $workload_report['steps'][1]['observation']['fingerprintCount'] );
+assert( 'wp-codebox/wordpress-rest-db-query-profile/v1' === $workload_report['steps'][1]['artifacts']['rest-db-query-profile']['schema'] );
+assert( 1 === $workload_report['steps'][1]['artifacts']['rest-db-query-profile']['summary']['case_count'] );
+assert( 4 === $workload_report['steps'][1]['artifacts']['rest-db-query-profile']['summary']['query_count'] );
+assert( 'status' === $workload_report['steps'][1]['artifacts']['rest-db-query-profile']['cases'][0]['case_id'] );
 assert( 4 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
 assert( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID IN (?)" === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
 assert( 2 === $workload_report['steps'][1]['queryFingerprints'][0]['count'] );
@@ -563,6 +609,27 @@ assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capa
 assert( in_array( 'target:runtime-action', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
 assert( in_array( 'target:runtime', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
 assert( in_array( 'runtime-action:browser', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
+
+$empty_source_result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
+	array(
+		'schema' => 'wp-codebox/fuzz-suite/v1',
+		'id'     => 'empty-source-suite',
+		'cases'  => array(
+			array(
+				'id'     => 'empty-source-profiler',
+				'phases' => array(
+					'action' => array(
+						array( 'command' => 'wordpress.run-workload', 'args' => array( 'path=' . $empty_json_workload_path ) ),
+					),
+				),
+			),
+		),
+	)
+);
+assert( false === $empty_source_result['success'] );
+assert( 'failed' === $empty_source_result['status'] );
+assert( 'wp_codebox_fuzz_rest_request_cases_source_empty' === $empty_source_result['diagnostics'][0]['code'] );
+assert( 'wp_codebox_fuzz_rest_request_cases_source_empty' === $empty_source_result['cases'][0]['diagnostics'][0]['code'] );
 
 $runtime_backed_request = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 	array(
