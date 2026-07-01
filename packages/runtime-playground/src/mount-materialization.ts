@@ -78,7 +78,9 @@ export async function materializePlaygroundStagedInputs(server: PlaygroundCliSer
   let skipped = 0
   for (const mount of mounts) {
     const collected = await hostMountFilesForVfs(mount)
-    files.push(...collected.files)
+    for (const file of collected.files) {
+      files.push(file)
+    }
     skipped += collected.skipped
   }
   if (files.length === 0) {
