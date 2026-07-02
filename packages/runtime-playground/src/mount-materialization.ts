@@ -36,6 +36,12 @@ interface HostMountFilePayload {
   contentsBase64: string
 }
 
+interface HostMountCollection {
+  files: HostMountFilePayload[]
+  directories: string[]
+  skipped: number
+}
+
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
   return {
     ...input,
@@ -75,15 +81,19 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
 
 export async function materializePlaygroundStagedInputs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<StagedInputMaterializationResult> {
   const files: HostMountFilePayload[] = []
+  const directories: string[] = []
   let skipped = 0
   for (const mount of mounts) {
     const collected = await hostMountFilesForVfs(mount)
     for (const file of collected.files) {
       files.push(file)
     }
+    for (const directory of collected.directories) {
+      directories.push(directory)
+    }
     skipped += collected.skipped
   }
-  if (files.length === 0) {
+  if (files.length === 0 && directories.length === 0) {
     return {
       materialized: 0,
       deleted: 0,
@@ -96,8 +106,9 @@ export async function materializePlaygroundStagedInputs(server: PlaygroundCliSer
     }
   }
 
-  const materializedByPersistentWriter = await materializeHostMountFilesWithPersistentWriter(server, files)
+  const materializedByPersistentWriter = await materializeHostMountFilesWithPersistentWriter(server, files, directories)
   const materialized = materializedByPersistentWriter?.materialized ?? 0
+  const created = materializedByPersistentWriter?.created ?? 0
   const totalSkipped = skipped + (materializedByPersistentWriter?.skipped ?? 0)
   return {
     materialized,
@@ -105,19 +116,22 @@ export async function materializePlaygroundStagedInputs(server: PlaygroundCliSer
     skipped: totalSkipped,
     phaseResult: materializationPhaseResult({
       phase: "playground-staged-input-materialization",
-      status: materialized > 0 ? "completed" : "skipped",
-      metadata: { materialized, deleted: 0, skipped: totalSkipped },
+      status: materialized > 0 || created > 0 ? "completed" : "skipped",
+      metadata: { materialized, deleted: 0, skipped: totalSkipped, created },
     }),
   }
 }
 
-async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number } | undefined> {
+async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundCliServer, files: HostMountFilePayload[], directories: string[]): Promise<{ materialized: number; created: number; skipped: number } | undefined> {
   if (!server.playground.writeFile) {
-    return materializeHostMountFilesWithPhp(server, files)
+    return materializeHostMountFilesWithPhp(server, files, directories)
   }
 
-  const directories = [...new Set(files.map((file) => dirname(file.target.trim())).filter((directory) => directory && directory !== "."))]
-  const directoryResult = await createHostMountDirectories(server, directories)
+  const targetDirectories = [...new Set([
+    ...directories,
+    ...files.map((file) => dirname(file.target.trim())),
+  ].filter((directory) => directory && directory !== "."))]
+  const directoryResult = await createHostMountDirectories(server, targetDirectories)
   let materialized = 0
   let skipped = directoryResult.skipped
   const failedFiles: HostMountFilePayload[] = []
@@ -135,11 +149,11 @@ async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundC
     }
   }
   if (failedFiles.length > 0) {
-    const fallback = await materializeHostMountFilesWithPhp(server, failedFiles)
+    const fallback = await materializeHostMountFilesWithPhp(server, failedFiles, [])
     materialized += fallback.materialized
     skipped += fallback.skipped
   }
-  return { materialized, skipped }
+  return { materialized, created: directoryResult.created, skipped }
 }
 
 async function createHostMountDirectories(server: PlaygroundCliServer, directories: string[]): Promise<{ created: number; skipped: number }> {
@@ -154,11 +168,12 @@ async function createHostMountDirectories(server: PlaygroundCliServer, directori
   }
 }
 
-async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number }> {
-  const response = await server.playground.run({ code: hostMountWritePhp(files) })
-  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; skipped?: number }
+async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[], directories: string[]): Promise<{ materialized: number; created: number; skipped: number }> {
+  const response = await server.playground.run({ code: hostMountWritePhp(files, directories) })
+  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; created?: number; skipped?: number }
   return {
     materialized: parsed.materialized ?? 0,
+    created: parsed.created ?? 0,
     skipped: parsed.skipped ?? 0,
   }
 }
@@ -258,32 +273,40 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
   return files
 }
 
-async function hostMountFilesForVfs(mount: MountSpec): Promise<{ files: HostMountFilePayload[]; skipped: number }> {
+async function hostMountFilesForVfs(mount: MountSpec): Promise<HostMountCollection> {
   const files: HostMountFilePayload[] = []
+  const directories: string[] = []
   let skipped = 0
   let sourceStat
   try {
     sourceStat = await stat(mount.source)
   } catch {
-    return { files, skipped: 1 }
+    return { files, directories, skipped: 1 }
   }
 
   if (mount.type === "file" || sourceStat.isFile()) {
     files.push({ target: mount.target, contentsBase64: (await readFile(mount.source)).toString("base64") })
-    return { files, skipped }
+    return { files, directories, skipped }
   }
   if (!sourceStat.isDirectory()) {
-    return { files, skipped: skipped + 1 }
+    return { files, directories, skipped: skipped + 1 }
   }
 
-  for (const file of await hostMountDirectoryFiles(mount.source)) {
+  const target = mount.target.replace(/\/+$/, "")
+  directories.push(target)
+  const collected = await hostMountDirectoryFiles(mount.source)
+  for (const directory of collected.directories) {
+    directories.push(`${target}/${directory}`)
+  }
+  for (const file of collected.files) {
     files.push({ target: `${mount.target.replace(/\/+$/, "")}/${file.relativePath}`, contentsBase64: file.contentsBase64 })
   }
-  return { files, skipped }
+  return { files, directories, skipped }
 }
 
-async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""): Promise<Array<{ relativePath: string; contentsBase64: string }>> {
+async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""): Promise<{ files: Array<{ relativePath: string; contentsBase64: string }>; directories: string[] }> {
   const files: Array<{ relativePath: string; contentsBase64: string }> = []
+  const directories: string[] = []
   const pending = [relativeDirectory]
 
   while (pending.length > 0) {
@@ -302,6 +325,7 @@ async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""
       const relativePath = currentDirectory ? `${currentDirectory}/${entry.name}` : entry.name
       const absolutePath = join(directory, relativePath)
       if (entry.isDirectory()) {
+        directories.push(relativePath)
         pending.push(relativePath)
         continue
       }
@@ -312,15 +336,28 @@ async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""
     }
   }
 
-  return files
+  return { files, directories }
 }
 
-function hostMountWritePhp(files: HostMountFilePayload[]): string {
-  const payload = JSON.stringify(JSON.stringify({ files }))
+function hostMountWritePhp(files: HostMountFilePayload[], directories: string[]): string {
+  const payload = JSON.stringify(JSON.stringify({ files, directories }))
   return `<?php
 $payload = json_decode(${payload}, true);
 $materialized = 0;
+$created = 0;
 $skipped = 0;
+foreach (($payload['directories'] ?? array()) as $directory) {
+    $directory = (string) $directory;
+    if ('' === $directory || str_contains($directory, "\0")) {
+        $skipped++;
+        continue;
+    }
+    if (is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory)) {
+        $created++;
+        continue;
+    }
+    $skipped++;
+}
 foreach (($payload['files'] ?? array()) as $file) {
     $target = (string) ($file['target'] ?? '');
     $contents = (string) ($file['contentsBase64'] ?? '');
@@ -340,7 +377,7 @@ foreach (($payload['files'] ?? array()) as $file) {
     }
     $materialized++;
 }
-echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
 `
 }
 
