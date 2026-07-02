@@ -92,6 +92,7 @@
     "test:browser-runtime-file-ops": "tsx tests/browser-runtime-file-ops.test.ts",
     "test:browser-visual-compare-blocks-engine-adapter": "tsx tests/browser-visual-compare-blocks-engine-adapter.test.ts",
     "test:browser-visual-compare-fair-ratio": "tsx tests/browser-visual-compare-fair-ratio.test.ts",
+    "test:browser-visual-compare-layout-drift": "tsx tests/browser-visual-compare-layout-drift.test.ts",
     "test:browser-visual-compare-capture-reliability": "tsx tests/browser-visual-compare-capture-reliability.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
     "test:browser-playground-session-run": "tsx tests/browser-playground-session-run.test.ts",

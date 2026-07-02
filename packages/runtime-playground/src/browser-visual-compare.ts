@@ -33,6 +33,37 @@ interface VisualCompareMismatchRegion {
   width: number
   height: number
   pixels: number
+  sourceElements?: VisualCompareRegionElementOverlap[]
+  candidateElements?: VisualCompareRegionElementOverlap[]
+}
+
+interface VisualCompareRegionElementOverlap {
+  path: string
+  tag: string
+  text?: string
+  className?: string
+  boundingBox: VisualCompareDomElementSnapshot["boundingBox"]
+  overlap: { x: number; y: number; width: number; height: number; area: number; regionCoverage: number; elementCoverage: number }
+  styles: Record<string, string>
+}
+
+export interface VisualCompareActionableStyleDelta {
+  property: string
+  source: string
+  candidate: string
+  category: "layout" | "typography" | "paint" | "effect"
+  severity: "info" | "warning" | "error"
+  hint: string
+}
+
+export interface VisualCompareSelectorDelta {
+  selector: string
+  sourcePath: string
+  candidatePath: string
+  source: { path: string; tag: string; boundingBox: VisualCompareDomElementSnapshot["boundingBox"] }
+  candidate: { path: string; tag: string; boundingBox: VisualCompareDomElementSnapshot["boundingBox"] }
+  boundingBox: { source: VisualCompareDomElementSnapshot["boundingBox"]; candidate: VisualCompareDomElementSnapshot["boundingBox"]; delta: { x: number; y: number; width: number; height: number }; severity: "none" | "info" | "warning" | "error"; category: "layout"; hint: string }
+  styles: VisualCompareActionableStyleDelta[]
 }
 
 interface VisualCompareDimensionDriftRegion extends VisualCompareMismatchRegion {
@@ -46,6 +77,47 @@ interface VisualCompareDimensionDrift {
   candidateOnly: VisualCompareDimensionDriftRegion[]
 }
 
+export type VisualCompareLayoutDriftDivergenceType = "height-delta" | "gap-delta" | "y-offset" | "added-flow-element" | "removed-flow-element" | "screenshot-only"
+
+export interface VisualCompareLayoutDriftAnchor {
+  path: string
+  tag: string
+  text?: string
+  className?: string
+  source?: VisualCompareDomElementSnapshot["boundingBox"]
+  candidate?: VisualCompareDomElementSnapshot["boundingBox"]
+  delta?: { y?: number; height?: number; gap?: number }
+}
+
+export interface VisualCompareLayoutDriftDivergence {
+  type: VisualCompareLayoutDriftDivergenceType
+  path?: string
+  tag?: string
+  text?: string
+  className?: string
+  y?: number
+  previousPath?: string
+  source?: VisualCompareDomElementSnapshot["boundingBox"]
+  candidate?: VisualCompareDomElementSnapshot["boundingBox"]
+  delta?: { y?: number; height?: number; gap?: number }
+}
+
+export interface VisualCompareLayoutDrift {
+  summary: {
+    compact: string
+    firstDivergenceType: VisualCompareLayoutDriftDivergenceType
+    matchedFlowElements: number
+    addedFlowElements: number
+    removedFlowElements: number
+    changedFlowElements: number
+    maxAbsYOffset: number
+    maxAbsHeightDelta: number
+    maxAbsGapDelta: number
+  }
+  firstDivergence: VisualCompareLayoutDriftDivergence
+  anchors: VisualCompareLayoutDriftAnchor[]
+}
+
 interface VisualCompareExplanation {
   schema: "wp-codebox/visual-explanation/v1"
   source: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
@@ -53,10 +125,12 @@ interface VisualCompareExplanation {
   viewport: BrowserProbeViewport | null
   mismatchRegions: VisualCompareMismatchRegion[]
   selectors?: Array<{ selector: string; source: VisualCompareSelectorSnapshot; candidate: VisualCompareSelectorSnapshot }>
+  selectorDeltas?: VisualCompareSelectorDelta[]
   missingSelectors?: Array<{ selector: string; sourceMatched: boolean; candidateMatched: boolean; sourceError?: string; candidateError?: string }>
   limits: { maxElements: number; maxCandidates: number }
   truncation: { changed: boolean; added: boolean; removed: boolean }
   summary: { changedElements: number; addedElements: number; removedElements: number; sourceCapturedElements: number; candidateCapturedElements: number }
+  layoutDrift?: VisualCompareLayoutDrift
   changes: VisualCompareElementDelta[]
   added: VisualCompareDomElementSnapshot[]
   removed: VisualCompareDomElementSnapshot[]
@@ -81,6 +155,54 @@ interface VisualCompareComparisonMetrics {
 interface VisualCompareComparisonSummary extends VisualCompareComparisonMetrics {
   source?: { label?: string; url?: string; screenshot?: string }
   candidate?: { label?: string; url?: string; screenshot?: string }
+}
+
+export interface VisualCompareCaptureDiagnostics {
+  schema: "wp-codebox/visual-compare-capture-diagnostics/v1"
+  readiness: {
+    status: "ready" | "warning"
+    confidence: "high" | "medium" | "low"
+    afterSettle: true
+    reasons: string[]
+  }
+  assets: {
+    stylesheets: { total: number; loaded: number; pending: number; errored: number }
+    images: { total: number; loaded: number; loading: number; failed: number }
+    fonts: { status: string; total?: number; loaded?: number; loading?: number; error?: number }
+  }
+  environment: {
+    url: string
+    title: string
+    userAgent: string
+    viewport: { width: number; height: number }
+    devicePixelRatio: number
+    colorScheme: string
+    reducedMotion: boolean
+    timezone: string
+  }
+  dynamicContent: {
+    fixed: number
+    sticky: number
+    video: number
+    canvas: number
+    iframe: number
+    animated: number
+    focusedElement: boolean
+    focusedElementTag?: string
+  }
+}
+
+export interface VisualCompareCaptureDiagnosticsCompact {
+  readiness: "ready" | "warning"
+  confidence: "high" | "medium" | "low"
+  reasons: string[]
+  assets: {
+    stylesheets: { total: number; pending: number; errored: number }
+    images: { total: number; loading: number; failed: number }
+    fonts: { status: string; loading?: number; error?: number }
+  }
+  dynamicContent: VisualCompareCaptureDiagnostics["dynamicContent"]
+  environment: Pick<VisualCompareCaptureDiagnostics["environment"], "url" | "viewport" | "devicePixelRatio" | "colorScheme" | "reducedMotion">
 }
 
 interface VisualCompareBaselineDelta {
@@ -122,8 +244,9 @@ export function blocksEngineVisualParityReportFromVisualCompare(input: {
   files?: Record<string, unknown>
   comparison?: VisualCompareComparisonMetrics
   options?: Record<string, unknown>
+  captureDiagnostics?: { source?: VisualCompareCaptureDiagnostics; candidate?: VisualCompareCaptureDiagnostics }
   explanation?: VisualCompareExplanation
-  comparisons?: Array<{ name: string; status?: string; source?: Record<string, unknown>; candidate?: Record<string, unknown>; viewport?: BrowserProbeViewport | null; files?: Record<string, unknown>; comparison?: VisualCompareComparisonMetrics }>
+  comparisons?: Array<{ name: string; status?: string; source?: Record<string, unknown>; candidate?: Record<string, unknown>; viewport?: BrowserProbeViewport | null; files?: Record<string, unknown>; captureDiagnostics?: { source?: VisualCompareCaptureDiagnostics; candidate?: VisualCompareCaptureDiagnostics }; comparison?: VisualCompareComparisonMetrics }>
   metrics?: Record<string, unknown>
   command?: string
   startedAt?: string
@@ -165,6 +288,7 @@ export function blocksEngineVisualParityReportFromVisualCompare(input: {
       target_selector: selector.selector,
     },
   })) ?? []
+  const computedStyleDeltas = blocksEngineComputedStyleDeltas(input.explanation?.selectorDeltas, fallbackViewport[0]?.id)
 
   return {
     schema: "blocks-engine/php-transformer/visual-parity-report/v1",
@@ -174,6 +298,7 @@ export function blocksEngineVisualParityReportFromVisualCompare(input: {
     target_render: blocksEngineVisualParityRender("target", input.candidate, stringFileRef(targetScreenshot)),
     viewports: fallbackViewport,
     matches,
+    ...(computedStyleDeltas.length > 0 ? { computed_style_deltas: computedStyleDeltas } : {}),
     visual_diff: {
       available: completeComparisons.length > 0,
       ...(typeof input.comparison?.mismatchRatio === "number" ? { mismatch_percent: input.comparison.mismatchRatio * 100 } : {}),
@@ -197,8 +322,41 @@ export function blocksEngineVisualParityReportFromVisualCompare(input: {
       ...(input.finishedAt ? { finished_at: input.finishedAt } : {}),
       ...(input.updatedAt ? { updated_at: input.updatedAt } : {}),
       ...(input.metrics ? { source_metrics: input.metrics } : {}),
+      ...(input.captureDiagnostics ? { capture_diagnostics: visualCompareCompactCaptureDiagnostics(input.captureDiagnostics) } : {}),
     },
   }
+}
+
+function blocksEngineComputedStyleDeltas(selectorDeltas: VisualCompareSelectorDelta[] | undefined, viewportId?: string): NonNullable<BlocksEngineVisualParityReport["computed_style_deltas"]> {
+  return (selectorDeltas ?? []).flatMap((selectorDelta) => {
+    const common = {
+      ...(viewportId ? { viewport_id: viewportId } : {}),
+      source_selector: selectorDelta.selector,
+      target_selector: selectorDelta.selector,
+    }
+    const deltas: NonNullable<BlocksEngineVisualParityReport["computed_style_deltas"]> = []
+    if (selectorDelta.boundingBox.severity !== "none") {
+      deltas.push({
+        property: "bounding-box",
+        severity: selectorDelta.boundingBox.severity,
+        ...common,
+        source_value: selectorDelta.boundingBox.source,
+        target_value: selectorDelta.boundingBox.candidate,
+        delta: { ...selectorDelta.boundingBox.delta, category: selectorDelta.boundingBox.category, hint: selectorDelta.boundingBox.hint },
+      })
+    }
+    for (const style of selectorDelta.styles) {
+      deltas.push({
+        property: style.property,
+        severity: style.severity,
+        ...common,
+        source_value: style.source,
+        target_value: style.candidate,
+        delta: { category: style.category, hint: style.hint },
+      })
+    }
+    return deltas
+  })
 }
 
 function blocksEngineVisualParityRender(kind: "source", input?: Record<string, unknown>, screenshotPath?: string): BlocksEngineVisualParityReport["source_render"]
@@ -346,6 +504,7 @@ async function runVisualComparePairCommand({
   let viewport: BrowserProbeViewport | null = null
   let sourceDomSnapshot: VisualCompareDomSnapshot | undefined
   let candidateDomSnapshot: VisualCompareDomSnapshot | undefined
+  let captureDiagnostics: { source?: VisualCompareCaptureDiagnostics; candidate?: VisualCompareCaptureDiagnostics } | undefined
   const sourceSummary = (): Record<string, unknown> => ({
     label: sourceLabel,
     ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
@@ -399,6 +558,7 @@ async function runVisualComparePairCommand({
         }
         finalSourceUrl = sourceCapture.finalUrl
         sourceDomSnapshot = sourceCapture.domSnapshot
+        const sourceCaptureDiagnostics = sourceCapture.captureDiagnostics
         await writePartialSummary("source-captured")
         let candidateCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
         await artifactSession.writeGenerated("candidateScreenshot", "candidate.png", async (path) => {
@@ -414,6 +574,8 @@ async function runVisualComparePairCommand({
         }
         finalCandidateUrl = candidateCapture.finalUrl
         candidateDomSnapshot = candidateCapture.domSnapshot
+        const candidateCaptureDiagnostics = candidateCapture.captureDiagnostics
+        captureDiagnostics = { source: sourceCaptureDiagnostics, candidate: candidateCaptureDiagnostics }
         await writePartialSummary("candidate-captured")
       } catch (error) {
         const result = await writeVisualCompareFailureSummary({
@@ -540,6 +702,7 @@ async function runVisualComparePairCommand({
       candidateScreenshot: { algorithm: "sha256", value: await fileSha256(candidatePath) },
       diffScreenshot: { algorithm: "sha256", value: await fileSha256(diffPath) },
     },
+    ...(captureDiagnostics ? { captureDiagnostics } : {}),
     comparison,
     ...(baseline ? { baseline } : {}),
   }
@@ -578,6 +741,7 @@ async function runVisualComparePairCommand({
         dimensionDeltaPixels: comparison.dimensionDeltaPixels,
         dimensionDeltaRatio: comparison.dimensionDeltaRatio,
         dimensionMismatch: comparison.dimensionMismatch,
+        ...(captureDiagnostics ? { captureDiagnostics: visualCompareCompactCaptureDiagnostics(captureDiagnostics) } : {}),
         ...(explanation ? { explanation: files.visualExplanation } : {}),
         blocksEngineVisualParity: files.blocksEngineVisualParity,
       },
@@ -653,6 +817,7 @@ function visualCompareMatrixArtifact(
   const visualDiffs = entries.map((entry) => entry.artifact.files.visualDiff).filter((file): file is string => typeof file === "string")
   const visualExplanations = entries.map((entry) => entry.artifact.files.visualExplanation).filter((file): file is string => typeof file === "string")
   const firstArtifact = entries[0]?.artifact
+  const captureDiagnostics = visualCompareMatrixCompactCaptureDiagnostics(matrixSummary)
   return {
     artifactType: "visual-compare",
     requestedUrl: expectedEntries.map((entry) => entry.name).join(","),
@@ -683,6 +848,7 @@ function visualCompareMatrixArtifact(
         totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + (entry.comparison?.totalPixels ?? 0), 0),
         overlapMismatchRatio: matrixSummary.metrics.maxOverlapMismatchRatio,
         dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison?.dimensionMismatch === true),
+        ...(captureDiagnostics ? { captureDiagnostics } : {}),
         explanation: matrixSummary.files.summary,
         ...(matrixSummary.files.blocksEngineVisualParity ? { blocksEngineVisualParity: matrixSummary.files.blocksEngineVisualParity } : {}),
       },
@@ -940,6 +1106,7 @@ async function writeVisualCompareMatrixSummary(
     options: entry.summary.options,
     viewport: entry.summary.viewport,
     files: entry.summary.files,
+    ...(entry.summary.captureDiagnostics ? { captureDiagnostics: entry.summary.captureDiagnostics } : {}),
     comparison: entry.summary.comparison,
   }))
   const allComparisons = [...comparisons, ...failedEntries]
@@ -1062,6 +1229,7 @@ interface VisualComparePairSummary {
   options: Record<string, unknown>
   viewport: BrowserProbeViewport | null
   files: Record<string, string>
+  captureDiagnostics?: { source?: VisualCompareCaptureDiagnostics; candidate?: VisualCompareCaptureDiagnostics }
   comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean; overlapMismatchRatio?: number; overlapMismatchPixels?: number; overlapPixels?: number; dimensionDeltaPixels?: number; dimensionDeltaRatio?: number }
 }
 
@@ -1143,6 +1311,7 @@ interface VisualCompareMatrixSummary {
     options: Record<string, unknown>
     viewport: BrowserProbeViewport | null
     files: Record<string, string>
+    captureDiagnostics?: VisualComparePairSummary["captureDiagnostics"]
     comparison?: VisualComparePairSummary["comparison"]
     diagnostic?: VisualCompareMatrixFailedEntry["diagnostic"]
   }>
@@ -1468,27 +1637,40 @@ function visualCompareExplainSelectors(args: string[]): string[] {
 // hanging on unreachable external resources. Same-origin requests (the document,
 // its local CSS/JS/images served by the preview server) pass through untouched.
 async function installVisualCompareOfflineIsolation(page: Page, previewOrigin: string): Promise<void> {
-  let allowedOrigin: string | null = null
-  try {
-    allowedOrigin = new URL(previewOrigin).origin
-  } catch {
-    allowedOrigin = null
-  }
   await page.route("**/*", (route) => {
-    const requestUrl = route.request().url()
-    let requestOrigin: string | null = null
-    try {
-      requestOrigin = new URL(requestUrl).origin
-    } catch {
-      requestOrigin = null
-    }
-    // Allow same-origin (preview) and non-HTTP schemes (data:, blob:, about:).
-    if (!requestUrl.startsWith("http") || (allowedOrigin && requestOrigin === allowedOrigin)) {
+    if (visualCompareOfflineRequestAllowed(route.request().url(), previewOrigin)) {
       void route.continue()
       return
     }
     void route.abort()
   })
+}
+
+export function visualCompareOfflineRequestAllowed(requestUrl: string, previewOrigin: string): boolean {
+  let request: URL
+  try {
+    request = new URL(requestUrl)
+  } catch {
+    return true
+  }
+  if (request.protocol !== "http:" && request.protocol !== "https:") {
+    return true
+  }
+
+  try {
+    if (request.origin === new URL(previewOrigin).origin) {
+      return true
+    }
+  } catch {
+    // Ignore malformed preview origins and fall through to loopback allowance.
+  }
+
+  return isLoopbackHostname(request.hostname)
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase()
+  return normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(normalized)
 }
 
 // A static full-page screenshot never scrolls the document, so any content gated
@@ -1593,6 +1775,51 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
     await nextFrame()
     await sleep(16)
   })
+}
+
+async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<void> {
+  const readinessTimeoutMs = Math.max(1_000, Math.min(10_000, timeoutMs))
+  await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
+  await page.evaluate(async (timeout) => {
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+    const until = Date.now() + timeout
+
+    const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
+      .filter((link) => !link.disabled && Boolean(link.href))
+    await Promise.all(stylesheetLinks.map(async (link) => {
+      while (!link.sheet && Date.now() < until) {
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            link.addEventListener("load", () => resolve(), { once: true })
+            link.addEventListener("error", () => resolve(), { once: true })
+          }),
+          sleep(100),
+        ])
+      }
+    }))
+
+    await (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready?.catch(() => undefined)
+
+    const images = Array.from(document.images).filter((image) => !image.complete)
+    await Promise.all(images.map(async (image) => {
+      if (typeof image.decode === "function") {
+        await image.decode().catch(() => undefined)
+        return
+      }
+      if (image.complete) {
+        return
+      }
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          image.addEventListener("load", () => resolve(), { once: true })
+          image.addEventListener("error", () => resolve(), { once: true })
+        }),
+        sleep(Math.max(0, until - Date.now())),
+      ])
+    }))
+
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  }, readinessTimeoutMs).catch(() => undefined)
 }
 
 export interface VisualCompareNavigationPolicy {
@@ -1720,7 +1947,160 @@ async function captureVisualComparePageScreenshot(page: Page, outputPath: string
   throw new Error(`wordpress.visual-compare screenshot failed after ${attempts} attempt(s)${where}: ${visualCompareErrorDetail(lastError)}`)
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
+export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDiagnostics, "assets" | "dynamicContent">): VisualCompareCaptureDiagnostics["readiness"] {
+  const reasons: string[] = []
+  if (input.assets.stylesheets.pending > 0) {
+    reasons.push(`${input.assets.stylesheets.pending} stylesheet(s) still pending`)
+  }
+  if (input.assets.stylesheets.errored > 0) {
+    reasons.push(`${input.assets.stylesheets.errored} stylesheet(s) errored`)
+  }
+  if (input.assets.images.loading > 0) {
+    reasons.push(`${input.assets.images.loading} image(s) still loading`)
+  }
+  if (input.assets.images.failed > 0) {
+    reasons.push(`${input.assets.images.failed} image(s) failed`)
+  }
+  if (input.assets.fonts.status && input.assets.fonts.status !== "loaded") {
+    reasons.push(`fonts status is ${input.assets.fonts.status}`)
+  }
+  if ((input.assets.fonts.loading ?? 0) > 0) {
+    reasons.push(`${input.assets.fonts.loading} font face(s) still loading`)
+  }
+  if ((input.assets.fonts.error ?? 0) > 0) {
+    reasons.push(`${input.assets.fonts.error} font face(s) errored`)
+  }
+
+  const noise = input.dynamicContent.animated + input.dynamicContent.video + input.dynamicContent.canvas + input.dynamicContent.iframe
+  if (noise > 0) {
+    reasons.push(`${noise} dynamic/noisy element(s) present`)
+  }
+  if (input.dynamicContent.focusedElement) {
+    reasons.push("focused element present")
+  }
+
+  return {
+    status: reasons.length === 0 ? "ready" : "warning",
+    confidence: reasons.length === 0 ? "high" : reasons.length <= 2 ? "medium" : "low",
+    afterSettle: true,
+    reasons,
+  }
+}
+
+export function visualCompareCompactCaptureDiagnostics(input: { source?: VisualCompareCaptureDiagnostics; candidate?: VisualCompareCaptureDiagnostics }): { source?: VisualCompareCaptureDiagnosticsCompact; candidate?: VisualCompareCaptureDiagnosticsCompact } {
+  return {
+    ...(input.source ? { source: visualCompareCompactCaptureDiagnostic(input.source) } : {}),
+    ...(input.candidate ? { candidate: visualCompareCompactCaptureDiagnostic(input.candidate) } : {}),
+  }
+}
+
+function visualCompareCompactCaptureDiagnostic(input: VisualCompareCaptureDiagnostics): VisualCompareCaptureDiagnosticsCompact {
+  return {
+    readiness: input.readiness.status,
+    confidence: input.readiness.confidence,
+    reasons: input.readiness.reasons,
+    assets: {
+      stylesheets: { total: input.assets.stylesheets.total, pending: input.assets.stylesheets.pending, errored: input.assets.stylesheets.errored },
+      images: { total: input.assets.images.total, loading: input.assets.images.loading, failed: input.assets.images.failed },
+      fonts: { status: input.assets.fonts.status, ...(input.assets.fonts.loading !== undefined ? { loading: input.assets.fonts.loading } : {}), ...(input.assets.fonts.error !== undefined ? { error: input.assets.fonts.error } : {}) },
+    },
+    dynamicContent: input.dynamicContent,
+    environment: {
+      url: input.environment.url,
+      viewport: input.environment.viewport,
+      devicePixelRatio: input.environment.devicePixelRatio,
+      colorScheme: input.environment.colorScheme,
+      reducedMotion: input.environment.reducedMotion,
+    },
+  }
+}
+
+function visualCompareMatrixCompactCaptureDiagnostics(input: VisualCompareMatrixSummary): { comparisons: Array<{ name: string; source?: VisualCompareCaptureDiagnosticsCompact; candidate?: VisualCompareCaptureDiagnosticsCompact }> } | undefined {
+  const comparisons = input.comparisons
+    .filter((comparison) => comparison.captureDiagnostics)
+    .map((comparison) => ({ name: comparison.name, ...visualCompareCompactCaptureDiagnostics(comparison.captureDiagnostics ?? {}) }))
+  return comparisons.length > 0 ? { comparisons } : undefined
+}
+
+async function captureVisualCompareDiagnostics(page: Page): Promise<VisualCompareCaptureDiagnostics> {
+  const diagnostics = await page.evaluate(() => {
+    const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')).filter((link) => !link.disabled && Boolean(link.href))
+    const stylesheetStatus = stylesheetLinks.map((link) => {
+      const resource = performance.getEntriesByName(link.href).at(-1) as PerformanceResourceTiming | undefined
+      const loaded = Boolean(link.sheet)
+      const errored = !loaded && resource !== undefined && resource.transferSize === 0 && resource.decodedBodySize === 0
+      return { loaded, errored }
+    })
+    const images = Array.from(document.images)
+    const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts
+    const fontFaces = fontSet ? Array.from(fontSet) : []
+    const elements = Array.from(document.querySelectorAll<HTMLElement>("body *"))
+    const positionCounts = elements.reduce((counts, element) => {
+      const position = getComputedStyle(element).position
+      if (position === "fixed") {
+        counts.fixed += 1
+      } else if (position === "sticky") {
+        counts.sticky += 1
+      }
+      return counts
+    }, { fixed: 0, sticky: 0 })
+    const animatedTargets = new Set<Element>()
+    const documentWithSubtreeAnimations = document as Document & { getAnimations(options?: { subtree?: boolean }): Animation[] }
+    for (const animation of documentWithSubtreeAnimations.getAnimations({ subtree: true })) {
+      const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null
+      if (target instanceof Element) {
+        animatedTargets.add(target)
+      }
+    }
+    const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    const colorScheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+
+    return {
+      schema: "wp-codebox/visual-compare-capture-diagnostics/v1" as const,
+      assets: {
+        stylesheets: {
+          total: stylesheetStatus.length,
+          loaded: stylesheetStatus.filter((item) => item.loaded).length,
+          pending: stylesheetStatus.filter((item) => !item.loaded && !item.errored).length,
+          errored: stylesheetStatus.filter((item) => item.errored).length,
+        },
+        images: {
+          total: images.length,
+          loaded: images.filter((image) => image.complete && image.naturalWidth > 0).length,
+          loading: images.filter((image) => !image.complete).length,
+          failed: images.filter((image) => image.complete && image.naturalWidth === 0).length,
+        },
+        fonts: {
+          status: fontSet?.status ?? "unavailable",
+          ...(fontSet ? { total: fontFaces.length, loaded: fontFaces.filter((font) => font.status === "loaded").length, loading: fontFaces.filter((font) => font.status === "loading").length, error: fontFaces.filter((font) => font.status === "error").length } : {}),
+        },
+      },
+      environment: {
+        url: location.href,
+        title: document.title,
+        userAgent: navigator.userAgent,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        devicePixelRatio: window.devicePixelRatio || 1,
+        colorScheme,
+        reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+      },
+      dynamicContent: {
+        fixed: positionCounts.fixed,
+        sticky: positionCounts.sticky,
+        video: document.querySelectorAll("video").length,
+        canvas: document.querySelectorAll("canvas").length,
+        iframe: document.querySelectorAll("iframe").length,
+        animated: animatedTargets.size,
+        focusedElement: Boolean(active),
+        ...(active ? { focusedElementTag: active.tagName.toLowerCase() } : {}),
+      },
+    }
+  })
+  return { ...diagnostics, readiness: visualCompareCaptureReadiness(diagnostics) }
+}
+
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
   if (waitFor === "duration") {
     await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     if (durationMs > 0) {
@@ -1740,16 +2120,18 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
+  await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
   // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
   // fully-revealed page state. Identical treatment for source and candidate.
   await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
   // to their final state and freezes infinite ones to a deterministic frame, so the
   // capture does not depend on transition timing. Applied to both sides equally.
   await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
-  return { finalUrl: page.url(), domSnapshot }
+  return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
 }
 
 function createVisualCompareExplanation({
@@ -1801,6 +2183,8 @@ function createVisualCompareExplanation({
 
   const maxElements = limits.maxElements
   const selectorSummary = visualCompareSelectorSummary(source.selectors, candidate.selectors, explainSelectors)
+  const selectorDeltas = visualCompareSelectorDeltas(source.selectors, candidate.selectors, source.capturedElements, candidate.capturedElements, explainSelectors)
+  const layoutDrift = visualCompareLayoutDrift(source.capturedElements, candidate.capturedElements, comparison.mismatchPixels > 0 || comparison.dimensionMismatch)
   const limitations = [
     "visual explanations are heuristic evidence generated from DOM snapshots and computed styles; pixel screenshots remain the source of visual truth",
     "elements are matched by deterministic CSS-like paths, so large structural moves can appear as added and removed elements",
@@ -1814,8 +2198,9 @@ function createVisualCompareExplanation({
     source: { label: sourceLabel, url: source.url, title: source.title, elementCount: source.elementCount, capturedElements: source.capturedElements.length, truncated: source.truncated },
     candidate: { label: candidateLabel, url: candidate.url, title: candidate.title, elementCount: candidate.elementCount, capturedElements: candidate.capturedElements.length, truncated: candidate.truncated },
     viewport,
-    mismatchRegions: comparison.regions,
+    mismatchRegions: visualCompareExplainRegions(comparison.regions, source.capturedElements, candidate.capturedElements),
     ...(selectorSummary.selectors.length > 0 ? { selectors: selectorSummary.selectors } : {}),
+    ...(selectorDeltas.length > 0 ? { selectorDeltas } : {}),
     ...(selectorSummary.missingSelectors.length > 0 ? { missingSelectors: selectorSummary.missingSelectors } : {}),
     limits,
     truncation: {
@@ -1830,6 +2215,7 @@ function createVisualCompareExplanation({
       sourceCapturedElements: source.capturedElements.length,
       candidateCapturedElements: candidate.capturedElements.length,
     },
+    ...(layoutDrift ? { layoutDrift } : {}),
     changes: changed.slice(0, maxElements),
     added: added.slice(0, maxElements),
     removed: removed.slice(0, maxElements),
@@ -1860,6 +2246,297 @@ function visualCompareSelectorSummary(sourceSelectors: VisualCompareSelectorSnap
     }))
 
   return { selectors, missingSelectors }
+}
+
+export function visualCompareSelectorDeltas(sourceSelectors: VisualCompareSelectorSnapshot[] | undefined, candidateSelectors: VisualCompareSelectorSnapshot[] | undefined, sourceElements: VisualCompareDomElementSnapshot[], candidateElements: VisualCompareDomElementSnapshot[], requestedSelectors: string[] = []): VisualCompareSelectorDelta[] {
+  const sourceBySelector = new Map((sourceSelectors ?? []).map((item) => [item.selector, item]))
+  const candidateBySelector = new Map((candidateSelectors ?? []).map((item) => [item.selector, item]))
+  const sourceByPath = new Map(sourceElements.map((element) => [element.path, element]))
+  const candidateByPath = new Map(candidateElements.map((element) => [element.path, element]))
+
+  return [...new Set(requestedSelectors)].flatMap((selector) => {
+    const source = sourceBySelector.get(selector)
+    const candidate = candidateBySelector.get(selector)
+    if (!source || !candidate || source.captured !== 1 || candidate.captured !== 1) {
+      return []
+    }
+    const sourceElement = sourceByPath.get(source.paths[0] ?? "")
+    const candidateElement = candidateByPath.get(candidate.paths[0] ?? "")
+    if (!sourceElement || !candidateElement) {
+      return []
+    }
+
+    const boundingBoxDelta = visualCompareBoundingBoxDelta(sourceElement.boundingBox, candidateElement.boundingBox)
+    const styles = visualCompareActionableStyleDeltas(sourceElement.styles, candidateElement.styles)
+    if (boundingBoxDelta.severity === "none" && styles.length === 0) {
+      return []
+    }
+
+    return [{
+      selector,
+      sourcePath: sourceElement.path,
+      candidatePath: candidateElement.path,
+      source: { path: sourceElement.path, tag: sourceElement.tag, boundingBox: sourceElement.boundingBox },
+      candidate: { path: candidateElement.path, tag: candidateElement.tag, boundingBox: candidateElement.boundingBox },
+      boundingBox: boundingBoxDelta,
+      styles,
+    }]
+  })
+}
+
+function visualCompareBoundingBoxDelta(source: VisualCompareDomElementSnapshot["boundingBox"], candidate: VisualCompareDomElementSnapshot["boundingBox"]): VisualCompareSelectorDelta["boundingBox"] {
+  const delta = {
+    x: roundVisualDelta(candidate.x - source.x),
+    y: roundVisualDelta(candidate.y - source.y),
+    width: roundVisualDelta(candidate.width - source.width),
+    height: roundVisualDelta(candidate.height - source.height),
+  }
+  const maxPositionDelta = Math.max(Math.abs(delta.x), Math.abs(delta.y))
+  const maxSizeDelta = Math.max(Math.abs(delta.width), Math.abs(delta.height))
+  const severity = maxPositionDelta >= 8 || maxSizeDelta >= 8 ? "error" : maxPositionDelta >= 1 || maxSizeDelta >= 1 ? "warning" : maxPositionDelta >= 0.5 || maxSizeDelta >= 0.5 ? "info" : "none"
+  return {
+    source,
+    candidate,
+    delta,
+    severity,
+    category: "layout",
+    hint: severity === "none" ? "Bounding boxes match within the visual-compare tolerance." : "Check layout, spacing, sizing, and positioning rules for this selector.",
+  }
+}
+
+function visualCompareActionableStyleDeltas(source: Record<string, string>, candidate: Record<string, string>): VisualCompareActionableStyleDelta[] {
+  return Object.keys(visualCompareActionableStyles({ ...source, ...candidate }))
+    .filter((property) => (source[property] ?? "") !== (candidate[property] ?? ""))
+    .map((property) => ({
+      property,
+      source: source[property] ?? "",
+      candidate: candidate[property] ?? "",
+      ...visualCompareStyleDeltaMetadata(property),
+    }))
+}
+
+function visualCompareStyleDeltaMetadata(property: string): Pick<VisualCompareActionableStyleDelta, "category" | "severity" | "hint"> {
+  if (/^(display|position|top|right|bottom|left|z-index|width|height|min-|max-|margin-|padding-|overflow|flex-|justify-content|align-|gap|row-gap|column-gap|grid-)/.test(property)) {
+    return { category: "layout", severity: property === "display" || property === "position" ? "error" : "warning", hint: "Check layout, flow, sizing, or spacing rules for this selector." }
+  }
+  if (/^(font-|line-height$|letter-spacing$|text-align$|white-space$)/.test(property)) {
+    return { category: "typography", severity: "warning", hint: "Check typography rules that can shift text metrics and wrapping." }
+  }
+  if (/^(opacity|transform|visibility)$/.test(property)) {
+    return { category: "effect", severity: property === "transform" || property === "visibility" ? "error" : "warning", hint: "Check visibility, transform, or compositing rules for this selector." }
+  }
+  return { category: "paint", severity: "info", hint: "Check paint-only rules such as color, background, border, or object rendering." }
+}
+
+function visualCompareExplainRegions(regions: VisualCompareMismatchRegion[], sourceElements: VisualCompareDomElementSnapshot[], candidateElements: VisualCompareDomElementSnapshot[]): VisualCompareMismatchRegion[] {
+  return regions.map((region) => ({
+    ...region,
+    sourceElements: visualCompareRegionElementOverlaps(region, sourceElements),
+    candidateElements: visualCompareRegionElementOverlaps(region, candidateElements),
+  }))
+}
+
+export function visualCompareRegionElementOverlaps(region: VisualCompareMismatchRegion, elements: VisualCompareDomElementSnapshot[], limit = 8): VisualCompareRegionElementOverlap[] {
+  const regionArea = region.width * region.height
+  if (regionArea <= 0) {
+    return []
+  }
+
+  return elements
+    .map((element) => {
+      const box = element.boundingBox
+      const overlapX = Math.max(region.x, box.x)
+      const overlapY = Math.max(region.y, box.y)
+      const overlapRight = Math.min(region.x + region.width, box.x + box.width)
+      const overlapBottom = Math.min(region.y + region.height, box.y + box.height)
+      const width = Math.max(0, overlapRight - overlapX)
+      const height = Math.max(0, overlapBottom - overlapY)
+      const area = width * height
+      if (area <= 0) {
+        return undefined
+      }
+      const elementArea = Math.max(1, box.width * box.height)
+      return {
+        path: element.path,
+        tag: element.tag,
+        ...(element.text ? { text: element.text } : {}),
+        ...(element.attributes.class ? { className: element.attributes.class } : {}),
+        boundingBox: box,
+        overlap: {
+          x: roundVisualDelta(overlapX),
+          y: roundVisualDelta(overlapY),
+          width: roundVisualDelta(width),
+          height: roundVisualDelta(height),
+          area: roundVisualDelta(area),
+          regionCoverage: roundVisualDelta(area / regionArea),
+          elementCoverage: roundVisualDelta(area / elementArea),
+        },
+        styles: visualCompareActionableStyles(element.styles),
+      } satisfies VisualCompareRegionElementOverlap
+    })
+    .filter((element): element is VisualCompareRegionElementOverlap => Boolean(element))
+    .sort((a, b) => {
+      const areaDelta = b.overlap.area - a.overlap.area
+      if (Math.abs(areaDelta) >= 1) {
+        return areaDelta
+      }
+      const aArea = a.boundingBox.width * a.boundingBox.height
+      const bArea = b.boundingBox.width * b.boundingBox.height
+      return aArea - bArea
+    })
+    .slice(0, limit)
+}
+
+function visualCompareActionableStyles(styles: Record<string, string>): Record<string, string> {
+  const keys = ["display", "position", "box-sizing", "top", "right", "bottom", "left", "z-index", "width", "height", "min-width", "max-width", "min-height", "max-height", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "overflow", "overflow-x", "overflow-y", "flex-direction", "flex-wrap", "justify-content", "align-items", "align-content", "gap", "row-gap", "column-gap", "grid-template-columns", "grid-template-rows", "grid-auto-flow", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align", "white-space", "color", "background-color", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "object-fit", "object-position", "opacity", "transform", "visibility"]
+  return Object.fromEntries(keys.flatMap((key) => (styles[key] ? [[key, styles[key]]] : [])))
+}
+
+export function visualCompareLayoutDrift(sourceElements: VisualCompareDomElementSnapshot[], candidateElements: VisualCompareDomElementSnapshot[], screenshotChanged = false): VisualCompareLayoutDrift | undefined {
+  const sourceFlow = sourceElements.filter(visualCompareElementInDocumentFlow).sort(visualCompareFlowOrder)
+  const candidateFlow = candidateElements.filter(visualCompareElementInDocumentFlow).sort(visualCompareFlowOrder)
+  const sourceByPath = new Map(sourceFlow.map((element) => [element.path, element]))
+  const candidateByPath = new Map(candidateFlow.map((element) => [element.path, element]))
+  const matched = sourceFlow.map((source) => ({ source, candidate: candidateByPath.get(source.path) })).filter((pair): pair is { source: VisualCompareDomElementSnapshot; candidate: VisualCompareDomElementSnapshot } => Boolean(pair.candidate))
+  const added = candidateFlow.filter((element) => !sourceByPath.has(element.path))
+  const removed = sourceFlow.filter((element) => !candidateByPath.has(element.path))
+  const divergences: VisualCompareLayoutDriftDivergence[] = []
+  const anchors: VisualCompareLayoutDriftAnchor[] = []
+  let maxAbsYOffset = 0
+  let maxAbsHeightDelta = 0
+  let maxAbsGapDelta = 0
+
+  for (const { source, candidate } of matched) {
+    const yDelta = roundVisualDelta(candidate.boundingBox.y - source.boundingBox.y)
+    const heightDelta = roundVisualDelta(candidate.boundingBox.height - source.boundingBox.height)
+    maxAbsYOffset = Math.max(maxAbsYOffset, Math.abs(yDelta))
+    maxAbsHeightDelta = Math.max(maxAbsHeightDelta, Math.abs(heightDelta))
+    if (Math.abs(heightDelta) >= 1) {
+      divergences.push(visualCompareLayoutDriftDivergence("height-delta", source, candidate, { height: heightDelta }))
+    }
+    if (Math.abs(yDelta) >= 1) {
+      divergences.push(visualCompareLayoutDriftDivergence("y-offset", source, candidate, { y: yDelta }))
+    }
+    if (Math.abs(yDelta) >= 1 || Math.abs(heightDelta) >= 1) {
+      anchors.push(visualCompareLayoutDriftAnchor(source, candidate, { ...(Math.abs(yDelta) >= 1 ? { y: yDelta } : {}), ...(Math.abs(heightDelta) >= 1 ? { height: heightDelta } : {}) }))
+    }
+  }
+
+  for (let index = 1; index < matched.length; index += 1) {
+    const previous = matched[index - 1]
+    const current = matched[index]
+    const sourceGap = current.source.boundingBox.y - (previous.source.boundingBox.y + previous.source.boundingBox.height)
+    const candidateGap = current.candidate.boundingBox.y - (previous.candidate.boundingBox.y + previous.candidate.boundingBox.height)
+    const gapDelta = roundVisualDelta(candidateGap - sourceGap)
+    maxAbsGapDelta = Math.max(maxAbsGapDelta, Math.abs(gapDelta))
+    if (Math.abs(gapDelta) >= 1) {
+      divergences.push({ ...visualCompareLayoutDriftDivergence("gap-delta", current.source, current.candidate, { gap: gapDelta }), previousPath: previous.source.path })
+      anchors.push(visualCompareLayoutDriftAnchor(current.source, current.candidate, { gap: gapDelta }))
+    }
+  }
+
+  for (const element of added) {
+    divergences.push(visualCompareLayoutDriftDivergence("added-flow-element", undefined, element))
+    anchors.push(visualCompareLayoutDriftAnchor(undefined, element))
+  }
+  for (const element of removed) {
+    divergences.push(visualCompareLayoutDriftDivergence("removed-flow-element", element, undefined))
+    anchors.push(visualCompareLayoutDriftAnchor(element, undefined))
+  }
+
+  const changedFlowElements = new Set(anchors.map((anchor) => anchor.path)).size
+  if (divergences.length === 0) {
+    if (!screenshotChanged) {
+      return undefined
+    }
+    const firstDivergence: VisualCompareLayoutDriftDivergence = { type: "screenshot-only" }
+    return {
+      summary: {
+        compact: "Screenshot pixels differ, but captured in-flow DOM anchors do not show vertical layout drift.",
+        firstDivergenceType: firstDivergence.type,
+        matchedFlowElements: matched.length,
+        addedFlowElements: 0,
+        removedFlowElements: 0,
+        changedFlowElements: 0,
+        maxAbsYOffset: 0,
+        maxAbsHeightDelta: 0,
+        maxAbsGapDelta: 0,
+      },
+      firstDivergence,
+      anchors: [],
+    }
+  }
+
+  const firstDivergence = divergences.sort(visualCompareLayoutDivergenceOrder)[0] as VisualCompareLayoutDriftDivergence
+  const summary = {
+    compact: visualCompareLayoutDriftSummary(firstDivergence, { matched: matched.length, added: added.length, removed: removed.length }),
+    firstDivergenceType: firstDivergence.type,
+    matchedFlowElements: matched.length,
+    addedFlowElements: added.length,
+    removedFlowElements: removed.length,
+    changedFlowElements,
+    maxAbsYOffset: roundVisualDelta(maxAbsYOffset),
+    maxAbsHeightDelta: roundVisualDelta(maxAbsHeightDelta),
+    maxAbsGapDelta: roundVisualDelta(maxAbsGapDelta),
+  }
+  return { summary, firstDivergence, anchors: anchors.sort(visualCompareLayoutAnchorOrder).slice(0, 12) }
+}
+
+function visualCompareElementInDocumentFlow(element: VisualCompareDomElementSnapshot): boolean {
+  const position = element.styles.position?.trim().toLowerCase()
+  return position !== "fixed" && position !== "sticky"
+}
+
+function visualCompareFlowOrder(a: VisualCompareDomElementSnapshot, b: VisualCompareDomElementSnapshot): number {
+  return a.boundingBox.y - b.boundingBox.y || a.boundingBox.x - b.boundingBox.x || a.path.localeCompare(b.path)
+}
+
+function visualCompareLayoutDriftDivergence(type: Exclude<VisualCompareLayoutDriftDivergenceType, "screenshot-only">, source?: VisualCompareDomElementSnapshot, candidate?: VisualCompareDomElementSnapshot, delta?: VisualCompareLayoutDriftDivergence["delta"]): VisualCompareLayoutDriftDivergence {
+  const element = source ?? candidate
+  return {
+    type,
+    ...(element ? { path: element.path, tag: element.tag } : {}),
+    ...(element?.text ? { text: element.text } : {}),
+    ...(element?.attributes.class ? { className: element.attributes.class } : {}),
+    ...(element ? { y: roundVisualDelta(element.boundingBox.y) } : {}),
+    ...(source ? { source: source.boundingBox } : {}),
+    ...(candidate ? { candidate: candidate.boundingBox } : {}),
+    ...(delta ? { delta } : {}),
+  }
+}
+
+function visualCompareLayoutDriftAnchor(source?: VisualCompareDomElementSnapshot, candidate?: VisualCompareDomElementSnapshot, delta?: VisualCompareLayoutDriftAnchor["delta"]): VisualCompareLayoutDriftAnchor {
+  const element = source ?? candidate
+  return {
+    path: element?.path ?? "",
+    tag: element?.tag ?? "",
+    ...(element?.text ? { text: element.text } : {}),
+    ...(element?.attributes.class ? { className: element.attributes.class } : {}),
+    ...(source ? { source: source.boundingBox } : {}),
+    ...(candidate ? { candidate: candidate.boundingBox } : {}),
+    ...(delta ? { delta } : {}),
+  }
+}
+
+function visualCompareLayoutDivergenceOrder(a: VisualCompareLayoutDriftDivergence, b: VisualCompareLayoutDriftDivergence): number {
+  return (a.y ?? Number.MAX_SAFE_INTEGER) - (b.y ?? Number.MAX_SAFE_INTEGER) || visualCompareLayoutDivergencePriority(a.type) - visualCompareLayoutDivergencePriority(b.type) || (a.path ?? "").localeCompare(b.path ?? "")
+}
+
+function visualCompareLayoutAnchorOrder(a: VisualCompareLayoutDriftAnchor, b: VisualCompareLayoutDriftAnchor): number {
+  const aY = Math.min(a.source?.y ?? Number.MAX_SAFE_INTEGER, a.candidate?.y ?? Number.MAX_SAFE_INTEGER)
+  const bY = Math.min(b.source?.y ?? Number.MAX_SAFE_INTEGER, b.candidate?.y ?? Number.MAX_SAFE_INTEGER)
+  return aY - bY || a.path.localeCompare(b.path)
+}
+
+function visualCompareLayoutDivergencePriority(type: VisualCompareLayoutDriftDivergenceType): number {
+  return ["height-delta", "gap-delta", "y-offset", "added-flow-element", "removed-flow-element", "screenshot-only"].indexOf(type)
+}
+
+function visualCompareLayoutDriftSummary(first: VisualCompareLayoutDriftDivergence, counts: { matched: number; added: number; removed: number }): string {
+  const delta = first.delta?.height ?? first.delta?.gap ?? first.delta?.y
+  const deltaText = typeof delta === "number" ? ` (${delta > 0 ? "+" : ""}${delta}px)` : ""
+  const location = first.path ? ` at ${first.path}` : ""
+  return `First layout drift: ${first.type}${location}${deltaText}. Flow anchors: ${counts.matched} matched, ${counts.added} added, ${counts.removed} removed.`
 }
 
 function visualCompareElementDelta(source: VisualCompareDomElementSnapshot, candidate: VisualCompareDomElementSnapshot): VisualCompareElementDelta | undefined {
@@ -2158,7 +2835,14 @@ function visualCompareRegionBounds(diff: PNG, x: number, y: number, width: numbe
 
 function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
   const offset = ((y * diff.width) + x) << 2
-  return diff.data[offset] > 0 || diff.data[offset + 1] > 0 || diff.data[offset + 2] > 0
+  const red = diff.data[offset]
+  const green = diff.data[offset + 1]
+  const blue = diff.data[offset + 2]
+  // pixelmatch renders unchanged pixels as grayscale source context, so RGB>0 is
+  // not a mismatch signal. Actual mismatches use red and anti-aliased pixels use
+  // yellow, both non-grayscale. Region detection must walk those colored pixels,
+  // not the entire grayscale backdrop.
+  return red !== green || green !== blue
 }
 
 async function fileSha256(path: string): Promise<string> {

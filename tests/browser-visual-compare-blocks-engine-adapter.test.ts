@@ -17,6 +17,30 @@ const report = blocksEngineVisualParityReportFromVisualCompare({
     visualDiff: "files/browser/visual-compare/visual-diff.json",
   },
   comparison: { mismatchRatio: 0.0125, mismatchPixels: 42, totalPixels: 336960, dimensionMismatch: false },
+  explanation: {
+    schema: "wp-codebox/visual-explanation/v1",
+    source: { label: "source", url: "/source", title: "Source", elementCount: 1, capturedElements: 1, truncated: false },
+    candidate: { label: "candidate", url: "/candidate", title: "Candidate", elementCount: 1, capturedElements: 1, truncated: false },
+    viewport: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: "test" },
+    mismatchRegions: [],
+    selectors: [{ selector: ".cta", source: { selector: ".cta", matched: 1, captured: 1, paths: ["main > a.cta"] }, candidate: { selector: ".cta", matched: 1, captured: 1, paths: ["main > div.actions > a.cta"] } }],
+    selectorDeltas: [{
+      selector: ".cta",
+      sourcePath: "main > a.cta",
+      candidatePath: "main > div.actions > a.cta",
+      source: { path: "main > a.cta", tag: "a", boundingBox: { x: 20, y: 40, width: 120, height: 32 } },
+      candidate: { path: "main > div.actions > a.cta", tag: "a", boundingBox: { x: 20, y: 52, width: 132, height: 32 } },
+      boundingBox: { source: { x: 20, y: 40, width: 120, height: 32 }, candidate: { x: 20, y: 52, width: 132, height: 32 }, delta: { x: 0, y: 12, width: 12, height: 0 }, severity: "error", category: "layout", hint: "Check layout, spacing, sizing, and positioning rules for this selector." },
+      styles: [{ property: "gap", source: "4px", candidate: "12px", category: "layout", severity: "warning", hint: "Check layout, flow, sizing, or spacing rules for this selector." }],
+    }],
+    limits: { maxElements: 25, maxCandidates: 160 },
+    truncation: { changed: false, added: false, removed: false },
+    summary: { changedElements: 0, addedElements: 0, removedElements: 0, sourceCapturedElements: 1, candidateCapturedElements: 1 },
+    changes: [],
+    added: [],
+    removed: [],
+    limitations: [],
+  },
 })
 
 assert.equal(report.schema, "blocks-engine/php-transformer/visual-parity-report/v1")
@@ -54,6 +78,15 @@ assert.equal(report.findings.length, 1)
 assert.equal(report.findings[0]?.id, "visual-diff-default")
 assert.equal(report.findings[0]?.recommendation_ids?.[0], "review-visual-diff")
 assert.equal(report.recommendations[0]?.priority, "blocking")
+assert.equal(report.matches[0]?.source_selector, ".cta")
+assert.equal(report.computed_style_deltas?.length, 2)
+assert.equal(report.computed_style_deltas?.[0]?.property, "bounding-box")
+assert.equal(report.computed_style_deltas?.[0]?.severity, "error")
+assert.equal(report.computed_style_deltas?.[0]?.source_selector, ".cta")
+assert.equal(report.computed_style_deltas?.[0]?.viewport_id, "default")
+assert.deepEqual(report.computed_style_deltas?.[0]?.delta, { x: 0, y: 12, width: 12, height: 0, category: "layout", hint: "Check layout, spacing, sizing, and positioning rules for this selector." })
+assert.equal(report.computed_style_deltas?.[1]?.property, "gap")
+assert.equal(report.computed_style_deltas?.[1]?.delta?.category, "layout")
 
 const matrixReport = blocksEngineVisualParityReportFromVisualCompare({
   schema: "wp-codebox/visual-compare-matrix/v1",

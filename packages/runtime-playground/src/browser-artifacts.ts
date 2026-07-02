@@ -197,6 +197,7 @@ export interface BrowserArtifactSummary {
     dimensionDeltaPixels?: number
     dimensionDeltaRatio?: number
     dimensionMismatch?: boolean
+    captureDiagnostics?: unknown
     explanation?: string
     blocksEngineVisualParity?: string
   }
