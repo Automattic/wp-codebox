@@ -108,6 +108,41 @@ try {
   await rm(fallbackSource, { recursive: true, force: true })
 }
 
+const unreadableTargetSource = await mkdtemp(join(tmpdir(), "wp-codebox-unreadable-target-"))
+
+try {
+  await mkdir(join(unreadableTargetSource, "bin", "tests", "i18n-tools"), { recursive: true })
+  await writeFile(join(unreadableTargetSource, "bin", "tests", "i18n-tools", "phpunit.xml"), "<phpunit />")
+
+  await assert.rejects(
+    materializePlaygroundStagedInputs({
+      playground: {
+        async run({ code }: { code: string }) {
+          const payload = materializationPayload(code)
+          return {
+            text: JSON.stringify({
+              created: payload.directories?.length ?? 0,
+              skipped: 0,
+              missing: ["/home/example/public_html/bin/tests/i18n-tools"],
+            }),
+          }
+        },
+        async writeFile() {
+          throw new Error("files should not be written when directory verification fails")
+        },
+      },
+    } as never, [{
+      type: "directory",
+      source: unreadableTargetSource,
+      target: "/home/example/public_html",
+      mode: "readwrite",
+    }]),
+    /Staged input mount target directories are not readable in the sandbox after materialization: \/home\/example\/public_html\/bin\/tests\/i18n-tools \(missing\)/,
+  )
+} finally {
+  await rm(unreadableTargetSource, { recursive: true, force: true })
+}
+
 function materializationPayload(code: string): { directories?: string[]; files?: Array<{ target: string; contentsBase64: string }> } {
   const match = code.match(/\$payload = json_decode\((.*), true\);/)
   assert.ok(match, "materialization PHP includes a JSON payload")
