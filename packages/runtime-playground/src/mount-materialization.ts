@@ -36,6 +36,14 @@ interface HostMountFilePayload {
   contentsBase64: string
 }
 
+interface HostMountDirectoryMaterializationResponse {
+  created?: number
+  skipped?: number
+  missing?: string[]
+  unreadable?: string[]
+  unresolved?: string[]
+}
+
 const HOST_MOUNT_FILE_BATCH_SIZE = 100
 const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
 
@@ -188,7 +196,15 @@ async function createHostMountDirectories(server: PlaygroundCliServer, directori
     return { created: 0, skipped: 0 }
   }
   const response = await server.playground.run({ code: hostMountMkdirPhp(directories) })
-  const parsed = JSON.parse(response.text || "{}") as { created?: number; skipped?: number }
+  const parsed = JSON.parse(response.text || "{}") as HostMountDirectoryMaterializationResponse
+  const failures = [
+    ...(parsed.missing ?? []).map((path) => `${path} (missing)`),
+    ...(parsed.unreadable ?? []).map((path) => `${path} (unreadable)`),
+    ...(parsed.unresolved ?? []).map((path) => `${path} (unresolved)`),
+  ]
+  if (failures.length > 0) {
+    throw new Error(`Staged input mount target directories are not readable in the sandbox after materialization: ${failures.slice(0, 10).join(", ")}${failures.length > 10 ? `, and ${failures.length - 10} more` : ""}`)
+  }
   return {
     created: parsed.created ?? 0,
     skipped: parsed.skipped ?? 0,
@@ -408,6 +424,9 @@ function hostMountMkdirPhp(directories: string[]): string {
 $payload = json_decode(${payload}, true);
 $created = 0;
 $skipped = 0;
+$missing = array();
+$unreadable = array();
+$unresolved = array();
 foreach (($payload['directories'] ?? array()) as $directory) {
     $directory = (string) $directory;
     if ('' === $directory || str_contains($directory, "\0")) {
@@ -420,7 +439,24 @@ foreach (($payload['directories'] ?? array()) as $directory) {
     }
     $skipped++;
 }
-echo json_encode(array('schema' => 'wp-codebox/host-mount-directory-materialization/v1', 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+foreach (($payload['directories'] ?? array()) as $directory) {
+    $directory = (string) $directory;
+    if ('' === $directory || str_contains($directory, "\0")) {
+        continue;
+    }
+    if (!is_dir($directory)) {
+        $missing[] = $directory;
+        continue;
+    }
+    if (!is_readable($directory)) {
+        $unreadable[] = $directory;
+        continue;
+    }
+    if (false === realpath($directory)) {
+        $unresolved[] = $directory;
+    }
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-directory-materialization/v1', 'created' => $created, 'skipped' => $skipped, 'missing' => $missing, 'unreadable' => $unreadable, 'unresolved' => $unresolved), JSON_UNESCAPED_SLASHES);
 `
 }
 
