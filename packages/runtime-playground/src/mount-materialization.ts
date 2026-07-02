@@ -36,11 +36,8 @@ interface HostMountFilePayload {
   contentsBase64: string
 }
 
-interface HostMountCollection {
-  files: HostMountFilePayload[]
-  directories: string[]
-  skipped: number
-}
+const HOST_MOUNT_FILE_BATCH_SIZE = 100
+const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
 
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
   return {
@@ -80,20 +77,16 @@ export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServ
 }
 
 export async function materializePlaygroundStagedInputs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<StagedInputMaterializationResult> {
-  const files: HostMountFilePayload[] = []
-  const directories: string[] = []
+  let materialized = 0
+  let created = 0
   let skipped = 0
   for (const mount of mounts) {
-    const collected = await hostMountFilesForVfs(mount)
-    for (const file of collected.files) {
-      files.push(file)
-    }
-    for (const directory of collected.directories) {
-      directories.push(directory)
-    }
-    skipped += collected.skipped
+    const result = await materializeHostMountToVfs(server, mount)
+    materialized += result.materialized
+    created += result.created
+    skipped += result.skipped
   }
-  if (files.length === 0 && directories.length === 0) {
+  if (materialized === 0 && created === 0) {
     return {
       materialized: 0,
       deleted: 0,
@@ -106,54 +99,88 @@ export async function materializePlaygroundStagedInputs(server: PlaygroundCliSer
     }
   }
 
-  const materializedByPersistentWriter = await materializeHostMountFilesWithPersistentWriter(server, files, directories)
-  const materialized = materializedByPersistentWriter?.materialized ?? 0
-  const created = materializedByPersistentWriter?.created ?? 0
-  const totalSkipped = skipped + (materializedByPersistentWriter?.skipped ?? 0)
   return {
     materialized,
     deleted: 0,
-    skipped: totalSkipped,
+    skipped,
     phaseResult: materializationPhaseResult({
       phase: "playground-staged-input-materialization",
       status: materialized > 0 || created > 0 ? "completed" : "skipped",
-      metadata: { materialized, deleted: 0, skipped: totalSkipped, created },
+      metadata: { materialized, deleted: 0, skipped, created },
     }),
   }
 }
 
-async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundCliServer, files: HostMountFilePayload[], directories: string[]): Promise<{ materialized: number; created: number; skipped: number } | undefined> {
-  if (!server.playground.writeFile) {
-    return materializeHostMountFilesWithPhp(server, files, directories)
-  }
-
-  const targetDirectories = [...new Set([
-    ...directories,
-    ...files.map((file) => dirname(file.target.trim())),
-  ].filter((directory) => directory && directory !== "."))]
-  const directoryResult = await createHostMountDirectories(server, targetDirectories)
+async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: MountSpec): Promise<{ materialized: number; created: number; skipped: number }> {
   let materialized = 0
-  let skipped = directoryResult.skipped
-  const failedFiles: HostMountFilePayload[] = []
-  for (const file of files) {
-    const target = file.target.trim()
+  let created = 0
+  let skipped = 0
+  const directoryBatch: string[] = []
+  const fileBatch: HostMountFilePayload[] = []
+
+  const flushDirectories = async () => {
+    if (directoryBatch.length === 0) {
+      return
+    }
+    const result = await createHostMountDirectories(server, directoryBatch.splice(0, directoryBatch.length))
+    created += result.created
+    skipped += result.skipped
+  }
+  const queueDirectory = async (directory: string) => {
+    directoryBatch.push(directory)
+    if (directoryBatch.length >= HOST_MOUNT_DIRECTORY_BATCH_SIZE) {
+      await flushDirectories()
+    }
+  }
+  const flushFileBatch = async () => {
+    if (fileBatch.length === 0) {
+      return
+    }
+    const result = await materializeHostMountFilesWithPhp(server, fileBatch.splice(0, fileBatch.length), [])
+    materialized += result.materialized
+    created += result.created
+    skipped += result.skipped
+  }
+  const writeFilePayload = async (payload: HostMountFilePayload) => {
+    if (!server.playground.writeFile) {
+      fileBatch.push(payload)
+      if (fileBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushFileBatch()
+      }
+      return
+    }
+    const target = payload.target.trim()
     if (!target || target.includes("\0")) {
       skipped++
-      continue
+      return
     }
     try {
-      await server.playground.writeFile(target, Buffer.from(file.contentsBase64, "base64").toString("utf8"))
+      await server.playground.writeFile(target, Buffer.from(payload.contentsBase64, "base64").toString("utf8"))
       materialized++
     } catch {
-      failedFiles.push(file)
+      const fallback = await materializeHostMountFilesWithPhp(server, [payload], [])
+      materialized += fallback.materialized
+      created += fallback.created
+      skipped += fallback.skipped
     }
   }
-  if (failedFiles.length > 0) {
-    const fallback = await materializeHostMountFilesWithPhp(server, failedFiles, [])
-    materialized += fallback.materialized
-    skipped += fallback.skipped
+
+  for await (const entry of hostMountEntriesForVfs(mount)) {
+    if (entry.type === "skipped") {
+      skipped += entry.count
+      continue
+    }
+    if (entry.type === "directory") {
+      await queueDirectory(entry.target)
+      continue
+    }
+    await flushDirectories()
+    await writeFilePayload(entry.file)
   }
-  return { materialized, created: directoryResult.created, skipped }
+  await flushDirectories()
+  await flushFileBatch()
+
+  return { materialized, created, skipped }
 }
 
 async function createHostMountDirectories(server: PlaygroundCliServer, directories: string[]): Promise<{ created: number; skipped: number }> {
@@ -165,6 +192,66 @@ async function createHostMountDirectories(server: PlaygroundCliServer, directori
   return {
     created: parsed.created ?? 0,
     skipped: parsed.skipped ?? 0,
+  }
+}
+
+type HostMountEntry =
+  | { type: "directory"; target: string }
+  | { type: "file"; file: HostMountFilePayload }
+  | { type: "skipped"; count: number }
+
+async function* hostMountEntriesForVfs(mount: MountSpec): AsyncGenerator<HostMountEntry> {
+  let sourceStat
+  try {
+    sourceStat = await stat(mount.source)
+  } catch {
+    yield { type: "skipped", count: 1 }
+    return
+  }
+
+  if (mount.type === "file" || sourceStat.isFile()) {
+    const parent = dirname(mount.target.trim())
+    if (parent && parent !== ".") {
+      yield { type: "directory", target: parent }
+    }
+    yield { type: "file", file: { target: mount.target, contentsBase64: (await readFile(mount.source)).toString("base64") } }
+    return
+  }
+  if (!sourceStat.isDirectory()) {
+    yield { type: "skipped", count: 1 }
+    return
+  }
+
+  const source = mount.source
+  const target = mount.target.replace(/\/+$/, "")
+  yield { type: "directory", target }
+  const pending = [""]
+
+  while (pending.length > 0) {
+    const currentDirectory = pending.pop() ?? ""
+    let entries
+    try {
+      entries = await readdir(join(source, currentDirectory), { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
+        continue
+      }
+      const relativePath = currentDirectory ? `${currentDirectory}/${entry.name}` : entry.name
+      const absolutePath = join(source, relativePath)
+      if (entry.isDirectory()) {
+        yield { type: "directory", target: `${target}/${relativePath}` }
+        pending.push(relativePath)
+        continue
+      }
+      if (!entry.isFile()) {
+        continue
+      }
+      yield { type: "file", file: { target: `${target}/${relativePath}`, contentsBase64: (await readFile(absolutePath)).toString("base64") } }
+    }
   }
 }
 
@@ -271,72 +358,6 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
   }
 
   return files
-}
-
-async function hostMountFilesForVfs(mount: MountSpec): Promise<HostMountCollection> {
-  const files: HostMountFilePayload[] = []
-  const directories: string[] = []
-  let skipped = 0
-  let sourceStat
-  try {
-    sourceStat = await stat(mount.source)
-  } catch {
-    return { files, directories, skipped: 1 }
-  }
-
-  if (mount.type === "file" || sourceStat.isFile()) {
-    files.push({ target: mount.target, contentsBase64: (await readFile(mount.source)).toString("base64") })
-    return { files, directories, skipped }
-  }
-  if (!sourceStat.isDirectory()) {
-    return { files, directories, skipped: skipped + 1 }
-  }
-
-  const target = mount.target.replace(/\/+$/, "")
-  directories.push(target)
-  const collected = await hostMountDirectoryFiles(mount.source)
-  for (const directory of collected.directories) {
-    directories.push(`${target}/${directory}`)
-  }
-  for (const file of collected.files) {
-    files.push({ target: `${mount.target.replace(/\/+$/, "")}/${file.relativePath}`, contentsBase64: file.contentsBase64 })
-  }
-  return { files, directories, skipped }
-}
-
-async function hostMountDirectoryFiles(directory: string, relativeDirectory = ""): Promise<{ files: Array<{ relativePath: string; contentsBase64: string }>; directories: string[] }> {
-  const files: Array<{ relativePath: string; contentsBase64: string }> = []
-  const directories: string[] = []
-  const pending = [relativeDirectory]
-
-  while (pending.length > 0) {
-    const currentDirectory = pending.pop() ?? ""
-    let entries
-    try {
-      entries = await readdir(join(directory, currentDirectory), { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const entry of entries) {
-      if (entry.isDirectory() && SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
-        continue
-      }
-      const relativePath = currentDirectory ? `${currentDirectory}/${entry.name}` : entry.name
-      const absolutePath = join(directory, relativePath)
-      if (entry.isDirectory()) {
-        directories.push(relativePath)
-        pending.push(relativePath)
-        continue
-      }
-      if (!entry.isFile()) {
-        continue
-      }
-      files.push({ relativePath, contentsBase64: (await readFile(absolutePath)).toString("base64") })
-    }
-  }
-
-  return { files, directories }
 }
 
 function hostMountWritePhp(files: HostMountFilePayload[], directories: string[]): string {

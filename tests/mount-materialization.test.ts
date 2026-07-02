@@ -74,7 +74,41 @@ try {
   await rm(directorySource, { recursive: true, force: true })
 }
 
-function materializationPayload(code: string): { directories?: string[] } {
+const fallbackSource = await mkdtemp(join(tmpdir(), "wp-codebox-batched-materialization-"))
+const fallbackFileBatches: number[] = []
+
+try {
+  await mkdir(join(fallbackSource, "files"), { recursive: true })
+  for (let index = 0; index < 205; index++) {
+    await writeFile(join(fallbackSource, "files", `file-${index}.txt`), `file ${index}`)
+  }
+
+  const result = await materializePlaygroundStagedInputs({
+    playground: {
+      async run({ code }: { code: string }) {
+        const payload = materializationPayload(code)
+        if (code.includes("wp-codebox/host-mount-materialization/v1")) {
+          fallbackFileBatches.push(payload.files?.length ?? 0)
+          return { text: JSON.stringify({ materialized: payload.files?.length ?? 0, skipped: 0 }) }
+        }
+        return { text: JSON.stringify({ created: payload.directories?.length ?? 0, skipped: 0 }) }
+      },
+    },
+  } as never, [{
+    type: "directory",
+    source: fallbackSource,
+    target: "/workspace/large-tree",
+    mode: "readwrite",
+  }])
+
+  assert.equal(result.materialized, 205)
+  assert.equal(fallbackFileBatches.length, 3, "large fallback writes are split into bounded batches")
+  assert.deepEqual(fallbackFileBatches, [100, 100, 5])
+} finally {
+  await rm(fallbackSource, { recursive: true, force: true })
+}
+
+function materializationPayload(code: string): { directories?: string[]; files?: Array<{ target: string; contentsBase64: string }> } {
   const match = code.match(/\$payload = json_decode\((.*), true\);/)
   assert.ok(match, "materialization PHP includes a JSON payload")
   return JSON.parse(JSON.parse(match[1]))
