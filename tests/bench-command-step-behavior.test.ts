@@ -515,6 +515,28 @@ assert.equal(generatedCaseSteps[1].case_id, "cart-context-view")
 assert.deepEqual(generatedCaseSteps[1].metadata, { rest_request_case_index: 1 })
 assert.match(phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_request_step"), /'rest_request_case_index'\] = \(int\) \$step\['metadata'\]\['rest_request_case_index'\]/)
 assert.match(phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_request_step"), /\$record\['case_id'\] = \(string\) \$step\['case_id'\]/)
+
+const publicWorkloadSteps = await withTempDir("wp-codebox-bench-public-steps-", async (directory) => {
+  const phpTestFile = join(directory, "public-steps.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${commandStepHelpers}
+$steps = wp_codebox_bench_workload_run_steps(array(
+    'id' => 'public-runtime-workload',
+    'steps' => array(
+        array('type' => 'rest-db-query-profiler', 'rest_request_cases' => array(array('id' => 'products', 'method' => 'GET', 'path' => '/wc/store/v1/products'))),
+    ),
+));
+echo json_encode($steps, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<Array<{ type: string; rest_request_cases?: Array<{ id: string; path: string }> }>>(phpTestFile)
+})
+assert.equal(publicWorkloadSteps.length, 1)
+assert.equal(publicWorkloadSteps[0].type, "rest-db-query-profiler")
+assert.equal(publicWorkloadSteps[0].rest_request_cases?.[0]?.id, "products")
+assert.equal(publicWorkloadSteps[0].rest_request_cases?.[0]?.path, "/wc/store/v1/products")
 assert.match(benchRunner, /\$type === 'db-inventory'/)
 assert.match(benchRunner, /wp_codebox_bench_run_db_inventory_step\(\$step\)/)
 assert.match(benchRunner, /\$type === 'rest-db-query-profiler'/)

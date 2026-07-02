@@ -142,6 +142,21 @@ assert( 1 === $php_result['steps'][1]['observation']['payload']['summary']['step
 assert( 'workload/php-report.json' === $php_result['steps'][1]['observation']['payload']['artifactRefs'][0]['path'] );
 @unlink( $php_workload_path );
 
+$missing_collection_result = WP_Codebox_WordPress_Workload_Runner_Smoke::run_wordpress_workload(
+	array(
+		'schema' => 'wp-codebox/wordpress-workload-run/v1',
+		'steps'  => array(
+			array( 'command' => 'wordpress.collect-workload-result', 'args' => array( 'artifact=missing-rest-db-query-profile' ) ),
+		),
+	)
+);
+
+assert( is_array( $missing_collection_result ) );
+assert( false === $missing_collection_result['success'] );
+assert( 'failed' === $missing_collection_result['status'] );
+assert( 'failed' === $missing_collection_result['steps'][0]['status'] );
+assert( 'wp_codebox_workload_result_artifact_missing' === $missing_collection_result['steps'][0]['diagnostics'][0]['code'] );
+
 $guardrail_workload_path = tempnam( sys_get_temp_dir(), 'wp-codebox-guardrail-' );
 assert( is_string( $guardrail_workload_path ) );
 file_put_contents(

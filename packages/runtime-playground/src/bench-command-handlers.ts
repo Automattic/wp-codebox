@@ -1468,6 +1468,9 @@ if (did_action('rest_api_init')) {
 
 function wp_codebox_bench_workload_run_steps(array $workload): array {
     $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array();
+    if (empty($steps) && isset($workload['steps']) && is_array($workload['steps'])) {
+        $steps = $workload['steps'];
+    }
     $route_matrix = isset($workload['route_matrix']) && is_array($workload['route_matrix']) ? $workload['route_matrix'] : array();
     $rest_request_cases = isset($workload['rest_request_cases']) && is_array($workload['rest_request_cases']) ? $workload['rest_request_cases'] : array();
     if (empty($rest_request_cases) && isset($workload['request_cases']) && is_array($workload['request_cases'])) {

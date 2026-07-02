@@ -133,6 +133,11 @@ return static function ( array $input, array $args ): array {
   assert.notEqual(runtimeFuzzJson.cases[0].skipReason, "fuzz_suite_executor_unavailable")
   assert.equal(runtimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
   assert.equal(runtimeFuzzJson.metadata.runnerCapabilities.mode, "runtime-backed")
+  assert.equal(runtimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.bench")
+  const typedWorkloadsJson = runtimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].args.find((arg: string) => arg.startsWith("workloads-json="))
+  assert.ok(typedWorkloadsJson)
+  const typedWorkloads = JSON.parse(typedWorkloadsJson.replace(/^workloads-json=/, ""))
+  assert.deepEqual(typedWorkloads[0].run, [{ type: "php", code: "return array('ok' => true);" }])
 
   const runtimeCommandFuzzInput = join(directory, "runtime-command-fuzz.json")
   await writeFile(runtimeCommandFuzzInput, JSON.stringify({

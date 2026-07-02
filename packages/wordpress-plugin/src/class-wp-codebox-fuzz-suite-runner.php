@@ -1070,8 +1070,9 @@ private static function execute_fuzz_suite_collect_artifact( array $args, array 
 	);
 	$collection = WP_Codebox_WordPress_Runtime_Primitives::collect_workload_result( $args, $prior_steps, array_merge( self::fuzz_suite_declared_artifact_refs( $case ), $prior_artifacts ) );
 	$observation['artifact'] = $name;
-	$observation['payload'] = $collection['payload'];
-	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $collection['artifactRefs'] );
+	$observation['payload'] = is_array( $collection['payload'] ?? null ) ? $collection['payload'] : array();
+	$diagnostics = is_array( $collection['diagnostics'] ?? null ) ? $collection['diagnostics'] : array();
+	return array( 'status' => (string) ( $collection['status'] ?? 'failed' ), 'observation' => $observation, 'artifactRefs' => is_array( $collection['artifactRefs'] ?? null ) ? $collection['artifactRefs'] : array(), 'diagnostic' => $diagnostics[0] ?? null );
 }
 
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @param array<string,mixed> $observation Observation. @return array<string,mixed> */

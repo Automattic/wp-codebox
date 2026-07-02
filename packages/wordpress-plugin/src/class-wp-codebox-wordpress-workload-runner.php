@@ -242,11 +242,13 @@ final class WP_Codebox_WordPress_Workload_Runner {
 	private function collect_artifact( array $args, array $input, array $prior_steps = array(), array $prior_artifacts = array() ): array {
 		$declared_artifacts = is_array( $input['artifacts'] ?? null ) ? array_values( array_filter( $input['artifacts'], 'is_array' ) ) : array();
 		$collection         = WP_Codebox_WordPress_Runtime_Primitives::collect_workload_result( $args, $prior_steps, array_merge( $declared_artifacts, $prior_artifacts ) );
-		$payload            = $collection['payload'];
+		$payload            = is_array( $collection['payload'] ?? null ) ? $collection['payload'] : array();
+		$status             = (string) ( $collection['status'] ?? 'failed' );
 
 		return array(
-			'status'       => 'passed',
+			'status'       => $status,
 			'observation'  => array_filter( array( 'artifact' => (string) ( $args['artifact'] ?? $args['name'] ?? '' ), 'payload' => $payload ), static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) ) && '' !== $value ),
+			'diagnostics'  => is_array( $collection['diagnostics'] ?? null ) ? $collection['diagnostics'] : array(),
 			'artifactRefs' => $collection['artifactRefs'],
 		);
 	}

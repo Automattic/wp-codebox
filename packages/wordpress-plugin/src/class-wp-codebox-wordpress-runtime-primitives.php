@@ -107,28 +107,44 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 							return true;
 						}
 					}
+					if ( self::step_has_artifact_payload( $step, $name ) ) {
+						return true;
+					}
 					$observation = is_array( $step['observation'] ?? null ) ? $step['observation'] : array();
-					return $name === (string) ( $observation['artifact'] ?? $observation['name'] ?? '' );
+					return self::artifact_name_matches( (string) ( $observation['artifact'] ?? $observation['name'] ?? '' ), $name );
 				}
 			)
 		);
 
 		$matched_refs = array();
+		$matched_payloads = array();
 		foreach ( $matched_steps as $step ) {
 			foreach ( is_array( $step['artifactRefs'] ?? null ) ? $step['artifactRefs'] : array() as $ref ) {
 				if ( is_array( $ref ) && ( '' === $name || self::artifact_matches_name( $ref, $name ) ) ) {
 					$matched_refs[] = $ref;
 				}
 			}
+			$matched_payloads = array_merge( $matched_payloads, self::step_artifact_payloads( $step, $name ) );
 		}
 		$matched_refs = array_merge( $matched_refs, array_values( array_filter( $artifact_refs, static fn( mixed $ref ): bool => is_array( $ref ) && ( '' === $name || self::artifact_matches_name( $ref, $name ) ) ) ) );
 		$matched_refs = self::dedupe_artifact_refs( $matched_refs );
+		if ( '' !== $name && empty( $matched_refs ) && empty( $matched_payloads ) ) {
+			$diagnostic = array(
+				'severity' => 'error',
+				'code'     => 'wp_codebox_workload_result_artifact_missing',
+				'message'  => 'Requested workload result artifact was not found or had no payload.',
+				'metadata' => array_filter( array( 'artifact' => $name, 'command' => $command, 'status' => $status ), static fn( mixed $value ): bool => '' !== $value ),
+			);
+
+			return array( 'status' => 'failed', 'payload' => array(), 'artifactRefs' => array(), 'diagnostics' => array( $diagnostic ) );
+		}
 		$payload      = array(
 			'schema'      => 'wp-codebox/wordpress-workload-result-collection/v1',
 			'generatedAt' => gmdate( 'Y-m-d\TH:i:s\Z' ),
 			'query'       => array_filter( array( 'artifact' => $name, 'command' => $command, 'status' => $status ), static fn( mixed $value ): bool => '' !== $value ),
-			'summary'     => array( 'steps' => count( $matched_steps ), 'artifactRefs' => count( $matched_refs ) ),
+			'summary'     => array( 'steps' => count( $matched_steps ), 'artifactRefs' => count( $matched_refs ), 'payloads' => count( $matched_payloads ) ),
 			'steps'       => $matched_steps,
+			'payloads'    => $matched_payloads,
 			'artifactRefs'=> $matched_refs,
 		);
 
@@ -141,7 +157,7 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 			'payload'     => $payload,
 		);
 
-		return array( 'payload' => $payload, 'artifactRefs' => array_values( array_merge( $matched_refs, array( $collection_ref ) ) ) );
+		return array( 'status' => 'passed', 'payload' => $payload, 'artifactRefs' => array_values( array_merge( $matched_refs, array( $collection_ref ) ) ), 'diagnostics' => array() );
 	}
 
 	/** @param mixed $value Value. @return string[] */
@@ -197,7 +213,49 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 
 	/** @param array<string,mixed> $artifact Artifact ref. */
 	private static function artifact_matches_name( array $artifact, string $name ): bool {
-		return $name === (string) ( $artifact['name'] ?? $artifact['artifact'] ?? $artifact['id'] ?? '' );
+		return self::artifact_name_matches( (string) ( $artifact['name'] ?? $artifact['artifact'] ?? $artifact['id'] ?? '' ), $name );
+	}
+
+	private static function artifact_name_matches( string $candidate, string $name ): bool {
+		return $name === $candidate || str_replace( '_', '-', $name ) === str_replace( '_', '-', $candidate );
+	}
+
+	/** @param array<string,mixed> $step Step. */
+	private static function step_has_artifact_payload( array $step, string $name ): bool {
+		return ! empty( self::step_artifact_payloads( $step, $name ) );
+	}
+
+	/** @param array<string,mixed> $step Step. @return array<int,array<string,mixed>> */
+	private static function step_artifact_payloads( array $step, string $name ): array {
+		$payloads = array();
+		$containers = array( $step, is_array( $step['observation'] ?? null ) ? $step['observation'] : array() );
+		foreach ( $containers as $container ) {
+			$payload = is_array( $container['payload'] ?? null ) ? $container['payload'] : array();
+			foreach ( self::artifact_payloads_from_container( $container, $name ) as $artifact_payload ) {
+				$payloads[] = $artifact_payload;
+			}
+			foreach ( is_array( $payload['steps'] ?? null ) ? $payload['steps'] : array() as $payload_step ) {
+				if ( is_array( $payload_step ) ) {
+					foreach ( self::artifact_payloads_from_container( $payload_step, $name ) as $artifact_payload ) {
+						$payloads[] = $artifact_payload;
+					}
+				}
+			}
+		}
+
+		return $payloads;
+	}
+
+	/** @param array<string,mixed> $container Container. @return array<int,array<string,mixed>> */
+	private static function artifact_payloads_from_container( array $container, string $name ): array {
+		$payloads = array();
+		foreach ( is_array( $container['artifacts'] ?? null ) ? $container['artifacts'] : array() as $artifact_name => $payload ) {
+			if ( is_array( $payload ) && ( '' === $name || self::artifact_name_matches( (string) $artifact_name, $name ) ) ) {
+				$payloads[] = array( 'name' => (string) $artifact_name, 'payload' => $payload );
+			}
+		}
+
+		return $payloads;
 	}
 
 	/** @param array<int,array<string,mixed>> $refs Refs. @return array<int,array<string,mixed>> */

@@ -840,9 +840,11 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       const startedAt = new Date().toISOString()
       const executions: ExecutionResult[] = []
       for (const [stepIndex, step] of steps.entries()) {
-        const result = await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs, metadata: stripUndefined({ ...step.metadata, phase: step.phase, phaseIndex: step.phaseIndex, workloadStepIndex: stepIndex }) }, { type: "command-result" })
-        executions.push(result.execution)
-        if (result.execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
+        const execution = step.command === "wordpress.collect-workload-result"
+          ? collectWorkloadResultExecution(step, executions, startedAt)
+          : (await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs, metadata: stripUndefined({ ...step.metadata, phase: step.phase, phaseIndex: step.phaseIndex, workloadStepIndex: stepIndex }) }, { type: "command-result" })).execution
+        executions.push(execution)
+        if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
           break
         }
       }
@@ -871,6 +873,88 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       }
     },
   }
+}
+
+function collectWorkloadResultExecution(step: { command: string; args?: string[] }, priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
+  const args = stepArgMap(step.args)
+  const artifact = args.artifact ?? args.name ?? ""
+  const expectedSchema = args.schema
+  const command = args.command ?? ""
+  const status = args.status ?? ""
+  const matchedExecutions = priorExecutions.filter((execution) => {
+    if (command && execution.command !== command) return false
+    if (status && (execution.exitCode === 0 ? "passed" : "failed") !== status) return false
+    if (!artifact) return true
+    return executionMatchesArtifact(execution, artifact)
+  })
+  const payloads = matchedExecutions.flatMap((execution) => workloadArtifactPayloads(execution, artifact, expectedSchema))
+  const artifactRefs = matchedExecutions.flatMap((execution) => (execution.artifactRefs ?? []).filter((ref) => !artifact || artifactRefMatchesName(ref, artifact)))
+  const requiresProfilePayload = artifactNameMatches(artifact, "rest-db-query-profile")
+  const missing = artifact && (matchedExecutions.length === 0 || (requiresProfilePayload && payloads.length === 0))
+  const payload = {
+    schema: "wp-codebox/wordpress-workload-result-collection/v1",
+    generatedAt: new Date().toISOString(),
+    query: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined }),
+    summary: { steps: matchedExecutions.length, artifactRefs: artifactRefs.length, payloads: payloads.length },
+    steps: matchedExecutions.map((execution) => stripUndefined({ command: execution.command, exitCode: execution.exitCode, result: execution.result?.json })),
+    payloads,
+    artifactRefs,
+  }
+  const diagnostic = missing ? { severity: "error", code: "wp_codebox_workload_result_artifact_missing", message: "Requested workload result artifact was not found or had no payload.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined }) } : undefined
+  const stdout = `${JSON.stringify(payload)}\n`
+  return {
+    id: `wordpress-collect-workload-result-${artifact || "workload-result"}`,
+    command: "wordpress.collect-workload-result",
+    args: step.args ?? [],
+    exitCode: missing ? 1 : 0,
+    stdout,
+    stderr: missing ? diagnostic?.message ?? "" : "",
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: missing ? "error" : "ok", json: payload, diagnostics: diagnostic ? [diagnostic] : undefined },
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    artifactRefs: [{ kind: "wordpress-workload-result-collection", id: artifact || "workload-result", artifactId: artifact || "workload-result", path: `files/workload-results/${safeArtifactSegment(artifact || "workload-result")}.json`, payload } as NonNullable<ExecutionResult["artifactRefs"]>[number]],
+  }
+}
+
+function executionMatchesArtifact(execution: ExecutionResult, artifact: string): boolean {
+  if ((execution.artifactRefs ?? []).some((ref) => artifactRefMatchesName(ref, artifact))) return true
+  return workloadArtifactPayloads(execution, artifact).length > 0
+}
+
+function artifactRefMatchesName(ref: NonNullable<ExecutionResult["artifactRefs"]>[number], artifact: string): boolean {
+  const record = ref as unknown as Record<string, unknown>
+  return [record.name, record.artifact, ref.artifactId, ref.id, ref.path].some((value) => typeof value === "string" && artifactNameMatches(value, artifact))
+}
+
+function workloadArtifactPayloads(execution: ExecutionResult, artifact: string, expectedSchema?: string): Array<{ name: string; payload: Record<string, unknown> }> {
+  const payloads: Array<{ name: string; payload: Record<string, unknown> }> = []
+  const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
+  for (const { profile } of restDbQueryProfilesFromJson(json)) {
+    if (artifactNameMatches(artifact, "rest-db-query-profile") && (!expectedSchema || profile.schema === expectedSchema)) {
+      payloads.push({ name: "rest-db-query-profile", payload: profile })
+    }
+  }
+  collectArtifactPayloadsFromContainer(json, artifact, expectedSchema, payloads)
+  return payloads
+}
+
+function collectArtifactPayloadsFromContainer(container: Record<string, unknown> | undefined, artifact: string, expectedSchema: string | undefined, out: Array<{ name: string; payload: Record<string, unknown> }>): void {
+  if (!container) return
+  const artifacts = recordValue(container.artifacts)
+  for (const [name, value] of Object.entries(artifacts ?? {})) {
+    const payload = recordValue(value)
+    if (payload && (!artifact || artifactNameMatches(name, artifact)) && (!expectedSchema || payload.schema === expectedSchema)) {
+      out.push({ name, payload })
+    }
+  }
+  for (const step of arrayValue(container.steps)) {
+    collectArtifactPayloadsFromContainer(recordValue(step), artifact, expectedSchema, out)
+  }
+}
+
+function artifactNameMatches(candidate: string, artifact: string): boolean {
+  const normalize = (value: string) => value.replace(/_/g, "-")
+  return normalize(candidate) === normalize(artifact)
 }
 
 export function createWordPressFuzzSuiteResetExecutor(episode: WordPressFuzzSuiteResetEpisode, options: WordPressFuzzSuiteResetExecutorOptions = {}): FuzzSuiteResetExecutor {
@@ -1316,6 +1400,24 @@ function restDbQueryProfilesFromJson(json: Record<string, unknown> | undefined):
       const stepRecord = recordValue(step)
       const profile = recordValue(recordValue(stepRecord?.artifacts)?.["rest-db-query-profile"])
       if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(stepRecord?.type) })
+    }
+  }
+  if (json?.schema === "wp-codebox/wordpress-workload-result-collection/v1") {
+    for (const item of arrayValue(json.payloads)) {
+      const payloadRecord = recordValue(item)
+      const profile = recordValue(payloadRecord?.payload)
+      if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(payloadRecord?.name) })
+    }
+  }
+  if (json?.schema === "wp-codebox/recipe-run/v1") {
+    profiles.push(...restDbQueryProfilesFromJson(recordValue(json.benchResults)))
+    for (const benchResults of arrayValue(json.benchResultsList)) {
+      profiles.push(...restDbQueryProfilesFromJson(recordValue(benchResults)))
+    }
+    for (const execution of arrayValue(json.executions)) {
+      const executionRecord = recordValue(execution)
+      profiles.push(...restDbQueryProfilesFromJson(recordValue(recordValue(executionRecord?.result)?.json)))
+      profiles.push(...restDbQueryProfilesFromJson(parseJsonRecord(stringValue(executionRecord?.stdout))))
     }
   }
   return profiles

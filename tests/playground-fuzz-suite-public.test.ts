@@ -51,7 +51,11 @@ const episode = {
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 }, metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "db_operation", target: "wp_fuzz", entries: [{ table: "wp_fuzz", operation: "update", rowsAffected: 1, rowCountBefore: 1, rowCountAfter: 1, resource: { table: "wp_fuzz", identifiers: { id: 1 } }, key: "wp_fuzz:update:1" }], repeatedWrites: [], totals: { writes: 1, rowsAffected: 1, tables: 1, repeatedWriteKeys: 0 } } } },
       "wordpress.crud-operation": { item: { id: 123 }, status: "ok", metadata: { dbWriteSet: { schema: "wp-codebox/wordpress-db-write-set/v1", artifactKind: "wordpress-db-write-set", action: "crud_operation", target: "post:123", entries: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }, { table: "wp_postmeta", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_postmeta:update:123" }], repeatedWrites: [{ table: "wp_posts", operation: "update", rowsAffected: 1, object: { kind: "post", id: 123 }, key: "wp_posts:update:123", repeatedWritesToSameKey: 2 }], totals: { writes: 2, rowsAffected: 2, tables: 2, repeatedWriteKeys: 1 } } } },
-      "wordpress.run-php": runPhpCode.includes("wordpress-rollback-capture-request") ? rollbackCapturePayload(runPhpCode) : runPhpCode.includes("rest-db-query-profiler") ? {
+      "wordpress.run-php": runPhpCode.includes("wordpress-rollback-capture-request") ? rollbackCapturePayload(runPhpCode) : runPhpCode.includes("marker-only-rest-db-query-profile") ? { status: "passed", artifactRefs: [{ name: "rest-db-query-profile", path: "workloads/rest-db-query-profile.marker.json" }] } : runPhpCode.includes("recipe-run-rest-db-query-profiler") ? {
+        schema: "wp-codebox/recipe-run/v1",
+        success: true,
+        executions: [{ result: { json: { schema: "wp-codebox/bench-results/v1", scenarios: [{ id: "recipe-profile", artifacts: { "rest-db-query-profile": { schema: "wp-codebox/wordpress-rest-db-query-profile/v1", cases: [{ case_id: "recipe-products", method: "GET", path: "/wc/store/v1/products", summary: { query_count: 11, total_time_ms: 14.5 } }] } } }] } } }],
+      } : runPhpCode.includes("rest-db-query-profiler") ? {
         schema: "wp-codebox/json-workload-result/v1",
         steps: [{
           type: "rest-db-query-profiler",
@@ -117,6 +121,8 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     { id: "workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }] } },
     { id: "php-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", runtime_env: { WC_REST_BATCH_IMPORT_ITEMS: "2" }, settings: { fixtureMode: "small" }, steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/wp-codebox-workloads/rest-product-batch-import.php"] }] } },
     { id: "typed-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }] }, metadata: { caseMetadata: { intent: { plugin: { activation: "woocommerce/woocommerce.php" } } } } },
+    { id: "profile-collection", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest_db_query_profile"] }] }, metadata: { caseMetadata: { intent: { plugin: { activation: "woocommerce/woocommerce.php" } } } } },
+    { id: "recipe-run-profile", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/recipe-run-rest-db-query-profiler.php"] }] } },
   ],
 }), { requireCoverage: true })
 
@@ -137,6 +143,8 @@ assert.equal(result.cases[5]?.status, "passed")
 assert.equal(result.cases[6]?.status, "passed")
 assert.equal(result.cases[7]?.status, "passed")
 assert.equal(result.cases[8]?.status, "passed")
+assert.equal(result.cases[9]?.status, "passed")
+assert.equal(result.cases[10]?.status, "passed")
 const restWriteSet = result.cases[1]?.metadata?.dbWriteSet as { schema?: string; entries?: Array<{ table?: string; operation?: string }>; artifactPath?: string } | undefined
 assert.equal(restWriteSet?.schema, "wp-codebox/wordpress-db-write-set/v1")
 assert.deepEqual(restWriteSet?.entries?.map((entry) => [entry.table, entry.operation]), [["wp_posts", "delete"]])
@@ -166,9 +174,19 @@ assert.equal(metadataArtifacts?.queryObservations?.persisted, false)
 assert.equal(metadataArtifacts?.queryObservations?.metadata?.schema, "wp-codebox/query-observation/v1")
 assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "rest" && item.queryCount === 3), true)
 assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "typed-workload" && item.queryCount === 9), true)
+assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "profile-collection" && item.queryCount === 9), true)
+assert.equal(metadataArtifacts?.queryObservations?.observations?.some((item) => item.caseId === "recipe-run-profile" && item.queryCount === 11), true)
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
+
+const missingProfilePayload = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
+  id: "runtime-backed-missing-profile-payload",
+  metadata: { disposableSandboxBoundary },
+  cases: [{ id: "marker-only-profile", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/marker-only-rest-db-query-profile.php"] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest-db-query-profile"] }] } }],
+}), { requireCoverage: true })
+assert.equal(missingProfilePayload.status, "failed")
+assert.equal(missingProfilePayload.cases[0]?.status, "failed")
 
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-artifacts-"))
 try {
