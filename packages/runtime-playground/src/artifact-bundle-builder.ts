@@ -145,10 +145,12 @@ export class ArtifactBundleBuilder {
       probes: source.browserArtifacts(),
       redactor,
     })
-    const replaySnapshot = portableSiteReplaySnapshot(
-      await firstRuntimeStateSnapshotPayload(source.snapshots),
-      source.spec.environment.blueprint,
-    )
+    const replaySnapshot = spec.includeRuntimeSnapshotBundles
+      ? portableSiteReplaySnapshot(
+        await firstRuntimeStateSnapshotPayload(source.snapshots),
+        source.spec.environment.blueprint,
+      )
+      : undefined
     const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])

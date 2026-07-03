@@ -340,25 +340,21 @@ export async function collectAndFinalizeFailedRecipeArtifacts(args: {
 }
 
 export async function collectRecipeRuntimeArtifacts(runtime: Runtime, spec: ArtifactSpec, options: RecipeRuntimeArtifactCollectionOptions = {}): Promise<ArtifactBundle> {
-  let snapshotCaptured = false
-  try {
-    const snapshot = runtime.snapshot()
-    if (options.snapshotTimeoutMs && options.snapshotTimeoutMs > 0) {
-      snapshot.catch(() => undefined)
-      const settled = await timeoutOrUndefined(snapshot, options.snapshotTimeoutMs)
-      snapshotCaptured = settled !== undefined
-    } else {
-      await snapshot
-      snapshotCaptured = true
+  if (spec.includeRuntimeSnapshotBundles === true) {
+    try {
+      const snapshot = runtime.snapshot()
+      if (options.snapshotTimeoutMs && options.snapshotTimeoutMs > 0) {
+        snapshot.catch(() => undefined)
+        await timeoutOrUndefined(snapshot, options.snapshotTimeoutMs)
+      } else {
+        await snapshot
+      }
+    } catch {
+      // Preserve artifact collection on runtimes that are too broken to snapshot.
     }
-  } catch {
-    // Preserve artifact collection on runtimes that are too broken to snapshot.
   }
 
-  const collectSpec: ArtifactSpec = snapshotCaptured && spec.includeRuntimeSnapshotBundles !== false
-    ? { ...spec, includeRuntimeSnapshotBundles: true }
-    : spec
-  const artifacts = runtime.collectArtifacts(collectSpec)
+  const artifacts = runtime.collectArtifacts(spec)
   if (options.timeoutMs && options.timeoutMs > 0) {
     return timeoutOrReject(artifacts, options.timeoutMs, `Runtime artifact collection exceeded ${options.timeoutMs}ms`)
   }
