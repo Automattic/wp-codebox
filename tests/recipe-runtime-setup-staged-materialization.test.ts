@@ -240,4 +240,50 @@ assert.deepEqual(executedWorkflowSpecs.map((spec) => spec.command), ["wordpress.
 assert.deepEqual(executedWorkflowSpecs[0]?.args, wpcomPhpunitExecution.args)
 assert.equal(executedWorkflowSpecs[0]?.args?.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), false)
 
+// Regression (Extra-Chill/data-machine#2840): the plugin-under-test is mounted
+// at /wordpress/wp-content/plugins/<slug>. Canonicalizing that mount into
+// /tmp/wp-codebox-inputs/... relocated the plugin outside the WordPress plugins
+// directory, so WordPress never loaded it, its composer autoloader never
+// registered, and phpunit crashed at class collection ("Class ... not found").
+// WordPress-tree mounts must keep their declared paths (identity mapping) while
+// mounts targeting sandbox-colliding paths are still canonicalized.
+const pluginUnderTestPathMap = recipeInputMountPathMap({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    mounts: [
+      { source: "/workspace/data-machine", target: "/wordpress/wp-content/plugins/data-machine", mode: "readwrite" },
+      { source: "/workspace/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
+    ],
+  },
+  workflow: { steps: [] },
+})
+assert.equal(pluginUnderTestPathMap[0].originalTarget, "/wordpress/wp-content/plugins/data-machine")
+assert.equal(pluginUnderTestPathMap[0].canonicalTarget, "/wordpress/wp-content/plugins/data-machine", "plugin-under-test mount under /wordpress must not be relocated")
+assert.ok(pluginUnderTestPathMap[1].canonicalTarget.startsWith("/tmp/wp-codebox-inputs/"), "sandbox-colliding mounts are still canonicalized")
+
+const pluginUnderTestExecution = await executeRecipeWorkflowStep(workflowRuntime, {
+  phase: "steps",
+  index: 0,
+  step: {
+    command: "wordpress.phpunit",
+    args: [
+      "plugin-slug=data-machine",
+      "autoload-file=/wp-codebox-vendor/autoload.php",
+      "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+      "cwd=/wordpress/wp-content/plugins/data-machine",
+      "test-root=/wordpress/wp-content/plugins/data-machine/tests",
+      "phpunit-xml=/wordpress/wp-content/plugins/data-machine/phpunit.xml.dist",
+    ],
+  },
+}, process.cwd(), undefined, undefined, undefined, pluginUnderTestPathMap)
+
+assert.deepEqual(pluginUnderTestExecution.args, [
+  "plugin-slug=data-machine",
+  `autoload-file=${pluginUnderTestPathMap[1].canonicalTarget}/autoload.php`,
+  `tests-dir=${pluginUnderTestPathMap[1].canonicalTarget}/wp-phpunit/wp-phpunit`,
+  "cwd=/wordpress/wp-content/plugins/data-machine",
+  "test-root=/wordpress/wp-content/plugins/data-machine/tests",
+  "phpunit-xml=/wordpress/wp-content/plugins/data-machine/phpunit.xml.dist",
+], "plugin-under-test path args stay under /wordpress; only sandbox-colliding vendor paths are canonicalized")
+
 console.log("recipe runtime setup staged materialization ok")

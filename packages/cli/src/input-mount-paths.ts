@@ -99,11 +99,30 @@ function originalPathReferencePattern(path: string): RegExp {
   return new RegExp(`${escapeRegExp(path)}(?=$|[\\/\\s'"\\]\\}\\),:;])`)
 }
 
+// Mounts targeting the WordPress install tree (ABSPATH is `/wordpress/` in the
+// Playground runtime) must keep their declared paths. WordPress core, plugin
+// activation, and the phpunit handler (which computes
+// `/wordpress/wp-content/plugins/<slug>`) all depend on those exact locations,
+// and the Playground VFS mounts them cleanly in place. Canonicalizing them into
+// `/tmp/wp-codebox-inputs/...` relocates the plugin-under-test outside the
+// plugins directory, so WordPress never loads it and its composer autoloader
+// never registers — crashing phpunit at class-collection time. Relocation is
+// only needed for mounts targeting arbitrary paths that collide with sandbox
+// internals (e.g. `/home/wpcom/public_html`, `/wp-codebox-vendor`).
+const RESERVED_INPUT_MOUNT_TARGET_ROOT = "/wordpress"
+
 function canonicalInputMountTarget(target: string, index: number): string {
   const normalized = normalizeSandboxPath(target)
+  if (isReservedInputMountTarget(normalized)) {
+    return normalized
+  }
   const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12)
   const name = safeInputMountTargetName(posix.basename(normalized)) || "mount"
   return `/tmp/wp-codebox-inputs/${index}-${name}-${hash}`
+}
+
+function isReservedInputMountTarget(normalized: string): boolean {
+  return normalized === RESERVED_INPUT_MOUNT_TARGET_ROOT || normalized.startsWith(`${RESERVED_INPUT_MOUNT_TARGET_ROOT}/`)
 }
 
 function safeInputMountTargetName(name: string): string {
