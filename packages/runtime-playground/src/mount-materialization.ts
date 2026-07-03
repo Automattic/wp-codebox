@@ -70,7 +70,7 @@ function mountMaterializationResult(input: Omit<MountMaterializationResult, "pha
 export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
   const writableDirectoryMounts = mounts
     .map((mount, mountIndex) => ({ mount, mountIndex }))
-    .filter(({ mount }) => mount.mode === "readwrite" && mount.type !== "file")
+    .filter(({ mount }) => mount.mode === "readwrite" && mount.type !== "file" && mountMaterializesVfsToHost(mount))
   if (writableDirectoryMounts.length === 0) {
     return mountMaterializationResult({ materialized: 0, deleted: 0, skipped: 0 })
   }
@@ -87,6 +87,10 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
   const response = await server.playground.run({ code: vfsMountSnapshotPhp(hostSnapshots) })
   const parsed = JSON.parse(response.text || "{}") as { mounts?: VfsMountSnapshot[] }
   return applyVfsMountSnapshots(mounts, parsed.mounts ?? [])
+}
+
+function mountMaterializesVfsToHost(mount: MountSpec): boolean {
+  return Boolean(mount.metadata && typeof mount.metadata === "object" && !Array.isArray(mount.metadata) && mount.metadata.materializeVfsToHost === true)
 }
 
 export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {

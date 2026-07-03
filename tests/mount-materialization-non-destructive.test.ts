@@ -3,12 +3,23 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { applyVfsMountSnapshots } from "../packages/runtime-playground/src/mount-materialization.js"
+import { applyVfsMountSnapshots, materializePlaygroundMountsFromVfs } from "../packages/runtime-playground/src/mount-materialization.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-mount-materialization-"))
 
 try {
   await writeFile(join(root, "host-only.txt"), "keep me")
+
+  const skippedMaterialization = await materializePlaygroundMountsFromVfs({
+    playground: {
+      async run() {
+        throw new Error("default readwrite mounts should not be snapshotted from VFS")
+      },
+    },
+  } as never, [{ type: "directory", source: root, target: "/workspace/example", mode: "readwrite" }])
+
+  assert.equal(skippedMaterialization.phaseResult.status, "skipped")
+  assert.equal(skippedMaterialization.materialized, 0)
 
   await applyVfsMountSnapshots([{ type: "directory", source: root, target: "/workspace/example", mode: "readwrite" }], [{
     mountIndex: 0,
