@@ -4,6 +4,7 @@
  * sandbox backend implementation APIs.
  */
 export * from "./agent-runtime-workload.js"
+export * from "./async-agent-task-contracts.js"
 export * from "./agent-workload.js"
 export * from "./agent-task-run-result.js"
 export * from "./headless-agent-task-contracts.js"

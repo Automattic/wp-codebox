@@ -10,6 +10,9 @@ import {
   fuzzSuiteContract,
   fuzzSuiteResultEnvelope,
   normalizeAgentTaskRunResult,
+  normalizeCodeboxAsyncAgentTaskHandle,
+  normalizeCodeboxAsyncAgentTaskResult,
+  normalizeCodeboxAsyncAgentTaskStatus,
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
   normalizePreviewReviewerAccess,
@@ -29,6 +32,9 @@ import {
   ARTIFACT_APPLY_PAYLOAD_SCHEMA,
   ARTIFACT_APPLY_PREFLIGHT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  CODEBOX_ASYNC_AGENT_TASK_HANDLE_SCHEMA,
+  CODEBOX_ASYNC_AGENT_TASK_RESULT_SCHEMA,
+  CODEBOX_ASYNC_AGENT_TASK_STATUS_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
@@ -130,6 +136,7 @@ const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin
 
 assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-runtime-workload.js",
+  "./async-agent-task-contracts.js",
   "./agent-workload.js",
   "./agent-task-run-result.js",
   "./headless-agent-task-contracts.js",
@@ -431,6 +438,9 @@ assert.equal(typeof browserArtifactPersistenceProjection, "function")
 assert.equal(typeof persistedBrowserArtifactRefs, "function")
 assert.equal(typeof artifactBundleFileManifest, "function")
 assert.equal(typeof normalizeAgentTaskRunResult, "function")
+assert.equal(typeof normalizeCodeboxAsyncAgentTaskHandle, "function")
+assert.equal(typeof normalizeCodeboxAsyncAgentTaskStatus, "function")
+assert.equal(typeof normalizeCodeboxAsyncAgentTaskResult, "function")
 assert.equal(typeof artifactResultEnvelope, "function")
 assert.equal(typeof normalizeArtifactResultEnvelope, "function")
 assert.equal(typeof runResultsApi.normalizeAgentTaskRunResult, "function")
@@ -486,6 +496,9 @@ assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox
 assert.equal(runtimeContractManifest().providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(normalizeCodeboxAsyncAgentTaskHandle({ id: "run-1" })?.schema, CODEBOX_ASYNC_AGENT_TASK_HANDLE_SCHEMA)
+assert.equal(normalizeCodeboxAsyncAgentTaskStatus({ id: "run-1", status: "running" })?.schema, CODEBOX_ASYNC_AGENT_TASK_STATUS_SCHEMA)
+assert.equal(normalizeCodeboxAsyncAgentTaskResult({ id: "run-1", result: { success: true } })?.schema, CODEBOX_ASYNC_AGENT_TASK_RESULT_SCHEMA)
 assert.equal(wordpressRestMatrixContract({ id: "public-rest-matrix" }).schema, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
