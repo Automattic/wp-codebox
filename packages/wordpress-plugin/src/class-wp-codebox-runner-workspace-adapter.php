@@ -66,7 +66,15 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 		}
 
 		if ( '' !== $checkout_path ) {
-			$adopt = $this->execute( $adopt_ability, array( 'path' => $checkout_path, 'name' => $input['repo'] ) );
+			$adopt = $this->execute(
+				$adopt_ability,
+				array(
+					'path'        => $checkout_path,
+					'name'        => $input['repo_slug'],
+					'repo'        => $input['repo'],
+					'target_repo' => $input['target_repo'],
+				)
+			);
 			if ( empty( $adopt['success'] ) ) {
 				return $adopt;
 			}
@@ -75,21 +83,35 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 			return array(
 				'success' => true,
 				'result'  => array(
-					'repo'   => (string) $input['repo'],
-					'branch' => (string) $input['branch'],
-					'handle' => (string) ( $result['handle'] ?? $result['name'] ?? $input['repo'] ),
-					'path'   => (string) ( $result['path'] ?? $checkout_path ),
+					'repo'        => (string) $input['repo'],
+					'target_repo' => (string) $input['target_repo'],
+					'repo_slug'   => (string) $input['repo_slug'],
+					'branch'      => (string) $input['branch'],
+					'handle'      => (string) ( $result['handle'] ?? $result['name'] ?? $input['repo_slug'] ),
+					'path'        => (string) ( $result['path'] ?? $checkout_path ),
 				),
 			);
 		}
 
-		$show = $this->execute( $show_ability, array( 'name' => $input['repo'] ) );
+		$show = $this->execute(
+			$show_ability,
+			array(
+				'name'        => $input['repo_slug'],
+				'repo'        => $input['repo'],
+				'target_repo' => $input['target_repo'],
+			)
+		);
 		if ( empty( $show['success'] ) ) {
 			if ( '' === (string) $input['clone_url'] ) {
 				return $this->failure( 'clone_url_required', 'wp_codebox_runner_workspace_prepare_clone_url_required', 'Runner workspace primary is missing and clone_url is empty.' );
 			}
 
-			$clone_input = array( 'url' => $input['clone_url'], 'name' => $input['repo'] );
+			$clone_input = array(
+				'url'         => $input['clone_url'],
+				'name'        => $input['repo_slug'],
+				'repo'        => $input['repo'],
+				'target_repo' => $input['target_repo'],
+			);
 			if ( '' !== (string) $input['github_token_env'] && '' !== trim( (string) getenv( (string) $input['github_token_env'] ) ) && preg_match( '#^https://github\.com/#', (string) $input['clone_url'] ) ) {
 				$clone_input['auth_token_env'] = $input['github_token_env'];
 			}
@@ -102,7 +124,8 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 		$worktree_input = array_filter(
 			array(
-				'repo'           => $input['repo'],
+				'repo'           => $input['repo_slug'],
+				'target_repo'    => $input['target_repo'],
 				'branch'         => $input['branch'],
 				'from'           => $input['from'],
 				'inject_context' => $input['inject_context'],
@@ -123,10 +146,12 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 		return array(
 			'success' => true,
 			'result'  => array(
-				'repo'   => (string) $input['repo'],
-				'branch' => (string) ( $result['branch'] ?? $input['branch'] ),
-				'handle' => (string) ( $result['handle'] ?? '' ),
-				'path'   => (string) ( $result['path'] ?? '' ),
+				'repo'        => (string) $input['repo'],
+				'target_repo' => (string) $input['target_repo'],
+				'repo_slug'   => (string) $input['repo_slug'],
+				'branch'      => (string) ( $result['branch'] ?? $input['branch'] ),
+				'handle'      => (string) ( $result['handle'] ?? '' ),
+				'path'        => (string) ( $result['path'] ?? '' ),
 			),
 		);
 	}

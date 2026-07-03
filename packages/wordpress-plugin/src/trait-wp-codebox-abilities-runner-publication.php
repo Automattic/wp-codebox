@@ -17,6 +17,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'schema'                  => array( 'type' => 'string', 'const' => 'wp-codebox/runner-workspace-prepare-request/v1' ),
 				'repo'                    => array( 'type' => 'string', 'description' => 'Target repository name or owner/name.' ),
 				'target_repo'             => array( 'type' => 'string' ),
+				'repo_slug'               => array( 'type' => 'string', 'description' => 'Sanitized repository basename used for runner workspace backend operations.' ),
 				'checkout_path'           => array( 'type' => 'string', 'description' => 'Mounted Actions checkout path visible to the WordPress runtime.' ),
 				'mounted_path'            => array( 'type' => 'string' ),
 				'clone_url'               => array( 'type' => 'string' ),
@@ -43,6 +44,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'path'         => array( 'type' => 'string' ),
 				'branch'       => array( 'type' => 'string' ),
 				'repo'         => array( 'type' => 'string' ),
+				'target_repo'  => array( 'type' => 'string' ),
+				'repo_slug'    => array( 'type' => 'string' ),
 				'capabilities' => array( 'type' => 'object' ),
 				'failure_type' => array( 'type' => 'string' ),
 				'error'        => array( 'type' => 'object' ),
@@ -60,6 +63,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			'runner_workspace'  => array( 'type' => 'object', 'description' => 'Opaque runner workspace identity and provenance.' ),
 			'repo'              => array( 'type' => 'string', 'description' => 'Target repository, for example Automattic/wp-codebox. Alias: target_repo.' ),
 			'target_repo'       => array( 'type' => 'string' ),
+			'repo_slug'         => array( 'type' => 'string', 'description' => 'Sanitized repository basename used for runner workspace backend operations.' ),
 		);
 	}
 
@@ -204,6 +208,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => 'prepared',
 				'repo'         => $normalized['repo'],
+				'target_repo'  => $normalized['target_repo'],
+				'repo_slug'    => $normalized['repo_slug'],
 				'branch'       => (string) ( $worktree['branch'] ?? $normalized['branch'] ),
 				'handle'       => (string) ( $worktree['handle'] ?? '' ),
 				'path'         => (string) ( $worktree['path'] ?? '' ),
@@ -248,6 +254,11 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$dirty         = count( $files );
 		$diff_result   = array();
 		$include_diff  = false !== ( $input['include_diff'] ?? true );
+		$status_repo = (string) ( $status_result['target_repo'] ?? $normalized['target_repo'] ?? '' );
+		if ( '' === $status_repo ) {
+			$status_repo = (string) ( $status_result['repo'] ?? '' );
+		}
+		$status_repo_slug = (string) ( $status_result['repo_slug'] ?? $status_result['repo'] ?? $normalized['repo_slug'] );
 
 		if ( $include_diff ) {
 			$diff_input = array_filter(
@@ -280,13 +291,15 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					array(
 						'handle'  => (string) ( $status_result['name'] ?? $normalized['workspace'] ),
 						'name'    => (string) ( $status_result['name'] ?? $normalized['workspace'] ),
-						'repo'    => (string) ( $status_result['repo'] ?? $normalized['repo'] ),
-						'path'    => (string) ( $status_result['path'] ?? $normalized['workspace_path'] ),
-						'branch'  => (string) ( $status_result['branch'] ?? '' ),
-						'remote'  => (string) ( $status_result['remote'] ?? '' ),
-						'commit'  => (string) ( $status_result['commit'] ?? '' ),
-						'dirty'   => $dirty,
-						'files'   => $files,
+						'repo'        => $status_repo,
+						'target_repo' => (string) ( $status_result['target_repo'] ?? $normalized['target_repo'] ?? '' ),
+						'repo_slug'   => $status_repo_slug,
+						'path'        => (string) ( $status_result['path'] ?? $normalized['workspace_path'] ),
+						'branch'      => (string) ( $status_result['branch'] ?? '' ),
+						'remote'      => (string) ( $status_result['remote'] ?? '' ),
+						'commit'      => (string) ( $status_result['commit'] ?? '' ),
+						'dirty'       => $dirty,
+						'files'       => $files,
 					),
 					static fn( mixed $value ): bool => '' !== $value && array() !== $value
 				),
@@ -326,7 +339,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'workspace_path'    => $normalized['workspace_path'],
 				'workspace_backend' => $normalized['workspace_backend'],
 				'repo'              => $normalized['repo'],
-				'target_repo'       => $normalized['repo'],
+				'target_repo'       => $normalized['target_repo'],
+				'repo_slug'         => $normalized['repo_slug'],
 				'command'           => $command,
 				'description'       => trim( (string) ( $input['description'] ?? '' ) ),
 				'timeout_seconds'   => max( 1, min( 600, (int) ( $input['timeout_seconds'] ?? 120 ) ) ),
@@ -354,7 +368,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 	/** @param array<string,mixed> $input Raw ability input. @return array<string,mixed> */
 	private static function normalize_runner_workspace_prepare_input( array $input ): array {
 		$config        = is_array( $input['runner_workspace_config'] ?? null ) ? $input['runner_workspace_config'] : ( is_array( $input['runner_workspace'] ?? null ) ? $input['runner_workspace'] : array() );
-		$repo          = self::normalize_runner_workspace_repo_name( (string) ( $input['repo'] ?? $input['target_repo'] ?? $config['repo'] ?? '' ) );
+		$target_repo   = self::normalize_runner_workspace_target_repo( (string) ( $input['target_repo'] ?? $input['repo'] ?? $config['target_repo'] ?? $config['repo'] ?? '' ) );
+		$repo_slug     = self::normalize_runner_workspace_repo_slug( (string) ( $input['repo_slug'] ?? $config['repo_slug'] ?? $target_repo ) );
 		$checkout_path = trim( (string) ( $input['checkout_path'] ?? $input['mounted_path'] ?? $config['checkout_path'] ?? $config['mounted_path'] ?? $config['local_seed_path'] ?? '' ) );
 		$branch        = trim( (string) ( $input['branch'] ?? $config['branch'] ?? '' ) );
 
@@ -365,8 +380,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		}
 
 		$normalized = array(
-			'repo'             => $repo,
-			'target_repo'      => (string) ( $input['target_repo'] ?? $input['repo'] ?? $config['repo'] ?? '' ),
+			'repo'             => $target_repo,
+			'target_repo'      => $target_repo,
+			'repo_slug'        => $repo_slug,
 			'checkout_path'    => $checkout_path,
 			'clone_url'        => trim( (string) ( $input['clone_url'] ?? $config['clone_url'] ?? '' ) ),
 			'branch'           => $branch,
@@ -380,19 +396,28 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			'config'           => $config,
 		);
 
-		if ( '' === $repo ) {
+		if ( '' === $target_repo || '' === $repo_slug ) {
 			$normalized['error'] = array( 'code' => 'wp_codebox_runner_workspace_prepare_invalid_request', 'message' => 'Runner workspace preparation requires repo.', 'missing' => array( 'repo' ) );
 		}
 
 		return $normalized;
 	}
 
-	private static function normalize_runner_workspace_repo_name( string $repo ): string {
+	private static function normalize_runner_workspace_target_repo( string $repo ): string {
 		$repo = trim( $repo );
+		$repo = preg_replace( '#^(?:https://github\.com/|git@github\.com:)#i', '', $repo ) ?? $repo;
+		$repo = preg_replace( '#\.git$#i', '', $repo ) ?? $repo;
+
+		return trim( $repo, '/' );
+	}
+
+	private static function normalize_runner_workspace_repo_slug( string $repo ): string {
+		$repo = self::normalize_runner_workspace_target_repo( $repo );
 		if ( str_contains( $repo, '/' ) ) {
 			$repo = basename( $repo );
 		}
-		return preg_replace( '/\.git$/', '', $repo ) ?? $repo;
+
+		return self::runner_workspace_slug( $repo );
 	}
 
 	private static function runner_workspace_bool( array $input, array $config, string $key, bool $default ): bool {
@@ -431,6 +456,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'failure_type' => $failure_type,
 				'error'        => $error,
 				'repo'         => (string) ( $input['repo'] ?? '' ),
+				'target_repo'  => (string) ( $input['target_repo'] ?? '' ),
+				'repo_slug'    => (string) ( $input['repo_slug'] ?? '' ),
 				'branch'       => (string) ( $input['branch'] ?? '' ),
 				'capabilities' => array( 'capture' => false, 'command' => false, 'publish' => false ),
 			),
@@ -454,7 +481,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			'workspace_backend'     => (string) $identity['workspace_backend'],
 			'runner_workspace'      => $identity['runner_workspace'],
 			'repo'                  => $repo,
-			'target_repo'           => $repo,
+			'target_repo'           => $identity['target_repo'],
+			'repo_slug'             => $identity['repo_slug'],
 			'base'                  => trim( (string) ( $input['base'] ?? $input['base_branch'] ?? '' ) ),
 			'head'                  => trim( (string) ( $input['head'] ?? $input['head_branch'] ?? '' ) ),
 			'commit_message'        => trim( (string) ( $input['commit_message'] ?? '' ) ),
@@ -494,7 +522,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 	private static function normalize_runner_workspace_identity_input( array $input ): array {
 		$runner_workspace = is_array( $input['runner_workspace'] ?? null ) ? $input['runner_workspace'] : array();
 		$workspace        = trim( (string) ( $input['workspace'] ?? $input['workspace_handle'] ?? $input['handle'] ?? $runner_workspace['handle'] ?? $runner_workspace['name'] ?? '' ) );
-		$repo             = trim( (string) ( $input['repo'] ?? $input['target_repo'] ?? $runner_workspace['repo'] ?? '' ) );
+		$target_repo      = self::normalize_runner_workspace_target_repo( (string) ( $input['target_repo'] ?? $input['repo'] ?? $runner_workspace['target_repo'] ?? $runner_workspace['repo'] ?? '' ) );
+		$repo_slug        = self::normalize_runner_workspace_repo_slug( (string) ( $input['repo_slug'] ?? $runner_workspace['repo_slug'] ?? $target_repo ) );
 		$path             = trim( (string) ( $input['workspace_path'] ?? $runner_workspace['path'] ?? '' ) );
 		$backend          = trim( (string) ( $input['workspace_backend'] ?? $runner_workspace['backend'] ?? '' ) );
 
@@ -504,8 +533,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			'workspace_path'    => $path,
 			'workspace_backend' => $backend,
 			'runner_workspace'  => $runner_workspace,
-			'repo'              => $repo,
-			'target_repo'       => $repo,
+			'repo'              => $target_repo,
+			'target_repo'       => $target_repo,
+			'repo_slug'         => $repo_slug,
 		);
 
 		if ( '' === $workspace ) {
@@ -529,6 +559,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'workspace_backend'     => $input['workspace_backend'],
 				'runner_workspace'      => $input['runner_workspace'],
 				'target_repo'           => $input['target_repo'],
+				'repo_slug'             => $input['repo_slug'],
 				'repo'                  => $input['repo'],
 				'base'                  => $input['base'],
 				'head'                  => $input['head'],
@@ -647,7 +678,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			array(
 				'handle'  => (string) ( $input['workspace'] ?? '' ),
 				'path'    => (string) ( $input['workspace_path'] ?? '' ),
-				'repo'    => (string) ( $input['repo'] ?? '' ),
+				'repo'        => (string) ( $input['repo'] ?? '' ),
+				'target_repo' => (string) ( $input['target_repo'] ?? '' ),
+				'repo_slug'   => (string) ( $input['repo_slug'] ?? '' ),
 			),
 			static fn( mixed $value ): bool => '' !== $value
 		);

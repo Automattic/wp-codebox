@@ -36,6 +36,7 @@ export type RunnerWorkspacePublicationRequest = {
   runner_workspace?: Record<string, unknown>
   repo?: string
   target_repo?: string
+  repo_slug?: string
   base?: string
   base_branch?: string
   head?: string
@@ -79,6 +80,9 @@ export type RunnerWorkspacePublicationResult = {
     handle?: string
     path?: string
     backend?: string
+    repo?: string
+    target_repo?: string
+    repo_slug?: string
   }
   branch?: {
     base?: string
@@ -111,6 +115,7 @@ export type RunnerWorkspaceIdentity = {
   runner_workspace?: Record<string, unknown>
   repo?: string
   target_repo?: string
+  repo_slug?: string
 }
 
 export type RunnerWorkspaceCaptureRequest = RunnerWorkspaceIdentity & {
@@ -131,6 +136,8 @@ export type RunnerWorkspaceCaptureResult = {
     handle?: string
     name?: string
     repo?: string
+    target_repo?: string
+    repo_slug?: string
     path?: string
     branch?: string
     remote?: string

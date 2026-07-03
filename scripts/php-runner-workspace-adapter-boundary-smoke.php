@@ -94,6 +94,17 @@ function assert_no_backend_leak( mixed $value, string $label ): void {
 	}
 }
 
+function ability_call_named( string $name ): array {
+	foreach ( array_reverse( $GLOBALS['wp_codebox_ability_calls'] ) as $call ) {
+		if ( $name === $call['name'] ) {
+			return $call;
+		}
+	}
+
+	fwrite( STDERR, 'Missing ability call: ' . $name . "\n" );
+	exit( 1 );
+}
+
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 add_filter(
@@ -145,17 +156,24 @@ foreach ( $public_runner_workspace_abilities as $ability_name ) {
 $prepared = WP_Codebox_Abilities::prepare_runner_workspace( array( 'repo' => 'Automattic/wp-codebox', 'checkout_path' => '/tmp/checkout', 'branch' => 'agent/change' ) );
 assert_same_contract( true, $prepared['success'], 'prepare success' );
 assert_same_contract( 'wp-codebox/runner-workspace-prepare-result/v1', $prepared['schema'], 'prepare schema' );
+assert_same_contract( 'Automattic/wp-codebox', $prepared['target_repo'], 'prepare preserves target repo owner/name' );
+assert_same_contract( 'wp-codebox', $prepared['repo_slug'], 'prepare exposes repo slug' );
 assert_same_contract( 'wp-codebox@task', $prepared['handle'], 'prepare handle' );
+$adopt_call = ability_call_named( 'fake-runner-workspace-backend/workspace-adopt' );
+assert_same_contract( 'wp-codebox', $adopt_call['input']['name'], 'prepare backend uses repo slug as workspace name' );
+assert_same_contract( 'Automattic/wp-codebox', $adopt_call['input']['target_repo'], 'prepare backend receives full target repo' );
 
-$captured = WP_Codebox_Abilities::capture_runner_workspace( array( 'workspace' => 'wp-codebox@task', 'repo' => 'wp-codebox', 'exclude_paths' => array( 'vendor/**' ) ) );
+$captured = WP_Codebox_Abilities::capture_runner_workspace( array( 'workspace' => 'wp-codebox@task', 'repo' => 'Automattic/wp-codebox', 'exclude_paths' => array( 'vendor/**' ) ) );
 assert_same_contract( true, $captured['success'], 'capture success' );
+assert_same_contract( 'Automattic/wp-codebox', $captured['workspace']['target_repo'], 'capture workspace preserves target repo owner/name' );
+assert_same_contract( 'wp-codebox', $captured['workspace']['repo_slug'], 'capture workspace exposes repo slug' );
 assert_same_contract( array( 'src/keep.php' ), $captured['status']['files'], 'capture excludes files' );
 assert_same_contract( false, str_contains( $captured['diff']['diff'], 'vendor/skip.php' ), 'capture excludes diff section' );
 
 $published = WP_Codebox_Abilities::publish_runner_workspace(
 	array(
 		'workspace'      => 'wp-codebox@task',
-		'repo'           => 'wp-codebox',
+		'repo'           => 'Automattic/wp-codebox',
 		'commit_message' => 'Test change',
 		'title'          => 'Test change',
 		'body'           => 'Body',
@@ -163,10 +181,16 @@ $published = WP_Codebox_Abilities::publish_runner_workspace(
 );
 assert_same_contract( true, $published['success'], 'publish success' );
 assert_same_contract( 7, $published['pull_request']['number'], 'publish PR number' );
+$publish_call = ability_call_named( 'fake-runner-workspace-backend/publish-runner-workspace' );
+assert_same_contract( 'Automattic/wp-codebox', $publish_call['input']['target_repo'], 'publish backend receives full target repo' );
+assert_same_contract( 'wp-codebox', $publish_call['input']['repo_slug'], 'publish backend receives repo slug' );
 
-$command = WP_Codebox_Abilities::run_runner_workspace_command( array( 'workspace' => 'wp-codebox@task', 'repo' => 'wp-codebox', 'command' => 'php -l file.php' ) );
+$command = WP_Codebox_Abilities::run_runner_workspace_command( array( 'workspace' => 'wp-codebox@task', 'repo' => 'Automattic/wp-codebox', 'command' => 'php -l file.php' ) );
 assert_same_contract( true, $command['success'], 'command success' );
 assert_same_contract( 'completed', $command['status'], 'command status' );
+$command_call = ability_call_named( 'fake-runner-workspace-backend/run-runner-workspace-command' );
+assert_same_contract( 'Automattic/wp-codebox', $command_call['input']['target_repo'], 'command backend receives full target repo' );
+assert_same_contract( 'wp-codebox', $command_call['input']['repo_slug'], 'command backend receives repo slug' );
 
 $GLOBALS['wp_codebox_test_abilities']['fake-runner-workspace-backend/workspace-git-status'] = new class() {
 	public function execute( array $input ): WP_Error {
