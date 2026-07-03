@@ -233,6 +233,8 @@ export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions =
   const includedOptionNames = JSON.stringify(normalizeStringList(options.includedOptionNames ?? []))
   const includedPostTypes = JSON.stringify(normalizeStringList(options.includedPostTypes ?? []))
   return [String.raw`
+@ini_set( 'memory_limit', '512M' );
+
 global $wpdb;
 
 $wp_codebox_snapshot_excluded_wp_content_paths = json_decode(<<<'WP_CODEBOX_EXCLUDED_WP_CONTENT_PATHS'
