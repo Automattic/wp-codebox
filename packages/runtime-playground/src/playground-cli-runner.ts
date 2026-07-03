@@ -14,6 +14,8 @@ import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
 
+const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
+
 export interface PlaygroundCliModule {
   runCLI(options: {
     command: "server"
@@ -279,7 +281,10 @@ function pluginRuntimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<st
 }
 
 function pluginRuntimePhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
-  return pluginRuntimePhpEntries(spec, "iniEntries")
+  return {
+    ...DEFAULT_RUNTIME_PHP_INI_ENTRIES,
+    ...(pluginRuntimePhpEntries(spec, "iniEntries") ?? {}),
+  }
 }
 
 function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "bootstrapIniEntries"): Record<string, string> | undefined {

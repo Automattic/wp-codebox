@@ -80,6 +80,18 @@ try {
   assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
 
   calls.length = 0
+  const defaultRuntimeIniSpec: RuntimeCreateSpec = {
+    ...spec,
+    metadata: {},
+  }
+
+  const defaultRuntimeIniServer = await startPlaygroundCliServer(defaultRuntimeIniSpec, [], { cliModule })
+  await defaultRuntimeIniServer[Symbol.asyncDispose]()
+
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+
+  calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {
     ...spec,
     metadata: {
