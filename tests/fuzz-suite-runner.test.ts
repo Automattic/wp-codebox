@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzFixturePlanContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, mutationFixtureSeedOperation, normalizeFuzzSuiteResetPolicy, planBrowserRandomWalk, planFuzzSuiteCaseExecutionSpec, restMutationFixtureOptInContract, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const disposableSandboxBoundary = { disposable: true, destructivePermission: true, teardown: "discard", hostAccess: "declared-mounts-only" }
+const destructiveSandboxProof = { schema: "wp-codebox/destructive-sandbox-proof/v1", artifactKind: "destructive-sandbox-proof", version: 1, runtimeId: "runtime-1", createdAt: "2026-01-01T00:00:00.000Z", boundarySource: "runtime-created", boundary: { ...disposableSandboxBoundary, backend: "wordpress-playground", environment: "wordpress" } }
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-001",
@@ -154,7 +155,7 @@ for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
     cases: [{ id: `${method.toLowerCase()}-blocked`, target: { kind: "runtime-action" }, input: { type: "rest_request", method, path: "/wp/v2/posts/10" } }],
   }), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
   assert.equal(blockedRestMutation.status, "skipped")
-  assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_disposable_sandbox_boundary_required")
+  assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_destructive_sandbox_proof_required")
   assert.equal(blockedRestMutation.cases[0]?.diagnostics[0]?.metadata?.mutationSkipped, true)
 }
 
@@ -170,7 +171,7 @@ for (const input of [
     cases: [{ id: `${input.type}-blocked`, target: { kind: "runtime-action" }, input }],
   }), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
   assert.equal(blockedMutation.status, "skipped")
-  assert.equal(blockedMutation.cases[0]?.skipReason, "fuzz_suite_disposable_sandbox_boundary_required")
+  assert.equal(blockedMutation.cases[0]?.skipReason, "fuzz_suite_destructive_sandbox_proof_required")
 }
 
 const allowedRestMutations: string[] = []
@@ -203,7 +204,7 @@ assert.deepEqual(allowedRestMutation.cases[0]?.diagnostics, [])
 const resetGuardedRestMutationSpecs: ExecutionSpec[] = []
 const resetGuardedRestMutation = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-rest-mutation-reset-guarded",
-  metadata: { disposableSandboxBoundary },
+  metadata: { destructiveSandboxProof },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "destructive-baseline" },
   mutation: { intent: "delete", destructive: true, intensity: "high" },
   cases: [{ id: "delete-post-reset-guarded", target: { kind: "rest", id: "/wp/v2/posts/10" }, input: { method: "DELETE", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high" } }],
@@ -223,7 +224,7 @@ assert.deepEqual((resetGuardedRestMutation.coveragePlan?.generated[0]?.metadata 
 
 const resetGuardedRuntimeActionMutation = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-runtime-action-mutation-reset-guarded",
-  metadata: { disposableSandboxBoundary },
+  metadata: { destructiveSandboxProof },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "runtime-action-destructive-baseline" },
   cases: [{ id: "delete-post-runtime-action-reset-guarded", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
 }), {
@@ -473,12 +474,12 @@ const mutatingSequenceWithoutReset = await runFuzzSuite(fuzzSuiteContract({
   cases: [{ id: "sequence-mutation", input: { type: "sequence", seed: "seq-mutate", maxSteps: 2, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] } }],
 }), { runtimeActionExecutor: async () => { throw new Error("must not execute without reset") } })
 assert.equal(mutatingSequenceWithoutReset.status, "skipped")
-assert.equal(mutatingSequenceWithoutReset.cases[0]?.skipReason, "fuzz_suite_disposable_sandbox_boundary_required")
+assert.equal(mutatingSequenceWithoutReset.cases[0]?.skipReason, "fuzz_suite_destructive_sandbox_proof_required")
 
 const sequenceSteps: string[] = []
 const mutatingSequenceWithReset = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-mutating-sequence-with-reset",
-  metadata: { disposableSandboxBoundary },
+  metadata: { destructiveSandboxProof },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "sequence-baseline" },
   target: { kind: "runtime-action" },
   cases: [{ id: "sequence-mutation", input: { type: "sequence", seed: "seq-mutate", maxSteps: 3, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] } }],
@@ -499,7 +500,7 @@ assert.equal(mutatingSequenceWithReset.artifactRefs.length, 2)
 
 const sequenceFailure = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-sequence-step-failure",
-  metadata: { disposableSandboxBoundary },
+  metadata: { destructiveSandboxProof },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "sequence-failure-baseline" },
   target: { kind: "runtime-action" },
   cases: [{ id: "sequence-fails", input: { type: "sequence", steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "browser", operation: "click", selector: "#missing" }] } }],
@@ -514,7 +515,7 @@ assert.equal(sequenceFailure.cases[0]?.diagnostics[0]?.metadata?.stepIndex, 1)
 let dbWriteOperation: Record<string, unknown> | undefined
 const commandBackedDbWrite = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-db-write-reset-command-backed",
-  metadata: { disposableSandboxBoundary },
+  metadata: { destructiveSandboxProof },
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "db-baseline" },
   target: { kind: "runtime-action" },
   cases: [{ id: "db-write", input: { type: "db_operation", operation: "write", query: { table: "options", where: { option_name: "missing" }, values: { option_value: "fuzz" }, limit: 1 }, options: { mutation: "update" } } }],

@@ -4,10 +4,12 @@ import { stripUndefined } from "./object-utils.js"
 
 export const SANDBOX_ISOLATION_PROOF_SCHEMA = "wp-codebox/sandbox-isolation-proof/v1" as const
 export const SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND = "sandbox-isolation-proof" as const
+export const DESTRUCTIVE_SANDBOX_PROOF_SCHEMA = "wp-codebox/destructive-sandbox-proof/v1" as const
+export const DESTRUCTIVE_SANDBOX_PROOF_ARTIFACT_KIND = "destructive-sandbox-proof" as const
 
 export type SandboxIsolationProofStatus = "passed" | "failed"
 export type SandboxIsolationProofLifecycleStatus = "created" | "mutated" | "restored" | "destroyed" | "discarded" | "failed"
-export type SandboxIsolationProofDiffStatus = "clean-after-restore" | "dirty-after-restore" | "not-validated" | "not-required-disposable-sandbox"
+export type SandboxIsolationProofDiffStatus = "clean-after-restore" | "dirty-after-restore" | "not-validated"
 
 export interface SandboxIsolationProofStepEvidence {
   status: SandboxIsolationProofLifecycleStatus
@@ -45,6 +47,33 @@ export interface SandboxIsolationProofRuntimeBoundary {
   disposable: true
   hostAccess: "declared-mounts-only"
   destroy: SandboxIsolationProofStepEvidence & { status: "destroyed" | "discarded" }
+  metadata?: Record<string, unknown>
+}
+
+export interface DestructiveSandboxProof {
+  schema: typeof DESTRUCTIVE_SANDBOX_PROOF_SCHEMA
+  artifactKind: typeof DESTRUCTIVE_SANDBOX_PROOF_ARTIFACT_KIND
+  version: 1
+  runtimeId: string
+  runtimeSessionId?: string
+  createdAt: string
+  boundarySource: "runtime-created" | (string & {})
+  boundary: {
+    disposable: true
+    destructivePermission: true
+    teardown: "discard" | "destroy"
+    backend: string
+    environment: string
+    hostAccess: "declared-mounts-only"
+  }
+  mountedPathAllowlist?: string[]
+  teardown?: {
+    intent: "discard" | "destroy"
+    status: "intended" | "discarded" | "destroyed" | "unsupported" | (string & {})
+    evidence?: string
+    metadata?: Record<string, unknown>
+  }
+  artifactPath?: string
   metadata?: Record<string, unknown>
 }
 
@@ -92,6 +121,21 @@ export function sandboxIsolationProof(input: Omit<SandboxIsolationProof, "schema
 
 export function sandboxIsolationProofDigest(proof: SandboxIsolationProof): string {
   return createHash("sha256").update(`${JSON.stringify(proof)}\n`).digest("hex")
+}
+
+export function destructiveSandboxProof(input: Omit<DestructiveSandboxProof, "schema" | "artifactKind" | "version" | "createdAt"> & { createdAt?: string }): DestructiveSandboxProof {
+  if (!input.runtimeId) throw new Error("Destructive sandbox proof requires a runtimeId")
+  if (input.boundarySource !== "runtime-created") throw new Error("Destructive sandbox proof requires boundarySource=runtime-created")
+  if (input.boundary?.disposable !== true || input.boundary?.destructivePermission !== true) throw new Error("Destructive sandbox proof requires disposable destructive boundary permission")
+  if (input.boundary.teardown !== "discard" && input.boundary.teardown !== "destroy") throw new Error("Destructive sandbox proof requires teardown=discard or destroy")
+  if (input.boundary.hostAccess !== "declared-mounts-only") throw new Error("Destructive sandbox proof requires declared-mounts-only host access")
+  return stripUndefined({
+    schema: DESTRUCTIVE_SANDBOX_PROOF_SCHEMA,
+    artifactKind: DESTRUCTIVE_SANDBOX_PROOF_ARTIFACT_KIND,
+    version: 1 as const,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    ...input,
+  }) as DestructiveSandboxProof
 }
 
 function assertSandboxIsolationProofInput(input: Omit<SandboxIsolationProof, "schema" | "artifactKind" | "version" | "generatedAt"> & { generatedAt?: string }): void {

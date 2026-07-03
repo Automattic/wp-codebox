@@ -196,7 +196,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
 
     const mutationGate = target ? fuzzSuiteCaseMutationGate(suite, fuzzCase, target, runtimeAction?.status === "valid" ? runtimeAction.action : undefined) : undefined
     if (mutationGate && !mutationGate.allowed) {
-      const diagnostic: FuzzSuiteDiagnostic = { severity: "warning", code: "fuzz_suite_disposable_sandbox_boundary_required", caseId: fuzzCase.id, target, message: "Fuzz suite case is mutating or destructive and requires an explicit disposable sandbox boundary before execution.", metadata: mutationGate.metadata }
+      const diagnostic: FuzzSuiteDiagnostic = { severity: "warning", code: "fuzz_suite_destructive_sandbox_proof_required", caseId: fuzzCase.id, target, message: "Fuzz suite case is mutating or destructive and requires runtime-created destructive sandbox proof before execution.", metadata: mutationGate.metadata }
       diagnostics.push(diagnostic)
       cases.push({ id: fuzzCase.id, status: "skipped", success: false, target, reset, skipReason: diagnostic.code, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }) })
       continue
@@ -843,7 +843,7 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
       if (input.payload.type === "db_operation") {
         try {
           const rawOperation = normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, ...input.payload, operation: input.payload.operation ?? "read" })
-          const disposableSandboxBoundary = rawOperation.operation === "write" ? fuzzSuiteDisposableSandboxBoundary(suite) : undefined
+          const disposableSandboxBoundary = rawOperation.operation === "write" ? fuzzSuiteDestructiveSandboxProofBoundary(suite) : undefined
           const operation = disposableSandboxBoundary ? normalizeWordPressDbOperation({
             ...rawOperation,
             options: { ...(rawOperation.options ?? {}), destructivePermission: true },
@@ -1143,9 +1143,9 @@ function fuzzSuiteCaseMutationGate(suite: FuzzSuiteContract, fuzzCase: FuzzSuite
   const classification = action ? fuzzSuiteRuntimeActionMutationClassification(action) : fuzzSuiteCaseMutationClassification(fuzzCase, target)
   if (!classification.mutates) return undefined
   const resetPolicyAllowsMutation = fuzzSuiteResetPolicyAllowsMutation(suite, fuzzCase)
-  const disposableSandboxBoundary = fuzzSuiteDisposableSandboxBoundary(suite)
+  const disposableSandboxBoundary = fuzzSuiteDestructiveSandboxProofBoundary(suite)
   const mutationOptIn = action?.type === "rest_request" && isRestMutationMethod(action.method ?? "GET") ? fuzzSuiteRestMutationOptIn(suite, fuzzCase, action as unknown as Record<string, unknown>) : undefined
-  return { allowed: Boolean(disposableSandboxBoundary || mutationOptIn), metadata: stripUndefined({ ...classification.metadata, mutationSkipped: !disposableSandboxBoundary && !mutationOptIn, disposableSandboxBoundaryRequired: !disposableSandboxBoundary && !mutationOptIn, disposableSandboxBoundary, resetPolicyAllowsMutation, resetMode: resetPolicyAllowsMutation ? fuzzSuiteCaseResetPolicy(suite, fuzzCase).mode : undefined, restMutationFixtureOptIn: mutationOptIn, requiredContract: action?.type === "rest_request" ? "wp-codebox/rest-mutation-fixture-opt-in/v1 or explicit disposable sandbox boundary" : "explicit disposable sandbox boundary" }) }
+  return { allowed: Boolean(disposableSandboxBoundary || mutationOptIn), metadata: stripUndefined({ ...classification.metadata, mutationSkipped: !disposableSandboxBoundary && !mutationOptIn, destructiveSandboxProofRequired: !disposableSandboxBoundary && !mutationOptIn, disposableSandboxBoundary, resetPolicyAllowsMutation, resetMode: resetPolicyAllowsMutation ? fuzzSuiteCaseResetPolicy(suite, fuzzCase).mode : undefined, restMutationFixtureOptIn: mutationOptIn, requiredContract: action?.type === "rest_request" ? "wp-codebox/rest-mutation-fixture-opt-in/v1 or wp-codebox/destructive-sandbox-proof/v1" : "wp-codebox/destructive-sandbox-proof/v1" }) }
 }
 
 function fuzzSuiteCaseMutationClassification(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef): { mutates: boolean; metadata: Record<string, unknown> } {
@@ -1490,10 +1490,13 @@ function fuzzSuiteResetPolicyAllowsMutation(suite: FuzzSuiteContract, fuzzCase: 
   return fuzzSuiteCaseResetPolicy(suite, fuzzCase).mode !== "none"
 }
 
-function fuzzSuiteDisposableSandboxBoundary(suite: FuzzSuiteContract): Record<string, unknown> | undefined {
-  const boundary = recordValue(suite.metadata?.disposableSandboxBoundary)
-    ?? recordValue(suite.metadata?.sandboxBoundary)
-    ?? recordValue(suite.metadata?.runtimeBoundary)
+function fuzzSuiteDestructiveSandboxProofBoundary(suite: FuzzSuiteContract): Record<string, unknown> | undefined {
+  const proof = recordValue(suite.metadata?.destructiveSandboxProof)
+    ?? recordValue(suite.metadata?.destructive_sandbox_proof)
+  if (proof?.schema !== "wp-codebox/destructive-sandbox-proof/v1" || proof.boundarySource !== "runtime-created") {
+    return undefined
+  }
+  const boundary = recordValue(proof.boundary)
   const destructivePermission = boundary?.destructivePermission === true || boundary?.destructive === true || boundary?.allowsDestructive === true
   const teardown = boundary?.teardown === "discard" || boundary?.discard === true || recordValue(boundary?.destroy)?.status === "destroyed"
   if (boundary?.disposable === true && destructivePermission && teardown) {

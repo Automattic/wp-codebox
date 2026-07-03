@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { DELETE_BOUNDARY_ARTIFACT_KIND, SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND, sandboxIsolationProof, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult, type Snapshot } from "../packages/runtime-core/src/public.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND, executeFuzzSuite, sandboxIsolationProof, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult, type Snapshot } from "../packages/runtime-core/src/public.js"
 import {
   createWordPressFuzzSuiteResetExecutor,
   createWordPressRuntimeCheckpoint,
@@ -272,11 +272,12 @@ const proof = (deleteBoundary?.metadata as Record<string, unknown> | undefined)?
 assert.ok(proof)
 assert.equal(proof?.schema, "wp-codebox/sandbox-isolation-proof/v1")
 assert.equal(proof?.artifactKind, SANDBOX_ISOLATION_PROOF_ARTIFACT_KIND)
-assert.equal(proof?.baseline.command, "wp-codebox.disposable-sandbox-boundary")
+assert.equal(proof?.baseline.command, "wp-codebox.runtime-sandbox-created")
 assert.equal(proof?.mutation.command, "wordpress.rest-request")
-assert.equal(proof?.diff?.status, "not-required-disposable-sandbox")
+assert.equal(proof?.diff?.status, "not-validated")
 assert.equal(proof?.runtimeBoundary.destroy.status, "discarded")
 assert.equal(proof?.artifactPath, "files/sandbox-isolation/delete-post-proof.json")
+assert.equal((proof?.baseline.metadata as { schema?: string } | undefined)?.schema, "wp-codebox/destructive-sandbox-proof/v1")
 const invalidProof = sandboxIsolationProof({
   status: "passed",
   baseline: { status: "created", command: "wp-codebox.disposable-sandbox-boundary" },
@@ -289,15 +290,16 @@ assert.equal(invalidProof.schema, "wp-codebox/sandbox-isolation-proof/v1")
 assert.equal(proof.schema, "wp-codebox/sandbox-isolation-proof/v1")
 assert.throws(() => sandboxIsolationProof({ ...invalidProof, runtimeBoundary: { ...invalidProof.runtimeBoundary, destroy: { status: "failed" } as never } }), /runtimeBoundary\.destroy\.status destroyed or discarded/)
 
-const beforeDeniedMutationStepCount = steps.length
-const deniedMutationResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
-  id: "mutation-suite-denied",
+const beforeCallerBoundaryOnlyStepCount = steps.length
+const callerBoundaryOnlyResult = await executeFuzzSuite(fuzzSuiteContract({
+  id: "mutation-suite-caller-boundary-only",
   metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: false, teardown: "discard" } },
-  cases: [{ id: "delete-post-denied", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", restMutationFixtureOptIn: deleteOptIn } }],
-}))
-assert.equal(deniedMutationResult.status, "error")
-assert.equal(deniedMutationResult.cases[0]?.status, "error")
-assert.match(deniedMutationResult.cases[0]?.diagnostics?.[0]?.message ?? "", /disposableSandboxBoundary/)
-assert.deepEqual(steps.slice(beforeDeniedMutationStepCount).map((step) => step.command), [])
+  cases: [{ id: "delete-post-denied", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" } }],
+}), { requireCoverage: true, runtimeActionExecutor: { async executeRuntimeAction() { throw new Error("must not execute without runtime proof") } } })
+assert.equal(callerBoundaryOnlyResult.status, "skipped")
+assert.equal(callerBoundaryOnlyResult.cases[0]?.status, "skipped")
+assert.equal(callerBoundaryOnlyResult.cases[0]?.diagnostics?.[0]?.code, "fuzz_suite_destructive_sandbox_proof_required")
+assert.match(callerBoundaryOnlyResult.cases[0]?.diagnostics?.[0]?.message ?? "", /runtime-created destructive sandbox proof/)
+assert.deepEqual(steps.slice(beforeCallerBoundaryOnlyStepCount).map((step) => step.command), [])
 
 console.log("playground public runtime primitives ok")

@@ -187,7 +187,7 @@ const beforeFuzzCalls = calls.length
 const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
   id: "wordpress-episode-runtime-actions",
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "runtime-actions-baseline" },
-  metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: true, teardown: "discard", backend: "wordpress-playground", hostAccess: "declared-mounts-only" } },
+  metadata: { destructiveSandboxProof: { schema: "wp-codebox/destructive-sandbox-proof/v1", artifactKind: "destructive-sandbox-proof", version: 1, runtimeId: "runtime-1", createdAt: "2026-01-01T00:00:00.000Z", boundarySource: "runtime-created", boundary: { disposable: true, destructivePermission: true, teardown: "discard", backend: "wordpress-playground", environment: "wordpress", hostAccess: "declared-mounts-only" } } },
   target: { kind: "runtime-action" },
   cases: [
     { id: "browser", input: { type: "browser", operation: "capture", capture: ["html"] } },

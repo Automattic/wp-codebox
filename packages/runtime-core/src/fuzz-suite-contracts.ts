@@ -195,6 +195,10 @@ export interface WordPressFuzzDestructiveModeRequirements {
     destructivePermission: true
     teardown: "discard"
   }
+  requiredSandboxProof: {
+    schema: "wp-codebox/destructive-sandbox-proof/v1"
+    boundarySource: "runtime-created"
+  }
   optionalResetModes: FuzzSuiteResetMode[]
   requiredArtifacts: string[]
   deleteBoundaryCapability: string
@@ -262,6 +266,8 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "cache-churn-observation",
     "delete-boundary-artifact",
     "sandbox-isolation-proof",
+    "destructive-sandbox-proof",
+    "reset-evidence",
     "external-http-guardrail",
     "external-side-effect-guardrail",
     "artifact-export",
@@ -332,13 +338,13 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       id: "checkpoint-per-case",
       supported: true,
       optionalForMutationIntents: ["write", "delete", "destructive"],
-      artifactKinds: ["mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set"],
+      artifactKinds: ["mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set", "reset-evidence"],
     },
     {
       id: "restore-snapshot",
       supported: false,
       optionalForMutationIntents: ["write", "delete", "destructive"],
-      artifactKinds: [],
+      artifactKinds: ["reset-evidence"],
     },
   ],
   artifactExpectations: [
@@ -377,6 +383,20 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       producedBy: ["wordpress.cache-churn-observation"],
       description: "Optional destructive fuzzing evidence that correlates a case/action with transient, site transient, option, autoload, and explicitly unsupported object-cache churn fields.",
     },
+    {
+      id: "destructive-sandbox-proof",
+      required: true,
+      schema: "wp-codebox/destructive-sandbox-proof/v1",
+      producedBy: ["run-fuzz-suite"],
+      description: "Destructive fuzz runs require runtime-created sandbox proof; caller metadata cannot satisfy destructive isolation by itself.",
+    },
+    {
+      id: "reset-evidence",
+      required: false,
+      schema: "wp-codebox/fuzz-suite-reset-result/v1",
+      producedBy: ["checkpoint-per-case", "restore-snapshot"],
+      description: "Reset modes report passed, failed, or unsupported evidence explicitly; unsupported snapshot restore is a fail-closed result, not simulated reset success.",
+    },
   ],
   destructiveModeRequirements: {
     supported: true,
@@ -386,8 +406,12 @@ export const WORDPRESS_FUZZ_RUNTIME_CONTRACT: WordPressFuzzRuntimeContract = {
       destructivePermission: true,
       teardown: "discard",
     },
+    requiredSandboxProof: {
+      schema: "wp-codebox/destructive-sandbox-proof/v1",
+      boundarySource: "runtime-created",
+    },
     optionalResetModes: ["checkpoint-per-case", "restore-snapshot"],
-    requiredArtifacts: ["mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set"],
+    requiredArtifacts: ["destructive-sandbox-proof", "mutation-isolation-artifact", "delete-boundary-artifact", "wordpress-db-write-set"],
     deleteBoundaryCapability: "delete-boundary-artifact",
     rawDeleteCapability: null,
   },

@@ -47,6 +47,7 @@ import {
   isRestMutationMethod,
   mutationArtifactDigest,
   mutationIsolationArtifact,
+  destructiveSandboxProof,
   sandboxIsolationProof,
   sandboxIsolationProofDigest,
   wordpressRollbackArtifact,
@@ -82,6 +83,7 @@ import {
   type RuntimeEpisodeContentDigest,
   type RuntimeEpisodeTraceRef,
   type RuntimeEpisodeSpec,
+  type RuntimeEpisodeResetResult,
   type RuntimeEpisodeStepResult,
   type Snapshot,
   type WordPressRollbackArtifact,
@@ -92,6 +94,7 @@ import {
   type QueryObservationTableRef,
   type DisposableDestructiveSandboxBoundaryEvidence,
   type DisposableSandboxTeardownEvidence,
+  type DestructiveSandboxProof,
   type SandboxIsolationProof,
   type SandboxIsolationProofStepEvidence,
   type WordPressDbWriteSetArtifact,
@@ -210,6 +213,51 @@ type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & P
 
 export interface WordPressFuzzSuiteResetExecutorOptions {
   artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+}
+
+function suiteRequiresDestructiveSandboxProof(suite: FuzzSuiteContract): boolean {
+  return suite.cases.some((fuzzCase) => {
+    const mutation = recordValue(fuzzCase.mutation) ?? recordValue(fuzzCase.mutation_intent)
+    if (mutation?.destructive === true || ["write", "delete", "destructive"].includes(stringValue(mutation?.intent) ?? "")) return true
+    const target = fuzzCase.target ?? suite.target
+    if (target?.kind !== "runtime-action") return false
+    const input = recordValue(fuzzCase.input)
+    const actionType = stringValue(input?.type)
+    if (actionType === "rest_request") return isRestMutationMethod(stringValue(input?.method) ?? "GET")
+    if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(input?.operation) ?? "")
+    if (actionType === "crud_operation") return stringValue(input?.operation) !== "read"
+    return false
+  })
+}
+
+async function createRuntimeDestructiveSandboxProof(episode: Pick<RuntimeEpisode, "reset">, suite: FuzzSuiteContract): Promise<DestructiveSandboxProof> {
+  const reset = await episode.reset()
+  return destructiveSandboxProof({
+    runtimeId: reset.runtime.id,
+    runtimeSessionId: reset.id,
+    createdAt: reset.runtime.createdAt,
+    boundarySource: "runtime-created",
+    boundary: {
+      disposable: true,
+      destructivePermission: true,
+      teardown: "discard",
+      backend: reset.runtime.backend,
+      environment: runtimeEnvironmentName(reset),
+      hostAccess: "declared-mounts-only",
+    },
+    teardown: {
+      intent: "discard",
+      status: "intended",
+      evidence: "Runtime episode reset created an isolated disposable WordPress runtime for this destructive fuzz suite.",
+      metadata: { resetId: reset.id, runtimeStatus: reset.runtime.status },
+    },
+    artifactPath: `files/sandbox-isolation/${suite.id}-destructive-sandbox-proof.json`,
+    metadata: { suiteId: suite.id, resetObservationRefs: reset.observationRefs },
+  })
+}
+
+function runtimeEnvironmentName(reset: RuntimeEpisodeResetResult): string {
+  return stringValue(reset.runtime.environment.kind) ?? stringValue(reset.runtime.environment.name) ?? "wordpress"
 }
 
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
@@ -382,7 +430,8 @@ async function executeDisposableSandboxDbMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "db_operation" }> },
 ): Promise<RuntimeActionObservation> {
-  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
+  const destructiveProof = requireDestructiveSandboxProof(input.suite)
+  const sandboxBoundary = destructiveSandboxBoundaryFromProof(destructiveProof)
   const operation = normalizeWordPressDbOperation({
     schema: WORDPRESS_DB_OPERATION_SCHEMA,
     ...input.action,
@@ -395,7 +444,7 @@ async function executeDisposableSandboxDbMutation(
   const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
   const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
   const resultMetadata = recordValue(recordValue(stdout)?.metadata)
-  const sandboxProof = disposableSandboxMutationProof({ operation: "db_operation", target, method: mutation, step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "db_operation", target, method: mutation, step, sandboxBoundary, destructiveSandboxProof: destructiveProof, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "db_operation",
     target,
@@ -403,10 +452,10 @@ async function executeDisposableSandboxDbMutation(
     sandboxBoundary,
     destructivePermission: true,
     mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
-    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary, destructiveProof),
     afterObservation: mutationStepEvidence(step, "observed"),
     affectedIdentifiers: undefined,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, destructiveSandboxProof: destructiveProof, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
@@ -443,12 +492,13 @@ async function executeDisposableSandboxCrudMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "crud_operation" }> },
 ): Promise<RuntimeActionObservation> {
-  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
+  const destructiveProof = requireDestructiveSandboxProof(input.suite)
+  const sandboxBoundary = destructiveSandboxBoundaryFromProof(destructiveProof)
   const target = crudTarget(input.action)
   const action = { ...input.action, options: { ...(input.action.options ?? {}), destructivePermission: true }, metadata: { ...(input.action.metadata ?? {}), disposableSandboxBoundary: sandboxBoundary } }
   const step = await runWordPressCrudOperation(episode, action, input.action.timeout_ms)
   const stdout = parseJsonRecord(step.execution.stdout)
-  const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "crud_operation", target, method: input.action.operation.toUpperCase(), step, sandboxBoundary, destructiveSandboxProof: destructiveProof, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const artifact = mutationIsolationArtifact({
     operation: "crud_operation",
     target,
@@ -456,10 +506,10 @@ async function executeDisposableSandboxCrudMutation(
     sandboxBoundary,
     destructivePermission: true,
     mutationBoundary: { permission: "destructive", containment: "disposable-sandbox", artifactEvidence: "captured" },
-    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary, destructiveProof),
     afterObservation: mutationStepEvidence(step, "observed"),
     affectedIdentifiers: crudAffectedIdentifiers(input.action, stdout),
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, destructiveSandboxProof: destructiveProof },
   })
   const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
@@ -727,48 +777,49 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
   }
 }
 
-function requireDisposableDestructiveSandboxBoundary(suite: FuzzSuiteContract): DisposableDestructiveSandboxBoundaryEvidence {
-  const boundary = recordValue(suite.metadata?.disposableSandboxBoundary)
-  const teardown = stringValue(boundary?.teardown)
-  if (boundary?.disposable !== true || boundary?.destructivePermission !== true || !teardown) {
-    throw new Error("Destructive WordPress fuzz mutations require suite.metadata.disposableSandboxBoundary with disposable=true, destructivePermission=true, and teardown=discard or destroy.")
+function requireDestructiveSandboxProof(suite: FuzzSuiteContract): DestructiveSandboxProof {
+  const proof = recordValue(suite.metadata?.destructiveSandboxProof) ?? recordValue(suite.metadata?.destructive_sandbox_proof)
+  if (proof?.schema !== "wp-codebox/destructive-sandbox-proof/v1" || proof.boundarySource !== "runtime-created") {
+    throw new Error("Destructive WordPress fuzz mutations require suite.metadata.destructiveSandboxProof with schema=wp-codebox/destructive-sandbox-proof/v1 and boundarySource=runtime-created.")
   }
-  if (teardown !== "discard" && teardown !== "destroy") {
-    throw new Error("Destructive WordPress fuzz mutations require disposable sandbox teardown=discard or destroy.")
-  }
+  return destructiveSandboxProof(proof as unknown as Omit<DestructiveSandboxProof, "schema" | "artifactKind" | "version" | "createdAt"> & { createdAt?: string })
+}
+
+function destructiveSandboxBoundaryFromProof(proof: DestructiveSandboxProof): DisposableDestructiveSandboxBoundaryEvidence {
   return stripUndefined({
     disposable: true,
     destructivePermission: true,
-    teardown,
-    backend: stringValue(boundary.backend) ?? "wordpress-playground",
-    environment: stringValue(boundary.environment) ?? "wordpress",
-    hostAccess: stringValue(boundary.hostAccess) ?? "declared-mounts-only",
-    metadata: recordValue(boundary.metadata),
+    teardown: proof.boundary.teardown,
+    backend: proof.boundary.backend,
+    environment: proof.boundary.environment,
+    hostAccess: proof.boundary.hostAccess,
+    metadata: stripUndefined({ runtimeId: proof.runtimeId, runtimeSessionId: proof.runtimeSessionId, boundarySource: proof.boundarySource, proofCreatedAt: proof.createdAt, mountedPathAllowlist: proof.mountedPathAllowlist }),
   }) as DisposableDestructiveSandboxBoundaryEvidence
 }
 
-function disposableSandboxTeardownEvidence(boundary: DisposableDestructiveSandboxBoundaryEvidence): DisposableSandboxTeardownEvidence {
+function disposableSandboxTeardownEvidence(boundary: DisposableDestructiveSandboxBoundaryEvidence, proof?: DestructiveSandboxProof): DisposableSandboxTeardownEvidence {
   const intent = boundary.teardown === "destroy" ? "destroy" : "discard"
   return {
     intent,
-    status: "intended" as const,
-    evidence: "Disposable WP Codebox sandbox will be discarded after the fuzz run.",
-    metadata: { backend: boundary.backend, hostAccess: boundary.hostAccess },
+    status: proof?.teardown?.status ?? "intended" as const,
+    evidence: proof?.teardown?.evidence ?? "Disposable WP Codebox sandbox will be discarded after the fuzz run.",
+    metadata: { backend: boundary.backend, hostAccess: boundary.hostAccess, runtimeId: proof?.runtimeId, ...proof?.teardown?.metadata },
   }
 }
 
-function disposableSandboxMutationProof(input: { operation: string; target: string; method: string; step: RuntimeEpisodeStepResult; sandboxBoundary: DisposableDestructiveSandboxBoundaryEvidence; suiteId: string; caseId: string; caseIndex: number }): SandboxIsolationProof {
+function disposableSandboxMutationProof(input: { operation: string; target: string; method: string; step: RuntimeEpisodeStepResult; sandboxBoundary: DisposableDestructiveSandboxBoundaryEvidence; destructiveSandboxProof: DestructiveSandboxProof; suiteId: string; caseId: string; caseIndex: number }): SandboxIsolationProof {
   const proof = sandboxIsolationProof({
     status: input.step.execution.exitCode === 0 ? "passed" : "failed",
-    baseline: { status: "created", command: "wp-codebox.disposable-sandbox-boundary", metadata: input.sandboxBoundary as unknown as Record<string, unknown> },
+    baseline: { status: "created", command: "wp-codebox.runtime-sandbox-created", metadata: input.destructiveSandboxProof as unknown as Record<string, unknown> },
     mutation: mutationStepEvidence(input.step, "mutated") as SandboxIsolationProofStepEvidence & { status: "mutated" },
-    diff: { status: "not-required-disposable-sandbox", changed: true, metadata: { reason: "Disposable sandbox boundary is the destructive mutation proof; rollback validation is optional debug metadata." } },
+    diff: { status: "not-validated", changed: true, metadata: { reason: "Runtime-created disposable sandbox proof isolates destructive mutation; reset diff validation is optional reset evidence." } },
     runtimeBoundary: {
+      runtimeId: input.destructiveSandboxProof.runtimeId,
       backend: input.sandboxBoundary.backend ?? "wordpress-playground",
       environment: input.sandboxBoundary.environment ?? "wordpress",
       disposable: true,
       hostAccess: "declared-mounts-only",
-      destroy: { status: input.sandboxBoundary.teardown === "destroy" ? "destroyed" : "discarded", command: "wp-codebox.disposable-sandbox-teardown", metadata: { intent: input.sandboxBoundary.teardown } },
+      destroy: { status: input.sandboxBoundary.teardown === "destroy" ? "destroyed" : "discarded", command: "wp-codebox.disposable-sandbox-teardown", metadata: { intent: input.sandboxBoundary.teardown, teardownEvidence: input.destructiveSandboxProof.teardown } },
     },
     artifacts: [{ path: `files/sandbox-isolation/${input.caseId}-proof.json`, kind: "sandbox-isolation-proof" }],
     metadata: { suiteId: input.suiteId, caseId: input.caseId, caseIndex: input.caseIndex, operation: input.operation, target: input.target, method: input.method },
@@ -783,7 +834,8 @@ async function executeDisposableSandboxRestMutation(
   episode: Pick<RuntimeEpisode, "step">,
   input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "rest_request" }> },
 ): Promise<RuntimeActionObservation> {
-  const sandboxBoundary = requireDisposableDestructiveSandboxBoundary(input.suite)
+  const destructiveProof = requireDestructiveSandboxProof(input.suite)
+  const sandboxBoundary = destructiveSandboxBoundaryFromProof(destructiveProof)
   const method = (input.action.method ?? "GET").toUpperCase()
   const target = input.action.path
   const observation = await requestWordPressRest(episode, { ...input.action, capture: { ...(input.action.capture ?? {}), queries: true }, enableQueryCapture: true })
@@ -792,7 +844,7 @@ async function executeDisposableSandboxRestMutation(
   }
   const affectedIdentifiers = restMutationAffectedIdentifiers(observation)
   const status = restObservationStatus(observation)
-  const sandboxProof = disposableSandboxMutationProof({ operation: "rest_request", target, method, step: observation.step, sandboxBoundary, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
+  const sandboxProof = disposableSandboxMutationProof({ operation: "rest_request", target, method, step: observation.step, sandboxBoundary, destructiveSandboxProof: destructiveProof, suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex })
   const baseArtifact = {
     operation: "rest_request" as const,
     target,
@@ -801,10 +853,10 @@ async function executeDisposableSandboxRestMutation(
     sandboxBoundary,
     destructivePermission: true as const,
     mutationBoundary: { permission: "destructive" as const, containment: "disposable-sandbox" as const, artifactEvidence: "captured" as const },
-    teardown: disposableSandboxTeardownEvidence(sandboxBoundary),
+    teardown: disposableSandboxTeardownEvidence(sandboxBoundary, destructiveProof),
     afterObservation: mutationStepEvidence(observation.step, "observed"),
     affectedIdentifiers,
-    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof },
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, sandboxIsolationProof: sandboxProof, destructiveSandboxProof: destructiveProof },
   }
   const artifact = method === "DELETE" ? deleteBoundaryArtifact(baseArtifact) : mutationIsolationArtifact(baseArtifact)
   const artifactWithRef = {
@@ -1103,7 +1155,7 @@ export function createWordPressFuzzSuiteResetExecutor(episode: WordPressFuzzSuit
   }
 }
 
-export function executeWordPressFuzzSuite(
+export async function executeWordPressFuzzSuite(
   episode: WordPressFuzzSuiteResetEpisode,
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
@@ -1112,17 +1164,12 @@ export function executeWordPressFuzzSuite(
   const commandExecutor = createWordPressFuzzSuiteCommandExecutor(episode)
   const runtimeActionExecutor = createWordPressFuzzSuiteRuntimeActionExecutor(episode)
   const runtimeWorkloadExecutor = createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode)
+  const destructiveProof = suiteRequiresDestructiveSandboxProof(suite) ? await createRuntimeDestructiveSandboxProof(episode, suite) : undefined
   const playgroundSuite = {
     ...suite,
     metadata: stripUndefined({
       ...suite.metadata,
-      disposableSandboxBoundary: recordValue(suite.metadata?.disposableSandboxBoundary) ?? {
-        disposable: true,
-        destructivePermission: true,
-        teardown: "discard",
-        backend: "wordpress-playground",
-        hostAccess: "declared-mounts-only",
-      },
+      destructiveSandboxProof: destructiveProof,
     }),
   }
 
