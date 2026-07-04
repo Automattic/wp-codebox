@@ -477,6 +477,39 @@ export interface BrowserWordPressDiagnosticsArtifact {
 const BROWSER_WORDPRESS_DIAGNOSTICS_LOG = "/wordpress/wp-content/wp-codebox-browser-diagnostics.jsonl"
 const BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN = "/wordpress/wp-content/mu-plugins/000-wp-codebox-browser-diagnostics.php"
 const BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN = phpBrowserWordPressDiagnosticsPlugin()
+const WORDPRESS_EDITOR_AUTOMATION_GUARD_MU_PLUGIN = "/wordpress/wp-content/mu-plugins/000-wp-codebox-editor-automation-guard.php"
+const WORDPRESS_EDITOR_AUTOMATION_GUARD_PLUGIN = wordpressEditorAutomationGuardPhpCode()
+
+export async function installWordPressEditorAutomationGuards({
+  command,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+}: {
+  command: string
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec?: RuntimeCreateSpec
+  server: PlaygroundCliServer
+}): Promise<void> {
+  if (!runPlaygroundCommand) {
+    throw new Error(`${command} editor automation guards require Playground PHP command support`)
+  }
+  if (!runtimeSpec) {
+    throw new Error(`${command} editor automation guards require a runtime spec`)
+  }
+
+  const setupCommand = `${command}.editor-automation-guards`
+  const response = await runPlaygroundCommand(setupCommand, server, {
+    code: bootstrapPhpCode(runtimeSpec, `
+$directory = '/wordpress/wp-content/mu-plugins';
+if (!is_dir($directory)) {
+    mkdir($directory, 0777, true);
+}
+file_put_contents(${JSON.stringify(WORDPRESS_EDITOR_AUTOMATION_GUARD_MU_PLUGIN)}, base64_decode(${JSON.stringify(Buffer.from(WORDPRESS_EDITOR_AUTOMATION_GUARD_PLUGIN, "utf8").toString("base64"))}));
+`, []),
+  })
+  assertPlaygroundResponseOk(setupCommand, response)
+}
 
 export async function installBrowserWordPressDiagnostics(
   runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined,
@@ -752,6 +785,44 @@ foreach ( $browser_urls as $browser_url ) {
     }
 }
 echo wp_json_encode( $cookies );
+`
+}
+
+export function wordpressEditorAutomationGuardPhpCode(): string {
+  return `<?php
+/**
+ * Keeps browser-driven editor automation on the requested editor screen.
+ */
+
+function wp_codebox_editor_automation_path($url) {
+    if (!is_string($url) || '' === $url) {
+        return '';
+    }
+    $path = wp_parse_url($url, PHP_URL_PATH);
+    return is_string($path) ? $path : '';
+}
+
+function wp_codebox_editor_automation_is_editor_path($path) {
+    return in_array($path, array('/wp-admin/post.php', '/wp-admin/post-new.php', '/wp-admin/site-editor.php'), true);
+}
+
+add_filter('wp_redirect', static function($location, $status) {
+    $request_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+    $request_path = wp_codebox_editor_automation_path($request_uri);
+    if (!wp_codebox_editor_automation_is_editor_path($request_path)) {
+        return $location;
+    }
+
+    $target_path = wp_codebox_editor_automation_path($location);
+    if ('' === $target_path || !str_starts_with($target_path, '/wp-admin/')) {
+        return $location;
+    }
+    if (wp_codebox_editor_automation_is_editor_path($target_path)) {
+        return $location;
+    }
+
+    return false;
+}, 0, 2);
 `
 }
 

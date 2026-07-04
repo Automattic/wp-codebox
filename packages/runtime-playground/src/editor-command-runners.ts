@@ -13,7 +13,10 @@ import { editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateCont
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
-import { fileSha256, installWordPressAdminAuthCookies } from "./browser-probe-support.js"
+import { fileSha256, installWordPressAdminAuthCookies, installWordPressEditorAutomationGuards } from "./browser-probe-support.js"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { assertPlaygroundResponseOk } from "./playground-command-errors.js"
+import { cleanWpCliOutput } from "./wp-cli-command-handlers.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -546,6 +549,7 @@ export async function runEditorOpenCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
+    await installWordPressEditorAutomationGuards({ command: "wordpress.editor-open", runPlaygroundCommand, runtimeSpec, server })
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
@@ -764,6 +768,7 @@ export async function runEditorActionsCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
+    await installWordPressEditorAutomationGuards({ command: "wordpress.editor-actions", runPlaygroundCommand, runtimeSpec, server })
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
@@ -1428,8 +1433,10 @@ export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; 
   }
 }
 
-export async function validateEditorBlocks(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidation> {
-  const evaluation = await evaluateEditorBlockValidation(page, options)
+type EditorBlocksRuntimeTarget = import("playwright").Page | import("playwright").Frame
+
+export async function validateEditorBlocks(target: EditorBlocksRuntimeTarget, options: { content?: string; provider: string }): Promise<EditorBlockValidation> {
+  const evaluation = await evaluateEditorBlockValidation(target, options)
   return {
     result: summarizeBlockValidation({ nodes: evaluation.nodes, validationProvider: evaluation.validationProvider }),
     contentSource: evaluation.contentSource,
@@ -1437,8 +1444,8 @@ export async function validateEditorBlocks(page: import("playwright").Page, opti
   }
 }
 
-async function evaluateEditorBlockValidation(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidationEvaluation> {
-  return page.evaluate((input) => {
+async function evaluateEditorBlockValidation(target: EditorBlocksRuntimeTarget, options: { content?: string; provider: string }): Promise<EditorBlockValidationEvaluation> {
+  return target.evaluate((input) => {
     const win = window as unknown as {
       wp?: {
         blocks?: {
@@ -1520,6 +1527,39 @@ async function evaluateEditorBlockValidation(page: import("playwright").Page, op
   }, { content: options.content, provider: options.provider })
 }
 
+async function editorValidatePostContent({
+  command,
+  postId,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+}: {
+  command: string
+  postId: number
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+}): Promise<{ content: string; postType: string }> {
+  const response = await runPlaygroundCommand(`${command}.post-content`, server, {
+    code: bootstrapPhpCode(runtimeSpec, `
+$post = get_post(${JSON.stringify(postId)});
+if (!$post) {
+    throw new RuntimeException('Post not found for editor validation.');
+}
+echo wp_json_encode(array(
+    'content' => (string) $post->post_content,
+    'postType' => (string) $post->post_type,
+));
+`, []),
+  })
+  assertPlaygroundResponseOk(`${command}.post-content`, response)
+  const parsed = JSON.parse(cleanWpCliOutput(response.text)) as { content?: unknown; postType?: unknown }
+  return {
+    content: typeof parsed.content === "string" ? parsed.content : "",
+    postType: typeof parsed.postType === "string" && /^[a-zA-Z0-9_-]+$/.test(parsed.postType) ? parsed.postType : "post",
+  }
+}
+
 export async function runEditorValidateBlocksCommand({
   artifactRoot,
   runPlaygroundCommand,
@@ -1540,12 +1580,18 @@ export async function runEditorValidateBlocksCommand({
     runtimeSpec,
     server,
   })
-  const content = await editorValidateContentFromArgs(args)
+  let content = await editorValidateContentFromArgs(args)
+  const postContent = typeof content === "string" || !target.postId ? undefined : await editorValidatePostContent({ command: "wordpress.editor-validate-blocks", postId: target.postId, runPlaygroundCommand, runtimeSpec, server })
+  if (postContent) {
+    content = postContent.content
+  }
   const provider = editorValidateProviderFromArgs(args)
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
   const { preview, networkPolicy } = topology
-  const targetUrl = topology.resolveUrl(target.url)
+  const runtimeUrl = postContent ? "/wp-admin/post-new.php" : target.url
+  const targetUrl = topology.resolveUrl(runtimeUrl)
+  const requestedContentUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-validate-blocks", operation: "editor-validate-blocks" })
 
   const errors: BrowserProbeErrorRecord[] = []
@@ -1564,7 +1610,8 @@ export async function runEditorValidateBlocksCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
-    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-validate-blocks", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    await installWordPressEditorAutomationGuards({ command: "wordpress.editor-validate-blocks", runPlaygroundCommand, runtimeSpec, server })
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-validate-blocks", cookieUrls: topology.authCookieUrls([targetUrl, requestedContentUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: false,
@@ -1579,9 +1626,9 @@ export async function runEditorValidateBlocksCommand({
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: waitTimeoutMs })
     finalUrl = page.url()
     await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
-    await waitForEditorBlocksRuntime(page, waitTimeoutMs)
+    const editorRuntime = await waitForEditorBlocksRuntimeTarget(page, waitTimeoutMs)
     finalUrl = page.url()
-    validation = await validateEditorBlocks(page, { content, provider })
+    validation = await validateEditorBlocks(editorRuntime, { content, provider })
   } catch (error) {
     pendingError = error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
@@ -1604,7 +1651,8 @@ export async function runEditorValidateBlocksCommand({
     await artifactSession.writeJson("validateBlocks", "editor-validate-blocks.json", {
       schema: "wp-codebox/editor-validate-blocks/v1",
       target,
-      requestedUrl: targetUrl,
+      requestedUrl: requestedContentUrl,
+      runtimeUrl: targetUrl,
       preview,
       ...topology.origins,
       finalUrl,
@@ -1618,7 +1666,7 @@ export async function runEditorValidateBlocksCommand({
 
     artifact = {
       artifactType: "editor-validate-blocks",
-      requestedUrl: targetUrl,
+      requestedUrl: requestedContentUrl,
       url: targetUrl,
       preview,
       ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
@@ -1656,7 +1704,8 @@ export async function runEditorValidateBlocksCommand({
     await artifactSession.writeJson("summary", "editor-validate-blocks-summary.json", {
       schema: "wp-codebox/editor-validate-blocks/v1",
       target,
-      requestedUrl: targetUrl,
+      requestedUrl: requestedContentUrl,
+      runtimeUrl: targetUrl,
       preview,
       ...topology.origins,
       finalUrl,
@@ -1681,13 +1730,31 @@ export async function runEditorValidateBlocksCommand({
   }
 }
 
-async function waitForEditorBlocksRuntime(page: import("playwright").Page, timeoutMs: number): Promise<void> {
-  await page.waitForFunction(() => {
-    const wpBlocks = (window as unknown as { wp?: { blocks?: { parse?: unknown; getBlockTypes?: () => unknown[] } } }).wp?.blocks
+async function waitForEditorBlocksRuntimeTarget(page: import("playwright").Page, timeoutMs: number): Promise<EditorBlocksRuntimeTarget> {
+  const targets: EditorBlocksRuntimeTarget[] = [page]
+  const existingCanvasFrame = page.frames().find((frame) => frame.name() === "editor-canvas")
+  if (existingCanvasFrame) {
+    targets.unshift(existingCanvasFrame)
+  } else {
+    const handle = await page.waitForSelector(EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR, { state: "attached", timeout: Math.min(timeoutMs, 1_000) }).catch(() => undefined)
+    const frame = handle ? await handle.contentFrame() : null
+    if (frame) {
+      targets.unshift(frame)
+    }
+  }
+
+  return Promise.any(targets.map(async (target) => {
+    await waitForEditorBlocksRuntime(target, timeoutMs)
+    return target
+  }))
+}
+
+async function waitForEditorBlocksRuntime(target: EditorBlocksRuntimeTarget, timeoutMs: number): Promise<void> {
+  await target.waitForFunction(() => {
+    const wpBlocks = (window as unknown as { wp?: { blocks?: { parse?: unknown; validateBlock?: unknown } } }).wp?.blocks
     if (!wpBlocks || typeof wpBlocks.parse !== "function") {
       return false
     }
-    const blockTypes = typeof wpBlocks.getBlockTypes === "function" ? wpBlocks.getBlockTypes() : []
-    return Array.isArray(blockTypes) && blockTypes.length > 0
+    return typeof wpBlocks.validateBlock === "function"
   }, undefined, { timeout: timeoutMs })
 }
