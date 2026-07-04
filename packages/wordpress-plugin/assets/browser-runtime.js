@@ -394,6 +394,18 @@
 		return new URL( '/wp-json/wp-codebox/v1/runtime-task', window.location.origin ).toString();
 	};
 
+	const abilityRestPath = ( abilityName ) => `/wp-abilities/v1/abilities/${ String( abilityName || '' ).replace( /^\/+|\/+$/g, '' ) }/run`;
+
+	const abilityRestEndpoint = ( abilityName ) => {
+		const root = window.wpApiSettings?.root || window.wp?.apiFetch?.root;
+		const path = abilityRestPath( abilityName ).replace( /^\//, '' );
+		if ( typeof root === 'string' && root ) {
+			return new URL( path, root ).toString();
+		}
+
+		return new URL( `/wp-json/${ path }`, window.location.origin ).toString();
+	};
+
 	const codeboxRestHeaders = () => {
 		const nonce = window.wpApiSettings?.nonce;
 		return {
@@ -458,6 +470,37 @@
 
 		return data;
 	};
+
+	const executeRestAbility = async ( abilityName, input = {}, options = {} ) => {
+		if ( typeof options.executeAbility === 'function' ) {
+			return options.executeAbility( abilityName, input );
+		}
+		if ( window.wp?.apiFetch ) {
+			return window.wp.apiFetch( {
+				path: abilityRestPath( abilityName ),
+				method: 'POST',
+				data: { input },
+			} );
+		}
+		if ( typeof fetch !== 'function' ) {
+			throw runtimeError( 'ability_run', 'ability_fetch_unavailable', 'Browser fetch or wp.apiFetch is required to run abilities.' );
+		}
+
+		const response = await fetch( abilityRestEndpoint( abilityName ), {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: codeboxRestHeaders(),
+			body: JSON.stringify( { input } ),
+		} );
+		const data = await response.json().catch( () => null );
+		if ( ! response.ok ) {
+			throw runtimeError( 'ability_run', data?.code || 'ability_request_failed', data?.message || `Ability request failed: ${ abilityName }`, { status: response.status, response: data } );
+		}
+
+		return data;
+	};
+
+	const openOrCreateBrowserContainedSite = async ( input = {}, options = {} ) => executeRestAbility( 'wp-codebox/open-or-create-browser-contained-site', input, options );
 
 	const containedSiteSyncRoute = ( delegation, name ) => {
 		const route = String( delegation?.routes?.[ name ] || '' );
@@ -709,6 +752,7 @@
 		createRuntimeTaskRequest,
 		runRuntimeTask,
 		consumeContainedSiteSync: ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ),
+		openOrCreateBrowserContainedSite: ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ),
 		startBrowserPreview: ( input, options = {} ) => api.startBrowserPreview( input, options ),
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
@@ -738,6 +782,7 @@
 			executeBrowserConnectorRequest: api.executeBrowserConnectorRequest,
 			executeBrowserProviderProxyRequest: api.executeBrowserProviderProxyRequest,
 			consumeContainedSiteSync: api.consumeContainedSiteSync,
+			openOrCreateBrowserContainedSite: api.openOrCreateBrowserContainedSite,
 			startBrowserPreview: api.startBrowserPreview,
 			bootExecutableBrowserSession: api.bootExecutableBrowserSession,
 			createParentToolRequest: api.createParentToolRequest,
@@ -3084,6 +3129,7 @@ echo wp_json_encode( array(
 		browserSessionRecipe,
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
+		openOrCreateBrowserContainedSite,
 		createBrowserConnectorRequest: browserConnectorRequest,
 		executeBrowserConnectorRequest,
 		executeBrowserProviderProxyRequest,

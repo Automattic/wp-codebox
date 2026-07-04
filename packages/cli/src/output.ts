@@ -334,14 +334,14 @@ export function printHelp(): void {
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
-  wp-codebox recipe-run --recipe <path> [options]
+  wp-codebox recipe-run --recipe <path> [--output <path>] [options]
   wp-codebox boot [--mount <host>:<vfs>] [options]
   wp-codebox run --mount <host>:<vfs> --command <id> [options]
 
 Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --options <path>    Recipe builder options JSON file for recipe build.
-  --output <path>     Recipe build output JSON path, or materialize-replay-package output directory.
+  --output <path>     Recipe build output JSON path, recipe-run JSON result path, or materialize-replay-package output directory.
   --input-file <path> Input JSON for public workload/fuzz commands or agent-task-run.
   --format=json       Emit machine-readable JSON; accepted by public workload/fuzz commands.
   --preview-hold-seconds <n>

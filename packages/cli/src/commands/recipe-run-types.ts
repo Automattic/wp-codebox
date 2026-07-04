@@ -8,6 +8,7 @@ import type { RunOutput } from "../runtime-command-wrappers.js"
 export interface RecipeRunOptions {
   recipePath: string
   artifactsDirectory?: string
+  outputPath?: string
   runRegistryDirectory?: string
   previewHoldSeconds?: number
   previewPublicUrl?: string

@@ -74,9 +74,11 @@ assert.equal(api.v1.methods.setFrontendAdminBarVisible, api.setFrontendAdminBarV
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
+assert.equal(typeof api.v1.openOrCreateBrowserContainedSite, "function")
 const studioNativeConsumedTopLevelMethods = [
   "consumeContainedSiteSync",
   "ensureDirectory",
+  "openOrCreateBrowserContainedSite",
   "runBrowserSessionRecipe",
   "runRecipe",
   "setFrontendAdminBarVisible",
@@ -149,6 +151,26 @@ assert.deepEqual(plain(browserRun.artifactRefs), [
   { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
 ])
 assert.equal(api.v1.browserArtifactPersistenceRef(browserRun.result).schema, "wp-codebox/browser-artifact-persistence/ref/v1")
+
+const previousAbilityWp = sandbox.window.wp
+let abilityRequest: { path?: string, method?: string, data?: unknown } | null = null
+sandbox.window.wp = {
+  apiFetch: async (request: { path?: string, method?: string, data?: unknown }) => {
+    abilityRequest = request
+    return { schema: "wp-codebox/browser-contained-site-open-or-create/v1", success: true, action: "opened" }
+  },
+}
+const containedSiteOpen = await api.v1.openOrCreateBrowserContainedSite({
+  mode: "open-only",
+  contained_site: { site_id: "site-1" },
+})
+assert.deepEqual(plain(containedSiteOpen), { schema: "wp-codebox/browser-contained-site-open-or-create/v1", success: true, action: "opened" })
+assert.deepEqual(plain(abilityRequest), {
+  path: "/wp-abilities/v1/abilities/wp-codebox/open-or-create-browser-contained-site/run",
+  method: "POST",
+  data: { input: { mode: "open-only", contained_site: { site_id: "site-1" } } },
+})
+sandbox.window.wp = previousAbilityWp
 
 const previousFetch = (sandbox as any).fetch
 const requestedRoutes: Array<{ route: string, method: string, body?: string }> = []

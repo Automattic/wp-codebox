@@ -49,7 +49,11 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
       const { result } = await captureStdout(execute)
       const output = interruptedRecipeOutput(result, interruption)
       const summary = normalizeRecipeRunSummary(output)
-      if (options.json) await writeRecipeJsonOutput(summary)
+      if (options.outputPath) await writeRecipeOutputFile(options.outputPath, output)
+      if (options.json) {
+        if (options.outputPath) await writeRecipeOutputSummaryLine(output, options.outputPath)
+        else await writeRecipeJsonOutput(summary)
+      }
       else await writeRecipeSummaryHumanOutput(summary)
       interruption?.propagateIfInterrupted()
       exitAfterRecipeRunTimeout(output)
@@ -71,7 +75,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     const { result, logs } = await captureStdout(execute)
     const interruptedResult = interruptedRecipeOutput(result, interruption)
     const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
-    await writeRecipeJsonOutput(output)
+    await writeRecipeRunJsonOutput(output, options)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
     exitAfterRecipeRunTimeout(output)
@@ -692,6 +696,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--artifacts":
         options.artifactsDirectory = value
         break
+      case "--output":
+        options.outputPath = value
+        break
       case "--run-registry":
         options.runRegistryDirectory = value
         break
@@ -729,6 +736,45 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
   }
 
   return options as RecipeRunOptions
+}
+
+async function writeRecipeRunJsonOutput(output: unknown, options: RecipeRunOptions): Promise<void> {
+  if (!options.outputPath) {
+    await writeRecipeJsonOutput(output)
+    return
+  }
+
+  await writeRecipeOutputFile(options.outputPath, output)
+  await writeRecipeOutputSummaryLine(output, options.outputPath)
+}
+
+async function writeRecipeOutputFile(outputPath: string, output: unknown): Promise<void> {
+  await mkdir(dirname(outputPath), { recursive: true })
+  await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`)
+}
+
+function recipeRunOutputSummary(output: unknown, outputPath: string): Record<string, unknown> {
+  const record = output && typeof output === "object" && !Array.isArray(output) ? output as Record<string, unknown> : {}
+  return stripUndefined({
+    schema: "wp-codebox/recipe-run-output/v1",
+    success: typeof record.success === "boolean" ? record.success : undefined,
+    status: typeof record.success === "boolean" ? (record.success ? "succeeded" : "failed") : undefined,
+    output: outputPath,
+    recipePath: typeof record.recipePath === "string" ? record.recipePath : undefined,
+    runId: record.run && typeof record.run === "object" && !Array.isArray(record.run) && typeof (record.run as Record<string, unknown>).runId === "string" ? (record.run as Record<string, unknown>).runId : undefined,
+  })
+}
+
+function writeRecipeOutputSummaryLine(output: unknown, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(recipeRunOutputSummary(output, outputPath))}\n`, (error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    })
+  })
 }
 
 function parseRecipeRunTimeoutMs(value: unknown): number {
