@@ -295,8 +295,8 @@ export function normalizeMaterializationArtifactRef(input: unknown, defaults: Pa
   }
 
   const kind = stringValue(source.kind ?? source.role ?? source.artifact_type) || defaults.kind
-  const id = stringValue(source.id ?? source.artifact_id) || defaults.id
-  const path = stringValue(source.path ?? source.artifacts_path ?? source.directory) || defaults.path
+  const id = stringValue(source.id ?? source.artifact_id ?? source.artifactId) || defaults.id
+  const path = stringValue(source.path ?? source.artifacts_path ?? source.artifactsPath ?? source.directory) || defaults.path
   const digest = normalizeDigest(source.digest ?? source.contentDigest ?? source.content_digest ?? source.sha256) ?? defaults.digest
 
   if (!id && !path && !digest && !stringValue(source.kind)) {
@@ -410,7 +410,7 @@ function normalizeDigest(input: unknown): MaterializationArtifactRef["digest"] |
   }
   const value = stringValue(input.value)
   const algorithm = stringValue(input.algorithm) || "sha256"
-  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest)
+  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest) ?? normalizeDigest(input.contentDigest) ?? normalizeDigest(input.content_digest)
 }
 
 function phaseDiagnostics(phase: MaterializationPhaseResult): MaterializationDiagnostic[] {

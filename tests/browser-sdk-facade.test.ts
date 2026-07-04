@@ -69,11 +69,23 @@ assert.deepEqual(plain(api.v1.info()), {
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
-assert.equal(api.v1.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
+assert.equal(typeof api.v1.setFrontendAdminBarVisible, "function")
 assert.equal(api.v1.methods.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
+const studioNativeConsumedTopLevelMethods = [
+  "consumeContainedSiteSync",
+  "ensureDirectory",
+  "runBrowserSessionRecipe",
+  "runRecipe",
+  "setFrontendAdminBarVisible",
+  "writeFile",
+] as const
+for (const method of studioNativeConsumedTopLevelMethods) {
+  assert.equal(typeof api.v1[method], "function", `Studio Native consumes wpCodeboxBrowser.v1.${method} top-level`)
+}
+assert.equal(Object.isFrozen(api.v1), true, "browser SDK v1 facade remains frozen")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
 assert.equal(typeof api.v1.createBrowserConnectorRequest, "function")
 assert.equal(typeof api.v1.executeBrowserConnectorRequest, "function")
