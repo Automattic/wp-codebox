@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { flattenBlockValidationNodes, summarizeBlockValidation, validateEditorBlocks, type BlockValidationNode } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { editorValidateContentFromArgs, editorValidateProviderFromArgs } from "../packages/runtime-playground/src/editor-actions.js"
+import { installWordPressEditorAutomationGuards, wordpressEditorAutomationGuardPhpCode } from "../packages/runtime-playground/src/browser-probe-support.js"
 
 // Argument parsing: inline content, default provider, and explicit provider.
 assert.equal(await editorValidateContentFromArgs(["content=<!-- wp:paragraph --><p>Hi</p><!-- /wp:paragraph -->"]), "<!-- wp:paragraph --><p>Hi</p><!-- /wp:paragraph -->")
@@ -77,5 +78,27 @@ assert.equal(evaluated.result.valid_blocks, 1)
 assert.equal(evaluated.result.invalid_blocks, 1)
 assert.equal(evaluated.contentSource, "argument")
 assert.equal(evaluated.blockTypesRegistered, 42)
+
+// Editor automation installs a runtime guard that keeps plugin onboarding/admin redirects
+// from stealing block-editor requests before wp.blocks is available.
+let guardSetup: { command: string; code: string } | undefined
+await installWordPressEditorAutomationGuards({
+  command: "wordpress.editor-validate-blocks",
+  runtimeSpec: { wp: "latest" } as never,
+  server: {} as never,
+  runPlaygroundCommand: async (command, _server, options) => {
+    assert.ok("code" in options)
+    guardSetup = { command, code: options.code }
+    return { text: "", exitCode: 0 }
+  },
+})
+assert.equal(guardSetup?.command, "wordpress.editor-validate-blocks.editor-automation-guards")
+assert.match(guardSetup?.code ?? "", /000-wp-codebox-editor-automation-guard\.php/)
+const guardPhp = wordpressEditorAutomationGuardPhpCode()
+assert.match(guardPhp, /wp_redirect/)
+assert.match(guardPhp, /post\.php/)
+assert.match(guardPhp, /post-new\.php/)
+assert.match(guardPhp, /site-editor\.php/)
+assert.match(guardPhp, /return false/)
 
 console.log("editor validate blocks ok")
