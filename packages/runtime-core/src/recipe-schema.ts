@@ -1111,6 +1111,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           metadata: { $ref: "#/$defs/metadata" },
           allowFailure: { type: "boolean" },
+          continue_on_error: { type: "boolean" },
           advisory: { type: "boolean" },
         },
       },

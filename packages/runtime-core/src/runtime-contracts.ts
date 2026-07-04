@@ -256,6 +256,7 @@ export interface WorkspaceRecipeStep {
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean
+  continue_on_error?: boolean
   advisory?: boolean
 }
 

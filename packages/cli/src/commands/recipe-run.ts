@@ -29,7 +29,7 @@ import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
-import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeStepFailureFromExecution, recipeWorkflowArgsEvidence, recipeWorkflowStepContinuesOnError, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
@@ -278,12 +278,20 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
             ? withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args), workflowStep.step.metadata)
             : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
+          if (execution.exitCode !== 0) {
+            if (!recipeWorkflowStepContinuesOnError(workflowStep.step)) {
+              throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: command exited with code ${execution.exitCode}`)
+            }
+            const failure = recipeStepFailureFromExecution(workflowStep, execution)
+            stepFailures.push(failure)
+            await artifactPointer.update({ command: operation, commandStatus: "failed", failure: failure.error, phases: phaseTracker.list(), stepFailures })
+          }
           interruption?.throwIfInterrupted()
         } catch (error) {
           const failure = recipeStepFailure(workflowStep, error, stepStartedAtMs)
           stepFailures.push(failure)
           await artifactPointer.update({ command: operation, commandStatus: "failed", failure: failure.error, phases: phaseTracker.list(), stepFailures })
-          if (!recipeWorkflowStepIsAdvisory(workflowStep.step)) {
+          if (!recipeWorkflowStepContinuesOnError(workflowStep.step)) {
             throw error
           }
           advisoryFailures.push(recipeAdvisoryFailure(workflowStep, error))
