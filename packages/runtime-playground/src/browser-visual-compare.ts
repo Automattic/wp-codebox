@@ -1673,30 +1673,24 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(normalized)
 }
 
-// A static full-page screenshot never scrolls the document, so any content gated
-// behind a scroll/IntersectionObserver entrance reveal (a near-universal pattern,
-// e.g. `.reveal { opacity: 0 }` toggled to a visible class once the element enters
-// the viewport) stays at its hidden initial state below the fold. The imported
-// WordPress candidate typically renders that content statically visible (the reveal
-// scripts/styles are not carried through the transform), so comparing a scroll-gated
-// source against a static candidate counts the entire below-the-fold region as a
-// false pixel diff that has nothing to do with real visual parity.
-//
-// Programmatic scrolling alone is an unreliable trigger under headless capture
-// (IntersectionObserver delivery is throttled/batched and frequently fires for only
-// a fraction of off-screen elements), so this stubs `IntersectionObserver` via an
-// init script that runs before any page script: every observed element is reported
-// as intersecting on the next microtask. That deterministically drives the page's
-// OWN reveal logic for ALL elements regardless of scroll position, with no
-// fixture-specific selectors or class names. The init script persists across this
-// shared page's navigations, so source and candidate are treated identically; on a
-// page with no IntersectionObserver-gated reveals it is a harmless no-op.
-async function installVisualCompareDeterministicReveal(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const NativeIntersectionObserver = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
-    if (typeof NativeIntersectionObserver !== "function") {
-      return
-    }
+export const VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS = `
+html {
+  scroll-behavior: auto !important;
+}
+*, *::before, *::after {
+  transition-property: none !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  animation-delay: 0s !important;
+  animation-duration: 1ms !important;
+  animation-fill-mode: forwards !important;
+  animation-iteration-count: 1 !important;
+}
+`
+
+export function visualCompareDeterministicCaptureInitScript(deterministicCaptureCss: string): void {
+  const NativeIntersectionObserver = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
+  if (typeof NativeIntersectionObserver === "function") {
     class ImmediateIntersectionObserver {
       private readonly callback: (entries: unknown[], observer: unknown) => void
       constructor(callback: (entries: unknown[], observer: unknown) => void) {
@@ -1711,7 +1705,7 @@ async function installVisualCompareDeterministicReveal(page: Page): Promise<void
           boundingClientRect: rect,
           intersectionRect: rect,
           rootBounds: null,
-          time: 0,
+          time: performance.now(),
         }
         Promise.resolve().then(() => {
           try {
@@ -1732,7 +1726,49 @@ async function installVisualCompareDeterministicReveal(page: Page): Promise<void
     } catch {
       // If the global is read-only, leave the native observer in place.
     }
-  })
+  }
+
+  try {
+    const installStyle = (): void => {
+      const doc = document
+      if (!doc.head || doc.getElementById("wp-codebox-visual-compare-deterministic-capture")) {
+        return
+      }
+      const style = doc.createElement("style")
+      style.id = "wp-codebox-visual-compare-deterministic-capture"
+      style.textContent = deterministicCaptureCss
+      doc.head.appendChild(style)
+    }
+    if (document.head) {
+      installStyle()
+    } else {
+      document.addEventListener("DOMContentLoaded", installStyle, { once: true })
+    }
+  } catch {
+    // CSS injection is a capture aid; never let it break page navigation.
+  }
+}
+
+// A static full-page screenshot never scrolls the document, so any content gated
+// behind a scroll/IntersectionObserver entrance reveal (a near-universal pattern,
+// e.g. `.reveal { opacity: 0 }` toggled to a visible class once the element enters
+// the viewport) stays at its hidden initial state below the fold. The imported
+// WordPress candidate typically renders that content statically visible (the reveal
+// scripts/styles are not carried through the transform), so comparing a scroll-gated
+// source against a static candidate counts the entire below-the-fold region as a
+// false pixel diff that has nothing to do with real visual parity.
+//
+// Programmatic scrolling alone is an unreliable trigger under headless capture
+// (IntersectionObserver delivery is throttled/batched and frequently fires for only
+// a fraction of off-screen elements), so this stubs `IntersectionObserver` via an
+// init script that runs before any page script: every observed element is reported
+// as intersecting on the next microtask. That deterministically drives the page's
+// OWN reveal logic for ALL elements regardless of scroll position, with no
+// fixture-specific selectors or class names. The init script persists across this
+// shared page's navigations, so source and candidate are treated identically; on a
+// page with no IntersectionObserver-gated reveals it is a harmless no-op.
+async function installVisualCompareDeterministicReveal(page: Page): Promise<void> {
+  await page.addInitScript(visualCompareDeterministicCaptureInitScript, VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS)
 }
 
 // Complements the IntersectionObserver reveal trigger by walking the full document
@@ -1775,6 +1811,83 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
     await nextFrame()
     await sleep(16)
   })
+}
+
+async function prepareVisualComparePageForDeterministicCapture(page: Page): Promise<void> {
+  await page.evaluate(async (deterministicCaptureCss) => {
+    const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+    const installStyle = (): void => {
+      if (!document.head || document.getElementById("wp-codebox-visual-compare-deterministic-capture")) {
+        return
+      }
+      const style = document.createElement("style")
+      style.id = "wp-codebox-visual-compare-deterministic-capture"
+      style.textContent = deterministicCaptureCss
+      document.head.appendChild(style)
+    }
+
+    installStyle()
+    window.scrollTo(0, 0)
+    await (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready?.catch(() => undefined)
+
+    const finishAnimations = (): void => {
+      const documentWithSubtreeAnimations = document as Document & { getAnimations?(options?: { subtree?: boolean }): Animation[] }
+      for (const animation of documentWithSubtreeAnimations.getAnimations?.({ subtree: true }) ?? []) {
+        try {
+          animation.finish()
+        } catch {
+          try {
+            animation.pause()
+          } catch {
+            // Ignore animations that cannot be controlled by Web Animations API.
+          }
+        }
+      }
+    }
+
+    await nextFrame()
+    finishAnimations()
+    await nextFrame()
+    finishAnimations()
+
+    await new Promise<void>((resolve) => {
+      let done = false
+      let quietTimer: ReturnType<typeof setTimeout> | undefined
+      let hardTimer: ReturnType<typeof setTimeout> | undefined
+      let observer: MutationObserver | undefined
+      const finish = (): void => {
+        if (done) {
+          return
+        }
+        done = true
+        if (quietTimer) {
+          clearTimeout(quietTimer)
+        }
+        if (hardTimer) {
+          clearTimeout(hardTimer)
+        }
+        observer?.disconnect()
+        resolve()
+      }
+      const markMutation = (): void => {
+        if (quietTimer) {
+          clearTimeout(quietTimer)
+        }
+        quietTimer = setTimeout(finish, 150)
+      }
+      observer = new MutationObserver(markMutation)
+      observer.observe(document.documentElement, { attributes: true, childList: true, characterData: true, subtree: true })
+      hardTimer = setTimeout(finish, 2_500)
+      markMutation()
+    })
+
+    finishAnimations()
+    window.scrollTo(0, 0)
+    await nextFrame()
+    await sleep(16)
+  }, VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS)
 }
 
 async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<void> {
@@ -2125,6 +2238,7 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
   // fully-revealed page state. Identical treatment for source and candidate.
   await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "deterministic-capture-state", operation: prepareVisualComparePageForDeterministicCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
