@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import { PNG } from "pngjs"
 
-import { comparePngFiles, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
+import { comparePngFiles, VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareDeterministicCaptureInitScript, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
 
 // Build an opaque solid-color PNG. `fill` is [r,g,b].
 function solidPng(width: number, height: number, fill: [number, number, number]): PNG {
@@ -18,6 +18,20 @@ function solidPng(width: number, height: number, fill: [number, number, number])
     png.data[offset + 3] = 255
   }
   return png
+}
+
+// 8. Deterministic browser capture is generic: IntersectionObserver-gated reveals are
+//    driven through the page's own visible branch, CSS transition/animation time is
+//    removed at capture time, and the injected script is reusable for every navigation.
+{
+  const initScript = visualCompareDeterministicCaptureInitScript.toString()
+  assert.match(initScript, /IntersectionObserver/)
+  assert.match(initScript, /isIntersecting:\s*true/)
+  assert.match(initScript, /intersectionRatio:\s*1/)
+  assert.match(initScript, /wp-codebox-visual-compare-deterministic-capture/)
+  assert.match(VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS, /transition-property:\s*none\s*!important/)
+  assert.match(VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS, /animation-fill-mode:\s*forwards\s*!important/)
+  assert.match(VISUAL_COMPARE_DETERMINISTIC_CAPTURE_CSS, /animation-duration:\s*1ms\s*!important/)
 }
 
 function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fill: [number, number, number]): void {
