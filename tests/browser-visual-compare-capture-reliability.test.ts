@@ -194,6 +194,18 @@ function countDiffPixels(png: PNG): number {
   assert.ok(noisy.reasons.some((reason) => reason.includes("stylesheet")))
   assert.ok(noisy.reasons.some((reason) => reason.includes("dynamic/noisy")))
 
+  const navigationDegraded = visualCompareCaptureReadiness({
+    assets: {
+      stylesheets: { total: 0, loaded: 0, pending: 0, errored: 0 },
+      images: { total: 0, loaded: 0, loading: 0, failed: 0 },
+      fonts: { status: "loaded", total: 0, loaded: 0, loading: 0, error: 0 },
+    },
+    dynamicContent: { fixed: 0, sticky: 0, video: 0, canvas: 0, iframe: 0, animated: 0, focusedElement: false },
+    navigation: { status: "degraded", code: "navigation_degraded", targetUrl: "http://example.test/", finalUrl: "http://example.test/", waitUntil: "domcontentloaded", attempts: 2, perAttemptTimeoutMs: 30000, message: "navigation_degraded after timeout" },
+  })
+  assert.equal(navigationDegraded.status, "warning")
+  assert.ok(navigationDegraded.reasons.some((reason) => reason.includes("navigation_degraded")))
+
   const diagnostic: VisualCompareCaptureDiagnostics = {
     schema: "wp-codebox/visual-compare-capture-diagnostics/v1",
     readiness: noisy,
@@ -213,6 +225,7 @@ function countDiffPixels(png: PNG): number {
       timezone: "UTC",
     },
     dynamicContent: { fixed: 2, sticky: 1, video: 1, canvas: 1, iframe: 1, animated: 2, focusedElement: true, focusedElementTag: "input" },
+    navigation: { status: "degraded", code: "navigation_degraded", targetUrl: "http://example.test/page", finalUrl: "http://example.test/page", waitUntil: "domcontentloaded", attempts: 2, perAttemptTimeoutMs: 30000, message: "navigation_degraded after timeout" },
   }
   const compact = visualCompareCompactCaptureDiagnostics({ source: diagnostic })
   assert.equal(compact.source?.readiness, "warning")
@@ -220,6 +233,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal(compact.source?.dynamicContent.focusedElementTag, "input")
   assert.equal(compact.source?.environment.url, "http://example.test/page")
   assert.equal("title" in (compact.source?.environment ?? {}), false)
+  assert.equal(compact.source?.navigation?.code, "navigation_degraded")
 }
 
 // 7. The bounded flood-fill region detection runs the real comparePngFiles aggregation
