@@ -96,6 +96,7 @@ assert.ok(projectModeCode.includes("foreach ($xml->xpath('//testsuite/file') ?: 
 assert.ok(projectModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config"))
 assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
+assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes, \$files\);/g)?.length, 3)
 
 const managedModeCode = phpunitRunCode({
   pluginSlug: "demo-plugin",

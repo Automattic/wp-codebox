@@ -103,7 +103,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     $files = array();${fallbackXmlDist}
     if (!is_readable($xml_path)) {
         ${options.logFunction}('${options.missingConfigMessage}' . $xml_path . '; using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes);
+        return array($directories, $suffixes, $prefixes, $excludes, $files);
     }
     $prev = libxml_use_internal_errors(true);
     $xml = @simplexml_load_file($xml_path);
@@ -113,7 +113,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     if ($xml === false) {
         $first = $errors ? trim($errors[0]->message) : 'unknown';
         ${parseFailureLog}
-        return array($directories, $suffixes, $prefixes, $excludes);
+        return array($directories, $suffixes, $prefixes, $excludes, $files);
     }
     $base = ${options.basePathExpression};
     $config_dirs = array();
