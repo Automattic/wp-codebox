@@ -100,10 +100,13 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     $suffixes = array('Test.php');
     $prefixes = array('test-');
     $excludes = array();
-    $files = array();${fallbackXmlDist}
+    $files = array();
+    $return_values = static function() use (&$directories, &$suffixes, &$prefixes, &$excludes, &$files) {
+        return ${returnValues};
+    };${fallbackXmlDist}
     if (!is_readable($xml_path)) {
         ${options.logFunction}('${options.missingConfigMessage}' . $xml_path . '; using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes, $files);
+        return $return_values();
     }
     $prev = libxml_use_internal_errors(true);
     $xml = @simplexml_load_file($xml_path);
@@ -113,7 +116,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     if ($xml === false) {
         $first = $errors ? trim($errors[0]->message) : 'unknown';
         ${parseFailureLog}
-        return array($directories, $suffixes, $prefixes, $excludes, $files);
+        return $return_values();
     }
     $base = ${options.basePathExpression};
     $config_dirs = array();
@@ -157,7 +160,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     if (!empty($config_prefixes)) {
         ${prefixAssignment}
     }
-    return ${returnValues};
+    return $return_values();
 }`
 }
 
