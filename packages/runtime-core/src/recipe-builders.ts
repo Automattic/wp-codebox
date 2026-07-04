@@ -120,6 +120,7 @@ function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: stri
       ...(step.args !== undefined ? { args: step.args } : {}),
       ...(step.metadata !== undefined ? { metadata: step.metadata } : {}),
       ...(step.allowFailure !== undefined ? { allowFailure: step.allowFailure } : {}),
+      ...(step.continue_on_error !== undefined ? { continue_on_error: step.continue_on_error } : {}),
       ...(step.advisory !== undefined ? { advisory: step.advisory } : {}),
     }
   })

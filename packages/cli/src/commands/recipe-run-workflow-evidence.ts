@@ -42,6 +42,10 @@ export function recipeWorkflowStepIsAdvisory(step: WorkspaceRecipe["workflow"]["
   return step.allowFailure === true || step.advisory === true
 }
 
+export function recipeWorkflowStepContinuesOnError(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
+  return step.continue_on_error === true || recipeWorkflowStepIsAdvisory(step)
+}
+
 export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown): RecipeAdvisoryFailure {
   return {
     schema: "wp-codebox/recipe-advisory-failure/v1",
@@ -68,6 +72,13 @@ export function recipeStepFailure(workflowStep: ReturnType<typeof recipeWorkflow
     timeoutMs: timeoutError?.timeoutMs,
     error: serializeRecipeRunError(error),
   }) as RecipeStepFailure
+}
+
+export function recipeStepFailureFromExecution(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], execution: ExecutionResult): RecipeStepFailure {
+  const startedAtMs = execution.startedAt ? Date.parse(execution.startedAt) : Date.now()
+  const finishedAtMs = execution.finishedAt ? Date.parse(execution.finishedAt) : Date.now()
+  const message = execution.stderr.trim() || execution.stdout.trim() || `Command exited with code ${execution.exitCode}.`
+  return recipeStepFailure(workflowStep, new Error(message), Number.isFinite(startedAtMs) ? startedAtMs : Date.now(), Number.isFinite(finishedAtMs) ? finishedAtMs : Date.now())
 }
 
 function recipeTimeoutError(error: unknown): RecipeRunTimeoutError | undefined {
@@ -260,7 +271,7 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
       ? executeRecipeCollectWorkloadResult(step, executions, startedAt, workloadAlias)
       : await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap)
     executions.push(execution)
-    if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
+    if (execution.exitCode !== 0 && !recipeWorkflowStepContinuesOnError(step)) {
       break
     }
   }
