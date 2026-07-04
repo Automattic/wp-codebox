@@ -180,6 +180,7 @@ export interface VisualCompareCaptureDiagnostics {
     reducedMotion: boolean
     timezone: string
   }
+  navigation?: VisualCompareNavigationDiagnostic
   dynamicContent: {
     fixed: number
     sticky: number
@@ -203,6 +204,18 @@ export interface VisualCompareCaptureDiagnosticsCompact {
   }
   dynamicContent: VisualCompareCaptureDiagnostics["dynamicContent"]
   environment: Pick<VisualCompareCaptureDiagnostics["environment"], "url" | "viewport" | "devicePixelRatio" | "colorScheme" | "reducedMotion">
+  navigation?: VisualCompareNavigationDiagnostic
+}
+
+export interface VisualCompareNavigationDiagnostic {
+  status: "ok" | "degraded"
+  code?: "navigation_degraded"
+  targetUrl: string
+  finalUrl: string
+  waitUntil: "domcontentloaded" | "load" | "networkidle"
+  attempts: number
+  perAttemptTimeoutMs: number
+  message?: string
 }
 
 interface VisualCompareBaselineDelta {
@@ -534,22 +547,24 @@ async function runVisualComparePairCommand({
   if (sourceTargetUrl && candidateTargetUrl) {
     const browser = await launchChromiumBrowser()
     try {
-      const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
-      if (blockExternalRequests) {
-        await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin)
+      const createCapturePage = async (): Promise<Page> => {
+        const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
+        if (blockExternalRequests) {
+          await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin)
+        }
+        await installVisualCompareDeterministicReveal(page)
+        return page
       }
-      // Determinism applies to BOTH source and candidate: the init script runs on
-      // every navigation of this shared page, so source and candidate are captured
-      // under identical reveal/animation conditions.
-      await installVisualCompareDeterministicReveal(page)
-      viewport = await browserProbeViewport(page)
+      const sourcePage = await createCapturePage()
+      const candidatePage = await createCapturePage()
+      viewport = await browserProbeViewport(sourcePage)
       try {
         let sourceCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
         await artifactSession.writeGenerated("sourceScreenshot", "source.png", async (path) => {
           sourceCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "source-capture",
-            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(sourcePage, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -565,7 +580,7 @@ async function runVisualComparePairCommand({
           candidateCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "candidate-capture",
-            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(candidatePage, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -593,7 +608,10 @@ async function runVisualComparePairCommand({
             ...(await fileExists(candidatePath) ? { candidateScreenshot: `${artifactPathPrefix}/candidate.png` } : {}),
           },
         })
-        throw new BrowserCommandArtifactError(`wordpress.visual-compare failed during capture: ${visualCompareErrorDetail(error)}`, visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
+        return {
+          artifact: visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }),
+          output: `${JSON.stringify(result.summary, null, 2)}\n`,
+        }
       }
     } finally {
       await browser.close()
@@ -665,7 +683,8 @@ async function runVisualComparePairCommand({
     explainSelectors,
   })
   const finishedAt = now()
-  const status = comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different"
+  const navigationDegraded = captureDiagnostics?.source?.navigation?.status === "degraded" || captureDiagnostics?.candidate?.navigation?.status === "degraded"
+  const status = navigationDegraded ? "partial" : comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different"
   const baseline = baselineRef
     ? await createVisualCompareBaselineDelta({
         baselineRef,
@@ -1853,16 +1872,26 @@ export function visualCompareNavigationPolicy(wallTimeoutMs: number): VisualComp
 // broken — it does not mask a real serving bug. External resources are already
 // blocked (`block-external-requests`), so navigation never waits on unreachable
 // hosts regardless of `waitFor`.
-async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil: "domcontentloaded" | "load" | "networkidle", wallTimeoutMs: number): Promise<void> {
+async function stopVisualCompareNavigation(page: Page): Promise<void> {
+  const session = await page.context().newCDPSession(page)
+  try {
+    await session.send("Page.stopLoading")
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
+}
+
+async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil: "domcontentloaded" | "load" | "networkidle", wallTimeoutMs: number): Promise<VisualCompareNavigationDiagnostic> {
   // Reserve roughly half the wall for navigation, capped well below the overall
   // visual-compare wall so a bad candidate route cannot consume the full 120s
   // capture window before producing diagnostics.
   const policy = visualCompareNavigationPolicy(wallTimeoutMs)
+  const startingUrl = page.url()
   let lastError: unknown
   for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
     try {
       await page.goto(targetUrl, { waitUntil, timeout: policy.perAttemptTimeoutMs })
-      return
+      return { status: "ok", targetUrl, finalUrl: page.url(), waitUntil, attempts: attempt, perAttemptTimeoutMs: policy.perAttemptTimeoutMs }
     } catch (error) {
       lastError = error
       if (attempt >= policy.attempts) {
@@ -1870,7 +1899,23 @@ async function gotoVisualCompareTarget(page: Page, targetUrl: string, waitUntil:
       }
     }
   }
-  const wrapped = new Error(`wordpress.visual-compare navigation failed for ${targetUrl} after ${policy.attempts} attempt(s) with ${policy.perAttemptTimeoutMs}ms per attempt (waitUntil=${waitUntil}): ${visualCompareErrorDetail(lastError)}`)
+  const message = `wordpress.visual-compare navigation degraded for ${targetUrl} after ${policy.attempts} attempt(s) with ${policy.perAttemptTimeoutMs}ms per attempt (waitUntil=${waitUntil}): ${visualCompareErrorDetail(lastError)}`
+  await stopVisualCompareNavigation(page).catch(() => undefined)
+  let finalUrl = page.url()
+  if (finalUrl === startingUrl) {
+    try {
+      await page.goto(targetUrl, { waitUntil: "commit" as "domcontentloaded", timeout: Math.min(5_000, policy.perAttemptTimeoutMs) })
+      finalUrl = page.url()
+      await stopVisualCompareNavigation(page).catch(() => undefined)
+    } catch (error) {
+      lastError = error
+      finalUrl = page.url()
+    }
+  }
+  if (finalUrl && finalUrl !== "about:blank" && finalUrl !== startingUrl) {
+    return { status: "degraded", code: "navigation_degraded", targetUrl, finalUrl, waitUntil, attempts: policy.attempts, perAttemptTimeoutMs: policy.perAttemptTimeoutMs, message }
+  }
+  const wrapped = new Error(message.replace("navigation degraded", "navigation failed"))
   ;(wrapped as Error & { cause?: unknown }).cause = lastError
   throw wrapped
 }
@@ -1947,8 +1992,11 @@ async function captureVisualComparePageScreenshot(page: Page, outputPath: string
   throw new Error(`wordpress.visual-compare screenshot failed after ${attempts} attempt(s)${where}: ${visualCompareErrorDetail(lastError)}`)
 }
 
-export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDiagnostics, "assets" | "dynamicContent">): VisualCompareCaptureDiagnostics["readiness"] {
+export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDiagnostics, "assets" | "dynamicContent"> & { navigation?: VisualCompareNavigationDiagnostic }): VisualCompareCaptureDiagnostics["readiness"] {
   const reasons: string[] = []
+  if (input.navigation?.status === "degraded") {
+    reasons.push(input.navigation.message ?? "navigation_degraded")
+  }
   if (input.assets.stylesheets.pending > 0) {
     reasons.push(`${input.assets.stylesheets.pending} stylesheet(s) still pending`)
   }
@@ -2012,6 +2060,7 @@ function visualCompareCompactCaptureDiagnostic(input: VisualCompareCaptureDiagno
       colorScheme: input.environment.colorScheme,
       reducedMotion: input.environment.reducedMotion,
     },
+    ...(input.navigation ? { navigation: input.navigation } : {}),
   }
 }
 
@@ -2022,7 +2071,7 @@ function visualCompareMatrixCompactCaptureDiagnostics(input: VisualCompareMatrix
   return comparisons.length > 0 ? { comparisons } : undefined
 }
 
-async function captureVisualCompareDiagnostics(page: Page): Promise<VisualCompareCaptureDiagnostics> {
+async function captureVisualCompareDiagnostics(page: Page, navigation?: VisualCompareNavigationDiagnostic): Promise<VisualCompareCaptureDiagnostics> {
   const diagnostics = await page.evaluate(() => {
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')).filter((link) => !link.disabled && Boolean(link.href))
     const stylesheetStatus = stylesheetLinks.map((link) => {
@@ -2097,35 +2146,71 @@ async function captureVisualCompareDiagnostics(page: Page): Promise<VisualCompar
       },
     }
   })
+  return { ...diagnostics, ...(navigation ? { navigation } : {}), readiness: visualCompareCaptureReadiness({ ...diagnostics, navigation }) }
+}
+
+function degradedVisualCompareCaptureDiagnostics(navigation: VisualCompareNavigationDiagnostic, viewport: BrowserProbeViewport | null): VisualCompareCaptureDiagnostics {
+  const diagnostics = {
+    schema: "wp-codebox/visual-compare-capture-diagnostics/v1" as const,
+    assets: {
+      stylesheets: { total: 0, loaded: 0, pending: 0, errored: 0 },
+      images: { total: 0, loaded: 0, loading: 0, failed: 0 },
+      fonts: { status: "unknown" },
+    },
+    environment: {
+      url: navigation.finalUrl,
+      title: "",
+      userAgent: viewport?.userAgent ?? "unknown",
+      viewport: { width: viewport?.width ?? 0, height: viewport?.height ?? 0 },
+      devicePixelRatio: viewport?.deviceScaleFactor ?? 1,
+      colorScheme: "unknown",
+      reducedMotion: false,
+      timezone: "unknown",
+    },
+    navigation,
+    dynamicContent: { fixed: 0, sticky: 0, video: 0, canvas: 0, iframe: 0, animated: 0, focusedElement: false },
+  }
   return { ...diagnostics, readiness: visualCompareCaptureReadiness(diagnostics) }
 }
 
+function degradedVisualCompareDomSnapshot(navigation: VisualCompareNavigationDiagnostic): VisualCompareDomSnapshot {
+  return { url: navigation.finalUrl, title: "", elementCount: 0, capturedElements: [], truncated: false }
+}
+
 async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
+  let navigation: VisualCompareNavigationDiagnostic
   if (waitFor === "duration") {
-    await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
+    navigation = await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor.startsWith("selector:")) {
-    await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
+    navigation = await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible", timeout: timeoutMs })
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
-    await gotoVisualCompareTarget(page, targetUrl, waitFor, timeoutMs)
+    navigation = await gotoVisualCompareTarget(page, targetUrl, waitFor, timeoutMs)
     if (durationMs > 0) {
       await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
+  if (navigation.status === "degraded") {
+    const captureDiagnostics = degradedVisualCompareCaptureDiagnostics(navigation, await browserProbeViewport(page).catch(() => null))
+    const domSnapshot = degradedVisualCompareDomSnapshot(navigation)
+    await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs: Math.min(timeoutMs, 10_000), maxFullPageHeightPx: maxFullPageHeight })
+    return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
+  }
+
   await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
   // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
   // fully-revealed page state. Identical treatment for source and candidate.
   await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, navigation), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
   // to their final state and freezes infinite ones to a deterministic frame, so the
