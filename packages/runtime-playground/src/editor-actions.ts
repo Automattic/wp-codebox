@@ -46,7 +46,7 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   // The site's static front page (`page_on_front`). Its concrete post id is only
   // known at runtime — e.g. after an importer materializes pages and points
   // `page_on_front` at the imported home page — so the URL is resolved against
-  // the running WordPress by `resolveEditorOpenTargetUrl` before navigation,
+  // the running WordPress by `resolveEditorOpenTarget` before navigation,
   // turning into `post.php?post=<page_on_front>&action=edit`. This lets a recipe
   // open and validate the actual imported front page without knowing its id when
   // the recipe is built.

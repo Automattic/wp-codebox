@@ -1260,7 +1260,7 @@ export const commandRegistry = [
     id: "wordpress.editor-open",
     description: "Open a generic WordPress block editor target and capture replayable editor evidence artifacts.",
     acceptedArgs: [
-      { name: "target", description: "Editor target to open; defaults to post-new.", format: "post-new|site" },
+      { name: "target", description: "Editor target to open; defaults to post-new. Use front-page to open the site's configured static front page.", format: "post-new|site|front-page" },
       { name: "post-id", description: "Existing post ID to open in the post editor.", format: "positive integer" },
       { name: "post-type", description: "Post type for post-new or post-id targets; defaults to post.", format: "post type slug" },
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
@@ -1277,7 +1277,7 @@ export const commandRegistry = [
     id: "wordpress.editor-actions",
     description: "Open a generic WordPress block editor target, run a bounded editor action script, and capture replayable mutation evidence artifacts.",
     acceptedArgs: [
-      { name: "target", description: "Editor target to open; defaults to post-new.", format: "post-new|site" },
+      { name: "target", description: "Editor target to open; defaults to post-new. Use front-page to open the site's configured static front page.", format: "post-new|site|front-page" },
       { name: "post-id", description: "Existing post ID to open in the post editor.", format: "positive integer" },
       { name: "post-type", description: "Post type for post-new or post-id targets; defaults to post.", format: "post type slug" },
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
@@ -1300,7 +1300,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "content", description: "Serialized block markup to validate. When omitted, the command validates the opened post's edited content.", format: "string" },
       { name: "content-file", description: "Path to a file whose serialized block markup should be validated instead of inline content.", format: "path" },
-      { name: "target", description: "Editor target to open; defaults to post-new.", format: "post-new|site" },
+      { name: "target", description: "Editor target to open; defaults to post-new. Use front-page to open the site's configured static front page.", format: "post-new|site|front-page" },
       { name: "post-id", description: "Existing post ID to open in the post editor. The post's edited content is validated when content is not supplied.", format: "positive integer" },
       { name: "post-type", description: "Post type for post-new or post-id targets; defaults to post.", format: "post type slug" },
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
