@@ -62,9 +62,13 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 
 	foreach ( $runtime['plugins'] as $plugin ) {
 		if ( ! empty( $plugin['local_package'] ) ) {
+			$write_step = self::browser_local_package_write_step( $plugin, 'plugin' );
+			if ( ! empty( $write_step ) ) {
+				$steps[] = $write_step;
+			}
 			$steps[] = array(
 				'step' => 'runPHP',
-				'code' => self::browser_plugin_install_php( $plugin ),
+				'code' => self::browser_plugin_install_php( $plugin, (string) ( $write_step['path'] ?? '' ) ),
 			);
 			continue;
 		}
@@ -97,18 +101,26 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	foreach ( $runtime['mu_plugins'] as $mu_plugin ) {
+		$write_step = ! empty( $mu_plugin['local_package'] ) ? self::browser_local_package_write_step( $mu_plugin, 'mu-plugin' ) : array();
+		if ( ! empty( $write_step ) ) {
+			$steps[] = $write_step;
+		}
 		$steps[] = array(
 			'step' => 'runPHP',
-			'code' => self::browser_mu_plugin_install_php( $mu_plugin ),
+			'code' => self::browser_mu_plugin_install_php( $mu_plugin, (string) ( $write_step['path'] ?? '' ) ),
 		);
 	}
 
 	foreach ( $runtime['themes'] as $theme ) {
 		if ( ! empty( $theme['url'] ) ) {
 			if ( ! empty( $theme['local_package'] ) ) {
+				$write_step = self::browser_local_package_write_step( $theme, 'theme' );
+				if ( ! empty( $write_step ) ) {
+					$steps[] = $write_step;
+				}
 				$steps[] = array(
 					'step' => 'runPHP',
-					'code' => self::browser_theme_package_install_php( $theme ),
+					'code' => self::browser_theme_package_install_php( $theme, (string) ( $write_step['path'] ?? '' ) ),
 				);
 			} else {
 				$steps[] = array(
@@ -151,6 +163,28 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	return $blueprint;
+}
+
+/** @param array<string,mixed> $package Runtime package spec. @return array<string,mixed> */
+private static function browser_local_package_write_step( array $package, string $kind ): array {
+	$url = (string) ( $package['local_package_fetch_url'] ?? $package['url'] ?? '' );
+	if ( '' === $url || str_starts_with( $url, 'data:application/zip;base64,' ) ) {
+		return array();
+	}
+
+	$digest = (string) ( $package['sha256'] ?? '' );
+	if ( '' === $digest ) {
+		$digest = hash( 'sha256', $kind . ':' . $url );
+	}
+
+	return array(
+		'step' => 'writeFile',
+		'path' => '/tmp/wp-codebox-' . sanitize_key( $kind ) . '-' . substr( $digest, 0, 16 ) . '.zip',
+		'data' => array(
+			'resource' => 'url',
+			'url'      => $url,
+		),
+	);
 }
 
 /** @param array<string,mixed> $prepared Prepared runtime descriptor. @param array<string,mixed> $fallback_blueprint Full dynamic blueprint. @param array<string,mixed> $playground Playground settings. @return array<string,mixed> */
@@ -280,7 +314,7 @@ private static function browser_selected_prepared_runtime_blueprint( array $prep
 }
 
 /** @param array<string,mixed> $plugin Plugin spec. */
-private static function browser_plugin_install_php( array $plugin ): string {
+private static function browser_plugin_install_php( array $plugin, string $package_path = '' ): string {
 	$target_folder = sanitize_key( (string) ( $plugin['targetFolderName'] ?? $plugin['slug'] ?? '' ) );
 	if ( '' === $target_folder ) {
 		$target_folder = 'wp-codebox-runtime-plugin';
@@ -290,13 +324,16 @@ private static function browser_plugin_install_php( array $plugin ): string {
 
 	return '<?php
 $package_url = ' . var_export( $package_url, true ) . ';
+$package_path = ' . var_export( $package_path, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $plugin['sha256'] ?? '' ), true ) . ';
 $target_folder = ' . var_export( $target_folder, true ) . ';
 $activate = ' . ( ! empty( $plugin['activate'] ) ? 'true' : 'false' ) . ';
 
-$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+$archive = "" !== $package_path
+? file_get_contents( $package_path )
+: ( str_starts_with( $package_url, "data:application/zip;base64," )
 ? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
-: file_get_contents( $package_url );
+: file_get_contents( $package_url ) );
 if ( ! is_string( $archive ) || "" === $archive ) {
 throw new RuntimeException( "Could not read browser plugin package." );
 }
@@ -344,9 +381,9 @@ if ( is_wp_error( $result ) ) {
 }
 
 /** @param array<string,mixed> $mu_plugin Mu-plugin spec. */
-private static function browser_mu_plugin_install_php( array $mu_plugin ): string {
+private static function browser_mu_plugin_install_php( array $mu_plugin, string $package_path = '' ): string {
 	if ( ! empty( $mu_plugin['local_package'] ) ) {
-		return self::browser_packaged_mu_plugin_install_php( $mu_plugin );
+		return self::browser_packaged_mu_plugin_install_php( $mu_plugin, $package_path );
 	}
 
 	return '<?php
@@ -360,19 +397,22 @@ file_put_contents( $path, ' . var_export( $mu_plugin['content'], true ) . ' );
 }
 
 /** @param array<string,mixed> $mu_plugin Packaged mu-plugin spec. */
-private static function browser_packaged_mu_plugin_install_php( array $mu_plugin ): string {
+private static function browser_packaged_mu_plugin_install_php( array $mu_plugin, string $package_path = '' ): string {
 	$package_url = (string) ( $mu_plugin['url'] ?? '' );
 
 	return '<?php
 $package_url = ' . var_export( $package_url, true ) . ';
+$package_path = ' . var_export( $package_path, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $mu_plugin['sha256'] ?? '' ), true ) . ';
 $target_directory = "/wordpress/wp-content/mu-plugins/" . ' . var_export( (string) $mu_plugin['targetFolderName'], true ) . ';
 $loader_path = ' . var_export( (string) $mu_plugin['path'], true ) . ';
 $entry = ' . var_export( (string) $mu_plugin['entry'], true ) . ';
 
-$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+$archive = "" !== $package_path
+? file_get_contents( $package_path )
+: ( str_starts_with( $package_url, "data:application/zip;base64," )
 ? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
-: file_get_contents( $package_url );
+: file_get_contents( $package_url ) );
 if ( ! is_string( $archive ) || "" === $archive ) {
 throw new RuntimeException( "Could not read browser mu-plugin package." );
 }
@@ -410,19 +450,22 @@ file_put_contents( $loader_path, "<?php\nrequire_once " . var_export( $entry_pat
 }
 
 /** @param array<string,mixed> $theme Theme package spec. */
-private static function browser_theme_package_install_php( array $theme ): string {
+private static function browser_theme_package_install_php( array $theme, string $package_path = '' ): string {
 	$package_url = (string) ( $theme['url'] ?? '' );
 	$slug        = (string) ( $theme['slug'] ?? '' );
 
 	return '<?php
 $package_url = ' . var_export( $package_url, true ) . ';
+$package_path = ' . var_export( $package_path, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $theme['sha256'] ?? '' ), true ) . ';
 $slug = ' . var_export( $slug, true ) . ';
 $activate = ' . ( ! empty( $theme['activate'] ) ? 'true' : 'false' ) . ';
 
-$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+$archive = "" !== $package_path
+? file_get_contents( $package_path )
+: ( str_starts_with( $package_url, "data:application/zip;base64," )
 ? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
-: file_get_contents( $package_url );
+: file_get_contents( $package_url ) );
 if ( ! is_string( $archive ) || "" === $archive ) {
 throw new RuntimeException( "Could not read browser theme package." );
 }
