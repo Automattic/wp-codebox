@@ -66,6 +66,86 @@ assert.deepEqual(plain(api.v1.info()), {
   },
 })
 
+const expectedV1TopLevelKeys = [
+  "schema",
+  "apiVersion",
+  "version",
+  "capabilities",
+  "getCapabilities",
+  "info",
+  "normalizeError",
+  "normalizeBrowserRunResult",
+  "browserArtifactPersistenceRef",
+  "createRuntimeTaskRequest",
+  "runRuntimeTask",
+  "consumeContainedSiteSync",
+  "openOrCreateBrowserContainedSite",
+  "startBrowserPreview",
+  "aggregateFanoutOutputs",
+  "validateBrowserRuntimeMaterialization",
+  "ensureDirectory",
+  "writeFile",
+  "readFile",
+  "listDirectory",
+  "grep",
+  "editFile",
+  "applyPatch",
+  "runRecipe",
+  "normalizeResult",
+  "result",
+  "executableBrowserSession",
+  "bootExecutableBrowserSession",
+  "parentToolBridge",
+  "createBrowserConnectorRequest",
+  "executeBrowserConnectorRequest",
+  "createParentToolRequest",
+  "dispatchParentTool",
+  "runBrowserSessionRecipe",
+  "setFrontendAdminBarVisible",
+  "methods",
+] as const
+assert.deepEqual(Object.keys(api.v1), expectedV1TopLevelKeys, "wpCodeboxBrowser.v1 top-level keys must remain contract-derived and stable")
+
+const expectedV1MethodKeys = [
+  "activateTheme",
+  "browserSessionRecipe",
+  "createBrowserConnectorRequest",
+  "executeBrowserConnectorRequest",
+  "executeBrowserProviderProxyRequest",
+  "consumeContainedSiteSync",
+  "openOrCreateBrowserContainedSite",
+  "startBrowserPreview",
+  "bootExecutableBrowserSession",
+  "createParentToolRequest",
+  "dispatchParentTool",
+  "ensureDirectory",
+  "readFile",
+  "listDirectory",
+  "grep",
+  "editFile",
+  "applyPatch",
+  "executableBrowserSession",
+  "installTheme",
+  "parentToolBridge",
+  "validateBrowserRuntimeMaterialization",
+  "aggregateFanoutOutputs",
+  "preparedBrowserRuntimeContract",
+  "preparedBrowserRuntimeStatus",
+  "runBrowserRuntimeContractProbe",
+  "runBrowserSessionRecipe",
+  "runPhpRequest",
+  "runRecipe",
+  "runWordPressOperation",
+  "selectPreparedBrowserBlueprint",
+  "setFrontendAdminBarVisible",
+  "writeFile",
+  "writeReviewFile",
+] as const
+assert.deepEqual(Object.keys(api.v1.methods), expectedV1MethodKeys, "wpCodeboxBrowser.v1.methods must match the SDK methods contract")
+for (const method of expectedV1MethodKeys) {
+  assert.equal(api.v1.methods[method], api[method], `wpCodeboxBrowser.v1.methods.${method} must be derived from the runtime API map`)
+}
+
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
