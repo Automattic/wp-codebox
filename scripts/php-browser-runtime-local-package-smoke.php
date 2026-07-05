@@ -210,5 +210,36 @@ if ( 'https://example.test/runtime.zip' !== ( $remote_entry['provenance']['url']
 	fail( 'Expected remote package provenance to keep the source URL.' );
 }
 
+$local_url = WP_Codebox_Browser_Runtime_Local_Package_Smoke::normalize(
+	array(
+		array(
+			'slug'          => 'runtime-smoke',
+			'file'          => 'runtime-smoke.php',
+			'url'           => 'https://example.test/runtime.zip',
+			'sha256'        => $sha256,
+			'entry'         => 'runtime-smoke/runtime-smoke.php',
+			'local_package' => true,
+		),
+	)
+);
+
+if ( is_wp_error( $local_url ) ) {
+	fail( 'Expected local package URL normalization to succeed, got ' . $local_url->get_error_code() . ': ' . $local_url->get_error_message() );
+}
+
+$local_url_entry = $local_url[0] ?? array();
+if ( 'https://example.test/runtime.zip' !== ( $local_url_entry['url'] ?? '' ) ) {
+	fail( 'Expected mu-plugin local_package URL mode to preserve the source URL.' );
+}
+if ( ( $local_url_entry['sha256'] ?? '' ) !== $sha256 ) {
+	fail( 'Expected mu-plugin local_package URL mode to preserve the expected sha256.' );
+}
+if ( ( $local_url_entry['local_package_fetch_url'] ?? '' ) !== 'https://example.test/runtime.zip' ) {
+	fail( 'Expected mu-plugin local_package URL mode to expose the browser fetch URL.' );
+}
+if ( ( $local_url_entry['provenance']['source'] ?? '' ) !== 'runtime-mu-plugin-local-package-url' ) {
+	fail( 'Expected mu-plugin local_package URL provenance.' );
+}
+
 remove_tree( $root );
 fwrite( STDOUT, "PHP browser runtime local package smoke passed\n" );

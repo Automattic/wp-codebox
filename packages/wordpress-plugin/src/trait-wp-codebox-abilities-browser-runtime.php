@@ -45,6 +45,28 @@ private static function normalize_browser_mu_plugins( array $mu_plugins ): array
 					'source' => 'runtime-mu-plugin-path',
 					'path'   => $source_path,
 				);
+			} elseif ( '' !== $source_url && ! empty( $mu_plugin['local_package'] ) ) {
+				$source = self::browser_local_plugin_url( $source_url, $index );
+				if ( is_wp_error( $source ) ) {
+					return $source;
+				}
+
+				$sha256 = strtolower( trim( (string) ( $mu_plugin['sha256'] ?? '' ) ) );
+				if ( '' !== $sha256 && ! preg_match( '/^[a-f0-9]{64}$/', $sha256 ) ) {
+					return new WP_Error( 'wp_codebox_browser_mu_plugin_sha256_invalid', 'Browser mu-plugin sha256 must be a 64-character hex digest.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+				}
+
+				$package    = array(
+					'url'       => $source['url'],
+					'fetch_url' => $source['url'],
+					'path'      => '',
+					'sha256'    => $sha256,
+				);
+				$provenance = array(
+					'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+					'source' => 'runtime-mu-plugin-local-package-url',
+					'url'    => $source_url,
+				);
 			} elseif ( '' !== $source_url ) {
 				$package    = self::browser_remote_mu_plugin_package( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
 				$provenance = array(
