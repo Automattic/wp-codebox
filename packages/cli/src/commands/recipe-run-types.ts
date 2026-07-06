@@ -1,4 +1,4 @@
-import type { AgentTerminalResult, ArtifactBundle, ArtifactPackageProvenance, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipe, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import type { AgentTerminalResult, ArtifactBundle, ArtifactPackageProvenance, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimePolicy, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipe, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeExternalServiceBoundaryHostCorrelation } from "../recipe-external-services.js"
@@ -20,6 +20,7 @@ export interface RecipeRunOptions {
   previewLeaseId?: string
   previewLeaseFile?: string
   timeoutMs: number
+  policy?: RuntimePolicy
   json: boolean
   summary: boolean
   dryRun: boolean
@@ -27,6 +28,7 @@ export interface RecipeRunOptions {
 
 export interface RecipeValidateOptions {
   recipePath: string
+  policy?: RuntimePolicy
   json: boolean
 }
 

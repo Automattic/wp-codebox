@@ -6,12 +6,13 @@ import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from 
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
 import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBoundarySummary } from "./recipe-external-services.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
-import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
+import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 
 export interface RecipeDryRunOptions {
   recipePath: string
   artifactsDirectory?: string
+  policy?: RuntimePolicy
 }
 
 export interface RecipeDryRunContext {
@@ -267,7 +268,10 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
       }
     }
 
-    const issues = await validateWorkspaceRecipe(recipe, recipePath)
+    const issues = [
+      ...await validateWorkspaceRecipe(recipe, recipePath),
+      ...validateRecipeRuntimePolicy(recipe, options.policy),
+    ]
 
     if (issues.length > 0) {
       return {
@@ -315,7 +319,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
 }
 
 export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirectory: string, options: RecipePlanOptions, context: RecipePlanContext): Promise<RecipePlan> {
-  const policy = recipePolicy(recipe)
+  const policy = options.policy ?? recipePolicy(recipe)
   const policyValidation = validateRuntimePolicy(policy)
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)

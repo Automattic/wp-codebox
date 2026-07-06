@@ -19,6 +19,19 @@ npm run wp-codebox -- recipe validate --recipe ./path/to/recipe.json --json
 npm run wp-codebox -- recipe-run --recipe ./path/to/recipe.json --dry-run --json
 ```
 
+`recipe-run` derives the runtime policy from the recipe by default. To run with a
+stricter or caller-owned policy, pass `--policy <json|file>` to both validation
+and execution:
+
+```bash
+npm run wp-codebox -- recipe validate --recipe ./path/to/recipe.json --policy ./runtime-policy.json --json
+npm run wp-codebox -- recipe-run --recipe ./path/to/recipe.json --policy ./runtime-policy.json --json
+```
+
+The override must include every runtime command required by recipe setup, probes,
+and workflow steps. Use `recipe-run --dry-run --json` to inspect the resolved
+`plan.policy.commands` list before tightening a policy.
+
 ## Minimal Shape
 
 ```json

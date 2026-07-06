@@ -307,7 +307,7 @@ export function printHelp(): void {
   wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe build phpunit|bench|template|generic-ability-runtime-run|runtime-package-run --options <path> [--output <path>]
-  wp-codebox recipe validate --recipe <path> [--json]
+  wp-codebox recipe validate --recipe <path> [--policy <json|file>] [--json]
   wp-codebox bench matrix --matrix <path> [--recipe <path>] [--artifacts <dir>] [--json]
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
   wp-codebox bench compare --baseline <recipe-run.json> --candidate <recipe-run.json> [--json]
@@ -427,7 +427,7 @@ Options:
   --preview-lease-json <json>
                          wp-codebox/preview-lease/v1 envelope for public/local URL, expiry, alignment, and handoff metadata.
   --timeout <duration>  Maximum live recipe-run duration before emitting a structured timeout failure. Defaults to 25m.
-  --policy <json|file> Runtime policy JSON or path to a JSON file.
+  --policy <json|file> Runtime policy JSON or path to a JSON file. For recipe-run and recipe validate, this overrides the recipe-derived runtime policy and must include every command required by the recipe setup, probes, and workflow.
   --dry-run            Validate recipe-run and emit a resolved JSON plan without booting Playground or writing temp workspaces.
   --json               Emit machine-readable JSON.
 

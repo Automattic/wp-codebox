@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, validateRuntimePolicy, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -14,7 +14,7 @@ import { recipeExternalServiceBoundarySummaries } from "../recipe-external-servi
 import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
-import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
+import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { artifactManifestFilesByPath, parseBenchResults, writeBenchmarkArtifactEvidence } from "./recipe-run-benchmark-artifacts.js"
@@ -106,7 +106,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let { runRecord } = context
   runRecord = await runRegistry.update(runRecord.runId, { metadata: { provenance: recipeRunProvenance(recipe, recipePath) } })
   await artifactPointer.update({ commandStatus: "queued" })
-  const issues = await validateWorkspaceRecipe(recipe, recipePath)
+  const issues = [
+    ...await validateWorkspaceRecipe(recipe, recipePath),
+    ...validateRecipeRuntimePolicy(recipe, options.policy),
+  ]
   if (issues.length > 0) {
     const failure = {
       name: "RecipeValidationError",
@@ -127,7 +130,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   }
 
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
-  const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
+  const { valid: _policyValid, issues: _policyIssues, ...plannedPolicy } = plan.policy
+  const policy = options.policy ?? plannedPolicy
   const runtimeEnv = {
     ...distributionRuntimeEnv(recipe),
     ...normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {}),
@@ -610,7 +614,10 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
   const recipePath = resolve(options.recipePath)
   try {
     const recipe = await loadWorkspaceRecipe(recipePath)
-    const issues = await validateWorkspaceRecipe(recipe, recipePath)
+    const issues = [
+      ...await validateWorkspaceRecipe(recipe, recipePath),
+      ...validateRecipeRuntimePolicy(recipe, options.policy),
+    ]
 
     return {
       success: issues.length === 0,
@@ -711,6 +718,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--timeout":
         options.timeoutMs = parseRecipeRunTimeoutMs(value)
         break
+      case "--policy":
+        options.policy = parseRecipePolicy(value)
+        break
       default:
         throw new Error(`Unknown option: ${name}`)
     }
@@ -741,6 +751,17 @@ function parseRecipeRunTimeoutMs(value: unknown): number {
   return timeoutMs
 }
 
+function parseRecipePolicy(value: string): RuntimePolicy {
+  const raw = value.trim().startsWith("{") ? value : readFileSync(resolve(value), "utf8")
+  const policy = JSON.parse(raw) as unknown
+  const result = validateRuntimePolicy(policy)
+  if (!result.valid) {
+    throw new Error(`Runtime policy is invalid: ${result.issues.map((issue) => issue.message).join("; ")}`)
+  }
+
+  return policy as RuntimePolicy
+}
+
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
   const parsed = parseCommandOptions(args, new Set(["--json"]))
   if (parsed.positionals.length > 0) {
@@ -754,6 +775,9 @@ function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
     switch (name) {
       case "--recipe":
         options.recipePath = value
+        break
+      case "--policy":
+        options.policy = parseRecipePolicy(value)
         break
       default:
         throw new Error(`Unknown option: ${name}`)
