@@ -536,6 +536,7 @@ export async function runEditorOpenCommand({
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
   let editorValidity: EditorValidityArtifact | undefined
+  let editorCanvasReadiness: BrowserEditorCanvasProbeSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -576,8 +577,11 @@ export async function runEditorOpenCommand({
       const waitStartedAtMs = Date.now()
       try {
         await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
+        editorCanvasReadiness = await waitForEditorOpenCanvasReadiness(page, target.waitSelector, waitTimeoutMs)
         finalUrl = page.url()
-        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {}))
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {
+          ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
+        } as never))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
@@ -600,7 +604,16 @@ export async function runEditorOpenCommand({
       htmlSha256 = sha256(Buffer.from(html, "utf8"))
     }
     if (capture.has("screenshot")) {
-      await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
+      await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", async (path) => {
+        if (editorCanvasReadiness?.ready) {
+          const frame = await resolveEditorCanvasFrame(page, target.waitSelector)
+          if (frame) {
+            await frame.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().screenshot({ path, timeout: waitTimeoutMs })
+            return
+          }
+        }
+        await page.screenshot({ path, fullPage: true })
+      })
       screenshotSha256 = await fileSha256(screenshotPath)
     }
   } finally {
@@ -648,6 +661,7 @@ export async function runEditorOpenCommand({
         screenshot: capture.has("screenshot"),
         ...(editorSummary ? { editor: editorSummary } : {}),
         ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
+        ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         viewport,
       },
     }
@@ -693,6 +707,26 @@ export async function runEditorOpenCommand({
       steps: stepRecords,
     }, null, 2)}\n`,
   }
+}
+
+async function waitForEditorOpenCanvasReadiness(page: import("playwright").Page, waitSelector: string, timeoutMs: number): Promise<BrowserEditorCanvasProbeSummary | undefined> {
+  if (!waitSelector.includes("editor-canvas")) {
+    return undefined
+  }
+
+  const probe = await waitForEditorCanvasProbe(page, {
+    blockSelector: EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR,
+    iframeSelector: waitSelector,
+    layoutSelector: EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR,
+    selectorGroups: editorCanvasSelectorGroups([], EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR, EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR),
+    startedAtMs: Date.now(),
+    timeoutMs,
+  })
+  if (!probe.summary.ready) {
+    throw new Error(`Editor canvas was not ready: ${probe.summary.diagnostics.map((diagnostic) => diagnostic.code).join(", ") || "not-ready"}`)
+  }
+
+  return probe.summary
 }
 
 export async function runEditorActionsCommand({
