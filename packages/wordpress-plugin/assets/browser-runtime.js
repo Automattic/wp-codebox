@@ -191,6 +191,7 @@
 
 	const runtimeError = ( phase, code, message, data = null ) => {
 		const error = new Error( message );
+		error.schema = 'wp-codebox/browser-runtime-error/v1';
 		error.phase = phase;
 		error.code = code;
 		error.data = data;
@@ -739,76 +740,73 @@
 		};
 	};
 
-	const browserSdkMethodContract = Object.freeze( [
-		'activateTheme',
-		'browserSessionRecipe',
-		'createBrowserConnectorRequest',
-		'executeBrowserConnectorRequest',
-		'executeBrowserProviderProxyRequest',
-		'consumeContainedSiteSync',
-		'openOrCreateBrowserContainedSite',
-		'startBrowserPreview',
-		'bootExecutableBrowserSession',
-		'createParentToolRequest',
-		'dispatchParentTool',
-		'ensureDirectory',
-		'readFile',
-		'listDirectory',
-		'grep',
-		'editFile',
-		'applyPatch',
-		'executableBrowserSession',
-		'installTheme',
-		'parentToolBridge',
-		'validateBrowserRuntimeMaterialization',
-		'aggregateFanoutOutputs',
-		'preparedBrowserRuntimeContract',
-		'preparedBrowserRuntimeStatus',
-		'runBrowserRuntimeContractProbe',
-		'runBrowserSessionRecipe',
-		'runPhpRequest',
-		'runRecipe',
-		'runWordPressOperation',
-		'selectPreparedBrowserBlueprint',
-		'setFrontendAdminBarVisible',
-		'writeFile',
-		'writeReviewFile',
+	const browserSdkContract = Object.freeze( [
+		{ name: 'activateTheme' },
+		{ name: 'browserSessionRecipe' },
+		{ name: 'createBrowserConnectorRequest', topLevelOrder: 16, topLevel: ( api ) => api.createBrowserConnectorRequest },
+		{ name: 'executeBrowserConnectorRequest', topLevelOrder: 17, topLevel: ( api ) => api.executeBrowserConnectorRequest },
+		{ name: 'executeBrowserProviderProxyRequest' },
+		{ name: 'consumeContainedSiteSync', topLevelOrder: 1, topLevel: ( api ) => ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ) },
+		{ name: 'openOrCreateBrowserContainedSite', topLevelOrder: 2, topLevel: ( api ) => ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ) },
+		{ name: 'startBrowserPreview', topLevelOrder: 3, topLevel: ( api ) => ( input, options = {} ) => api.startBrowserPreview( input, options ) },
+		{ name: 'bootExecutableBrowserSession', topLevelOrder: 14, topLevel: ( api ) => async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ) },
+		{ name: 'createParentToolRequest', topLevelOrder: 18, topLevel: ( api ) => api.createParentToolRequest },
+		{ name: 'dispatchParentTool', topLevelOrder: 19, topLevel: ( api ) => api.dispatchParentTool },
+		{ name: 'ensureDirectory', topLevelOrder: 6, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.ensureDirectory( client, args, options ) },
+		{ name: 'readFile', topLevelOrder: 8, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.readFile( client, args, options ) },
+		{ name: 'listDirectory', topLevelOrder: 9, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.listDirectory( client, args, options ) },
+		{ name: 'grep', topLevelOrder: 10, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.grep( client, args, options ) },
+		{ name: 'editFile', topLevelOrder: 11, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.editFile( client, args, options ) },
+		{ name: 'applyPatch', topLevelOrder: 12, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.applyPatch( client, args, options ) },
+		{ name: 'executableBrowserSession', topLevelOrder: 13, topLevel: ( api ) => api.executableBrowserSession },
+		{ name: 'installTheme' },
+		{ name: 'parentToolBridge', topLevelOrder: 15, topLevel: ( api ) => api.parentToolBridge },
+		{ name: 'validateBrowserRuntimeMaterialization', topLevelOrder: 5, topLevel: ( api ) => ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ) },
+		{ name: 'aggregateFanoutOutputs', topLevelOrder: 4, topLevel: ( api ) => ( input ) => api.aggregateFanoutOutputs( input ) },
+		{ name: 'preparedBrowserRuntimeContract' },
+		{ name: 'preparedBrowserRuntimeStatus' },
+		{ name: 'runBrowserRuntimeContractProbe' },
+		{ name: 'runBrowserSessionRecipe', topLevelOrder: 20, topLevel: ( api ) => async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ) },
+		{ name: 'runPhpRequest' },
+		{ name: 'runRecipe', topLevelOrder: 12.5, topLevel: ( api ) => ( client, recipe, taskPayload, options = {} ) => api.runRecipe( client, recipe, taskPayload, options ) },
+		{ name: 'runWordPressOperation' },
+		{ name: 'selectPreparedBrowserBlueprint' },
+		{ name: 'setFrontendAdminBarVisible', topLevelOrder: 22, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.setFrontendAdminBarVisible( client, args, options ) },
+		{ name: 'writeFile', topLevelOrder: 7, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.writeFile( client, args, options ) },
+		{ name: 'writeReviewFile' },
 	] );
 
-	const browserSdkTopLevelContract = Object.freeze( {
-		capabilities: () => () => browserSdkInfo().capabilities,
-		getCapabilities: () => () => browserSdkInfo(),
-		info: () => browserSdkInfo,
-		normalizeError: () => normalizeBrowserSdkError,
-		normalizeBrowserRunResult: () => normalizeBrowserRunResult,
-		browserArtifactPersistenceRef: () => browserArtifactPersistenceRef,
-		createRuntimeTaskRequest: () => createRuntimeTaskRequest,
-		runRuntimeTask: () => runRuntimeTask,
-		consumeContainedSiteSync: ( api ) => ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ),
-		openOrCreateBrowserContainedSite: ( api ) => ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ),
-		startBrowserPreview: ( api ) => ( input, options = {} ) => api.startBrowserPreview( input, options ),
-		aggregateFanoutOutputs: ( api ) => ( input ) => api.aggregateFanoutOutputs( input ),
-		validateBrowserRuntimeMaterialization: ( api ) => ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
-		ensureDirectory: ( api ) => ( client, args = {}, options = {} ) => api.ensureDirectory( client, args, options ),
-		writeFile: ( api ) => ( client, args = {}, options = {} ) => api.writeFile( client, args, options ),
-		readFile: ( api ) => ( client, args = {}, options = {} ) => api.readFile( client, args, options ),
-		listDirectory: ( api ) => ( client, args = {}, options = {} ) => api.listDirectory( client, args, options ),
-		grep: ( api ) => ( client, args = {}, options = {} ) => api.grep( client, args, options ),
-		editFile: ( api ) => ( client, args = {}, options = {} ) => api.editFile( client, args, options ),
-		applyPatch: ( api ) => ( client, args = {}, options = {} ) => api.applyPatch( client, args, options ),
-		runRecipe: ( api ) => ( client, recipe, taskPayload, options = {} ) => api.runRecipe( client, recipe, taskPayload, options ),
-		normalizeResult: () => normalizeOperationResult,
-		result: () => browserSdkResult,
-		executableBrowserSession: ( api ) => api.executableBrowserSession,
-		bootExecutableBrowserSession: ( api ) => async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ),
-		parentToolBridge: ( api ) => api.parentToolBridge,
-		createBrowserConnectorRequest: ( api ) => api.createBrowserConnectorRequest,
-		executeBrowserConnectorRequest: ( api ) => api.executeBrowserConnectorRequest,
-		createParentToolRequest: ( api ) => api.createParentToolRequest,
-		dispatchParentTool: ( api ) => api.dispatchParentTool,
-		runBrowserSessionRecipe: ( api ) => async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
-		setFrontendAdminBarVisible: ( api ) => ( client, args = {}, options = {} ) => api.setFrontendAdminBarVisible( client, args, options ),
-	} );
+	const browserSdkUtilityContract = Object.freeze( [
+		{ name: 'capabilities', topLevelOrder: -8, topLevel: () => () => browserSdkInfo().capabilities },
+		{ name: 'getCapabilities', topLevelOrder: -7, topLevel: () => () => browserSdkInfo() },
+		{ name: 'info', topLevelOrder: -6, topLevel: () => browserSdkInfo },
+		{ name: 'normalizeError', topLevelOrder: -5, topLevel: () => normalizeBrowserSdkError },
+		{ name: 'normalizeBrowserRunResult', topLevelOrder: -4, topLevel: () => normalizeBrowserRunResult },
+		{ name: 'browserArtifactPersistenceRef', topLevelOrder: -3, topLevel: () => browserArtifactPersistenceRef },
+		{ name: 'createRuntimeTaskRequest', topLevelOrder: -2, topLevel: () => createRuntimeTaskRequest },
+		{ name: 'runRuntimeTask', topLevelOrder: -1, topLevel: () => runRuntimeTask },
+		{ name: 'normalizeResult', topLevelOrder: 12.6, topLevel: () => normalizeOperationResult },
+		{ name: 'result', topLevelOrder: 12.7, topLevel: () => browserSdkResult },
+	] );
+
+	const browserRuntimeInternalContract = Object.freeze( [
+		'normalizeOperationResult',
+		'parseJsonResponse',
+	] );
+
+	const browserSdkMethodContract = Object.freeze( browserSdkContract.map( ( entry ) => entry.name ) );
+	const browserSdkTopLevelContract = Object.freeze( [ ...browserSdkUtilityContract, ...browserSdkContract.filter( ( entry ) => typeof entry.topLevel === 'function' ) ]
+		.sort( ( a, b ) => a.topLevelOrder - b.topLevelOrder ) );
+
+	const assertBrowserSdkContractComplete = ( api ) => {
+		const sdkMethods = new Set( browserSdkMethodContract );
+		const internalMethods = new Set( browserRuntimeInternalContract );
+		const missing = browserSdkMethodContract.filter( ( name ) => typeof api[ name ] !== 'function' );
+		const uncovered = Object.keys( api ).filter( ( name ) => ! sdkMethods.has( name ) && ! internalMethods.has( name ) );
+		if ( missing.length || uncovered.length ) {
+			throw runtimeError( 'contract', 'browser_sdk_contract_incomplete', 'Browser SDK contract must cover every public runtime API method.', { missing, uncovered } );
+		}
+	};
 
 	const materializeBrowserSdkMethods = ( api ) => Object.freeze( Object.fromEntries(
 		browserSdkMethodContract.map( ( name ) => [ name, api[ name ] ] )
@@ -818,7 +816,7 @@
 		schema: browserSdkSchema,
 		apiVersion: 'v1',
 		version: browserSdkVersion,
-		...Object.fromEntries( Object.entries( browserSdkTopLevelContract ).map( ( [ name, materialize ] ) => [ name, materialize( api ) ] ) ),
+		...Object.fromEntries( browserSdkTopLevelContract.map( ( { name, topLevel } ) => [ name, topLevel( api ) ] ) ),
 		methods: materializeBrowserSdkMethods( api ),
 	} );
 
@@ -866,20 +864,6 @@
 				attempts: failedAttempts,
 			}
 		);
-	};
-
-	const isPlaygroundStructuredCloneError = ( error ) => {
-		const message = String( error?.message || '' );
-		if ( error?.code === 25 || message.includes( 'could not be cloned' ) || message.includes( 'DataCloneError' ) ) {
-			return true;
-		}
-
-		const details = error?.data;
-		if ( details?.last_error && isPlaygroundStructuredCloneError( details.last_error ) ) {
-			return true;
-		}
-
-		return Array.isArray( details?.attempts ) && details.attempts.some( ( attempt ) => isPlaygroundStructuredCloneError( attempt?.error ) );
 	};
 
 	const runPhpDirect = async ( client, code, options = {} ) => {
@@ -1924,9 +1908,6 @@ try {
 		if ( ! options.forceRequest && typeof client?.run === 'function' ) {
 			return await runPhpDirect( client, code, options );
 		}
-		if ( options.forceRequest && typeof client?.writeFile !== 'function' && typeof client?.run === 'function' ) {
-			return await runPhpDirect( client, code, options );
-		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );
 		const runnerUrlBase = String( options.runnerUrlBase || defaultRunnerUrlBase );
@@ -1940,16 +1921,7 @@ try {
 			method: 'GET',
 			url: requestUrl,
 		};
-		let response;
-		try {
-			response = await playgroundRequest( client, request );
-		} catch ( error ) {
-			if ( options.forceRequest && typeof client?.run === 'function' && isPlaygroundStructuredCloneError( error ) ) {
-				return await runPhpDirect( client, code, options );
-			}
-
-			throw error;
-		}
+		const response = await playgroundRequest( client, request );
 
 		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
@@ -3171,6 +3143,7 @@ echo wp_json_encode( array(
 		writeReviewFile,
 	} );
 	const wpCodeboxBrowserApi = { ...browserRuntimeApiContract };
+	assertBrowserSdkContractComplete( wpCodeboxBrowserApi );
 	wpCodeboxBrowserApi.v1 = browserSdkFacade( wpCodeboxBrowserApi );
 	window.wpCodeboxBrowser = wpCodeboxBrowserApi;
 	window.wpCodebox = Object.freeze( {

@@ -146,6 +146,16 @@ for (const method of expectedV1MethodKeys) {
   assert.equal(api.v1.methods[method], api[method], `wpCodeboxBrowser.v1.methods.${method} must be derived from the runtime API map`)
 }
 
+const expectedRuntimeInternalKeys = [
+  "normalizeOperationResult",
+  "parseJsonResponse",
+] as const
+assert.deepEqual(
+  Object.keys(api).filter((key) => key !== "v1").sort(),
+  [...expectedV1MethodKeys, ...expectedRuntimeInternalKeys].sort(),
+  "every public runtime API method must be covered by the SDK methods contract or explicitly internal",
+)
+
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
@@ -162,10 +172,12 @@ const studioNativeConsumedTopLevelMethods = [
   "runBrowserSessionRecipe",
   "runRecipe",
   "setFrontendAdminBarVisible",
+  "startBrowserPreview",
   "writeFile",
 ] as const
 for (const method of studioNativeConsumedTopLevelMethods) {
   assert.equal(typeof api.v1[method], "function", `Studio Native consumes wpCodeboxBrowser.v1.${method} top-level`)
+  assert.equal(typeof api.v1.methods[method], "function", `Studio Native consumes wpCodeboxBrowser.v1.methods.${method}`)
 }
 assert.equal(Object.isFrozen(api.v1), true, "browser SDK v1 facade remains frozen")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
@@ -211,10 +223,23 @@ const directRunClient = {
 const directRunResult = await api.v1.methods.runPhpRequest(directRunClient, {
   code: "<?php echo wp_json_encode( array( 'success' => true ) );",
   expectJson: true,
-  forceRequest: true,
 })
 assert.equal(directRunCode.includes("wp_json_encode"), true)
 assert.deepEqual(plain(directRunResult), { success: true, data: { mode: "direct-run" }, error: null })
+
+await assert.rejects(
+  () => api.v1.methods.runPhpRequest(directRunClient, {
+    code: "<?php echo wp_json_encode( array( 'success' => true ) );",
+    expectJson: true,
+    forceRequest: true,
+  }),
+  (error: any) => {
+    assert.equal(error.schema, "wp-codebox/browser-runtime-error/v1")
+    assert.equal(error.phase, "write_file")
+    assert.equal(error.code, "playground_write_file_unavailable")
+    return true
+  },
+)
 
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
