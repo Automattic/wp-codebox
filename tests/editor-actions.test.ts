@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { captureEditorValidity, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { captureEditorState, captureEditorValidity, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
 const steps = await editorActionStepsFromArgs([
@@ -24,6 +24,25 @@ await assert.rejects(
 )
 
 const target = editorOpenTargetFromArgs(["target=post-new"])
+const unavailableEditorState = await captureEditorState({
+  evaluate: async (callback: () => unknown) => {
+    const globals = globalThis as typeof globalThis & { window?: unknown }
+    const previousWindow = globals.window
+    globals.window = {
+      data: {
+        select: (store: string) => store === "core/block-editor" ? { getBlocks: () => [] } : undefined,
+      },
+    }
+    globals.window = { wp: globals.window }
+    try {
+      return callback()
+    } finally {
+      globals.window = previousWindow
+    }
+  },
+} as never, target)
+assert.equal(unavailableEditorState.storesAvailable, false)
+
 const validity = await captureEditorValidity({
   evaluate: async (_callback: unknown, selectors: string[]) => ([{
     source: "dom",

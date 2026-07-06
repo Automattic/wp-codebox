@@ -1070,11 +1070,14 @@ async function executeEditorActionStep(page: import("playwright").Page, step: Ed
       return { state: await page.evaluate(() => {
         const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data
         const select = wpData?.select
-        if (!select) {
+        if (typeof select !== "function") {
           return { storesAvailable: false }
         }
         const editor = select("core/editor")
         const blockEditor = select("core/block-editor")
+        if (!editor || !blockEditor) {
+          return { storesAvailable: false }
+        }
         const currentPost = typeof editor.getCurrentPost === "function" ? editor.getCurrentPost() as Record<string, unknown> | null : null
         const blocks = typeof blockEditor.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
         return {
@@ -1147,6 +1150,9 @@ async function saveEditorPost(page: import("playwright").Page, step: Extract<Edi
     const editor = select("core/editor")
     const blockEditor = dispatch("core/block-editor")
     const editorDispatch = dispatch("core/editor")
+    if (!editor) {
+      throw new Error("wp-codebox-editor-readiness-unavailable: core/editor store is unavailable")
+    }
     if (typeof editorDispatch?.savePost !== "function") {
       throw new Error("wp-codebox-editor-save-unsupported: core/editor savePost is unavailable")
     }
@@ -1265,15 +1271,18 @@ interface EditorValidityArtifact {
   summary: BrowserEditorValiditySummary
 }
 
-async function captureEditorState(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorStateSnapshot> {
+export async function captureEditorState(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorStateSnapshot> {
   const state = await page.evaluate(() => {
     const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data
     const select = wpData?.select
-    if (!select) {
+    if (typeof select !== "function") {
       return { storesAvailable: false }
     }
     const editor = select("core/editor")
     const blockEditor = select("core/block-editor")
+    if (!editor || !blockEditor) {
+      return { storesAvailable: false }
+    }
     const currentPost = typeof editor.getCurrentPost === "function" ? editor.getCurrentPost() as Record<string, unknown> | null : null
     const blocks = typeof blockEditor.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
     return {
