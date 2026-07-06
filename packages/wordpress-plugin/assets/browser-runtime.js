@@ -1921,10 +1921,10 @@ try {
 			throw runtimeError( 'validate', 'php_code_missing', 'PHP code is required.' );
 		}
 
-		if ( ! options.forceRequest && typeof client.run === 'function' ) {
+		if ( ! options.forceRequest && typeof client?.run === 'function' ) {
 			return await runPhpDirect( client, code, options );
 		}
-		if ( options.forceRequest && typeof client?.writeFile !== 'function' && typeof client.run === 'function' ) {
+		if ( options.forceRequest && typeof client?.writeFile !== 'function' && typeof client?.run === 'function' ) {
 			return await runPhpDirect( client, code, options );
 		}
 
@@ -1944,7 +1944,7 @@ try {
 		try {
 			response = await playgroundRequest( client, request );
 		} catch ( error ) {
-			if ( options.forceRequest && typeof client.run === 'function' && isPlaygroundStructuredCloneError( error ) ) {
+			if ( options.forceRequest && typeof client?.run === 'function' && isPlaygroundStructuredCloneError( error ) ) {
 				return await runPhpDirect( client, code, options );
 			}
 
