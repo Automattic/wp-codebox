@@ -16,8 +16,9 @@ export type RunPlaygroundCommand = (
 
 export interface EditorOpenTarget {
   url: string
-  kind: "post" | "post-new" | "site" | "url" | "front-page"
+  kind: "post" | "post-new" | "site" | "url" | "front-page" | "post-slug"
   postId?: number
+  postSlug?: string
   postType?: string
   waitSelector: string
 }
@@ -68,8 +69,16 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
     return { url: `/wp-admin/post.php?post=${postId}&action=edit`, kind: "post", postId, postType, waitSelector }
   }
 
+  const postSlug = argValue(args, "post-slug")?.trim()
+  if (postSlug) {
+    if (!/^[a-zA-Z0-9_\-/]+$/.test(postSlug)) {
+      throw new Error(`wordpress.editor-open post-slug must be a WordPress post slug or path: ${postSlug}`)
+    }
+    return { url: "", kind: "post-slug", postSlug, postType, waitSelector }
+  }
+
   if (target !== "post-new") {
-    throw new Error(`wordpress.editor-open target supports post-new, site, front-page, or url=<path-or-url>: ${target}`)
+    throw new Error(`wordpress.editor-open target supports post-new, site, front-page, post-slug=<slug>, or url=<path-or-url>: ${target}`)
   }
 
   return { url: `/wp-admin/post-new.php?post_type=${encodeURIComponent(postType)}`, kind: "post-new", postType, waitSelector }
@@ -93,25 +102,28 @@ export async function resolveEditorOpenTarget(
     server: PlaygroundCliServer
   },
 ): Promise<EditorOpenTarget> {
-  if (target.kind !== "front-page") {
+  if (target.kind !== "front-page" && target.kind !== "post-slug") {
     return target
   }
   const { command, runPlaygroundCommand, runtimeSpec, server } = context
   if (!runPlaygroundCommand) {
-    throw new Error(`${command} target=front-page requires Playground PHP command support`)
+    throw new Error(`${command} ${target.kind} target requires Playground PHP command support`)
   }
   if (!runtimeSpec) {
-    throw new Error(`${command} target=front-page requires a runtime spec`)
+    throw new Error(`${command} ${target.kind} target requires a runtime spec`)
   }
 
-  const resolveCommand = `${command}.resolve-front-page`
+  const resolveCommand = target.kind === "front-page" ? `${command}.resolve-front-page` : `${command}.resolve-post-slug`
   const response = await runPlaygroundCommand(resolveCommand, server, {
-    code: bootstrapPhpCode(runtimeSpec, frontPagePostIdPhpCode(), []),
+    code: bootstrapPhpCode(runtimeSpec, target.kind === "front-page" ? frontPagePostIdPhpCode() : postSlugPostIdPhpCode(target.postSlug ?? "", target.postType ?? "post"), []),
   })
   assertPlaygroundResponseOk(resolveCommand, response)
 
-  const frontPageId = Number.parseInt(cleanWpCliOutput(response.text).trim(), 10)
-  if (!Number.isInteger(frontPageId) || frontPageId <= 0) {
+  const postId = Number.parseInt(cleanWpCliOutput(response.text).trim(), 10)
+  if (!Number.isInteger(postId) || postId <= 0) {
+    if (target.kind === "post-slug") {
+      throw new Error(`${command} post-slug=${target.postSlug ?? ""} post-type=${target.postType ?? "post"} resolved no editable post.`)
+    }
     throw new Error(
       `${command} target=front-page found no static front page: WordPress has show_on_front != "page" or page_on_front is unset. Configure a static front page (e.g. an importer that sets page_on_front) before validating the front page.`,
     )
@@ -120,8 +132,8 @@ export async function resolveEditorOpenTarget(
   return {
     ...target,
     kind: "post",
-    postId: frontPageId,
-    url: `/wp-admin/post.php?post=${frontPageId}&action=edit`,
+    postId,
+    url: `/wp-admin/post.php?post=${postId}&action=edit`,
   }
 }
 
@@ -134,6 +146,13 @@ if ( 'page' === get_option( 'show_on_front' ) ) {
     $front_page_id = (int) get_option( 'page_on_front' );
 }
 echo $front_page_id;
+`
+}
+
+function postSlugPostIdPhpCode(postSlug: string, postType: string): string {
+  return `
+$post = get_page_by_path(${JSON.stringify(postSlug)}, OBJECT, ${JSON.stringify(postType)});
+echo $post instanceof WP_Post ? (int) $post->ID : 0;
 `
 }
 

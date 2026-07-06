@@ -63,6 +63,39 @@ assert.equal(resolved.postId, 57)
 assert.equal(resolved.url, "/wp-admin/post.php?post=57&action=edit")
 assert.deepEqual(resolveCalls, ["wordpress.editor-validate-blocks.resolve-front-page"])
 
+// post-slug targets are also runtime-resolved, allowing recipe authors to target
+// imported pages by stable WordPress slug when the post id is created in an
+// earlier recipe step.
+const postSlugTarget = editorOpenTargetFromArgs(["post-type=page", "post-slug=contact"])
+assert.equal(postSlugTarget.kind, "post-slug")
+assert.equal(postSlugTarget.postType, "page")
+assert.equal(postSlugTarget.postSlug, "contact")
+assert.equal(postSlugTarget.url, "")
+const postSlugCalls: string[] = []
+const resolvedPostSlug = await resolveEditorOpenTarget(postSlugTarget, {
+  command: "wordpress.editor-open",
+  runPlaygroundCommand: async (command) => {
+    postSlugCalls.push(command)
+    return { ok: true, text: "91\n" } as never
+  },
+  runtimeSpec: { wp: "latest" } as never,
+  server: { serverUrl: "http://localhost" } as never,
+})
+assert.equal(resolvedPostSlug.kind, "post")
+assert.equal(resolvedPostSlug.postId, 91)
+assert.equal(resolvedPostSlug.url, "/wp-admin/post.php?post=91&action=edit")
+assert.deepEqual(postSlugCalls, ["wordpress.editor-open.resolve-post-slug"])
+
+await assert.rejects(
+  resolveEditorOpenTarget(postSlugTarget, {
+    command: "wordpress.editor-open",
+    runPlaygroundCommand: async () => ({ ok: true, text: "0" } as never),
+    runtimeSpec: { wp: "latest" } as never,
+    server: { serverUrl: "http://localhost" } as never,
+  }),
+  /resolved no editable post/,
+)
+
 // No static front page configured (page_on_front resolves to 0) is a real
 // misconfiguration, not a silent empty-editor open.
 await assert.rejects(
