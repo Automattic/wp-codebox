@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { cp, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { cp, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "@automattic/wp-codebox-core"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileListDigest, calculateArtifactManifestFileSha256 } from "@automattic/wp-codebox-core"
 import { preflightArtifactBundleApply, verifyArtifactBundle } from "@automattic/wp-codebox-core/artifacts"
-import type { ArtifactManifest } from "@automattic/wp-codebox-core"
+import type { ArtifactBundle, ArtifactManifest } from "@automattic/wp-codebox-core"
+import { appendRecipeRuntimeEvidence } from "../packages/cli/src/recipe-evidence.js"
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, "..")
@@ -35,6 +36,15 @@ try {
 
   const artifactsOption = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "verify", "--artifacts", validBundle, "--json"], { cwd: root })
   assert.equal(JSON.parse(artifactsOption.stdout).valid, true)
+
+  const recipeEvidenceBundle = await copyBundle(validBundle, join(workspace, "recipe-evidence-appended"))
+  await rewriteBundleToManifestFileListDigest(recipeEvidenceBundle)
+  const recipeArtifacts = await artifactBundleFixture(recipeEvidenceBundle)
+  await appendRecipeRuntimeEvidence(recipeArtifacts, [{ filename: "run-attestation.json", kind: "run-attestation", value: { schema: "fixture/run-attestation/v1", status: "passed" } }])
+  const recipeEvidenceVerification = await verifyArtifactBundle(recipeEvidenceBundle)
+  assert.equal(recipeEvidenceVerification.valid, true)
+  assert.equal(recipeEvidenceVerification.manifest?.contentDigest.value, recipeArtifacts.contentDigest)
+  assert.equal(recipeEvidenceVerification.manifest?.files.some((file) => file.path === "files/runtime-evidence/run-attestation.json"), true)
 
   const missingManifest = join(workspace, "missing-manifest")
   await mkdir(missingManifest, { recursive: true })
@@ -159,6 +169,56 @@ async function writeValidBundle(directory: string): Promise<void> {
   await attachCaseArtifactHashes(directory, manifest)
   await attachManifestFileHashes(directory, manifest)
   await writeJson(join(directory, "manifest.json"), manifest)
+}
+
+async function rewriteBundleToManifestFileListDigest(directory: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as ArtifactManifest
+  const digest = calculateArtifactManifestFileListDigest(manifest.files)
+  manifest.id = `artifact-bundle-sha256-${digest}`
+  manifest.contentDigest = { algorithm: "sha256", inputs: ["manifest.files"], value: digest }
+  await writeJson(join(directory, "files/review.json"), reviewFixture(digest))
+  await writeJson(join(directory, "metadata.json"), {
+    id: manifest.id,
+    contentDigest: manifest.contentDigest,
+    artifacts: {
+      changedFiles: "files/changed-files.json",
+      patch: "files/patch.diff",
+      review: "files/review.json",
+      testResults: "files/test-results.json",
+      runtimeEpisodeTrace: "files/runtime-episode-trace.json",
+      runtimeEpisodeEvents: "files/runtime-episode.jsonl",
+    },
+  })
+  await attachManifestFileHashes(directory, manifest)
+  await writeJson(join(directory, "manifest.json"), manifest)
+}
+
+async function artifactBundleFixture(directory: string): Promise<ArtifactBundle> {
+  const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as ArtifactManifest
+  return {
+    id: manifest.id,
+    directory,
+    manifestPath: join(directory, "manifest.json"),
+    metadataPath: join(directory, "metadata.json"),
+    blueprintAfterPath: join(directory, "blueprint.after.json"),
+    blueprintAfterNotesPath: join(directory, "blueprint.after-notes.json"),
+    eventsPath: join(directory, "events.jsonl"),
+    commandsPath: join(directory, "commands.jsonl"),
+    observationsPath: join(directory, "observations.jsonl"),
+    runtimeLogPath: join(directory, "logs/runtime.log"),
+    commandsLogPath: join(directory, "logs/commands.log"),
+    mountsPath: join(directory, "files/mounts.json"),
+    capturedMountsPath: join(directory, "files/mounted-files.json"),
+    diffsPath: join(directory, "files/diffs.json"),
+    workspacePatchPath: join(directory, "files/workspace-patch.json"),
+    changedFilesPath: join(directory, "files/changed-files.json"),
+    patchPath: join(directory, "files/patch.diff"),
+    diagnosticsPath: join(directory, "files/diagnostics.json"),
+    testResultsPath: join(directory, "files/test-results.json"),
+    reviewPath: join(directory, "files/review.json"),
+    contentDigest: manifest.contentDigest.value,
+    createdAt: manifest.createdAt,
+  }
 }
 
 function manifestFixture(digest: string): ArtifactManifest {

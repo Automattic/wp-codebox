@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeRuntimeBackendKind, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, calculateArtifactManifestFileListDigest, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeRuntimeBackendKind, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
@@ -1533,22 +1533,38 @@ async function writeRecipeEvidenceJson(artifactRoot: string, path: string, value
 async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle, evidenceFiles: RecipeArtifactEvidenceFile[]): Promise<void> {
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
   upsertArtifactManifestFiles(manifest, evidenceFiles.map(evidenceFileToManifestFile))
+  refreshManifestFileListDigest(manifest, artifacts)
 
   const evidence = Object.fromEntries(evidenceFiles.map((file) => [file.kind, { path: file.path, sha256: file.sha256 }]))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8")) as Record<string, unknown>
   const metadataArtifacts = isRecord(metadata.artifacts) ? metadata.artifacts : {}
   const metadataEvidence = isRecord(metadata.evidence) ? metadata.evidence : {}
+  metadata.id = manifest.id
+  metadata.contentDigest = manifest.contentDigest
   metadata.artifacts = { ...metadataArtifacts, runtimeEvidence: { ...(isRecord(metadataArtifacts.runtimeEvidence) ? metadataArtifacts.runtimeEvidence : {}), ...evidence } }
   metadata.evidence = { ...metadataEvidence, runtimeEvidence: { ...(isRecord(metadataEvidence.runtimeEvidence) ? metadataEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`)
 
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8")) as Record<string, unknown>
   const reviewEvidence = isRecord(review.evidence) ? review.evidence : {}
-  review.evidence = { ...reviewEvidence, runtimeEvidence: { ...(isRecord(reviewEvidence.runtimeEvidence) ? reviewEvidence.runtimeEvidence : {}), ...evidence } }
+  review.artifactId = manifest.id
+  review.evidence = { ...reviewEvidence, artifactContentDigest: manifest.contentDigest.value, runtimeEvidence: { ...(isRecord(reviewEvidence.runtimeEvidence) ? reviewEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
   await refreshManifestAfterEvidenceMutation(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+function refreshManifestFileListDigest(manifest: ArtifactManifest, artifacts: ArtifactBundle): void {
+  if (manifest.contentDigest.inputs.length !== 1 || manifest.contentDigest.inputs[0] !== "manifest.files") {
+    return
+  }
+
+  const value = calculateArtifactManifestFileListDigest(manifest.files)
+  manifest.contentDigest = { algorithm: "sha256", inputs: ["manifest.files"], value }
+  manifest.id = `artifact-bundle-sha256-${value}`
+  artifacts.id = manifest.id
+  artifacts.contentDigest = value
 }
 
 async function refreshManifestAfterEvidenceMutation(artifactRoot: string, manifest: ArtifactManifest): Promise<void> {
