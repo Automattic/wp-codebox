@@ -6,6 +6,7 @@ import { join } from "node:path"
 
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
 import { corePhpunitRunCode, phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
+import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
 import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
@@ -155,6 +156,28 @@ assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
 assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
 assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 3)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(projectModeCode, "wp_codebox_phpunit_parse_config", "pg_log")
+
+let capturedDefaultProjectCode = ""
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    capturedDefaultProjectCode = input.code
+    return { text: "ok", exitCode: 0 }
+  },
+  server: { playground: {} } as never,
+  spec: {
+    command: "wordpress.phpunit",
+    args: [
+      "plugin-slug=ai-provider-for-openai",
+      "bootstrap-mode=project",
+      "phpunit-xml=phpunit.xml.dist",
+      "test-file=tests/unit/Models/OpenAiEmbeddingGenerationModelTest.php",
+    ],
+  },
+})
+assert.ok(capturedDefaultProjectCode.includes('$autoload_file = "";'))
+assert.ok(capturedDefaultProjectCode.includes("NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload"))
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
