@@ -342,6 +342,31 @@ function pg_log($msg) {
     file_put_contents($result_file, $msg . "\n", FILE_APPEND);
 }
 
+function pg_resolve_selected_test_file($selected_test_file, $test_dir, $runtime_cwd, $plugin_path) {
+    if ($selected_test_file === '') {
+        return '';
+    }
+    if ($selected_test_file[0] === '/') {
+        return $selected_test_file;
+    }
+
+    $relative = ltrim($selected_test_file, '/');
+    $candidates = array(
+        rtrim($test_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $relative,
+        rtrim($runtime_cwd, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $relative,
+        rtrim($plugin_path, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $relative,
+    );
+    $tests_real = realpath($test_dir);
+    foreach (array_unique($candidates) as $candidate) {
+        $candidate_real = realpath($candidate);
+        if ($candidate_real !== false && $tests_real !== false && strpos($candidate_real, rtrim($tests_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0 && is_file($candidate_real)) {
+            return $candidate_real;
+        }
+    }
+
+    return $candidates[0];
+}
+
 ${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));")}
 
 ${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "pg_log('NOTICE: skipping invalid wp_config_defines key: ' . var_export($name, true));")}
@@ -1139,7 +1164,7 @@ try {
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
-        $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $test_dir . '/' . ltrim($selected_test_file, '/');
+        $selected_abs = pg_resolve_selected_test_file($selected_test_file, $test_dir, $runtime_cwd, $plugin_path);
         if (!in_array($selected_abs, $test_files, true)) {
             $selected_real = realpath($selected_abs);
             $tests_real = realpath($test_dir);

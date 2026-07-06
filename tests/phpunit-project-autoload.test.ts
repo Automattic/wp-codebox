@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -62,6 +62,38 @@ echo "ok\n";
 `)
 
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
+function assertSelectedTestFileResolution(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-selected-test-file-"))
+  const pluginRoot = join(tempDir, "demo-plugin")
+  const testRoot = join(pluginRoot, "tests")
+  const nestedTestDir = join(testRoot, "Feature")
+  const selectedTestFile = join(nestedTestDir, "ExampleTest.php")
+  const scriptPath = join(tempDir, "assert-selected-test-file.php")
+  mkdirSync(nestedTestDir, { recursive: true })
+  writeFileSync(selectedTestFile, "<?php // test\n")
+  const selectedTestFileReal = realpathSync(selectedTestFile)
+
+  const resolverFunction = extractPhpFunction(source, "pg_resolve_selected_test_file")
+  writeFileSync(scriptPath, `<?php
+${resolverFunction}
+$plugin_root = ${phpString(pluginRoot)};
+$test_root = ${phpString(testRoot)};
+$selected_test_file = ${phpString(selectedTestFile)};
+$cases = array(
+    'relative-to-test-root' => pg_resolve_selected_test_file('Feature/ExampleTest.php', $test_root, $plugin_root, $plugin_root),
+    'relative-to-runtime-root' => pg_resolve_selected_test_file('tests/Feature/ExampleTest.php', $test_root, $plugin_root, $plugin_root),
+    'absolute-runtime-path' => pg_resolve_selected_test_file($selected_test_file, $test_root, $plugin_root, $plugin_root),
+);
+echo json_encode($cases);
+`)
+
+  assert.deepEqual(JSON.parse(execFileSync("php", [scriptPath], { encoding: "utf8" })), {
+    "relative-to-test-root": selectedTestFileReal,
+    "relative-to-runtime-root": selectedTestFileReal,
+    "absolute-runtime-path": selectedTestFile,
+  })
 }
 
 const recipe = buildWordPressPhpunitRecipe({
@@ -145,6 +177,7 @@ assert.ok(projectModeCode.includes("configured PHPUnit harness autoload file is 
 assert.ok(projectModeCode.includes("NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload"))
 assert.ok(projectModeCode.includes("$test_root = \"/home/example/public_html/bin/tests/phpunit\";"))
 assert.ok(projectModeCode.includes("pg_resolve_test_root"))
+assert.ok(projectModeCode.includes("pg_resolve_selected_test_file"))
 assert.ok(projectModeCode.includes("function pg_project_bootstrap_real_path"))
 assert.ok(projectModeCode.includes("$base_dir = dirname($xml_real);"))
 assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);"))
@@ -155,6 +188,7 @@ assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
 assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
 assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 3)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(projectModeCode, "wp_codebox_phpunit_parse_config", "pg_log")
+assertSelectedTestFileResolution(projectModeCode)
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
