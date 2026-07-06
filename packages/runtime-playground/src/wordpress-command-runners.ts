@@ -49,7 +49,7 @@ import {
   themeCheckRunCode,
   themeSetupInputFromArgs,
 } from "./commands.js"
-import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
+import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
@@ -150,12 +150,14 @@ interface RunPhpDiagnosticsPayload {
 }
 
 function runPhpCommandDiagnosticsPhp(code: string, marker: string, maxItems: number, maxBytes: number): string {
+  const command = splitLeadingStrictTypesDeclare(code)
+
   return `
-$wp_codebox_command_observation_started_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
+${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}$wp_codebox_command_observation_started_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
 $wp_codebox_command_observation_start_time = microtime(true);
 $wp_codebox_command_observation_start_memory = memory_get_usage(true);
 $wp_codebox_command_diagnostics_start = isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries) ? count($GLOBALS['wpdb']->queries) : 0;
-${code.replace(/^<\?php\s*/, "")}
+${command.body}
 $wp_codebox_command_observation_finished_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
 $wp_codebox_command_observation_duration_ms = round((microtime(true) - $wp_codebox_command_observation_start_time) * 1000, 3);
 $wp_codebox_command_observation_end_memory = memory_get_usage(true);

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { mkdtempSync } from "node:fs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
-import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
+import { bootstrapPhpCode, phpCodeFromArgs } from "../packages/runtime-playground/src/php-bootstrap.js"
 
 const lifecycleReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("contained_runtime_test")
 assert.match(lifecycleReplaySnippet, /function contained_runtime_test_component_lifecycle_replay_prepare\(\): array/)
@@ -93,6 +93,15 @@ const bootstrappedRunPhp = bootstrapPhpCode({
 assert.match(bootstrappedRunPhp, /contained_runtime_run_php_component_lifecycle_replay_prepare/)
 assert.match(bootstrappedRunPhp, /CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON/)
 assert.doesNotMatch(bootstrappedRunPhp, /wp_codebox_run_php|wp_codebox_component_manifest|WP_CODEBOX_COMPONENT_MANIFEST_JSON/)
+
+const strictTypesCodeFileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-run-php-strict-types-"))
+const strictTypesCodeFile = join(strictTypesCodeFileRoot, "strict-types.php")
+writeFileSync(strictTypesCodeFile, "<?php declare(strict_types=1);\necho 'strict';")
+const strictTypesCode = await phpCodeFromArgs([`code-file=${strictTypesCodeFile}`])
+const bootstrappedStrictTypesCodeFile = bootstrapPhpCode({} as never, strictTypesCode, [])
+assert.match(bootstrappedStrictTypesCodeFile, /^<\?php\ndeclare\(strict_types=1\);\nregister_shutdown_function/)
+assert.equal((bootstrappedStrictTypesCodeFile.match(/declare\(strict_types=1\);/g) ?? []).length, 1)
+assert.match(bootstrappedStrictTypesCodeFile, /echo 'strict';/)
 
 const sandboxAgentCode = await resolveSandboxTaskCode({
   task: "Say hello",

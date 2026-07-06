@@ -25,8 +25,10 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
     return code
   }
 
+  const command = splitLeadingStrictTypesDeclare(code)
+
   return `<?php
-${phpFatalDiagnosticPhp()}
+${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec)}
@@ -37,7 +39,16 @@ ${recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
-${phpBody(code)}`
+${command.body}`
+}
+
+export function splitLeadingStrictTypesDeclare(code: string): { strictTypesDeclare: string; body: string } {
+  const normalized = normalizePhpCode(code)
+  const match = normalized.match(/^<\?php\s*(declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;)\s*/i)
+
+  return match
+    ? { strictTypesDeclare: match[1], body: normalized.slice(match[0].length) }
+    : { strictTypesDeclare: "", body: phpBody(normalized) }
 }
 
 function saveQueriesBootstrapPhp(args: string[]): string {
