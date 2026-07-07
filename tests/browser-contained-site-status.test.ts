@@ -52,6 +52,15 @@ $GLOBALS['wp_codebox_test_transients'][ $bad_transient_key ] = array(
 	'input_hash' => $bad_hash,
 	'created_at' => '2026-06-18T00:00:00+00:00',
 );
+$mismatch_hash = str_repeat( 'f', 64 );
+$mismatch_transient_key = 'wp_codebox_browser_prepared_runtime_' . substr( hash( 'sha256', $cache_key . ':' . $mismatch_hash ), 0, 24 );
+$GLOBALS['wp_codebox_test_transients'][ $mismatch_transient_key ] = array(
+	'schema' => 'wp-codebox/browser-prepared-runtime-artifact/v1',
+	'cache_key' => $cache_key,
+	'input_hash' => $bad_hash,
+	'created_at' => '2026-06-18T00:00:00+00:00',
+	'blueprint' => array( 'steps' => array( array( 'step' => 'login' ) ) ),
+);
 
 $hit = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_site_status( array(
 	'contained_site' => array(
@@ -67,6 +76,13 @@ $miss = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_
 $incompatible = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_site_status( array(
 	'site_id' => $cache_key,
 	'input_hash' => $bad_hash,
+) );
+$mismatch = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_site_status( array(
+	'site_id' => $cache_key,
+	'input_hash' => $mismatch_hash,
+) );
+$missing_ref = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_site_status( array(
+	'site_id' => $cache_key,
 ) );
 $open_hit = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_contained_site( array(
 	'contained_site' => array(
@@ -153,7 +169,7 @@ $scope_mismatch_plan = WP_Codebox_Test_Browser_Contained_Site_Abilities::plan_br
 	'scope' => 'other-scope',
 ) );
 
-echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_or_create_missing_mode' => $open_or_create_missing_mode, 'open_or_create_invalid_mode' => $open_or_create_invalid_mode, 'open_unbootable' => $open_unbootable, 'snapshot' => $snapshot, 'export' => $export, 'apply_plan' => $apply_plan, 'apply_result' => $apply_result, 'stale_snapshot' => $stale_snapshot, 'scope_mismatch_plan' => $scope_mismatch_plan ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'mismatch' => $mismatch, 'missing_ref' => array( 'code' => $missing_ref->code ?? null, 'message' => $missing_ref->message ?? null, 'data' => $missing_ref->data ?? null ), 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_or_create_missing_mode' => $open_or_create_missing_mode, 'open_or_create_invalid_mode' => $open_or_create_invalid_mode, 'open_unbootable' => $open_unbootable, 'snapshot' => $snapshot, 'export' => $export, 'apply_plan' => $apply_plan, 'apply_result' => $apply_result, 'stale_snapshot' => $stale_snapshot, 'scope_mismatch_plan' => $scope_mismatch_plan ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.hit.schema, "wp-codebox/browser-contained-site-status/v1")
@@ -183,19 +199,29 @@ assert.equal(result.hit.materialization_digest.value, "b".repeat(64))
 assert.equal(result.hit.blueprint_ref.ref, `prepared:browser-site-proof:${"c".repeat(64)}`)
 assert.equal(result.hit.recovery_handle, `browser-contained-site:browser-site-proof:${"c".repeat(64)}`)
 assert.equal(result.miss.success, false)
-assert.equal(result.miss.status, "miss")
-assert.equal(result.miss.resolution.outcome, "miss")
-assert.equal(result.miss.resolution.miss, true)
-assert.equal(result.miss.resolution.reason, "prepared-runtime-not-found-or-expired")
+assert.equal(result.miss.status, "expired_transient")
+assert.equal(result.miss.preview_state, "expired-transient")
+assert.equal(result.miss.prepare_new_required, true)
+assert.equal(result.miss.resolution.outcome, "expired_transient")
+assert.equal(result.miss.resolution.reason, "expired-transient")
 assert.equal(result.miss.open_mode, "materialize")
 assert.equal(result.miss.reuse_level, "none")
 assert.equal(result.miss.requires_materialization, true)
 assert.equal(result.incompatible.success, false)
-assert.equal(result.incompatible.status, "incompatible")
-assert.equal(result.incompatible.resolution.incompatible, true)
-assert.equal(result.incompatible.resolution.reason, "source-digest-mismatch")
-assert.equal(result.incompatible.open_mode, "unavailable")
+assert.equal(result.incompatible.status, "cache_miss")
+assert.equal(result.incompatible.preview_state, "cache-miss")
+assert.equal(result.incompatible.resolution.reason, "cache-miss")
+assert.equal(result.incompatible.open_mode, "materialize")
 assert.equal(result.incompatible.requires_materialization, true)
+assert.equal(result.mismatch.success, false)
+assert.equal(result.mismatch.status, "input_hash_mismatch")
+assert.equal(result.mismatch.preview_state, "input-hash-mismatch")
+assert.equal(result.mismatch.resolution.incompatible, true)
+assert.equal(result.mismatch.open_mode, "unavailable")
+assert.equal(result.mismatch.prepare_new_required, true)
+assert.equal(result.missing_ref.code, "wp_codebox_browser_contained_site_ref_missing")
+assert.equal(result.missing_ref.data.preview_state, "hydratable-ref-missing")
+assert.equal(result.missing_ref.data.prepare_new_required, true)
 assert.equal(result.open_hit.schema, "wp-codebox/browser-contained-site-open/v1")
 assert.equal(result.open_hit.success, true)
 assert.equal(result.open_hit.status, "recoverable_prepared_runtime")
@@ -243,8 +269,8 @@ assert.equal(result.open_hit.recovery_handle, `browser-contained-site:browser-si
 assert.equal(JSON.stringify(result.open_hit).includes('"blueprint"'), false)
 assert.equal(JSON.stringify(result.open_hit).includes("must-not-leak"), false)
 assert.equal(result.open_miss.success, false)
-assert.equal(result.open_miss.status, "miss")
-assert.equal(result.open_miss.resolution.miss, true)
+assert.equal(result.open_miss.status, "expired_transient")
+assert.equal(result.open_miss.preview_state, "expired-transient")
 assert.equal(result.open_miss.open_mode, "materialize")
 assert.equal(result.open_miss.requires_materialization, true)
 assert.equal(result.open_miss.blueprint_ref, undefined)
@@ -253,7 +279,9 @@ assert.equal(result.open_or_create_miss_no_fallback.success, false)
 assert.equal(result.open_or_create_miss_no_fallback.mode, "open-only")
 assert.equal(result.open_or_create_miss_no_fallback.action, "unavailable")
 assert.equal(result.open_or_create_miss_no_fallback.reload_required, true)
-assert.equal(result.open_or_create_miss_no_fallback.decision.action, "create-new")
+assert.equal(result.open_or_create_miss_no_fallback.decision.action, "prepare-new")
+assert.equal(result.open_or_create_miss_no_fallback.decision.preview_state, "expired-transient")
+assert.equal(result.open_or_create_miss_no_fallback.decision.prepare_new_required, true)
 assert.equal(result.open_or_create_miss_no_fallback.error.code, "wp_codebox_browser_contained_site_unavailable")
 assert.equal(result.open_or_create_miss_no_fallback.created, undefined)
 assert.equal(result.open_or_create_missing_mode.code, "wp_codebox_browser_contained_site_mode_required")

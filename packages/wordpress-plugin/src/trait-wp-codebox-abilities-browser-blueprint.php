@@ -233,17 +233,20 @@ private static function browser_prepared_runtime_with_blueprints( array $prepare
 private static function browser_prepared_runtime_cache_lookup( array $prepared ): array {
 	$transient_key = self::browser_prepared_runtime_transient_key( $prepared );
 	if ( '' === $transient_key ) {
-		return array( 'status' => 'disabled' );
+		return array( 'status' => 'hydratable_ref_missing', 'invalidation' => array( 'reason' => 'hydratable-ref-missing' ) );
 	}
 
 	$artifact = function_exists( 'get_transient' ) ? get_transient( $transient_key ) : false;
 	if ( ! is_array( $artifact ) ) {
-		return array( 'status' => 'miss', 'key' => $transient_key );
+		return array( 'status' => 'expired_transient', 'key' => $transient_key, 'invalidation' => array( 'reason' => 'expired-transient' ) );
 	}
 
 	$input_hash = (string) ( $prepared['input_hash'] ?? '' );
-	if ( 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
-		return array( 'status' => 'miss', 'key' => $transient_key, 'invalidation' => array( 'reason' => 'source-digest-mismatch' ) );
+	if ( $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) ) {
+		return array( 'status' => 'input_hash_mismatch', 'key' => $transient_key, 'artifact' => $artifact, 'invalidation' => array( 'reason' => 'input-hash-mismatch' ) );
+	}
+	if ( 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
+		return array( 'status' => 'cache_miss', 'key' => $transient_key, 'artifact' => $artifact, 'invalidation' => array( 'reason' => 'cache-miss' ) );
 	}
 
 	return array( 'status' => 'hit', 'key' => $transient_key, 'artifact' => $artifact );

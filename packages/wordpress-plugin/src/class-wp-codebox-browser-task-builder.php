@@ -278,7 +278,7 @@ final class WP_Codebox_Browser_Task_Builder {
 		$task_input       = is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array();
 		$signals          = is_array( $session['signals'] ?? null ) ? $session['signals'] : array();
 		$preview_boot     = self::browser_preview_boot_config( $session );
-		$blueprint_ref    = self::browser_blueprint_ref( self::browser_prepared_runtime_from_envelope( $session, $preview_boot ), $session );
+		$blueprint_ref    = is_array( $preview_boot['blueprint_ref_dto'] ?? null ) ? $preview_boot['blueprint_ref_dto'] : self::browser_blueprint_ref( self::browser_prepared_runtime_from_envelope( $session, $preview_boot ), $session );
 		$preview_lease    = self::preview_lease_from_session( $session );
 		$runtime_access   = self::runtime_access_from_session( $session );
 		$runtime_readiness = self::browser_runtime_readiness_dto( $session );
@@ -287,7 +287,7 @@ final class WP_Codebox_Browser_Task_Builder {
 		$dto = array_filter(
 			array(
 				'schema'           => 'wp-codebox/browser-session-product-dto/v1',
-				'dto_schema'       => 'wp-codebox/browser-executable-session/v1',
+				'dto_schema'       => 'wp-codebox/browser-preview-boot-config/v1',
 				'source_schema'    => (string) ( $session['schema'] ?? '' ),
 				'success'          => (bool) ( $session['success'] ?? false ),
 				'status'           => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
@@ -295,7 +295,6 @@ final class WP_Codebox_Browser_Task_Builder {
 				'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),
 				'permission_model' => (string) ( $session['permission_model'] ?? '' ),
 				'session_id'       => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
-				'executable_session' => self::browser_executable_session_dto( $session, $preview_boot, $preview_lease, $blueprint_ref, $runtime_access, $runtime_readiness, $runtime_capabilities ),
 				'contained_site'   => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'task'             => (string) ( $session['task'] ?? $task_input['goal'] ?? '' ),
 				'target'           => is_array( $task_input['target'] ?? null ) ? self::compact_public_value( $task_input['target'] ) : array(),
@@ -305,7 +304,6 @@ final class WP_Codebox_Browser_Task_Builder {
 				'preview_boot'     => $preview_boot,
 				'preview_lease'    => $preview_lease,
 				'blueprint_ref'    => $blueprint_ref,
-				'preview_reference' => self::browser_product_preview_reference( $session, $preview_boot, $preview_lease, $blueprint_ref ),
 				'runtime_access'   => $runtime_access,
 				'runtime_capabilities' => $runtime_capabilities,
 				'runtime_readiness' => $runtime_readiness,
@@ -327,55 +325,6 @@ final class WP_Codebox_Browser_Task_Builder {
 		 * @param array<string,mixed> $session Source browser session contract.
 		 */
 		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_session_product_dto', $dto, $session ) : $dto;
-	}
-
-	/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $preview_boot Preview boot DTO. @param array<string,mixed> $preview_lease Preview lease DTO. @param array<string,mixed> $blueprint_ref Blueprint ref DTO. @param array<string,mixed> $runtime_access Runtime access DTO. @param array<string,mixed> $runtime_readiness Runtime readiness DTO. @param array<string,mixed> $runtime_capabilities Runtime capabilities DTO. @return array<string,mixed> */
-	private static function browser_executable_session_dto( array $session, array $preview_boot, array $preview_lease, array $blueprint_ref, array $runtime_access, array $runtime_readiness, array $runtime_capabilities ): array {
-		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
-		$contained_site   = is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array();
-		$task_input       = is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array();
-		$parent_tool_bridge = is_array( $task_input['parent_tool_bridge'] ?? null ) ? self::compact_public_value( $task_input['parent_tool_bridge'] ) : array();
-
-		return array_filter(
-			array(
-				'schema'               => 'wp-codebox/browser-executable-session/v1',
-				'success'              => (bool) ( $session['success'] ?? false ),
-				'session_id'           => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
-				'status'               => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
-				'execution'            => (string) ( $session['execution'] ?? '' ),
-				'execution_scope'      => (string) ( $session['execution_scope'] ?? '' ),
-				'permission_model'     => (string) ( $session['permission_model'] ?? '' ),
-				'preview'              => $preview_lease,
-				'preview_ref'          => self::browser_preview_ref( $session ),
-				'preview_boot'         => $preview_boot,
-				'blueprint_ref'        => $blueprint_ref,
-				'runtime_access'       => $runtime_access,
-				'runtime_capabilities' => $runtime_capabilities,
-				'runtime_readiness'    => $runtime_readiness,
-				'contained_site'       => $contained_site,
-				'runtime_handoff'      => self::browser_runtime_handoff_dto( $session, $preview_boot, $blueprint_ref, $parent_tool_bridge ),
-				'parent_tool_bridge'   => $parent_tool_bridge,
-			),
-			static fn( mixed $value ): bool => '' !== $value && array() !== $value
-		);
-	}
-
-	/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $preview_boot Preview boot DTO. @param array<string,mixed> $blueprint_ref Blueprint ref DTO. @param array<string,mixed> $parent_tool_bridge Parent tool bridge DTO. @return array<string,mixed> */
-	private static function browser_runtime_handoff_dto( array $session, array $preview_boot, array $blueprint_ref, array $parent_tool_bridge ): array {
-		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
-		return array_filter(
-			array(
-				'schema'            => 'wp-codebox/browser-runtime-handoff/v1',
-				'owner'             => 'wp-codebox',
-				'session_id'        => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
-				'boot_schema'       => 'wp-codebox/browser-preview-boot-config/v1',
-				'blueprint_ref'     => $blueprint_ref,
-				'blueprint_ref_dto' => is_array( $preview_boot['blueprint_ref_dto'] ?? null ) ? $preview_boot['blueprint_ref_dto'] : $blueprint_ref,
-				'hydrator_ability'  => (string) ( $blueprint_ref['hydrator_ability'] ?? 'wp-codebox/hydrate-browser-blueprint-ref' ),
-				'parent_tool_bridge' => $parent_tool_bridge,
-			),
-			static fn( mixed $value ): bool => '' !== $value && array() !== $value
-		);
 	}
 
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
@@ -465,38 +414,6 @@ final class WP_Codebox_Browser_Task_Builder {
 				'boot_ref'   => (string) ( $preview_boot['blueprint_ref'] ?? '' ),
 			),
 			static fn( string $value ): bool => '' !== $value
-		);
-	}
-
-	/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $preview_boot Preview boot DTO. @param array<string,mixed> $preview_lease Preview lease DTO. @param array<string,mixed> $blueprint_ref Blueprint ref DTO. @return array<string,mixed> */
-	private static function browser_product_preview_reference( array $session, array $preview_boot, array $preview_lease, array $blueprint_ref ): array {
-		$contained_site = is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array();
-		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
-		$preview_ref = self::browser_preview_ref( $session );
-		$preview_url = (string) ( $preview_lease['public_url'] ?? $preview_lease['preview_public_url'] ?? $preview_lease['site_url'] ?? $preview_lease['local_url'] ?? $preview_ref['url'] ?? '' );
-
-		return array_filter(
-			array(
-				'schema'             => 'wp-codebox/browser-preview-reference/v1',
-				'kind'               => 'browser-contained-site',
-				'status'             => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
-				'preview_id'         => (string) ( $contained_site['preview_id'] ?? $preview_ref['preview_id'] ?? '' ),
-				'session_id'         => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? $contained_site['session_id'] ?? '' ),
-				'site_id'            => (string) ( $contained_site['site_id'] ?? '' ),
-				'preview_url'        => $preview_url,
-				'preview'            => $preview_lease,
-				'preview_ref'        => $preview_ref,
-				'blueprint_ref'      => $blueprint_ref,
-				'hydration_endpoint' => (string) ( $blueprint_ref['hydration_endpoint'] ?? $blueprint_ref['endpoint'] ?? '' ),
-				'boot'               => array_filter(
-					array(
-						'schema' => 'wp-codebox/browser-contained-site-boot/v1',
-						'ref'    => (string) ( $preview_boot['blueprint_ref'] ?? '' ),
-					)
-				),
-				'contained_site'     => $contained_site,
-			),
-			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
 	}
 
@@ -695,10 +612,9 @@ final class WP_Codebox_Browser_Task_Builder {
 		if ( is_array( $input['preview_boot']['blueprint_ref_dto'] ?? null ) ) {
 			return $input['preview_boot']['blueprint_ref_dto'];
 		}
-		if ( is_array( $input['preview_reference']['blueprint_ref'] ?? null ) ) {
-			return $input['preview_reference']['blueprint_ref'];
+		if ( is_array( $input['preview_boot']['blueprint_ref'] ?? null ) ) {
+			return $input['preview_boot']['blueprint_ref'];
 		}
-
 		$session = is_array( $input['session'] ?? null ) ? $input['session'] : $input;
 		$primary = is_array( $session['primary'] ?? null ) ? $session['primary'] : $session;
 		$playground = is_array( $primary['playground'] ?? null ) ? $primary['playground'] : ( is_array( $input['playground'] ?? null ) ? $input['playground'] : array() );
@@ -751,16 +667,32 @@ final class WP_Codebox_Browser_Task_Builder {
 		}
 
 		if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
-			return new WP_Error( 'wp_codebox_browser_blueprint_ref_invalid', 'Browser blueprint refs require a prepared cache_key and 64-character input_hash.', array( 'status' => 400 ) );
+			return new WP_Error( 'wp_codebox_browser_blueprint_ref_missing', 'Browser blueprint hydration requires a hydratable prepared runtime ref. Use prepare-new to create a preview session before hydrating.', self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, $ref, 'hydratable-ref-missing' ) );
 		}
 
 		$transient_key = self::prepared_runtime_transient_key( $cache_key, $input_hash );
 		$artifact      = function_exists( 'get_transient' ) ? get_transient( $transient_key ) : false;
-		if ( ! is_array( $artifact ) || 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
+		if ( ! is_array( $artifact ) ) {
 			return new WP_Error(
-				'wp_codebox_browser_blueprint_ref_not_found',
-				'Browser blueprint ref could not be hydrated from the prepared runtime cache. Create a new browser session to materialize the site again.',
-				self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash )
+				'wp_codebox_browser_blueprint_ref_expired',
+				'Browser blueprint ref expired from the prepared runtime cache. Use prepare-new to materialize the preview again.',
+				self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash, 'expired-transient' )
+			);
+		}
+
+		if ( $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) ) {
+			return new WP_Error(
+				'wp_codebox_browser_blueprint_ref_input_hash_mismatch',
+				'Browser blueprint ref input hash does not match the prepared runtime cache artifact. Use prepare-new to create a matching preview session.',
+				self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash, 'input-hash-mismatch' )
+			);
+		}
+
+		if ( 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
+			return new WP_Error(
+				'wp_codebox_browser_blueprint_ref_cache_miss',
+				'Browser blueprint ref could not be hydrated from the prepared runtime cache. Use prepare-new to create a preview session before hydrating.',
+				self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash, 'cache-miss' )
 			);
 		}
 
@@ -786,10 +718,8 @@ final class WP_Codebox_Browser_Task_Builder {
 		$primary                = is_array( $session['primary'] ?? null ) ? $session['primary'] : array();
 		$playground             = is_array( $session['playground'] ?? null ) ? $session['playground'] : ( is_array( $primary['playground'] ?? null ) ? $primary['playground'] : array() );
 		$prepared_runtime       = self::browser_prepared_runtime_from_envelope( $session, $playground );
-		$site_blueprint_artifact = is_array( $session['site_blueprint_artifact'] ?? null ) ? $session['site_blueprint_artifact'] : array();
 		$session_envelope       = is_array( $session['session'] ?? null ) ? $session['session'] : array();
 		$blueprint_ref          = self::browser_blueprint_ref( $prepared_runtime, $session );
-		$legacy_blueprint_ref   = (string) ( $prepared_runtime['cache_key'] ?? $prepared_runtime['input_hash'] ?? $site_blueprint_artifact['ref'] ?? $site_blueprint_artifact['id'] ?? '' );
 
 		$config = array_filter(
 			array(
@@ -799,7 +729,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'client_module_url' => (string) ( $playground['client_module_url'] ?? '' ),
 				'remote_url'        => (string) ( $playground['remote_url'] ?? '' ),
 				'cors_proxy_url'    => (string) ( $playground['cors_proxy_url'] ?? '' ),
-				'blueprint_ref'     => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? (string) $blueprint_ref['ref'] : ( '' !== $legacy_blueprint_ref ? $legacy_blueprint_ref : 'inline-session-blueprint' ),
+				'blueprint_ref'     => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? (string) $blueprint_ref['ref'] : '',
 				'blueprint_ref_dto' => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? $blueprint_ref : array(),
 				'preview'           => self::preview_lease_from_session( $session ),
 				'runtime_access'    => self::runtime_access_from_session( $session ),
@@ -837,8 +767,8 @@ final class WP_Codebox_Browser_Task_Builder {
 		$contract_ref       = trim( (string) ( $blueprint_ref['ref'] ?? $blueprint_ref['id'] ?? '' ) );
 		$hydration_endpoint = trim( (string) ( $boot_ref_dto['hydration_endpoint'] ?? $boot_ref_dto['endpoint'] ?? '' ) );
 
-		if ( '' === $boot_ref || 'inline-session-blueprint' === $boot_ref ) {
-			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-missing' );
+		if ( '' === $boot_ref ) {
+			return array( 'valid' => false, 'reason' => 'prepare-new-required' );
 		}
 
 		if ( '' === $boot_dto_ref ) {
@@ -1170,7 +1100,7 @@ final class WP_Codebox_Browser_Task_Builder {
 	/** @return array{status:string,hydratable:bool} */
 	private static function browser_blueprint_ref_hydration_status( string $cache_key, string $input_hash ): array {
 		if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
-			return array( 'status' => 'invalid', 'hydratable' => false );
+			return array( 'status' => 'hydratable-ref-missing', 'hydratable' => false );
 		}
 
 		if ( ! function_exists( 'get_transient' ) ) {
@@ -1181,12 +1111,18 @@ final class WP_Codebox_Browser_Task_Builder {
 		if ( is_array( $artifact ) && 'wp-codebox/browser-prepared-runtime-artifact/v1' === ( $artifact['schema'] ?? '' ) && $input_hash === (string) ( $artifact['input_hash'] ?? '' ) && is_array( $artifact['blueprint'] ?? null ) ) {
 			return array( 'status' => 'available', 'hydratable' => true );
 		}
+		if ( is_array( $artifact ) && $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) ) {
+			return array( 'status' => 'input-hash-mismatch', 'hydratable' => false );
+		}
+		if ( is_array( $artifact ) ) {
+			return array( 'status' => 'cache-miss', 'hydratable' => false );
+		}
 
-		return array( 'status' => 'expired', 'hydratable' => false );
+		return array( 'status' => 'expired-transient', 'hydratable' => false );
 	}
 
 	/** @return array<string,mixed> */
-	private static function browser_blueprint_ref_miss_contract( string $cache_key, string $input_hash, string $ref ): array {
+	private static function browser_blueprint_ref_miss_contract( string $cache_key, string $input_hash, string $ref, string $state = 'cache-miss' ): array {
 		return array(
 			'status'                   => 409,
 			'success'                  => false,
@@ -1194,12 +1130,14 @@ final class WP_Codebox_Browser_Task_Builder {
 			'ref'                      => $ref,
 			'cache_key'                => $cache_key,
 			'input_hash'               => $input_hash,
-			'action'                   => 'reload-required',
+			'preview_state'            => $state,
+			'action'                   => 'prepare-new',
 			'open_mode'                => 'materialize',
 			'reload_required'          => true,
 			'requires_materialization' => true,
-			'reason'                  => 'prepared-runtime-not-found-or-expired',
-			'blueprint_ref'            => self::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'expired' ) ),
+			'prepare_new_required'     => true,
+			'reason'                  => $state,
+			'blueprint_ref'            => self::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => $state ) ),
 		);
 	}
 

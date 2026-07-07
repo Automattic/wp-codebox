@@ -620,11 +620,11 @@
 	const browserPreviewBootConfig = ( input ) => {
 		const boot = input?.schema === 'wp-codebox/browser-preview-boot-config/v1'
 			? input
-			: ( input?.preview_boot && typeof input.preview_boot === 'object' ? input.preview_boot : ( input?.boot && typeof input.boot === 'object' ? input.boot : null ) );
+			: ( input?.preview_boot && typeof input.preview_boot === 'object' ? input.preview_boot : null );
 		if ( ! boot || typeof boot !== 'object' ) {
 			throw runtimeError( 'browser_preview_start', 'browser_preview_boot_missing', 'A WP Codebox browser preview boot config is required.' );
 		}
-		if ( boot.schema && boot.schema !== 'wp-codebox/browser-preview-boot-config/v1' && boot.schema !== 'wp-codebox/browser-contained-site-boot/v1' ) {
+		if ( boot.schema && boot.schema !== 'wp-codebox/browser-preview-boot-config/v1' ) {
 			throw runtimeError( 'browser_preview_start', 'browser_preview_boot_schema_unsupported', `Unsupported WP Codebox browser preview boot schema: ${ boot.schema }` );
 		}
 
@@ -643,7 +643,7 @@
 			? boot.blueprint_ref_dto
 			: ( boot.blueprint_ref && typeof boot.blueprint_ref === 'object' ? boot.blueprint_ref : { ref: boot.blueprint_ref || '' } );
 		const ref = String( blueprintRef.ref || blueprintRef.id || boot.blueprint_ref || '' );
-		if ( ! ref || ref === 'inline-session-blueprint' ) {
+		if ( ! ref ) {
 			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_ref_missing', 'Browser preview boot config is missing a hydratable Codebox blueprint ref.' );
 		}
 

@@ -33,7 +33,17 @@ public function get_browser_contained_site_status( array $input ): array|WP_Erro
 	$cache_key  = $this->safe_key( (string) ( $input['cache_key'] ?? $recovery['cache_key'] ?? $prepared['cache_key'] ?? $input['site_id'] ?? $contained_site['site_id'] ?? '' ) );
 	$input_hash = strtolower( trim( (string) ( $input['input_hash'] ?? $recovery['input_hash'] ?? $prepared['input_hash'] ?? $source_digest ) ) );
 	if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
-		return new WP_Error( 'wp_codebox_browser_contained_site_ref_invalid', 'Browser contained site status requires cache_key/site_id and a 64-character source digest.', array( 'status' => 400 ) );
+		return new WP_Error(
+			'wp_codebox_browser_contained_site_ref_missing',
+			'Browser contained site status requires a hydratable prepared runtime ref. Use prepare-new to create a preview session before opening.',
+			array(
+				'status' => 400,
+				'schema' => 'wp-codebox/browser-contained-site-status/v1',
+				'preview_state' => 'hydratable-ref-missing',
+				'reason' => 'hydratable-ref-missing',
+				'prepare_new_required' => true,
+			)
+		);
 	}
 
 	$prepared_ref = array(
@@ -55,9 +65,9 @@ public function preview_reuse_decision( array $input ): array|WP_Error {
 		'reuse_current' => 'reuse-current',
 		'reuse_live', 'reuse_materialized', 'reuse_prepared_runtime' => 'hydrate-ref',
 		'unavailable' => 'reload-required',
-		default => 'create-new',
+		default => 'prepare-new',
 	};
-	$reload_required = in_array( $action, array( 'create-new', 'reload-required' ), true );
+	$reload_required = in_array( $action, array( 'prepare-new', 'reload-required' ), true );
 	$identity_key    = hash( 'sha256', implode( ':', array( (string) ( $status['site_id'] ?? '' ), (string) ( $status['source_digest']['value'] ?? '' ), $open_mode ) ) );
 
 	return array_filter(
@@ -72,6 +82,8 @@ public function preview_reuse_decision( array $input ): array|WP_Error {
 			'open_mode'       => $open_mode,
 			'reuse_level'     => (string) ( $status['reuse_level'] ?? 'none' ),
 			'requires_materialization' => true === ( $status['requires_materialization'] ?? false ),
+			'prepare_new_required' => true === ( $status['prepare_new_required'] ?? false ),
+			'preview_state'    => (string) ( $status['preview_state'] ?? '' ),
 			'prepared_runtime_recoverable' => true === ( $status['prepared_runtime_recoverable'] ?? false ),
 			'live'            => true === ( $status['live'] ?? false ),
 			'current'         => true === ( $status['current'] ?? false ),
@@ -98,7 +110,7 @@ public function open_browser_contained_site( array $input ): array|WP_Error {
 	$preview_boot   = WP_Codebox_Browser_Task_Builder::preview_boot_config( $session );
 	$preview_lease  = WP_Codebox_Browser_Task_Builder::preview_lease( $session );
 	$blueprint_ref  = is_array( $status['blueprint_ref'] ?? null ) ? $status['blueprint_ref'] : array();
-	$boot_contract  = true === ( $status['success'] ?? false ) ? WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref ) : array( 'valid' => false, 'reason' => '' );
+	$boot_contract  = true === ( $status['success'] ?? false ) ? WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref ) : array( 'valid' => false, 'reason' => (string) ( $status['preview_state'] ?? '' ) );
 	$site_id        = (string) ( $status['site_id'] ?? $contained_site['site_id'] ?? $input['site_id'] ?? '' );
 	$session_id     = (string) ( $session['session']['id'] ?? '' );
 	$preview_id     = (string) ( $contained_site['preview_id'] ?? $input['preview_id'] ?? '' );
@@ -155,6 +167,8 @@ public function open_browser_contained_site( array $input ): array|WP_Error {
 				'site_id'       => $site_id,
 				'status'        => $open_status,
 				'resolution'    => $resolution,
+				'preview_state' => (string) ( $resolution['reason'] ?? '' ),
+				'prepare_new_required' => true === ( $lifecycle['requires_materialization'] ?? false ),
 				'contained_site' => $opened_site,
 				'source_digest' => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
 				'prepared_runtime' => is_array( $status['prepared_runtime'] ?? null ) ? $status['prepared_runtime'] : array(),
@@ -297,7 +311,7 @@ public function boot_browser_contained_site_session( array $input ): array|WP_Er
 			'success'             => true === ( $session['success'] ?? false ),
 			'schema'              => 'wp-codebox/browser-contained-site-boot-result/v1',
 			'action'              => (string) ( $session['action'] ?? '' ),
-			'boot'                => is_array( $session['boot'] ?? null ) ? $session['boot'] : array(),
+			'preview_boot'        => is_array( $session['preview_boot'] ?? null ) ? $session['preview_boot'] : array(),
 			'preview_lease'       => is_array( $session['preview_lease'] ?? null ) ? $session['preview_lease'] : array(),
 			'contained_site'      => is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array(),
 			'startup_diagnostics' => is_array( $session['startup_diagnostics'] ?? null ) ? $session['startup_diagnostics'] : array(),
@@ -312,7 +326,7 @@ public function preview_boot_ref( array $input ): array|WP_Error {
 		return $boot_result;
 	}
 
-	$boot           = is_array( $boot_result['boot'] ?? null ) ? $boot_result['boot'] : array();
+	$boot           = is_array( $boot_result['preview_boot'] ?? null ) ? $boot_result['preview_boot'] : array();
 	$contained_site = is_array( $boot_result['contained_site'] ?? null ) ? $boot_result['contained_site'] : array();
 	$preview_lease  = is_array( $boot_result['preview_lease'] ?? null ) ? $boot_result['preview_lease'] : array();
 	$diagnostics    = is_array( $boot_result['startup_diagnostics'] ?? null ) ? $boot_result['startup_diagnostics'] : array();
@@ -321,7 +335,7 @@ public function preview_boot_ref( array $input ): array|WP_Error {
 
 	$stable_boot = array_filter(
 		array(
-			'schema'        => 'wp-codebox/browser-contained-site-boot/v1',
+			'schema'        => 'wp-codebox/browser-preview-boot-config/v1',
 			'session_id'    => (string) ( $boot['session_id'] ?? '' ),
 			'site_id'       => (string) ( $boot['site_id'] ?? '' ),
 			'status'        => (string) ( $boot['status'] ?? '' ),
@@ -335,19 +349,10 @@ public function preview_boot_ref( array $input ): array|WP_Error {
 		array(
 			'success'             => true === ( $boot_result['success'] ?? false ),
 			'schema'              => 'wp-codebox/preview-boot-ref/v1',
-			'boot'                => $stable_boot,
+			'preview_boot'        => $stable_boot,
 			'blueprint_ref'       => $blueprint_ref,
 			'preview_lease'       => $preview_lease,
 			'startup_diagnostics' => $diagnostics,
-			'compatibility'       => array_filter(
-				array(
-					'contained_site_schema' => (string) ( $contained_site['schema'] ?? '' ),
-					'session_result_schema' => (string) ( $boot_result['schema'] ?? '' ),
-					'legacy_contained_site' => $contained_site,
-					'legacy_session_result' => $boot_result,
-				),
-				static fn( mixed $value ): bool => array() !== $value && '' !== $value
-			),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
@@ -452,7 +457,7 @@ public function browser_session_response_for_input( array $session, array $input
 		if ( false === ( $boot_contract['valid'] ?? false ) ) {
 			return new WP_Error(
 				'wp_codebox_browser_preview_boot_contract_invalid',
-				'Browser preview session is missing a hydratable blueprint ref.',
+				'Browser preview sessions require a hydratable blueprint ref. Use prepare-new to create a preview session before opening or hydrating it.',
 				array(
 					'status'        => 500,
 					'schema'        => 'wp-codebox/browser-preview-boot-contract-error/v1',
@@ -490,7 +495,6 @@ public function browser_session_evidence_store( array $product_dto, array $sessi
 			'created_at'        => gmdate( 'c' ),
 			'session_id'        => $session_id,
 			'preview_ref'       => is_array( $product_dto['preview_ref'] ?? null ) ? $product_dto['preview_ref'] : array(),
-			'preview_reference' => is_array( $product_dto['preview_reference'] ?? null ) ? $product_dto['preview_reference'] : array(),
 			'preview_lease'     => is_array( $product_dto['preview_lease'] ?? null ) ? $product_dto['preview_lease'] : array(),
 			'preview_boot'      => is_array( $product_dto['preview_boot'] ?? null ) ? $product_dto['preview_boot'] : array(),
 			'blueprint_ref'     => is_array( $product_dto['blueprint_ref'] ?? null ) ? $product_dto['blueprint_ref'] : array(),
@@ -610,6 +614,8 @@ public function browser_contained_site_status_envelope( string $cache_key, strin
 					'algorithm' => 'sha256',
 					'value'     => $input_hash,
 				),
+				'preview_state' => (string) ( $resolution['reason'] ?? $status ),
+				'prepare_new_required' => 'recoverable_prepared_runtime' !== $status,
 				'prepared_runtime' => array_filter(
 					array(
 						'cache_key'  => $cache_key,
@@ -649,7 +655,7 @@ public function browser_contained_site_lifecycle( string $status, array $resolut
 	} elseif ( $materialized ) {
 		$open_mode   = 'reuse_materialized';
 		$reuse_level = 'materialized';
-	} elseif ( in_array( $status, array( 'disabled', 'incompatible', 'unusable' ), true ) ) {
+	} elseif ( in_array( $status, array( 'disabled', 'incompatible', 'unusable', 'hydratable_ref_missing', 'input_hash_mismatch' ), true ) ) {
 		$open_mode = 'unavailable';
 	}
 
@@ -701,6 +707,9 @@ public function browser_contained_site_status_from_lookup( array $lookup ): stri
 	if ( 'hit' === $lookup_status ) {
 		return 'recoverable_prepared_runtime';
 	}
+	if ( in_array( $lookup_status, array( 'expired_transient', 'cache_miss', 'input_hash_mismatch', 'hydratable_ref_missing' ), true ) ) {
+		return $lookup_status;
+	}
 
 	if ( ! empty( $lookup['invalidation'] ) ) {
 		return 'incompatible';
@@ -715,6 +724,10 @@ public function browser_contained_site_resolution( string $status, array $lookup
 	if ( '' === $reason ) {
 		$reason = match ( $status ) {
 			'recoverable_prepared_runtime' => 'prepared-runtime-cache-hit',
+			'expired_transient' => 'expired-transient',
+			'cache_miss'    => 'cache-miss',
+			'input_hash_mismatch' => 'input-hash-mismatch',
+			'hydratable_ref_missing' => 'hydratable-ref-missing',
 			'incompatible'  => 'prepared-runtime-incompatible',
 			'disabled'      => 'prepared-runtime-cache-disabled',
 			default         => 'prepared-runtime-not-found-or-expired',
@@ -734,8 +747,9 @@ public function browser_contained_site_resolution( string $status, array $lookup
 			'reused'       => false,
 			'created'      => false,
 			'expired'      => 'miss' === $status ? null : false,
-			'miss'         => 'miss' === $status,
-			'incompatible' => 'incompatible' === $status,
+			'miss'         => in_array( $status, array( 'miss', 'cache_miss' ), true ),
+			'incompatible' => in_array( $status, array( 'incompatible', 'input_hash_mismatch' ), true ),
+			'prepare_new_required' => 'recoverable_prepared_runtime' !== $status,
 		),
 		static fn( mixed $value ): bool => null !== $value && array() !== $value && '' !== $value
 	);
@@ -840,7 +854,7 @@ public function browser_contained_site_facade_session( array $result, string $ac
 			'schema'              => 'wp-codebox/browser-contained-site-session/v1',
 			'action'              => $action,
 			'contained_site'      => $contained_site,
-			'boot'                => $boot,
+			'preview_boot'        => $boot,
 			'preview_lease'       => $preview_lease,
 			'startup_diagnostics' => $this->browser_contained_site_startup_diagnostics( $result, $contained_site, $preview_lease, $boot_contract ),
 			'session'             => is_array( $result['session'] ?? null ) ? $result['session'] : array(),
@@ -852,7 +866,7 @@ public function browser_contained_site_facade_session( array $result, string $ac
 public function browser_contained_site_boot_descriptor( array $result, array $contained_site, array $preview_boot, array $preview_lease, array $blueprint_ref ): array {
 	return array_filter(
 		array(
-			'schema'         => 'wp-codebox/browser-contained-site-boot/v1',
+			'schema'         => 'wp-codebox/browser-preview-boot-config/v1',
 			'session_id'     => (string) ( $result['session']['session_id'] ?? $result['session']['id'] ?? $preview_boot['session_id'] ?? '' ),
 			'site_id'        => (string) ( $result['site_id'] ?? $contained_site['site_id'] ?? '' ),
 			'status'         => (string) ( $result['status'] ?? $contained_site['status'] ?? '' ),

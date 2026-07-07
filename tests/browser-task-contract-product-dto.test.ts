@@ -26,13 +26,11 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-c
 class WP_Codebox_Browser_DTO_Schema_Test {
 	use WP_Codebox_Abilities_Schemas {
 		browser_product_dto_schema as private trait_browser_product_dto_schema;
-		browser_executable_session_schema as private trait_browser_executable_session_schema;
 		browser_materializer_contract_schema as private trait_browser_materializer_contract_schema;
 		browser_internal_materializer_contract_schema as private trait_browser_internal_materializer_contract_schema;
 		browser_task_contract_schema as private trait_browser_task_contract_schema;
 	}
 	public static function browser_product_schema(): array { return self::trait_browser_product_dto_schema(); }
-	public static function browser_executable_schema(): array { return self::trait_browser_executable_session_schema(); }
 	public static function browser_materializer_schema(): array { return self::trait_browser_materializer_contract_schema(); }
 	public static function browser_internal_materializer_schema(): array { return self::trait_browser_internal_materializer_contract_schema(); }
 	public static function public_browser_task_contract_schema(): array { return self::trait_browser_task_contract_schema(); }
@@ -70,7 +68,6 @@ echo json_encode( array(
 	'product' => WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session ),
 	'safe' => WP_Codebox_Browser_Task_Builder::safe_browser_session_dto( $session ),
 	'product_schema' => WP_Codebox_Browser_DTO_Schema_Test::browser_product_schema(),
-	'executable_schema' => WP_Codebox_Browser_DTO_Schema_Test::browser_executable_schema(),
 	'materializer_schema' => WP_Codebox_Browser_DTO_Schema_Test::browser_materializer_schema(),
 	'internal_materializer_schema' => WP_Codebox_Browser_DTO_Schema_Test::browser_internal_materializer_schema(),
 	'task_contract_schema' => WP_Codebox_Browser_DTO_Schema_Test::public_browser_task_contract_schema(),
@@ -79,11 +76,14 @@ echo json_encode( array(
 
 assert.equal(result.product.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.safe.schema, "wp-codebox/browser-session-product-dto/v1")
-assert.equal(result.product.executable_session.schema, "wp-codebox/browser-executable-session/v1")
+assert.equal(result.product.dto_schema, "wp-codebox/browser-preview-boot-config/v1")
+assert.equal(result.product.executable_session, undefined)
+assert.equal(result.product.runtime_handoff, undefined)
+assert.equal(result.product.preview_reference, undefined)
 assert.equal(result.product.preview_boot.blueprint_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
 assert.equal(result.product.artifact_refs[0].path, "files/browser/index.html")
 
-for (const dto of [result.product, result.safe, result.product.executable_session]) {
+for (const dto of [result.product, result.safe]) {
   const encoded = JSON.stringify(dto)
   for (const raw of ['"task_payload"', '"task_input"', '"recipe"', '"playground"', '"materialization"', "filesystem", "must-not-leak", '"blueprint"']) {
     assert.equal(encoded.includes(raw), false, `public DTO leaked ${raw}`)
@@ -95,7 +95,7 @@ assert.deepEqual(Object.keys(result.task_contract_schema.properties), Object.key
 assert.equal(result.internal_materializer_schema.properties.task_payload.type, "object")
 assert.equal(result.product_schema.properties.task_payload, undefined)
 assert.equal(result.product_schema.properties.playground, undefined)
-assert.equal(result.executable_schema.properties.task_payload, undefined)
-assert.equal(result.executable_schema.properties.runtime, undefined)
+assert.equal(result.product_schema.properties.executable_session, undefined)
+assert.equal(result.product_schema.properties.preview_reference, undefined)
 
 console.log("browser task contract product dto ok")

@@ -76,6 +76,18 @@ $task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input );
 $raw_task_contract_requested_public = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_raw_browser_task_contract' => true ) );
 $raw_task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_internal_browser_contract' => true ) );
 
+$early_failure_session = array(
+	'success' => true,
+	'schema' => 'wp-codebox/browser-playground-session/v1',
+	'status' => 'ready',
+	'session' => array( 'id' => 'missing-prepared-ref' ),
+	'task_input' => array( 'goal' => 'Missing prepared ref should fail server-side.' ),
+	'playground' => array( 'scope' => 'missing-prepared-ref' ),
+	'signals' => array( 'ready_to_code' => array( 'schema' => 'wp-codebox/signal/v1', 'emitted' => true ) ),
+);
+$response_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_session_response_for_input' );
+$early_failure = $response_method->invoke( null, $early_failure_session, array() );
+
 echo json_encode( array(
 	'public' => $public,
 	'raw_requested_public' => array(
@@ -108,6 +120,7 @@ echo json_encode( array(
 		'compact' => $raw_task_contract['compact'] ?? null,
 		'primary_playground_blueprint_steps_is_array' => is_array( $raw_task_contract['primary']['playground']['blueprint']['steps'] ?? null ),
 	),
+	'early_failure' => is_wp_error( $early_failure ) ? array( 'code' => $early_failure->code, 'message' => $early_failure->message, 'data' => $early_failure->data ) : $early_failure,
 ), JSON_UNESCAPED_SLASHES );
 `)
 
@@ -121,17 +134,9 @@ function assertPublicDtoDoesNotExposeInternals(value: unknown) {
 }
 
 assert.equal(result.public.schema, "wp-codebox/browser-session-product-dto/v1")
-assert.equal(result.public.dto_schema, "wp-codebox/browser-executable-session/v1")
+assert.equal(result.public.dto_schema, "wp-codebox/browser-preview-boot-config/v1")
 assert.equal(result.public.source_schema, "wp-codebox/browser-playground-session/v1")
 assert.equal(result.public.session_id, "session-public-dto")
-assert.equal(result.public.executable_session.schema, "wp-codebox/browser-executable-session/v1")
-assert.equal(result.public.executable_session.session_id, "session-public-dto")
-assert.equal(result.public.executable_session.status, "ready")
-assert.equal(result.public.executable_session.preview_ref.schema, "wp-codebox/browser-preview-ref/v1")
-assert.equal(result.public.executable_session.preview.schema, "wp-codebox/preview-lease/v1")
-assert.equal(result.public.executable_session.preview_boot.blueprint_ref, result.public.preview_boot.blueprint_ref)
-assert.equal(result.public.executable_session.blueprint_ref.ref, result.public.blueprint_ref.ref)
-assert.equal(result.public.executable_session.runtime_access.schema, "wp-codebox/runtime-access/v1")
 assert.equal(result.public.preview_ref.schema, "wp-codebox/browser-preview-ref/v1")
 assert.equal(result.public.preview_ref.preview_id.startsWith("preview-"), true)
 assert.equal(result.public.preview_ref.site_id, "public-dto-site")
@@ -140,18 +145,13 @@ assert.equal(result.public.runtime_access.preview_url, "/preview/index.html")
 assert.equal(result.public.runtime_access.lease.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.public.runtime_capabilities.schema, "wp-codebox/browser-runtime-capabilities/v1")
 assert.deepEqual([...result.public.runtime_capabilities.capabilities].sort(), ["browser:compile_blueprint", "browser:materialize", "browser:preview", "browser:run_blueprint", "browser:run_php", "browser:write_file"].sort())
-assert.deepEqual(result.public.executable_session.runtime_capabilities, result.public.runtime_capabilities)
 assert.equal(result.public.runtime_readiness.schema, "wp-codebox/browser-runtime-readiness/v1")
 assert.equal(result.public.runtime_readiness.status, "ready")
 assert.equal(result.public.runtime_readiness.ready, true)
 assert.deepEqual(result.public.runtime_readiness.missing, undefined)
-assert.deepEqual(result.public.executable_session.runtime_readiness, result.public.runtime_readiness)
-assert.equal(result.public.executable_session.runtime_handoff.schema, "wp-codebox/browser-runtime-handoff/v1")
-assert.equal(result.public.executable_session.runtime_handoff.owner, "wp-codebox")
-assert.equal(result.public.executable_session.runtime_handoff.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
-assert.equal(result.public.executable_session.runtime_handoff.blueprint_ref.ref, result.public.blueprint_ref.ref)
-assert.equal(result.public.executable_session.parent_tool_bridge.schema, "wp-codebox/parent-tool-bridge/v1")
-assert.deepEqual(result.public.executable_session.parent_tool_bridge.allowed_tools, ["workspace.read"])
+assert.equal(result.public.executable_session, undefined)
+assert.equal(result.public.runtime_handoff, undefined)
+assert.equal(result.public.parent_tool_bridge, undefined)
 assert.match(result.public.preview_boot.blueprint_ref, /^prepared:public-dto-site:[a-f0-9]{64}$/)
 assert.equal(result.public.preview_boot.blueprint_ref_dto.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
 assert.equal(result.public.preview_ref.boot_ref, result.public.preview_boot.blueprint_ref)
@@ -170,7 +170,6 @@ assert.equal(JSON.stringify(result.public).includes("must-not-leak"), false)
 assert.equal(result.public.preview_boot.artifacts.base_path, undefined)
 assert.equal(result.public.preview_boot.runtime_access.preview_url, "/preview/index.html")
 assertPublicDtoDoesNotExposeInternals(result.public)
-assertPublicDtoDoesNotExposeInternals(result.public.executable_session)
 
 assert.equal(result.raw_requested_public.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.raw_requested_public.has_playground, false)
@@ -200,5 +199,10 @@ assert.equal(result.raw_task_contract_requested_public.has_primary, true)
 assert.equal(result.raw_task_contract.schema, "wp-codebox/browser-task-contract/v1")
 assert.equal(result.raw_task_contract.compact.schema, "wp-codebox/browser-task-product-dto/v1")
 assert.equal(result.raw_task_contract.primary_playground_blueprint_steps_is_array, true)
+
+assert.equal(result.early_failure.code, "wp_codebox_browser_preview_boot_contract_invalid")
+assert.equal(result.early_failure.data.schema, "wp-codebox/browser-preview-boot-contract-error/v1")
+assert.equal(result.early_failure.data.reason, "prepare-new-required")
+assert.equal(result.early_failure.message, "Browser preview sessions require a hydratable blueprint ref. Use prepare-new to create a preview session before opening or hydrating it.")
 
 console.log("browser session public dto ok")

@@ -141,7 +141,7 @@ $miss_decision = WP_Codebox_Abilities::preview_reuse_decision(
 
 expect( ! is_wp_error( $miss_decision ), 'Expected miss preview reuse decision to return an envelope.' );
 expect( 'wp-codebox/preview-reuse-decision/v1' === $miss_decision['schema'], 'Expected preview reuse decision schema.' );
-expect( 'create-new' === $miss_decision['action'], 'Expected miss preview decision to create a new contained site.' );
+expect( 'prepare-new' === $miss_decision['action'], 'Expected miss preview decision to require prepare-new.' );
 expect( true === $miss_decision['reload_required'], 'Expected miss preview decision to require reload/materialization.' );
 expect( 'materialize' === $miss_decision['open_mode'], 'Expected miss preview decision open_mode=materialize.' );
 expect( isset( $miss_decision['identity_key'] ) && 64 === strlen( $miss_decision['identity_key'] ), 'Expected stable decision identity key.' );
@@ -420,11 +420,11 @@ $boot = WP_Codebox_Abilities::boot_browser_contained_site_session(
 expect( ! is_wp_error( $boot ), 'Expected boot facade to return an envelope.' );
 expect( true === $boot['success'], 'Expected boot facade success=true.' );
 expect( 'wp-codebox/browser-contained-site-boot-result/v1' === $boot['schema'], 'Expected boot result schema.' );
-expect( 'wp-codebox/browser-contained-site-boot/v1' === $boot['boot']['schema'], 'Expected boot descriptor schema.' );
-expect( ! isset( $boot['boot']['client_module_url'] ), 'Boot descriptor must not expose client_module_url.' );
-expect( ! isset( $boot['boot']['remote_url'] ), 'Boot descriptor must not expose remote_url.' );
-expect( ! isset( $boot['boot']['scope'] ), 'Boot descriptor must not expose scope as a consumer boot requirement.' );
-expect( isset( $boot['boot']['blueprint_ref']['hydration_endpoint'] ), 'Boot descriptor should expose a Codebox blueprint ref hydrator.' );
+expect( 'wp-codebox/browser-preview-boot-config/v1' === $boot['preview_boot']['schema'], 'Expected preview boot descriptor schema.' );
+expect( ! isset( $boot['preview_boot']['client_module_url'] ), 'Preview boot ref facade descriptor must not expose client_module_url.' );
+expect( ! isset( $boot['preview_boot']['remote_url'] ), 'Preview boot ref facade descriptor must not expose remote_url.' );
+expect( ! isset( $boot['preview_boot']['scope'] ), 'Preview boot ref facade descriptor must not expose scope as a consumer boot requirement.' );
+expect( isset( $boot['preview_boot']['blueprint_ref']['hydration_endpoint'] ), 'Preview boot descriptor should expose a Codebox blueprint ref hydrator.' );
 expect( 'wp-codebox/browser-contained-site-startup-diagnostics/v1' === $boot['startup_diagnostics']['schema'], 'Expected startup diagnostics schema.' );
 expect( 'active' === $boot['startup_diagnostics']['preview_lease_status'], 'Expected active lease diagnostics.' );
 
@@ -444,15 +444,14 @@ $preview_boot_ref = WP_Codebox_Abilities::preview_boot_ref(
 expect( ! is_wp_error( $preview_boot_ref ), 'Expected preview boot ref facade to return an envelope.' );
 expect( true === $preview_boot_ref['success'], 'Expected preview boot ref success=true.' );
 expect( 'wp-codebox/preview-boot-ref/v1' === $preview_boot_ref['schema'], 'Expected preview boot ref schema.' );
-expect( 'wp-codebox/browser-contained-site-boot/v1' === $preview_boot_ref['boot']['schema'], 'Expected stable boot descriptor.' );
+expect( 'wp-codebox/browser-preview-boot-config/v1' === $preview_boot_ref['preview_boot']['schema'], 'Expected stable preview boot descriptor.' );
 expect( isset( $preview_boot_ref['blueprint_ref']['hydration_endpoint'] ), 'Expected stable blueprint ref hydration endpoint.' );
-expect( ! isset( $preview_boot_ref['boot']['client_module_url'] ), 'Stable boot descriptor must not expose client_module_url.' );
-expect( ! isset( $preview_boot_ref['boot']['remote_url'] ), 'Stable boot descriptor must not expose remote_url.' );
-expect( ! isset( $preview_boot_ref['boot']['cors_proxy_url'] ), 'Stable boot descriptor must not expose cors_proxy_url.' );
-expect( ! isset( $preview_boot_ref['boot']['scope'] ), 'Stable boot descriptor must not expose scope.' );
-expect( ! isset( $preview_boot_ref['boot']['blueprint'] ), 'Stable boot descriptor must not expose raw blueprint.' );
-expect( 'wp-codebox/browser-contained-site/v1' === $preview_boot_ref['compatibility']['contained_site_schema'], 'Expected contained-site compatibility schema.' );
-expect( 'wp-codebox/browser-contained-site-boot-result/v1' === $preview_boot_ref['compatibility']['session_result_schema'], 'Expected session result compatibility schema.' );
+expect( ! isset( $preview_boot_ref['preview_boot']['client_module_url'] ), 'Stable preview boot descriptor must not expose client_module_url.' );
+expect( ! isset( $preview_boot_ref['preview_boot']['remote_url'] ), 'Stable preview boot descriptor must not expose remote_url.' );
+expect( ! isset( $preview_boot_ref['preview_boot']['cors_proxy_url'] ), 'Stable preview boot descriptor must not expose cors_proxy_url.' );
+expect( ! isset( $preview_boot_ref['preview_boot']['scope'] ), 'Stable preview boot descriptor must not expose scope.' );
+expect( ! isset( $preview_boot_ref['preview_boot']['blueprint'] ), 'Stable preview boot descriptor must not expose raw blueprint.' );
+expect( ! isset( $preview_boot_ref['compatibility'] ), 'Preview boot ref must not expose legacy compatibility payloads.' );
 
 $destroy = WP_Codebox_Abilities::destroy_browser_contained_site_session(
 	array(
@@ -520,8 +519,8 @@ expect( true === $product_session['success'], 'Expected product session success=
 expect( isset( $product_session['preview_boot'] ), 'Expected product session preview boot.' );
 expect( isset( $product_session['preview_ref'] ), 'Expected product session preview ref.' );
 expect( isset( $product_session['preview_lease'] ), 'Expected product session preview lease.' );
-expect( isset( $product_session['preview_reference'] ), 'Expected product session preview reference.' );
-expect( 'wp-codebox/browser-preview-reference/v1' === $product_session['preview_reference']['schema'], 'Expected preview reference schema.' );
+expect( ! isset( $product_session['preview_reference'] ), 'Product session must not expose preview_reference.' );
+expect( ! isset( $product_session['executable_session'] ), 'Product session must not expose executable_session.' );
 expect( isset( $product_session['blueprint_ref'] ), 'Expected product session blueprint ref.' );
 expect( isset( $product_session['evidence_ref'] ), 'Expected product session evidence ref.' );
 expect( 'wp-codebox/browser-session-evidence-ref/v1' === $product_session['evidence_ref']['schema'], 'Expected evidence ref schema.' );
@@ -533,7 +532,7 @@ expect( isset( $GLOBALS['wp_codebox_test_transients'][ $evidence_key ] ), 'Expec
 $evidence = $GLOBALS['wp_codebox_test_transients'][ $evidence_key ]['value'];
 expect( 'wp-codebox/browser-session-evidence/v1' === $evidence['schema'], 'Expected evidence schema.' );
 expect( $product_session['session_id'] === $evidence['session_id'], 'Expected evidence session id.' );
-expect( isset( $evidence['preview_reference'] ), 'Expected evidence preview reference.' );
+expect( ! isset( $evidence['preview_reference'] ), 'Evidence must not store legacy preview_reference.' );
 expect( false === str_contains( wp_json_encode( $evidence ), '<h1>Preview</h1>' ), 'Evidence must not store raw uploaded content.' );
 
 $executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $product_session );
@@ -543,10 +542,6 @@ $compact_product_session = array(
 	'success'        => true,
 	'schema'         => 'wp-codebox/browser-session-product-dto/v1',
 	'session_id'     => 'compact-product-smoke-session',
-	'preview_boot'   => array(
-		'schema'        => 'wp-codebox/browser-preview-boot-config/v1',
-		'blueprint_ref' => 'inline-session-blueprint',
-	),
 	'contained_site' => array(
 		'schema'   => 'wp-codebox/browser-contained-site/v1',
 		'site_id'  => 'product-smoke-cache',
