@@ -203,6 +203,7 @@
     "test:php-provider-credential-boundary": "php scripts/php-provider-credential-boundary-smoke.php",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
     "test:public-api-contract": "tsx tests/public-api-contract.test.ts",
+    "test:runtime-capture-status": "tsx tests/runtime-capture-status.test.ts",
     "test:wordpress-runtime-actions": "tsx tests/wordpress-runtime-actions.test.ts",
     "test:wordpress-action-auth-contract": "tsx tests/wordpress-action-auth-contract.test.ts",
     "test:wordpress-hotspots-contracts": "tsx tests/wordpress-hotspots-contracts.test.ts",

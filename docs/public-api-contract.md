@@ -44,7 +44,7 @@ Use these package entrypoints from external integrations:
   implementation packages directly.
 - `@automattic/wp-codebox-playground`: advanced runtime backend entrypoint and
   adapter surface for runtime-backend implementors. New consumers should prefer
-  `@automattic/wp-codebox-playground/public`. Product consumers should use the Codebox-owned public surfaces above and the WordPress/browser surfaces below.
+  `@automattic/wp-codebox-playground/public`. Product consumers should use the Codebox-owned public surfaces above and the WordPress/browser surfaces below. The public facade exposes `runtimeCaptureStatus()` for normalizing existing snapshot, workspace patch, changed-file, or mount-diff evidence into `wp-codebox/runtime-capture-status/v1`.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment

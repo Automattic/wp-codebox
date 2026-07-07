@@ -177,6 +177,7 @@ export {
 } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundRuntimeBackendOptions } from "./playground-runtime.js"
+export { RUNTIME_CAPTURE_STATUS_SCHEMA, runtimeCaptureStatus, type RuntimeCaptureDiagnostic, type RuntimeCaptureState, type RuntimeCaptureStatus, type RuntimeCaptureStatusInput } from "./runtime-capture-status.js"
 
 export type WordPressRuntimeSpec = Omit<RuntimeCreateSpec, "backend"> & {
   backend?: "wordpress-playground"
