@@ -188,6 +188,7 @@ public static function create_browser_playground_session( array $input ): array|
 
 	$base_blueprint = self::browser_blueprint_with_site_artifact( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $site_blueprint_artifact );
 	$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
+	$blueprint      = self::browser_blueprint_with_post_runtime( $blueprint, is_array( $input['post_runtime_blueprint'] ?? null ) ? $input['post_runtime_blueprint'] : array() );
 	$prepared_runtime = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $blueprint, $playground );
 	$runtime['prepared_runtime'] = $prepared_runtime;
 	$contained_site  = self::browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'ready' );

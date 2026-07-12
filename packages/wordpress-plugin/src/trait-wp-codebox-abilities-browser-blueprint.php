@@ -46,6 +46,24 @@ private static function browser_blueprint_with_site_artifact( array $blueprint, 
 	return $merged;
 }
 
+/** @param array<string,mixed> $blueprint Runtime-materialized blueprint. @param array<string,mixed> $post_runtime_blueprint Caller steps that must run after runtime dependencies. @return array<string,mixed> */
+private static function browser_blueprint_with_post_runtime( array $blueprint, array $post_runtime_blueprint ): array {
+	if ( empty( $post_runtime_blueprint ) ) {
+		return $blueprint;
+	}
+
+	$steps      = is_array( $blueprint['steps'] ?? null ) ? $blueprint['steps'] : array();
+	$post_steps = is_array( $post_runtime_blueprint['steps'] ?? null ) ? $post_runtime_blueprint['steps'] : array();
+	$merged     = array_merge( $blueprint, $post_runtime_blueprint );
+	$merged['steps'] = array_values( array_merge( $steps, $post_steps ) );
+
+	if ( isset( $blueprint['features'] ) && isset( $post_runtime_blueprint['features'] ) && is_array( $blueprint['features'] ) && is_array( $post_runtime_blueprint['features'] ) ) {
+		$merged['features'] = array_merge( $blueprint['features'], $post_runtime_blueprint['features'] );
+	}
+
+	return $merged;
+}
+
 /** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $runtime Runtime dependency specs. @return array<string,mixed> */
 private static function browser_blueprint_with_runtime( array $blueprint, array $runtime, array $playground = array() ): array {
 	$steps = is_array( $blueprint['steps'] ?? null ) ? $blueprint['steps'] : array();
