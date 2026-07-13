@@ -169,25 +169,28 @@ name: Run Agent Task (reusable)
 jobs:
   run-agent-task:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
-      job_status: ${{ steps.plan.outputs.job_status }}
-      transcript_json: ${{ steps.plan.outputs.transcript_json }}
-      transcript_summary: ${{ steps.plan.outputs.transcript_summary }}
-      engine_data_json: ${{ steps.plan.outputs.engine_data_json }}
-      credential_mode: ${{ steps.plan.outputs.credential_mode }}
-      declared_artifacts_json: ${{ steps.plan.outputs.declared_artifacts_json }}
+      job_status: ${{ steps.execute.outputs.job_status }}
+      transcript_json: ${{ steps.execute.outputs.transcript_json }}
+      transcript_summary: ${{ steps.execute.outputs.transcript_summary }}
+      engine_data_json: ${{ steps.execute.outputs.engine_data_json }}
+      credential_mode: ${{ steps.execute.outputs.credential_mode }}
+      declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
       - name: Resolve WP Codebox workflow ref
         id: workflow-ref
         env:
-          # `github.job_workflow_sha` is the commit SHA of THIS reusable workflow
+          # `github.workflow_sha` is the commit SHA of THIS reusable workflow
           # file, so the checked-out helper scripts always match the version of
           # run-agent-task.yml that is executing. `github.workflow_ref` must not be
           # used here: inside a reusable workflow it resolves to the caller's
           # top-level workflow ref, so its branch name (e.g. `trunk` for a caller
           # whose default branch is not `main`) gets used to check out
           # Automattic/wp-codebox and fails when that ref does not exist here.
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          JOB_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           ref="${JOB_WORKFLOW_SHA}"
           if [ -z "${ref}" ]; then
@@ -201,6 +204,23 @@ jobs:
           repository: Automattic/wp-codebox
           ref: ${{ steps.workflow-ref.outputs.ref }}
           path: .wp-codebox-workflow
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install WP Codebox runtime
+        working-directory: .wp-codebox-workflow
+        run: npm ci
+
+      - name: Checkout target workspace
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          path: workspace
+          token: ${{ github.token }}
+          persist-credentials: true
 
       - name: Build Codebox task request
         id: plan
@@ -245,6 +265,20 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/build-codebox-task-request.mjs
 
+      - name: Execute native agent task
+        id: execute
+        env:
+          AGENT_TASK_REQUEST_PATH: ${{ github.workspace }}/.codebox/agent-task-request.json
+          AGENT_TASK_WORKSPACE: ${{ github.workspace }}/workspace
+          WP_CODEBOX_WORKFLOW_ROOT: ${{ github.workspace }}/.wp-codebox-workflow
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
+          MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
+          MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
+          MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
+          MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
+        run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
+
       - name: Upload Codebox task request
         uses: actions/upload-artifact@v4
         with:
@@ -252,11 +286,14 @@ jobs:
           path: |
             .codebox/agent-task-request.json
             .codebox/agent-task-workflow-result.json
+            .codebox/native-agent-task-input.json
 
       - name: Upload Codebox task result
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codebox-agent-task-result-${{ github.run_id }}
-          path: .codebox/agent-task-workflow-result.json
+          path: |
+            .codebox/agent-task-workflow-result.json
+            workspace/.codebox/agent-task-artifacts
           if-no-files-found: ignore

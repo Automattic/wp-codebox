@@ -25,6 +25,12 @@ assert.match(workflow, /require_access_token:/)
 assert.doesNotMatch(workflow, /homeboy|require_app_token|require_homeboy_app_token|REQUIRE_HOMEBOY_APP_TOKEN|Extra-Chill\/homeboy-action|agent-task run-plan/i)
 assert.doesNotMatch(workflow, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref/i)
 assert.doesNotMatch(workflow, /datamachine-agent-ci|runtime-agent-full-run|Extra-Chill\/homeboy-extensions/)
+assert.match(workflow, /Install WP Codebox runtime/)
+assert.match(workflow, /Checkout target workspace/)
+assert.match(workflow, /Execute native agent task/)
+assert.match(workflow, /execute-native-agent-task\.mjs/)
+assert.match(workflow, /agent-task-artifacts/)
+assert.doesNotMatch(workflow, /steps\.plan\.outputs/)
 assert.doesNotMatch(publicWorkflowSurface, /datamachine|data machine|data-machine|agents api/i)
 assert.doesNotMatch(publicWorkflowSurface, /mount|component path|ability id|provider plugin/i)
 
@@ -38,8 +44,8 @@ assert.match(docs, /agent_bundle/)
 assert.match(docs, /runner_workspace/)
 assert.match(docs, /access_token_repos/)
 assert.match(docs, /require_access_token/)
-assert.match(docs, /implementation-specific\s+runtime\s+wiring,\s+workspace\s+adapters,\s+plugins,\s+and\s+model\s+setup\s+stay\s+behind\s+the\s+WP\s+Codebox\s+boundary/)
-assert.doesNotMatch(docs, /wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
+assert.match(docs, /runtime wiring,\s+workspace adapters, plugins, and model setup stay behind the WP\s+Codebox boundary/)
+assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
 const outputPath = join(tmp, "github-output.txt")
@@ -96,15 +102,83 @@ assert.equal(request.schema, "wp-codebox/agent-task-workflow-request/v1")
 assert.deepEqual(request, expectedRequest)
 assert.doesNotMatch(JSON.stringify(request), /homeboy|require_app_token|app_token_repos/i)
 
+await assert.rejects(readFile(resultPath, "utf8"), /ENOENT/)
+
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: {
+    ...process.env,
+    GITHUB_OUTPUT: outputPath,
+    AGENT_TASK_REQUEST_PATH: requestPath,
+    AGENT_TASK_WORKSPACE: tmp,
+    WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+  },
+})
+
 const result = JSON.parse(await readFile(resultPath, "utf8"))
-const expectedResult = JSON.parse(await readFile(new URL("../contracts/agent-task-workflow-result.fixture.json", import.meta.url), "utf8"))
 assert.equal(result.schema, "wp-codebox/agent-task-workflow-result/v1")
-assert.deepEqual(result, expectedResult)
+assert.equal(result.status, "skipped")
+assert.equal(result.runtime_input_path, ".codebox/native-agent-task-input.json")
+assert.deepEqual(result.verification, [])
 assert.doesNotMatch(JSON.stringify(result), /homeboy|agent-task-plan|run-plan/i)
+
+const liveRequest = {
+  ...request,
+  run_agent: true,
+  dry_run: false,
+  verification_commands: [{ command: "test -f agent-output.txt", description: "Verify the agent workspace write" }],
+}
+const fakeCliPath = join(tmp, "fake-codebox-cli.mjs")
+await writeFile(requestPath, `${JSON.stringify(liveRequest, null, 2)}\n`)
+await writeFile(fakeCliPath, `
+import { readFile, writeFile } from "node:fs/promises"
+const inputPath = process.argv[process.argv.indexOf("--input-file") + 1]
+const input = JSON.parse(await readFile(inputPath, "utf8"))
+if (input.task_input.runtime_task.ability !== "wp-codebox/run-runtime-package") process.exit(2)
+if (input.task_input.runtime_task.input.package.source !== "/workspace/${tmp.split("/").pop()}/bundles/example-agent") process.exit(3)
+if (!input.task_input.allowed_tools.includes("workspace-write")) process.exit(4)
+if (!input.task_input.sandbox_tool_policy.tools.some((tool) => tool.id === "create-github-pull-request" && tool.allowed)) process.exit(5)
+await writeFile("agent-output.txt", "agent wrote this workspace file\\n")
+process.stdout.write(JSON.stringify({
+  success: true,
+  outputs: {
+    artifact_result: {
+      result: {
+        outputs: {
+          runner_workspace_publication: {
+            schema: "wp-codebox/runner-workspace-publication-result/v1",
+            success: true,
+            status: "published",
+            pull_request: { url: "https://github.com/Automattic/example-target/pull/1" }
+          }
+        }
+      }
+    }
+  },
+  agent_task_run_result: { refs: { transcripts: [{ path: "transcript.json" }] } }
+}))
+`)
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: {
+    ...process.env,
+    GITHUB_OUTPUT: outputPath,
+    AGENT_TASK_REQUEST_PATH: requestPath,
+    AGENT_TASK_WORKSPACE: tmp,
+    WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+    WP_CODEBOX_CLI_PATH: fakeCliPath,
+  },
+})
+
+const liveResult = JSON.parse(await readFile(resultPath, "utf8"))
+assert.equal(liveResult.status, "succeeded")
+assert.equal(liveResult.verification[0].success, true)
+assert.equal(liveResult.publication.pull_request.url, "https://github.com/Automattic/example-target/pull/1")
+assert.equal(await readFile(join(tmp, "agent-output.txt"), "utf8"), "agent wrote this workspace file\n")
 
 const outputs = await readFile(outputPath, "utf8")
 assert.match(outputs, /job_status<<__WP_CODEBOX_OUTPUT__\nskipped\n__WP_CODEBOX_OUTPUT__/)
-assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\napp-token\n__WP_CODEBOX_OUTPUT__/)
+assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\nrunner-(provider|default)-credentials\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /request_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-request\.json\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-workflow-result\.json\n__WP_CODEBOX_OUTPUT__/)
 

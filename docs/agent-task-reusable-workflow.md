@@ -52,11 +52,14 @@ jobs:
     secrets: inherit
 ```
 
-Consumers provide product-level task inputs: the agent bundle, target repository,
-workspace publication request, verification commands, drift checks, artifact
-expectations, typed artifact declarations, and output projection. The workflow
-returns stable run outputs; implementation-specific runtime wiring, workspace
-adapters, plugins, and model setup stay behind the WP Codebox boundary.
+Consumers provide product-level task inputs: the selected runner recipe, agent
+bundle, target repository, workspace publication request, verification commands,
+drift checks, artifact expectations, typed artifact declarations, and output
+projection. The workflow checks out the target workspace, imports the selected
+native package, invokes its registered agent through the default chat workflow,
+runs the requested verification commands in that workspace, and returns the
+runtime and runner-publication result. Implementation-specific runtime wiring,
+workspace adapters, plugins, and model setup stay behind the WP Codebox boundary.
 
 ## Runner Recipe
 
@@ -87,6 +90,19 @@ which deletes this input.
 - `provider` and `model`: model selection for the recipe owner.
 - `dry_run`: validates the runner request without a live agent call.
 
+## Execution
+
+For a live run, the reusable workflow builds a native runtime-package task from
+`agent_bundle` and executes it with WP Codebox. The package importer registers
+the declared package before the package workflow invokes its default chat agent.
+The checked-out target repository is the runner workspace; its provider
+credentials and native workspace tools are available to the agent. The workflow
+then executes every `verification_commands` entry in that same workspace.
+
+Publication is owned by the runner workspace tool surface. Its returned branch,
+commit, and pull request data is preserved in the workflow result rather than
+being synthesized by the reusable workflow.
+
 ## Outputs
 
 - `job_status`: normalized terminal status.
@@ -95,6 +111,10 @@ which deletes this input.
 - `engine_data_json`: projected recipe outputs as one JSON object.
 - `credential_mode`: credential source selected for the run.
 - `declared_artifacts_json`: typed artifact declarations accepted for the run.
+
+The `codebox-agent-task-result-<run id>` artifact contains the executable task
+input, normalized runtime result, verification records, and runner-owned
+publication result. A request artifact alone is not a successful task result.
 
 The workflow is intentionally product-input-first. Consumers should model new
 behavior as workflow inputs instead of depending on worker filesystem paths,

@@ -103,39 +103,8 @@ const request = {
 }
 
 const runId = `${request.workload.id}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
-const status = !request.run_agent ? "skipped" : request.dry_run ? "dry-run" : "planned"
-const result = {
-  schema: "wp-codebox/agent-task-workflow-result/v1",
-  run_id: runId,
-  status,
-  request_path: ".codebox/agent-task-request.json",
-  transcript: {
-    artifact_name: request.artifacts.transcript_name,
-  },
-  artifacts: {
-    declarations: artifactDeclarations,
-    expected: request.artifacts.expected,
-    replay_bundle_name: request.artifacts.replay_bundle_name,
-  },
-  outputs: {
-    engine_data: {},
-    projections: request.outputs.projections,
-  },
-  access: {
-    credential_mode: request.access.require_access_token ? "app-token" : "default",
-  },
-}
-
 mkdirSync(".codebox", { recursive: true })
 writeFileSync(".codebox/agent-task-request.json", `${JSON.stringify(request, null, 2)}\n`)
-writeFileSync(".codebox/agent-task-workflow-result.json", `${JSON.stringify(result, null, 2)}\n`)
 
-output("job_status", status)
-output("transcript_json", request.artifacts.transcript_name)
-output("transcript_summary", `${request.workload.label}: ${status}`)
-output("engine_data_json", JSON.stringify(result.outputs.engine_data))
-output("credential_mode", result.access.credential_mode)
-output("declared_artifacts_json", JSON.stringify(artifactDeclarations))
-output("request_path", result.request_path)
-output("result_path", ".codebox/agent-task-workflow-result.json")
+output("request_path", ".codebox/agent-task-request.json")
 output("run_id", runId)
