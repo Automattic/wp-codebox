@@ -87,8 +87,8 @@ const request = {
     requires_pr: booleanEnv("SUCCESS_REQUIRES_PR"),
   },
   access: {
+    caller_repo: requiredString("CALLER_REPO").toLowerCase(),
     access_token_repos: repositoryList("ACCESS_TOKEN_REPOS"),
-    require_access_token: booleanEnv("REQUIRE_ACCESS_TOKEN"),
     allowed_repos: parseJson("ALLOWED_REPOS", [], "array"),
   },
   limits: {
@@ -115,6 +115,9 @@ if (request.access.allowed_repos.some((repository) => typeof repository !== "str
 request.access.allowed_repos = [...new Set(request.access.allowed_repos.map((repository) => repository.toLowerCase()))]
 request.access.access_token_repos = [...new Set(request.access.access_token_repos.map((repository) => repository.toLowerCase()))]
 request.target_repo = request.target_repo.toLowerCase()
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(request.access.caller_repo)) {
+  throw new Error("CALLER_REPO must be an OWNER/REPO value.")
+}
 if (!request.access.allowed_repos.includes(request.target_repo)) {
   throw new Error("ALLOWED_REPOS must explicitly include TARGET_REPO.")
 }
