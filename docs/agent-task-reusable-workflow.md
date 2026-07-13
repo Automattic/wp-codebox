@@ -61,6 +61,7 @@ runner token, so a fabricated publication result cannot satisfy the gate.
 - `transcript_json`: transcript artifact references when available.
 - `transcript_summary`: short transcript label.
 - `engine_data_json`: actual runtime output object.
+- `projected_outputs_json`: evaluated values from `output_projections`.
 - `credential_mode`: redacted credential source classification.
 - `declared_artifacts_json`: accepted typed artifact declarations.
 

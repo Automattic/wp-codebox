@@ -144,6 +144,8 @@ name: Run Agent Task (reusable)
         value: ${{ jobs.run-agent-task.outputs.transcript_summary }}
       engine_data_json:
         value: ${{ jobs.run-agent-task.outputs.engine_data_json }}
+      projected_outputs_json:
+        value: ${{ jobs.run-agent-task.outputs.projected_outputs_json }}
       credential_mode:
         value: ${{ jobs.run-agent-task.outputs.credential_mode }}
       declared_artifacts_json:
@@ -160,6 +162,7 @@ jobs:
       transcript_json: ${{ steps.execute.outputs.transcript_json }}
       transcript_summary: ${{ steps.execute.outputs.transcript_summary }}
       engine_data_json: ${{ steps.execute.outputs.engine_data_json }}
+      projected_outputs_json: ${{ steps.execute.outputs.projected_outputs_json }}
       credential_mode: ${{ steps.execute.outputs.credential_mode }}
       declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
