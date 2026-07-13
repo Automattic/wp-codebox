@@ -63,10 +63,6 @@ name: Run Agent Task (reusable)
         description: Comma-separated repositories for access-token scoping.
         type: string
         default: ""
-      require_access_token:
-        description: Whether the run requires the configured access token.
-        type: boolean
-        default: false
       allowed_repos:
         description: JSON array of repositories the run may access.
         type: string
@@ -125,7 +121,7 @@ name: Run Agent Task (reusable)
       MODEL_PROVIDER_SECRET_5:
         required: false
       ACCESS_TOKEN:
-        description: GitHub token for target-repository publication only; it is never used to fetch external packages.
+        description: Optional explicit GitHub token for an authorized cross-repository target. Same-repository publication uses the caller token.
         required: false
       EXTERNAL_PACKAGE_SOURCE_POLICY:
         description: Trusted versioned JSON policy authorizing external native package repositories and exact standalone .agent.json paths.
@@ -151,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Advance this only in a subsequent workflow commit after helper changes land.
-      WP_CODEBOX_HELPER_REVISION: 54c2f9a7bc3cd1fe20055d496c83efcfb99afb41
+      WP_CODEBOX_HELPER_REVISION: d9e329e7c3bb852b857870a26d8f3853feef751d
     permissions:
       contents: write
       pull-requests: write
@@ -206,6 +202,7 @@ jobs:
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
           COMPONENT_ID: ${{ inputs.component_id }}
           TARGET_REPO: ${{ inputs.target_repo }}
+          CALLER_REPO: ${{ github.repository }}
           PROMPT: ${{ inputs.prompt }}
           WRITABLE_PATHS: ${{ inputs.writable_paths }}
           PROVIDER: ${{ inputs.provider }}
@@ -220,7 +217,6 @@ jobs:
           DRIFT_CHECKS: ${{ inputs.drift_checks }}
           SUCCESS_REQUIRES_PR: ${{ inputs.success_requires_pr }}
           ACCESS_TOKEN_REPOS: ${{ inputs.access_token_repos }}
-          REQUIRE_ACCESS_TOKEN: ${{ inputs.require_access_token }}
           ALLOWED_REPOS: ${{ inputs.allowed_repos }}
           MAX_TURNS: ${{ inputs.max_turns }}
           TIME_BUDGET_MS: ${{ inputs.time_budget_ms }}
@@ -249,7 +245,7 @@ jobs:
           # Runner workspace tools resolve GitHub credentials from this standard
           # environment variable. It is never written to task inputs or artifacts.
           GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
-          ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
+          EXPLICIT_ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
           EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 

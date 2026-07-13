@@ -17,7 +17,6 @@
     "drift_checks": { "required": false, "type": "string", "default": "[]" },
     "success_requires_pr": { "required": false, "type": "boolean", "default": false },
     "access_token_repos": { "required": false, "type": "string", "default": "" },
-    "require_access_token": { "required": false, "type": "boolean", "default": false },
     "allowed_repos": { "required": false, "type": "string", "default": "[]" },
     "max_turns": { "required": false, "type": "number", "default": 12 },
     "time_budget_ms": { "required": false, "type": "number", "default": 600000 },

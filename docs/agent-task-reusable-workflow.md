@@ -18,7 +18,6 @@ jobs:
       success_requires_pr: true
       access_token_repos: Automattic/example-target
       allowed_repos: '["Automattic/example-target"]'
-      require_access_token: true
       output_projections: '{"pr_url":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url"}'
     secrets:
       EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
@@ -58,13 +57,17 @@ and [29281470159](https://github.com/Automattic/build-with-wordpress/actions/run
 - `success_requires_pr`: require a successful, published runner-workspace pull request for `target_repo`.
 - `access_token_repos`: comma-separated repositories available to the supplied access token.
 - `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
-- `require_access_token`: require the reusable workflow's `ACCESS_TOKEN` secret.
 - `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. Every projection must resolve.
 
 ## Access And Publication
 
-`ACCESS_TOKEN` is passed only as `GITHUB_TOKEN` to native agent execution and is
-not serialized into task input, result, or artifact data. GitHub runner tools
+For a target equal to the caller repository, the workflow passes the caller's
+built-in `github.token` as `GITHUB_TOKEN` to native agent execution. An
+`ACCESS_TOKEN` secret is not required in that case. For a target in another
+repository, `ACCESS_TOKEN` is required explicitly and must be scoped by both
+`access_token_repos` and `allowed_repos`. The caller token is never inferred to
+have cross-repository access. The effective token is not serialized into task
+input, result, or artifact data. GitHub runner tools
 receive the normalized `allowed_repos` policy explicitly through the runtime and
 fail closed for every PR, issue, and comment operation outside that set. The
 checkout does not persist credentials. Verification, dependency, and drift

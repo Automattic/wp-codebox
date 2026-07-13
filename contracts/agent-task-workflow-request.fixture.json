@@ -34,10 +34,10 @@
     "requires_pr": false
   },
   "access": {
+    "caller_repo": "automattic/example-target",
     "access_token_repos": [
       "automattic/example-target"
     ],
-    "require_access_token": false,
     "allowed_repos": [
       "automattic/example-target"
     ]
