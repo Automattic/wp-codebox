@@ -180,7 +180,7 @@ export async function applyRecipeRuntimeSetup(args: {
       type: stagedFile.type,
       source: stagedFile.source,
       target: stagedFile.target,
-      mode: stagedFile.mode,
+      mode: "readwrite",
       metadata: stagedFile.metadata,
     }))
     interruption?.throwIfInterrupted()
@@ -192,7 +192,7 @@ export async function applyRecipeRuntimeSetup(args: {
       type: stagedFile.type,
       source: stagedFile.source,
       target: stagedFile.target,
-      mode: stagedFile.mode,
+      mode: "readwrite" as const,
       metadata: stagedFile.metadata,
     })),
   ]

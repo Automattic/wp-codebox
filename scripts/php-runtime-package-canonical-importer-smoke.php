@@ -20,7 +20,7 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	return array( 'success' => true );
 }
 
-$source = realpath( __DIR__ . '/../tests/fixtures/wpsg-runtime-package' );
+$source = realpath( __DIR__ . '/../tests/fixtures/wpsg-runtime-package/.agent.json' );
 $executor = new WP_Codebox_Runtime_Package_Executor();
 $run = new ReflectionMethod( $executor, 'import_package_bundle' );
 $result = $run->invoke( $executor, array( 'package' => array( 'slug' => 'example', 'source' => $source ) ) );

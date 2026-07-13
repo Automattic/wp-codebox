@@ -7,7 +7,7 @@ jobs:
   run-agent-task:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"packages/example-agent","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"agents/example.agent.json","digest":"sha256-bytes-v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
@@ -32,8 +32,8 @@ publication data.
 
 ## Inputs
 
-- `external_package_source`: immutable external package descriptor with `repository`, full commit `revision`, package-relative `path`, and expected package-tree `sha256`.
-- `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["exact/package","packages/*"]}}`. `packages/*` authorizes descendants of `packages/` only; it does not authorize `packages-evil`. The policy is validated in runner memory, is never part of task input, and is not uploaded.
+- `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
+- `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
@@ -62,10 +62,12 @@ from task requests, runtime input, results, and upload artifacts, and is never
 passed to the agent. The selected descriptor is authorized against this policy
 both before persistence and immediately before host materialization.
 
-The external package mount is explicitly read-only inside the sandbox. The
-runtime applies read-only filesystem permissions after staging and verifies the
-descriptor SHA-256 again immediately before canonical package import; mutation
-or post-stage tampering fails execution.
+The external package is never mounted or copied into the Playground workspace.
+The runner verifies raw file bytes, passes them through a private bootstrap
+input, and the runtime re-hashes, decodes, validates, canonically imports, and
+unlinks a private ephemeral `.agent.json` before resolving agent tools. The
+private bytes are removed from the persisted runtime input and redacted from
+artifacts and results.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,

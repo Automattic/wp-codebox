@@ -54,15 +54,22 @@ final class WP_Codebox_Runtime_Package_Executor {
 		$package = is_array( $task['package'] ?? null ) ? $task['package'] : array();
 		$source  = $this->string_value( $package['source'] ?? '' );
 		$slug    = $this->string_value( $package['slug'] ?? '' );
+		$external_source = is_array( $package['external_source'] ?? null ) ? $package['external_source'] : array();
+		$expected_digest = $this->string_value( $external_source['digest'] ?? '' );
+		if ( ! empty( $package['bootstrap_imported'] ) ) {
+			$bootstrap = is_array( $GLOBALS['wp_codebox_private_runtime_package_import'] ?? null ) ? $GLOBALS['wp_codebox_private_runtime_package_import'] : array();
+			if ( ! hash_equals( $expected_digest, $this->string_value( $bootstrap['digest'] ?? '' ) ) || ! is_array( $bootstrap['imports'] ?? null ) ) {
+				return new WP_Error( 'wp_codebox_runtime_package_bootstrap_missing', 'Private runtime package import did not complete before agent availability.', array( 'status' => 400 ) );
+			}
+			return $bootstrap['imports'];
+		}
 		if ( '' === $source ) {
 			return new WP_Error( 'wp_codebox_runtime_package_source_missing', 'Runtime package execution requires package.source.', array( 'status' => 400 ) );
 		}
-		if ( ! is_readable( rtrim( $source, '/\\' ) . '/.agent.json' ) ) {
-			return new WP_Error( 'wp_codebox_runtime_package_native_agent_missing', 'Runtime package source must contain a standalone .agent.json file.', array( 'status' => 400 ) );
+		if ( ! is_readable( $source ) || ! str_ends_with( $source, '.agent.json' ) ) {
+			return new WP_Error( 'wp_codebox_runtime_package_native_agent_missing', 'Runtime package source must identify one standalone .agent.json file.', array( 'status' => 400 ) );
 		}
-		$external_source = is_array( $package['external_source'] ?? null ) ? $package['external_source'] : array();
-		$expected_digest = $this->string_value( $external_source['sha256'] ?? '' );
-		if ( '' !== $expected_digest && ! hash_equals( strtolower( $expected_digest ), $this->package_directory_sha256( $source ) ) ) {
+		if ( '' !== $expected_digest && ! hash_equals( $expected_digest, 'sha256-bytes-v1:' . hash_file( 'sha256', $source ) ) ) {
 			return new WP_Error( 'wp_codebox_runtime_package_digest_mismatch', 'Runtime package content changed after staging and before import.', array( 'status' => 400 ) );
 		}
 
@@ -94,25 +101,6 @@ final class WP_Codebox_Runtime_Package_Executor {
 		}
 		$result = wp_agent_import_runtime_bundles( $bundle_specs, array( 'owner_id' => $this->owner_id() ) );
 		return is_array( $result ) ? $result : new WP_Error( 'wp_codebox_runtime_package_importer_invalid_result', 'Canonical wp_agent_import_runtime_bundles() returned an invalid result.', array( 'status' => 500 ) );
-	}
-
-	private function package_directory_sha256( string $root ): string {
-		$root = rtrim( $root, '/\\' );
-		$files = array();
-		$iterator = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::LEAVES_ONLY );
-		foreach ( $iterator as $file ) {
-			if ( $file->isLink() || ! $file->isFile() ) {
-				return '';
-			}
-			$path = str_replace( '\\', '/', substr( $file->getPathname(), strlen( $root ) + 1 ) );
-			$files[ $path ] = hash_file( 'sha256', $file->getPathname() );
-		}
-		ksort( $files, SORT_STRING );
-		$context = hash_init( 'sha256' );
-		foreach ( $files as $path => $digest ) {
-			hash_update( $context, $path . "\0" . $digest . "\n" );
-		}
-		return hash_final( $context );
 	}
 
 	/** @param array<string,mixed> $task Runtime package task. @return array<string,mixed>|WP_Error */

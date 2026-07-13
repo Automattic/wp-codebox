@@ -83,6 +83,8 @@ function wp_get_agent($slug) {
 }
 
 function wp_get_ability($name) {
+    $GLOBALS['ability_resolved'] = true;
+    if (isset($GLOBALS['private_import']) && (!($GLOBALS['private_import']['before_ability'] ?? false) || !hash_equals((string) ($GLOBALS['expected_private_bytes'] ?? ''), (string) ($GLOBALS['private_import']['bytes'] ?? '')) || file_exists((string) ($GLOBALS['private_import']['source'] ?? '')))) { return null; }
     if ('agents/chat' !== $name) { return null; }
     return new class {
         public function execute(array $input) {
@@ -149,5 +151,37 @@ assert.equal(agentsApiMeta.handler, "wp-agent-default-chat-handler")
 // can source them from agent config alone when a request omits them.
 assert.match(sandboxAgentCode, /'provider' => \$configured_provider/)
 assert.match(sandboxAgentCode, /'model' => \$configured_model/)
+
+// A private standalone package is imported before the runtime resolves an
+// ability. Its ephemeral source must be gone by the time the agent turn starts.
+const privatePackageBytes = Buffer.from('{"schema":"agents/agent/v1","slug":"private-agent","label":"Café"}\n')
+const privatePackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(privatePackageBytes).digest("hex"))}`
+const bootstrapCode = await resolveSandboxTaskCode({
+  task: "Say hello",
+  agent: "wp-codebox-sandbox",
+  runtimeTask: {
+    ability: "agents/chat",
+    input: {
+      package: { slug: "private-agent", source: "private-runtime-bootstrap", bootstrap_imported: true, external_source: { digest: privatePackageDigest } },
+    },
+  },
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+const bootstrapOutput = execFileSync("php", ["-r", `${phpPreamble}
+function wp_agent_import_runtime_bundles($bundles, $options) {
+    $source = $bundles[0]['source'] ?? '';
+    $GLOBALS['private_import'] = array('before_ability' => !isset($GLOBALS['ability_resolved']), 'bytes' => is_file($source) ? file_get_contents($source) : false, 'source' => $source);
+    return array(array('success' => true, 'slug' => $bundles[0]['slug'] ?? ''));
+}
+$GLOBALS['expected_private_bytes'] = base64_decode((string) getenv('WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES'));
+${bootstrapCode}`], {
+  encoding: "utf8",
+  env: { ...process.env, WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES: privatePackageBytes.toString("base64") },
+})
+const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { success?: boolean, result?: unknown } }
+assert.equal(bootstrapParsed.agent_runtime?.success, true)
+assert.doesNotMatch(bootstrapCode, new RegExp(privatePackageBytes.toString("base64")))
+assert.match(bootstrapCode, /wp_codebox_import_private_runtime_agent_package/)
+assert.ok(bootstrapCode.indexOf("wp_codebox_import_private_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
 
 console.log("agent-no-data-machine-loop: native agents/chat loop turn ran without Data Machine")

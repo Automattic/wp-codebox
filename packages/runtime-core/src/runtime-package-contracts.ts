@@ -18,7 +18,7 @@ export interface RuntimePackageExternalSource {
   repository: string
   revision: string
   path: string
-  sha256: string
+  digest: string
 }
 
 export interface RuntimePackageWorkflowDescriptor {
@@ -114,8 +114,8 @@ function runtimePackageExternalSource(value: unknown): RuntimePackageExternalSou
   const repository = stringValue(value.repository)
   const revision = stringValue(value.revision)
   const path = stringValue(value.path)
-  const sha256 = stringValue(value.sha256)
-  return repository && revision && path && sha256 ? { repository, revision, path, sha256 } : undefined
+  const digest = stringValue(value.digest)
+  return repository && revision && path && digest ? { repository, revision, path, digest } : undefined
 }
 
 export function validateRuntimePackageTask(value: unknown): RuntimePackageTaskValidationResult {

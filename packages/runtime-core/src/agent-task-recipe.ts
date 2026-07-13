@@ -567,7 +567,6 @@ function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles
     stagedFiles.push({
       source: localSource,
       target: source,
-      mode: "readonly",
     })
     seenTargets.add(source)
   }
@@ -583,7 +582,7 @@ function stagedRuntimePackageSources(runtimeTask: AgentTaskRunInput["runtime_tas
   const localSource = localAgentBundleSource(source, roots)
   if (!localSource) return []
 
-  return [{ source: localSource, target: source, mode: "readonly" }]
+  return [{ source: localSource, target: source }]
 }
 
 function localAgentBundleSource(source: string, roots: string[]): string {

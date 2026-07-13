@@ -4,7 +4,7 @@ name: Run Agent Task (reusable)
   workflow_call:
     inputs:
       external_package_source:
-        description: JSON descriptor with repository, immutable revision, package-relative path, and SHA-256 digest.
+        description: "JSON descriptor for exactly one standalone .agent.json file: repository, immutable revision, file path, and sha256-bytes-v1 digest."
         type: string
         required: true
       workload_id:
@@ -128,7 +128,7 @@ name: Run Agent Task (reusable)
         description: GitHub token with access to every repository in access_token_repos.
         required: false
       EXTERNAL_PACKAGE_SOURCE_POLICY:
-        description: Trusted versioned JSON policy authorizing external native package repositories and paths.
+        description: Trusted versioned JSON policy authorizing external native package repositories and exact standalone .agent.json paths.
         required: true
     outputs:
       job_status:

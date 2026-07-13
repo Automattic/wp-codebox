@@ -200,18 +200,7 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   }
   await flushDirectories()
   await flushFileBatch()
-  if (mount.mode === "readonly") {
-    await lockMaterializedMountReadOnly(server, mount.target)
-  }
-
   return { materialized, created, skipped }
-}
-
-async function lockMaterializedMountReadOnly(server: PlaygroundCliServer, target: string): Promise<void> {
-  const response = await server.playground.run({ code: hostMountReadOnlyPhp(target) })
-  assertPlaygroundResponseOk("playground-staged-input-readonly", response)
-  const parsed = parseMaterializationJson<{ schema?: string; locked?: boolean }>(response.text, "wp-codebox/host-mount-readonly/v1", "playground-staged-input-readonly")
-  if (parsed.locked !== true) throw new Error(`Staged input mount could not be made read-only in the sandbox: ${target}`)
 }
 
 async function createHostMountDirectories(server: PlaygroundCliServer, directories: string[]): Promise<{ created: number; skipped: number }> {
@@ -496,28 +485,6 @@ foreach (($payload['directories'] ?? array()) as $directory) {
     }
 }
 echo json_encode(array('schema' => 'wp-codebox/host-mount-directory-materialization/v1', 'created' => $created, 'skipped' => $skipped, 'missing' => $missing, 'unreadable' => $unreadable, 'unresolved' => $unresolved), JSON_UNESCAPED_SLASHES);
-`
-}
-
-function hostMountReadOnlyPhp(target: string): string {
-  const payload = JSON.stringify(JSON.stringify({ target }))
-  return `<?php
-$payload = json_decode(${payload}, true);
-$root = (string) ($payload['target'] ?? '');
-$locked = '' !== $root && (is_file($root) || is_dir($root));
-if ($locked && is_dir($root)) {
-    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
-    foreach ($iterator as $entry) {
-        if ($entry->isLink() || !chmod($entry->getPathname(), $entry->isDir() ? 0555 : 0444)) {
-            $locked = false;
-            break;
-        }
-    }
-}
-if ($locked && !chmod($root, is_dir($root) ? 0555 : 0444)) {
-    $locked = false;
-}
-echo json_encode(array('schema' => 'wp-codebox/host-mount-readonly/v1', 'locked' => $locked), JSON_UNESCAPED_SLASHES);
 `
 }
 

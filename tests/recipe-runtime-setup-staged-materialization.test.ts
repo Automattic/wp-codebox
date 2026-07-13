@@ -69,7 +69,7 @@ const runtime = {
         type: "directory",
         source: "/tmp/host-bundle",
         target: "/workspace/example/bundles/runtime-agent",
-        mode: "readonly",
+        mode: "readwrite",
         metadata: { kind: "runtime-package-source" },
       },
     ])

@@ -11,6 +11,7 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
+const PRIVATE_RUNTIME_AGENT_BYTES = "WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES"
 
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
@@ -60,7 +61,7 @@ function safeEnvironment(extra = {}) {
 }
 
 function agentEnvironment() {
-  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN"].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
+  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", PRIVATE_RUNTIME_AGENT_BYTES].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
 }
 
 function command(command, args, cwd, env = safeEnvironment()) {
@@ -187,7 +188,6 @@ const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_
 const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.env.EXTERNAL_PACKAGE_SOURCE_POLICY))
 const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
 const packageSlug = basename(externalPackageSource.path)
-const runtimePackageSource = `/workspace/external-native-packages/${packageSlug}`
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
@@ -211,6 +211,11 @@ if (accessError) {
 const materializedPackage = request.run_agent && !request.dry_run
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
   : undefined
+const privatePackageBytes = materializedPackage?.bytes.toString("base64")
+if (privatePackageBytes) {
+  secretValues.push(privatePackageBytes)
+  process.env[PRIVATE_RUNTIME_AGENT_BYTES] = privatePackageBytes
+}
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -223,7 +228,7 @@ const taskInput = {
     target: { kind: "repo", materialization: { root: workspace } },
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
-    ...(materializedPackage ? { stagedFiles: [{ source: materializedPackage.source, target: runtimePackageSource, mode: "readonly", metadata: { kind: "external-native-package", sha256: externalPackageSource.sha256 } }] } : {}),
+    ...(privatePackageBytes ? { runtime_env: { [PRIVATE_RUNTIME_AGENT_BYTES]: privatePackageBytes } } : {}),
     provider: request.model?.provider,
     model: request.model?.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
@@ -240,7 +245,7 @@ const taskInput = {
       ability: "wp-codebox/run-runtime-package",
       input: {
         schema: "wp-codebox/runtime-package-task/v1",
-        package: { slug: packageSlug, source: runtimePackageSource, external_source: externalPackageSource },
+        package: { slug: packageSlug, source: "private-runtime-bootstrap", external_source: externalPackageSource, bootstrap_imported: true },
         workflow: { id: "agents/chat" },
         input: {
           prompt: request.prompt,
@@ -263,6 +268,13 @@ await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
 if (request.run_agent && !request.dry_run) {
   execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment())
+}
+
+// The byte channel exists only while the runtime boots. Persisted workflow input
+// retains the descriptor but never the external package contents.
+if (privatePackageBytes) {
+  delete taskInput.task_input.runtime_env
+  await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 }
 
 let runtimeResult = {}
