@@ -61,11 +61,13 @@ adapters, plugins, and model setup stay behind the WP Codebox boundary.
 ## Runner Recipe
 
 `runner_recipe` is a temporary optional input while callers transition away from
-the runner-recipe contract. When omitted, it is absent from the planned request.
-Merge the transition in this order: this bridge, Docs Agent caller cleanup
-([docs-agent#117](https://github.com/Automattic/docs-agent/pull/117)), then
-[wp-codebox#1751](https://github.com/Automattic/wp-codebox/pull/1751), which
-deletes this input.
+the runner-recipe contract. It may be omitted only for an explicit
+`run_agent: false` skipped result or `dry_run: true` dry-run result. A live
+`run_agent: true` request without a recipe fails closed until the executable
+[wp-codebox#1751](https://github.com/Automattic/wp-codebox/pull/1751) workflow
+lands. Merge the transition in this order: this bridge, Docs Agent caller cleanup
+([docs-agent#117](https://github.com/Automattic/docs-agent/pull/117)), then #1751,
+which deletes this input.
 
 ## Inputs
 

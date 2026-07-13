@@ -43,6 +43,13 @@ function output(name, value) {
 
 const artifactDeclarations = parseJson("ARTIFACT_DECLARATIONS", [], "array")
 const runnerRecipe = optionalString("RUNNER_RECIPE")
+const runAgent = booleanEnv("RUN_AGENT")
+const dryRun = booleanEnv("DRY_RUN")
+
+if (!runnerRecipe && runAgent && !dryRun) {
+  throw new Error("RUNNER_RECIPE may be omitted only when RUN_AGENT=false or DRY_RUN=true. The executable workflow in wp-codebox PR #1751 must land before a live agent run can omit it.")
+}
+
 const request = {
   schema: "wp-codebox/agent-task-workflow-request/v1",
   ...(runnerRecipe ? { runner_recipe: runnerRecipe } : {}),
@@ -91,12 +98,12 @@ const request = {
     projections: parseJson("OUTPUT_PROJECTIONS", {}, "object"),
   },
   callback_data: parseJson("CALLBACK_DATA", {}, "object"),
-  run_agent: booleanEnv("RUN_AGENT"),
-  dry_run: booleanEnv("DRY_RUN"),
+  run_agent: runAgent,
+  dry_run: dryRun,
 }
 
 const runId = `${request.workload.id}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
-const status = request.run_agent && !request.dry_run ? "planned" : "skipped"
+const status = !request.run_agent ? "skipped" : request.dry_run ? "dry-run" : "planned"
 const result = {
   schema: "wp-codebox/agent-task-workflow-result/v1",
   run_id: runId,
