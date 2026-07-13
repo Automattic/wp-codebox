@@ -13,6 +13,15 @@ const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 const PRIVATE_RUNTIME_AGENT_PACKAGE_FD = "WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_FD"
 const PRIVATE_PACKAGE_MAGIC = Buffer.from("WPCBPKG1", "ascii")
+let activePrivatePackageBytes
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    activePrivatePackageBytes?.fill(0)
+    activePrivatePackageBytes = undefined
+    process.exit(signal === "SIGINT" ? 130 : 143)
+  })
+}
 
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
@@ -238,6 +247,7 @@ const materializedPackage = request.run_agent && !request.dry_run
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
   : undefined
 let privatePackageBytes = materializedPackage?.bytes
+activePrivatePackageBytes = privatePackageBytes
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -293,6 +303,7 @@ if (request.run_agent && !request.dry_run) {
   } finally {
     privatePackageBytes?.fill(0)
     privatePackageBytes = undefined
+    activePrivatePackageBytes = undefined
   }
 }
 

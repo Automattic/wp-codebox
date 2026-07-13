@@ -8,6 +8,13 @@ const MAX_PRIVATE_PACKAGE_BYTES = 1024 * 1024
 
 let privatePackagePath = ""
 
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    clearPrivateRuntimeAgentPackage()
+    process.exit(signal === "SIGINT" ? 130 : 143)
+  })
+}
+
 export function privateRuntimeAgentPackagePath(): string {
   return privatePackagePath || process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_PATH || ""
 }
