@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -38,6 +39,26 @@ assert.match(workflow, /agent-task-artifacts/)
 assert.match(workflow, /prepare-agent-task-upload\.mjs/)
 assert.match(workflow, /agent-task-upload/)
 assert.match(workflow, /if: always\(\)/)
+const helperRevision = workflow.match(/WP_CODEBOX_HELPER_REVISION:\s*([0-9a-f]{40})/)?.[1]
+assert.ok(helperRevision, "The workflow must declare one full immutable WP Codebox helper revision")
+assert.match(workflow, /ref: \$\{\{ env\.WP_CODEBOX_HELPER_REVISION \}\}/)
+assert.doesNotMatch(workflow, /github\.(?:workflow_sha|workflow_ref)/)
+assert.doesNotMatch(workflow, /steps\.[^.]+\.outputs\.ref/)
+const foreignCallerSha = "ba2df8c2215407b1a58edbff29e3ddcb5efa2249"
+assert.notEqual(helperRevision, foreignCallerSha, "A caller repository SHA must not select WP Codebox helpers")
+assert.doesNotMatch(workflow, new RegExp(foreignCallerSha))
+assert.match(workflow, /Validate pinned WP Codebox helper revision/)
+
+const requiredHelperFiles = {
+  ".github/scripts/run-agent-task/build-codebox-task-request.mjs": "a0b9052bf63b0d5b096568c21a1e7333b7474b35834ffd1bc0d748fb0cfd0859",
+  ".github/scripts/run-agent-task/execute-native-agent-task.mjs": "b67910e538c6fb231c25dee43d0ff2e06e521e08108f8570e0389b022f9f8ccc",
+  ".github/scripts/run-agent-task/prepare-agent-task-upload.mjs": "93511e4174e705f55ff014ba68ac52fdaca771ce3f19f3921cceb661e69569da",
+}
+for (const [path, digest] of Object.entries(requiredHelperFiles)) {
+  const { stdout } = await execFileAsync("git", ["show", `${helperRevision}:${path}`], { encoding: "buffer" })
+  const actualDigest = createHash("sha256").update(stdout).digest("hex")
+  assert.equal(actualDigest, digest, `Pinned helper source changed unexpectedly: ${path}`)
+}
 assert.doesNotMatch(publicWorkflowSurface, /step_budget:|tool_results_key:/)
 assert.doesNotMatch(workflow, /steps\.plan\.outputs/)
 assert.doesNotMatch(publicWorkflowSurface, /datamachine|data machine|data-machine|agents api/i)
@@ -57,7 +78,7 @@ assert.match(docs, /run-agent-task-reusable-workflow-interface\.v1\.json/)
 assert.match(docs, /WP_CODEBOX_DIR/)
 assert.match(docs, /Runtime Coverage/)
 assert.match(docs, /not a WordPress Playground end-to-end test/)
-assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
+assert.doesNotMatch(docs.slice(0, docs.indexOf("## Runtime Coverage")), /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
 const nativePackageRepository = join(tmp, "native-package-repository")

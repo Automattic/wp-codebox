@@ -149,6 +149,9 @@ name: Run Agent Task (reusable)
 jobs:
   run-agent-task:
     runs-on: ubuntu-latest
+    env:
+      # Advance this only in a subsequent workflow commit after helper changes land.
+      WP_CODEBOX_HELPER_REVISION: 54c2f9a7bc3cd1fe20055d496c83efcfb99afb41
     permissions:
       contents: write
       pull-requests: write
@@ -161,29 +164,20 @@ jobs:
       credential_mode: ${{ steps.execute.outputs.credential_mode }}
       declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
-      - name: Resolve WP Codebox workflow ref
-        id: workflow-ref
-        env:
-          # `github.workflow_sha` is the commit SHA of THIS reusable workflow
-          # file, so the checked-out helper scripts always match the version of
-          # run-agent-task.yml that is executing. `github.workflow_ref` must not be
-          # used here: inside a reusable workflow it resolves to the caller's
-          # top-level workflow ref, so its branch name (e.g. `trunk` for a caller
-          # whose default branch is not `main`) gets used to check out
-          # Automattic/wp-codebox and fails when that ref does not exist here.
-          JOB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      - name: Validate pinned WP Codebox helper revision
         run: |
-          ref="${JOB_WORKFLOW_SHA}"
-          if [ -z "${ref}" ]; then
-            ref="main"
+          if ! [[ "${WP_CODEBOX_HELPER_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "WP_CODEBOX_HELPER_REVISION must be a full lowercase Git commit SHA" >&2
+            exit 1
           fi
-          printf 'ref=%s\n' "${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout WP Codebox workflow helpers
         uses: actions/checkout@v4
         with:
           repository: Automattic/wp-codebox
-          ref: ${{ steps.workflow-ref.outputs.ref }}
+          # This checkout fetches the exact immutable helper source and verifies
+          # its reachability independently of the caller's workflow revision.
+          ref: ${{ env.WP_CODEBOX_HELPER_REVISION }}
           path: .wp-codebox-workflow
 
       - name: Set up Node.js
