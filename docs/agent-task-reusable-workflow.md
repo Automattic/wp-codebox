@@ -97,20 +97,13 @@ input, secret, or output expectation.
 ## Compatibility
 
 This removes the previously exposed `runner_recipe`, `context_repositories`,
-`success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs. They were serialized without a generic WP
-Codebox execution primitive, so retaining them would have presented inert data
-as a supported contract. Callers must migrate checks to executable
-`validation_dependencies`, `verification_commands`, or `drift_checks`; context
-and artifact preparation remain caller-workflow responsibilities. This is an
-intentional exposed-workflow breaking change.
-
-## Docs Agent Merge Order
-
-The current Docs Agent `maintain-docs.yml` still passes removed inputs. This PR
-depends on a prior Docs Agent caller-contract preparation commit that removes
-those inputs and expresses only executable checks through this workflow. Merge
-that caller preparation first, then merge this workflow change. Until the
-preparation lands, this PR is intentionally not mergeable.
+`workspace_contract_checks`, `actions_artifact_downloads`,
+`success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs.
+They were serialized without a generic WP Codebox execution primitive, so
+retaining them would have presented inert data as a supported contract. Callers
+must migrate checks to executable `validation_dependencies`,
+`verification_commands`, or `drift_checks`; context and artifact preparation
+remain caller-workflow responsibilities. This is an intentional exposed-workflow breaking change.
 
 ## Upload safety limits
 
