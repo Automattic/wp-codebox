@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile)
 
 await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   const packagePath = join(repository, "agents", "naïve.agent.json")
-  const bytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"naive-agent","instruction":"café"}}\n', "utf8")
+  const bytes = await readFile(new URL("./fixtures/external-native-package/flat-agent.agent.json", import.meta.url))
   await mkdir(join(repository, "agents"), { recursive: true })
   await mkdir(join(repository, "agents", "legacy.agent.json"), { recursive: true })
   await writeFile(packagePath, bytes)
@@ -38,8 +38,8 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   assert.equal(materialized.descriptor.digest, descriptor.digest)
   assert.deepEqual(materialized.identity, { slug: "naive-agent" })
   assert.deepEqual(canonicalExternalNativeAgentIdentity(bytes), { slug: "naive-agent" })
-  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema":"agents/agent/v1","slug":"caller-controlled"}')), /canonical agent\.agent_slug identity/)
-  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"native-agent"},"package_slug":"caller-controlled"}')), /ambiguous agent identities/)
+  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema_version":1,"bundle_slug":"native-agent","slug":"caller-controlled"}')), /canonical agent\.agent_slug identity/)
+  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema_version":1,"bundle_slug":"native-agent","agent":{"agent_slug":"native-agent"},"package_slug":"caller-controlled"}')), /ambiguous agent identities/)
 
   await assert.rejects(materializeExternalNativePackage({ ...descriptor, digest: `sha256-bytes-v1:${"b".repeat(64)}` }, { policy, remote: repository }), /byte digest does not match/)
   await assert.rejects(materializeExternalNativePackage({ ...descriptor, revision: "main" }, { policy, remote: repository }), /immutable 40-character commit/)
@@ -51,5 +51,23 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   assert.throws(() => parseExternalPackageSourcePolicy(JSON.stringify({ version: 1, repositories: { [descriptor.repository]: ["agents/*"] } })), /exact standalone/)
   assert.throws(() => parseExternalPackageSourcePolicy('{'), /valid JSON/)
 })
+
+const docsAgentDirectory = process.env.DOCS_AGENT_DIR
+if (docsAgentDirectory) {
+  const packagePath = join(docsAgentDirectory, "bundles", "technical-docs-agent", "native", "technical-docs-maintenance-agent.agent.json")
+  const bytes = await readFile(packagePath)
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: docsAgentDirectory })
+  const descriptor = {
+    repository: "automattic/docs-agent",
+    revision: stdout.trim(),
+    path: "bundles/technical-docs-agent/native/technical-docs-maintenance-agent.agent.json",
+    digest: sha256BytesV1(bytes),
+  }
+  const policy = parseExternalPackageSourcePolicy(JSON.stringify({ version: 1, repositories: { [descriptor.repository]: [descriptor.path] } }))
+  const materialized = await materializeExternalNativePackage(descriptor, { policy, remote: docsAgentDirectory })
+  assert.deepEqual(materialized.identity, { slug: "technical-docs-maintenance-agent" })
+  assert.deepEqual(materialized.bytes, bytes)
+  console.log("Docs Agent native package materialization ok")
+}
 
 console.log("external native package materialization ok")

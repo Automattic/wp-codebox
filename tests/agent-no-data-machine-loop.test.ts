@@ -23,6 +23,9 @@
 
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
+import { canonicalExternalNativeAgentIdentity } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 
 // No `provider` is supplied, so the generated provider-validation short-circuits
@@ -169,7 +172,11 @@ assert.match(sandboxAgentCode, /'model' => \$configured_model/)
 
 // A public standalone package is embedded in the runtime recipe, imported before
 // ability resolution, and its importer-only source is removed before tools run.
-const publicPackageBytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"public-agent","label":"Café"}}\n')
+const docsAgentDirectory = process.env.DOCS_AGENT_DIR
+const publicPackageBytes = docsAgentDirectory
+  ? await readFile(join(docsAgentDirectory, "bundles", "technical-docs-agent", "native", "technical-docs-maintenance-agent.agent.json"))
+  : await readFile(new URL("./fixtures/external-native-package/flat-agent.agent.json", import.meta.url))
+const publicAgentSlug = canonicalExternalNativeAgentIdentity(publicPackageBytes).slug
 const publicPackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(publicPackageBytes).digest("hex"))}`
 const bootstrapCode = await resolveSandboxTaskCode({
   task: "Say hello",
@@ -198,7 +205,7 @@ const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { succe
 assert.equal(bootstrapParsed.agent_runtime?.success, true, JSON.stringify(bootstrapParsed))
 assert.equal(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.external_package_imported, true, "decoded public bytes must reach the canonical importer")
 assert.equal((bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.registered_config as { source?: string } | undefined)?.source, "canonical-importer", "canonical importer must register the declared package agent")
-assert.deepEqual(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.ability_invocations, ["wp-codebox/run-runtime-package", "agents/chat:public-agent"], "the imported identity must be selected after canonical import")
+assert.deepEqual(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.ability_invocations, ["wp-codebox/run-runtime-package", `agents/chat:${publicAgentSlug}`], "the imported identity must be selected after canonical import")
 assert.match(bootstrapCode, new RegExp(publicPackageBytes.toString("base64")))
 assert.match(bootstrapCode, /wp_codebox_import_external_runtime_agent_package/)
 assert.ok(bootstrapCode.indexOf("wp_codebox_import_external_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
@@ -212,7 +219,7 @@ ${bootstrapCode}`], {
 const failedImport = JSON.parse(failedImportOutput) as { agent_runtime?: { success?: boolean } }
 assert.equal(failedImport.agent_runtime?.success, false, "Import failure must stop before the agent loop starts")
 
-const ambiguousPackageBytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"public-agent"},"package_slug":"caller-controlled"}\n')
+const ambiguousPackageBytes = Buffer.from('{"schema_version":1,"bundle_slug":"public-agent","agent":{"agent_slug":"public-agent"},"package_slug":"caller-controlled"}\n')
 const ambiguousPackageDigest = await import("node:crypto").then(({ createHash }) => `sha256-bytes-v1:${createHash("sha256").update(ambiguousPackageBytes).digest("hex")}`)
 const ambiguousPackageCode = await resolveSandboxTaskCode({
   task: "Say hello",

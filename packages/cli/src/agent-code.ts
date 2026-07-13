@@ -233,7 +233,7 @@ function wp_codebox_import_external_runtime_agent_package(array $runtime_task): 
         $decoded = json_decode($bytes, true);
         $agent = is_array($decoded['agent'] ?? null) ? $decoded['agent'] : array();
         $agent_slug = (string) ($agent['agent_slug'] ?? '');
-        if (!is_array($decoded) || array_is_list($decoded) || JSON_ERROR_NONE !== json_last_error() || 'agents/agent/v1' !== ($decoded['schema'] ?? null) || !preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $agent_slug) || isset($decoded['slug']) || isset($decoded['package_slug']) || isset($decoded['bundle_slug']) || isset($decoded['agents']) || isset($agent['slug'])) {
+        if (!is_array($decoded) || array_is_list($decoded) || JSON_ERROR_NONE !== json_last_error() || 1 !== ($decoded['schema_version'] ?? null) || !is_string($decoded['bundle_slug'] ?? null) || !preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $decoded['bundle_slug']) || !preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $agent_slug) || isset($decoded['slug']) || isset($decoded['agent_slug']) || isset($decoded['package_slug']) || isset($decoded['agents']) || isset($agent['slug'])) {
             return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_json_invalid', 'message' => 'Public external runtime package must declare exactly one canonical agent.agent_slug identity.'));
         }
         if (!function_exists('wp_agent_import_runtime_bundles')) {

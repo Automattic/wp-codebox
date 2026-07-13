@@ -9,6 +9,7 @@ const COMMIT = /^[0-9a-f]{40}$/i
 const DIGEST = /^[0-9a-f]{64}$/i
 const DIGEST_SCHEME = "sha256-bytes-v1"
 const MAX_PACKAGE_BYTES = 1024 * 1024
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const string = (value) => typeof value === "string" ? value.trim() : ""
 
 export function canonicalExternalNativeAgentIdentity(bytes) {
@@ -18,14 +19,14 @@ export function canonicalExternalNativeAgentIdentity(bytes) {
   } catch {
     throw new Error("External native package must contain valid UTF-8 JSON.")
   }
-  if (!packageDocument || typeof packageDocument !== "object" || Array.isArray(packageDocument) || packageDocument.schema !== "agents/agent/v1") {
-    throw new Error("External native package must use the canonical agents/agent/v1 schema.")
+  if (!packageDocument || typeof packageDocument !== "object" || Array.isArray(packageDocument) || packageDocument.schema_version !== 1 || !SLUG.test(packageDocument.bundle_slug)) {
+    throw new Error("External native package must use the canonical flat schema_version 1 and bundle_slug contract.")
   }
   const agent = packageDocument.agent
-  if (!agent || typeof agent !== "object" || Array.isArray(agent) || typeof agent.agent_slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agent.agent_slug)) {
+  if (!agent || typeof agent !== "object" || Array.isArray(agent) || typeof agent.agent_slug !== "string" || !SLUG.test(agent.agent_slug)) {
     throw new Error("External native package must declare exactly one canonical agent.agent_slug identity.")
   }
-  if (["slug", "package_slug", "bundle_slug", "agents"].some((field) => Object.hasOwn(packageDocument, field)) || Object.hasOwn(agent, "slug")) {
+  if (["slug", "agent_slug", "package_slug", "agents"].some((field) => Object.hasOwn(packageDocument, field)) || Object.hasOwn(agent, "slug")) {
     throw new Error("External native package contains ambiguous agent identities.")
   }
   return { slug: agent.agent_slug }

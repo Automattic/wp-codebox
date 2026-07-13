@@ -65,8 +65,9 @@ both before persistence and immediately before host materialization.
 The source fetch receives no repository, publication, provider, or GitHub token.
 Public package bytes are verified against the immutable descriptor, encoded in
 the normal in-memory runtime recipe, and decoded inside Playground. The runtime
-re-hashes raw bytes, validates the canonical standalone `agents/agent/v1`
-document with exactly one `agent.agent_slug`, canonically imports it, verifies
+re-hashes raw bytes, validates the canonical flat package contract
+(`schema_version: 1`, `bundle_slug`, and exactly one authoritative
+`agent.agent_slug`), canonically imports it, verifies
 that exact slug registered, and passes it explicitly as the `agent` input to
 `agents/chat`. The descriptor and caller cannot select a different identity.
 Only `{slug}` is carried in task metadata. The importer-only temporary
@@ -83,6 +84,15 @@ cleanup. They are not a WordPress Playground end-to-end test: this repository
 does not provide a fixture that boots both the agent-registry plugin and a real
 provider-backed chat turn in Playground. The existing Playground CLI tests use
 injected CLI modules and do not exercise that plugin/provider path.
+
+To run the optional cross-repository package coverage, use a Docs Agent checkout
+pinned to commit `3da1b8076359db9bf9f4ee7dadcc3932c080ed71`, which contains
+`technical-docs-maintenance-agent.agent.json`:
+
+```sh
+DOCS_AGENT_DIR=/path/to/docs-agent npm run test:external-native-package-materialization
+DOCS_AGENT_DIR=/path/to/docs-agent npm run test:agent-no-data-machine-loop
+```
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
