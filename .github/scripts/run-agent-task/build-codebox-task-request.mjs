@@ -65,7 +65,11 @@ function commandList(name) {
 const artifactDeclarations = parseJson("ARTIFACT_DECLARATIONS", [], "array")
 const request = {
   schema: "wp-codebox/agent-task-workflow-request/v1",
-  agent_bundle: requiredString("AGENT_BUNDLE"),
+  external_package_source: parseJson("EXTERNAL_PACKAGE_SOURCE", {}, "object"),
+  external_package_policy: {
+    allowed_repositories: parseJson("EXTERNAL_PACKAGE_ALLOWED_REPOSITORIES", [], "array"),
+    allowed_paths: parseJson("EXTERNAL_PACKAGE_ALLOWED_PATHS", [], "array"),
+  },
   workload: {
     id: process.env.WORKLOAD_ID || "agent-task",
     label: process.env.WORKLOAD_LABEL || "Run Agent Task",
@@ -120,6 +124,7 @@ if (!request.access.allowed_repos.includes(request.target_repo)) {
 if (!request.access.access_token_repos.includes(request.target_repo)) {
   throw new Error("ACCESS_TOKEN_REPOS must explicitly include TARGET_REPO.")
 }
+if (!request.external_package_source.repository) throw new Error("EXTERNAL_PACKAGE_SOURCE is required.")
 
 const runId = `${request.workload.id}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
 mkdirSync(".codebox", { recursive: true })

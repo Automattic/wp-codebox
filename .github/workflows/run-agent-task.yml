@@ -3,10 +3,18 @@ name: Run Agent Task (reusable)
 'on':
   workflow_call:
     inputs:
-      agent_bundle:
-        description: Repository-relative path to the agent bundle selected by the caller.
+      external_package_source:
+        description: JSON descriptor with repository, immutable revision, package-relative path, and SHA-256 digest.
         type: string
         required: true
+      external_package_allowed_repositories:
+        description: JSON array of repositories permitted to provide the external native package.
+        type: string
+        default: '[]'
+      external_package_allowed_paths:
+        description: JSON array of permitted package paths or prefix patterns ending in *.
+        type: string
+        default: '[]'
       workload_id:
         description: Stable workload identifier for this run.
         type: string
@@ -203,7 +211,9 @@ jobs:
       - name: Build Codebox task request
         id: plan
         env:
-          AGENT_BUNDLE: ${{ inputs.agent_bundle }}
+          EXTERNAL_PACKAGE_SOURCE: ${{ inputs.external_package_source }}
+          EXTERNAL_PACKAGE_ALLOWED_REPOSITORIES: ${{ inputs.external_package_allowed_repositories }}
+          EXTERNAL_PACKAGE_ALLOWED_PATHS: ${{ inputs.external_package_allowed_paths }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
           COMPONENT_ID: ${{ inputs.component_id }}

@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, join, resolve } from "node:path"
 import { spawn } from "node:child_process"
+import { materializeExternalNativePackage, normalizeExternalPackageSource } from "./materialize-external-native-package.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -183,8 +184,9 @@ const request = JSON.parse(await readFile(requestPath, "utf8"))
 const verificationCommands = commandEntries(request.verification_commands, "verification_commands")
 const driftChecks = commandEntries(request.drift_checks, "drift_checks")
 const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
-const packageSlug = basename(string(request.agent_bundle).replace(/\/+$/, ""))
-const runtimePackageSource = `/workspace/${basename(workspace)}/${string(request.agent_bundle).replace(/^\/+/, "")}`
+const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, request.external_package_policy)
+const packageSlug = basename(externalPackageSource.path)
+const runtimePackageSource = `/workspace/external-native-packages/${packageSlug}`
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
@@ -205,6 +207,10 @@ if (accessError) {
   process.exit()
 }
 
+const materializedPackage = request.run_agent && !request.dry_run
+  ? await materializeExternalNativePackage(externalPackageSource, { policy: request.external_package_policy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
+  : undefined
+
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
   task_id: runId,
@@ -217,6 +223,7 @@ const taskInput = {
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
     agent_bundles: [{ slug: packageSlug, source: runtimePackageSource }],
+    ...(materializedPackage ? { stagedFiles: [{ source: materializedPackage.source, target: runtimePackageSource }] } : {}),
     provider: request.model?.provider,
     model: request.model?.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
@@ -233,8 +240,8 @@ const taskInput = {
       ability: "wp-codebox/run-runtime-package",
       input: {
         schema: "wp-codebox/runtime-package-task/v1",
-        package: { slug: packageSlug, source: runtimePackageSource },
-        workflow: { id: packageSlug },
+        package: { slug: packageSlug, source: runtimePackageSource, external_source: externalPackageSource },
+        workflow: { id: "agents/chat" },
         input: {
           prompt: request.prompt,
           runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
@@ -245,7 +252,7 @@ const taskInput = {
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
         output_projections: [],
-        metadata: { workload: request.workload },
+        metadata: { workload: request.workload, external_package_source: externalPackageSource },
       },
     },
   },

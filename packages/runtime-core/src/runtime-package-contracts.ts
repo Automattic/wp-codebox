@@ -11,6 +11,14 @@ export type RuntimePackageResultStatus = "success" | "failed"
 export interface RuntimePackageDescriptor {
   slug: string
   source: string
+  external_source?: RuntimePackageExternalSource
+}
+
+export interface RuntimePackageExternalSource {
+  repository: string
+  revision: string
+  path: string
+  sha256: string
 }
 
 export interface RuntimePackageWorkflowDescriptor {
@@ -86,6 +94,7 @@ export function normalizeRuntimePackageTask(options: RuntimePackageTaskOptions):
   const normalizedPackage = stripUndefined({
     slug: packageSlug,
     source: normalizePackageSource(stringValue(descriptor.source), options.workspaceRoot),
+    external_source: runtimePackageExternalSource(descriptor.external_source),
   })
 
   return stripUndefined({
@@ -98,6 +107,15 @@ export function normalizeRuntimePackageTask(options: RuntimePackageTaskOptions):
     required_artifacts: runtimePackageRequiredArtifacts(options.required_artifacts, options.artifact_declarations),
     metadata,
   }) as RuntimePackageTask
+}
+
+function runtimePackageExternalSource(value: unknown): RuntimePackageExternalSource | undefined {
+  if (!isPlainObject(value)) return undefined
+  const repository = stringValue(value.repository)
+  const revision = stringValue(value.revision)
+  const path = stringValue(value.path)
+  const sha256 = stringValue(value.sha256)
+  return repository && revision && path && sha256 ? { repository, revision, path, sha256 } : undefined
 }
 
 export function validateRuntimePackageTask(value: unknown): RuntimePackageTaskValidationResult {

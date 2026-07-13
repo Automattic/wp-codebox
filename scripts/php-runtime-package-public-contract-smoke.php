@@ -31,6 +31,10 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	return $value;
 }
 function get_current_user_id(): int { return 1; }
+function wp_agent_import_runtime_bundles( array $bundles, array $options ): array {
+	$GLOBALS['wp_codebox_runtime_package_imports'] = array( 'bundles' => $bundles, 'options' => $options );
+	return array_map( static fn( array $bundle ): array => array( 'success' => true, 'slug' => (string) ( $bundle['slug'] ?? '' ) ), $bundles );
+}
 
 final class WP_Codebox_Runtime_Package_Smoke_Ability {
 	public function execute( array $input ): array {
@@ -94,7 +98,7 @@ assert( false !== $bundle_root );
 $wpsg_like_task = array(
 	'schema'                => 'wp-codebox/runtime-package-task/v1',
 	'package'               => array( 'slug' => 'store-idea-agent', 'source' => $bundle_root ),
-	'workflow'              => array( 'id' => 'store-idea-artifact-flow' ),
+	'workflow'              => array( 'id' => 'agents/chat' ),
 	'input'                 => array( 'prompt' => 'Industry: open' ),
 	'artifact_declarations' => array( array( 'name' => 'concept_packet', 'type' => 'typed_artifact', 'required' => true ) ),
 	'required_artifacts'    => array( 'concept_packet' ),
@@ -102,19 +106,17 @@ $wpsg_like_task = array(
 );
 
 WP_Codebox_Runtime_Package_Executor::register_runtime_provider();
-add_filter( 'wp_agent_runtime_import_bundle', static fn( mixed $result, array $spec ): array => array( 'success' => true, 'slug' => $spec['slug'] ?? '' ), 10, 2 );
 $native = WP_Codebox_Abilities::run_runtime_package( $wpsg_like_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );
 assert( ! is_wp_error( $native ) );
 assert( true === $native['success'] );
 assert( 'native semantic output' === $native['outputs']['summary'] );
 assert( 'store-idea-agent' === $native['outputs']['agent'] );
-assert( 'store-idea-artifact-flow' === $native['metadata']['workflow_id'] );
-assert( 'store-idea-artifact-pipeline' === $native['metadata']['pipeline_id'] );
+assert( 'agents/chat' === $native['metadata']['workflow_id'] );
 assert( 'concept_packet' === $native['artifacts'][0]['name'] );
-assert( 'store-idea-artifact-flow' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['runtime_package_flow']['slug'] );
-assert( 'store-idea-artifact-pipeline' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['runtime_package_pipeline']['slug'] );
-assert( str_contains( $GLOBALS['wp_codebox_runtime_package_smoke_input']['message'], 'ConceptPacket' ) );
+assert( 'Industry: open' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['message'] );
 assert( 'codebox-runtime-package' === $native['metadata']['runtime_provider']['id'] );
+assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_imports']['bundles'][0]['slug'] );
+assert( 1 === $GLOBALS['wp_codebox_runtime_package_imports']['options']['owner_id'] );
 assert( ! in_array( 'agents/run-runtime-package', $GLOBALS['wp_codebox_runtime_package_smoke_abilities'], true ) );
 
 $invalid = WP_Codebox_Abilities::run_runtime_package( array( 'schema' => 'wp-codebox/runtime-package-task/v1', 'package' => array( 'slug' => 'example-agent' ) ) );

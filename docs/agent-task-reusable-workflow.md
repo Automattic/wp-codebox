@@ -7,7 +7,9 @@ jobs:
   run-agent-task:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      agent_bundle: bundles/example-agent
+      external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"packages/example-agent","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      external_package_allowed_repositories: '["OWNER/agent-packages"]'
+      external_package_allowed_paths: '["packages/*"]'
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
@@ -30,7 +32,8 @@ publication data.
 
 ## Inputs
 
-- `agent_bundle`: selected agent bundle path in the target repository.
+- `external_package_source`: immutable external package descriptor with `repository`, full commit `revision`, package-relative `path`, and expected package-tree `sha256`.
+- `external_package_allowed_repositories` and `external_package_allowed_paths`: explicit source allowlists. The target repository remains the only writable workspace.
 - `target_repo`: `OWNER/REPO` target repository.
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
