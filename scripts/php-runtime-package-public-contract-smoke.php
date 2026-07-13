@@ -33,8 +33,17 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 function get_current_user_id(): int { return 1; }
 function wp_agent_import_runtime_bundles( array $bundles, array $options ): array {
 	$GLOBALS['wp_codebox_runtime_package_imports'] = array( 'bundles' => $bundles, 'options' => $options );
-	return array_map( static fn( array $bundle ): array => array( 'success' => true, 'slug' => (string) ( $bundle['slug'] ?? '' ) ), $bundles );
+	return array_map(
+		static function( array $bundle ): array {
+			$document = json_decode( (string) file_get_contents( (string) $bundle['source'] ), true );
+			$slug     = (string) ( $document['agent']['agent_slug'] ?? '' );
+			$GLOBALS['wp_codebox_runtime_package_registered_agents'][ $slug ] = true;
+			return array( 'success' => true, 'agent_slug' => $slug );
+		},
+		$bundles
+	);
 }
+function wp_get_agent( string $slug ): ?object { return ! empty( $GLOBALS['wp_codebox_runtime_package_registered_agents'][ $slug ] ) ? (object) array( 'slug' => $slug ) : null; }
 function wp_codebox_smoke_package_digest( string $root ): string {
 	$files = array();
 	$iterator = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::LEAVES_ONLY );
@@ -119,7 +128,7 @@ $wpsg_like_task = array(
 	'input'                 => array( 'prompt' => 'Industry: open' ),
 	'artifact_declarations' => array( array( 'name' => 'concept_packet', 'type' => 'typed_artifact', 'required' => true ) ),
 	'required_artifacts'    => array( 'concept_packet' ),
-	'metadata'              => array( 'caller' => 'wpsg-like-contract-smoke' ),
+	'metadata'              => array( 'caller' => 'wpsg-like-contract-smoke', 'imported_agent' => array( 'slug' => 'store-idea-agent' ) ),
 );
 
 WP_Codebox_Runtime_Package_Executor::register_runtime_provider();
@@ -135,6 +144,20 @@ assert( 'codebox-runtime-package' === $native['metadata']['runtime_provider']['i
 assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_imports']['bundles'][0]['slug'] );
 assert( 1 === $GLOBALS['wp_codebox_runtime_package_imports']['options']['owner_id'] );
 assert( ! in_array( 'agents/run-runtime-package', $GLOBALS['wp_codebox_runtime_package_smoke_abilities'], true ) );
+
+$GLOBALS['wp_codebox_private_runtime_package_import'] = array(
+	'digest'   => $wpsg_like_task['package']['external_source']['digest'],
+	'imports'  => array( array( 'success' => true, 'agent_slug' => 'store-idea-agent' ) ),
+	'identity' => array( 'slug' => 'store-idea-agent' ),
+);
+$GLOBALS['wp_codebox_runtime_package_registered_agents']['store-idea-agent'] = true;
+$bootstrap_task = $wpsg_like_task;
+$bootstrap_task['package']['slug']               = 'caller-controlled-agent';
+$bootstrap_task['package']['bootstrap_imported'] = true;
+$bootstrap_task['input']['agent']                = 'caller-controlled-agent';
+$bootstrap = WP_Codebox_Abilities::run_runtime_package( $bootstrap_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );
+assert( ! is_wp_error( $bootstrap ) );
+assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['agent'] );
 
 file_put_contents( $staged_bundle_file, "tampered\n" );
 $tampered = WP_Codebox_Abilities::run_runtime_package( $wpsg_like_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );

@@ -26,7 +26,7 @@ jobs:
 ```
 
 The workflow checks out the target workspace, fetches and imports the selected
-public native package, invokes it through the default native chat path, runs declared commands
+public native package, invokes the package-declared agent through the native chat path, runs declared commands
 in a credential-free verification environment, and returns actual runtime and
 publication data.
 
@@ -65,10 +65,24 @@ both before persistence and immediately before host materialization.
 The source fetch receives no repository, publication, provider, or GitHub token.
 Public package bytes are verified against the immutable descriptor, encoded in
 the normal in-memory runtime recipe, and decoded inside Playground. The runtime
-re-hashes raw bytes, validates a standalone `agents/agent/v1` `.agent.json`,
-canonically imports it, and removes its importer-only temporary `.agent.json` in
-a `try/finally` before resolving agent tools. No package file is mounted into or
-visible from the agent workspace.
+re-hashes raw bytes, validates the canonical standalone `agents/agent/v1`
+document with exactly one `agent.agent_slug`, canonically imports it, verifies
+that exact slug registered, and passes it explicitly as the `agent` input to
+`agents/chat`. The descriptor and caller cannot select a different identity.
+Only `{slug}` is carried in task metadata. The importer-only temporary
+`.agent.json` is removed in a `try/finally` before resolving agent tools. No
+package file is mounted into or visible from the agent workspace.
+
+## Runtime Coverage
+
+The repository's native-loop and PHP runtime-package tests execute generated
+PHP with narrow WordPress and native agent-registry
+shims. They prove digest-then-schema validation, canonical import, exact slug
+resolution, `agents/chat` selection, invocation order, and temporary-file
+cleanup. They are not a WordPress Playground end-to-end test: this repository
+does not provide a fixture that boots both the agent-registry plugin and a real
+provider-backed chat turn in Playground. The existing Playground CLI tests use
+injected CLI modules and do not exercise that plugin/provider path.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,

@@ -85,9 +85,22 @@ function wp_get_agent($slug) {
 function wp_get_ability($name) {
     $GLOBALS['ability_resolved'] = true;
     if (isset($GLOBALS['external_import']) && (!($GLOBALS['external_import']['before_ability'] ?? false) || file_exists((string) ($GLOBALS['external_import']['source'] ?? '')))) { return null; }
+    if ('wp-codebox/run-runtime-package' === $name) {
+        return new class {
+            public function execute(array $task) {
+                $GLOBALS['ability_invocations'][] = 'wp-codebox/run-runtime-package';
+                $slug = (string) ($task['metadata']['imported_agent']['slug'] ?? '');
+                if ('' === $slug || $slug !== (string) ($GLOBALS['wp_codebox_private_runtime_package_import']['identity']['slug'] ?? '')) {
+                    return new WP_Error('wp_codebox_runtime_package_imported_agent_unresolved', 'Imported agent identity did not resolve.');
+                }
+                return wp_get_ability('agents/chat')->execute(array('agent' => $slug));
+            }
+        };
+    }
     if ('agents/chat' !== $name) { return null; }
     return new class {
         public function execute(array $input) {
+            $GLOBALS['ability_invocations'][] = 'agents/chat:' . (string) ($input['agent'] ?? '');
             // Mirror the Agents API default handler: resolve the agent from the
             // native registry; a missing registration is a hard error.
             $slug = isset($input['agent']) ? sanitize_title((string) $input['agent']) : '';
@@ -110,6 +123,7 @@ function wp_get_ability($name) {
                     'data_machine_present'       => class_exists('DataMachine\\\\Core\\\\Database\\\\Agents\\\\Agents'),
                     'registered_config'          => ('' !== $slug && $registry) ? $registry->get_registered($slug) : null,
                     'external_package_imported'  => !empty($GLOBALS['external_import']['bytes']),
+                    'ability_invocations'        => $GLOBALS['ability_invocations'] ?? array(),
                 )),
             );
         }
@@ -155,15 +169,15 @@ assert.match(sandboxAgentCode, /'model' => \$configured_model/)
 
 // A public standalone package is embedded in the runtime recipe, imported before
 // ability resolution, and its importer-only source is removed before tools run.
-const publicPackageBytes = Buffer.from('{"schema":"agents/agent/v1","slug":"public-agent","label":"Café"}\n')
+const publicPackageBytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"public-agent","label":"Café"}}\n')
 const publicPackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(publicPackageBytes).digest("hex"))}`
 const bootstrapCode = await resolveSandboxTaskCode({
   task: "Say hello",
   agent: "wp-codebox-sandbox",
   runtimeTask: {
-    ability: "agents/chat",
+    ability: "wp-codebox/run-runtime-package",
     input: {
-      package: { slug: "public-agent", source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
+      package: { slug: "caller-controlled-agent", source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
     },
   },
   sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
@@ -172,14 +186,19 @@ const bootstrapOutput = execFileSync("php", ["-r", `${phpPreamble}
 function wp_agent_import_runtime_bundles($bundles, $options) {
     $source = $bundles[0]['source'] ?? '';
     $GLOBALS['external_import'] = array('before_ability' => !isset($GLOBALS['ability_resolved']), 'bytes' => is_file($source) ? file_get_contents($source) : false, 'source' => $source);
-    return array(array('success' => true, 'slug' => $bundles[0]['slug'] ?? ''));
+    $package = json_decode((string) $GLOBALS['external_import']['bytes'], true);
+    $slug = $package['agent']['agent_slug'] ?? '';
+    WP_Agents_Registry::get_instance()->register($slug, array('source' => 'canonical-importer'));
+    return array(array('success' => true, 'agent_slug' => $slug));
 }
 ${bootstrapCode}`], {
   encoding: "utf8",
 })
-const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { success?: boolean, result?: { metadata?: { agents_api?: { external_package_imported?: boolean } } } } }
+const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { success?: boolean, result?: { metadata?: { agents_api?: { external_package_imported?: boolean, ability_invocations?: string[] } } } } }
 assert.equal(bootstrapParsed.agent_runtime?.success, true, JSON.stringify(bootstrapParsed))
 assert.equal(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.external_package_imported, true, "decoded public bytes must reach the canonical importer")
+assert.equal((bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.registered_config as { source?: string } | undefined)?.source, "canonical-importer", "canonical importer must register the declared package agent")
+assert.deepEqual(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.ability_invocations, ["wp-codebox/run-runtime-package", "agents/chat:public-agent"], "the imported identity must be selected after canonical import")
 assert.match(bootstrapCode, new RegExp(publicPackageBytes.toString("base64")))
 assert.match(bootstrapCode, /wp_codebox_import_external_runtime_agent_package/)
 assert.ok(bootstrapCode.indexOf("wp_codebox_import_external_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
@@ -192,5 +211,23 @@ ${bootstrapCode}`], {
 })
 const failedImport = JSON.parse(failedImportOutput) as { agent_runtime?: { success?: boolean } }
 assert.equal(failedImport.agent_runtime?.success, false, "Import failure must stop before the agent loop starts")
+
+const ambiguousPackageBytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"public-agent"},"package_slug":"caller-controlled"}\n')
+const ambiguousPackageDigest = await import("node:crypto").then(({ createHash }) => `sha256-bytes-v1:${createHash("sha256").update(ambiguousPackageBytes).digest("hex")}`)
+const ambiguousPackageCode = await resolveSandboxTaskCode({
+  task: "Say hello",
+  agent: "wp-codebox-sandbox",
+  runtimeTask: {
+    ability: "wp-codebox/run-runtime-package",
+    input: {
+      package: { source: "public-external-package", bootstrap: { encoding: "base64", bytes: ambiguousPackageBytes.toString("base64"), digest: ambiguousPackageDigest } },
+    },
+  },
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+const ambiguousPackageOutput = execFileSync("php", ["-r", `${phpPreamble}\n${ambiguousPackageCode}`], { encoding: "utf8" })
+const ambiguousPackage = JSON.parse(ambiguousPackageOutput) as { agent_runtime?: { success?: boolean, error?: { code?: string } } }
+assert.equal(ambiguousPackage.agent_runtime?.success, false)
+assert.equal(ambiguousPackage.agent_runtime?.error?.code, "wp_codebox_external_runtime_package_json_invalid")
 
 console.log("agent-no-data-machine-loop: native agents/chat loop turn ran without Data Machine")

@@ -41,7 +41,12 @@ final class WP_Codebox_Runtime_Package_Executor {
 			return $imports;
 		}
 
-		$result = $this->execute_workflow( $task );
+		$agent_slug = $this->imported_agent_slug( $task );
+		if ( is_wp_error( $agent_slug ) ) {
+			return $agent_slug;
+		}
+
+		$result = $this->execute_workflow( $task, $agent_slug );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -58,7 +63,7 @@ final class WP_Codebox_Runtime_Package_Executor {
 		$expected_digest = $this->string_value( $external_source['digest'] ?? '' );
 		if ( ! empty( $package['bootstrap_imported'] ) ) {
 			$bootstrap = is_array( $GLOBALS['wp_codebox_private_runtime_package_import'] ?? null ) ? $GLOBALS['wp_codebox_private_runtime_package_import'] : array();
-			if ( ! hash_equals( $expected_digest, $this->string_value( $bootstrap['digest'] ?? '' ) ) || ! is_array( $bootstrap['imports'] ?? null ) ) {
+			if ( ! hash_equals( $expected_digest, $this->string_value( $bootstrap['digest'] ?? '' ) ) || ! is_array( $bootstrap['imports'] ?? null ) || '' === $this->string_value( $bootstrap['identity']['slug'] ?? '' ) ) {
 				return new WP_Error( 'wp_codebox_runtime_package_bootstrap_missing', 'Private runtime package import did not complete before agent availability.', array( 'status' => 400 ) );
 			}
 			return $bootstrap['imports'];
@@ -104,11 +109,13 @@ final class WP_Codebox_Runtime_Package_Executor {
 	}
 
 	/** @param array<string,mixed> $task Runtime package task. @return array<string,mixed>|WP_Error */
-	private function execute_workflow( array $task ): array|WP_Error {
+	private function execute_workflow( array $task, string $agent_slug = '' ): array|WP_Error {
 		$ability = 'agents/chat';
 		$input   = is_array( $task['input'] ?? null ) ? $task['input'] : array();
 		$package = is_array( $task['package'] ?? null ) ? $task['package'] : array();
-		if ( ! isset( $input['agent'] ) && '' !== $this->string_value( $package['slug'] ?? '' ) ) {
+		if ( '' !== $agent_slug ) {
+			$input['agent'] = $agent_slug;
+		} elseif ( ! isset( $input['agent'] ) && '' !== $this->string_value( $package['slug'] ?? '' ) ) {
 			$input['agent'] = $this->string_value( $package['slug'] );
 		}
 		if ( ! isset( $input['message'] ) ) {
@@ -137,6 +144,22 @@ final class WP_Codebox_Runtime_Package_Executor {
 		);
 
 		return $result;
+	}
+
+	/** @param array<string,mixed> $task Runtime package task. @return string|WP_Error */
+	private function imported_agent_slug( array $task ): string|WP_Error {
+		$package = is_array( $task['package'] ?? null ) ? $task['package'] : array();
+		if ( empty( $package['bootstrap_imported'] ) ) {
+			return '';
+		}
+		$metadata = is_array( $task['metadata'] ?? null ) ? $task['metadata'] : array();
+		$slug     = $this->string_value( $metadata['imported_agent']['slug'] ?? '' );
+		$bootstrap = is_array( $GLOBALS['wp_codebox_private_runtime_package_import'] ?? null ) ? $GLOBALS['wp_codebox_private_runtime_package_import'] : array();
+		if ( '' === $slug || ! hash_equals( $slug, $this->string_value( $bootstrap['identity']['slug'] ?? '' ) ) || ! function_exists( 'wp_get_agent' ) || ! wp_get_agent( $slug ) ) {
+			return new WP_Error( 'wp_codebox_runtime_package_imported_agent_unresolved', 'The imported runtime package agent identity did not resolve exactly.', array( 'status' => 400 ) );
+		}
+
+		return $slug;
 	}
 
 

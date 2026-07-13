@@ -4,13 +4,13 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { withTempDir } from "../scripts/test-kit.js"
-import { canonicalPublicGithubRepositorySource, materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy, publicGitEnvironment, sha256BytesV1 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
+import { canonicalExternalNativeAgentIdentity, canonicalPublicGithubRepositorySource, materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy, publicGitEnvironment, sha256BytesV1 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 
 const execFileAsync = promisify(execFile)
 
 await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   const packagePath = join(repository, "agents", "naïve.agent.json")
-  const bytes = Buffer.from('{"schema":"agents/agent/v1","slug":"naïve","instruction":"café"}\n', "utf8")
+  const bytes = Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"naive-agent","instruction":"café"}}\n', "utf8")
   await mkdir(join(repository, "agents"), { recursive: true })
   await mkdir(join(repository, "agents", "legacy.agent.json"), { recursive: true })
   await writeFile(packagePath, bytes)
@@ -36,6 +36,10 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   const materialized = await materializeExternalNativePackage(descriptor, { policy, remote: repository })
   assert.deepEqual(materialized.bytes, bytes, "The versioned digest covers raw UTF-8 bytes, not decoded JSON or a package tree.")
   assert.equal(materialized.descriptor.digest, descriptor.digest)
+  assert.deepEqual(materialized.identity, { slug: "naive-agent" })
+  assert.deepEqual(canonicalExternalNativeAgentIdentity(bytes), { slug: "naive-agent" })
+  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema":"agents/agent/v1","slug":"caller-controlled"}')), /canonical agent\.agent_slug identity/)
+  assert.throws(() => canonicalExternalNativeAgentIdentity(Buffer.from('{"schema":"agents/agent/v1","agent":{"agent_slug":"native-agent"},"package_slug":"caller-controlled"}')), /ambiguous agent identities/)
 
   await assert.rejects(materializeExternalNativePackage({ ...descriptor, digest: `sha256-bytes-v1:${"b".repeat(64)}` }, { policy, remote: repository }), /byte digest does not match/)
   await assert.rejects(materializeExternalNativePackage({ ...descriptor, revision: "main" }, { policy, remote: repository }), /immutable 40-character commit/)

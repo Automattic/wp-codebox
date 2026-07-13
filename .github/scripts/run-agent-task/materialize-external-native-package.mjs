@@ -11,6 +11,26 @@ const DIGEST_SCHEME = "sha256-bytes-v1"
 const MAX_PACKAGE_BYTES = 1024 * 1024
 const string = (value) => typeof value === "string" ? value.trim() : ""
 
+export function canonicalExternalNativeAgentIdentity(bytes) {
+  let packageDocument
+  try {
+    packageDocument = JSON.parse(Buffer.from(bytes).toString("utf8"))
+  } catch {
+    throw new Error("External native package must contain valid UTF-8 JSON.")
+  }
+  if (!packageDocument || typeof packageDocument !== "object" || Array.isArray(packageDocument) || packageDocument.schema !== "agents/agent/v1") {
+    throw new Error("External native package must use the canonical agents/agent/v1 schema.")
+  }
+  const agent = packageDocument.agent
+  if (!agent || typeof agent !== "object" || Array.isArray(agent) || typeof agent.agent_slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agent.agent_slug)) {
+    throw new Error("External native package must declare exactly one canonical agent.agent_slug identity.")
+  }
+  if (["slug", "package_slug", "bundle_slug", "agents"].some((field) => Object.hasOwn(packageDocument, field)) || Object.hasOwn(agent, "slug")) {
+    throw new Error("External native package contains ambiguous agent identities.")
+  }
+  return { slug: agent.agent_slug }
+}
+
 function normalizePath(value) {
   const path = value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
   if (!path || path.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("external_package_source.path must be a non-empty relative path without traversal.")
@@ -120,7 +140,8 @@ export async function materializeExternalNativePackage(source, options = {}) {
     const bytes = await run("git", ["show", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout, env: environment })
     if (bytes.length === 0 || bytes.length > MAX_PACKAGE_BYTES) throw new Error("External native package source must be between 1 byte and 1 MiB.")
     if (sha256BytesV1(bytes) !== descriptor.digest) throw new Error("External package byte digest does not match the trusted descriptor.")
+    const identity = canonicalExternalNativeAgentIdentity(bytes)
     await rm(root, { recursive: true, force: true })
-    return { bytes, descriptor }
+    return { bytes, descriptor, identity }
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error }
 }

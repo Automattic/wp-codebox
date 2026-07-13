@@ -108,6 +108,14 @@ $sandbox_runtime_task = json_decode(${phpStringLiteral(JSON.stringify(runtimeTas
 $sandbox_stack['runtime_task'] = is_array($sandbox_runtime_task) ? $sandbox_runtime_task : null;
 $sandbox_external_runtime_package_import = wp_codebox_import_external_runtime_agent_package(is_array($sandbox_runtime_task) ? $sandbox_runtime_task : array());
 $sandbox_stack['external_runtime_package_import'] = $sandbox_external_runtime_package_import;
+if (!empty($sandbox_external_runtime_package_import['success']) && empty($sandbox_external_runtime_package_import['skipped'])) {
+    $sandbox_imported_agent = (string) ($sandbox_external_runtime_package_import['identity']['slug'] ?? '');
+    if (is_array($sandbox_runtime_task) && '' !== $sandbox_imported_agent) {
+        $sandbox_runtime_task['input']['package']['slug'] = $sandbox_imported_agent;
+        $sandbox_runtime_task['input']['package']['bootstrap_imported'] = true;
+        $sandbox_runtime_task['input']['metadata']['imported_agent'] = array('slug' => $sandbox_imported_agent);
+    }
+}
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
     if (!$principal instanceof AgentsAPI\\AI\\WP_Agent_Execution_Principal) {
@@ -223,8 +231,10 @@ function wp_codebox_import_external_runtime_agent_package(array $runtime_task): 
             return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_digest_mismatch', 'message' => 'Public external runtime package bytes failed digest verification.'));
         }
         $decoded = json_decode($bytes, true);
-        if (!is_array($decoded) || array_is_list($decoded) || JSON_ERROR_NONE !== json_last_error() || 'agents/agent/v1' !== ($decoded['schema'] ?? null) || !is_string($decoded['slug'] ?? null) || '' === trim($decoded['slug'])) {
-            return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_json_invalid', 'message' => 'Public external runtime package must be a standalone agents/agent/v1 .agent.json object.'));
+        $agent = is_array($decoded['agent'] ?? null) ? $decoded['agent'] : array();
+        $agent_slug = (string) ($agent['agent_slug'] ?? '');
+        if (!is_array($decoded) || array_is_list($decoded) || JSON_ERROR_NONE !== json_last_error() || 'agents/agent/v1' !== ($decoded['schema'] ?? null) || !preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $agent_slug) || isset($decoded['slug']) || isset($decoded['package_slug']) || isset($decoded['bundle_slug']) || isset($decoded['agents']) || isset($agent['slug'])) {
+            return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_json_invalid', 'message' => 'Public external runtime package must declare exactly one canonical agent.agent_slug identity.'));
         }
         if (!function_exists('wp_agent_import_runtime_bundles')) {
             return array('success' => false, 'error' => array('code' => 'wp_codebox_agent_bundle_importer_unavailable', 'message' => 'Canonical wp_agent_import_runtime_bundles() is unavailable.'));
@@ -239,12 +249,13 @@ function wp_codebox_import_external_runtime_agent_package(array $runtime_task): 
         if (!hash_equals($expected_digest, 'sha256-bytes-v1:' . hash_file('sha256', $path))) {
             return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_digest_mismatch', 'message' => 'Public external runtime package bytes changed before canonical import.'));
         }
-        $imports = wp_agent_import_runtime_bundles(array(array('source' => $path, 'slug' => (string) ($package['slug'] ?? ''), 'on_conflict' => 'upgrade')), array('owner_id' => get_current_user_id() ?: 1));
-        if (!is_array($imports) || !empty(array_filter($imports, static fn($import): bool => is_array($import) && empty($import['success'])))) {
+        $imports = wp_agent_import_runtime_bundles(array(array('source' => $path, 'on_conflict' => 'upgrade')), array('owner_id' => get_current_user_id() ?: 1));
+        $imported_slugs = is_array($imports) ? array_values(array_unique(array_filter(array_map(static fn($import): string => is_array($import) ? (string) ($import['agent_slug'] ?? '') : '', $imports)))) : array();
+        if (!is_array($imports) || count($imports) !== 1 || !empty(array_filter($imports, static fn($import): bool => is_array($import) && empty($import['success']))) || array($agent_slug) !== $imported_slugs || !function_exists('wp_get_agent') || !wp_get_agent($agent_slug)) {
             return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_import_failed', 'message' => 'Canonical runtime package import failed.'));
         }
-        $GLOBALS['wp_codebox_external_runtime_package_import'] = array('digest' => $expected_digest, 'imports' => $imports);
-        return array('success' => true, 'imports' => $imports);
+        $GLOBALS['wp_codebox_private_runtime_package_import'] = array('digest' => $expected_digest, 'imports' => $imports, 'identity' => array('slug' => $agent_slug));
+        return array('success' => true, 'imports' => $imports, 'identity' => array('slug' => $agent_slug));
     } finally {
         $bytes = '';
         if (is_file($path)) { @unlink($path); }

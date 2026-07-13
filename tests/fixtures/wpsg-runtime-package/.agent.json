@@ -1,4 +1,6 @@
 {
   "schema": "agents/agent/v1",
-  "slug": "store-idea-agent"
+  "agent": {
+    "agent_slug": "store-idea-agent"
+  }
 }

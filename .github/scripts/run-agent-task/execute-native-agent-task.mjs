@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
-import { basename, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
 
@@ -185,7 +185,6 @@ const driftChecks = commandEntries(request.drift_checks, "drift_checks")
 const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
 const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.env.EXTERNAL_PACKAGE_SOURCE_POLICY))
 const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
-const packageSlug = basename(externalPackageSource.path)
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
@@ -238,7 +237,7 @@ const taskInput = {
       input: {
         schema: "wp-codebox/runtime-package-task/v1",
         package: {
-          slug: packageSlug,
+          slug: materializedPackage?.identity.slug || "external-agent-pending-materialization",
           source: "public-external-package",
           external_source: externalPackageSource,
           bootstrap: materializedPackage ? { encoding: "base64", bytes: materializedPackage.bytes.toString("base64"), digest: externalPackageSource.digest } : undefined,
@@ -254,7 +253,7 @@ const taskInput = {
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
         output_projections: [],
-        metadata: { workload: request.workload, external_package_source: externalPackageSource },
+        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}) },
       },
     },
   },
