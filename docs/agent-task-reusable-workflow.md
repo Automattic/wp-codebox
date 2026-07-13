@@ -75,6 +75,25 @@ publication result. Runtime input, result, and diagnostics are uploaded from
 `workspace/.codebox/` with `if: always()`, including execution failures. A request
 artifact alone is not a successful task result.
 
+## Interface Contract
+
+[`contracts/run-agent-task-reusable-workflow-interface.v1.json`](../contracts/run-agent-task-reusable-workflow-interface.v1.json)
+is the producer-owned, machine-readable `wp-codebox/reusable-workflow-interface/v1`
+fixture. It records every declared input's required/type/default behavior, every
+secret's required behavior, and every workflow output expression.
+
+The offline validator reads only the checkout's fixture and
+`.github/workflows/run-agent-task.yml`; it makes no network calls. External
+consumers can contract-test a checked-out version with:
+
+```sh
+WP_CODEBOX_DIR=/path/to/wp-codebox npm --prefix /path/to/wp-codebox run test:agent-task-workflow-interface
+```
+
+Update the workflow declaration and fixture together when intentionally changing
+this interface. The contract test rejects either addition, removal, or changed
+input, secret, or output expectation.
+
 ## Compatibility
 
 This removes the previously exposed `runner_recipe`, `context_repositories`,

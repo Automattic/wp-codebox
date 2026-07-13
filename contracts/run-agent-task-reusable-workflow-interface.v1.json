@@ -1,0 +1,51 @@
+{
+  "schema": "wp-codebox/reusable-workflow-interface/v1",
+  "workflow": ".github/workflows/run-agent-task.yml",
+  "inputs": {
+    "agent_bundle": { "required": true, "type": "string" },
+    "workload_id": { "required": false, "type": "string", "default": "agent-task" },
+    "workload_label": { "required": false, "type": "string", "default": "Run Agent Task" },
+    "component_id": { "required": false, "type": "string", "default": "agent-task" },
+    "target_repo": { "required": true, "type": "string" },
+    "prompt": { "required": true, "type": "string" },
+    "writable_paths": { "required": false, "type": "string", "default": "" },
+    "provider": { "required": false, "type": "string", "default": "openai" },
+    "model": { "required": false, "type": "string", "default": "gpt-5.5" },
+    "runner_workspace": { "required": false, "type": "string", "default": "{}" },
+    "validation_dependencies": { "required": false, "type": "string", "default": "" },
+    "verification_commands": { "required": false, "type": "string", "default": "[]" },
+    "drift_checks": { "required": false, "type": "string", "default": "[]" },
+    "success_requires_pr": { "required": false, "type": "boolean", "default": false },
+    "access_token_repos": { "required": false, "type": "string", "default": "" },
+    "require_access_token": { "required": false, "type": "boolean", "default": false },
+    "allowed_repos": { "required": false, "type": "string", "default": "[]" },
+    "max_turns": { "required": false, "type": "number", "default": 12 },
+    "time_budget_ms": { "required": false, "type": "number", "default": 600000 },
+    "output_projections": { "required": false, "type": "string", "default": "{}" },
+    "transcript_artifact_name": { "required": false, "type": "string", "default": "agent-task-transcript" },
+    "replay_bundle_artifact_name": { "required": false, "type": "string", "default": "" },
+    "expected_artifacts": { "required": false, "type": "string", "default": "[]" },
+    "artifact_declarations": { "required": false, "type": "string", "default": "[]" },
+    "callback_data": { "required": false, "type": "string", "default": "{}" },
+    "run_agent": { "required": false, "type": "boolean", "default": true },
+    "dry_run": { "required": false, "type": "boolean", "default": false }
+  },
+  "secrets": {
+    "OPENAI_API_KEY": { "required": false },
+    "MODEL_PROVIDER_SECRET_1": { "required": false },
+    "MODEL_PROVIDER_SECRET_2": { "required": false },
+    "MODEL_PROVIDER_SECRET_3": { "required": false },
+    "MODEL_PROVIDER_SECRET_4": { "required": false },
+    "MODEL_PROVIDER_SECRET_5": { "required": false },
+    "ACCESS_TOKEN": { "required": false }
+  },
+  "outputs": {
+    "job_status": { "value": "${{ jobs.run-agent-task.outputs.job_status }}" },
+    "transcript_json": { "value": "${{ jobs.run-agent-task.outputs.transcript_json }}" },
+    "transcript_summary": { "value": "${{ jobs.run-agent-task.outputs.transcript_summary }}" },
+    "engine_data_json": { "value": "${{ jobs.run-agent-task.outputs.engine_data_json }}" },
+    "projected_outputs_json": { "value": "${{ jobs.run-agent-task.outputs.projected_outputs_json }}" },
+    "credential_mode": { "value": "${{ jobs.run-agent-task.outputs.credential_mode }}" },
+    "declared_artifacts_json": { "value": "${{ jobs.run-agent-task.outputs.declared_artifacts_json }}" }
+  }
+}
