@@ -1,6 +1,5 @@
 {
   "schema": "wp-codebox/agent-task-workflow-request/v1",
-  "runner_recipe": "Automattic/example-runner@abc123:ci/runner-recipe.json",
   "agent_bundle": "bundles/example-agent",
   "workload": {
     "id": "example-maintenance",
@@ -19,7 +18,6 @@
     "repo": "Automattic/example-target"
   },
   "validation_dependencies": "",
-  "context_repositories": [],
   "verification_commands": [
     {
       "command": "npm test",
@@ -27,15 +25,14 @@
     }
   ],
   "drift_checks": [],
-  "workspace_contract_checks": {},
-  "actions_artifact_downloads": [],
   "success": {
-    "requires_pr": false,
-    "completion_outcomes": []
+    "requires_pr": false
   },
   "access": {
-    "access_token_repos": "Automattic/example-target",
-    "require_access_token": true,
+    "access_token_repos": [
+      "Automattic/example-target"
+    ],
+    "require_access_token": false,
     "allowed_repos": [
       "Automattic/example-target"
     ]

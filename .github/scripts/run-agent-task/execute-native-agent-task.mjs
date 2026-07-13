@@ -33,20 +33,79 @@ function string(value) {
   return typeof value === "string" ? value.trim() : ""
 }
 
-function verificationCommands(value) {
-  return Array.isArray(value) ? value.flatMap((entry) => {
-    if (typeof entry === "string" && entry.trim()) return [{ command: entry.trim(), description: entry.trim() }]
-    const item = record(entry)
-    const command = string(item.command)
-    return command ? [{ command, description: string(item.description) || command }] : []
-  }) : []
+function commandEntries(value, name) {
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array.`)
+  return value.map((entry, index) => {
+    const check = record(entry)
+    const command = string(check.command)
+    if (!command) throw new Error(`${name}[${index}].command must be a non-empty string.`)
+    const description = check.description === undefined ? command : string(check.description)
+    if (!description) throw new Error(`${name}[${index}].description must be a non-empty string when provided.`)
+    return { command, description }
+  })
 }
 
 function resultValue(result, path) {
-  return path.split(".").reduce((value, key) => record(value)[key], result)
+  return path.split(".").reduce((value, key) => value && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined, result)
+}
+
+function accessFailure(request) {
+  const access = record(request.access)
+  const allowed = Array.isArray(access.allowed_repos) ? access.allowed_repos : []
+  const tokenRepos = Array.isArray(access.access_token_repos) ? access.access_token_repos : []
+  const target = string(request.target_repo)
+  if (!allowed.includes(target) || !tokenRepos.includes(target)) return "Target repository is not explicitly authorized by allowed_repos and access_token_repos."
+  if (access.require_access_token === true && process.env.ACCESS_TOKEN_CONFIGURED !== "true") return "A configured ACCESS_TOKEN is required but unavailable."
+  return ""
+}
+
+function validPublication(value, targetRepo) {
+  const publication = record(value)
+  const pullRequest = record(publication.pull_request)
+  const url = string(pullRequest.url)
+  return publication.schema === "wp-codebox/runner-workspace-publication-result/v1"
+    && publication.success === true
+    && publication.status === "published"
+    && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(url)
+    && url.startsWith(`https://github.com/${targetRepo}/pull/`)
+}
+
+async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
+  if (!validPublication(publication, targetRepo)) return { valid: false, error: "Publication did not return a valid canonical pull-request result." }
+  const match = string(record(publication).pull_request && record(publication).pull_request.url).match(/\/pull\/(\d+)\/?$/)
+  const pullNumber = match?.[1]
+  if (!pullNumber) return { valid: false, error: "Publication pull-request URL did not contain a pull number." }
+  const response = await command("gh", ["api", `repos/${targetRepo}/pulls/${pullNumber}`], cwd)
+  if (response.code !== 0) return { valid: false, error: "Published pull request could not be resolved through GitHub.", stderr: response.stderr }
+  try {
+    const pullRequest = JSON.parse(response.stdout)
+    return {
+      valid: pullRequest?.html_url === record(publication).pull_request?.url
+        && pullRequest?.base?.repo?.full_name === targetRepo,
+      error: "Published pull request did not resolve to the target repository.",
+    }
+  } catch {
+    return { valid: false, error: "GitHub pull-request validation did not return JSON." }
+  }
+}
+
+function projections(value, runtimeResult) {
+  const entries = Object.entries(record(value))
+  const output = {}
+  for (const [name, source] of entries) {
+    if (typeof source !== "string" || !source.trim() || !/^[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9_.-]+)*$/.test(source)) {
+      throw new Error(`output_projections.${name} must be a dot-delimited result path.`)
+    }
+    const projected = resultValue(runtimeResult, source.trim())
+    if (projected === undefined) throw new Error(`output_projections.${name} did not resolve from ${source}.`)
+    output[name] = projected
+  }
+  return output
 }
 
 const request = JSON.parse(await readFile(requestPath, "utf8"))
+const verificationCommands = commandEntries(request.verification_commands, "verification_commands")
+const driftChecks = commandEntries(request.drift_checks, "drift_checks")
 const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
 const packageSlug = basename(string(request.agent_bundle).replace(/\/+$/, ""))
 const runtimePackageSource = `/workspace/${basename(workspace)}/${string(request.agent_bundle).replace(/^\/+/, "")}`
@@ -60,6 +119,15 @@ const runnerWorkspaceTools = [
 ]
 
 await mkdir(artifactsPath, { recursive: true })
+
+const accessError = accessFailure(request)
+if (accessError) {
+  const result = { schema: "wp-codebox/agent-task-workflow-result/v1", run_id: runId, status: "failed", success: false, request_path: requestPath, access: { authorized: false, error: accessError } }
+  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`)
+  await output("job_status", "failed")
+  process.exitCode = 1
+  process.exit()
+}
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -98,11 +166,11 @@ const taskInput = {
           writable_paths: request.writable_paths,
           verification_commands: request.verification_commands,
           drift_checks: request.drift_checks,
-          workspace_contract_checks: request.workspace_contract_checks,
         },
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
-        metadata: { workload: request.workload, output_projections: request.outputs?.projections || {} },
+        output_projections: [],
+        metadata: { workload: request.workload },
       },
     },
   },
@@ -124,9 +192,18 @@ try {
 
 const verification = []
 if (execution.code === 0 && request.run_agent && !request.dry_run) {
-  for (const check of verificationCommands(request.verification_commands)) {
+  const validationDependencies = string(request.validation_dependencies)
+  if (validationDependencies) {
+    const checkResult = await command("bash", ["-lc", validationDependencies], workspace)
+    verification.push({ kind: "validation_dependencies", command: validationDependencies, description: "Install validation dependencies", success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+  }
+  for (const check of verificationCommands) {
     const checkResult = await command("bash", ["-lc", check.command], workspace)
-    verification.push({ ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+    verification.push({ kind: "verification", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+  }
+  for (const check of driftChecks) {
+    const checkResult = await command("bash", ["-lc", check.command], workspace)
+    verification.push({ kind: "drift", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
   }
 }
 
@@ -134,8 +211,20 @@ const verificationPassed = verification.every((check) => check.success)
 const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)
 const publication = resultValue(runtimeRecord, "outputs.artifact_result.result.outputs.runner_workspace_publication")
+let evaluatedProjections = {}
+let projectionError = ""
+try {
+  evaluatedProjections = projections(request.outputs?.projections, runtimeRecord)
+} catch (error) {
+  projectionError = error instanceof Error ? error.message : String(error)
+}
+const publicationRequired = request.success?.requires_pr === true
+const publicationVerification = publicationRequired && execution.code === 0 && runtimeRecord.success === true
+  ? await verifyPublishedPullRequest(publication, request.target_repo, workspace)
+  : { valid: !publicationRequired, error: "" }
+const publicationPassed = publicationVerification.valid
 const success = request.run_agent && !request.dry_run
-  ? execution.code === 0 && runtimeRecord.success === true && verificationPassed
+  ? execution.code === 0 && runtimeRecord.success === true && verificationPassed && publicationPassed && !projectionError
   : true
 const status = request.run_agent && !request.dry_run ? (success ? "succeeded" : "failed") : "skipped"
 const result = {
@@ -152,9 +241,12 @@ const result = {
   artifacts: { declarations: request.artifacts?.declarations || [], expected: request.artifacts?.expected || [], replay_bundle_name: request.artifacts?.replay_bundle_name || "" },
   outputs: {
     engine_data: record(runtimeRecord.outputs),
-    projections: record(request.outputs?.projections),
+    projections: evaluatedProjections,
   },
-  access: { credential_mode: process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials" },
+  access: { authorized: true, credential_mode: process.env.GITHUB_TOKEN || process.env.GH_TOKEN ? "runner-access-token" : (process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials") },
+  ...(publicationRequired ? { publication_verification: publicationVerification } : {}),
+  ...(publicationRequired && !publicationPassed ? { publication_error: "success_requires_pr requires a valid published runner-workspace pull request for target_repo." } : {}),
+  ...(projectionError ? { projection_error: projectionError } : {}),
 }
 
 await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`)

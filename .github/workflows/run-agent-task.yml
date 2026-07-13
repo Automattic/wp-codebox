@@ -3,10 +3,6 @@ name: Run Agent Task (reusable)
 'on':
   workflow_call:
     inputs:
-      runner_recipe:
-        description: Optional temporary Codebox runner recipe descriptor, such as OWNER/REPO@ref:path.
-        type: string
-        required: false
       agent_bundle:
         description: Repository-relative path to the agent bundle selected by the caller.
         type: string
@@ -48,13 +44,9 @@ name: Run Agent Task (reusable)
         type: string
         default: '{}'
       validation_dependencies:
-        description: Optional validation dependency install command or descriptor.
+        description: Optional validation dependency install command.
         type: string
         default: ""
-      context_repositories:
-        description: JSON array of additional repository context descriptors.
-        type: string
-        default: '[]'
       verification_commands:
         description: JSON array of verification commands to run after agent changes.
         type: string
@@ -63,22 +55,10 @@ name: Run Agent Task (reusable)
         description: JSON array of drift checks for generated outputs.
         type: string
         default: '[]'
-      workspace_contract_checks:
-        description: JSON object describing workspace contract checks.
-        type: string
-        default: '{}'
-      actions_artifact_downloads:
-        description: JSON array of workflow artifacts to preload into the run.
-        type: string
-        default: '[]'
       success_requires_pr:
         description: Whether success requires a published pull request.
         type: boolean
         default: false
-      success_completion_outcomes:
-        description: JSON array of accepted non-PR completion outcomes.
-        type: string
-        default: '[]'
       access_token_repos:
         description: Comma-separated repositories for access-token scoping.
         type: string
@@ -128,7 +108,7 @@ name: Run Agent Task (reusable)
         type: string
         default: '[]'
       callback_data:
-        description: JSON object passed through to the selected runner recipe.
+        description: JSON object passed through to the native task.
         type: string
         default: '{}'
       run_agent:
@@ -151,6 +131,9 @@ name: Run Agent Task (reusable)
       MODEL_PROVIDER_SECRET_4:
         required: false
       MODEL_PROVIDER_SECRET_5:
+        required: false
+      ACCESS_TOKEN:
+        description: GitHub token with access to every repository in access_token_repos.
         required: false
     outputs:
       job_status:
@@ -219,13 +202,12 @@ jobs:
         with:
           repository: ${{ inputs.target_repo }}
           path: workspace
-          token: ${{ github.token }}
+          token: ${{ secrets.ACCESS_TOKEN || github.token }}
           persist-credentials: true
 
       - name: Build Codebox task request
         id: plan
         env:
-          RUNNER_RECIPE: ${{ inputs.runner_recipe }}
           AGENT_BUNDLE: ${{ inputs.agent_bundle }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
@@ -241,13 +223,9 @@ jobs:
           # workspace path instead of this JSON config.
           RUNNER_WORKSPACE_CONFIG: ${{ inputs.runner_workspace }}
           VALIDATION_DEPENDENCIES: ${{ inputs.validation_dependencies }}
-          CONTEXT_REPOSITORIES: ${{ inputs.context_repositories }}
           VERIFICATION_COMMANDS: ${{ inputs.verification_commands }}
           DRIFT_CHECKS: ${{ inputs.drift_checks }}
-          WORKSPACE_CONTRACT_CHECKS: ${{ inputs.workspace_contract_checks }}
-          ACTIONS_ARTIFACT_DOWNLOADS: ${{ inputs.actions_artifact_downloads }}
           SUCCESS_REQUIRES_PR: ${{ inputs.success_requires_pr }}
-          SUCCESS_COMPLETION_OUTCOMES: ${{ inputs.success_completion_outcomes }}
           ACCESS_TOKEN_REPOS: ${{ inputs.access_token_repos }}
           REQUIRE_ACCESS_TOKEN: ${{ inputs.require_access_token }}
           ALLOWED_REPOS: ${{ inputs.allowed_repos }}
@@ -277,6 +255,10 @@ jobs:
           MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
           MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
           MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
+          # Runner workspace tools resolve GitHub credentials from this standard
+          # environment variable. It is never written to task inputs or artifacts.
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+          ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 
       - name: Upload Codebox task request

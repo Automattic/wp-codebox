@@ -8,115 +8,72 @@ jobs:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
       agent_bundle: bundles/example-agent
-      workload_id: example-maintenance
-      workload_label: Run example maintenance
-      component_id: example-ci-driver
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
-      runner_workspace: |
-        {
-          "enabled": true,
-          "repo": "Automattic/example-target",
-          "clone_url": "https://github.com/Automattic/example-target.git",
-          "branch_prefix": "agent/example-run",
-          "from": "origin/main"
-        }
+      runner_workspace: '{"enabled":true,"repo":"Automattic/example-target"}'
+      validation_dependencies: npm ci
       verification_commands: '[{"command":"npm test","description":"Run checks"}]'
-      drift_checks: '[]'
-      output_projections: '{"pr_url":"metadata.runner_workspace_publication.url"}'
+      drift_checks: '["git diff --exit-code"]'
+      success_requires_pr: true
       access_token_repos: Automattic/example-target
+      allowed_repos: '["Automattic/example-target"]'
       require_access_token: true
-      expected_artifacts: '["agent_transcript","agent_change_summary"]'
-      artifact_declarations: |
-        [
-          {
-            "schema": "wp-codebox/artifact-declaration/v1",
-            "name": "agent_transcript",
-            "type": "AgentTranscript",
-            "artifact_schema": "agent/transcript/v1",
-            "description": "Machine-readable transcript for the agent task.",
-            "required": false,
-            "egress": ["artifact", "workflow-output", "review-link"]
-          },
-          {
-            "schema": "wp-codebox/artifact-declaration/v1",
-            "name": "agent_change_summary",
-            "type": "AgentChangeSummary",
-            "artifact_schema": "agent/change-summary/v1",
-            "description": "Reviewable summary of changes made by the run.",
-            "required": false,
-            "egress": ["pr-body", "workflow-output", "review-link"]
-          }
-        ]
+      output_projections: '{"pr_url":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url"}'
     secrets: inherit
 ```
 
-Consumers provide product-level task inputs: the selected runner recipe, agent
-bundle, target repository, workspace publication request, verification commands,
-drift checks, artifact expectations, typed artifact declarations, and output
-projection. The workflow checks out the target workspace, imports the selected
-native package, invokes its registered agent through the default chat workflow,
-runs the requested verification commands in that workspace, and returns the
-runtime and runner-publication result. Implementation-specific runtime wiring,
-workspace adapters, plugins, and model setup stay behind the WP Codebox boundary.
-
-## Runner Recipe
-
-`runner_recipe` is a temporary optional input while callers transition away from
-the runner-recipe contract. It may be omitted only for an explicit
-`run_agent: false` skipped result or `dry_run: true` dry-run result. A live
-`run_agent: true` request without a recipe fails closed until the executable
-[wp-codebox#1751](https://github.com/Automattic/wp-codebox/pull/1751) workflow
-lands. Merge the transition in this order: this bridge, Docs Agent caller cleanup
-([docs-agent#119](https://github.com/Automattic/docs-agent/pull/119)), then #1751,
-which deletes this input.
+The workflow checks out the target workspace, imports the selected native
+package, invokes it through the default native chat path, runs declared commands
+in that workspace, and returns actual runtime and publication data.
 
 ## Inputs
 
-- `runner_recipe`: optional temporary runner recipe descriptor; removed by #1751 after Docs Agent caller cleanup.
-- `agent_bundle`: selected agent bundle path in the product repository.
-- `workload_id`, `workload_label`, and `component_id`: caller-owned run labels.
+- `agent_bundle`: selected agent bundle path in the target repository.
 - `target_repo`: `OWNER/REPO` target repository.
-- `prompt`: task instruction supplied to the agent bundle.
-- `writable_paths`: comma-separated repository paths the agent may edit.
-- `runner_workspace`: JSON workspace publication request.
-- `validation_dependencies`, `verification_commands`, and `drift_checks`: runner-owned validation inputs.
-- `access_token_repos`: comma-separated repositories for access-token scoping.
-- `require_access_token`: require the configured access token for the run.
-- `artifact_declarations` and `expected_artifacts`: typed review artifact contract.
-- `output_projections`: JSON object mapping workflow output names to result paths.
-- `run_agent`: set to `false` to record a skipped run.
-- `provider` and `model`: model selection for the recipe owner.
-- `dry_run`: validates the runner request without a live agent call.
+- `prompt`, `writable_paths`, provider/model, limits, callback data, and artifact declarations: native task inputs.
+- `runner_workspace`: JSON runner-workspace publication request owned by the package.
+- `validation_dependencies`: optional shell command that installs validation dependencies in the target workspace.
+- `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass.
+- `success_requires_pr`: require a successful, published runner-workspace pull request for `target_repo`.
+- `access_token_repos`: comma-separated repositories available to the supplied access token.
+- `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
+- `require_access_token`: require the reusable workflow's `ACCESS_TOKEN` secret.
+- `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. Every projection must resolve.
 
-## Execution
+## Access And Publication
 
-For a live run, the reusable workflow builds a native runtime-package task from
-`agent_bundle` and executes it with WP Codebox. The package importer registers
-the declared package before the package workflow invokes its default chat agent.
-The checked-out target repository is the runner workspace; its provider
-credentials and native workspace tools are available to the agent. The workflow
-then executes every `verification_commands` entry in that same workspace.
+`ACCESS_TOKEN` is passed only as `GITHUB_TOKEN` to the native runner workspace
+tools, whose canonical credential contract reads `GITHUB_TOKEN` or `GH_TOKEN`.
+It is not serialized into task input, result, or artifact data. The workflow
+fails closed before execution unless the target repository is present in both
+access lists, and it fails when `require_access_token` is true without a token.
 
-Publication is owned by the runner workspace tool surface. Its returned branch,
-commit, and pull request data is preserved in the workflow result rather than
-being synthesized by the reusable workflow.
+When `success_requires_pr` is true, success requires the canonical
+`wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
+`status: published`, and a GitHub pull-request URL for `target_repo`.
+WP Codebox then resolves that pull request through the GitHub API with the
+runner token, so a fabricated publication result cannot satisfy the gate.
 
 ## Outputs
 
 - `job_status`: normalized terminal status.
-- `transcript_json`: transcript artifact path when available.
-- `transcript_summary`: short transcript label when available.
-- `engine_data_json`: projected recipe outputs as one JSON object.
-- `credential_mode`: credential source selected for the run.
-- `declared_artifacts_json`: typed artifact declarations accepted for the run.
+- `transcript_json`: transcript artifact references when available.
+- `transcript_summary`: short transcript label.
+- `engine_data_json`: actual runtime output object.
+- `credential_mode`: redacted credential source classification.
+- `declared_artifacts_json`: accepted typed artifact declarations.
 
-The `codebox-agent-task-result-<run id>` artifact contains the executable task
-input, normalized runtime result, verification records, and runner-owned
+The result artifact includes the executable task input, normalized runtime
+result, evaluated projections, verification records, and runner-owned
 publication result. A request artifact alone is not a successful task result.
 
-The workflow is intentionally product-input-first. Consumers should model new
-behavior as workflow inputs instead of depending on worker filesystem paths,
-runtime internals, package internals, or the private implementation that
-executes the task.
+## Compatibility
+
+This removes the previously exposed `runner_recipe`, `context_repositories`,
+`success_completion_outcomes` inputs. They were serialized without a generic WP
+Codebox execution primitive, so retaining them would have presented inert data
+as a supported contract. Callers must migrate checks to executable
+`validation_dependencies`, `verification_commands`, or `drift_checks`; context
+and artifact preparation remain caller-workflow responsibilities. This is an
+intentional exposed-workflow breaking change.
