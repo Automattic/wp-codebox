@@ -25,13 +25,14 @@ jobs:
 
 The workflow checks out the target workspace, imports the selected native
 package, invokes it through the default native chat path, runs declared commands
-in that workspace, and returns actual runtime and publication data.
+in a credential-free verification environment, and returns actual runtime and
+publication data.
 
 ## Inputs
 
 - `agent_bundle`: selected agent bundle path in the target repository.
 - `target_repo`: `OWNER/REPO` target repository.
-- `prompt`, `writable_paths`, provider/model, limits, callback data, and artifact declarations: native task inputs.
+- `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
 - `validation_dependencies`: optional shell command that installs validation dependencies in the target workspace.
 - `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass.
@@ -43,11 +44,14 @@ in that workspace, and returns actual runtime and publication data.
 
 ## Access And Publication
 
-`ACCESS_TOKEN` is passed only as `GITHUB_TOKEN` to the native runner workspace
-tools, whose canonical credential contract reads `GITHUB_TOKEN` or `GH_TOKEN`.
-It is not serialized into task input, result, or artifact data. The workflow
-fails closed before execution unless the target repository is present in both
-access lists, and it fails when `require_access_token` is true without a token.
+`ACCESS_TOKEN` is passed only as `GITHUB_TOKEN` to native agent execution and is
+not serialized into task input, result, or artifact data. GitHub runner tools
+receive the normalized `allowed_repos` policy explicitly through the runtime and
+fail closed for every PR, issue, and comment operation outside that set. The
+checkout does not persist credentials. Verification, dependency, and drift
+commands run with a clean environment that excludes provider and GitHub secrets.
+Known secret values are redacted before result or artifact persistence; captured
+stdout/stderr is capped at 32 KiB and workflow outputs at 8 KiB.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
@@ -67,14 +71,24 @@ runner token, so a fabricated publication result cannot satisfy the gate.
 
 The result artifact includes the executable task input, normalized runtime
 result, evaluated projections, verification records, and runner-owned
-publication result. A request artifact alone is not a successful task result.
+publication result. Runtime input, result, and diagnostics are uploaded from
+`workspace/.codebox/` with `if: always()`, including execution failures. A request
+artifact alone is not a successful task result.
 
 ## Compatibility
 
 This removes the previously exposed `runner_recipe`, `context_repositories`,
-`success_completion_outcomes` inputs. They were serialized without a generic WP
+`success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs. They were serialized without a generic WP
 Codebox execution primitive, so retaining them would have presented inert data
 as a supported contract. Callers must migrate checks to executable
 `validation_dependencies`, `verification_commands`, or `drift_checks`; context
 and artifact preparation remain caller-workflow responsibilities. This is an
 intentional exposed-workflow breaking change.
+
+## Docs Agent Merge Order
+
+The current Docs Agent `maintain-docs.yml` still passes removed inputs. This PR
+depends on a prior Docs Agent caller-contract preparation commit that removes
+those inputs and expresses only executable checks through this workflow. Merge
+that caller preparation first, then merge this workflow change. Until the
+preparation lands, this PR is intentionally not mergeable.

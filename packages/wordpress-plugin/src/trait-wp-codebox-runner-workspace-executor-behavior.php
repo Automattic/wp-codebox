@@ -445,7 +445,10 @@ trait WP_Codebox_Runner_Workspace_Executor_Behavior {
 			);
 		}
 
-		$engine = new WP_Codebox_Runner_Workspace_Tools( $root );
+		$allowed_repos = is_array( $context['runner_workspace_policy']['allowed_repos'] ?? null )
+			? $context['runner_workspace_policy']['allowed_repos']
+			: array();
+		$engine = new WP_Codebox_Runner_Workspace_Tools( $root, null, $allowed_repos );
 		/** @var callable $callable */
 		$callable = array( $engine, $operation );
 		return (array) $callable( $parameters );

@@ -68,7 +68,7 @@ register_shutdown_function( static function () use ( $root ): void {
 	}
 } );
 
-$tools = new WP_Codebox_Runner_Workspace_Tools( $root );
+$tools = new WP_Codebox_Runner_Workspace_Tools( $root, null, array( 'automattic/wp-codebox' ) );
 
 // ---------------------------------------------------------------------------
 // File tools: write -> read -> edit -> grep
@@ -166,16 +166,19 @@ $pr = $tools->build_create_pull_request( array(
 ) );
 assert_true( ! empty( $pr['success'] ), 'build_create_pull_request succeeds with a token', $failures, $passes );
 assert_true( 'POST' === $pr['method'], 'PR request is a POST', $failures, $passes );
-assert_true( 'https://api.github.com/repos/Automattic/wp-codebox/pulls' === $pr['url'], 'PR request targets the pulls endpoint', $failures, $passes );
+assert_true( 'https://api.github.com/repos/automattic/wp-codebox/pulls' === $pr['url'], 'PR request targets the pulls endpoint', $failures, $passes );
 assert_true( 'token test-token-123' === ( $pr['headers']['Authorization'] ?? '' ), 'PR request carries the env token', $failures, $passes );
 $pr_body = json_decode( (string) $pr['body'], true );
 assert_true( 'feat/x' === ( $pr_body['head'] ?? '' ) && 'main' === ( $pr_body['base'] ?? '' ), 'PR body has head/base', $failures, $passes );
 
 $issue = $tools->build_create_issue( array( 'repo' => 'Automattic/wp-codebox', 'title' => 'Bug', 'labels' => array( 'bug' ) ) );
-assert_true( 'https://api.github.com/repos/Automattic/wp-codebox/issues' === ( $issue['url'] ?? '' ), 'issue request targets the issues endpoint', $failures, $passes );
+assert_true( 'https://api.github.com/repos/automattic/wp-codebox/issues' === ( $issue['url'] ?? '' ), 'issue request targets the issues endpoint', $failures, $passes );
 
 $comment = $tools->build_comment_pull_request( array( 'repo' => 'Automattic/wp-codebox', 'number' => 42, 'body' => 'LGTM' ) );
-assert_true( 'https://api.github.com/repos/Automattic/wp-codebox/issues/42/comments' === ( $comment['url'] ?? '' ), 'PR comment targets the issue-comments endpoint', $failures, $passes );
+assert_true( 'https://api.github.com/repos/automattic/wp-codebox/issues/42/comments' === ( $comment['url'] ?? '' ), 'PR comment targets the issue-comments endpoint', $failures, $passes );
+
+$blocked = $tools->build_create_issue( array( 'repo' => 'Automattic/not-allowed', 'title' => 'Blocked' ) );
+assert_true( empty( $blocked['success'] ) && 'wp_codebox_runner_workspace_github_repo_not_allowed' === ( $blocked['error']['code'] ?? '' ), 'GitHub tools fail closed outside the explicit normalized allowlist', $failures, $passes );
 
 // Missing-token failure surfaces (does not silently no-op).
 putenv( 'GITHUB_TOKEN' );
@@ -202,6 +205,14 @@ assert_true( ! empty( $exec_status['success'] ) && 'main' === ( $exec_status['br
 // Namespaced tool name is accepted.
 $exec_ns = $executor->execute_tool( 'wp-codebox/workspace-ls', array( 'path' => 'src', 'workspace_root' => $root ) );
 assert_true( ! empty( $exec_ns['success'] ), 'executor accepts namespaced tool names', $failures, $passes );
+
+putenv( 'GITHUB_TOKEN=test-token-123' );
+$exec_blocked = $executor->execute_tool(
+	'create-github-issue',
+	array( 'repo' => 'Automattic/not-allowed', 'title' => 'Blocked', 'workspace_root' => $root ),
+	array( 'runner_workspace_policy' => array( 'allowed_repos' => array( 'Automattic/wp-codebox' ) ) )
+);
+assert_true( empty( $exec_blocked['success'] ) && 'wp_codebox_runner_workspace_github_repo_not_allowed' === ( $exec_blocked['error']['code'] ?? '' ), 'executor passes explicit runtime allowlist to GitHub operations', $failures, $passes );
 
 // Unknown tool is rejected.
 $exec_unknown = $executor->execute_tool( 'not-a-tool', array( 'workspace_root' => $root ) );

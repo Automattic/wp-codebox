@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -32,6 +32,8 @@ assert.match(workflow, /Checkout target workspace/)
 assert.match(workflow, /Execute native agent task/)
 assert.match(workflow, /execute-native-agent-task\.mjs/)
 assert.match(workflow, /agent-task-artifacts/)
+assert.match(workflow, /if: always\(\)/)
+assert.doesNotMatch(publicWorkflowSurface, /step_budget:|tool_results_key:/)
 assert.doesNotMatch(workflow, /steps\.plan\.outputs/)
 assert.doesNotMatch(publicWorkflowSurface, /datamachine|data machine|data-machine|agents api/i)
 assert.doesNotMatch(publicWorkflowSurface, /mount|component path|ability id|provider plugin/i)
@@ -39,7 +41,6 @@ assert.doesNotMatch(publicWorkflowSurface, /mount|component path|ability id|prov
 const docs = await readFile(new URL("../docs/agent-task-reusable-workflow.md", import.meta.url), "utf8")
 assert.match(docs, /^# Agent Task Reusable Workflow/m)
 assert.match(docs, /Automattic\/wp-codebox\/.github\/workflows\/run-agent-task.yml@main/)
-assert.match(docs, /runner_recipe/)
 assert.match(docs, /agent_bundle/)
 assert.match(docs, /runner_workspace/)
 assert.match(docs, /access_token_repos/)
@@ -78,9 +79,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     REQUIRE_ACCESS_TOKEN: "false",
     ALLOWED_REPOS: '["Automattic/example-target"]',
     MAX_TURNS: "12",
-    STEP_BUDGET: "16",
     TIME_BUDGET_MS: "600000",
-    TOOL_RESULTS_KEY: "tool_results",
     OUTPUT_PROJECTIONS: '{"pr_url":"metadata.runner_workspace_publication.url"}',
     TRANSCRIPT_ARTIFACT_NAME: "agent-transcript",
     REPLAY_BUNDLE_ARTIFACT_NAME: "agent-replay",
@@ -144,5 +143,23 @@ assert.match(outputs, /job_status<<__WP_CODEBOX_OUTPUT__\nskipped\n__WP_CODEBOX_
 assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\nrunner-(provider|default)-credentials\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /request_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-request\.json\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-workflow-result\.json\n__WP_CODEBOX_OUTPUT__/)
+
+// Native execution gets only agent credentials. Verification gets a clean
+// environment, and any secret printed by either phase is redacted before the
+// result or artifacts are persisted.
+const fakeCli = join(tmp, "fake-cli.mjs")
+await mkdir(join(tmp, ".codebox", "agent-task-artifacts"), { recursive: true })
+await writeFile(fakeCli, `import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
+await writeFile(requestPath, `${JSON.stringify({ ...request, run_agent: true, dry_run: false, verification_commands: [{ command: 'test -z "$OPENAI_API_KEY" -a -z "$GITHUB_TOKEN" && printf secret-verification', description: "credential isolation" }], outputs: { projections: { answer: "outputs.artifact_result.result.outputs.answer" } } }, null, 2)}\n`)
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
+})
+const secureResult = await readFile(resultPath, "utf8")
+const secureArtifact = await readFile(join(tmp, ".codebox", "agent-task-artifacts", "agent.txt"), "utf8")
+assert.match(secureResult, /\[REDACTED\]/)
+assert.doesNotMatch(secureResult, /secret-agent-value|secret-github-value/)
+assert.doesNotMatch(secureArtifact, /secret-agent-value|secret-github-value/)
+assert.match(secureResult, /"answer": "ok"/)
 
 console.log("agent task reusable workflow ok")

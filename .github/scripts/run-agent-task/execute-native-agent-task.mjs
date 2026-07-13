@@ -7,21 +7,46 @@ const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const codeboxRoot = resolve(process.env.WP_CODEBOX_WORKFLOW_ROOT || ".")
 const codeboxCliPath = process.env.WP_CODEBOX_CLI_PATH || join(codeboxRoot, "packages/cli/dist/index.js")
 const outputPath = process.env.GITHUB_OUTPUT
+const MAX_CAPTURE_CHARS = 32768
+const MAX_OUTPUT_CHARS = 8192
+const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN"].map((name) => process.env[name]).filter(Boolean)
+
+function redact(value) {
+  if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
+  if (Array.isArray(value)) return value.map(redact)
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]))
+  return value
+}
+
+function bounded(value, limit = MAX_CAPTURE_CHARS) {
+  const safe = redact(value)
+  if (typeof safe !== "string") return safe
+  return safe.length > limit ? `${safe.slice(0, limit)}\n[TRUNCATED ${safe.length - limit} characters]` : safe
+}
 
 function output(name, value) {
   if (!outputPath) return Promise.resolve()
-  return appendFile(outputPath, `${name}<<__WP_CODEBOX_OUTPUT__\n${typeof value === "string" ? value : JSON.stringify(value)}\n__WP_CODEBOX_OUTPUT__\n`)
+  const rendered = typeof value === "string" ? value : JSON.stringify(value)
+  return appendFile(outputPath, `${name}<<__WP_CODEBOX_OUTPUT__\n${bounded(rendered, MAX_OUTPUT_CHARS)}\n__WP_CODEBOX_OUTPUT__\n`)
 }
 
-function command(command, args, cwd) {
+function safeEnvironment(extra = {}) {
+  return { PATH: process.env.PATH || "", HOME: process.env.HOME || "", CI: process.env.CI || "true", ...extra }
+}
+
+function agentEnvironment() {
+  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN"].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
+}
+
+function command(command, args, cwd, env = safeEnvironment()) {
   return new Promise((resolveCommand) => {
-    const child = spawn(command, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
     child.stdout.on("data", (chunk) => { stdout += chunk })
     child.stderr.on("data", (chunk) => { stderr += chunk })
-    child.on("close", (code) => resolveCommand({ code: code ?? 1, stdout, stderr }))
-    child.on("error", (error) => resolveCommand({ code: 1, stdout, stderr: `${stderr}${error.message}\n` }))
+    child.on("close", (code) => resolveCommand({ code: code ?? 1, stdout: bounded(stdout), stderr: bounded(stderr) }))
+    child.on("error", (error) => resolveCommand({ code: 1, stdout: bounded(stdout), stderr: bounded(`${stderr}${error.message}\n`) }))
   })
 }
 
@@ -75,7 +100,7 @@ async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
   const match = string(record(publication).pull_request && record(publication).pull_request.url).match(/\/pull\/(\d+)\/?$/)
   const pullNumber = match?.[1]
   if (!pullNumber) return { valid: false, error: "Publication pull-request URL did not contain a pull number." }
-  const response = await command("gh", ["api", `repos/${targetRepo}/pulls/${pullNumber}`], cwd)
+  const response = await command("gh", ["api", `repos/${targetRepo}/pulls/${pullNumber}`], cwd, agentEnvironment())
   if (response.code !== 0) return { valid: false, error: "Published pull request could not be resolved through GitHub.", stderr: response.stderr }
   try {
     const pullRequest = JSON.parse(response.stdout)
@@ -101,6 +126,18 @@ function projections(value, runtimeResult) {
     output[name] = projected
   }
   return output
+}
+
+async function redactArtifactFiles(directory) {
+  const { readdir, stat } = await import("node:fs/promises")
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) await redactArtifactFiles(path)
+    if (entry.isFile() && (await stat(path)).size <= 4 * 1024 * 1024) {
+      const contents = await readFile(path, "utf8").catch(() => null)
+      if (contents !== null) await writeFile(path, bounded(contents, 4 * 1024 * 1024))
+    }
+  }
 }
 
 const request = JSON.parse(await readFile(requestPath, "utf8"))
@@ -161,11 +198,10 @@ const taskInput = {
         workflow: { id: packageSlug },
         input: {
           prompt: request.prompt,
-          runner_workspace: request.runner_workspace,
+          runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
           target_repo: request.target_repo,
           writable_paths: request.writable_paths,
-          verification_commands: request.verification_commands,
-          drift_checks: request.drift_checks,
+          runner_workspace_policy: { allowed_repos: request.access.allowed_repos },
         },
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
@@ -180,15 +216,17 @@ await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "" }
 if (request.run_agent && !request.dry_run) {
-  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace)
+  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment())
 }
 
 let runtimeResult = {}
 try {
-  runtimeResult = JSON.parse(execution.stdout)
+  runtimeResult = redact(JSON.parse(execution.stdout))
 } catch {
   runtimeResult = { success: false, diagnostics: [{ code: "wp-codebox.agent-task.invalid-result", message: "Native agent-task-run did not return JSON.", stderr: execution.stderr }] }
 }
+
+await redactArtifactFiles(artifactsPath)
 
 const verification = []
 if (execution.code === 0 && request.run_agent && !request.dry_run) {
@@ -234,7 +272,7 @@ const result = {
   success,
   request_path: requestPath,
   runtime_input_path: ".codebox/native-agent-task-input.json",
-  runtime_result: runtimeRecord,
+  runtime_result: redact(runtimeRecord),
   verification,
   publication,
   transcript: { artifact_name: request.artifacts?.transcript_name || "agent-task-transcript" },
@@ -243,13 +281,13 @@ const result = {
     engine_data: record(runtimeRecord.outputs),
     projections: evaluatedProjections,
   },
-  access: { authorized: true, credential_mode: process.env.GITHUB_TOKEN || process.env.GH_TOKEN ? "runner-access-token" : (process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials") },
+  access: { authorized: true, credential_mode: process.env.GITHUB_TOKEN ? "runner-access-token" : (process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials"), policy: { allowed_repos: request.access.allowed_repos } },
   ...(publicationRequired ? { publication_verification: publicationVerification } : {}),
   ...(publicationRequired && !publicationPassed ? { publication_error: "success_requires_pr requires a valid published runner-workspace pull request for target_repo." } : {}),
   ...(projectionError ? { projection_error: projectionError } : {}),
 }
 
-await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`)
+await writeFile(resultPath, `${JSON.stringify(redact(result), null, 2)}\n`)
 await output("job_status", status)
 await output("transcript_json", JSON.stringify(agentResult.refs?.transcripts || []))
 await output("transcript_summary", `${request.workload?.label || "Run Agent Task"}: ${status}`)

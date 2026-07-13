@@ -32,8 +32,12 @@ function numberEnv(name) {
   return value
 }
 
+const MAX_OUTPUT_CHARS = 8192
+
 function output(name, value) {
-  appendFileSync(process.env.GITHUB_OUTPUT, `${name}<<__WP_CODEBOX_OUTPUT__\n${String(value)}\n__WP_CODEBOX_OUTPUT__\n`)
+  const rendered = String(value)
+  if (rendered.length > MAX_OUTPUT_CHARS) throw new Error(`${name} exceeds the ${MAX_OUTPUT_CHARS}-character workflow output limit.`)
+  appendFileSync(process.env.GITHUB_OUTPUT, `${name}<<__WP_CODEBOX_OUTPUT__\n${rendered}\n__WP_CODEBOX_OUTPUT__\n`)
 }
 
 function repositoryList(name) {
@@ -88,7 +92,6 @@ const request = {
   },
   limits: {
     max_turns: numberEnv("MAX_TURNS"),
-    step_budget: numberEnv("STEP_BUDGET"),
     time_budget_ms: numberEnv("TIME_BUDGET_MS"),
   },
   artifacts: {
@@ -98,7 +101,6 @@ const request = {
     replay_bundle_name: process.env.REPLAY_BUNDLE_ARTIFACT_NAME || "",
   },
   outputs: {
-    tool_results_key: process.env.TOOL_RESULTS_KEY || "tool_results",
     projections: parseJson("OUTPUT_PROJECTIONS", {}, "object"),
   },
   callback_data: parseJson("CALLBACK_DATA", {}, "object"),
@@ -109,6 +111,9 @@ const request = {
 if (request.access.allowed_repos.some((repository) => typeof repository !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))) {
   throw new Error("ALLOWED_REPOS must be a JSON array of OWNER/REPO values.")
 }
+request.access.allowed_repos = [...new Set(request.access.allowed_repos.map((repository) => repository.toLowerCase()))]
+request.access.access_token_repos = [...new Set(request.access.access_token_repos.map((repository) => repository.toLowerCase()))]
+request.target_repo = request.target_repo.toLowerCase()
 if (!request.access.allowed_repos.includes(request.target_repo)) {
   throw new Error("ALLOWED_REPOS must explicitly include TARGET_REPO.")
 }

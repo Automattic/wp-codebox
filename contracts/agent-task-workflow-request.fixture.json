@@ -6,7 +6,7 @@
     "label": "Run example maintenance",
     "component_id": "example-ci-driver"
   },
-  "target_repo": "Automattic/example-target",
+  "target_repo": "automattic/example-target",
   "prompt": "Update the configured surface.",
   "writable_paths": "README.md,docs/**",
   "model": {
@@ -30,16 +30,15 @@
   },
   "access": {
     "access_token_repos": [
-      "Automattic/example-target"
+      "automattic/example-target"
     ],
     "require_access_token": false,
     "allowed_repos": [
-      "Automattic/example-target"
+      "automattic/example-target"
     ]
   },
   "limits": {
     "max_turns": 12,
-    "step_budget": 16,
     "time_budget_ms": 600000
   },
   "artifacts": {
@@ -56,7 +55,6 @@
     "replay_bundle_name": "agent-replay"
   },
   "outputs": {
-    "tool_results_key": "tool_results",
     "projections": {
       "pr_url": "metadata.runner_workspace_publication.url"
     }

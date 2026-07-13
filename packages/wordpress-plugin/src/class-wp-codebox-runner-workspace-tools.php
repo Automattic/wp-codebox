@@ -26,17 +26,22 @@ final class WP_Codebox_Runner_Workspace_Tools {
 	/** @var callable(string $method, string $url, array<string,string> $headers, ?string $body):array<string,mixed> */
 	private $http_transport;
 
+	/** @var list<string> Canonical repositories allowed for GitHub mutations. */
+	private array $allowed_repos;
+
 	/** @var list<string> Environment variable names consulted for a GitHub token, in order. */
 	private const GITHUB_TOKEN_ENV_VARS = array( 'GITHUB_TOKEN', 'GH_TOKEN' );
 
 	/**
 	 * @param string        $root           Workspace root directory (must already exist).
 	 * @param callable|null $http_transport Optional GitHub HTTP transport override for testing.
+	 * @param list<string>  $allowed_repos Explicit GitHub repository allowlist for this runtime.
 	 */
-	public function __construct( string $root, ?callable $http_transport = null ) {
+	public function __construct( string $root, ?callable $http_transport = null, array $allowed_repos = array() ) {
 		$resolved   = realpath( $root );
 		$this->root = false !== $resolved ? $resolved : rtrim( $root, '/' );
 		$this->http_transport = $http_transport ?? array( $this, 'default_http_transport' );
+		$this->allowed_repos  = $this->normalize_allowed_repos( $allowed_repos );
 	}
 
 	public function root(): string {
@@ -478,6 +483,10 @@ final class WP_Codebox_Runner_Workspace_Tools {
 	 * @return array<string,mixed>
 	 */
 	private function build_github_request( string $method, string $path, array $body, array $input ): array {
+		$repo = $this->repo_from_github_path( $path );
+		if ( '' === $repo || ! in_array( $repo, $this->allowed_repos, true ) ) {
+			return $this->failure( 'github_repo_not_allowed', 'GitHub operation repository is not explicitly allowed by this runner runtime policy.' );
+		}
 		$token = $this->resolve_github_token( $input );
 		if ( '' === $token ) {
 			return $this->failure(
@@ -658,7 +667,27 @@ final class WP_Codebox_Runner_Workspace_Tools {
 		if ( 1 !== preg_match( '#^[^/\s]+/[^/\s]+$#', $repo ) ) {
 			return $this->failure( 'invalid_request', 'GitHub operations require a repo in owner/name form.' );
 		}
-		return preg_replace( '/\.git$/', '', $repo ) ?? $repo;
+		return strtolower( preg_replace( '/\.git$/', '', $repo ) ?? $repo );
+	}
+
+	/** @param list<mixed> $repositories @return list<string> */
+	private function normalize_allowed_repos( array $repositories ): array {
+		$normalized = array();
+		foreach ( $repositories as $repository ) {
+			$repo = $this->normalize_repo( is_string( $repository ) ? $repository : '' );
+			if ( is_string( $repo ) ) {
+				$normalized[] = $repo;
+			}
+		}
+		return array_values( array_unique( $normalized ) );
+	}
+
+	private function repo_from_github_path( string $path ): string {
+		if ( 1 !== preg_match( '#^repos/([^/]+/[^/]+)(?:/|$)#', ltrim( $path, '/' ), $matches ) ) {
+			return '';
+		}
+		$repo = $this->normalize_repo( $matches[1] );
+		return is_string( $repo ) ? $repo : '';
 	}
 
 	/**

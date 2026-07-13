@@ -75,18 +75,10 @@ name: Run Agent Task (reusable)
         description: Maximum agent turns for the run.
         type: number
         default: 12
-      step_budget:
-        description: Maximum tool/action steps for the run.
-        type: number
-        default: 16
       time_budget_ms:
         description: Run time budget in milliseconds.
         type: number
         default: 600000
-      tool_results_key:
-        description: Metadata key for captured tool results.
-        type: string
-        default: tool_results
       output_projections:
         description: JSON object mapping workflow output names to result paths.
         type: string
@@ -206,7 +198,7 @@ jobs:
           repository: ${{ inputs.target_repo }}
           path: workspace
           token: ${{ secrets.ACCESS_TOKEN || github.token }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Build Codebox task request
         id: plan
@@ -233,9 +225,7 @@ jobs:
           REQUIRE_ACCESS_TOKEN: ${{ inputs.require_access_token }}
           ALLOWED_REPOS: ${{ inputs.allowed_repos }}
           MAX_TURNS: ${{ inputs.max_turns }}
-          STEP_BUDGET: ${{ inputs.step_budget }}
           TIME_BUDGET_MS: ${{ inputs.time_budget_ms }}
-          TOOL_RESULTS_KEY: ${{ inputs.tool_results_key }}
           OUTPUT_PROJECTIONS: ${{ inputs.output_projections }}
           TRANSCRIPT_ARTIFACT_NAME: ${{ inputs.transcript_artifact_name }}
           REPLAY_BUNDLE_ARTIFACT_NAME: ${{ inputs.replay_bundle_artifact_name }}
@@ -265,13 +255,14 @@ jobs:
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 
       - name: Upload Codebox task request
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codebox-agent-task-request-${{ github.run_id }}
           path: |
             .codebox/agent-task-request.json
-            .codebox/agent-task-workflow-result.json
-            .codebox/native-agent-task-input.json
+            workspace/.codebox/agent-task-workflow-result.json
+            workspace/.codebox/native-agent-task-input.json
 
       - name: Upload Codebox task result
         if: always()
@@ -279,6 +270,6 @@ jobs:
         with:
           name: codebox-agent-task-result-${{ github.run_id }}
           path: |
-            .codebox/agent-task-workflow-result.json
+            workspace/.codebox/agent-task-workflow-result.json
             workspace/.codebox/agent-task-artifacts
           if-no-files-found: ignore
