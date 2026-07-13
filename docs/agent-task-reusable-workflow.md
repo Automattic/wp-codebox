@@ -25,14 +25,14 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-The workflow checks out the target workspace, imports the selected native
-package, invokes it through the default native chat path, runs declared commands
+The workflow checks out the target workspace, fetches and imports the selected
+public native package, invokes it through the default native chat path, runs declared commands
 in a credential-free verification environment, and returns actual runtime and
 publication data.
 
 ## Inputs
 
-- `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
+- `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. Packages are supported only from publicly accessible GitHub repositories, fetched from canonical `https://github.com/OWNER/REPOSITORY.git` without credentials. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
 - `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
@@ -62,16 +62,13 @@ from task requests, runtime input, results, and upload artifacts, and is never
 passed to the agent. The selected descriptor is authorized against this policy
 both before persistence and immediately before host materialization.
 
-The external package is never mounted or copied into the Playground workspace.
-The runner verifies raw file bytes and sends them to the CLI over inherited file
-descriptor 3 using the bounded `WPCBPKG1` protocol: an 8-byte magic prefix, a
-four-byte big-endian byte count, then exactly that many bytes (maximum 1 MiB).
-The CLI rejects missing, truncated, oversized, or malformed input, keeps the
-payload outside public task JSON and environment variables, and removes its
-private bootstrap source after the run. The runtime re-hashes, JSON-validates,
-canonically imports, and unlinks its ephemeral `.agent.json` in a `try/finally`
-before resolving agent tools. Persisted input, results, artifacts, commands,
-and logs retain descriptor metadata only.
+The source fetch receives no repository, publication, provider, or GitHub token.
+Public package bytes are verified against the immutable descriptor, encoded in
+the normal in-memory runtime recipe, and decoded inside Playground. The runtime
+re-hashes raw bytes, validates a standalone `agents/agent/v1` `.agent.json`,
+canonically imports it, and removes its importer-only temporary `.agent.json` in
+a `try/finally` before resolving agent tools. No package file is mounted into or
+visible from the agent workspace.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
@@ -116,7 +113,8 @@ input, secret, or output expectation.
 
 ## Compatibility
 
-This removes the previously exposed `external_package_allowed_repositories`,
+This public-only v1 interface removes support for confidential or private package
+bytes and removes the previously exposed `external_package_allowed_repositories`,
 `external_package_allowed_paths`, `runner_recipe`, `context_repositories`,
 `workspace_contract_checks`, `actions_artifact_downloads`,
 `success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs.

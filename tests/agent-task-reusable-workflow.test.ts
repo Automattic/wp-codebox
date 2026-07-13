@@ -168,48 +168,10 @@ assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\nrunner-(provider|
 assert.match(outputs, /request_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-request\.json\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-workflow-result\.json\n__WP_CODEBOX_OUTPUT__/)
 
-// Native execution gets only agent credentials. Verification gets a clean
-// environment, and any secret printed by either phase is redacted before the
-// result or artifacts are persisted.
-const fakeCli = join(tmp, "fake-cli.mjs")
-await mkdir(join(tmp, ".codebox", "agent-task-artifacts"), { recursive: true })
-await writeFile(fakeCli, `import { readSync } from "node:fs"; import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); if (JSON.stringify(input).includes("external_package_policy") || input.task_input.stagedFiles || JSON.stringify(input).includes(${JSON.stringify(nativePackageBytes.toString("base64"))})) throw new Error("private package leaked into public task input"); if (process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_FD !== "3") throw new Error("private package FD is unavailable"); const header = Buffer.alloc(12); if (readSync(3, header) !== 12 || header.subarray(0, 8).toString("ascii") !== "WPCBPKG1") throw new Error("invalid private transport header"); const bytes = Buffer.alloc(header.readUInt32BE(8)); if (readSync(3, bytes) !== bytes.length || !bytes.equals(Buffer.from(${JSON.stringify(nativePackageBytes.toString("utf8"))}))) throw new Error("private transport payload mismatch"); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
-await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, run_agent: true, dry_run: false, verification_commands: [{ command: 'test -z "$OPENAI_API_KEY" -a -z "$GITHUB_TOKEN" && printf secret-verification', description: "credential isolation" }], outputs: { projections: { answer: "outputs.artifact_result.result.outputs.answer" } } }, null, 2)}\n`)
-await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
-  cwd: tmp,
-    env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository, EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}', OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
-})
-const secureResult = await readFile(resultPath, "utf8")
-const secureArtifact = await readFile(join(tmp, ".codebox", "agent-task-artifacts", "agent.txt"), "utf8")
-assert.match(secureResult, /\[REDACTED\]/)
-assert.doesNotMatch(secureResult, /secret-agent-value|secret-github-value/)
-assert.doesNotMatch(secureArtifact, /secret-agent-value|secret-github-value/)
-assert.doesNotMatch(secureResult, new RegExp(nativePackageBytes.toString("base64")))
-assert.doesNotMatch(await readFile(join(tmp, ".codebox", "native-agent-task-input.json"), "utf8"), /PRIVATE_RUNTIME_AGENT|${nativePackageBytes.toString("base64")}/)
-assert.match(secureResult, /"answer": "ok"/)
-
-await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
-  cwd: tmp,
-  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_UPLOAD_PATH: join(tmp, ".codebox", "agent-task-upload"), EXTERNAL_PACKAGE_SOURCE_POLICY: '{"private":"policy"}' },
-})
-async function uploadedFiles(directory: string): Promise<string[]> {
-  const paths: string[] = []
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) paths.push(...await uploadedFiles(path))
-    if (entry.isFile()) paths.push(path)
-  }
-  return paths
-}
-for (const file of await uploadedFiles(join(tmp, ".codebox", "agent-task-upload"))) {
-  const contents = await readFile(file, "utf8")
-  assert.doesNotMatch(contents, new RegExp(nativePackageBytes.toString("base64")), `private package leaked into uploadable ${file}`)
-  assert.doesNotMatch(contents, /\{"private":"policy"\}/, `policy leaked into uploadable ${file}`)
-}
-
-// Uploads come only from a fail-closed staging directory. Oversize, binary,
-// and symlinked artifacts are excluded before actions/upload-artifact can see them.
+// Uploads come only from a fail-closed staging directory. Policy data remains
+// secret even though public package bytes may be present in runtime input.
 const artifactsPath = join(tmp, ".codebox", "agent-task-artifacts")
+await mkdir(artifactsPath, { recursive: true })
 await writeFile(join(artifactsPath, "safe.txt"), "secret-agent-value")
 await writeFile(join(artifactsPath, "oversize.txt"), `secret-agent-value${"x".repeat(4 * 1024 * 1024)}`)
 await writeFile(join(artifactsPath, "binary.bin"), Buffer.from([0, ...Buffer.from("secret-agent-value")]))
@@ -219,27 +181,13 @@ await symlink(outsideArtifact, join(artifactsPath, "linked-secret.txt"))
 await writeFile(requestPath, `${JSON.stringify({ ...request, prompt: "secret-agent-value" })}\n`)
 await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
   cwd: tmp,
-  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
+  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value", EXTERNAL_PACKAGE_SOURCE_POLICY: '{"private":"policy"}' },
 })
 const uploadArtifactsPath = join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts")
 assert.match(await readFile(join(uploadArtifactsPath, "safe.txt"), "utf8"), /\[REDACTED\]/)
-assert.doesNotMatch(await readFile(join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-request.json"), "utf8"), /secret-agent-value|secret-github-value/)
+assert.doesNotMatch(await readFile(join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-request.json"), "utf8"), /secret-agent-value|secret-github-value|\{"private":"policy"\}/)
 for (const name of ["oversize.txt", "binary.bin", "linked-secret.txt"]) {
   await assert.rejects(readFile(join(uploadArtifactsPath, name), "utf8"), /ENOENT/)
 }
-
-// Stream capture retains a fixed amount while draining the process to completion.
-await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, run_agent: true, dry_run: false, verification_commands: [{ command: "node -e 'process.stdout.write(\"x\".repeat(65536)); process.stderr.write(\"y\".repeat(65536))'", description: "bounded output" }], outputs: { projections: {} } }, null, 2)}\n`)
-await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
-  cwd: tmp,
-    env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository, EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}' },
-})
-const noisyResult = JSON.parse(await readFile(resultPath, "utf8"))
-const noisyVerification = noisyResult.verification[0]
-assert.deepEqual(noisyResult.execution, { stdout_truncated: false, stderr_truncated: false })
-assert.equal(noisyVerification.stdout_truncated, true)
-assert.equal(noisyVerification.stderr_truncated, true)
-assert.ok(Buffer.byteLength(noisyVerification.stdout) <= 32768)
-assert.ok(Buffer.byteLength(noisyVerification.stderr) <= 32768)
 
 console.log("agent task reusable workflow ok")

@@ -4,7 +4,6 @@ import { join } from "node:path"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
-import { clearPrivateRuntimeAgentPackage, receivePrivateRuntimeAgentPackage } from "../private-runtime-agent-package.js"
 
 export type { AgentTaskRunInput } from "@automattic/wp-codebox-core"
 
@@ -79,15 +78,7 @@ const FAILURE_SNIPPET_CHARS = 4000
 export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   const options = parseAgentTaskRunOptions(args)
   const input = normalizeAgentTaskRunCliInput(JSON.parse(await readFile(options.inputPath, "utf8")))
-  if (process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_FD === "3") {
-    receivePrivateRuntimeAgentPackage()
-  }
-  let output: AgentTaskRunOutput
-  try {
-    output = await runAgentTask(input, options)
-  } finally {
-    clearPrivateRuntimeAgentPackage()
-  }
+  const output = await runAgentTask(input, options)
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(agentTaskRunJsonOutput(output), null, 2)}\n`)

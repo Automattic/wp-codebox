@@ -125,7 +125,7 @@ name: Run Agent Task (reusable)
       MODEL_PROVIDER_SECRET_5:
         required: false
       ACCESS_TOKEN:
-        description: GitHub token with access to every repository in access_token_repos.
+        description: GitHub token for target-repository publication only; it is never used to fetch external packages.
         required: false
       EXTERNAL_PACKAGE_SOURCE_POLICY:
         description: Trusted versioned JSON policy authorizing external native package repositories and exact standalone .agent.json paths.

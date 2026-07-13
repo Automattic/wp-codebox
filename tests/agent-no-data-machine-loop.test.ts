@@ -23,9 +23,6 @@
 
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtemp, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 
 // No `provider` is supplied, so the generated provider-validation short-circuits
@@ -87,7 +84,7 @@ function wp_get_agent($slug) {
 
 function wp_get_ability($name) {
     $GLOBALS['ability_resolved'] = true;
-    if (isset($GLOBALS['private_import']) && (!($GLOBALS['private_import']['before_ability'] ?? false) || file_exists((string) ($GLOBALS['private_import']['source'] ?? '')))) { return null; }
+    if (isset($GLOBALS['external_import']) && (!($GLOBALS['external_import']['before_ability'] ?? false) || file_exists((string) ($GLOBALS['external_import']['source'] ?? '')))) { return null; }
     if ('agents/chat' !== $name) { return null; }
     return new class {
         public function execute(array $input) {
@@ -112,6 +109,7 @@ function wp_get_ability($name) {
                     'agent_resolved_from_registry' => ('' !== $slug && $registry && $registry->is_registered($slug)),
                     'data_machine_present'       => class_exists('DataMachine\\\\Core\\\\Database\\\\Agents\\\\Agents'),
                     'registered_config'          => ('' !== $slug && $registry) ? $registry->get_registered($slug) : null,
+                    'external_package_imported'  => !empty($GLOBALS['external_import']['bytes']),
                 )),
             );
         }
@@ -155,47 +153,42 @@ assert.equal(agentsApiMeta.handler, "wp-agent-default-chat-handler")
 assert.match(sandboxAgentCode, /'provider' => \$configured_provider/)
 assert.match(sandboxAgentCode, /'model' => \$configured_model/)
 
-// A private standalone package is imported before the runtime resolves an
-// ability. Its ephemeral source must be gone by the time the agent turn starts.
-const privatePackageBytes = Buffer.from('{"schema":"agents/agent/v1","slug":"private-agent","label":"Café"}\n')
-const privatePackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(privatePackageBytes).digest("hex"))}`
-const privatePackageDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-private-package-test-"))
-const privatePackagePath = join(privatePackageDirectory, "transport")
-await writeFile(privatePackagePath, privatePackageBytes)
-process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_PATH = privatePackagePath
+// A public standalone package is embedded in the runtime recipe, imported before
+// ability resolution, and its importer-only source is removed before tools run.
+const publicPackageBytes = Buffer.from('{"schema":"agents/agent/v1","slug":"public-agent","label":"Café"}\n')
+const publicPackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(publicPackageBytes).digest("hex"))}`
 const bootstrapCode = await resolveSandboxTaskCode({
   task: "Say hello",
   agent: "wp-codebox-sandbox",
   runtimeTask: {
     ability: "agents/chat",
     input: {
-      package: { slug: "private-agent", source: "private-runtime-bootstrap", bootstrap_imported: true, external_source: { digest: privatePackageDigest } },
+      package: { slug: "public-agent", source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
     },
   },
   sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
 })
-delete process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_PATH
 const bootstrapOutput = execFileSync("php", ["-r", `${phpPreamble}
 function wp_agent_import_runtime_bundles($bundles, $options) {
     $source = $bundles[0]['source'] ?? '';
-    $GLOBALS['private_import'] = array('before_ability' => !isset($GLOBALS['ability_resolved']), 'bytes' => is_file($source) ? file_get_contents($source) : false, 'source' => $source);
+    $GLOBALS['external_import'] = array('before_ability' => !isset($GLOBALS['ability_resolved']), 'bytes' => is_file($source) ? file_get_contents($source) : false, 'source' => $source);
     return array(array('success' => true, 'slug' => $bundles[0]['slug'] ?? ''));
 }
 ${bootstrapCode}`], {
   encoding: "utf8",
-  env: { ...process.env, WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_PATH: privatePackagePath },
 })
-const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { success?: boolean, result?: unknown } }
+const bootstrapParsed = JSON.parse(bootstrapOutput) as { agent_runtime?: { success?: boolean, result?: { metadata?: { agents_api?: { external_package_imported?: boolean } } } } }
 assert.equal(bootstrapParsed.agent_runtime?.success, true, JSON.stringify(bootstrapParsed))
-assert.doesNotMatch(bootstrapCode, new RegExp(privatePackageBytes.toString("base64")))
-assert.match(bootstrapCode, /wp_codebox_import_private_runtime_agent_package/)
-assert.ok(bootstrapCode.indexOf("wp_codebox_import_private_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
+assert.equal(bootstrapParsed.agent_runtime?.result?.metadata?.agents_api?.external_package_imported, true, "decoded public bytes must reach the canonical importer")
+assert.match(bootstrapCode, new RegExp(publicPackageBytes.toString("base64")))
+assert.match(bootstrapCode, /wp_codebox_import_external_runtime_agent_package/)
+assert.ok(bootstrapCode.indexOf("wp_codebox_import_external_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
+assert.match(bootstrapCode, /base64_decode\(\$bootstrap\['bytes'\], true\)/)
 
 const failedImportOutput = execFileSync("php", ["-r", `${phpPreamble}
-function wp_agent_import_runtime_bundles($bundles, $options) { $GLOBALS['private_source'] = $bundles[0]['source']; return array(array('success' => false)); }
+function wp_agent_import_runtime_bundles($bundles, $options) { $GLOBALS['external_source'] = $bundles[0]['source']; return array(array('success' => false)); }
 ${bootstrapCode}`], {
   encoding: "utf8",
-  env: { ...process.env, WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_PATH: privatePackagePath },
 })
 const failedImport = JSON.parse(failedImportOutput) as { agent_runtime?: { success?: boolean } }
 assert.equal(failedImport.agent_runtime?.success, false, "Import failure must stop before the agent loop starts")

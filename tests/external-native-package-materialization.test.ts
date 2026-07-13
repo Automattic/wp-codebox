@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { withTempDir } from "../scripts/test-kit.js"
-import { materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy, sha256BytesV1 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
+import { canonicalPublicGithubRepositorySource, materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy, publicGitEnvironment, sha256BytesV1 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -24,6 +24,14 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repository })
   const descriptor = { repository: "example/native-packages", revision: stdout.trim(), path: "agents/naïve.agent.json", digest: sha256BytesV1(bytes) }
   const policy = parseExternalPackageSourcePolicy(JSON.stringify({ version: 1, repositories: { [descriptor.repository]: [descriptor.path] } }))
+
+  assert.equal(canonicalPublicGithubRepositorySource("Example/Native-Packages"), "https://github.com/example/native-packages.git")
+  const sourceEnvironment = publicGitEnvironment(repository)
+  for (const credential of ["GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "OPENAI_API_KEY"]) {
+    assert.equal(sourceEnvironment[credential], undefined, `public source transport must not receive ${credential}`)
+  }
+  assert.equal(sourceEnvironment.GIT_TERMINAL_PROMPT, "0")
+  assert.equal(sourceEnvironment.GIT_CONFIG_NOSYSTEM, "1")
 
   const materialized = await materializeExternalNativePackage(descriptor, { policy, remote: repository })
   assert.deepEqual(materialized.bytes, bytes, "The versioned digest covers raw UTF-8 bytes, not decoded JSON or a package tree.")

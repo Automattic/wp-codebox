@@ -8,6 +8,7 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const COMMIT = /^[0-9a-f]{40}$/i
 const DIGEST = /^[0-9a-f]{64}$/i
 const DIGEST_SCHEME = "sha256-bytes-v1"
+const MAX_PACKAGE_BYTES = 1024 * 1024
 const string = (value) => typeof value === "string" ? value.trim() : ""
 
 function normalizePath(value) {
@@ -18,6 +19,12 @@ function normalizePath(value) {
 
 export function sha256BytesV1(bytes) {
   return `${DIGEST_SCHEME}:${createHash("sha256").update(bytes).digest("hex")}`
+}
+
+export function canonicalPublicGithubRepositorySource(repository) {
+  const normalized = string(repository).toLowerCase()
+  if (!REPOSITORY.test(normalized)) throw new Error("external_package_source.repository must be an OWNER/REPO identifier.")
+  return `https://github.com/${normalized}.git`
 }
 
 function normalizeDigest(value) {
@@ -83,18 +90,35 @@ function run(command, args, options = {}) {
   })
 }
 
+export function publicGitEnvironment(home) {
+  return {
+    PATH: process.env.PATH || "",
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, "config"),
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "/bin/false",
+  }
+}
+
 export async function materializeExternalNativePackage(source, options = {}) {
   const descriptor = normalizeExternalPackageSource(source, options.policy)
   const root = await mkdtemp(join(options.tempRoot ?? tmpdir(), "wp-codebox-native-package-")); const checkout = join(root, "checkout")
   try {
-    await run("git", ["init", "--quiet", checkout]); await run("git", ["remote", "add", "origin", options.remote ?? `https://github.com/${descriptor.repository}.git`], { cwd: checkout })
-    const token = string(options.token)
-    await run("git", token ? ["-c", `http.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`, "fetch", "--depth=1", "origin", descriptor.revision] : ["fetch", "--depth=1", "origin", descriptor.revision], { cwd: checkout })
-    const commit = (await run("git", ["rev-parse", "FETCH_HEAD^{commit}"], { cwd: checkout })).toString("utf8").trim().toLowerCase()
+    // Source acquisition is always an unauthenticated public Git transport. The
+    // optional remote exists only for hermetic transport tests; workflow callers
+    // always use the canonical GitHub HTTPS origin.
+    const remote = options.remote ?? canonicalPublicGithubRepositorySource(descriptor.repository)
+    const environment = publicGitEnvironment(root)
+    await run("git", ["init", "--quiet", checkout], { env: environment }); await run("git", ["remote", "add", "origin", remote], { cwd: checkout, env: environment })
+    await run("git", ["-c", "credential.helper=", "-c", "http.extraHeader=", "fetch", "--depth=1", "origin", descriptor.revision], { cwd: checkout, env: environment })
+    const commit = (await run("git", ["rev-parse", "FETCH_HEAD^{commit}"], { cwd: checkout, env: environment })).toString("utf8").trim().toLowerCase()
     if (commit !== descriptor.revision) throw new Error("External package revision did not resolve to the requested immutable commit.")
-    const objectType = (await run("git", ["cat-file", "-t", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout })).toString("utf8").trim()
+    const objectType = (await run("git", ["cat-file", "-t", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout, env: environment })).toString("utf8").trim()
     if (objectType !== "blob") throw new Error("External native package source must identify a standalone .agent.json file, not a directory or package envelope.")
-    const bytes = await run("git", ["show", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout })
+    const bytes = await run("git", ["show", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout, env: environment })
+    if (bytes.length === 0 || bytes.length > MAX_PACKAGE_BYTES) throw new Error("External native package source must be between 1 byte and 1 MiB.")
     if (sha256BytesV1(bytes) !== descriptor.digest) throw new Error("External package byte digest does not match the trusted descriptor.")
     await rm(root, { recursive: true, force: true })
     return { bytes, descriptor }
