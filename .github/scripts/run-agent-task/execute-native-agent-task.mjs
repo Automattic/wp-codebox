@@ -7,7 +7,7 @@ const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const codeboxRoot = resolve(process.env.WP_CODEBOX_WORKFLOW_ROOT || ".")
 const codeboxCliPath = process.env.WP_CODEBOX_CLI_PATH || join(codeboxRoot, "packages/cli/dist/index.js")
 const outputPath = process.env.GITHUB_OUTPUT
-const MAX_CAPTURE_CHARS = 32768
+const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN"].map((name) => process.env[name]).filter(Boolean)
 
@@ -18,10 +18,34 @@ function redact(value) {
   return value
 }
 
-function bounded(value, limit = MAX_CAPTURE_CHARS) {
+function bounded(value, limit = MAX_CAPTURE_BYTES) {
   const safe = redact(value)
   if (typeof safe !== "string") return safe
   return safe.length > limit ? `${safe.slice(0, limit)}\n[TRUNCATED ${safe.length - limit} characters]` : safe
+}
+
+function capturedStream(limit = MAX_CAPTURE_BYTES) {
+  const chunks = []
+  let retainedBytes = 0
+  let totalBytes = 0
+  return {
+    append(chunk) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      totalBytes += value.length
+      const remaining = limit - retainedBytes
+      if (remaining > 0) {
+        const retained = value.subarray(0, remaining)
+        chunks.push(retained)
+        retainedBytes += retained.length
+      }
+    },
+    result() {
+      return {
+        output: bounded(Buffer.concat(chunks, retainedBytes).toString("utf8"), limit),
+        truncated: totalBytes > retainedBytes,
+      }
+    },
+  }
 }
 
 function output(name, value) {
@@ -41,12 +65,27 @@ function agentEnvironment() {
 function command(command, args, cwd, env = safeEnvironment()) {
   return new Promise((resolveCommand) => {
     const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] })
-    let stdout = ""
-    let stderr = ""
-    child.stdout.on("data", (chunk) => { stdout += chunk })
-    child.stderr.on("data", (chunk) => { stderr += chunk })
-    child.on("close", (code) => resolveCommand({ code: code ?? 1, stdout: bounded(stdout), stderr: bounded(stderr) }))
-    child.on("error", (error) => resolveCommand({ code: 1, stdout: bounded(stdout), stderr: bounded(`${stderr}${error.message}\n`) }))
+    const stdout = capturedStream()
+    const stderr = capturedStream()
+    let settled = false
+    const complete = (code, error) => {
+      if (settled) return
+      settled = true
+      if (error) stderr.append(`${error.message}\n`)
+      const capturedStdout = stdout.result()
+      const capturedStderr = stderr.result()
+      resolveCommand({
+        code: code ?? 1,
+        stdout: capturedStdout.output,
+        stderr: capturedStderr.output,
+        stdout_truncated: capturedStdout.truncated,
+        stderr_truncated: capturedStderr.truncated,
+      })
+    }
+    child.stdout.on("data", (chunk) => { stdout.append(chunk) })
+    child.stderr.on("data", (chunk) => { stderr.append(chunk) })
+    child.on("close", (code) => complete(code))
+    child.on("error", (error) => complete(1, error))
   })
 }
 
@@ -101,7 +140,7 @@ async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
   const pullNumber = match?.[1]
   if (!pullNumber) return { valid: false, error: "Publication pull-request URL did not contain a pull number." }
   const response = await command("gh", ["api", `repos/${targetRepo}/pulls/${pullNumber}`], cwd, agentEnvironment())
-  if (response.code !== 0) return { valid: false, error: "Published pull request could not be resolved through GitHub.", stderr: response.stderr }
+  if (response.code !== 0) return { valid: false, error: "Published pull request could not be resolved through GitHub.", stderr: response.stderr, stderr_truncated: response.stderr_truncated }
   try {
     const pullRequest = JSON.parse(response.stdout)
     return {
@@ -214,7 +253,7 @@ const taskInput = {
 
 await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
-let execution = { code: 0, stdout: "", stderr: "" }
+let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
 if (request.run_agent && !request.dry_run) {
   execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment())
 }
@@ -233,15 +272,15 @@ if (execution.code === 0 && request.run_agent && !request.dry_run) {
   const validationDependencies = string(request.validation_dependencies)
   if (validationDependencies) {
     const checkResult = await command("bash", ["-lc", validationDependencies], workspace)
-    verification.push({ kind: "validation_dependencies", command: validationDependencies, description: "Install validation dependencies", success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+    verification.push({ kind: "validation_dependencies", command: validationDependencies, description: "Install validation dependencies", success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
   }
   for (const check of verificationCommands) {
     const checkResult = await command("bash", ["-lc", check.command], workspace)
-    verification.push({ kind: "verification", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+    verification.push({ kind: "verification", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
   }
   for (const check of driftChecks) {
     const checkResult = await command("bash", ["-lc", check.command], workspace)
-    verification.push({ kind: "drift", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr })
+    verification.push({ kind: "drift", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
   }
 }
 
@@ -272,6 +311,7 @@ const result = {
   success,
   request_path: requestPath,
   runtime_input_path: ".codebox/native-agent-task-input.json",
+  execution: { stdout_truncated: execution.stdout_truncated, stderr_truncated: execution.stderr_truncated },
   runtime_result: redact(runtimeRecord),
   verification,
   publication,

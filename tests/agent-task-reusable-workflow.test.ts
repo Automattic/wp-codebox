@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -32,6 +32,8 @@ assert.match(workflow, /Checkout target workspace/)
 assert.match(workflow, /Execute native agent task/)
 assert.match(workflow, /execute-native-agent-task\.mjs/)
 assert.match(workflow, /agent-task-artifacts/)
+assert.match(workflow, /prepare-agent-task-upload\.mjs/)
+assert.match(workflow, /agent-task-upload/)
 assert.match(workflow, /if: always\(\)/)
 assert.doesNotMatch(publicWorkflowSurface, /step_budget:|tool_results_key:/)
 assert.doesNotMatch(workflow, /steps\.plan\.outputs/)
@@ -164,5 +166,40 @@ assert.match(secureResult, /\[REDACTED\]/)
 assert.doesNotMatch(secureResult, /secret-agent-value|secret-github-value/)
 assert.doesNotMatch(secureArtifact, /secret-agent-value|secret-github-value/)
 assert.match(secureResult, /"answer": "ok"/)
+
+// Uploads come only from a fail-closed staging directory. Oversize, binary,
+// and symlinked artifacts are excluded before actions/upload-artifact can see them.
+const artifactsPath = join(tmp, ".codebox", "agent-task-artifacts")
+await writeFile(join(artifactsPath, "safe.txt"), "secret-agent-value")
+await writeFile(join(artifactsPath, "oversize.txt"), `secret-agent-value${"x".repeat(4 * 1024 * 1024)}`)
+await writeFile(join(artifactsPath, "binary.bin"), Buffer.from([0, ...Buffer.from("secret-agent-value")]))
+const outsideArtifact = join(tmp, "outside-secret.txt")
+await writeFile(outsideArtifact, "secret-agent-value")
+await symlink(outsideArtifact, join(artifactsPath, "linked-secret.txt"))
+await writeFile(requestPath, `${JSON.stringify({ ...request, prompt: "secret-agent-value" })}\n`)
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
+})
+const uploadArtifactsPath = join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts")
+assert.match(await readFile(join(uploadArtifactsPath, "safe.txt"), "utf8"), /\[REDACTED\]/)
+assert.doesNotMatch(await readFile(join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-request.json"), "utf8"), /secret-agent-value|secret-github-value/)
+for (const name of ["oversize.txt", "binary.bin", "linked-secret.txt"]) {
+  await assert.rejects(readFile(join(uploadArtifactsPath, name), "utf8"), /ENOENT/)
+}
+
+// Stream capture retains a fixed amount while draining the process to completion.
+await writeFile(requestPath, `${JSON.stringify({ ...request, run_agent: true, dry_run: false, verification_commands: [{ command: "node -e 'process.stdout.write(\"x\".repeat(65536)); process.stderr.write(\"y\".repeat(65536))'", description: "bounded output" }], outputs: { projections: {} } }, null, 2)}\n`)
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli },
+})
+const noisyResult = JSON.parse(await readFile(resultPath, "utf8"))
+const noisyVerification = noisyResult.verification[0]
+assert.deepEqual(noisyResult.execution, { stdout_truncated: false, stderr_truncated: false })
+assert.equal(noisyVerification.stdout_truncated, true)
+assert.equal(noisyVerification.stderr_truncated, true)
+assert.ok(Buffer.byteLength(noisyVerification.stdout) <= 32768)
+assert.ok(Buffer.byteLength(noisyVerification.stderr) <= 32768)
 
 console.log("agent task reusable workflow ok")

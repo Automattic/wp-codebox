@@ -111,3 +111,9 @@ depends on a prior Docs Agent caller-contract preparation commit that removes
 those inputs and expresses only executable checks through this workflow. Merge
 that caller preparation first, then merge this workflow change. Until the
 preparation lands, this PR is intentionally not mergeable.
+
+## Upload safety limits
+
+The reusable workflow stages every uploaded file through a fail-closed policy. Only regular UTF-8 files of 4 MiB or less are uploaded, after configured secret values are redacted. Symlinks, special files, binary files, and files larger than 4 MiB are excluded from the upload staging directory. This applies to task artifacts and workflow request, input, and result files.
+
+Native task execution, validation-dependency installation, verification, drift checks, and GitHub pull-request validation retain at most 32 KiB from each stdout and stderr stream while continuing to drain both streams. Command results expose `stdout_truncated` and `stderr_truncated` when retained output is incomplete.
