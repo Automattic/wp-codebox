@@ -11,7 +11,8 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
-const PRIVATE_RUNTIME_AGENT_BYTES = "WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES"
+const PRIVATE_RUNTIME_AGENT_PACKAGE_FD = "WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_FD"
+const PRIVATE_PACKAGE_MAGIC = Buffer.from("WPCBPKG1", "ascii")
 
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
@@ -61,12 +62,12 @@ function safeEnvironment(extra = {}) {
 }
 
 function agentEnvironment() {
-  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", PRIVATE_RUNTIME_AGENT_BYTES].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
+  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN"].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
 }
 
-function command(command, args, cwd, env = safeEnvironment()) {
+function command(command, args, cwd, env = safeEnvironment(), privatePackageBytes) {
   return new Promise((resolveCommand) => {
-    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(command, args, { cwd, env: privatePackageBytes ? { ...env, [PRIVATE_RUNTIME_AGENT_PACKAGE_FD]: "3" } : env, stdio: privatePackageBytes ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"] })
     const stdout = capturedStream()
     const stderr = capturedStream()
     let settled = false
@@ -86,9 +87,34 @@ function command(command, args, cwd, env = safeEnvironment()) {
     }
     child.stdout.on("data", (chunk) => { stdout.append(chunk) })
     child.stderr.on("data", (chunk) => { stderr.append(chunk) })
+    if (privatePackageBytes) {
+      writePrivatePackage(child.stdio[3], privatePackageBytes).catch((error) => {
+        stderr.append(`Private runtime package transport failed: ${error instanceof Error ? error.message : String(error)}\n`)
+        child.kill()
+      }).finally(() => privatePackageBytes.fill(0))
+    }
     child.on("close", (code) => complete(code))
     child.on("error", (error) => complete(1, error))
   })
+}
+
+async function writePrivatePackage(stream, bytes) {
+  if (!stream) throw new Error("Private runtime package transport could not be opened.")
+  if (bytes.length === 0 || bytes.length > 1024 * 1024) throw new Error("Private runtime package transport size is invalid.")
+  const header = Buffer.alloc(PRIVATE_PACKAGE_MAGIC.length + 4)
+  PRIVATE_PACKAGE_MAGIC.copy(header)
+  header.writeUInt32BE(bytes.length, PRIVATE_PACKAGE_MAGIC.length)
+  try {
+    await writePrivateTransportChunk(stream, header)
+    await writePrivateTransportChunk(stream, bytes)
+    stream.end()
+  } finally {
+    header.fill(0)
+  }
+}
+
+function writePrivateTransportChunk(stream, chunk) {
+  return new Promise((resolveWrite, rejectWrite) => stream.write(chunk, (error) => error ? rejectWrite(error) : resolveWrite()))
 }
 
 function record(value) {
@@ -211,11 +237,7 @@ if (accessError) {
 const materializedPackage = request.run_agent && !request.dry_run
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
   : undefined
-const privatePackageBytes = materializedPackage?.bytes.toString("base64")
-if (privatePackageBytes) {
-  secretValues.push(privatePackageBytes)
-  process.env[PRIVATE_RUNTIME_AGENT_BYTES] = privatePackageBytes
-}
+let privatePackageBytes = materializedPackage?.bytes
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -228,7 +250,6 @@ const taskInput = {
     target: { kind: "repo", materialization: { root: workspace } },
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
-    ...(privatePackageBytes ? { runtime_env: { [PRIVATE_RUNTIME_AGENT_BYTES]: privatePackageBytes } } : {}),
     provider: request.model?.provider,
     model: request.model?.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
@@ -267,15 +288,16 @@ await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
 if (request.run_agent && !request.dry_run) {
-  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment())
+  try {
+    execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment(), privatePackageBytes)
+  } finally {
+    privatePackageBytes?.fill(0)
+    privatePackageBytes = undefined
+  }
 }
 
 // The byte channel exists only while the runtime boots. Persisted workflow input
 // retains the descriptor but never the external package contents.
-if (privatePackageBytes) {
-  delete taskInput.task_input.runtime_env
-  await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
-}
 
 let runtimeResult = {}
 try {

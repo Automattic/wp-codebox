@@ -273,6 +273,7 @@ jobs:
           MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
           MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
           GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
 
       - name: Upload Codebox task request
         if: always()

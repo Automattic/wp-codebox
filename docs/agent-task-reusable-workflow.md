@@ -63,11 +63,15 @@ passed to the agent. The selected descriptor is authorized against this policy
 both before persistence and immediately before host materialization.
 
 The external package is never mounted or copied into the Playground workspace.
-The runner verifies raw file bytes, passes them through a private bootstrap
-input, and the runtime re-hashes, decodes, validates, canonically imports, and
-unlinks a private ephemeral `.agent.json` before resolving agent tools. The
-private bytes are removed from the persisted runtime input and redacted from
-artifacts and results.
+The runner verifies raw file bytes and sends them to the CLI over inherited file
+descriptor 3 using the bounded `WPCBPKG1` protocol: an 8-byte magic prefix, a
+four-byte big-endian byte count, then exactly that many bytes (maximum 1 MiB).
+The CLI rejects missing, truncated, oversized, or malformed input, keeps the
+payload outside public task JSON and environment variables, and removes its
+private bootstrap source after the run. The runtime re-hashes, JSON-validates,
+canonically imports, and unlinks its ephemeral `.agent.json` in a `try/finally`
+before resolving agent tools. Persisted input, results, artifacts, commands,
+and logs retain descriptor metadata only.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,

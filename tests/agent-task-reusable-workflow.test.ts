@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -173,7 +173,7 @@ assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task
 // result or artifacts are persisted.
 const fakeCli = join(tmp, "fake-cli.mjs")
 await mkdir(join(tmp, ".codebox", "agent-task-artifacts"), { recursive: true })
-await writeFile(fakeCli, `import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); const bytes = input.task_input.runtime_env?.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES; if (JSON.stringify(input).includes("external_package_policy") || input.task_input.stagedFiles || !bytes || Buffer.from(bytes, "base64").toString("utf8") !== ${JSON.stringify(nativePackageBytes.toString("utf8"))}) throw new Error("private bootstrap input is missing or package was exposed as a mount"); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
+await writeFile(fakeCli, `import { readSync } from "node:fs"; import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); if (JSON.stringify(input).includes("external_package_policy") || input.task_input.stagedFiles || JSON.stringify(input).includes(${JSON.stringify(nativePackageBytes.toString("base64"))})) throw new Error("private package leaked into public task input"); if (process.env.WP_CODEBOX_PRIVATE_RUNTIME_AGENT_PACKAGE_FD !== "3") throw new Error("private package FD is unavailable"); const header = Buffer.alloc(12); if (readSync(3, header) !== 12 || header.subarray(0, 8).toString("ascii") !== "WPCBPKG1") throw new Error("invalid private transport header"); const bytes = Buffer.alloc(header.readUInt32BE(8)); if (readSync(3, bytes) !== bytes.length || !bytes.equals(Buffer.from(${JSON.stringify(nativePackageBytes.toString("utf8"))}))) throw new Error("private transport payload mismatch"); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
 await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, run_agent: true, dry_run: false, verification_commands: [{ command: 'test -z "$OPENAI_API_KEY" -a -z "$GITHUB_TOKEN" && printf secret-verification', description: "credential isolation" }], outputs: { projections: { answer: "outputs.artifact_result.result.outputs.answer" } } }, null, 2)}\n`)
 await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
   cwd: tmp,
@@ -185,8 +185,27 @@ assert.match(secureResult, /\[REDACTED\]/)
 assert.doesNotMatch(secureResult, /secret-agent-value|secret-github-value/)
 assert.doesNotMatch(secureArtifact, /secret-agent-value|secret-github-value/)
 assert.doesNotMatch(secureResult, new RegExp(nativePackageBytes.toString("base64")))
-assert.doesNotMatch(await readFile(join(tmp, ".codebox", "native-agent-task-input.json"), "utf8"), /WP_CODEBOX_PRIVATE_RUNTIME_AGENT_JSON_BYTES/)
+assert.doesNotMatch(await readFile(join(tmp, ".codebox", "native-agent-task-input.json"), "utf8"), /PRIVATE_RUNTIME_AGENT|${nativePackageBytes.toString("base64")}/)
 assert.match(secureResult, /"answer": "ok"/)
+
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_UPLOAD_PATH: join(tmp, ".codebox", "agent-task-upload"), EXTERNAL_PACKAGE_SOURCE_POLICY: '{"private":"policy"}' },
+})
+async function uploadedFiles(directory: string): Promise<string[]> {
+  const paths: string[] = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) paths.push(...await uploadedFiles(path))
+    if (entry.isFile()) paths.push(path)
+  }
+  return paths
+}
+for (const file of await uploadedFiles(join(tmp, ".codebox", "agent-task-upload"))) {
+  const contents = await readFile(file, "utf8")
+  assert.doesNotMatch(contents, new RegExp(nativePackageBytes.toString("base64")), `private package leaked into uploadable ${file}`)
+  assert.doesNotMatch(contents, /\{"private":"policy"\}/, `policy leaked into uploadable ${file}`)
+}
 
 // Uploads come only from a fail-closed staging directory. Oversize, binary,
 // and symlinked artifacts are excluded before actions/upload-artifact can see them.
