@@ -59,6 +59,8 @@ assert.deepEqual(files.get("files/browser/screenshot.png")?.redaction, { policy:
 const visualSession = new BrowserArtifactSession(artifactRoot, "files/browser/visual-compare/mobile", { source: "wordpress.visual-compare", operation: "visual-compare" })
 await visualSession.writeJson("visualDiff", "visual-diff.json", { schema: "wp-codebox/visual-compare/v1", status: "different" })
 await visualSession.writeBuffer("sourceScreenshot", "source.png", Buffer.from([3, 4, 5]))
+await visualSession.writeJson("sourceDomSnapshot", "source-dom-snapshot.json", { schema: "wp-codebox/browser-dom-snapshot/v1" })
+await visualSession.writeJson("candidateDomSnapshot", "candidate-dom-snapshot.json", { schema: "wp-codebox/browser-dom-snapshot/v1" })
 
 assert.equal(visualSession.path("/tmp/source.png"), "files/browser/visual-compare/mobile/source.png")
 const visualFiles = new Map(visualSession.writer.artifacts.files().map((file) => [file.path, file]))
@@ -66,6 +68,10 @@ assert.equal(visualFiles.get("files/browser/visual-compare/mobile/visual-diff.js
 assert.equal(visualFiles.get("files/browser/visual-compare/mobile/visual-diff.json")?.redaction?.policy, "required")
 assert.equal(visualFiles.get("files/browser/visual-compare/mobile/source.png")?.kind, "browser-visual-source-screenshot")
 assert.deepEqual(visualFiles.get("files/browser/visual-compare/mobile/source.png")?.redaction, { policy: "none", sensitive: false })
+assert.equal(visualFiles.get("files/browser/visual-compare/mobile/source-dom-snapshot.json")?.kind, "browser-visual-source-dom-snapshot")
+assert.equal(visualFiles.get("files/browser/visual-compare/mobile/source-dom-snapshot.json")?.contentType, "application/json")
+assert.equal(visualFiles.get("files/browser/visual-compare/mobile/source-dom-snapshot.json")?.redaction?.policy, "required")
+assert.equal(visualFiles.get("files/browser/visual-compare/mobile/candidate-dom-snapshot.json")?.kind, "browser-visual-candidate-dom-snapshot")
 
 const review = browserReviewSummary([{
   artifactType: "probe",

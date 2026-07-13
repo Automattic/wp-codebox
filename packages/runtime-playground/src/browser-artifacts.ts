@@ -85,6 +85,8 @@ export interface BrowserArtifactFiles {
   actionCorpus?: string
   sourceScreenshot?: string | string[]
   candidateScreenshot?: string | string[]
+  sourceDomSnapshot?: string | string[]
+  candidateDomSnapshot?: string | string[]
   diffScreenshot?: string | string[]
   visualDiff?: string | string[]
   visualExplanation?: string | string[]
@@ -1081,6 +1083,8 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   actionCorpus: { kind: "browser-action-corpus", contentType: "application/json", redact: true },
   sourceScreenshot: { kind: "browser-visual-source-screenshot", contentType: "image/png", redact: false },
   candidateScreenshot: { kind: "browser-visual-candidate-screenshot", contentType: "image/png", redact: false },
+  sourceDomSnapshot: { kind: "browser-visual-source-dom-snapshot", contentType: "application/json", redact: true },
+  candidateDomSnapshot: { kind: "browser-visual-candidate-dom-snapshot", contentType: "application/json", redact: true },
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
   visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
   visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },

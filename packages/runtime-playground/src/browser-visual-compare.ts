@@ -676,6 +676,10 @@ async function runVisualComparePairCommand({
   const files = {
     sourceScreenshot: `${artifactPathPrefix}/source.png`,
     candidateScreenshot: `${artifactPathPrefix}/candidate.png`,
+    ...(sourceDomSnapshot && candidateDomSnapshot ? {
+      sourceDomSnapshot: `${artifactPathPrefix}/source-dom-snapshot.json`,
+      candidateDomSnapshot: `${artifactPathPrefix}/candidate-dom-snapshot.json`,
+    } : {}),
     diffScreenshot: `${artifactPathPrefix}/diff.png`,
     visualDiff: `${artifactPathPrefix}/visual-diff.json`,
     ...(explanation ? { visualExplanation: `${artifactPathPrefix}/visual-explanation.json` } : {}),
@@ -708,6 +712,22 @@ async function runVisualComparePairCommand({
   }
   const blocksEngineVisualParity = blocksEngineVisualParityReportFromVisualCompare({ ...summary, explanation })
   const summaryWithBlocksEngineVisualParity = { ...summary, blocksEngineVisualParity }
+  if (sourceDomSnapshot && candidateDomSnapshot) {
+    await artifactSession.writeJson("sourceDomSnapshot", "source-dom-snapshot.json", visualCompareDomSnapshotArtifact({
+      screenshot: files.sourceScreenshot,
+      finalUrl: finalSourceUrl ?? sourceDomSnapshot.url,
+      viewport,
+      maxElements: maxExplanationCandidates,
+      snapshot: sourceDomSnapshot,
+    }))
+    await artifactSession.writeJson("candidateDomSnapshot", "candidate-dom-snapshot.json", visualCompareDomSnapshotArtifact({
+      screenshot: files.candidateScreenshot,
+      finalUrl: finalCandidateUrl ?? candidateDomSnapshot.url,
+      viewport,
+      maxElements: maxExplanationCandidates,
+      snapshot: candidateDomSnapshot,
+    }))
+  }
   await artifactSession.writeJson("visualDiff", "visual-diff.json", summaryWithBlocksEngineVisualParity)
   if (explanation) {
     await artifactSession.writeJson("visualExplanation", "visual-explanation.json", explanation)
@@ -816,6 +836,8 @@ function visualCompareMatrixArtifact(
   const diffScreenshots = entries.map((entry) => entry.artifact.files.diffScreenshot).filter((file): file is string => typeof file === "string")
   const visualDiffs = entries.map((entry) => entry.artifact.files.visualDiff).filter((file): file is string => typeof file === "string")
   const visualExplanations = entries.map((entry) => entry.artifact.files.visualExplanation).filter((file): file is string => typeof file === "string")
+  const sourceDomSnapshots = entries.map((entry) => entry.artifact.files.sourceDomSnapshot).filter((file): file is string => typeof file === "string")
+  const candidateDomSnapshots = entries.map((entry) => entry.artifact.files.candidateDomSnapshot).filter((file): file is string => typeof file === "string")
   const firstArtifact = entries[0]?.artifact
   const captureDiagnostics = visualCompareMatrixCompactCaptureDiagnostics(matrixSummary)
   return {
@@ -829,6 +851,8 @@ function visualCompareMatrixArtifact(
       visualDiff: visualDiffs,
       sourceScreenshot: sourceScreenshots,
       candidateScreenshot: candidateScreenshots,
+      ...(sourceDomSnapshots.length > 0 ? { sourceDomSnapshot: sourceDomSnapshots } : {}),
+      ...(candidateDomSnapshots.length > 0 ? { candidateDomSnapshot: candidateDomSnapshots } : {}),
       diffScreenshot: diffScreenshots,
       ...(visualExplanations.length > 0 ? { visualExplanation: visualExplanations } : {}),
     },
@@ -1588,6 +1612,30 @@ async function readVisualCompareDomSnapshotArtifact(requestedPath: string, artif
   const parsed = JSON.parse(await readFile(path, "utf8")) as unknown
   const artifact = normalizeBrowserDomSnapshotArtifact(parsed, requestedPath, "Visual compare DOM snapshot")
   return artifact
+}
+
+function visualCompareDomSnapshotArtifact(input: {
+  screenshot: string
+  finalUrl: string
+  viewport: BrowserProbeViewport | null
+  maxElements: number
+  snapshot: VisualCompareDomSnapshot
+}): VisualCompareDomSnapshotArtifact {
+  return {
+    schema: "wp-codebox/browser-dom-snapshot/v1",
+    command: "wordpress.visual-compare",
+    screenshot: input.screenshot,
+    finalUrl: input.finalUrl,
+    viewport: input.viewport,
+    capturedAt: now(),
+    limits: { maxElements: input.maxElements },
+    summary: {
+      elementCount: input.snapshot.elementCount,
+      capturedElements: input.snapshot.capturedElements.length,
+      truncated: input.snapshot.truncated,
+    },
+    snapshot: input.snapshot,
+  }
 }
 
 async function resolveVisualCompareArtifactPath(requestedPath: string, artifactRoot: string, label: string): Promise<string> {
