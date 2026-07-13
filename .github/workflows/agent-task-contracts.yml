@@ -1,0 +1,55 @@
+name: Agent Task Contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/run-agent-task/**"
+      - ".github/workflows/agent-task-contracts.yml"
+      - ".github/workflows/run-agent-task.yml"
+      - "contracts/agent-task-workflow-request.fixture.json"
+      - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
+      - "docs/agent-task-reusable-workflow.md"
+      - "package-lock.json"
+      - "package.json"
+      - "tests/agent-task-*.test.ts"
+      - "tests/redaction.test.ts"
+      - "tests/production-boundary-enforcement.test.ts"
+      - "tests/runtime-tool-policy.test.ts"
+  push:
+    paths:
+      - ".github/scripts/run-agent-task/**"
+      - ".github/workflows/agent-task-contracts.yml"
+      - ".github/workflows/run-agent-task.yml"
+      - "contracts/agent-task-workflow-request.fixture.json"
+      - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
+      - "docs/agent-task-reusable-workflow.md"
+      - "package-lock.json"
+      - "package.json"
+      - "tests/agent-task-*.test.ts"
+      - "tests/redaction.test.ts"
+      - "tests/production-boundary-enforcement.test.ts"
+      - "tests/runtime-tool-policy.test.ts"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:agent-task-contracts
+      - run: npm run test:redaction
+      - run: npm run test:production-boundary-enforcement
+      - run: npm run test:runtime-tool-policy
+
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: .github/workflows/run-agent-task.yml
