@@ -7,14 +7,6 @@ name: Run Agent Task (reusable)
         description: JSON descriptor with repository, immutable revision, package-relative path, and SHA-256 digest.
         type: string
         required: true
-      external_package_allowed_repositories:
-        description: JSON array of repositories permitted to provide the external native package.
-        type: string
-        default: '[]'
-      external_package_allowed_paths:
-        description: JSON array of permitted package paths or prefix patterns ending in *.
-        type: string
-        default: '[]'
       workload_id:
         description: Stable workload identifier for this run.
         type: string
@@ -135,6 +127,9 @@ name: Run Agent Task (reusable)
       ACCESS_TOKEN:
         description: GitHub token with access to every repository in access_token_repos.
         required: false
+      EXTERNAL_PACKAGE_SOURCE_POLICY:
+        description: Trusted versioned JSON policy authorizing external native package repositories and paths.
+        required: true
     outputs:
       job_status:
         value: ${{ jobs.run-agent-task.outputs.job_status }}
@@ -212,8 +207,7 @@ jobs:
         id: plan
         env:
           EXTERNAL_PACKAGE_SOURCE: ${{ inputs.external_package_source }}
-          EXTERNAL_PACKAGE_ALLOWED_REPOSITORIES: ${{ inputs.external_package_allowed_repositories }}
-          EXTERNAL_PACKAGE_ALLOWED_PATHS: ${{ inputs.external_package_allowed_paths }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
           COMPONENT_ID: ${{ inputs.component_id }}
@@ -262,6 +256,7 @@ jobs:
           # environment variable. It is never written to task inputs or artifacts.
           GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
           ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 
       - name: Prepare Codebox task uploads

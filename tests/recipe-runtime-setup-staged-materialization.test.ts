@@ -35,6 +35,7 @@ const prepared: PreparedRecipeRuntimeSetup = {
     sourceRef: "/tmp/host-bundle",
     target: "/workspace/example/bundles/runtime-agent",
     type: "directory",
+    mode: "readonly",
     cleanupPaths: [],
     provenance: { type: "local", source: "/tmp/host-bundle" },
     metadata: { kind: "runtime-package-source" },
@@ -68,7 +69,7 @@ const runtime = {
         type: "directory",
         source: "/tmp/host-bundle",
         target: "/workspace/example/bundles/runtime-agent",
-        mode: "readwrite",
+        mode: "readonly",
         metadata: { kind: "runtime-package-source" },
       },
     ])

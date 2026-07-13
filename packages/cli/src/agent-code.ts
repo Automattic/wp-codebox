@@ -194,50 +194,11 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
         return array();
     }
 
-    if (function_exists('wp_agent_import_runtime_bundles')) {
-        return wp_agent_import_runtime_bundles($bundle_specs, array('owner_id' => get_current_user_id() ?: 1));
+    if (!function_exists('wp_agent_import_runtime_bundles')) {
+        return array(array('success' => false, 'error' => array('code' => 'wp_codebox_agent_bundle_importer_unavailable', 'message' => 'Canonical wp_agent_import_runtime_bundles() is unavailable.')));
     }
-
-    $imports = array();
-    foreach ($bundle_specs as $index => $spec) {
-        if (!is_array($spec)) {
-            $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_spec_invalid', 'message' => 'Agent bundle spec must be an object.'));
-            continue;
-        }
-
-        if (!isset($spec['source']) && !isset($spec['bundle'])) {
-            $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_source_missing', 'message' => 'Agent bundle spec requires source or bundle.'));
-            continue;
-        }
-
-        $input = array('on_conflict' => (string) ($spec['on_conflict'] ?? 'upgrade'));
-        if (isset($spec['source']) && '' !== trim((string) $spec['source'])) {
-            $input['source'] = trim((string) $spec['source']);
-        }
-        foreach (array('slug', 'token_env') as $field) {
-            if (isset($spec[$field]) && '' !== trim((string) $spec[$field])) {
-                $input[$field] = trim((string) $spec[$field]);
-            }
-        }
-        if (isset($spec['owner_id']) && (int) $spec['owner_id'] > 0) {
-            $input['owner_id'] = (int) $spec['owner_id'];
-        } else {
-            $input['owner_id'] = get_current_user_id() ?: 1;
-        }
-        if (isset($spec['import_principal']) && is_array($spec['import_principal'])) {
-            $input['import_principal'] = $spec['import_principal'];
-        }
-
-        $result = apply_filters('wp_agent_runtime_import_bundle', null, $spec, $input, $index);
-        if (null === $result) {
-            $result = new WP_Error('wp_codebox_agent_bundle_importer_unavailable', 'No runtime agent bundle importer handled this bundle spec.', array('index' => $index));
-        }
-        $imports[] = is_wp_error($result)
-            ? array('success' => false, 'index' => $index, 'source' => isset($input['source']) ? $input['source'] : 'inline', 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data()))
-            : array_merge(array('index' => $index, 'source' => isset($input['source']) ? $input['source'] : 'inline'), is_array($result) ? $result : array('result' => $result));
-    }
-
-    return $imports;
+    $imports = wp_agent_import_runtime_bundles($bundle_specs, array('owner_id' => get_current_user_id() ?: 1));
+    return is_array($imports) ? $imports : array(array('success' => false, 'error' => array('code' => 'wp_codebox_agent_bundle_importer_invalid_result', 'message' => 'Canonical wp_agent_import_runtime_bundles() returned an invalid result.')));
 }
 
 function wp_codebox_json_encode_agent_runtime_payload($value): string {

@@ -79,6 +79,7 @@ export interface PreparedStagedFile {
   sourceRef: string
   target: string
   type: MountSpec["type"]
+  mode: MountSpec["mode"]
   cleanupPaths: string[]
   provenance: RecipeStagedFileProvenance
   metadata: Record<string, unknown>
@@ -497,12 +498,14 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
       sourceRef: stagedFile.source,
       target: stagedFile.target,
       type,
+      mode: stagedFile.mode ?? "readwrite",
       cleanupPaths: staged.cleanupPaths,
       provenance,
       metadata: {
         kind: "staged-file",
         index,
         source: provenance,
+        ...(stagedFile.metadata ?? {}),
       },
     })
   }
@@ -545,6 +548,7 @@ async function prepareRecipeSourcePackage(sourcePackage: WorkspaceRecipeSourcePa
     sourceRef: sourcePackage.source,
     target: compiled.stagedFile.target,
     type: "directory",
+    mode: "readonly",
     cleanupPaths: [stagingRoot],
     provenance,
     metadata: {

@@ -36,6 +36,7 @@ try {
 const directorySource = await mkdtemp(join(tmpdir(), "wp-codebox-directory-materialization-"))
 const readableDirectories = new Set<string>()
 const directoryWrites: Record<string, string> = {}
+let directoryMountLocked = false
 
 try {
   await mkdir(join(directorySource, "bin", "tests", "i18n-tools", "fixtures", "empty"), { recursive: true })
@@ -44,6 +45,11 @@ try {
   const result = await materializePlaygroundStagedInputs({
     playground: {
       async run({ code }: { code: string }) {
+        if (code.includes("wp-codebox/host-mount-readonly/v1")) {
+          assert.match(code, /chmod\(\$entry->getPathname\(\), \$entry->isDir\(\) \? 0555 : 0444\)/)
+          directoryMountLocked = true
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-readonly/v1", locked: true }) }
+        }
         const payload = materializationPayload(code)
         for (const directory of payload.directories ?? []) {
           readableDirectories.add(directory)
@@ -51,6 +57,9 @@ try {
         return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
       },
       async writeFile(target: string, contents: string) {
+        if (directoryMountLocked) {
+          throw new Error("sandbox mount is read-only")
+        }
         if (!readableDirectories.has(dirname(target))) {
           throw new Error(`sandbox directory was not materialized before write: ${dirname(target)}`)
         }
@@ -70,6 +79,9 @@ try {
   assert.equal(readableDirectories.has("/home/example/public_html/bin/tests/i18n-tools"), true, "nested cwd target is created")
   assert.equal(readableDirectories.has("/home/example/public_html/bin/tests/i18n-tools/fixtures/empty"), true, "empty subdirectories are created")
   assert.equal(directoryWrites["/home/example/public_html/bin/tests/i18n-tools/phpunit.xml"], "<phpunit />")
+  await assert.rejects(async () => {
+    if (directoryMountLocked) throw new Error("sandbox mount is read-only")
+  }, /read-only/)
 } finally {
   await rm(directorySource, { recursive: true, force: true })
 }

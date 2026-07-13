@@ -60,6 +60,11 @@ final class WP_Codebox_Runtime_Package_Executor {
 		if ( ! is_readable( rtrim( $source, '/\\' ) . '/.agent.json' ) ) {
 			return new WP_Error( 'wp_codebox_runtime_package_native_agent_missing', 'Runtime package source must contain a standalone .agent.json file.', array( 'status' => 400 ) );
 		}
+		$external_source = is_array( $package['external_source'] ?? null ) ? $package['external_source'] : array();
+		$expected_digest = $this->string_value( $external_source['sha256'] ?? '' );
+		if ( '' !== $expected_digest && ! hash_equals( strtolower( $expected_digest ), $this->package_directory_sha256( $source ) ) ) {
+			return new WP_Error( 'wp_codebox_runtime_package_digest_mismatch', 'Runtime package content changed after staging and before import.', array( 'status' => 400 ) );
+		}
 
 		$bundle_spec = array_filter(
 			array(
@@ -71,6 +76,9 @@ final class WP_Codebox_Runtime_Package_Executor {
 		);
 
 		$imports = $this->import_runtime_bundles( array( $bundle_spec ) );
+		if ( is_wp_error( $imports ) ) {
+			return $imports;
+		}
 		$failed  = array_values( array_filter( $imports, static fn( mixed $import ): bool => is_array( $import ) && empty( $import['success'] ) ) );
 		if ( ! empty( $failed ) ) {
 			return new WP_Error( 'wp_codebox_runtime_package_import_failed', 'Runtime package bundle import failed.', array( 'status' => 500, 'agent_bundle_imports' => $failed ) );
@@ -79,37 +87,32 @@ final class WP_Codebox_Runtime_Package_Executor {
 		return $imports;
 	}
 
-	/** @param array<int,array<string,mixed>> $bundle_specs Runtime bundle specs. @return array<int,array<string,mixed>> */
-	private function import_runtime_bundles( array $bundle_specs ): array {
-		$function = function_exists( 'apply_filters' ) ? (string) apply_filters( 'wp_codebox_browser_runtime_bundle_import_function', 'wp_agent_import_runtime_bundles' ) : 'wp_agent_import_runtime_bundles';
-		if ( '' !== $function && ! function_exists( $function ) && class_exists( 'WP_Codebox_Agents_API_Adapter' ) ) {
-			foreach ( WP_Codebox_Agents_API_Adapter::runtime_bundle_importer_paths() as $path ) {
-				if ( is_readable( $path ) ) {
-					require_once $path;
-					break;
-				}
+	/** @param array<int,array<string,mixed>> $bundle_specs Runtime bundle specs. @return array<int,array<string,mixed>>|WP_Error */
+	private function import_runtime_bundles( array $bundle_specs ): array|WP_Error {
+		if ( ! function_exists( 'wp_agent_import_runtime_bundles' ) ) {
+			return new WP_Error( 'wp_codebox_runtime_package_importer_unavailable', 'Canonical wp_agent_import_runtime_bundles() is unavailable.', array( 'status' => 500 ) );
+		}
+		$result = wp_agent_import_runtime_bundles( $bundle_specs, array( 'owner_id' => $this->owner_id() ) );
+		return is_array( $result ) ? $result : new WP_Error( 'wp_codebox_runtime_package_importer_invalid_result', 'Canonical wp_agent_import_runtime_bundles() returned an invalid result.', array( 'status' => 500 ) );
+	}
+
+	private function package_directory_sha256( string $root ): string {
+		$root = rtrim( $root, '/\\' );
+		$files = array();
+		$iterator = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::LEAVES_ONLY );
+		foreach ( $iterator as $file ) {
+			if ( $file->isLink() || ! $file->isFile() ) {
+				return '';
 			}
+			$path = str_replace( '\\', '/', substr( $file->getPathname(), strlen( $root ) + 1 ) );
+			$files[ $path ] = hash_file( 'sha256', $file->getPathname() );
 		}
-		if ( '' !== $function && function_exists( $function ) ) {
-			$result = $function( $bundle_specs, array( 'owner_id' => $this->owner_id() ) );
-			return is_array( $result ) ? $result : array();
+		ksort( $files, SORT_STRING );
+		$context = hash_init( 'sha256' );
+		foreach ( $files as $path => $digest ) {
+			hash_update( $context, $path . "\0" . $digest . "\n" );
 		}
-
-		$imports = array();
-		foreach ( $bundle_specs as $index => $spec ) {
-			$input = array(
-				'source'      => (string) ( $spec['source'] ?? '' ),
-				'slug'        => (string) ( $spec['slug'] ?? '' ),
-				'on_conflict' => (string) ( $spec['on_conflict'] ?? 'upgrade' ),
-				'owner_id'    => $this->owner_id(),
-			);
-			$result = function_exists( 'apply_filters' ) ? apply_filters( 'wp_agent_runtime_import_bundle', null, $spec, array_filter( $input, static fn( mixed $value ): bool => '' !== $value ), $index ) : null;
-			$imports[] = is_wp_error( $result )
-				? array( 'success' => false, 'index' => $index, 'source' => (string) ( $spec['source'] ?? '' ), 'error' => array( 'code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data() ) )
-				: array_merge( array( 'success' => null !== $result, 'index' => $index, 'source' => (string) ( $spec['source'] ?? '' ) ), is_array( $result ) ? $result : array() );
-		}
-
-		return $imports;
+		return hash_final( $context );
 	}
 
 	/** @param array<string,mixed> $task Runtime package task. @return array<string,mixed>|WP_Error */

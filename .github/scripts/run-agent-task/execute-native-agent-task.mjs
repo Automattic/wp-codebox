@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, join, resolve } from "node:path"
 import { spawn } from "node:child_process"
-import { materializeExternalNativePackage, normalizeExternalPackageSource } from "./materialize-external-native-package.mjs"
+import { materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -10,7 +10,7 @@ const codeboxCliPath = process.env.WP_CODEBOX_CLI_PATH || join(codeboxRoot, "pac
 const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
-const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN"].map((name) => process.env[name]).filter(Boolean)
+const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
@@ -184,7 +184,8 @@ const request = JSON.parse(await readFile(requestPath, "utf8"))
 const verificationCommands = commandEntries(request.verification_commands, "verification_commands")
 const driftChecks = commandEntries(request.drift_checks, "drift_checks")
 const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
-const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, request.external_package_policy)
+const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.env.EXTERNAL_PACKAGE_SOURCE_POLICY))
+const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
 const packageSlug = basename(externalPackageSource.path)
 const runtimePackageSource = `/workspace/external-native-packages/${packageSlug}`
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
@@ -208,7 +209,7 @@ if (accessError) {
 }
 
 const materializedPackage = request.run_agent && !request.dry_run
-  ? await materializeExternalNativePackage(externalPackageSource, { policy: request.external_package_policy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
+  ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy, token: process.env.GITHUB_TOKEN, remote: process.env.WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE })
   : undefined
 
 const taskInput = {
@@ -222,8 +223,7 @@ const taskInput = {
     target: { kind: "repo", materialization: { root: workspace } },
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
-    agent_bundles: [{ slug: packageSlug, source: runtimePackageSource }],
-    ...(materializedPackage ? { stagedFiles: [{ source: materializedPackage.source, target: runtimePackageSource }] } : {}),
+    ...(materializedPackage ? { stagedFiles: [{ source: materializedPackage.source, target: runtimePackageSource, mode: "readonly", metadata: { kind: "external-native-package", sha256: externalPackageSource.sha256 } }] } : {}),
     provider: request.model?.provider,
     model: request.model?.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),

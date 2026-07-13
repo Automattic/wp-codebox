@@ -4,7 +4,7 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { withTempDir } from "../scripts/test-kit.js"
-import { materializeExternalNativePackage, normalizeExternalPackageSource, packageDirectorySha256 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
+import { materializeExternalNativePackage, normalizeExternalPackageSource, packageDirectorySha256, parseExternalPackageSourcePolicy } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -22,7 +22,7 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   const revision = stdout.trim()
   const sha256 = await packageDirectorySha256(packagePath)
   const descriptor = { repository: "example/native-packages", revision, path: "packages/native-agent", sha256 }
-  const policy = { allowed_repositories: [descriptor.repository], allowed_paths: ["packages/*"] }
+  const policy = parseExternalPackageSourcePolicy(JSON.stringify({ version: 1, repositories: { [descriptor.repository]: ["packages/*", "README.md"] } }))
 
   const materialized = await materializeExternalNativePackage(descriptor, { policy, remote: repository })
   assert.equal(await readFile(join(materialized.source, ".agent.json"), "utf8"), await readFile(join(packagePath, ".agent.json"), "utf8"))
@@ -33,6 +33,11 @@ await withTempDir("wp-codebox-external-native-package-", async (repository) => {
   await assert.rejects(materializeExternalNativePackage({ ...descriptor, revision: "main" }, { policy, remote: repository }), /immutable 40-character commit/)
   assert.throws(() => normalizeExternalPackageSource({ ...descriptor, repository: "other/repository" }, policy), /not authorized/)
   assert.throws(() => normalizeExternalPackageSource({ ...descriptor, path: "../packages/native-agent" }, policy), /without traversal/)
+  assert.throws(() => normalizeExternalPackageSource({ ...descriptor, path: "packages-evil/native-agent" }, policy), /not authorized/)
+  assert.throws(() => normalizeExternalPackageSource({ ...descriptor, path: "Packages/native-agent" }, policy), /not authorized/)
+  assert.deepEqual(normalizeExternalPackageSource({ ...descriptor, repository: "EXAMPLE/NATIVE-PACKAGES" }, policy).repository, descriptor.repository)
+  assert.throws(() => parseExternalPackageSourcePolicy(JSON.stringify({ version: 1, repositories: { [descriptor.repository]: ["packages*"] } })), /exact paths or subtree paths/)
+  assert.throws(() => parseExternalPackageSourcePolicy('{'), /valid JSON/)
 
   await symlink("/etc/passwd", join(packagePath, "escape"))
   await execFileAsync("git", ["add", "packages/native-agent/escape"], { cwd: repository })

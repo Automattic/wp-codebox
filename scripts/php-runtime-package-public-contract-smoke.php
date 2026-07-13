@@ -35,6 +35,19 @@ function wp_agent_import_runtime_bundles( array $bundles, array $options ): arra
 	$GLOBALS['wp_codebox_runtime_package_imports'] = array( 'bundles' => $bundles, 'options' => $options );
 	return array_map( static fn( array $bundle ): array => array( 'success' => true, 'slug' => (string) ( $bundle['slug'] ?? '' ) ), $bundles );
 }
+function wp_codebox_smoke_package_digest( string $root ): string {
+	$files = array();
+	$iterator = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::LEAVES_ONLY );
+	foreach ( $iterator as $file ) {
+		$files[ str_replace( '\\', '/', substr( $file->getPathname(), strlen( $root ) + 1 ) ) ] = hash_file( 'sha256', $file->getPathname() );
+	}
+	ksort( $files, SORT_STRING );
+	$context = hash_init( 'sha256' );
+	foreach ( $files as $path => $digest ) {
+		hash_update( $context, $path . "\0" . $digest . "\n" );
+	}
+	return hash_final( $context );
+}
 
 final class WP_Codebox_Runtime_Package_Smoke_Ability {
 	public function execute( array $input ): array {
@@ -94,10 +107,16 @@ assert( isset( $result['metadata']['received'] ) );
 
 $bundle_root = realpath( (string) ( getenv( 'WP_CODEBOX_RUNTIME_PACKAGE_FIXTURE' ) ?: __DIR__ . '/../tests/fixtures/wpsg-runtime-package' ) );
 assert( false !== $bundle_root );
+$staged_bundle_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . bin2hex( random_bytes( 8 ) );
+mkdir( $staged_bundle_root, 0700, true );
+foreach ( new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $bundle_root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::SELF_FIRST ) as $file ) {
+	$target = $staged_bundle_root . '/' . substr( $file->getPathname(), strlen( $bundle_root ) + 1 );
+	if ( $file->isDir() ) { mkdir( $target, 0700, true ); } else { copy( $file->getPathname(), $target ); }
+}
 
 $wpsg_like_task = array(
 	'schema'                => 'wp-codebox/runtime-package-task/v1',
-	'package'               => array( 'slug' => 'store-idea-agent', 'source' => $bundle_root ),
+	'package'               => array( 'slug' => 'store-idea-agent', 'source' => $staged_bundle_root, 'external_source' => array( 'sha256' => wp_codebox_smoke_package_digest( $staged_bundle_root ) ) ),
 	'workflow'              => array( 'id' => 'agents/chat' ),
 	'input'                 => array( 'prompt' => 'Industry: open' ),
 	'artifact_declarations' => array( array( 'name' => 'concept_packet', 'type' => 'typed_artifact', 'required' => true ) ),
@@ -118,6 +137,15 @@ assert( 'codebox-runtime-package' === $native['metadata']['runtime_provider']['i
 assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_imports']['bundles'][0]['slug'] );
 assert( 1 === $GLOBALS['wp_codebox_runtime_package_imports']['options']['owner_id'] );
 assert( ! in_array( 'agents/run-runtime-package', $GLOBALS['wp_codebox_runtime_package_smoke_abilities'], true ) );
+
+file_put_contents( $staged_bundle_root . '/.agent.json', "tampered\n" );
+$tampered = WP_Codebox_Abilities::run_runtime_package( $wpsg_like_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );
+assert( is_wp_error( $tampered ) );
+assert( 'wp_codebox_runtime_package_digest_mismatch' === $tampered->get_error_code() );
+
+$cleanup = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $staged_bundle_root, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::CHILD_FIRST );
+foreach ( $cleanup as $file ) { $file->isDir() ? rmdir( $file->getPathname() ) : unlink( $file->getPathname() ); }
+rmdir( $staged_bundle_root );
 
 $invalid = WP_Codebox_Abilities::run_runtime_package( array( 'schema' => 'wp-codebox/runtime-package-task/v1', 'package' => array( 'slug' => 'example-agent' ) ) );
 assert( is_wp_error( $invalid ) );

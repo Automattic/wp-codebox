@@ -50,6 +50,7 @@ await withTempDir("wp-codebox-runtime-package-staging-", async (root) => {
     assert.equal(recipe.inputs?.stagedFiles?.length, 1)
     assert.equal(recipe.inputs?.stagedFiles?.[0]?.target, "/workspace/wp-site-generator/bundles/store-idea-agent")
     assert.ok(recipe.inputs?.stagedFiles?.[0]?.source.endsWith("/wp-site-generator/bundles/store-idea-agent"))
+    assert.equal(recipe.inputs?.stagedFiles?.[0]?.mode, "readonly")
 
     const runtimeTaskArg = recipe.workflow.steps[0].args?.find((arg) => arg.startsWith("runtime-task-json="))
     assert.ok(runtimeTaskArg)

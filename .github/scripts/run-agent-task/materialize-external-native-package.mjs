@@ -24,14 +24,39 @@ export function normalizeExternalPackageSource(value, policy = {}) {
   if (!REPOSITORY.test(repository)) throw new Error("external_package_source.repository must be an OWNER/REPO identifier.")
   if (!COMMIT.test(revision)) throw new Error("external_package_source.revision must be a full immutable 40-character commit SHA.")
   if (!DIGEST.test(sha256)) throw new Error("external_package_source.sha256 must be a SHA-256 digest.")
-  const repositories = Array.isArray(policy.allowed_repositories) ? policy.allowed_repositories.map((entry) => string(entry).toLowerCase()) : []
-  if (!repositories.includes(repository)) throw new Error("External package repository is not authorized.")
-  const paths = Array.isArray(policy.allowed_paths) ? policy.allowed_paths : []
-  if (paths.length && !paths.some((pattern) => {
-    const normalized = normalizePath(string(pattern).replace(/\*$/, ""))
-    return string(pattern).endsWith("*") ? path.startsWith(normalized) : path === normalized || path.startsWith(`${normalized}/`)
+  const allowedPaths = policy.repositories?.[repository]
+  if (!Array.isArray(allowedPaths)) throw new Error("External package repository is not authorized.")
+  if (!allowedPaths.some((entry) => {
+    const pattern = string(entry)
+    if (!pattern) return false
+    if (pattern.endsWith("/*")) return path.startsWith(`${normalizePath(pattern.slice(0, -2))}/`)
+    return path === normalizePath(pattern)
   })) throw new Error("External package path is not authorized.")
   return { repository, revision, path, sha256 }
+}
+
+export function parseExternalPackageSourcePolicy(raw) {
+  let policy
+  try {
+    policy = JSON.parse(string(raw))
+  } catch {
+    throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY must be valid JSON.")
+  }
+  if (!policy || typeof policy !== "object" || Array.isArray(policy) || policy.version !== 1 || !policy.repositories || typeof policy.repositories !== "object" || Array.isArray(policy.repositories)) {
+    throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY must be a version 1 policy with a repositories mapping.")
+  }
+  const repositories = {}
+  for (const [repository, paths] of Object.entries(policy.repositories)) {
+    const normalizedRepository = string(repository).toLowerCase()
+    if (!REPOSITORY.test(normalizedRepository) || !Array.isArray(paths) || paths.length === 0) throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY contains an invalid repository entry.")
+    repositories[normalizedRepository] = paths.map((path) => {
+      const value = string(path)
+      if (!value || (value.includes("*") && !value.endsWith("/*")) || value.slice(0, -2).includes("*")) throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY paths must be exact paths or subtree paths ending in /*.")
+      return value.endsWith("/*") ? `${normalizePath(value.slice(0, -2))}/*` : normalizePath(value)
+    })
+  }
+  if (Object.keys(repositories).length === 0) throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY must authorize at least one repository.")
+  return { version: 1, repositories }
 }
 
 function run(command, args, options = {}) {
@@ -52,14 +77,14 @@ export async function packageDirectorySha256(root) {
       const path = join(directory, entry.name); const relativePath = relative(root, path).replace(/\\/g, "/"); const info = await lstat(path)
       if (info.isSymbolicLink()) throw new Error(`External package contains a symbolic link: ${relativePath}`)
       if (info.isDirectory()) await visit(path)
-      else if (info.isFile()) files.push({ path, relativePath, mode: info.mode & 0o777 })
+      else if (info.isFile()) files.push({ path, relativePath })
       else throw new Error(`External package contains an unsupported file type: ${relativePath}`)
     }
   }
   await visit(root)
   const digest = createHash("sha256")
-  for (const file of files.sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
-    digest.update(`${file.relativePath}\0${file.mode.toString(8)}\0`); digest.update(createHash("sha256").update(await readFile(file.path)).digest("hex")); digest.update("\n")
+  for (const file of files.sort((left, right) => left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0)) {
+    digest.update(`${file.relativePath}\0`); digest.update(createHash("sha256").update(await readFile(file.path)).digest("hex")); digest.update("\n")
   }
   return digest.digest("hex")
 }

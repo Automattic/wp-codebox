@@ -14,7 +14,8 @@ const publicWorkflowSurface = workflow.slice(0, workflow.indexOf("jobs:"))
 assert.match(workflow, /^name: Run Agent Task \(reusable\)$/m)
 assert.match(workflow, /workflow_call:/)
 assert.match(workflow, /external_package_source:/)
-assert.match(workflow, /external_package_allowed_repositories:/)
+assert.match(workflow, /EXTERNAL_PACKAGE_SOURCE_POLICY:/)
+assert.doesNotMatch(publicWorkflowSurface, /external_package_allowed_repositories:|external_package_allowed_paths:/)
 assert.match(workflow, /runner_workspace:/)
 assert.match(workflow, /artifact_declarations:/)
 assert.match(workflow, /output_projections:/)
@@ -80,8 +81,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     ...process.env,
     GITHUB_OUTPUT: outputPath,
     EXTERNAL_PACKAGE_SOURCE: '{"repository":"Automattic/example-agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"packages/example-agent","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-    EXTERNAL_PACKAGE_ALLOWED_REPOSITORIES: '["Automattic/example-agent-packages"]',
-    EXTERNAL_PACKAGE_ALLOWED_PATHS: '["packages/*"]',
+    EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/*"]}}',
     WORKLOAD_ID: "example-maintenance",
     WORKLOAD_LABEL: "Run example maintenance",
     COMPONENT_ID: "example-ci-driver",
@@ -115,6 +115,7 @@ const request = JSON.parse(await readFile(requestPath, "utf8"))
 const expectedRequest = JSON.parse(await readFile(new URL("../contracts/agent-task-workflow-request.fixture.json", import.meta.url), "utf8"))
 assert.equal(request.schema, "wp-codebox/agent-task-workflow-request/v1")
 assert.deepEqual(request, expectedRequest)
+assert.doesNotMatch(JSON.stringify(request), /external_package_policy|repositories.*packages/i)
 assert.doesNotMatch(JSON.stringify(request), /homeboy|require_app_token|app_token_repos/i)
 
 await assert.rejects(readFile(resultPath, "utf8"), /ENOENT/)
@@ -127,6 +128,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-
     AGENT_TASK_REQUEST_PATH: requestPath,
     AGENT_TASK_WORKSPACE: tmp,
     WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+    EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/*"]}}',
   },
 })
 
@@ -148,6 +150,7 @@ await assert.rejects(execFileAsync("node", [new URL("../.github/scripts/run-agen
     AGENT_TASK_REQUEST_PATH: requestPath,
     AGENT_TASK_WORKSPACE: tmp,
     WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+    EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/*"]}}',
   },
 }), /verification_commands\[0\]\.command/)
 
@@ -169,11 +172,11 @@ assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task
 // result or artifacts are persisted.
 const fakeCli = join(tmp, "fake-cli.mjs")
 await mkdir(join(tmp, ".codebox", "agent-task-artifacts"), { recursive: true })
-await writeFile(fakeCli, `import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
-await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, external_package_policy: { allowed_repositories: [nativeSource.repository], allowed_paths: ["packages/*"] }, run_agent: true, dry_run: false, verification_commands: [{ command: 'test -z "$OPENAI_API_KEY" -a -z "$GITHUB_TOKEN" && printf secret-verification', description: "credential isolation" }], outputs: { projections: { answer: "outputs.artifact_result.result.outputs.answer" } } }, null, 2)}\n`)
+await writeFile(fakeCli, `import { writeFile } from "node:fs/promises"; const input = JSON.parse(await (await import("node:fs/promises")).readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8")); if (JSON.stringify(input).includes("external_package_policy") || input.task_input.stagedFiles?.[0]?.mode !== "readonly") throw new Error("trusted policy leaked or package mount is writable"); await writeFile(input.artifacts_path + "/agent.txt", process.env.OPENAI_API_KEY || ""); console.log(JSON.stringify({success:true, diagnostic:process.env.OPENAI_API_KEY, outputs:{artifact_result:{result:{outputs:{answer:"ok"}}}}, agent_task_run_result:{refs:{transcripts:[]}}}));`)
+await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, run_agent: true, dry_run: false, verification_commands: [{ command: 'test -z "$OPENAI_API_KEY" -a -z "$GITHUB_TOKEN" && printf secret-verification', description: "credential isolation" }], outputs: { projections: { answer: "outputs.artifact_result.result.outputs.answer" } } }, null, 2)}\n`)
 await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
   cwd: tmp,
-  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository, OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
+  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository, EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/*"]}}', OPENAI_API_KEY: "secret-agent-value", GITHUB_TOKEN: "secret-github-value" },
 })
 const secureResult = await readFile(resultPath, "utf8")
 const secureArtifact = await readFile(join(tmp, ".codebox", "agent-task-artifacts", "agent.txt"), "utf8")
@@ -204,10 +207,10 @@ for (const name of ["oversize.txt", "binary.bin", "linked-secret.txt"]) {
 }
 
 // Stream capture retains a fixed amount while draining the process to completion.
-await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, external_package_policy: { allowed_repositories: [nativeSource.repository], allowed_paths: ["packages/*"] }, run_agent: true, dry_run: false, verification_commands: [{ command: "node -e 'process.stdout.write(\"x\".repeat(65536)); process.stderr.write(\"y\".repeat(65536))'", description: "bounded output" }], outputs: { projections: {} } }, null, 2)}\n`)
+await writeFile(requestPath, `${JSON.stringify({ ...request, external_package_source: nativeSource, run_agent: true, dry_run: false, verification_commands: [{ command: "node -e 'process.stdout.write(\"x\".repeat(65536)); process.stderr.write(\"y\".repeat(65536))'", description: "bounded output" }], outputs: { projections: {} } }, null, 2)}\n`)
 await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname], {
   cwd: tmp,
-  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository },
+  env: { ...process.env, GITHUB_OUTPUT: outputPath, AGENT_TASK_REQUEST_PATH: requestPath, AGENT_TASK_WORKSPACE: tmp, WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname, WP_CODEBOX_CLI_PATH: fakeCli, WP_CODEBOX_EXTERNAL_PACKAGE_REMOTE: nativePackageRepository, EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/*"]}}' },
 })
 const noisyResult = JSON.parse(await readFile(resultPath, "utf8"))
 const noisyVerification = noisyResult.verification[0]

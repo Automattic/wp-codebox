@@ -8,8 +8,6 @@ jobs:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
       external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"packages/example-agent","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
-      external_package_allowed_repositories: '["OWNER/agent-packages"]'
-      external_package_allowed_paths: '["packages/*"]'
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
@@ -22,7 +20,9 @@ jobs:
       allowed_repos: '["Automattic/example-target"]'
       require_access_token: true
       output_projections: '{"pr_url":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url"}'
-    secrets: inherit
+    secrets:
+      EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 The workflow checks out the target workspace, imports the selected native
@@ -33,7 +33,7 @@ publication data.
 ## Inputs
 
 - `external_package_source`: immutable external package descriptor with `repository`, full commit `revision`, package-relative `path`, and expected package-tree `sha256`.
-- `external_package_allowed_repositories` and `external_package_allowed_paths`: explicit source allowlists. The target repository remains the only writable workspace.
+- `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["exact/package","packages/*"]}}`. `packages/*` authorizes descendants of `packages/` only; it does not authorize `packages-evil`. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
@@ -55,6 +55,17 @@ checkout does not persist credentials. Verification, dependency, and drift
 commands run with a clean environment that excludes provider and GitHub secrets.
 Known secret values are redacted before result or artifact persistence; captured
 stdout/stderr is capped at 32 KiB and workflow outputs at 8 KiB.
+
+`EXTERNAL_PACKAGE_SOURCE_POLICY` is treated as a secret even when it contains
+only repository and path metadata. It is redacted from runner output, excluded
+from task requests, runtime input, results, and upload artifacts, and is never
+passed to the agent. The selected descriptor is authorized against this policy
+both before persistence and immediately before host materialization.
+
+The external package mount is explicitly read-only inside the sandbox. The
+runtime applies read-only filesystem permissions after staging and verifies the
+descriptor SHA-256 again immediately before canonical package import; mutation
+or post-stage tampering fails execution.
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
@@ -99,7 +110,8 @@ input, secret, or output expectation.
 
 ## Compatibility
 
-This removes the previously exposed `runner_recipe`, `context_repositories`,
+This removes the previously exposed `external_package_allowed_repositories`,
+`external_package_allowed_paths`, `runner_recipe`, `context_repositories`,
 `workspace_contract_checks`, `actions_artifact_downloads`,
 `success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs.
 They were serialized without a generic WP Codebox execution primitive, so
