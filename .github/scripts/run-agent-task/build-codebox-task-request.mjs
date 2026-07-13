@@ -20,6 +20,11 @@ function requiredString(name) {
   return value
 }
 
+function optionalString(name) {
+  const value = process.env[name]?.trim() ?? ""
+  return value || undefined
+}
+
 function booleanEnv(name) {
   return process.env[name] === "true"
 }
@@ -37,9 +42,10 @@ function output(name, value) {
 }
 
 const artifactDeclarations = parseJson("ARTIFACT_DECLARATIONS", [], "array")
+const runnerRecipe = optionalString("RUNNER_RECIPE")
 const request = {
   schema: "wp-codebox/agent-task-workflow-request/v1",
-  runner_recipe: requiredString("RUNNER_RECIPE"),
+  ...(runnerRecipe ? { runner_recipe: runnerRecipe } : {}),
   agent_bundle: requiredString("AGENT_BUNDLE"),
   workload: {
     id: process.env.WORKLOAD_ID || "agent-task",

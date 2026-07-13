@@ -4,9 +4,9 @@ name: Run Agent Task (reusable)
   workflow_call:
     inputs:
       runner_recipe:
-        description: Codebox runner recipe descriptor, such as OWNER/REPO@ref:path.
+        description: Optional temporary Codebox runner recipe descriptor, such as OWNER/REPO@ref:path.
         type: string
-        required: true
+        required: false
       agent_bundle:
         description: Repository-relative path to the agent bundle selected by the caller.
         type: string

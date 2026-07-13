@@ -7,7 +7,6 @@ jobs:
   run-agent-task:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      runner_recipe: Automattic/example-runner@main:ci/runner-recipe.json
       agent_bundle: bundles/example-agent
       workload_id: example-maintenance
       workload_label: Run example maintenance
@@ -53,24 +52,24 @@ jobs:
     secrets: inherit
 ```
 
-Consumers provide product-level task inputs: the selected runner recipe, agent
-bundle, target repository, workspace publication request, verification commands,
-drift checks, artifact expectations, typed artifact declarations, and output
-projection. The workflow returns stable run outputs; implementation-specific
-runtime wiring, workspace adapters, plugins, and model setup stay behind the WP
-Codebox boundary.
+Consumers provide product-level task inputs: the agent bundle, target repository,
+workspace publication request, verification commands, drift checks, artifact
+expectations, typed artifact declarations, and output projection. The workflow
+returns stable run outputs; implementation-specific runtime wiring, workspace
+adapters, plugins, and model setup stay behind the WP Codebox boundary.
 
 ## Runner Recipe
 
-`runner_recipe` is a descriptor for a committed runner recipe, such as
-`Automattic/example-runner@main:ci/runner-recipe.json`. The recipe stays owned by
-the product workflow. Consumers pass the descriptor and the selected
-`agent_bundle`; they do not pass worker filesystem paths, runtime substrate
-checkout rules, package internals, or private workflow names.
+`runner_recipe` is a temporary optional input while callers transition away from
+the runner-recipe contract. When omitted, it is absent from the planned request.
+Merge the transition in this order: this bridge, Docs Agent caller cleanup
+([docs-agent#117](https://github.com/Automattic/docs-agent/pull/117)), then
+[wp-codebox#1751](https://github.com/Automattic/wp-codebox/pull/1751), which
+deletes this input.
 
 ## Inputs
 
-- `runner_recipe`: committed runner recipe descriptor.
+- `runner_recipe`: optional temporary runner recipe descriptor; removed by #1751 after Docs Agent caller cleanup.
 - `agent_bundle`: selected agent bundle path in the product repository.
 - `workload_id`, `workload_label`, and `component_id`: caller-owned run labels.
 - `target_repo`: `OWNER/REPO` target repository.
@@ -96,6 +95,6 @@ checkout rules, package internals, or private workflow names.
 - `declared_artifacts_json`: typed artifact declarations accepted for the run.
 
 The workflow is intentionally product-input-first. Consumers should model new
-behavior as runner recipe fields or workflow inputs instead of depending on
-worker filesystem paths, runtime internals, package internals, or the private
-implementation that executes the task.
+behavior as workflow inputs instead of depending on worker filesystem paths,
+runtime internals, package internals, or the private implementation that
+executes the task.
