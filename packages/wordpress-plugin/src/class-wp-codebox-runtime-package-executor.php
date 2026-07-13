@@ -45,8 +45,13 @@ final class WP_Codebox_Runtime_Package_Executor {
 		if ( is_wp_error( $agent_slug ) ) {
 			return $agent_slug;
 		}
+		if ( '' !== $agent_slug ) {
+			$input           = is_array( $task['input'] ?? null ) ? $task['input'] : array();
+			$input['agent']  = $agent_slug;
+			$task['input']   = $input;
+		}
 
-		$result = $this->execute_workflow( $task, $agent_slug );
+		$result = $this->execute_workflow( $task );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -109,13 +114,11 @@ final class WP_Codebox_Runtime_Package_Executor {
 	}
 
 	/** @param array<string,mixed> $task Runtime package task. @return array<string,mixed>|WP_Error */
-	private function execute_workflow( array $task, string $agent_slug = '' ): array|WP_Error {
+	private function execute_workflow( array $task ): array|WP_Error {
 		$ability = 'agents/chat';
 		$input   = is_array( $task['input'] ?? null ) ? $task['input'] : array();
 		$package = is_array( $task['package'] ?? null ) ? $task['package'] : array();
-		if ( '' !== $agent_slug ) {
-			$input['agent'] = $agent_slug;
-		} elseif ( ! isset( $input['agent'] ) && '' !== $this->string_value( $package['slug'] ?? '' ) ) {
+		if ( ! isset( $input['agent'] ) && '' !== $this->string_value( $package['slug'] ?? '' ) ) {
 			$input['agent'] = $this->string_value( $package['slug'] );
 		}
 		if ( ! isset( $input['message'] ) ) {
