@@ -66,7 +66,7 @@ the runner-recipe contract. It may be omitted only for an explicit
 `run_agent: true` request without a recipe fails closed until the executable
 [wp-codebox#1751](https://github.com/Automattic/wp-codebox/pull/1751) workflow
 lands. Merge the transition in this order: this bridge, Docs Agent caller cleanup
-([docs-agent#117](https://github.com/Automattic/docs-agent/pull/117)), then #1751,
+([docs-agent#119](https://github.com/Automattic/docs-agent/pull/119)), then #1751,
 which deletes this input.
 
 ## Inputs
