@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
@@ -32,6 +33,11 @@ export interface MountMaterializationResult {
 
 export type StagedInputMaterializationResult = MountMaterializationResult
 
+export interface ReadonlyMountStaging {
+  mounts: MountSpec[]
+  [Symbol.asyncDispose](): Promise<void>
+}
+
 interface HostMountFilePayload {
   target: string
   contentsBase64: string
@@ -55,6 +61,41 @@ interface HostMountFileMaterializationResponse {
 
 const HOST_MOUNT_FILE_BATCH_SIZE = 100
 const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
+
+/**
+ * Playground's Node filesystem mount handler is writable. Snapshot readonly
+ * inputs into a runtime-owned directory before handing them to that handler.
+ */
+export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promise<ReadonlyMountStaging> {
+  const readonlyMounts = mounts.filter((mount) => mount.mode === "readonly")
+  if (readonlyMounts.length === 0) {
+    return {
+      mounts,
+      async [Symbol.asyncDispose]() {},
+    }
+  }
+
+  const root = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-"))
+  try {
+    const stagedMounts = await Promise.all(mounts.map(async (mount, index) => {
+      if (mount.mode !== "readonly") {
+        return mount
+      }
+      const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
+      await cp(mount.source, source, { recursive: mount.type !== "file", dereference: true })
+      return { ...mount, source }
+    }))
+    return {
+      mounts: stagedMounts,
+      async [Symbol.asyncDispose]() {
+        await rm(root, { recursive: true, force: true })
+      },
+    }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
+}
 
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
   return {

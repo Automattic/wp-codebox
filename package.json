@@ -91,6 +91,7 @@
     "test:external-native-package-materialization": "tsx tests/external-native-package-materialization.test.ts",
     "test:runtime-sources-materialization": "tsx tests/runtime-sources-materialization.test.ts",
     "test:runtime-sources-playground-integration": "tsx tests/runtime-sources-playground-integration.test.ts",
+    "test:playground-readonly-mounts": "tsx tests/playground-readonly-mounts.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
     "test:browser-runtime-file-ops": "tsx tests/browser-runtime-file-ops.test.ts",

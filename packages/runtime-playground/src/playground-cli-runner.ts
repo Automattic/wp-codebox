@@ -13,6 +13,7 @@ import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -62,6 +63,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     mounts: mounts.length,
   })
   emitProgress("preview:loading-client", "running", "Loading preview")
+  let readonlyMountStaging: ReadonlyMountStaging | undefined
   try {
     if (spec.preview?.port) {
       await assertPreviewPortAvailable(spec.preview.port)
@@ -74,6 +76,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
+    readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
+    const stagedMounts = readonlyMountStaging.mounts
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
@@ -99,7 +103,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           ...spec.preview,
           port,
         },
-      }, mounts, {
+      }, stagedMounts, {
         bootstrapIniEntries: bootstrapIniEntries!,
         phpIniEntries: pluginRuntimePhpIniEntries(spec),
         wordpressDirectory: wordpressDirectory!,
@@ -119,7 +123,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           skipBrowser: true,
           workers: 6,
           mount: [
-            ...mounts.map((mount) => ({
+            ...stagedMounts.map((mount) => ({
               hostPath: mount.source,
               vfsPath: mount.target,
             })),
@@ -154,12 +158,22 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       upstreamUrl: server.serverUrl,
       lease: proxiedServer.previewLease ? previewLeaseDetail(proxiedServer.previewLease) : undefined,
     })
-    return proxiedServer
+    return {
+      ...proxiedServer,
+      async [Symbol.asyncDispose]() {
+        try {
+          await proxiedServer[Symbol.asyncDispose]()
+        } finally {
+          await readonlyMountStaging?.[Symbol.asyncDispose]()
+        }
+      },
+    }
   } catch (error) {
     emitProgress("preview:error", "failed", "Preview failed to start", {
       error: errorDetail(error),
     })
 
+    await readonlyMountStaging?.[Symbol.asyncDispose]()
     if (spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
       throw new PlaygroundPreviewPortUnavailableError(spec.preview.port, error)
     }
