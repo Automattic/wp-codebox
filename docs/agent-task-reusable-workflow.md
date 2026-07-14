@@ -139,7 +139,14 @@ runner token, so a fabricated publication result cannot satisfy the gate.
 
 The result artifact includes the executable task input, normalized runtime
 result, evaluated projections, verification records, and runner-owned
-publication result. Runtime input, result, and diagnostics are uploaded from
+publication result. A single canonical `codebox-transcript` ref from the
+normalized runtime result is staged independently of package declarations at
+`.codebox/agent-task-artifacts/transcript.json`. The uploader accepts only a
+bounded regular UTF-8 file beneath the trusted artifact root, records its
+source provenance and staged digest in `exclusions.json`, and sanitizes secrets
+and private runtime, workspace, and snapshot paths while preserving
+target-relative tool arguments, errors, and model messages. Runtime source
+trees remain excluded. Runtime input, result, and diagnostics are uploaded from
 `workspace/.codebox/` with `if: always()`, including execution failures. A request
 artifact alone is not a successful task result.
 

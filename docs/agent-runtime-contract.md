@@ -176,6 +176,8 @@ Generic command runners and host tool registries should write tool-call evidence
 
 The artifact verifier checks that transcript artifact refs are listed in `manifest.json`, stay within the bundle, and match their declared SHA-256 digests when present. This lets a generic command runner branch merge by materializing its command/tool transcript into `files/runtime-evidence/tool-calls/transcript.json` and appending the referenced input/output artifacts through the existing runtime-evidence manifest update path.
 
+The reusable agent-task workflow separately uploads one normalized `codebox-transcript` ref for reviewer diagnostics. It accepts exactly one bounded, regular, non-symlink JSON file under its trusted artifact root, stages it as `.codebox/agent-task-artifacts/transcript.json`, and records the source ref plus staged SHA-256 in the upload exclusions manifest. This reviewer copy removes secrets and private host/runtime/source/snapshot paths while retaining target-relative tool arguments, errors, and model messages; package declarations cannot authorize alternate transcript paths or dependency source files.
+
 ## Runner Workspace Publication
 
 Runner workspace publication is a separate exported contract in runtime-core:

@@ -1,6 +1,8 @@
 import { constants } from "node:fs"
 import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
+import { createHash } from "node:crypto"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
 
@@ -14,6 +16,7 @@ const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(p
 const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX) : ""
 const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
 const privateUploadRoots = [...runtimeSourceRoots, workspace]
+const codeboxRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)))
 const SOURCE_TREE = /(^|\/)(prepared-plugins|prepared-source-packages|source-package[^/]*)(\/|$)/i
 const SOURCE_FILE = /\.(?:php|phtml|js|mjs|cjs|jsx|ts|tsx)$/i
 const PHP_OPENING_TAG = /<\?(?:php|=)(?:\s|$)/i
@@ -34,6 +37,7 @@ function redact(value) {
 
 function sanitizeText(text) {
   return sanitizeRuntimeSourceJson(text, privateUploadRoots)
+    .replace(/\/(?:Users|home|private|var|tmp|opt|Volumes)\/[^\s"'\\]+/g, "[host-path]")
 }
 
 function compactNativeInput(text) {
@@ -135,10 +139,36 @@ async function stageTextFile(source, destination, options = {}) {
   const text = redact(sanitizeSeedSnapshotJson(sanitized))
   assertNoRuntimeSourcePaths(text, privateUploadRoots, "Runtime source or workspace paths must never be persisted in artifact uploads.")
   assertNoSeedSnapshotPaths(text)
-  if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
+  if (!options.allowTargetCode && containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
   await mkdir(resolve(destination, ".."), { recursive: true })
   await writeFile(destination, text)
   return true
+}
+
+async function canonicalTranscript(result) {
+  const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
+  const refs = publicCore.normalizePublicArtifactRefDTOs(record(result).runtime_result)
+    .filter((ref) => ref.kind === "codebox-transcript")
+  if (refs.length === 0) return undefined
+  if (refs.length !== 1 || !safeRelativeArtifactPath(refs[0].path)) throw new Error("Canonical transcript requires exactly one trusted codebox-transcript path.")
+  return refs[0]
+}
+
+async function stageCanonicalTranscript(result) {
+  const ref = await canonicalTranscript(result)
+  if (!ref) return undefined
+  const path = safeRelativeArtifactPath(ref.path)
+  const source = resolve(artifactsPath, path)
+  if (relative(artifactsPath, source).startsWith("..") || sourceCategory(path, source)) throw new Error("Canonical transcript must stay under the trusted artifact root.")
+  const destination = join(uploadPath, ".codebox", "agent-task-artifacts", "transcript.json")
+  if (!await stageTextFile(source, destination, { allowTargetCode: true })) throw new Error("Canonical transcript must be a bounded regular UTF-8 file.")
+  const bytes = await readFile(destination)
+  if (!Object.keys(record(parseJsonOrEmpty(bytes.toString("utf8")))).length) throw new Error("Canonical transcript must be a JSON object.")
+  return {
+    path: ".codebox/agent-task-artifacts/transcript.json",
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    provenance: { kind: ref.kind, artifact_path: path, ...(ref.sha256 ? { source_sha256: ref.sha256 } : {}) },
+  }
 }
 
 function record(value) {
@@ -171,7 +201,7 @@ function declaredArtifactPaths(result, allowed) {
   return [...paths].sort()
 }
 
-async function exclusions(root, declaredPaths) {
+async function exclusions(root, declaredPaths, transcript) {
   const counts = new Map()
   const count = (category) => counts.set(category, (counts.get(category) || 0) + 1)
   const visit = async (directory) => {
@@ -188,7 +218,10 @@ async function exclusions(root, declaredPaths) {
     }
   }
   await visit(root)
-  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, count]) => ({ category, count }))
+  return {
+    exclusions: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, count]) => ({ category, count })),
+    ...(transcript ? { canonical_transcripts: [transcript] } : {}),
+  }
 }
 
 function runtimeProvenance(request) {
@@ -216,7 +249,7 @@ async function finalScan(directory) {
       const text = isUtf8(bytes) ? bytes.toString("utf8") : ""
       assertNoRuntimeSourcePaths(text, privateUploadRoots, "Runtime source or workspace paths must never be persisted in artifact uploads.")
       assertNoSeedSnapshotPaths(text)
-      if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be persisted in artifact uploads.")
+      if (relativePath !== ".codebox/agent-task-artifacts/transcript.json" && containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be persisted in artifact uploads.")
     } else throw new Error("Only regular files may be persisted in artifact uploads.")
   }
 }
@@ -237,11 +270,14 @@ await stageTextFile(join(workspace, ".codebox", "native-agent-task-input.json"),
 for (const path of declaredPaths) {
   const source = resolve(artifactsPath, path)
   if (relative(artifactsPath, source).startsWith("..") || sourceCategory(path, source)) {
-    throw new Error("Declared reviewer artifacts must not reference source files or private runtime internals.")
+    // Package declarations cannot authorize source trees or escape the root.
+    // Keep staging independent of an untrusted alias, including transcripts.
+    continue
   }
   await stageTextFile(source, join(uploadPath, ".codebox", "agent-task-artifacts", path))
 }
+const transcript = await stageCanonicalTranscript(result)
 await mkdir(join(uploadPath, ".codebox", "agent-task-artifacts"), { recursive: true })
 await writeFile(join(uploadPath, ".codebox", "agent-task-artifacts", "runtime-provenance.json"), `${JSON.stringify({ schema: "wp-codebox/agent-task-runtime-provenance/v1", sources: runtimeProvenance(request) }, null, 2)}\n`)
-await writeFile(join(uploadPath, ".codebox", "agent-task-artifacts", "exclusions.json"), `${JSON.stringify({ schema: "wp-codebox/agent-task-upload-exclusions/v1", exclusions: await exclusions(artifactsPath, declaredPaths) }, null, 2)}\n`)
+await writeFile(join(uploadPath, ".codebox", "agent-task-artifacts", "exclusions.json"), `${JSON.stringify({ schema: "wp-codebox/agent-task-upload-exclusions/v1", ...(await exclusions(artifactsPath, declaredPaths, transcript)) }, null, 2)}\n`)
 await finalScan(uploadPath)
