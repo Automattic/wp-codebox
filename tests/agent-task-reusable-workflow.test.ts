@@ -225,6 +225,17 @@ assert.deepEqual(nativeTaskInput.task_input.sandbox_tool_policy.tools, hostedDoc
   allowed: true,
   runtime: { environment: "runtime_local", capability_scope: "runtime_local" },
 })), "Hosted Docs Agent run 29298164272 must emit canonical sandbox-local workspace metadata")
+assert.deepEqual(nativeTaskInput.task_input.workspaces, [{
+  target: "/workspace",
+  mode: "readwrite",
+  sourceMode: "repo-backed",
+  seed: {
+    type: "directory",
+    source: tmp,
+    excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"],
+  },
+}], "Hosted failures 29324157852 and 29324563665 placed the runner seed outside task_input, so agent-task-run discarded it")
+assert.equal(nativeTaskInput.workspaces, undefined, "Runner workspace configuration must only use the canonical task_input.workspaces field")
 
 const executeNativeAgentTask = new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname
 const executeAccessCase = async (candidate: Record<string, unknown>, environment: Record<string, string>) => {

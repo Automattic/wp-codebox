@@ -367,9 +367,11 @@ const taskInput = {
         metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [] },
       },
     },
-   },
-   workspaces: request.runner_workspace?.enabled ? [{ target: "/workspace", mode: "readwrite", sourceMode: "repo-backed", seed: { type: "directory", source: workspace, excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"] } }] : [],
- }
+      // agent-task-run unwraps task_input before building the recipe. Keep the
+      // runner seed on that canonical input rather than on the request envelope.
+      workspaces: request.runner_workspace?.enabled ? [{ target: "/workspace", mode: "readwrite", sourceMode: "repo-backed", seed: { type: "directory", source: workspace, excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"] } }] : [],
+    },
+  }
 
 await writeFile(executionInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
@@ -389,12 +391,17 @@ const runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRun
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
 let runnerWorkspaceCore = null
+let downstreamFailure = null
 if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled) {
-  runnerWorkspaceCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
-  const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
-  const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
-    .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-  workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
+  try {
+    runnerWorkspaceCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
+    const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
+    const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
+      .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
+    workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
+  } catch (error) {
+    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
+  }
 }
 await cleanupPrivateRuntimeSources()
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
@@ -402,7 +409,7 @@ assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitizatio
 await redactArtifactFiles(artifactsPath)
 
 const verification = []
-if (execution.code === 0 && request.run_agent && !request.dry_run) {
+if (execution.code === 0 && request.run_agent && !request.dry_run && !downstreamFailure) {
   const validationDependencies = string(request.validation_dependencies)
   if (validationDependencies) {
     const checkResult = await command("bash", ["-lc", validationDependencies], workspace)
@@ -419,21 +426,30 @@ if (execution.code === 0 && request.run_agent && !request.dry_run) {
 }
 
 const verificationPassed = verification.every((check) => check.success)
+if (!verificationPassed) {
+  downstreamFailure ??= { stage: "verification", message: "Runner workspace verification did not pass." }
+}
 const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)
 let publication = resultValue(runtimeRecord, "metadata.runner_workspace_publication")
 if (execution.code === 0 && runtimeRecord.success === true && verificationPassed && workspaceApply.status === "applied") {
-  await runnerWorkspaceCore.verifyRunnerWorkspaceIntegrity(workspaceApply.integrity)
-  const testPublisher = string(process.env.WP_CODEBOX_TEST_PUBLISHER_MODULE)
-  const publisher = testPublisher ? (await import(pathToFileURL(resolve(testPublisher)).href)).publishRunnerWorkspace : publishRunnerWorkspace
-   const testHook = testPublisher && process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK
-     ? JSON.parse(process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK)
-     : undefined
-   publication = await publisher({ request, changedFiles: workspaceApply.changedFiles, publicationFiles: workspaceApply.publicationFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN, ...(testHook ? { testHook } : {}) })
-  runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
-  runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
+  try {
+    await runnerWorkspaceCore.verifyRunnerWorkspaceIntegrity(workspaceApply.integrity)
+    const testPublisher = string(process.env.WP_CODEBOX_TEST_PUBLISHER_MODULE)
+    const publisher = testPublisher ? (await import(pathToFileURL(resolve(testPublisher)).href)).publishRunnerWorkspace : publishRunnerWorkspace
+     const testHook = testPublisher && process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK
+       ? JSON.parse(process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK)
+       : undefined
+     publication = await publisher({ request, changedFiles: workspaceApply.changedFiles, publicationFiles: workspaceApply.publicationFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN, ...(testHook ? { testHook } : {}) })
+    runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
+    runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
+  } catch (error) {
+    downstreamFailure = { stage: "publication", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
+  }
 }
-if (request.success?.requires_pr === true && workspaceApply.status === "no-op" && !publication) throw new Error("success_requires_pr cannot succeed for a no-op runner workspace task.")
+if (request.success?.requires_pr === true && workspaceApply.status === "no-op" && !publication) {
+  downstreamFailure ??= { stage: "no-op", message: "success_requires_pr cannot succeed for a no-op runner workspace task." }
+}
 let evaluatedProjections = {}
 let projectionError = ""
 try {
@@ -446,8 +462,11 @@ const publicationVerification = publicationRequired && execution.code === 0 && r
   ? await verifyPublishedPullRequest(publication, request.target_repo, workspace)
   : { valid: !publicationRequired, error: "" }
 const publicationPassed = publicationVerification.valid
+if (publicationRequired && !publicationPassed) {
+  downstreamFailure ??= { stage: "publication", message: publicationVerification.error || "Runner workspace publication did not pass verification." }
+}
 const success = request.run_agent && !request.dry_run
-  ? execution.code === 0 && runtimeRecord.success === true && verificationPassed && publicationPassed && !projectionError
+  ? execution.code === 0 && runtimeRecord.success === true && verificationPassed && publicationPassed && !projectionError && !downstreamFailure
   : true
 const status = request.run_agent && !request.dry_run ? (success ? "succeeded" : "failed") : "skipped"
 const result = {
@@ -470,6 +489,7 @@ const result = {
   access: { authorized: true, credential_mode: process.env.GITHUB_TOKEN ? "runner-access-token" : (process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials"), policy: { allowed_repos: request.access.allowed_repos } },
   ...(publicationRequired ? { publication_verification: publicationVerification } : {}),
   ...(publicationRequired && !publicationPassed ? { publication_error: "success_requires_pr requires a valid published runner-workspace pull request for target_repo." } : {}),
+  ...(downstreamFailure ? { failure: { code: "wp-codebox.agent-task.downstream", classification: "downstream", ...downstreamFailure } } : {}),
   ...(projectionError ? { projection_error: projectionError } : {}),
 }
 

@@ -65,6 +65,7 @@ async function run(mode = "success") {
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 const output = process.argv[process.argv.indexOf("--result-file") + 1]
+const input = JSON.parse(await readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8"))
 const root = join(process.cwd(), ".codebox", "agent-task-artifacts", "files")
 await mkdir(root, { recursive: true })
 const patch = ${noOp} ? "" : "--- a/README.md\\n+++ b/README.md\\n@@ -1 +1 @@\\n-before\\n+after\\n"
@@ -94,6 +95,7 @@ const result = {
     patch: { artifact: "patch.diff", bytes: ${noOp} ? 0 : 1 },
   },
   metadata: { imported_agent: { slug: "fixture-agent" }, tool_contract: { tools: ["workspace_read", "workspace_edit"] } },
+  agent_runtime_diagnostics: { prepared_paths: { workspaces: input.task_input.workspaces.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: { baselineSource: "fixture-baseline", workspaceRoot: "/workspace", sourceMode: workspace.sourceMode } })) }, sandbox_workspace: { mounts: input.task_input.workspaces.map((workspace) => ({ target: workspace.target })) }, local_executor_root: "/workspace" },
 }
 await writeFile(output, JSON.stringify(result))
 `)
@@ -163,10 +165,16 @@ assert.equal(success.code, 0, success.stderr)
 assert.equal(await readFile(join(success.workspace, "README.md"), "utf8"), "after\n")
 assert.match(success.order, /runtime\nvalidation\nverification\ndrift\npublish\n/)
 assert.equal(success.result.runtime_result.metadata.runner_workspace_publication.pull_request.url, "https://github.com/owner/repo/pull/1")
+assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].target, "/workspace")
+assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].mode, "readwrite")
+assert.equal(success.result.runtime_result.agent_runtime_diagnostics.sandbox_workspace.mounts[0].target, "/workspace")
+assert.equal(success.result.runtime_result.agent_runtime_diagnostics.local_executor_root, "/workspace")
 
 const failedVerification = await run("verify-fail")
 assert.equal(failedVerification.code, 1)
 assert(!failedVerification.order.includes("publish"))
+assert.equal(failedVerification.result.failure.stage, "verification")
+assert.equal(failedVerification.result.runtime_result.success, true, "verification failures retain the normalized runtime result")
 
 const denied = await run("deny")
 assert.equal(denied.code, 1)
@@ -175,6 +183,8 @@ assert.equal(denied.order, "runtime\n")
 const noOpRequired = await run("no-op")
 assert.equal(noOpRequired.code, 1)
 assert(!noOpRequired.order.includes("publish"))
+assert.equal(noOpRequired.result.failure.stage, "no-op")
+assert.equal(noOpRequired.result.runtime_result.success, true, "downstream failures retain the normalized runtime result")
 
 const noOpMaintenance = await run("no-op-maintenance")
 assert.equal(noOpMaintenance.code, 0)
