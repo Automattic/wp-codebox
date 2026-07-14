@@ -912,7 +912,10 @@ PHP;
 
 	/** Builds the generated PHP runtime-local tool registration fragment. */
 	public static function runtime_tool_registration_fragment(): string {
-		return '
+		// The generated Playground runner is intentionally self-contained. Embed the
+		// same bounded executor used by the host registration, never a host bridge.
+		$sandbox_executor = file_get_contents( __DIR__ . '/class-wp-codebox-sandbox-workspace-executor.php' );
+		return "\nif ( ! class_exists( 'WP_Codebox_Sandbox_Workspace_Executor' ) ) {\n" . $sandbox_executor . "\n}\n" . '
 class WP_Codebox_Browser_Filesystem_Write_Tool {
 	public function handle_tool_call( array $parameters, array $tool_def = array() ): array {
 		global $wp_codebox_browser_artifact_environment;
@@ -959,6 +962,10 @@ if ( in_array( $tool_id, array( \'filesystem-write\', \'filesystem_write\', \'cl
 	return \'filesystem_write\';
 }
 
+if ( preg_match( "/^(?:client\\/)?workspace_(?:show|ls|read|grep|write|edit|apply_patch|git_status|git_diff)$/", $tool_id ) ) {
+	return str_starts_with( $tool_id, "client/" ) ? substr( $tool_id, 7 ) : $tool_id;
+}
+
 return \'\';
 }
 
@@ -966,8 +973,11 @@ function wp_codebox_browser_runtime_tool_declarations( array $tool_names ): arra
 global $wp_codebox_browser_artifact_environment;
 
 $declarations = array();
-if ( ! in_array( \'filesystem_write\', $tool_names, true ) ) {
-	return $declarations;
+foreach ( WP_Codebox_Sandbox_Workspace_Executor::tool_declarations() as $name => $declaration ) {
+	$base = substr( $name, strlen( "client/" ) );
+	if ( in_array( $base, $tool_names, true ) ) {
+		$declarations[ $base ] = $declaration;
+	}
 }
 
 $environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
@@ -1119,7 +1129,16 @@ return array(
 }
 
 function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
-unset( $payload );
+
+$workspace_tool = (string) ( $request[\'tool_name\'] ?? \'\' );
+if ( preg_match( "/^(?:client\\/)?workspace_(?:show|ls|read|grep|write|edit|apply_patch|git_status|git_diff)$/", $workspace_tool ) ) {
+	$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
+	$context = array(
+		\'workspace_root\' => \'/workspace\',
+		\'writable_paths\' => is_array( $task_input[\'writable_paths\'] ?? null ) ? $task_input[\'writable_paths\'] : array(),
+	);
+	return ( new WP_Codebox_Sandbox_Workspace_Executor() )->executeWP_Agent_Tool_Call( $request, is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] : array(), $context );
+}
 
 if ( ! in_array( (string) ( $request[\'tool_name\'] ?? \'\' ), array( \'filesystem_write\', \'client/filesystem-write\' ), true ) ) {
 	return null;

@@ -388,12 +388,13 @@ await rm(nativeResultPath, { force: true })
 const runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
+let runnerWorkspaceCore = null
 if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled) {
-  const core = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
+  runnerWorkspaceCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
   const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
   const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
     .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-  workspaceApply = await core.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
+  workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
 }
 await cleanupPrivateRuntimeSources()
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
@@ -422,9 +423,10 @@ const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)
 let publication = resultValue(runtimeRecord, "metadata.runner_workspace_publication")
 if (execution.code === 0 && runtimeRecord.success === true && verificationPassed && workspaceApply.status === "applied") {
+  await runnerWorkspaceCore.verifyRunnerWorkspaceIntegrity(workspaceApply.integrity)
   const testPublisher = string(process.env.WP_CODEBOX_TEST_PUBLISHER_MODULE)
   const publisher = testPublisher ? (await import(pathToFileURL(resolve(testPublisher)).href)).publishRunnerWorkspace : publishRunnerWorkspace
-  publication = await publisher({ request, workspace, changedFiles: workspaceApply.changedFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN })
+  publication = await publisher({ request, changedFiles: workspaceApply.changedFiles, publicationFiles: workspaceApply.publicationFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN })
   runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
   runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
 }

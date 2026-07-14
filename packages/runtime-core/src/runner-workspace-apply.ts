@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
-import { readFile, lstat, realpath } from "node:fs/promises"
-import { isAbsolute, resolve } from "node:path"
+import { readFile, lstat, realpath, readdir } from "node:fs/promises"
+import { isAbsolute, resolve, relative } from "node:path"
 import { promisify } from "node:util"
 import { createHash } from "node:crypto"
 import { pathIsWithinRoot, relativePathMatchesExcludePattern } from "./file-tree-policy.js"
@@ -36,6 +36,22 @@ export interface RunnerWorkspaceApplyResult {
   status: "applied" | "no-op"
   changedFiles: string[]
   patchSha256?: string
+  integrity?: RunnerWorkspaceIntegritySnapshot
+  publicationFiles?: RunnerWorkspacePublicationFile[]
+}
+
+export interface RunnerWorkspacePublicationFile {
+  path: string
+  mode: "100644" | "100755"
+  content?: string
+  sha256?: string
+  deleted: boolean
+}
+
+export interface RunnerWorkspaceIntegritySnapshot {
+  workspaceRoot: string
+  files: RunnerWorkspacePublicationFile[]
+  baseline: RunnerWorkspacePublicationFile[]
 }
 
 /**
@@ -51,6 +67,7 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
   const patchPath = await artifactPath(artifactRoot, patchRef.path)
   const changedPath = await artifactPath(artifactRoot, changedRef.path)
   const [patch, changedRaw] = await Promise.all([readBoundedText(patchPath), readBoundedText(changedPath)])
+  const baseline = await snapshotWorkspace(workspaceRoot)
   verifyDigest(patch, patchRef.sha256)
 
   const changed = parseChangedFiles(changedRaw)
@@ -64,6 +81,8 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
 
   await execGit(workspaceRoot, ["apply", "--check", "--whitespace=error", "--", patchPath])
   await execGit(workspaceRoot, ["apply", "--whitespace=error", "--", patchPath])
+  const files = await snapshotWorkspace(workspaceRoot)
+  validateAppliedWorkspace(baseline, files, changed)
   if (request.verify) await request.verify()
 
   return {
@@ -71,6 +90,19 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
     status: "applied",
     changedFiles: changed.map((file) => file.relativePath),
     patchSha256: createHash("sha256").update(patch).digest("hex"),
+    integrity: { workspaceRoot, files, baseline },
+    publicationFiles: changed.map((change) => {
+      const file = files.find((candidate) => candidate.path === change.relativePath)
+      return file ? file : { path: change.relativePath, mode: "100644", deleted: true }
+    }),
+  }
+}
+
+/** Ensures checks did not mutate approved output or introduce unrelated files. */
+export async function verifyRunnerWorkspaceIntegrity(snapshot: RunnerWorkspaceIntegritySnapshot): Promise<void> {
+  const current = await snapshotWorkspace(snapshot.workspaceRoot)
+  if (JSON.stringify(current) !== JSON.stringify(snapshot.files)) {
+    throw new Error("Runner workspace changed after approval; refusing publication.")
   }
 }
 
@@ -121,7 +153,7 @@ function validateChangedFiles(files: RunnerWorkspaceChangedFile[], writablePaths
   for (const file of files) {
     const path = file.relativePath.replaceAll("\\", "/")
     if (!path || path.startsWith("/") || path.split("/").some((part) => part === "" || part === "." || part === ".." || part === ".git" || part === ".codebox")) throw new Error(`Changed file has a denied path: ${file.relativePath}`)
-    if (![file.beforeMode, file.afterMode].filter(Boolean).every((mode) => mode === "100644")) throw new Error(`Changed file has an unsupported mode: ${file.relativePath}`)
+    if (![file.beforeMode, file.afterMode].filter(Boolean).every((mode) => mode === "100644" || mode === "100755")) throw new Error(`Changed file has an unsupported mode: ${file.relativePath}`)
     if (!writablePaths.some((pattern) => relativePathMatchesExcludePattern(path, pattern))) throw new Error(`Changed file is outside writable_paths: ${file.relativePath}`)
   }
 }
@@ -133,7 +165,53 @@ function validatePatchPaths(patch: string, changed: RunnerWorkspaceChangedFile[]
     const path = line.slice(4).split("\t", 1)[0].trim().replace(/^[ab]\//, "")
     return path === "/dev/null" ? [] : [path]
   })
-  if (paths.length === 0 || paths.some((path) => !declared.has(path))) throw new Error("Patch paths do not exactly correspond to canonical changed-files.")
+  if (paths.length === 0 || paths.some((path) => !declared.has(path)) || [...declared].some((path) => !paths.includes(path))) throw new Error("Patch paths do not exactly correspond to canonical changed-files.")
+  for (const line of patch.split("\n")) {
+    if (/^(old mode|new mode|new file mode|deleted file mode) /.test(line)) {
+      const mode = line.split(" ").at(-1)
+      if (mode !== "100644" && mode !== "100755") throw new Error("Patch contains an unsupported file mode.")
+    }
+    if (/^(similarity index|rename from|rename to|copy from|copy to|Subproject commit)/.test(line)) throw new Error("Patch contains unsupported git metadata.")
+  }
+}
+
+async function snapshotWorkspace(root: string): Promise<RunnerWorkspacePublicationFile[]> {
+  const output: RunnerWorkspacePublicationFile[] = []
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === ".git" || entry.name === ".codebox") continue
+      const absolute = resolve(directory, entry.name)
+      const path = relative(root, absolute).replaceAll("\\", "/")
+      const stat = await lstat(absolute)
+      if (stat.isSymbolicLink()) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
+      if (stat.isDirectory()) {
+        await visit(absolute)
+        continue
+      }
+      if (!stat.isFile()) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
+      const mode = (stat.mode & 0o111) ? "100755" : "100644"
+      const bytes = await readFile(absolute)
+      output.push({ path, mode, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex"), deleted: false })
+    }
+  }
+  await visit(root)
+  return output.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+function validateAppliedWorkspace(baseline: RunnerWorkspacePublicationFile[], current: RunnerWorkspacePublicationFile[], changed: RunnerWorkspaceChangedFile[]): void {
+  const before = new Map(baseline.map((file) => [file.path, file]))
+  const after = new Map(current.map((file) => [file.path, file]))
+  const actual = new Set([...before.keys(), ...after.keys()].filter((path) => JSON.stringify(before.get(path)) !== JSON.stringify(after.get(path))))
+  const declared = new Set(changed.map((file) => file.relativePath))
+  if (actual.size !== declared.size || [...actual].some((path) => !declared.has(path))) throw new Error("Applied workspace differs from the canonical changed-files manifest.")
+  for (const file of changed) {
+    const value = after.get(file.relativePath)
+    if (file.status === "deleted") {
+      if (value) throw new Error(`Canonical deletion was not applied: ${file.relativePath}`)
+      continue
+    }
+    if (!value || value.mode !== file.afterMode) throw new Error(`Applied file mode does not match canonical manifest: ${file.relativePath}`)
+  }
 }
 
 async function execGit(cwd: string, args: string[]): Promise<void> {

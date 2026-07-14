@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { createHash } from "node:crypto"
-import { applyRunnerWorkspacePatch } from "../packages/runtime-core/src/runner-workspace-apply.js"
+import { applyRunnerWorkspacePatch, verifyRunnerWorkspaceIntegrity } from "../packages/runtime-core/src/runner-workspace-apply.js"
 
 const exec = promisify(execFile)
 
@@ -35,12 +35,34 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
   assert.equal(result.status, "applied")
   assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "after\n")
   assert.deepEqual(order, ["verify"])
+  await verifyRunnerWorkspaceIntegrity(result.integrity!)
 }
 
 {
   const input = await fixture("", [])
   const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] })
   assert.equal(result.status, "no-op")
+}
+
+{
+  const executablePatch = "diff --git a/README.md b/README.md\nold mode 100644\nnew mode 100755\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n"
+  const executableFiles = [{ ...files[0], afterMode: "100755" }]
+  const input = await fixture(executablePatch, executableFiles)
+  const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] })
+  assert.equal(result.publicationFiles?.[0]?.mode, "100755")
+}
+
+{
+  const input = await fixture(patch, files)
+  await writeFile(join(input.artifacts, "files", "changed-files.json"), JSON.stringify({ schema: "wp-codebox/changed-files/v1", files: [{ ...files[0], relativePath: "other.md" }] }))
+  await assert.rejects(() => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md", "other.md"] }), /exactly correspond/)
+}
+
+{
+  const input = await fixture(patch, files)
+  const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] })
+  await writeFile(join(input.workspace, "extra.txt"), "unexpected\n")
+  await assert.rejects(() => verifyRunnerWorkspaceIntegrity(result.integrity!), /changed after approval/)
 }
 
 {

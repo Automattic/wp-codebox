@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
 
 function string(value) { return typeof value === "string" ? value.trim() : "" }
 function record(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {} }
 
-export async function publishRunnerWorkspace({ request, workspace, changedFiles, token, fetchImpl = fetch }) {
+export async function publishRunnerWorkspace({ request, changedFiles, publicationFiles, workspace, token, fetchImpl = fetch }) {
   const targetRepo = string(request.target_repo).toLowerCase()
   const config = record(request.runner_workspace)
   const configuredRepo = string(config.repo).toLowerCase()
@@ -23,28 +21,26 @@ export async function publishRunnerWorkspace({ request, workspace, changedFiles,
     if (!response.ok) throw new Error(`GitHub API ${method} ${path} failed with ${response.status}.`)
     return payload
   }
-  const baseRef = await api("GET", `/git/ref/heads/${encodeURIComponent(base)}`)
-  const baseSha = string(baseRef.object?.sha)
+  let existing = null
+  try { existing = await api("GET", `/git/ref/heads/${head.split("/").map(encodeURIComponent).join("/")}`) } catch (error) { if (!String(error.message).includes(" 404.")) throw error }
+  // Existing PR branches are append-only publication targets. Their current tree
+  // is the base so files from earlier agent turns cannot disappear.
+  const parent = string(existing?.object?.sha)
+  const baseRef = parent ? null : await api("GET", `/git/ref/heads/${encodeURIComponent(base)}`)
+  const baseSha = parent || string(baseRef.object?.sha)
   const baseCommit = await api("GET", `/git/commits/${baseSha}`)
   const tree = []
-  for (const changed of changedFiles) {
-    const relativePath = string(changed)
+  const captured = Array.isArray(publicationFiles) ? publicationFiles : []
+  if (!captured.length) throw new Error("Runner workspace publication requires immutable approved file content.")
+  for (const changed of captured) {
+    const relativePath = string(changed?.path)
     if (!relativePath || relativePath.startsWith("/") || relativePath.split("/").some((part) => !part || part === "." || part === ".." || part === ".git")) throw new Error("Publication changed file path is invalid.")
-    const absolute = resolve(workspace, relativePath)
-    if (!absolute.startsWith(`${resolve(workspace)}/`)) throw new Error("Publication changed file escapes workspace.")
-    try {
-      const content = await readFile(absolute)
-      const blob = await api("POST", "/git/blobs", { content: content.toString("base64"), encoding: "base64" })
-      tree.push({ path: relativePath, mode: "100644", type: "blob", sha: string(blob.sha) })
-    } catch (error) {
-      if (error?.code === "ENOENT") tree.push({ path: relativePath, mode: "100644", type: "blob", sha: null })
-      else throw error
-    }
+    if (changed.deleted) { tree.push({ path: relativePath, mode: "100644", type: "blob", sha: null }); continue }
+    if (changed.mode !== "100644" && changed.mode !== "100755" || typeof changed.content !== "string") throw new Error("Publication file is not an approved regular file.")
+    const blob = await api("POST", "/git/blobs", { content: changed.content, encoding: "base64" })
+    tree.push({ path: relativePath, mode: changed.mode, type: "blob", sha: string(blob.sha) })
   }
   const nextTree = await api("POST", "/git/trees", { base_tree: string(baseCommit.tree?.sha), tree })
-  let parent = baseSha
-  let existing = null
-  try { existing = await api("GET", `/git/ref/heads/${head.split("/").map(encodeURIComponent).join("/")}`); parent = string(existing.object?.sha) || baseSha } catch (error) { if (!String(error.message).includes(" 404.")) throw error }
   const commit = await api("POST", "/git/commits", { message: string(config.commit_message || request.workload?.label || "Apply agent task changes"), tree: string(nextTree.sha), parents: [parent] })
   if (existing) await api("PATCH", `/git/refs/heads/${head.split("/").map(encodeURIComponent).join("/")}`, { sha: string(commit.sha), force: false })
   else await api("POST", "/git/refs", { ref: `refs/heads/${head}`, sha: string(commit.sha) })
