@@ -140,13 +140,14 @@ runner token, so a fabricated publication result cannot satisfy the gate.
 The result artifact includes the executable task input, normalized runtime
 result, evaluated projections, verification records, and runner-owned
 publication result. A single canonical `codebox-transcript` ref from the
-normalized runtime result is staged independently of package declarations at
-`.codebox/agent-task-artifacts/transcript.json`. The uploader accepts only a
-bounded regular UTF-8 file beneath the trusted artifact root, records its
-source provenance and staged digest in `exclusions.json`, and sanitizes secrets
-and private runtime, workspace, and snapshot paths while preserving
-target-relative tool arguments, errors, and model messages. Runtime source
-trees remain excluded. Runtime input, result, and diagnostics are uploaded from
+normalized runtime result is handled independently of package declarations at
+`.codebox/agent-task-artifacts/transcript.json`. Missing canonical evidence is
+recorded as unavailable. Present evidence is verified against its normalized
+digest when supplied, then converted from `wp-codebox/agent-transcript/v1` into
+a compact `wp-codebox/reviewer-agent-transcript/v1` projection. The projection
+records verified source and output digests in `exclusions.json`, retains bounded
+diagnostic tool and model data, and excludes raw stdout, source trees, secrets,
+private paths, setup stacks, and package payloads. Runtime input, result, and diagnostics are uploaded from
 `workspace/.codebox/` with `if: always()`, including execution failures. A request
 artifact alone is not a successful task result.
 

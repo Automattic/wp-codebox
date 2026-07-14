@@ -1,5 +1,5 @@
 import { constants } from "node:fs"
-import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, open, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { createHash } from "node:crypto"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -7,6 +7,8 @@ import { isAbsolute, join, relative, resolve } from "node:path"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
 
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
+const MAX_TRANSCRIPT_EXECUTIONS = 64
+const MAX_REVIEW_TEXT_BYTES = 32 * 1024
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace, ".codebox", "agent-task-upload"))
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
@@ -154,20 +156,99 @@ async function canonicalTranscript(result) {
   return refs[0]
 }
 
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex")
+}
+
+function boundedText(value) {
+  if (typeof value !== "string") return undefined
+  const text = redact(sanitizeText(value)).slice(0, MAX_REVIEW_TEXT_BYTES)
+  return containsRuntimeSourceContent(text) ? "[redacted-source-content]" : text
+}
+
+function safeTargetPath(value) {
+  const path = safeRelativeArtifactPath(value)
+  return path ? `workspace/${path}` : undefined
+}
+
+function projectToolCall(value) {
+  const entry = record(value)
+  const tool = boundedText(entry.tool_id ?? entry.toolId ?? entry.name ?? entry.tool_name)
+  const path = safeTargetPath(record(entry.args ?? entry.arguments).path ?? entry.path)
+  const result = record(entry.result ?? entry.output)
+  const rawContent = result.content ?? entry.content
+  const content = path && /workspace/i.test(tool ?? "") && typeof rawContent === "string"
+    ? redact(sanitizeText(rawContent)).slice(0, MAX_REVIEW_TEXT_BYTES)
+    : undefined
+  return Object.fromEntries(Object.entries({ tool, path, status: boundedText(entry.status), arguments: path ? { path } : undefined, content, error: boundedText(record(entry.error).message ?? entry.error) }).filter(([, item]) => item !== undefined))
+}
+
+function projectParsed(value) {
+  const parsed = record(value)
+  const messages = Array.isArray(parsed.messages) ? parsed.messages : Array.isArray(parsed.model_messages) ? parsed.model_messages : []
+  const tools = Array.isArray(parsed.tool_calls) ? parsed.tool_calls : Array.isArray(parsed.toolCalls) ? parsed.toolCalls : []
+  const results = Array.isArray(parsed.tool_results) ? parsed.tool_results : Array.isArray(parsed.toolResults) ? parsed.toolResults : []
+  const errors = Array.isArray(parsed.errors) ? parsed.errors : parsed.error ? [parsed.error] : []
+  const agent = record(parsed.agent ?? parsed.agent_metadata)
+  return Object.fromEntries(Object.entries({
+    agent: Object.fromEntries(["id", "name", "model", "provider", "status"].flatMap((key) => boundedText(agent[key]) ? [[key, boundedText(agent[key])]] : [])),
+    model_messages: messages.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((message) => boundedText(record(message).content ?? record(message).text ?? message) ? [{ role: boundedText(record(message).role), content: boundedText(record(message).content ?? record(message).text ?? message) }] : []),
+    tool_calls: tools.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
+    tool_results: results.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
+    errors: errors.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((error) => boundedText(record(error).message ?? error) ? [boundedText(record(error).message ?? error)] : []),
+  }).filter(([, item]) => Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0))
+}
+
+async function trustedTranscriptFile(path) {
+  const root = await realpath(artifactsPath).catch(() => "")
+  if (!root) return { unavailable: "artifact-root-missing" }
+  const parts = path.split("/")
+  let current = root
+  for (const part of parts) {
+    current = join(current, part)
+    const stat = await lstat(current).catch((error) => error?.code === "ENOENT" ? undefined : Promise.reject(error))
+    if (!stat) return { unavailable: "referenced-file-missing" }
+    if (stat.isSymbolicLink()) throw new Error("Canonical transcript must not traverse symlinks.")
+  }
+  const stat = await lstat(current)
+  if (!stat.isFile() || stat.size > MAX_UPLOAD_FILE_BYTES) throw new Error("Canonical transcript must be a bounded regular file.")
+  const resolved = await realpath(current)
+  const contained = relative(root, resolved)
+  if (contained === ".." || contained.startsWith(`..${String.fromCharCode(47)}`) || isAbsolute(contained)) throw new Error("Canonical transcript escapes the trusted artifact root.")
+  return { source: resolved }
+}
+
 async function stageCanonicalTranscript(result) {
   const ref = await canonicalTranscript(result)
   if (!ref) return undefined
   const path = safeRelativeArtifactPath(ref.path)
-  const source = resolve(artifactsPath, path)
-  if (relative(artifactsPath, source).startsWith("..") || sourceCategory(path, source)) throw new Error("Canonical transcript must stay under the trusted artifact root.")
+  if (sourceCategory(path, resolve(artifactsPath, path))) throw new Error("Canonical transcript must stay under the trusted artifact root.")
+  const trusted = await trustedTranscriptFile(path)
+  if (trusted.unavailable) return { unavailable: trusted.unavailable, provenance: { kind: ref.kind, artifact_path: path } }
+  const source = trusted.source
+  const bytes = await readFile(source)
+  if (bytes.includes(0) || !isUtf8(bytes)) throw new Error("Canonical transcript must be UTF-8 JSON.")
+  const actualDigest = digest(bytes)
+  const expectedDigest = typeof ref.sha256 === "string" ? ref.sha256 : record(ref.digest).value
+  if (expectedDigest && expectedDigest !== actualDigest) throw new Error("Canonical transcript digest does not match its normalized ref.")
+  const raw = parseJsonOrEmpty(bytes.toString("utf8"))
+  if (raw.schema !== "wp-codebox/agent-transcript/v1" || !Array.isArray(raw.executions) || raw.executions.length > MAX_TRANSCRIPT_EXECUTIONS) throw new Error("Canonical transcript must be a bounded wp-codebox/agent-transcript/v1 envelope.")
+  const projection = {
+    schema: "wp-codebox/reviewer-agent-transcript/v1",
+    executions: raw.executions.map((execution, index) => {
+      const entry = record(execution)
+      if (typeof entry.command !== "string" || typeof entry.exitCode !== "number") throw new Error("Canonical transcript execution is malformed.")
+      return Object.fromEntries(Object.entries({ execution_index: typeof entry.executionIndex === "number" ? entry.executionIndex : index, command: boundedText(entry.command), status: entry.exitCode === 0 ? "succeeded" : "failed", exit_code: entry.exitCode, parsed: Object.keys(record(entry.parsed)).length ? projectParsed(entry.parsed) : undefined, error: boundedText(entry.stderr) }).filter(([, item]) => item !== undefined))
+    }),
+  }
   const destination = join(uploadPath, ".codebox", "agent-task-artifacts", "transcript.json")
-  if (!await stageTextFile(source, destination, { allowTargetCode: true })) throw new Error("Canonical transcript must be a bounded regular UTF-8 file.")
-  const bytes = await readFile(destination)
-  if (!Object.keys(record(parseJsonOrEmpty(bytes.toString("utf8")))).length) throw new Error("Canonical transcript must be a JSON object.")
+  await mkdir(resolve(destination, ".."), { recursive: true })
+  await writeFile(destination, `${JSON.stringify(projection, null, 2)}\n`)
+  const projectionDigest = digest(await readFile(destination))
   return {
     path: ".codebox/agent-task-artifacts/transcript.json",
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    provenance: { kind: ref.kind, artifact_path: path, ...(ref.sha256 ? { source_sha256: ref.sha256 } : {}) },
+    sha256: projectionDigest,
+    provenance: { kind: ref.kind, artifact_path: path, source_sha256: actualDigest, projection_sha256: projectionDigest },
   }
 }
 
@@ -277,6 +358,12 @@ for (const path of declaredPaths) {
   await stageTextFile(source, join(uploadPath, ".codebox", "agent-task-artifacts", path))
 }
 const transcript = await stageCanonicalTranscript(result)
+if (transcript?.provenance?.source_sha256) {
+  const stagedResultPath = join(uploadPath, ".codebox", "agent-task-workflow-result.json")
+  const stagedResult = parseJsonOrEmpty(await readFile(stagedResultPath, "utf8"))
+  stagedResult.artifact_upload = { canonical_transcript: transcript.provenance }
+  await writeFile(stagedResultPath, `${JSON.stringify(stagedResult, null, 2)}\n`)
+}
 await mkdir(join(uploadPath, ".codebox", "agent-task-artifacts"), { recursive: true })
 await writeFile(join(uploadPath, ".codebox", "agent-task-artifacts", "runtime-provenance.json"), `${JSON.stringify({ schema: "wp-codebox/agent-task-runtime-provenance/v1", sources: runtimeProvenance(request) }, null, 2)}\n`)
 await writeFile(join(uploadPath, ".codebox", "agent-task-artifacts", "exclusions.json"), `${JSON.stringify({ schema: "wp-codebox/agent-task-upload-exclusions/v1", ...(await exclusions(artifactsPath, declaredPaths, transcript)) }, null, 2)}\n`)

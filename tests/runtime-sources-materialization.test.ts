@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { access, chmod, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { promisify } from "node:util"
@@ -165,18 +166,16 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
   assert.match(await readFile(join(upload, ".codebox", "agent-task-artifacts", "safe.json"), "utf8"), /OpenAiProvider/)
   await mkdir(join(artifacts, "files"), { recursive: true })
-  await writeFile(join(artifacts, "files", "transcript.json"), JSON.stringify({
-    model_message: "Target snippet: <?php final class Target_Plugin {}",
-    tool_calls: [{ tool_id: "workspace.read", args: { path: "src/plugin.php" }, error: "Repeated workspace error" }, { tool_id: "workspace.read", args: { path: "src/plugin.php" }, error: "Repeated workspace error" }],
-    private_path: `${privateRoot}/source.php`,
-    host_path: "/Users/example/private-log.txt",
-    token: "secret-transcript-value",
-  }))
-  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ runtime_result: { agent_task_run_result: { refs: { transcripts: [{ kind: "codebox-transcript", path: "files/transcript.json", sha256: "a".repeat(64) }] } } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
+  const transcriptSource = JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [{ executionIndex: 0, command: "wp-codebox.agent-sandbox-run", exitCode: 1, stderr: "Repeated workspace error", parsed: { agent: { id: "fixture", provider: "openai" }, messages: [{ role: "assistant", content: "Target snippet: <?php final class Target_Plugin {}" }], tool_calls: [{ tool_id: "workspace.read", args: { path: "src/plugin.php" }, result: { content: "<?php final class Target_Plugin {}" }, error: "Repeated workspace error" }], token: "secret-transcript-value", private_path: `${privateRoot}/source.php`, host_path: "/Users/example/private-log.txt" } }] })
+  await writeFile(join(artifacts, "files", "transcript.json"), transcriptSource)
+  const transcriptDigest = createHash("sha256").update(transcriptSource).digest("hex")
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ runtime_result: { agent_task_run_result: { refs: { transcripts: [{ kind: "codebox-transcript", path: "files/transcript.json", sha256: transcriptDigest }] } } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot, OPENAI_API_KEY: "secret-transcript-value" } })
   const transcript = await readFile(join(upload, ".codebox", "agent-task-artifacts", "transcript.json"), "utf8")
-  assert.match(transcript, /Target snippet: <\?php/)
+  assert.match(transcript, /<\?php final class Target_Plugin/)
+  assert.match(transcript, /\[redacted-source-content\]/)
   assert.match(transcript, /Repeated workspace error/)
+  assert.match(transcript, /workspace\/src\/plugin.php/)
   assert.doesNotMatch(transcript, /private-runtime-source|secret-transcript-value|\/Users\/example/)
   const transcriptExclusions = await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8")
   assert.match(transcriptExclusions, /canonical_transcripts/)
@@ -185,7 +184,7 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   await writeFile(outsideTranscript, JSON.stringify({ secret: "outside" }))
   await rm(join(artifacts, "files", "transcript.json"))
   await symlink(outsideTranscript, join(artifacts, "files", "transcript.json"))
-  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /bounded regular UTF-8 file/, "Canonical transcript refs cannot follow symlinks outside artifacts")
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /must not traverse symlinks/, "Canonical transcript refs cannot follow symlinks outside artifacts")
   await rm(join(artifacts, "files", "transcript.json"))
   await writeFile(join(artifacts, "files", "transcript.json"), JSON.stringify({ tool_calls: [] }))
   await writeFile(join(artifacts, "leak.json"), `runtime log ${privateRoot}/source.php`)
