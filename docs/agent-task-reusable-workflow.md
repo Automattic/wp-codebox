@@ -5,8 +5,9 @@ WP Codebox publishes a reusable GitHub Actions workflow for generic agent tasks:
 ```yaml
 jobs:
   run-agent-task:
-    uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
+    uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@v0.12.3
     with:
+      wp_codebox_release_ref: v0.12.3
       external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"agents/example.agent.json","digest":"sha256-bytes-v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
@@ -29,24 +30,27 @@ public native package, invokes the package-declared agent through the native cha
 in a credential-free verification environment, and returns actual runtime and
 publication data.
 
-## Helper Source Revision
+## Helper Release Tag
 
-The workflow checks out its helper scripts from one immutable WP Codebox commit
-configured as `WP_CODEBOX_HELPER_REVISION`. This source revision is independent
-of the caller repository, caller commit, and future revisions of
-`run-agent-task.yml`; no GitHub workflow SHA context selects helper source.
+Callers must invoke the reusable workflow from an exact WP Codebox release tag
+and pass that same tag as `wp_codebox_release_ref`. For example, callers use
+`Automattic/wp-codebox/.github/workflows/run-agent-task.yml@v0.12.3` together
+with `wp_codebox_release_ref: v0.12.3`. The accepted format is exactly
+`vX.Y.Z`; branches, commit SHAs, moving major tags, prereleases, and arbitrary
+refs are rejected.
 
-Helper changes land first. A subsequent commit that updates this reusable
-workflow advances the helper revision to the full SHA containing those merged
-files. The workflow validates the full-SHA shape and `actions/checkout` fetches
-that exact source before running helpers. The regression test reads the required
-helper files at the pinned revision and checks their SHA-256 digests.
+The workflow validates that its own `uses:` reference and
+`wp_codebox_release_ref` match exactly before checkout. It always checks helpers
+out from `Automattic/wp-codebox`, verifies the checked-out commit equals the
+remote release tag commit, and verifies the checked-out `package.json` version
+equals the requested tag without its `v` prefix. The caller cannot select a
+different helper repository.
 
-This pin fixes [#1755](https://github.com/Automattic/wp-codebox/issues/1755) and the failed Build callers [29281470179](https://github.com/Automattic/build-with-wordpress/actions/runs/29281470179)
-and [29281470159](https://github.com/Automattic/build-with-wordpress/actions/runs/29281470159), where a foreign caller SHA was incorrectly used as a WP Codebox checkout ref.
+This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-codebox/issues/1759).
 
 ## Inputs
 
+- `wp_codebox_release_ref`: required exact immutable WP Codebox release tag. It must match the `@vX.Y.Z` tag in the caller's `uses:` declaration exactly.
 - `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. Packages are supported only from publicly accessible GitHub repositories, fetched from canonical `https://github.com/OWNER/REPOSITORY.git` without credentials. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
 - `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
@@ -166,6 +170,10 @@ retaining them would have presented inert data as a supported contract. Callers
 must migrate checks to executable `validation_dependencies`,
 `verification_commands`, or `drift_checks`; context and artifact preparation
 remain caller-workflow responsibilities. This is an intentional exposed-workflow breaking change.
+
+`wp_codebox_release_ref` is a required v1 input. Existing callers must switch
+their `uses:` reference from a branch or other ref to an exact release tag and
+pass that identical tag through this input.
 
 ## Upload safety limits
 

@@ -1,0 +1,12 @@
+name: Mismatched WP Codebox release consumer
+
+on: workflow_dispatch
+
+jobs:
+  run-agent-task:
+    uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@v0.12.3
+    with:
+      wp_codebox_release_ref: v0.12.4
+      external_package_source: '{"repository":"Automattic/example-agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"agents/example.agent.json","digest":"sha256-bytes-v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      target_repo: Automattic/example-target
+      prompt: Refresh the configured surface.

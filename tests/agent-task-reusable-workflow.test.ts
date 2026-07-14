@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -14,6 +13,7 @@ const publicWorkflowSurface = workflow.slice(0, workflow.indexOf("jobs:"))
 
 assert.match(workflow, /^name: Run Agent Task \(reusable\)$/m)
 assert.match(workflow, /workflow_call:/)
+assert.match(workflow, /wp_codebox_release_ref:/)
 assert.match(workflow, /external_package_source:/)
 assert.match(workflow, /EXTERNAL_PACKAGE_SOURCE_POLICY:/)
 assert.doesNotMatch(publicWorkflowSurface, /external_package_allowed_repositories:|external_package_allowed_paths:/)
@@ -40,25 +40,34 @@ assert.match(workflow, /agent-task-artifacts/)
 assert.match(workflow, /prepare-agent-task-upload\.mjs/)
 assert.match(workflow, /agent-task-upload/)
 assert.match(workflow, /if: always\(\)/)
-const helperRevision = workflow.match(/WP_CODEBOX_HELPER_REVISION:\s*([0-9a-f]{40})/)?.[1]
-assert.ok(helperRevision, "The workflow must declare one full immutable WP Codebox helper revision")
-assert.match(workflow, /ref: \$\{\{ env\.WP_CODEBOX_HELPER_REVISION \}\}/)
-assert.doesNotMatch(workflow, /github\.(?:workflow_sha|workflow_ref)/)
+assert.match(workflow, /WP_CODEBOX_RELEASE_REF: \$\{\{ inputs\.wp_codebox_release_ref \}\}/)
+assert.match(workflow, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
+assert.match(workflow, /WORKFLOW_REF: \$\{\{ github\.workflow_ref \}\}/)
+assert.match(workflow, /The reusable workflow tag and wp_codebox_release_ref must match exactly/)
+assert.match(workflow, /repository: Automattic\/wp-codebox/)
+assert.match(workflow, /ref: \$\{\{ inputs\.wp_codebox_release_ref \}\}/)
+assert.match(workflow, /Verify WP Codebox workflow helper release/)
+assert.match(workflow, /git ls-remote --exit-code --refs origin "refs\/tags\/\$\{WP_CODEBOX_RELEASE_REF\}"/)
+assert.match(workflow, /checked_out_commit.*remote_tag_commit/)
+assert.match(workflow, /JSON\.parse\(readFileSync\("package\.json", "utf8"\)\)\.version/)
 assert.doesNotMatch(workflow, /steps\.[^.]+\.outputs\.ref/)
-const foreignCallerSha = "ba2df8c2215407b1a58edbff29e3ddcb5efa2249"
-assert.notEqual(helperRevision, foreignCallerSha, "A caller repository SHA must not select WP Codebox helpers")
-assert.doesNotMatch(workflow, new RegExp(foreignCallerSha))
-assert.match(workflow, /Validate pinned WP Codebox helper revision/)
+assert.match(workflow, /Validate coherent WP Codebox release tag/)
 
-const requiredHelperFiles = {
-  ".github/scripts/run-agent-task/build-codebox-task-request.mjs": "ed1fbc144428bfbf222810a8a467390e8cd5b45daa0f3e64e03162949d6c84df",
-  ".github/scripts/run-agent-task/execute-native-agent-task.mjs": "324c6d12dd01880bc9e4cd880ea6c713cb1bfd630b4925c53d78af7283e4a459",
-  ".github/scripts/run-agent-task/prepare-agent-task-upload.mjs": "93511e4174e705f55ff014ba68ac52fdaca771ce3f19f3921cceb661e69569da",
+const parseConsumerReleaseTags = (consumer: string) => ({
+  workflow: consumer.match(/uses: Automattic\/wp-codebox\/\.github\/workflows\/run-agent-task\.yml@([^\s]+)/)?.[1],
+  helpers: consumer.match(/wp_codebox_release_ref: ([^\s]+)/)?.[1],
+})
+const isExactReleaseTag = (value: string | undefined) => /^v\d+\.\d+\.\d+$/.test(value ?? "")
+const isCoherentConsumer = (consumer: string) => {
+  const { workflow: workflowTag, helpers: helperTag } = parseConsumerReleaseTags(consumer)
+  return isExactReleaseTag(workflowTag) && workflowTag === helperTag
 }
-for (const [path, digest] of Object.entries(requiredHelperFiles)) {
-  const { stdout } = await execFileAsync("git", ["show", `${helperRevision}:${path}`], { encoding: "buffer" })
-  const actualDigest = createHash("sha256").update(stdout).digest("hex")
-  assert.equal(actualDigest, digest, `Pinned helper source changed unexpectedly: ${path}`)
+const coherentConsumer = await readFile(new URL("../fixtures/agent-task-reusable-workflow-consumer.yml", import.meta.url), "utf8")
+const mismatchedConsumer = await readFile(new URL("../fixtures/agent-task-reusable-workflow-consumer-mismatched.yml", import.meta.url), "utf8")
+assert.equal(isCoherentConsumer(coherentConsumer), true, "An exact matching workflow and helper release tag must succeed")
+assert.equal(isCoherentConsumer(mismatchedConsumer), false, "Mismatched workflow and helper release tags must fail")
+for (const invalidRef of ["main", "v0", "v0.12", "v0.12.3-rc.1", "0123456789abcdef0123456789abcdef01234567"]) {
+  assert.equal(isExactReleaseTag(invalidRef), false, `Non-release ref must fail: ${invalidRef}`)
 }
 assert.doesNotMatch(publicWorkflowSurface, /step_budget:|tool_results_key:/)
 assert.doesNotMatch(workflow, /steps\.plan\.outputs/)
@@ -67,7 +76,9 @@ assert.doesNotMatch(publicWorkflowSurface, /mount|component path|ability id|prov
 
 const docs = await readFile(new URL("../docs/agent-task-reusable-workflow.md", import.meta.url), "utf8")
 assert.match(docs, /^# Agent Task Reusable Workflow/m)
-assert.match(docs, /Automattic\/wp-codebox\/.github\/workflows\/run-agent-task.yml@main/)
+assert.match(docs, /Automattic\/wp-codebox\/.github\/workflows\/run-agent-task.yml@v0\.12\.3/)
+assert.match(docs, /wp_codebox_release_ref: v0\.12\.3/)
+assert.match(docs, /branches, commit SHAs, moving major tags, prereleases, and arbitrary\nrefs are rejected/)
 assert.match(docs, /external_package_source/)
 assert.match(docs, /runner_workspace/)
 assert.match(docs, /access_token_repos/)

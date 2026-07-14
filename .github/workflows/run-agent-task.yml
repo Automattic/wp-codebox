@@ -3,6 +3,10 @@ name: Run Agent Task (reusable)
 'on':
   workflow_call:
     inputs:
+      wp_codebox_release_ref:
+        description: Exact immutable WP Codebox release tag used for this workflow invocation, in vX.Y.Z form.
+        type: string
+        required: true
       external_package_source:
         description: "JSON descriptor for exactly one standalone .agent.json file: repository, immutable revision, file path, and sha256-bytes-v1 digest."
         type: string
@@ -146,8 +150,7 @@ jobs:
   run-agent-task:
     runs-on: ubuntu-latest
     env:
-      # Advance this only in a subsequent workflow commit after helper changes land.
-      WP_CODEBOX_HELPER_REVISION: d9e329e7c3bb852b857870a26d8f3853feef751d
+      WP_CODEBOX_RELEASE_REF: ${{ inputs.wp_codebox_release_ref }}
     permissions:
       contents: write
       pull-requests: write
@@ -160,10 +163,17 @@ jobs:
       credential_mode: ${{ steps.execute.outputs.credential_mode }}
       declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
-      - name: Validate pinned WP Codebox helper revision
+      - name: Validate coherent WP Codebox release tag
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
-          if ! [[ "${WP_CODEBOX_HELPER_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "WP_CODEBOX_HELPER_REVISION must be a full lowercase Git commit SHA" >&2
+          if ! [[ "${WP_CODEBOX_RELEASE_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "wp_codebox_release_ref must be an immutable vX.Y.Z release tag" >&2
+            exit 1
+          fi
+          expected_workflow_ref="Automattic/wp-codebox/.github/workflows/run-agent-task.yml@${WP_CODEBOX_RELEASE_REF}"
+          if [[ "${WORKFLOW_REF}" != "${expected_workflow_ref}" ]]; then
+            echo "The reusable workflow tag and wp_codebox_release_ref must match exactly" >&2
             exit 1
           fi
 
@@ -171,10 +181,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Automattic/wp-codebox
-          # This checkout fetches the exact immutable helper source and verifies
-          # its reachability independently of the caller's workflow revision.
-          ref: ${{ env.WP_CODEBOX_HELPER_REVISION }}
+          ref: ${{ inputs.wp_codebox_release_ref }}
           path: .wp-codebox-workflow
+
+      - name: Verify WP Codebox workflow helper release
+        working-directory: .wp-codebox-workflow
+        run: |
+          git ls-remote --exit-code --refs origin "refs/tags/${WP_CODEBOX_RELEASE_REF}" >/dev/null
+          remote_tag_object="$(git ls-remote --refs origin "refs/tags/${WP_CODEBOX_RELEASE_REF}" | cut -f1)"
+          remote_tag_commit="$(git ls-remote origin "refs/tags/${WP_CODEBOX_RELEASE_REF}^{}" | cut -f1)"
+          remote_tag_commit="${remote_tag_commit:-${remote_tag_object}}"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [[ "${checked_out_commit}" != "${remote_tag_commit}" ]]; then
+            echo "Checked-out WP Codebox helpers do not match the remote release tag commit" >&2
+            exit 1
+          fi
+          EXPECTED_VERSION="${WP_CODEBOX_RELEASE_REF#v}" node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const expected = process.env.EXPECTED_VERSION;
+            const actual = JSON.parse(readFileSync("package.json", "utf8")).version;
+            if (actual !== expected) {
+              throw new Error("WP Codebox helper package version " + actual + " does not match release tag v" + expected);
+            }
+          '
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
