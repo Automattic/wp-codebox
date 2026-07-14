@@ -200,7 +200,7 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   const artifacts: AgentTaskRunArtifactRef[] = []
   const artifactPolicy = objectValue(result.workspace_artifact_policy ?? result.workspaceArtifactPolicy)
   const publicUrlRoot = stringValue(artifactPolicy.public_url_root ?? artifactPolicy.publicUrlRoot)
-  for (const artifact of arrayObjects(result.artifacts)) {
+  for (const artifact of artifactRecords(result.artifacts)) {
     appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromResultArtifact(artifact), publicUrlRoot, ""))
   }
 
@@ -266,6 +266,14 @@ function artifactFromResultArtifact(artifact: Record<string, unknown>): AgentTas
   }) as AgentTaskRunArtifactRef
 }
 
+function artifactRecords(value: unknown): Record<string, unknown>[] {
+  const list = arrayObjects(value)
+  if (list.length > 0) return list
+  const artifact = objectValue(value)
+  if (stringValue(artifact.kind)) return [artifact]
+  return arrayObjects(artifact.items ?? artifact.files ?? artifact.artifacts)
+}
+
 function artifactFromAgentResult(id: string, kind: string, root: string, metadata: Record<string, unknown>): AgentTaskRunArtifactRef {
   const path = artifactPath(root, stringValue(metadata.artifact))
   return stripUndefined({
@@ -296,7 +304,7 @@ function noOpMetadata(result: Record<string, unknown>, agentResult: Record<strin
 }
 
 function agentResultRecord(result: Record<string, unknown>): Record<string, unknown> {
-  return firstObject(objectValue(result.run).agentResult, result.agentResult)
+  return firstObject(objectValue(result.run).agentResult, result.agentResult, result.agent_result)
 }
 
 function completionOutcomeRecord(result: Record<string, unknown>): Record<string, unknown> {

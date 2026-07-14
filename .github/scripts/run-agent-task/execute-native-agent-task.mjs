@@ -1,10 +1,12 @@
 import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
+import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -127,7 +129,7 @@ function accessFailure(request) {
   if (!allowed.includes(target) || !tokenRepos.includes(target)) return "Target repository is not explicitly authorized by allowed_repos and access_token_repos."
   if (!caller) return "Caller repository is required for publication authorization."
   if (target !== caller && process.env.EXPLICIT_ACCESS_TOKEN_CONFIGURED !== "true") return "An explicit ACCESS_TOKEN is required for cross-repository publication."
-  if (!string(process.env.GITHUB_TOKEN)) return "No effective GitHub token is available for runner workspace tools."
+  if (!string(process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN)) return "No effective GitHub token is available for runner workspace tools."
   return ""
 }
 
@@ -276,11 +278,10 @@ process.once("exit", () => { if (privateRuntimeSourceRoot) rmSync(privateRuntime
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.once(signal, () => { cleanupPrivateRuntimeSources().finally(() => process.exit(128)) })
 }
-const runnerWorkspaceTools = [
-  "workspace-read", "workspace-ls", "workspace-grep", "workspace-write", "workspace-edit", "workspace-apply-patch",
-  "workspace-git-status", "workspace-git-diff", "workspace-git-add", "workspace-git-commit", "workspace-git-push",
-  "create-github-pull-request", "create-github-issue", "comment-github-pull-request",
-]
+  const runnerWorkspaceTools = [
+   "workspace_read", "workspace_ls", "workspace_grep", "workspace_write", "workspace_edit", "workspace_apply_patch",
+   "workspace_show", "workspace_git_status", "workspace_git_diff",
+ ]
 
 function runtimeMetadataForExecutionLocation(executionLocation) {
   if (executionLocation === "sandbox") return { environment: "runtime_local", capability_scope: "runtime_local" }
@@ -297,10 +298,11 @@ if (accessError) {
   throw error
 }
 
-const materializedPackage = request.run_agent && !request.dry_run
+const skipMaterialization = process.env.NODE_ENV === "test" && process.env.WP_CODEBOX_TEST_SKIP_MATERIALIZATION === "true"
+const materializedPackage = request.run_agent && !request.dry_run && !skipMaterialization
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy })
   : undefined
-const materializedRuntimeSources = request.run_agent && !request.dry_run
+const materializedRuntimeSources = request.run_agent && !request.dry_run && !skipMaterialization
   ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy, forbiddenRoots: [workspace, artifactsPath] })
   : undefined
 privateRuntimeSourceRoot = materializedRuntimeSources?.root ?? ""
@@ -330,11 +332,11 @@ const taskInput = {
     structured_artifacts: request.artifacts?.declarations || [],
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
     ...runtimeSourceInputs,
-    allowed_tools: runnerWorkspaceTools,
+     allowed_tools: runnerWorkspaceTools,
     sandbox_tool_policy: {
       schema: "wp-codebox/sandbox-tool-policy/v1",
       version: 1,
-      tools: runnerWorkspaceTools.map((id) => ({ id, runtime_tool_id: id, execution_location: "parent", transport_visibility: "visible", allowed: true, runtime: runtimeMetadataForExecutionLocation("parent") })),
+       tools: runnerWorkspaceTools.map((id) => ({ id, runtime_tool_id: id, execution_location: "sandbox", transport_visibility: "sandbox", allowed: true, runtime: runtimeMetadataForExecutionLocation("sandbox") })),
     },
     max_turns: request.limits?.max_turns,
     task_timeout_seconds: Math.ceil(Number(request.limits?.time_budget_ms || 0) / 1000),
@@ -357,7 +359,7 @@ const taskInput = {
           runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
           target_repo: request.target_repo,
           writable_paths: request.writable_paths,
-          runner_workspace_policy: { allowed_repos: request.access.allowed_repos },
+           runner_workspace_policy: { allowed_repos: request.access.allowed_repos, writable_paths: request.writable_paths },
         },
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: requiredArtifacts(request.artifacts?.declarations),
@@ -365,8 +367,9 @@ const taskInput = {
         metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [] },
       },
     },
-  },
-}
+   },
+   workspaces: request.runner_workspace?.enabled ? [{ target: "/workspace", mode: "readwrite", sourceMode: "repo-backed", seed: { type: "directory", source: workspace, excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"] } }] : [],
+ }
 
 await writeFile(executionInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
@@ -384,6 +387,14 @@ const nativeRuntimeResult = request.run_agent && !request.dry_run
 await rm(nativeResultPath, { force: true })
 const runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
+let workspaceApply = { status: "no-op", changedFiles: [] }
+if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled) {
+  const core = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/runner-workspace-apply.js")).href)
+  const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
+  const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
+    .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
+  workspaceApply = await core.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
+}
 await cleanupPrivateRuntimeSources()
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 
@@ -409,7 +420,15 @@ if (execution.code === 0 && request.run_agent && !request.dry_run) {
 const verificationPassed = verification.every((check) => check.success)
 const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)
-const publication = resultValue(runtimeRecord, "outputs.artifact_result.result.outputs.runner_workspace_publication")
+let publication = resultValue(runtimeRecord, "metadata.runner_workspace_publication")
+if (execution.code === 0 && runtimeRecord.success === true && verificationPassed && workspaceApply.status === "applied") {
+  const testPublisher = string(process.env.WP_CODEBOX_TEST_PUBLISHER_MODULE)
+  const publisher = testPublisher ? (await import(pathToFileURL(resolve(testPublisher)).href)).publishRunnerWorkspace : publishRunnerWorkspace
+  publication = await publisher({ request, workspace, changedFiles: workspaceApply.changedFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN })
+  runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
+  runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
+}
+if (request.success?.requires_pr === true && workspaceApply.status === "no-op" && !publication) throw new Error("success_requires_pr cannot succeed for a no-op runner workspace task.")
 let evaluatedProjections = {}
 let projectionError = ""
 try {

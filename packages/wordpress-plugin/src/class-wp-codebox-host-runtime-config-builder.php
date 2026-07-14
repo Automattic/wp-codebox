@@ -61,6 +61,30 @@ final class WP_Codebox_Host_Runtime_Config_Builder {
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
 	public function recipe_workspaces( array $input ): array|WP_Error {
 		$workspaces = is_array( $input['workspaces'] ?? null ) ? $input['workspaces'] : array();
+		$runner_workspace = is_array( $input['runner_workspace'] ?? null ) ? $input['runner_workspace'] : array();
+		if ( ! empty( $runner_workspace['enabled'] ) ) {
+			$checkout = WP_Codebox_Path_Policy::clean_host_path( (string) ( $runner_workspace['checkout_path'] ?? $runner_workspace['workspace_path'] ?? $runner_workspace['path'] ?? '' ) );
+			if ( '' === $checkout || ! is_dir( $checkout ) ) {
+				return new WP_Error( 'wp_codebox_runner_workspace_checkout_missing', 'Enabled runner_workspace requires an existing checked-out host workspace path.', array( 'status' => 400 ) );
+			}
+			foreach ( $workspaces as $workspace ) {
+				if ( is_array( $workspace ) && '/workspace' === (string) ( $workspace['target'] ?? '' ) ) {
+					return new WP_Error( 'wp_codebox_runner_workspace_target_conflict', 'runner_workspace reserves the sandbox target /workspace.', array( 'status' => 400 ) );
+				}
+			}
+			// Recipe preparation copies this directory to an ephemeral source and a
+			// separate baseline. It is deliberately not represented as a mount.
+			$workspaces[] = array(
+				'target'     => '/workspace',
+				'mode'       => 'readwrite',
+				'sourceMode' => 'repo-backed',
+				'seed'       => array(
+					'type'         => 'directory',
+					'source'       => $checkout,
+					'excludePaths' => array( '.git/**', '.codebox/**', 'node_modules/**', 'vendor/**', 'dist/**', 'build/**', 'coverage/**', '.cache/**' ),
+				),
+			);
+		}
 		foreach ( $workspaces as $index => $workspace ) {
 			if ( ! is_array( $workspace ) || ! is_array( $workspace['seed'] ?? null ) ) {
 				return new WP_Error( 'wp_codebox_workspace_invalid', 'Each WP Codebox workspace must include a seed object.', array( 'status' => 400, 'index' => $index ) );

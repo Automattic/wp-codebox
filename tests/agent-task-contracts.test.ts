@@ -251,6 +251,14 @@ assert.equal(failedBeforeArtifacts.status, "failed")
 assert.equal(failedBeforeArtifacts.success, false)
 assert.deepEqual(failedBeforeArtifacts.refs.artifact_bundles, [])
 
+const objectArtifact = normalizeAgentTaskRunResult({
+  success: true,
+  status: "succeeded",
+  artifacts: { kind: "codebox-patch", path: "files/patch.diff", sha256: "abc" },
+  agent_result: { artifacts: { directory: "files" } },
+})
+assert.equal(objectArtifact.refs.patches[0]?.path, "files/patch.diff")
+
 const malformedProviderOutput = normalizeAgentTaskRunResult({ success: false, status: "failed", diagnostics: [{ code: "wp-codebox.output.invalid-json", message: "Invalid JSON" }] }, { exitStatus: 0 })
 assert.equal(malformedProviderOutput.status, "failed")
 assert.equal(malformedProviderOutput.diagnostics[0].code, "wp-codebox.output.invalid-json")
