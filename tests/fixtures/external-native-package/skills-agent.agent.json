@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_slug": "skills-agent",
+  "bundle_version": "1.0.0",
+  "agent": {
+    "agent_slug": "skills-agent",
+    "agent_name": "Skills Agent",
+    "description": "Fixture for a package that supplies skills through enabled tools.",
+    "agent_config": {
+      "instructions": "SKILLS PACKAGE INSTRUCTION",
+      "enabled_tools": ["workspace_read", "workspace_write"],
+      "modes": ["chat", "task"]
+    }
+  }
+}

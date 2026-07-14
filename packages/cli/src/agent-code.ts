@@ -110,11 +110,8 @@ $sandbox_external_runtime_package_import = wp_codebox_import_external_runtime_ag
 $sandbox_stack['external_runtime_package_import'] = $sandbox_external_runtime_package_import;
 if (!empty($sandbox_external_runtime_package_import['success']) && empty($sandbox_external_runtime_package_import['skipped'])) {
     $sandbox_imported_agent = (string) ($sandbox_external_runtime_package_import['identity']['slug'] ?? '');
-    if (is_array($sandbox_runtime_task) && '' !== $sandbox_imported_agent) {
-        $sandbox_runtime_task['input']['package']['slug'] = $sandbox_imported_agent;
-        $sandbox_runtime_task['input']['package']['bootstrap_imported'] = true;
-        $sandbox_runtime_task['input']['metadata']['imported_agent'] = array('slug' => $sandbox_imported_agent);
-    }
+    $sandbox_external_runtime_package_import = wp_codebox_bind_external_runtime_package_identity($sandbox_runtime_task, $sandbox_imported_agent, $sandbox_external_runtime_package_import);
+    $sandbox_stack['external_runtime_package_import'] = $sandbox_external_runtime_package_import;
 }
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
@@ -261,6 +258,31 @@ function wp_codebox_import_external_runtime_agent_package(array $runtime_task): 
         if (is_file($path)) { @unlink($path); }
         if (is_dir($directory)) { @rmdir($directory); }
     }
+}
+
+function wp_codebox_bind_external_runtime_package_identity(&$runtime_task, string $agent_slug, array $import): array {
+    if (!is_array($runtime_task) || '' === $agent_slug) {
+        return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_identity_missing', 'message' => 'Canonical runtime package import did not produce one agent identity.'));
+    }
+    $task_input = is_array($runtime_task['input'] ?? null) ? $runtime_task['input'] : null;
+    $package = is_array($task_input['package'] ?? null) ? $task_input['package'] : null;
+    $chat_input = is_array($task_input['input'] ?? null) ? $task_input['input'] : array();
+    $metadata = is_array($task_input['metadata'] ?? null) ? $task_input['metadata'] : array();
+    $requested_package_slug = is_array($package) ? (string) ($package['slug'] ?? '') : '';
+    $requested_agent_slug = is_array($chat_input) ? (string) ($chat_input['agent'] ?? '') : '';
+    $metadata_agent_slug = is_array($metadata['imported_agent'] ?? null) ? (string) ($metadata['imported_agent']['slug'] ?? '') : '';
+    if (!is_array($package) || ('' !== $requested_package_slug && !hash_equals($agent_slug, $requested_package_slug)) || ('' !== $requested_agent_slug && !hash_equals($agent_slug, $requested_agent_slug)) || ('' !== $metadata_agent_slug && !hash_equals($agent_slug, $metadata_agent_slug))) {
+        return array('success' => false, 'error' => array('code' => 'wp_codebox_external_runtime_package_identity_mismatch', 'message' => 'Runtime package execution must use the single agent identity verified during canonical import.'));
+    }
+    $package['slug'] = $agent_slug;
+    $package['bootstrap_imported'] = true;
+    $chat_input['agent'] = $agent_slug;
+    $metadata['imported_agent'] = array('slug' => $agent_slug);
+    $task_input['package'] = $package;
+    $task_input['input'] = $chat_input;
+    $task_input['metadata'] = $metadata;
+    $runtime_task['input'] = $task_input;
+    return $import;
 }
 
 function wp_codebox_json_encode_agent_runtime_payload($value): string {

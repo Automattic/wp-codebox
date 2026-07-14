@@ -28,7 +28,21 @@ const root = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-sources-playground
 try {
   const materialized = await materializeRuntimeSources(fixture.runtime_sources, { policy, tempRoot: root, forbiddenRoots: [join(root, "artifacts")] })
   const privatePackage = join(materialized.root, "flat-runtime-agent.agent.json")
-  await writeFile(privatePackage, '{"schema_version":1,"bundle_slug":"flat-runtime-agent","agent":{"agent_slug":"flat-runtime-agent"}}\n')
+  const packageInstruction = "PACKAGE SYSTEM INSTRUCTION: selected imported agent"
+  await writeFile(privatePackage, JSON.stringify({
+    schema_version: 1,
+    bundle_slug: "flat-runtime-agent",
+    agent: {
+      agent_slug: "flat-runtime-agent",
+      agent_name: "Flat Runtime Agent",
+      description: "Playground imported-agent selection fixture.",
+      agent_config: {
+        instructions: packageInstruction,
+        enabled_tools: [],
+        modes: ["chat"],
+      },
+    },
+  }) + "\n")
   const lowered = materialized.lowered.reduce((input: Record<string, unknown[]>, source: Record<string, unknown[]>) => {
     for (const [key, entries] of Object.entries(source)) input[key] = [...(input[key] ?? []), ...entries]
     return input
@@ -131,6 +145,8 @@ echo wp_json_encode( array( 'reply' => $result['reply'] ?? '', 'completed' => $r
   const providerTurn = chat.http_requests.find((request: { url: string }) => request.url.endsWith("/responses"))
   assert.ok(providerTurn, "the OpenAI provider transport must execute through the local interception fixture")
   assert.equal(JSON.parse(providerTurn.body).model, "gpt-5.5", "the selected OpenAI model must reach the provider transport")
+  assert.match(providerTurn.body, new RegExp(packageInstruction), "the selected imported agent instruction must reach the provider transport")
+  assert.doesNotMatch(providerTurn.body, /WP Codebox Sandbox|Default sandbox agent/, "the generic sandbox instruction must not reach an imported-agent model request")
   assert.match(providerTurn.url, /^https:\/\/api\.openai\.com\/v1\/responses$/, "the selected OpenAI provider must reach its provider transport")
   await rm(materialized.root, { recursive: true, force: true })
   await assert.rejects(access(privatePackage), /ENOENT/, "private source package must be removed with its materialization root")

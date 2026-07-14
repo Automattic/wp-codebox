@@ -164,12 +164,17 @@ $GLOBALS['wp_codebox_private_runtime_package_import'] = array(
 );
 $GLOBALS['wp_codebox_runtime_package_registered_agents']['store-idea-agent'] = true;
 $bootstrap_task = $wpsg_like_task;
-$bootstrap_task['package']['slug']               = 'caller-controlled-agent';
 $bootstrap_task['package']['bootstrap_imported'] = true;
-$bootstrap_task['input']['agent']                = 'caller-controlled-agent';
+$bootstrap_task['input']['agent']                = 'store-idea-agent';
 $bootstrap = WP_Codebox_Abilities::run_runtime_package( $bootstrap_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );
 assert( ! is_wp_error( $bootstrap ) );
 assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['agent'] );
+
+$spoofed_bootstrap_task = $bootstrap_task;
+$spoofed_bootstrap_task['input']['agent'] = 'caller-controlled-agent';
+$spoofed_bootstrap = WP_Codebox_Abilities::run_runtime_package( $spoofed_bootstrap_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );
+assert( is_wp_error( $spoofed_bootstrap ) );
+assert( 'wp_codebox_runtime_package_agent_identity_mismatch' === $spoofed_bootstrap->get_error_code() );
 
 file_put_contents( $staged_bundle_file, "tampered\n" );
 $tampered = WP_Codebox_Abilities::run_runtime_package( $wpsg_like_task + array( 'runtime_provider' => 'codebox-runtime-package' ) );

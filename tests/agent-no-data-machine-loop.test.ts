@@ -175,8 +175,11 @@ assert.match(sandboxAgentCode, /'model' => \$configured_model/)
 const docsAgentDirectory = process.env.DOCS_AGENT_DIR
 const publicPackageBytes = docsAgentDirectory
   ? await readFile(join(docsAgentDirectory, "bundles", "technical-docs-agent", "native", "technical-docs-maintenance-agent.agent.json"))
-  : await readFile(new URL("./fixtures/external-native-package/flat-agent.agent.json", import.meta.url))
+  : await readFile(new URL("./fixtures/external-native-package/technical-bootstrap-agent.agent.json", import.meta.url))
 const publicAgentSlug = canonicalExternalNativeAgentIdentity(publicPackageBytes).slug
+const skillsPackageBytes = await readFile(new URL("./fixtures/external-native-package/skills-agent.agent.json", import.meta.url))
+assert.deepEqual(canonicalExternalNativeAgentIdentity(skillsPackageBytes), { slug: "skills-agent" })
+assert.deepEqual(canonicalExternalNativeAgentIdentity(publicPackageBytes), { slug: docsAgentDirectory ? "technical-docs-maintenance-agent" : "technical-bootstrap-agent" })
 const publicPackageDigest = `sha256-bytes-v1:${await import("node:crypto").then(({ createHash }) => createHash("sha256").update(publicPackageBytes).digest("hex"))}`
 const bootstrapCode = await resolveSandboxTaskCode({
   task: "Say hello",
@@ -184,7 +187,7 @@ const bootstrapCode = await resolveSandboxTaskCode({
   runtimeTask: {
     ability: "wp-codebox/run-runtime-package",
     input: {
-      package: { slug: "caller-controlled-agent", source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
+      package: { slug: publicAgentSlug, source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
     },
   },
   sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
@@ -210,6 +213,30 @@ assert.match(bootstrapCode, new RegExp(publicPackageBytes.toString("base64")))
 assert.match(bootstrapCode, /wp_codebox_import_external_runtime_agent_package/)
 assert.ok(bootstrapCode.indexOf("wp_codebox_import_external_runtime_agent_package") < bootstrapCode.indexOf("wp_codebox_resolve_runtime_task_ability"))
 assert.match(bootstrapCode, /base64_decode\(\$bootstrap\['bytes'\], true\)/)
+
+const spoofedBootstrapCode = await resolveSandboxTaskCode({
+  task: "Say hello",
+  agent: "wp-codebox-sandbox",
+  runtimeTask: {
+    ability: "wp-codebox/run-runtime-package",
+    input: {
+      package: { slug: publicAgentSlug, source: "public-external-package", bootstrap: { encoding: "base64", bytes: publicPackageBytes.toString("base64"), digest: publicPackageDigest } },
+      input: { agent: "caller-controlled-agent" },
+    },
+  },
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+const spoofedBootstrapOutput = execFileSync("php", ["-r", `${phpPreamble}
+function wp_agent_import_runtime_bundles($bundles, $options) {
+    $package = json_decode((string) file_get_contents((string) ($bundles[0]['source'] ?? '')), true);
+    $slug = $package['agent']['agent_slug'] ?? '';
+    WP_Agents_Registry::get_instance()->register($slug, array('source' => 'canonical-importer'));
+    return array(array('success' => true, 'agent_slug' => $slug));
+}
+${spoofedBootstrapCode}`], { encoding: "utf8" })
+const spoofedBootstrap = JSON.parse(spoofedBootstrapOutput) as { agent_runtime?: { success?: boolean, error?: { code?: string } } }
+assert.equal(spoofedBootstrap.agent_runtime?.success, false)
+assert.equal(spoofedBootstrap.agent_runtime?.error?.code, "wp_codebox_external_runtime_package_identity_mismatch")
 
 const failedImportOutput = execFileSync("php", ["-r", `${phpPreamble}
 function wp_agent_import_runtime_bundles($bundles, $options) { $GLOBALS['external_source'] = $bundles[0]['source']; return array(array('success' => false)); }

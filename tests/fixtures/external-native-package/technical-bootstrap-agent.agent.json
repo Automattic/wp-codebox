@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "bundle_slug": "technical-bootstrap-agent",
+  "bundle_version": "1.0.0",
+  "agent": {
+    "agent_slug": "technical-bootstrap-agent",
+    "agent_name": "Technical Bootstrap Agent",
+    "description": "Fixture for a technical documentation bootstrap package.",
+    "agent_config": {
+      "instructions": "TECHNICAL BOOTSTRAP PACKAGE INSTRUCTION",
+      "enabled_tools": ["workspace_ls", "workspace_read", "workspace_write"],
+      "tool_call_rules": [{"id": "require-write", "require_tool_use": true, "require_one_of": ["workspace_write"]}],
+      "modes": ["chat"]
+    }
+  }
+}
