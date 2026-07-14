@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { sha256BytesV1 } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
+import { MAX_NATIVE_RESULT_BYTES, readNativeResult } from "../.github/scripts/run-agent-task/native-result-file.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -97,6 +98,35 @@ assert.match(docs, /not a WordPress Playground end-to-end test/)
 assert.doesNotMatch(docs.slice(0, docs.indexOf("## Runtime Coverage")), /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
+const controlledCodeboxPath = join(tmp, ".codebox")
+await mkdir(controlledCodeboxPath)
+const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
+const nativeResult = {
+  schema: "wp-codebox/agent-task-run/v1",
+  success: true,
+  status: "succeeded",
+  agent_task_run_result: { schema: "wp-codebox/agent-task-run-result/v1", success: true, status: "succeeded" },
+  padding: "x".repeat(40 * 1024),
+}
+const redactNativeResult = (value: unknown) => value
+await writeFile(nativeResultPath, JSON.stringify(nativeResult))
+const hostedTruncationRegression = await readNativeResult(nativeResultPath, controlledCodeboxPath, ["native-secret"], redactNativeResult)
+assert.equal(hostedTruncationRegression.success, true, "A valid result larger than the 32 KiB stdout diagnostic limit must be read from the result file")
+assert.equal((hostedTruncationRegression as Record<string, unknown>).padding, nativeResult.padding)
+assert.match(await readFile(new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url), "utf8"), /"--result-file", nativeResultPath/)
+await writeFile(nativeResultPath, "{")
+assert.equal((await readNativeResult(nativeResultPath, controlledCodeboxPath, [], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-malformed")
+await writeFile(nativeResultPath, JSON.stringify({ ...nativeResult, status: "pending" }))
+assert.equal((await readNativeResult(nativeResultPath, controlledCodeboxPath, [], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-schema")
+await writeFile(nativeResultPath, JSON.stringify({ ...nativeResult, padding: "x".repeat(MAX_NATIVE_RESULT_BYTES) }))
+assert.equal((await readNativeResult(nativeResultPath, controlledCodeboxPath, [], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-too-large")
+await writeFile(nativeResultPath, JSON.stringify({ ...nativeResult, padding: "native-secret" }))
+assert.equal((await readNativeResult(nativeResultPath, controlledCodeboxPath, ["native-secret"], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-secret")
+await writeFile(join(controlledCodeboxPath, "outside.json"), JSON.stringify(nativeResult))
+await rm(nativeResultPath)
+await symlink(join(controlledCodeboxPath, "outside.json"), nativeResultPath)
+assert.equal((await readNativeResult(nativeResultPath, controlledCodeboxPath, [], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-file")
+assert.equal((await readNativeResult(join(tmp, "outside.json"), controlledCodeboxPath, [], redactNativeResult) as any).diagnostics[0].code, "wp-codebox.agent-task.result-path")
 const nativePackageRepository = join(tmp, "native-package-repository")
 const nativePackagePath = join(nativePackageRepository, "packages", "example-agent.agent.json")
 await mkdir(join(nativePackageRepository, "packages"), { recursive: true })

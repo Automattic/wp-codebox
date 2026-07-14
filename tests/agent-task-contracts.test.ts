@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, TYPED_ARTIFACT_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunJsonOutput, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunJsonOutput, normalizeAgentTaskRunCliInput, writeAgentTaskRunResultFile } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
@@ -17,6 +17,27 @@ assert.equal(AGENT_TASK_RUN_RESULT_JSON_SCHEMA.properties.schema.const, AGENT_TA
 assert.equal(succeeded.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(succeeded.status, "succeeded")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: succeeded }), 0)
+
+const resultFileDirectory = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-result-file-"))
+const resultFilePath = join(resultFileDirectory, "result.json")
+const atomicResult = { schema: "wp-codebox/agent-task-run/v1", success: true, status: "succeeded", padding: "x".repeat(40 * 1024) }
+await writeAgentTaskRunResultFile(resultFilePath, atomicResult as never)
+assert.deepEqual(JSON.parse(await (await import("node:fs/promises")).readFile(resultFilePath, "utf8")), atomicResult)
+assert.equal(statSync(resultFilePath).mode & 0o777, 0o600)
+const originalNow = Date.now
+Date.now = () => 1
+const interruptedTemporaryPath = `${resultFilePath}.${process.pid}.1.tmp`
+writeFileSync(interruptedTemporaryPath, "partial")
+try {
+  await assert.rejects(writeAgentTaskRunResultFile(resultFilePath, atomicResult as never), /EEXIST/)
+} finally {
+  Date.now = originalNow
+}
+assert.deepEqual(readdirSync(resultFileDirectory).filter((entry) => entry.includes(".tmp")), [], "Interrupted atomic writes must clean up temporary files")
+mkdirSync(join(resultFileDirectory, "interrupted.json"))
+await assert.rejects(writeAgentTaskRunResultFile(join(resultFileDirectory, "interrupted.json"), atomicResult as never), /regular file/)
+assert.deepEqual(readdirSync(resultFileDirectory).filter((entry) => entry.includes(".tmp")), [], "Failed result-file writes must not leave partial temporary files")
+rmSync(resultFileDirectory, { recursive: true, force: true })
 
 const succeededWithAccess = normalizeAgentTaskRunResult({ success: true, status: "completed", outputs: { preview_url: "https://preview.example.test", site_url: "https://site.example.test" } }, { exitStatus: 0 })
 assert.equal(succeededWithAccess.runtime_access?.schema, "wp-codebox/runtime-access/v1")

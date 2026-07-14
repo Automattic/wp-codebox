@@ -1,7 +1,8 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
+import { readNativeResult } from "./native-result-file.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -191,6 +192,8 @@ const externalPackageSource = normalizeExternalPackageSource(request.external_pa
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
+const controlledCodeboxPath = resolve(requestPath, "..")
+const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
 const runnerWorkspaceTools = [
   "workspace-read", "workspace-ls", "workspace-grep", "workspace-write", "workspace-edit", "workspace-apply-patch",
   "workspace-git-status", "workspace-git-diff", "workspace-git-add", "workspace-git-commit", "workspace-git-push",
@@ -266,18 +269,16 @@ await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
 if (request.run_agent && !request.dry_run) {
-  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--json"], workspace, agentEnvironment())
+  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
 }
 
 // Public package bytes are embedded in the runtime recipe and consumed only by
 // the Playground bootstrap before the agent's tools are resolved.
 
-let runtimeResult = {}
-try {
-  runtimeResult = redact(JSON.parse(execution.stdout))
-} catch {
-  runtimeResult = { success: false, diagnostics: [{ code: "wp-codebox.agent-task.invalid-result", message: "Native agent-task-run did not return JSON.", stderr: execution.stderr }] }
-}
+const runtimeResult = request.run_agent && !request.dry_run
+  ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
+  : {}
+await rm(nativeResultPath, { force: true })
 
 await redactArtifactFiles(artifactsPath)
 

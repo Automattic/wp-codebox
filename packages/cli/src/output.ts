@@ -331,7 +331,7 @@ export function printHelp(): void {
   wp-codebox fuzz-minimize-case --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-wordpress-workload --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
-  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
+  wp-codebox agent-task-run --input-file <path> [--json] [--result-file <path>] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
   wp-codebox recipe-run --recipe <path> [options]
@@ -343,6 +343,7 @@ Options:
   --options <path>    Recipe builder options JSON file for recipe build.
   --output <path>     Recipe build output JSON path, or materialize-replay-package output directory.
   --input-file <path> Input JSON for public workload/fuzz commands or agent-task-run.
+  --result-file <path> Atomically write the final agent-task-run JSON result to a caller-owned file.
   --format=json       Emit machine-readable JSON; accepted by public workload/fuzz commands.
   --preview-hold-seconds <n>
                     Keep preview runtimes alive after run-agent-task/agent-task-run/recipe-run.

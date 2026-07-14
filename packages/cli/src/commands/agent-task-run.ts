@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -10,6 +10,7 @@ export type { AgentTaskRunInput } from "@automattic/wp-codebox-core"
 export interface AgentTaskRunOptions {
   inputPath: string
   json: boolean
+  resultFile?: string
   previewHoldSeconds?: string
   previewPublicUrl?: string
   previewPort?: string
@@ -79,9 +80,14 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   const options = parseAgentTaskRunOptions(args)
   const input = normalizeAgentTaskRunCliInput(JSON.parse(await readFile(options.inputPath, "utf8")))
   const output = await runAgentTask(input, options)
+  const jsonOutput = agentTaskRunJsonOutput(output)
+
+  if (options.resultFile) {
+    await writeAgentTaskRunResultFile(options.resultFile, jsonOutput)
+  }
 
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(agentTaskRunJsonOutput(output), null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify(jsonOutput, null, 2)}\n`)
     return agentTaskRunExitCode(output)
   }
 
@@ -391,7 +397,7 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
     throw new Error(`Unknown agent-task-run option: ${positionals[0]}`)
   }
   for (const name of options.keys()) {
-    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url", "--preview-port", "--preview-bind", "--preview-hold-blocking", "--preview-lease-json"].includes(name)) {
+    if (!["--input-file", "--json", "--format", "--result-file", "--preview-hold-seconds", "--preview-public-url", "--preview-port", "--preview-bind", "--preview-hold-blocking", "--preview-lease-json"].includes(name)) {
       throw new Error(`Unknown agent-task-run option: ${name}`)
     }
   }
@@ -402,12 +408,39 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
   return {
     inputPath,
     json: options.get("--json") === true || stringOption(options, "--format") === "json",
+    resultFile: stringOption(options, "--result-file") || undefined,
     previewHoldSeconds: stringOption(options, "--preview-hold-seconds"),
     previewPublicUrl: stringOption(options, "--preview-public-url"),
     previewPort: stringOption(options, "--preview-port"),
     previewBind: stringOption(options, "--preview-bind"),
     previewHoldBlocking: options.get("--preview-hold-blocking") === true,
     previewLeaseJson: stringOption(options, "--preview-lease-json"),
+  }
+}
+
+/** Write caller-owned structured output without exposing an incomplete result. */
+export async function writeAgentTaskRunResultFile(path: string, output: AgentTaskRunOutput | HeadlessAgentTaskResult): Promise<void> {
+  const parent = dirname(path)
+  await mkdir(parent, { recursive: true, mode: 0o700 })
+  const parentStat = await lstat(parent)
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
+    throw new Error("agent-task-run result-file parent must be a non-symlink directory")
+  }
+  try {
+    const targetStat = await lstat(path)
+    if (!targetStat.isFile() || targetStat.isSymbolicLink()) {
+      throw new Error("agent-task-run result-file must be a regular file when it already exists")
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(output, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" })
+    await rename(temporaryPath, path)
+  } finally {
+    await rm(temporaryPath, { force: true })
   }
 }
 
