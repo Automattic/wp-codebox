@@ -171,16 +171,28 @@ function safeTargetPath(value) {
   return path ? `workspace/${path}` : undefined
 }
 
+function omittedText(value) {
+  if (typeof value !== "string") return undefined
+  const bytes = Buffer.byteLength(value)
+  return { bytes, sha256: digest(Buffer.from(value)) }
+}
+
+function projectArguments(value) {
+  const entry = record(value)
+  const paths = [entry.path, ...(Array.isArray(entry.paths) ? entry.paths : [])].map(safeTargetPath).filter(Boolean).slice(0, 32)
+  const counts = Object.fromEntries(["bytes", "byte_count", "match_count", "matches", "change_count", "changes", "count"].flatMap((key) => typeof entry[key] === "number" ? [[key, entry[key]]] : []))
+  const payloads = Object.fromEntries(["content", "patch", "diff", "write", "old_string", "new_string", "text"].flatMap((key) => omittedText(entry[key]) ? [[key, omittedText(entry[key])]] : []))
+  return Object.fromEntries(Object.entries({ paths: paths.length ? paths : undefined, counts: Object.keys(counts).length ? counts : undefined, omitted_payloads: Object.keys(payloads).length ? payloads : undefined }).filter(([, item]) => item !== undefined))
+}
+
 function projectToolCall(value) {
   const entry = record(value)
   const tool = boundedText(entry.tool_id ?? entry.toolId ?? entry.name ?? entry.tool_name)
-  const path = safeTargetPath(record(entry.args ?? entry.arguments).path ?? entry.path)
+  const args = projectArguments(entry.args ?? entry.arguments)
+  const paths = [...(args.paths ?? []), ...[safeTargetPath(entry.path)].filter(Boolean)].slice(0, 32)
   const result = record(entry.result ?? entry.output)
-  const rawContent = result.content ?? entry.content
-  const content = path && /workspace/i.test(tool ?? "") && typeof rawContent === "string"
-    ? redact(sanitizeText(rawContent)).slice(0, MAX_REVIEW_TEXT_BYTES)
-    : undefined
-  return Object.fromEntries(Object.entries({ tool, path, status: boundedText(entry.status), arguments: path ? { path } : undefined, content, error: boundedText(record(entry.error).message ?? entry.error) }).filter(([, item]) => item !== undefined))
+  const resultSummary = projectArguments({ ...result, content: result.content ?? entry.content, path: result.path ?? entry.path })
+  return Object.fromEntries(Object.entries({ tool, paths: paths.length ? paths : undefined, status: boundedText(entry.status), arguments: Object.keys(args).length ? args : undefined, result: Object.keys(resultSummary).length ? resultSummary : undefined, error_code: boundedText(record(entry.error).code ?? entry.error_code), error: boundedText(record(entry.error).message ?? entry.error) }).filter(([, item]) => item !== undefined))
 }
 
 function projectParsed(value) {
