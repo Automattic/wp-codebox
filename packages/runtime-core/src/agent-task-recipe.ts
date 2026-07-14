@@ -54,6 +54,7 @@ export interface AgentTaskRunInput {
   session_id?: string
   sandbox_session_id?: string
   artifacts_path?: string
+  source_package_root?: string
   wp?: string
   component_contracts?: Array<Record<string, unknown>>
   runtime_requirements?: Record<string, unknown>
@@ -86,16 +87,17 @@ export interface RuntimeDependencyPlanContractInput {
 
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskInput, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
+  const sourcePackageRoot = stringValue(input.source_package_root) || artifacts
   const profile = runtimeOverlayProfileDefaults(input)
   const runtimeMounts = runtimeStateMounts(input)
   const sourceRoots = workspaceSourceRoots(input, taskInput)
   const runtimeTask = runtimeTaskWithInlineBundle(input.runtime_task, sourceRoots)
   const effectiveInput = { ...input, runtime_task: runtimeTask }
   const stagedFiles = stagedRuntimeSources(effectiveInput, taskInput, sourceRoots)
-  const providerPlugins = providerPluginEntries(input, artifacts)
+  const providerPlugins = providerPluginEntries(input, sourcePackageRoot)
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
-  const componentPluginEntries = componentPlugins([...runtimeProfileComponentContracts(input), ...(input.component_contracts ?? [])], artifacts)
+  const componentPluginEntries = componentPlugins([...runtimeProfileComponentContracts(input), ...(input.component_contracts ?? [])], sourcePackageRoot)
   const callerExtraPlugins = agentTaskExtraPlugins(input)
   const defaultRuntimeComponents = defaultAgentRuntimeComponentPlugins(componentPluginEntries, callerExtraPlugins)
   const extraPlugins = dedupeExtraPlugins([

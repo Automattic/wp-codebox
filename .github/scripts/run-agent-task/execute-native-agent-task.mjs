@@ -243,11 +243,13 @@ const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
   return input
 }, {})
+const sourcePackageRoot = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "prepared-packages") : artifactsPath
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
   task_id: runId,
-  artifacts_path: artifactsPath,
+    artifacts_path: artifactsPath,
+    source_package_root: sourcePackageRoot,
   callback_data: record(request.callback_data),
   task_input: {
     schema: "wp-codebox/task-input/v1",

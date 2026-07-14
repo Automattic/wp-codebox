@@ -14,6 +14,15 @@ function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
 }
 
+function omitPrivateRuntimeSourcePaths(value) {
+  if (Array.isArray(value)) return value.map(omitPrivateRuntimeSourcePaths)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+    if (runtimeSourceRoot && typeof entry === "string" && resolve(entry).startsWith(runtimeSourceRoot) && ["source", "path", "sourceRoot", "originalSource", "preparedPath", "requestedPath"].includes(key)) return []
+    return [[key, omitPrivateRuntimeSourcePaths(entry)]]
+  }))
+}
+
 async function stageFile(source, destination) {
   if (runtimeSourceRoot && resolve(source).startsWith(runtimeSourceRoot)) {
     throw new Error("Runtime source files must never be staged for artifact upload.")
@@ -27,7 +36,10 @@ async function stageFile(source, destination) {
   await handle.close()
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
   await mkdir(resolve(destination, ".."), { recursive: true })
-  const text = contents.toString("utf8")
+  let text = contents.toString("utf8")
+  if (source === join(workspace, ".codebox", "native-agent-task-input.json")) {
+    text = `${JSON.stringify(omitPrivateRuntimeSourcePaths(JSON.parse(text)), null, 2)}\n`
+  }
   if (runtimeSourceRoot && text.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
   await writeFile(destination, redact(text))
   return true

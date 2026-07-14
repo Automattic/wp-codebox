@@ -15,6 +15,7 @@ on:
       - "package.json"
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
+      - "tests/runtime-sources-playground-integration.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -32,6 +33,7 @@ on:
       - "package.json"
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
+      - "tests/runtime-sources-playground-integration.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -50,6 +52,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:agent-task-contracts
+      - run: npm run test:runtime-sources-playground-integration
+        env:
+          WP_CODEBOX_RUN_NETWORK_INTEGRATION: "1"
       - run: npm run test:redaction
       - run: npm run test:production-boundary-enforcement
       - run: npm run test:runtime-tool-policy

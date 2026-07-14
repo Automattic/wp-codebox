@@ -24,7 +24,7 @@ export function resolvePluginEntrypointContract(contract: PluginEntrypointContra
   const loadAs = contract.loadAs === "mu-plugin" ? "mu-plugin" : "plugin"
 
   if (contract.pluginFile) {
-    return { source, slug, pluginFile: contract.pluginFile, loadAs, fallback: "explicit" }
+    return { source, slug, pluginFile: canonicalPluginFile(slug, contract.pluginFile), loadAs, fallback: "explicit" }
   }
 
   for (const [name, fallback] of [[`${slug}.php`, "slug"], ["plugin.php", "plugin"]] as const) {
@@ -39,6 +39,14 @@ export function resolvePluginEntrypointContract(contract: PluginEntrypointContra
   }
 
   return { source, slug, pluginFile: `${slug}/${slug}.php`, loadAs, fallback: "default" }
+}
+
+function canonicalPluginFile(slug: string, pluginFile: string): string {
+  const normalized = pluginFile.trim().replace(/\\/g, "/").replace(/^\/+/, "")
+  if (!normalized || normalized.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error(`Plugin entrypoint must be a safe path inside ${slug}: ${pluginFile}`)
+  }
+  return normalized === slug || normalized.startsWith(`${slug}/`) ? normalized : `${slug}/${normalized}`
 }
 
 export function sanitizePluginSlug(value: string): string {
