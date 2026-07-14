@@ -80,7 +80,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/create-browser-playground-session'    => array(
 				'label'               => 'Create Browser Sandbox Session',
-				'description'         => 'Prepare a WP Codebox browser sandbox session without requiring the host to run the WP Codebox CLI or Node.',
+				'description'         => 'Prepare a WP Codebox browser sandbox session without requiring the host to run the WP Codebox CLI or Node. Set preview_only to prepare an editable runtime without an agent task runner.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',

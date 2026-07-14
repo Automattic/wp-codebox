@@ -52,6 +52,16 @@ registers runtime-principal authorization. If the runner is copied into a normal
 host WordPress install, it fails with `wp_codebox_browser_runner_not_playground`
 instead of executing the requested sandbox invocation.
 
+Callers that only need an editable contained-site preview can set
+`preview_only: true`. WP Codebox still compiles caller-declared runtime plugins,
+MU plugins, themes, bootstrap operations, and site blueprint artifacts and
+returns the normal product DTO, preview boot descriptor, readiness, contained
+site metadata, and hydratable prepared-runtime blueprint ref. This mode does not
+resolve agent/provider inheritance and does not append a task runner, captures,
+or staged task payload. Provider plugins are included only when the caller
+declares them as ordinary `browser_plugins` or `runtime.plugins` dependencies.
+Browser task and materializer contract creation remains agentic.
+
 ## Browser Contained Site Handle
 
 Browser session, materializer, and task contracts include an additive durable

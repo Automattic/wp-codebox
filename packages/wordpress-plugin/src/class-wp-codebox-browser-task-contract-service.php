@@ -25,6 +25,7 @@ final class WP_Codebox_Browser_Task_Contract_Service {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function create_browser_materializer_contract( array $input ): array|WP_Error {
 		$return_raw = $this->include_raw_browser_contract( $input, 'materializer' );
+		$input['preview_only'] = false;
 		$input['include_internal_browser_session'] = true;
 		$session = $this->create_browser_playground_session( $input );
 		if ( is_wp_error( $session ) ) {
@@ -111,6 +112,7 @@ final class WP_Codebox_Browser_Task_Contract_Service {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function prepare_browser_task_contract( array $input ): array|WP_Error {
+		$input['preview_only'] = false;
 		$input['include_internal_browser_session'] = true;
 		$primary = $this->create_browser_playground_session( $input );
 		if ( is_wp_error( $primary ) ) {

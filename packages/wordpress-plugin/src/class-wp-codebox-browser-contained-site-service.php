@@ -390,10 +390,12 @@ public function destroy_browser_contained_site_session( array $input ): array|WP
 public function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $runtime, array $artifacts, array $playground, array $blueprint, array $site_blueprint_artifact ): array {
 	$prepared_runtime = is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array();
 	$contained_site   = $this->browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'blocked' );
+	$preview_only     = true === ( $input['preview_only'] ?? false );
 
-	return array(
+	$session = array(
 		'success'          => false,
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
+		'preview_only'     => $preview_only,
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
 		'permission_model' => 'runtime-principal',
@@ -406,12 +408,12 @@ public function blocked_browser_playground_session( string $session_id, array $i
 		'session'          => $this->browser_session_envelope( $session_id, 'blocked', $input ),
 		'task'             => (string) $task_input['goal'],
 		'task_input' => $task_input,
-		'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
+		'agent'      => $preview_only ? '' : (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 		'plugins'    => $browser_plugins,
 		'runtime'    => $runtime,
 		'contained_site' => $contained_site,
 		'site_blueprint_artifact' => $site_blueprint_artifact,
-		'materialization' => array(
+		'materialization' => $preview_only ? array() : array(
 			'schema' => 'wp-codebox/browser-materialization/v1',
 			'status' => 'blocked',
 			'captures' => array(),
@@ -445,6 +447,11 @@ public function blocked_browser_playground_session( string $session_id, array $i
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+	if ( $preview_only ) {
+		unset( $session['agent'], $session['materialization'] );
+	}
+
+	return $session;
 }
 
 public function browser_session_response_for_input( array $session, array $input ): array|WP_Error {

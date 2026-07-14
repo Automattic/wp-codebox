@@ -290,6 +290,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'dto_schema'       => 'wp-codebox/browser-preview-boot-config/v1',
 				'source_schema'    => (string) ( $session['schema'] ?? '' ),
 				'success'          => (bool) ( $session['success'] ?? false ),
+				'preview_only'     => true === ( $session['preview_only'] ?? false ),
 				'status'           => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
 				'execution'        => (string) ( $session['execution'] ?? '' ),
 				'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),

@@ -145,6 +145,7 @@ public static function request_host_delegation( array $input ): array|WP_Error {
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_playground_session( array $input ): array|WP_Error {
+	$preview_only = true === ( $input['preview_only'] ?? false );
 	$input      = WP_Codebox_Browser_Task_Builder::local_browser_task_input( $input );
 	$task_input = self::normalize_task_input( $input );
 	if ( is_wp_error( $task_input ) ) {
@@ -161,21 +162,29 @@ public static function create_browser_playground_session( array $input ): array|
 		return $playground;
 	}
 
-	$inheritance_payload = self::browser_inheritance_resolution_payload( $input );
-	if ( is_wp_error( $inheritance_payload ) ) {
-		return $inheritance_payload;
+	$inheritance_payload = array( 'inheritance' => array( 'connectors' => array(), 'settings' => array() ) );
+	$dependency_plan     = null;
+	if ( ! $preview_only ) {
+		$inheritance_payload = self::browser_inheritance_resolution_payload( $input );
+		if ( is_wp_error( $inheritance_payload ) ) {
+			return $inheritance_payload;
+		}
+		$input = self::browser_input_with_inheritance( $input, $inheritance_payload['inheritance'] );
+		if ( is_wp_error( $input ) ) {
+			return $input;
+		}
+		$dependency_plan = self::browser_runtime_dependency_plan( $input, $inheritance_payload['inheritance'] );
 	}
-	$input           = self::browser_input_with_inheritance( $input, $inheritance_payload['inheritance'] );
-	if ( is_wp_error( $input ) ) {
-		return $input;
-	}
-	$dependency_plan = self::browser_runtime_dependency_plan( $input, $inheritance_payload['inheritance'] );
 	$browser_runner  = is_array( $input['browser_runner'] ?? null ) ? $input['browser_runner'] : array();
 	$browser_plugins = self::browser_plugins( $input );
 	if ( is_wp_error( $browser_plugins ) ) {
 		return $browser_plugins;
 	}
-	$runtime = self::browser_runtime_dependencies( $input, $browser_plugins, $dependency_plan );
+	$runtime_input = $input;
+	if ( $preview_only ) {
+		unset( $runtime_input['browser_runner'], $runtime_input['provider_plugin_paths'], $runtime_input['inherit'], $runtime_input['secret_env'], $runtime_input['runtime_requirements'] );
+	}
+	$runtime = self::browser_runtime_dependencies( $runtime_input, $browser_plugins, $dependency_plan );
 	if ( is_wp_error( $runtime ) ) {
 		return $runtime;
 	}
@@ -196,43 +205,50 @@ public static function create_browser_playground_session( array $input ): array|
 	if ( is_wp_error( $artifacts ) ) {
 		return $artifacts;
 	}
-	$ready_to_code = self::browser_ready_to_code_signal( $input, $runtime );
+	$ready_to_code = self::browser_ready_to_code_signal( $runtime_input, $runtime );
 	if ( false === ( $ready_to_code['emitted'] ?? false ) ) {
 		$blocked_session = self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
 		return self::browser_session_response_for_input( $blocked_session, $input );
 	}
 
-	$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
-	$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground, $task_payload );
-	if ( is_wp_error( $recipe ) ) {
-		return $recipe;
+	$task_payload = array();
+	$recipe       = array();
+	$materialization = array();
+	$recipe_blueprint = self::browser_playground_blueprint( self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint ), $playground );
+	if ( ! $preview_only ) {
+		$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
+		$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground, $task_payload );
+		if ( is_wp_error( $recipe ) ) {
+			return $recipe;
+		}
+		$recipe_blueprint = is_array( $recipe['runtime']['blueprint'] ?? null ) ? $recipe['runtime']['blueprint'] : $blueprint;
+		$materialization = self::browser_materialization_contract( $recipe );
 	}
-	$recipe_blueprint = is_array( $recipe['runtime']['blueprint'] ?? null ) ? $recipe['runtime']['blueprint'] : $blueprint;
 	if ( is_array( $runtime['prepared_runtime'] ?? null ) ) {
 		self::browser_prepared_runtime_cache_store( $runtime['prepared_runtime'], $recipe_blueprint );
 	}
 	$blueprint = $recipe_blueprint;
-	$materialization = self::browser_materialization_contract( $recipe );
 
 	$session = array(
 		'success'          => true,
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
+		'preview_only'     => $preview_only,
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
 		'permission_model' => 'runtime-principal',
 		'session'          => self::browser_session_envelope( $session_id, 'ready', $input ),
 		'task'             => (string) $task_input['goal'],
 		'task_input' => $task_input,
-		'task_payload' => $task_payload,
-		'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
-		'provider'   => self::browser_provider( $input, $inheritance_payload['inheritance'] ),
-		'model'      => self::browser_model( $input, $inheritance_payload['inheritance'] ),
-		'inheritance' => $inheritance_payload['inheritance'],
+		'task_payload' => $preview_only ? array() : $task_payload,
+		'agent'      => $preview_only ? '' : (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
+		'provider'   => $preview_only ? '' : self::browser_provider( $input, $inheritance_payload['inheritance'] ),
+		'model'      => $preview_only ? '' : self::browser_model( $input, $inheritance_payload['inheritance'] ),
+		'inheritance' => $preview_only ? array() : $inheritance_payload['inheritance'],
 		'plugins'    => $browser_plugins,
 		'runtime'    => $runtime,
 		'contained_site' => $contained_site,
 		'site_blueprint_artifact' => $site_blueprint_artifact,
-		'materialization' => $materialization,
+		'materialization' => $preview_only ? array() : $materialization,
 		'runtime_capabilities' => array_values(
 			array_unique(
 				array_filter(
@@ -263,7 +279,7 @@ public static function create_browser_playground_session( array $input ): array|
 			),
 			'provenance'         => $playground['provenance'],
 		),
-		'recipe'     => $recipe,
+		'recipe'     => $preview_only ? array() : $recipe,
 		'signals'    => array(
 			'ready_to_code' => $ready_to_code,
 		),
@@ -274,6 +290,9 @@ public static function create_browser_playground_session( array $input ): array|
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+	if ( $preview_only ) {
+		unset( $session['task_payload'], $session['agent'], $session['provider'], $session['model'], $session['inheritance'], $session['materialization'], $session['recipe'] );
+	}
 
 	return self::browser_session_response_for_input( $session, $input );
 }

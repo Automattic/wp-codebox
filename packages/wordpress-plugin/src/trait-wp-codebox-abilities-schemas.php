@@ -287,6 +287,7 @@ private static function browser_playground_session_schema(): array {
 		'type'       => 'object',
 		'properties' => array(
 			'success'    => array( 'type' => 'boolean' ),
+			'preview_only' => array( 'type' => 'boolean' ),
 			'schema'     => array( 'type' => 'string' ),
 			'execution'  => array(
 				'type'        => 'string',
@@ -419,6 +420,7 @@ private static function browser_product_dto_schema(): array {
 		'description' => 'Compact product-facing browser task/session DTO for durable product records and REST responses. It exposes stable ids, preview refs, artifact refs, status, and compact diagnostics while omitting raw playground, runtime, recipe, task payload, sandbox path, and implementation diagnostic contracts.',
 		'properties'  => array(
 			'success'          => array( 'type' => 'boolean' ),
+			'preview_only'     => array( 'type' => 'boolean' ),
 			'schema'           => array( 'type' => 'string' ),
 			'dto_schema'       => array( 'type' => 'string' ),
 			'source_schema'    => array( 'type' => 'string' ),
@@ -1019,7 +1021,7 @@ private static function component_contracts_schema( string $description = '' ): 
  * @return array<string,mixed>
  */
 private static function browser_task_input_properties( array $task_input_schema, array $inherit_schema, array $session_input, bool $detailed = false ): array {
-	return self::task_input_alias_properties( $task_input_schema ) + array(
+	$properties = self::task_input_alias_properties( $task_input_schema ) + array(
 		'agent_workload'          => self::agent_workload_schema(),
 		'workload'                => self::agent_workload_schema(),
 		'agent'                   => self::string_property_schema( $detailed ? 'Codebox agent runtime id for the browser sandbox.' : '' ),
@@ -1050,6 +1052,15 @@ private static function browser_task_input_properties( array $task_input_schema,
 			'description' => 'Optional debug fields for diagnostics. Public callers receive the stable product DTO envelope.',
 		),
 	);
+	if ( $detailed ) {
+		$properties['preview_only'] = array(
+			'type'        => 'boolean',
+			'default'     => false,
+			'description' => 'When true, prepare an editable browser preview runtime without resolving agent/provider inheritance or appending the task runner recipe.',
+		);
+	}
+
+	return $properties;
 }
 
 /** @return array<string,mixed> */

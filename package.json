@@ -168,6 +168,7 @@
     "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",
     "test:php-browser-runtime-agent-substrate": "php scripts/php-browser-runtime-agent-substrate-smoke.php",
+    "test:php-browser-preview-only-session": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-preview-only-session-smoke.php",
     "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",
     "test:primitive-contract-parity": "tsx tests/primitive-contract-parity.test.ts",
