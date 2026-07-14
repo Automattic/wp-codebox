@@ -833,6 +833,18 @@ function pg_run_project_autoload_stage(string $project_autoload_file): void {
     }
 }
 
+function pg_ensure_phpunit_harness_loaded(): void {
+    if (class_exists('PHPUnit\\Framework\\TestSuite', true)) {
+        return;
+    }
+    throw new RuntimeException(
+        'PHPUnit harness is not initialized: PHPUnit\\Framework\\TestSuite is not available after bootstrap. '
+        . 'In bootstrap-mode=project, the project bootstrap or project-autoload-file must load PHPUnit '
+        . '(typically via the project vendor/autoload.php), or mount the WP Codebox PHPUnit harness with autoload-file=/wp-codebox-vendor/autoload.php. '
+        . 'Aborting before test discovery to avoid an undefined-class fatal.'
+    );
+}
+
 function pg_run_install_stage(array $cfg) {
     global $argv, $pg_stage_output_buffering;
     pg_stage_begin('install');
@@ -1133,6 +1145,15 @@ try {
     pg_stage_fail('load_preload_files', $e);
     exit(1);
 }
+}
+
+pg_stage_begin('verify_harness');
+try {
+    pg_ensure_phpunit_harness_loaded();
+    pg_stage_ok('verify_harness');
+} catch (Throwable $e) {
+    pg_stage_fail('verify_harness', $e);
+    exit(1);
 }
 
 ${phpunitConfigDiscoveryPhp({

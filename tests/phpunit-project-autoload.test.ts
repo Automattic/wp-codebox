@@ -97,6 +97,68 @@ echo json_encode($cases);
   })
 }
 
+function assertProjectBootstrapHarnessGuard(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-harness-guard-"))
+  const stubFile = join(tempDir, "phpunit-testsuite-stub.php")
+  const scriptPath = join(tempDir, "assert-harness-guard.php")
+
+  writeFileSync(stubFile, `<?php
+namespace PHPUnit\\Framework;
+class TestSuite {}
+`)
+
+  const ensureFn = extractPhpFunction(source, "pg_ensure_phpunit_harness_loaded")
+
+  writeFileSync(scriptPath, `<?php
+function pg_log($msg) {}
+function pg_stage_begin($stage) {}
+function pg_stage_ok($stage) {}
+function pg_stage_fail($stage, Throwable $e) {}
+${ensureFn}
+
+if (class_exists('PHPUnit\\Framework\\TestSuite', false)) {
+    throw new RuntimeException('precondition failed: PHPUnit\\Framework\\TestSuite must not be preloaded in the test environment');
+}
+
+$reached_testsuite = false;
+$boundary_message = '';
+try {
+    pg_ensure_phpunit_harness_loaded();
+    $reached_testsuite = true;
+} catch (RuntimeException $e) {
+    $boundary_message = $e->getMessage();
+} catch (Throwable $e) {
+    throw new RuntimeException('REGRESSION: guard threw non-RuntimeException: ' . get_class($e) . ': ' . $e->getMessage());
+}
+
+if ($reached_testsuite) {
+    throw new RuntimeException('REGRESSION: harness guard did not fail when PHPUnit was unavailable; TestSuite construction would be reached');
+}
+foreach (array('PHPUnit\\Framework\\TestSuite', 'bootstrap-mode=project', 'project-autoload-file', 'autoload-file=/wp-codebox-vendor/autoload.php') as $needle) {
+    if (strpos($boundary_message, $needle) === false) {
+        throw new RuntimeException('REGRESSION: boundary error missing actionable hint: ' . $needle . '; message=' . $boundary_message);
+    }
+}
+
+spl_autoload_register(function ($class) {
+    if ($class !== 'PHPUnit\\Framework\\TestSuite') {
+        return;
+    }
+    require_once ${phpString(realpathSync(stubFile))};
+});
+
+try {
+    pg_ensure_phpunit_harness_loaded();
+} catch (Throwable $e) {
+    throw new RuntimeException('REGRESSION: harness guard failed even though a project autoloader provides PHPUnit: ' . $e->getMessage());
+}
+
+echo "BOUNDARY_OK\n";
+`)
+
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "BOUNDARY_OK\n")
+}
+
 const recipe = buildWordPressPhpunitRecipe({
   pluginSlug: "woocommerce",
   extra_plugins: [{
@@ -190,6 +252,15 @@ assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$p
 assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 3)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(projectModeCode, "wp_codebox_phpunit_parse_config", "pg_log")
 assertSelectedTestFileResolution(projectModeCode)
+
+assert.ok(projectModeCode.includes("function pg_ensure_phpunit_harness_loaded(): void"))
+assert.ok(projectModeCode.includes("PHPUnit harness is not initialized"))
+assert.ok(projectModeCode.includes("pg_stage_begin('verify_harness')"))
+const verifyHarnessIndex = projectModeCode.indexOf("pg_stage_begin('verify_harness')")
+const projectModeTestsuiteIndex = projectModeCode.indexOf("$suite = new PHPUnit\\Framework\\TestSuite(")
+assert.ok(verifyHarnessIndex > 0, "verify_harness stage must be present")
+assert.ok(projectModeTestsuiteIndex > verifyHarnessIndex, "harness verification must precede TestSuite construction")
+assertProjectBootstrapHarnessGuard(projectModeCode)
 
 let capturedDefaultProjectCode = ""
 await runPhpunitCommand({
