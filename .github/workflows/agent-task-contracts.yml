@@ -55,8 +55,6 @@ jobs:
       - run: npm run build
       - run: npm run test:agent-task-contracts
       - run: npm run test:runtime-sources-playground-integration
-        env:
-          WP_CODEBOX_RUN_NETWORK_INTEGRATION: "1"
       - run: npm run test:redaction
       - run: npm run test:production-boundary-enforcement
       - run: npm run test:runtime-tool-policy
