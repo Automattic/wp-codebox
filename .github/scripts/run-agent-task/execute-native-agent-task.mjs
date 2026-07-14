@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
@@ -14,6 +14,8 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
+let privateRuntimeSourceRoot = ""
+let privateRuntimeSourceRootForSanitization = ""
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
   if (Array.isArray(value)) return value.map(redact)
@@ -173,6 +175,45 @@ function projections(value, runtimeResult) {
   return output
 }
 
+function workflowPath(path) {
+  const relativePath = relative(workspace, resolve(path))
+  return relativePath && !relativePath.startsWith("..") ? relativePath.replaceAll("\\", "/") : ".codebox/agent-task-workflow-result.json"
+}
+
+function failureClassification(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  const code = typeof error?.code === "string" && error.code ? error.code : ""
+  if (code.includes(".policy")) return { code, classification: "policy" }
+  if (code && !/materializ|fetch|download|archive|entrypoint|git failed|spawn git/i.test(message)) return { code, classification: "native-agent-task" }
+  if (/policy|authorized|allowlisted|allowed_repos|ACCESS_TOKEN/i.test(message)) return { code: "wp-codebox.agent-task.policy", classification: "policy" }
+  if (/materializ|fetch|download|archive|entrypoint|git failed|spawn git/i.test(message)) return { code: "wp-codebox.agent-task.materialization", classification: "materialization" }
+  if (/approval|publication|pull request/i.test(message)) return { code: "wp-codebox.agent-task.approval", classification: "approval" }
+  if (/projection/i.test(message)) return { code: "wp-codebox.agent-task.output-projection", classification: "output-projection" }
+  return { code: "wp-codebox.agent-task.execution", classification: "execution" }
+}
+
+async function writeNormalizedFailure(error, request = {}) {
+  const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
+  const failure = failureClassification(error)
+  const message = bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS)
+  const accessError = failure.classification === "policy" && /allowed_repos|ACCESS_TOKEN|GitHub token|Caller repository|authorized/i.test(message)
+  const result = {
+    schema: "wp-codebox/agent-task-workflow-result/v1",
+    run_id: `${record(request).workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-"),
+    status: "failed",
+    success: false,
+    request_path: workflowPath(requestPath),
+    failure: { ...failure, message },
+    ...(accessError ? { access: { authorized: false, error: message } } : {}),
+  }
+  await mkdir(join(workspace, ".codebox"), { recursive: true })
+  const sanitized = sanitizeRuntimeSourceValue(redact(result), privateRuntimeSourceRootForSanitization)
+  assertNoRuntimeSourcePaths(sanitized, privateRuntimeSourceRootForSanitization)
+  await writeFile(resultPath, `${JSON.stringify(sanitized, null, 2)}\n`)
+  await output("job_status", "failed")
+  await output("result_path", ".codebox/agent-task-workflow-result.json")
+}
+
 async function redactArtifactFiles(directory) {
   const { readdir, stat } = await import("node:fs/promises")
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -189,6 +230,7 @@ async function redactArtifactFiles(directory) {
   }
 }
 
+async function executeNativeAgentTask() {
 const request = JSON.parse(await readFile(requestPath, "utf8"))
 const verificationCommands = commandEntries(request.verification_commands, "verification_commands")
 const driftChecks = commandEntries(request.drift_checks, "drift_checks")
@@ -202,8 +244,6 @@ const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.js
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const controlledCodeboxPath = resolve(requestPath, "..")
 const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
-let privateRuntimeSourceRoot = ""
-let privateRuntimeSourceRootForSanitization = ""
 let cleaningPrivateRuntimeSources = false
 async function cleanupPrivateRuntimeSources() {
   if (cleaningPrivateRuntimeSources || !privateRuntimeSourceRoot) return
@@ -232,11 +272,9 @@ await mkdir(artifactsPath, { recursive: true })
 
 const accessError = accessFailure(request)
 if (accessError) {
-  const result = { schema: "wp-codebox/agent-task-workflow-result/v1", run_id: runId, status: "failed", success: false, request_path: requestPath, access: { authorized: false, error: accessError } }
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`)
-  await output("job_status", "failed")
-  process.exitCode = 1
-  process.exit()
+  const error = new Error(accessError)
+  error.code = "wp-codebox.agent-task.policy"
+  throw error
 }
 
 const materializedPackage = request.run_agent && !request.dry_run
@@ -404,3 +442,20 @@ await output("declared_artifacts_json", result.artifacts.declarations)
 await output("result_path", ".codebox/agent-task-workflow-result.json")
 
 if (!success) process.exitCode = 1
+}
+
+try {
+  await executeNativeAgentTask()
+} catch (error) {
+  try {
+    await writeNormalizedFailure(error)
+  } finally {
+    if (privateRuntimeSourceRoot) {
+      const root = privateRuntimeSourceRoot
+      privateRuntimeSourceRoot = ""
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+  console.error(bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS))
+  process.exitCode = 1
+}

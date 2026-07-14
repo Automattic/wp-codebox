@@ -159,9 +159,12 @@ async function finalScan(directory) {
   }
 }
 
-const request = JSON.parse(await readFile(requestPath, "utf8"))
+const parseJsonOrEmpty = (text) => {
+  try { return JSON.parse(text) } catch { return {} }
+}
+const request = parseJsonOrEmpty(await readFile(requestPath, "utf8").catch(() => "{}"))
 const resultSource = join(workspace, ".codebox", "agent-task-workflow-result.json")
-const result = JSON.parse(await readFile(resultSource, "utf8").catch(() => "{}"))
+const result = parseJsonOrEmpty(await readFile(resultSource, "utf8").catch(() => "{}"))
 const declaredPaths = new Set(declaredArtifactPaths(result, declarations(request)))
 
 await rm(uploadPath, { recursive: true, force: true })

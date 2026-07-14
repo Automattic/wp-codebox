@@ -291,6 +291,68 @@ await assert.rejects(execFileAsync("node", [new URL("../.github/scripts/run-agen
   },
 }), /verification_commands\[0\]\.command/)
 
+await writeFile(requestPath, "{\n")
+await assert.rejects(execFileAsync("node", [executeNativeAgentTask], {
+  cwd: tmp,
+  env: {
+    ...process.env,
+    GITHUB_OUTPUT: outputPath,
+    AGENT_TASK_REQUEST_PATH: requestPath,
+    AGENT_TASK_WORKSPACE: tmp,
+    WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+    EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
+  },
+}))
+const malformedParseResult = JSON.parse(await readFile(resultPath, "utf8"))
+assert.equal(malformedParseResult.failure.classification, "execution")
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, AGENT_TASK_REQUEST_PATH: requestPath },
+})
+assert.ok(await readFile(join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+
+// Every lifecycle failure publishes the same safe review envelope, including
+// failures before artifact materialization has created an artifact directory.
+const assertEarlyFailureUpload = async (name: string, environment: Record<string, string>, expectedClassification: string) => {
+  const failureRoot = await mkdtemp(join(tmpdir(), `wp-codebox-agent-task-${name}-`))
+  const failureCodebox = join(failureRoot, ".codebox")
+  const failureRequestPath = join(failureCodebox, "agent-task-request.json")
+  await mkdir(failureCodebox, { recursive: true })
+  await writeFile(failureRequestPath, `${JSON.stringify({ ...request, run_agent: name === "materialization", dry_run: false }, null, 2)}\n`)
+  await assert.rejects(execFileAsync(process.execPath, [executeNativeAgentTask], {
+    cwd: failureRoot,
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: join(failureRoot, "github-output.txt"),
+      AGENT_TASK_REQUEST_PATH: failureRequestPath,
+      AGENT_TASK_WORKSPACE: failureRoot,
+      WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+      EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
+      GITHUB_TOKEN: "test-caller-token",
+      ...environment,
+    },
+  }))
+  const failureResultPath = join(failureCodebox, "agent-task-workflow-result.json")
+  const failureResult = JSON.parse(await readFile(failureResultPath, "utf8"))
+  assert.equal(failureResult.status, "failed")
+  assert.equal(failureResult.success, false)
+  assert.equal(failureResult.failure.classification, expectedClassification)
+  assert.equal(await readFile(join(failureCodebox, "agent-task-artifacts", "exclusions.json"), "utf8").catch(() => "missing"), "missing", "Early failures must not create source or artifact trees")
+  await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
+    cwd: failureRoot,
+    env: { ...process.env, AGENT_TASK_WORKSPACE: failureRoot, AGENT_TASK_REQUEST_PATH: failureRequestPath, AGENT_TASK_UPLOAD_PATH: join(failureCodebox, "agent-task-upload") },
+  })
+  const uploadRoot = join(failureCodebox, "agent-task-upload", ".codebox")
+  assert.deepEqual(JSON.parse(await readFile(join(uploadRoot, "agent-task-workflow-result.json"), "utf8")).failure, failureResult.failure)
+  assert.ok(await readFile(join(uploadRoot, "agent-task-request.json"), "utf8"))
+  assert.ok(await readFile(join(uploadRoot, "agent-task-artifacts", "exclusions.json"), "utf8"))
+  assert.equal((await readdir(uploadRoot, { recursive: true })).some((path) => /prepared-|source-package|\.php$|\.m?js$/i.test(path)), false, "Failure uploads must exclude sources")
+}
+
+await assertEarlyFailureUpload("source-policy", { EXTERNAL_PACKAGE_SOURCE_POLICY: "{}" }, "policy")
+await assertEarlyFailureUpload("materialization", { PATH: "" }, "materialization")
+await assertEarlyFailureUpload("approval", { GITHUB_TOKEN: "", EXPLICIT_ACCESS_TOKEN_CONFIGURED: "false" }, "policy")
+
 // A serialized task request cannot stand in for a native run. Exercise the real
 // package-staging and canonical agents/chat harnesses instead of fabricating CLI
 // JSON or publication output in this workflow test.
