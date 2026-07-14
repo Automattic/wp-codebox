@@ -739,7 +739,9 @@ export async function directoryDiff(baselineDirectory: string, currentDirectory:
     }
 
     const path = `${targetPrefix}/${relativePath}`
-    patches.push(fileDiff(path, before ?? "", after ?? "", before === undefined, after === undefined))
+    // Patches are promoted into the caller workspace, so their headers are
+    // repository-relative while the manifest retains the sandbox mount target.
+    patches.push(fileDiff(relativePath, before ?? "", after ?? "", before === undefined, after === undefined))
     files.push({
       path,
       relativePath,
@@ -880,8 +882,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function fileDiff(path: string, before: string, after: string, isAdded: boolean, isDeleted: boolean): string {
   const beforeLines = splitLines(before)
   const afterLines = splitLines(after)
-  const gitOldPath = `a${path}`
-  const gitNewPath = `b${path}`
+  const gitOldPath = `a/${path}`
+  const gitNewPath = `b/${path}`
   const oldPath = isAdded ? "/dev/null" : gitOldPath
   const newPath = isDeleted ? "/dev/null" : gitNewPath
   const lines = [

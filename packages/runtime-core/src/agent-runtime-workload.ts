@@ -97,11 +97,18 @@ export interface AgentRuntimeWorkload {
   metadata: Record<string, unknown>
 }
 
+export interface AgentRuntimeExecutionChanges {
+  changed_files_count: number
+  patch_bytes: number
+  refs: AgentRuntimeWorkloadArtifact[]
+}
+
 export interface AgentRuntimeWorkloadOptions {
   requiredOutputs?: Record<string, string> | string[]
   toolRecorders?: unknown
   workloadId?: string
   normalizerAdapters?: AgentRuntimeWorkloadNormalizerAdapter[]
+  executionChanges?: AgentRuntimeExecutionChanges
 }
 
 export type AgentRuntimeWorkloadDraft = Omit<AgentRuntimeWorkload, "schema" | "success"> & { success?: boolean }
@@ -123,7 +130,12 @@ export function normalizeAgentRuntimeWorkload(raw: unknown, options: AgentRuntim
   const adapters = workloadNormalizerAdapters(options)
   const workload = canonicalWorkload ?? workloadFromNormalizerAdapters(raw, options, adapters) ?? emptyWorkload(options)
   const toolRecorderOutputs = outputsFromToolRecorders(workload, options.toolRecorders)
-  const outputs = { ...workload.outputs, ...toolRecorderOutputs }
+  const executionChanges = options.executionChanges
+  const outputs = {
+    ...workload.outputs,
+    ...toolRecorderOutputs,
+    ...(executionChanges ? { execution_changes: executionChangeSummary(executionChanges) } : {}),
+  }
   const diagnostics = [...workload.diagnostics, ...diagnosticsFromWorkload({ ...workload, outputs }, options)]
   const success = workload.success !== false && diagnostics.every((diagnostic) => !isFailureDiagnostic(diagnostic))
 
@@ -204,7 +216,7 @@ function diagnosticsFromWorkload(workload: WorkloadDraft, options: AgentRuntimeW
     })
   }
 
-  if (workload.scenarios.length === 0 && Object.keys(workload.outputs).length === 0) {
+  if (workload.scenarios.length === 0 && Object.keys(workload.outputs).length === 0 && !options.executionChanges) {
     diagnostics.push({
       class: "agent_runtime.workload.incomplete",
       message: "Agent runtime workload did not produce scenarios or semantic outputs.",
@@ -213,6 +225,43 @@ function diagnosticsFromWorkload(workload: WorkloadDraft, options: AgentRuntimeW
   }
 
   return diagnostics
+}
+
+export function normalizeAgentRuntimeExecutionChanges(raw: unknown): AgentRuntimeExecutionChanges | undefined {
+  const agentResult = objectValue(raw)
+  const changedFiles = objectValue(agentResult?.changedFiles)
+  const patch = objectValue(agentResult?.patch)
+  const changedFilesCount = numberValue(changedFiles?.count)
+  const patchBytes = numberValue(patch?.bytes)
+  if (!changedFilesCount || !patchBytes) return undefined
+
+  const refs = [
+    executionChangeRef("codebox-changed-files", changedFiles),
+    executionChangeRef("codebox-patch", patch),
+  ].filter((ref): ref is AgentRuntimeWorkloadArtifact => Boolean(ref))
+
+  return { changed_files_count: changedFilesCount, patch_bytes: patchBytes, refs }
+}
+
+function executionChangeSummary(changes: AgentRuntimeExecutionChanges): Record<string, unknown> {
+  return {
+    summary: `Agent execution changed ${changes.changed_files_count} file${changes.changed_files_count === 1 ? "" : "s"} with a ${changes.patch_bytes}-byte patch.`,
+    changed_files_count: changes.changed_files_count,
+    patch_bytes: changes.patch_bytes,
+    refs: changes.refs,
+  }
+}
+
+function executionChangeRef(kind: string, evidence: Record<string, unknown> | undefined): AgentRuntimeWorkloadArtifact | undefined {
+  const path = stringValue(evidence?.artifact)
+  if (!path) return undefined
+  return stripUndefined({
+    id: path,
+    kind,
+    path,
+    sha256: stringValue(evidence?.sha256) || undefined,
+    size_bytes: numberValue(evidence?.bytes),
+  })
 }
 
 function missingRequiredOutputs(workload: WorkloadDraft, requiredOutputs: AgentRuntimeWorkloadOptions["requiredOutputs"]): Array<{ name: string; path?: string }> {

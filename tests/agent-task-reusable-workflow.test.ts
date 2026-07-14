@@ -225,16 +225,27 @@ assert.deepEqual(nativeTaskInput.task_input.sandbox_tool_policy.tools, hostedDoc
   allowed: true,
   runtime: { environment: "runtime_local", capability_scope: "runtime_local" },
 })), "Hosted Docs Agent run 29298164272 must emit canonical sandbox-local workspace metadata")
-assert.deepEqual(nativeTaskInput.task_input.workspaces, [{
-  target: "/workspace",
-  mode: "readwrite",
-  sourceMode: "repo-backed",
-  seed: {
-    type: "directory",
-    source: tmp,
-    excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"],
-  },
-}], "Hosted failures 29324157852 and 29324563665 placed the runner seed outside task_input, so agent-task-run discarded it")
+  assert.deepEqual(nativeTaskInput.task_input.workspaces.map((entry: Record<string, unknown>) => ({
+    target: entry.target,
+    mode: entry.mode,
+    sourceMode: entry.sourceMode,
+    seed: { ...(entry.seed as Record<string, unknown>), source: "[external snapshot]" },
+  })), [{
+    target: "/workspace",
+    mode: "readwrite",
+    sourceMode: "repo-backed",
+    seed: {
+      type: "directory",
+      source: "[external snapshot]",
+      excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"],
+    },
+  }], "Hosted failures 29324157852 and 29324563665 placed the runner seed outside task_input, so agent-task-run discarded it")
+  const seed = nativeTaskInput.task_input.workspaces[0]
+  assert.notEqual(seed.seed.source, tmp)
+  const seedProvenance = nativeTaskInput.task_input.runtime_task.input.metadata.runner_workspace_seed
+  assert.match(seedProvenance.digest.sha256, /^[a-f0-9]{64}$/)
+  assert.deepEqual(seedProvenance.excludes, [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"])
+  assert.doesNotMatch(JSON.stringify(seedProvenance), new RegExp(tmp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
 assert.equal(nativeTaskInput.workspaces, undefined, "Runner workspace configuration must only use the canonical task_input.workspaces field")
 
 const executeNativeAgentTask = new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname

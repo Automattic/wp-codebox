@@ -1,12 +1,13 @@
 import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { join, relative, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { spawn } from "node:child_process"
-import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
+import { canonicalExternalNativeAgentIdentity, materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, sha256BytesV1, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
+import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -18,6 +19,7 @@ const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
+let runnerWorkspaceSeedSnapshot
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
   if (Array.isArray(value)) return value.map(redact)
@@ -197,6 +199,44 @@ function requiredArtifacts(declarations) {
   })))
 }
 
+async function testRuntimeFixtures(externalPackageSource) {
+  if (process.env.NODE_ENV !== "test") return {}
+  const packagePath = string(process.env.WP_CODEBOX_TEST_EXTERNAL_PACKAGE_PATH)
+  const runtimeSourceInputs = string(process.env.WP_CODEBOX_TEST_RUNTIME_SOURCE_INPUTS)
+  if (!packagePath && !runtimeSourceInputs) return {}
+  const fixtures = {}
+  if (packagePath) {
+    const bytes = await readFile(packagePath)
+    if (sha256BytesV1(bytes) !== externalPackageSource.digest) throw new Error("Test external package fixture digest does not match the request.")
+    fixtures.materializedPackage = { bytes, descriptor: externalPackageSource, identity: canonicalExternalNativeAgentIdentity(bytes) }
+  }
+  if (runtimeSourceInputs) {
+    try {
+      fixtures.runtimeSourceInputs = JSON.parse(runtimeSourceInputs)
+    } catch {
+      throw new Error("WP_CODEBOX_TEST_RUNTIME_SOURCE_INPUTS must be valid JSON.")
+    }
+  }
+  return fixtures
+}
+
+function runtimeSourceFixtureRoot(value) {
+  const paths = []
+  const collect = (entry) => {
+    if (typeof entry === "string") {
+      if (isAbsolute(entry)) paths.push(resolve(entry))
+      return
+    }
+    if (Array.isArray(entry)) return entry.forEach(collect)
+    if (entry && typeof entry === "object") Object.values(entry).forEach(collect)
+  }
+  collect(value)
+  if (paths.length === 0) return ""
+
+  const shared = paths.map((path) => path.split("/").filter(Boolean)).reduce((prefix, parts) => prefix.filter((part, index) => parts[index] === part))
+  return shared.length > 0 ? `/${shared.join("/")}` : ""
+}
+
 function workflowPath(path) {
   const relativePath = relative(workspace, resolve(path))
   return relativePath && !relativePath.startsWith("..") ? relativePath.replaceAll("\\", "/") : ".codebox/agent-task-workflow-result.json"
@@ -261,19 +301,26 @@ const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.en
 const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
 const runtimeSources = normalizeRuntimeSources(request.runtime_sources ?? [], externalPackagePolicy)
 const requestedModel = validateRuntimeSourceModel(request.model, runtimeSources)
+const writablePaths = String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean)
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const controlledCodeboxPath = resolve(requestPath, "..")
-const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
+ const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
 let cleaningPrivateRuntimeSources = false
-async function cleanupPrivateRuntimeSources() {
+ async function cleanupPrivateRuntimeSources() {
   if (cleaningPrivateRuntimeSources || !privateRuntimeSourceRoot) return
   cleaningPrivateRuntimeSources = true
   const root = privateRuntimeSourceRoot
   privateRuntimeSourceRoot = ""
   await rm(root, { recursive: true, force: true })
-}
+ }
+ async function cleanupRunnerWorkspaceSeedSnapshot() {
+   if (!runnerWorkspaceSeedSnapshot) return
+   const source = runnerWorkspaceSeedSnapshot.source
+   runnerWorkspaceSeedSnapshot = undefined
+   await rm(source, { recursive: true, force: true })
+ }
 process.once("exit", () => { if (privateRuntimeSourceRoot) rmSync(privateRuntimeSourceRoot, { recursive: true, force: true }) })
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.once(signal, () => { cleanupPrivateRuntimeSources().finally(() => process.exit(128)) })
@@ -291,17 +338,20 @@ function runtimeMetadataForExecutionLocation(executionLocation) {
 
 await mkdir(artifactsPath, { recursive: true })
 
-const accessError = accessFailure(request)
+ const accessError = accessFailure(request)
 if (accessError) {
   const error = new Error(accessError)
   error.code = "wp-codebox.agent-task.policy"
-  throw error
-}
+   throw error
+ }
 
-const skipMaterialization = process.env.NODE_ENV === "test" && process.env.WP_CODEBOX_TEST_SKIP_MATERIALIZATION === "true"
+ if (request.runner_workspace?.enabled) runnerWorkspaceSeedSnapshot = await createRunnerWorkspaceSeedSnapshot(workspace)
+
+const testFixtures = await testRuntimeFixtures(externalPackageSource)
+const skipMaterialization = process.env.NODE_ENV === "test" && (process.env.WP_CODEBOX_TEST_SKIP_MATERIALIZATION === "true" || Boolean(testFixtures.materializedPackage || testFixtures.runtimeSourceInputs))
 const materializedPackage = request.run_agent && !request.dry_run && !skipMaterialization
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy })
-  : undefined
+  : testFixtures.materializedPackage
 const materializedRuntimeSources = request.run_agent && !request.dry_run && !skipMaterialization
   ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy, forbiddenRoots: [workspace, artifactsPath] })
   : undefined
@@ -311,7 +361,8 @@ await output("runtime_source_root", privateRuntimeSourceRoot)
 const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((input, lowered) => {
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
   return input
-}, {})
+}, testFixtures.runtimeSourceInputs ?? {})
+const runtimeSourceOutputRoots = [privateRuntimeSourceRoot, runtimeSourceFixtureRoot(testFixtures.runtimeSourceInputs)]
 // Runtime source preparation must remain beside the private checkout, never in
 // the target artifact directory that is collected after the run.
 const privatePreparationRoot = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "prepared-runtime-sources") : ""
@@ -358,27 +409,28 @@ const taskInput = {
           model: requestedModel.name,
           runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
           target_repo: request.target_repo,
-          writable_paths: request.writable_paths,
-           runner_workspace_policy: { allowed_repos: request.access.allowed_repos, writable_paths: request.writable_paths },
+           writable_paths: writablePaths,
+            runner_workspace_policy: { allowed_repos: request.access.allowed_repos, writable_paths: writablePaths },
         },
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: requiredArtifacts(request.artifacts?.declarations),
         output_projections: [],
-        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [] },
+         metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [], ...(runnerWorkspaceSeedSnapshot ? { runner_workspace_seed: runnerWorkspaceSeedSnapshot.provenance } : {}) },
       },
     },
-      // agent-task-run unwraps task_input before building the recipe. Keep the
-      // runner seed on that canonical input rather than on the request envelope.
-      workspaces: request.runner_workspace?.enabled ? [{ target: "/workspace", mode: "readwrite", sourceMode: "repo-backed", seed: { type: "directory", source: workspace, excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"] } }] : [],
+       // agent-task-run unwraps task_input before building the recipe. The
+       // external snapshot prevents the recipe from ever mounting the checkout.
+       workspaces: runnerWorkspaceSeedSnapshot ? [{ target: "/workspace", mode: "readwrite", sourceMode: "repo-backed", seed: { type: "directory", source: runnerWorkspaceSeedSnapshot.source, excludePaths: RUNNER_WORKSPACE_SEED_EXCLUDES } }] : [],
     },
   }
 
 await writeFile(executionInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
-if (request.run_agent && !request.dry_run) {
-  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
-}
+ if (request.run_agent && !request.dry_run) {
+   execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
+ }
+ await cleanupRunnerWorkspaceSeedSnapshot()
 
 // Public package bytes are embedded in the runtime recipe and consumed only by
 // the Playground bootstrap before the agent's tools are resolved.
@@ -387,7 +439,7 @@ const nativeRuntimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
-const runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
+let runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
 let runnerWorkspaceCore = null
@@ -398,12 +450,14 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
     const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-    workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths: String(request.writable_paths || "").split(",").map((value) => value.trim()).filter(Boolean) })
+     workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths })
   } catch (error) {
     downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
   }
 }
 await cleanupPrivateRuntimeSources()
+runtimeResult = sanitizeRuntimeSourceValue(runtimeResult, runtimeSourceOutputRoots)
+privateRuntimeSourceRootForSanitization = runtimeSourceOutputRoots
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 
 await redactArtifactFiles(artifactsPath)
@@ -514,6 +568,11 @@ try {
   try {
     await writeNormalizedFailure(error)
   } finally {
+    if (runnerWorkspaceSeedSnapshot) {
+      const source = runnerWorkspaceSeedSnapshot.source
+      runnerWorkspaceSeedSnapshot = undefined
+      await rm(source, { recursive: true, force: true })
+    }
     if (privateRuntimeSourceRoot) {
       const root = privateRuntimeSourceRoot
       privateRuntimeSourceRoot = ""

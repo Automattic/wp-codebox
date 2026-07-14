@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chdir, cwd } from "node:process"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, TYPED_ARTIFACT_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, TYPED_ARTIFACT_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunJsonOutput, normalizeAgentTaskRunCliInput, writeAgentTaskRunResultFile } from "../packages/cli/src/commands/agent-task-run.js"
@@ -272,6 +272,28 @@ assert.equal(strictNestedTerminal, undefined)
 
 const strictRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } })
 assert.deepEqual(strictRuntimeWorkload.outputs, {})
+
+const executionChanges = normalizeAgentRuntimeExecutionChanges({
+  changedFiles: { count: 1, artifact: "changed-files.json", bytes: 128, sha256: "changed" },
+  patch: { artifact: "patch.diff", bytes: 256, sha256: "patch" },
+})
+const changedRuntimeWorkload = normalizeAgentRuntimeWorkload({}, { executionChanges })
+assert.equal(changedRuntimeWorkload.success, true)
+assert.equal(changedRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.data?.reason === "missing_semantic_outputs"), false)
+assert.deepEqual(changedRuntimeWorkload.outputs.execution_changes, {
+  summary: "Agent execution changed 1 file with a 256-byte patch.",
+  changed_files_count: 1,
+  patch_bytes: 256,
+  refs: [
+    { id: "changed-files.json", kind: "codebox-changed-files", path: "changed-files.json", sha256: "changed", size_bytes: 128 },
+    { id: "patch.diff", kind: "codebox-patch", path: "patch.diff", sha256: "patch", size_bytes: 256 },
+  ],
+})
+assert.deepEqual(normalizeAgentRuntimeExecutionChanges({ changedFiles: { count: 0 }, patch: { bytes: 0 } }), undefined)
+assert.deepEqual(normalizeAgentRuntimeExecutionChanges({ changedFiles: { count: 1 }, patch: { bytes: 0 } }), undefined)
+const emptyChangeRuntimeWorkload = normalizeAgentRuntimeWorkload({}, { executionChanges: normalizeAgentRuntimeExecutionChanges({ changedFiles: { count: 0 }, patch: { bytes: 0 } }) })
+assert.equal(emptyChangeRuntimeWorkload.success, false)
+assert.equal(emptyChangeRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.data?.reason === "missing_semantic_outputs"), true)
 
 const typedArtifactRefs = normalizeArtifactResultTypedArtifacts({
   typed_artifacts: [{

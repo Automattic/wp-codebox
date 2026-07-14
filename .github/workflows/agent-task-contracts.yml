@@ -17,6 +17,7 @@ on:
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
       - "tests/runtime-sources-playground-integration.test.ts"
+      - "tests/execute-native-agent-task-playground-e2e.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -36,6 +37,7 @@ on:
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
       - "tests/runtime-sources-playground-integration.test.ts"
+      - "tests/execute-native-agent-task-playground-e2e.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -55,6 +57,7 @@ jobs:
       - run: npm run build
       - run: npm run test:agent-task-contracts
       - run: npm run test:runtime-sources-playground-integration
+      - run: npm run test:native-agent-task-playground-e2e
       - run: npm run test:redaction
       - run: npm run test:production-boundary-enforcement
       - run: npm run test:runtime-tool-policy

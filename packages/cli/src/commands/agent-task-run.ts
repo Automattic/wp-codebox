@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -167,17 +167,19 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const runtimeRecord = objectValue(run.runtime) || {}
     const agentBundle = objectValue(input.agent_bundle) || {}
     const metadataRuntime = objectValue(objectValue(run.metadata)?.agent_runtime)
+    const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
+    const executionChanges = normalizeAgentRuntimeExecutionChanges(agentResult)
     const workload = normalizeAgentRuntimeWorkload(metadataRuntime?.workload ?? run, {
       requiredOutputs: stringRecord(agentBundle.engine_data_outputs),
       toolRecorders: agentBundle.tool_recorders,
       workloadId: stringValue(agentBundle.workload_id) || stringValue(agentBundle.agent_slug) || stringValue(agentBundle.flow_slug) || undefined,
+      executionChanges,
     })
     const hasAgentBundle = Object.keys(agentBundle).length > 0
     const recipeSuccess = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const agentTaskResult = agentTaskResultFromRun(run, runRecord, artifactsRecord)
     const terminalResult = terminalResultFromRun(run, agentTaskResult)
     const completionOutcome = objectValue(run.completionOutcome) || objectValue(run.completion_outcome) || objectValue(artifactsRecord.completionOutcome) || objectValue(artifactsRecord.completion_outcome) || {}
-    const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
     const normalizedRunResult = normalizeAgentTaskRunResult({
       ...run,
       success: recipeSuccess,
