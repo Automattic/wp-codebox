@@ -36,26 +36,32 @@ try {
     },
   })}\n`)
 
-  const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", artifactsPath, "--json"], {
-    cwd: process.cwd(),
-    timeout: 300_000,
-    maxBuffer: 2 * 1024 * 1024,
-  })
-  const output = JSON.parse(result.stdout)
-  assert.equal(output.success, true, JSON.stringify(output))
-  assert.equal(sha256(await readFile(readonlySource)), sha256(readonlyBytes), "readonly host bytes must survive an actual Playground PHP overwrite")
-  assert.deepEqual(await readFile(readwriteSource), overwrittenBytes, "readwrite host bytes must reflect an actual Playground PHP overwrite")
-  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "recipe-run cleanup must remove readonly mount staging")
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (/fetch failed|Could not resolve host|Connection timed out|network is unreachable/i.test(message)) {
-    console.log(`playground readonly mount integration skipped: WordPress runtime source was unreachable (${message})`)
-  } else {
-    throw error
+  const output = await runRecipe()
+  if (output) {
+    assert.equal(output.success, true, JSON.stringify(output))
+    assert.equal(sha256(await readFile(readonlySource)), sha256(readonlyBytes), "readonly host bytes must survive an actual Playground PHP overwrite")
+    assert.deepEqual(await readFile(readwriteSource), overwrittenBytes, "readwrite host bytes must reflect an actual Playground PHP overwrite")
+    assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "recipe-run cleanup must remove readonly mount staging")
   }
 } finally {
   await rm(root, { recursive: true, force: true })
 }
+
+assert.equal(isUnavailableWordPressRuntimeSource({
+  stdout: JSON.stringify({
+    schema: "wp-codebox/recipe-run/v1",
+    success: false,
+    phaseEvidence: [{ name: "runtime_startup", status: "failed", error: { message: "Unable to resolve Playground startup asset wordpress-archive-cache for WordPress 6.5: fetch failed" } }],
+  }),
+}), true, "only a structured pre-runtime WordPress archive acquisition failure may skip")
+
+assert.equal(isUnavailableWordPressRuntimeSource({
+  stdout: JSON.stringify({
+    schema: "wp-codebox/recipe-run/v1",
+    success: false,
+    phaseEvidence: [{ name: "runtime_startup", status: "completed" }, { name: "run_workloads", status: "failed", error: { message: "fetch failed" } }],
+  }),
+}), false, "a post-start failure containing fetch failed must fail the integration test")
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex")
@@ -63,6 +69,55 @@ function sha256(bytes: Buffer): string {
 
 async function readonlyStagingDirectories(): Promise<string[]> {
   return (await readdir(tmpdir())).filter((entry) => entry.startsWith("wp-codebox-readonly-mounts-")).sort()
+}
+
+async function runRecipe(): Promise<RecipeRunOutput | undefined> {
+  try {
+    const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", artifactsPath, "--json"], {
+      cwd: process.cwd(),
+      timeout: 300_000,
+      maxBuffer: 2 * 1024 * 1024,
+    })
+    return recipeRunOutput(result.stdout)
+  } catch (error) {
+    if (isUnavailableWordPressRuntimeSource(error)) {
+      console.log("playground readonly mount integration skipped: WordPress runtime source was unavailable before runtime startup")
+      return undefined
+    }
+    throw error
+  }
+}
+
+interface RecipeRunOutput {
+  schema?: string
+  success?: boolean
+  phaseEvidence?: Array<{
+    name?: string
+    status?: string
+    error?: { message?: string }
+  }>
+}
+
+function isUnavailableWordPressRuntimeSource(error: unknown): boolean {
+  const output = recipeRunOutput(error && typeof error === "object" && "stdout" in error ? error.stdout : undefined)
+  const startup = output?.phaseEvidence?.find((phase) => phase.name === "runtime_startup")
+  const message = startup?.error?.message ?? ""
+  return output?.schema === "wp-codebox/recipe-run/v1"
+    && startup?.status === "failed"
+    && /Unable to resolve Playground startup asset (wordpress-archive-cache|wordpress-release-metadata)/.test(message)
+    && /fetch failed|Could not resolve host|Connection timed out|network is unreachable/i.test(message)
+}
+
+function recipeRunOutput(value: unknown): RecipeRunOutput | undefined {
+  if (typeof value !== "string") {
+    return undefined
+  }
+  try {
+    const output = JSON.parse(value) as RecipeRunOutput
+    return output && typeof output === "object" ? output : undefined
+  } catch {
+    return undefined
+  }
 }
 
 console.log("playground readonly mount integration ok")
