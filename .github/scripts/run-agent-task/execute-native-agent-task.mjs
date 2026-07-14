@@ -1,8 +1,9 @@
 import { rmSync } from "node:fs"
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { appendFile, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { canonicalExternalNativeAgentIdentity, materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, sha256BytesV1, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
@@ -20,6 +21,7 @@ const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVID
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
 let runnerWorkspaceSeedSnapshot
+let reviewerEvidence
 
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }
 let materializedSourceCleanup
@@ -312,6 +314,7 @@ async function writeNormalizedFailure(error, request = {}) {
     success: false,
     request_path: workflowPath(requestPath),
     failure: { ...failure, message },
+    ...(reviewerEvidence ? { reviewer_evidence: reviewerEvidence } : {}),
     ...(accessError ? { access: { authorized: false, error: message } } : {}),
   }
   await mkdir(join(workspace, ".codebox"), { recursive: true })
@@ -322,11 +325,59 @@ async function writeNormalizedFailure(error, request = {}) {
   await output("result_path", ".codebox/agent-task-workflow-result.json")
 }
 
-async function redactArtifactFiles(directory) {
+function underRoot(root, path) {
+  const contained = relative(root, path)
+  return contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained)
+}
+
+async function canonicalReviewerTranscript(nativeRuntimeResult, artifactsPath) {
+  const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
+  const refs = publicCore.normalizePublicArtifactRefDTOs(nativeRuntimeResult)
+    .filter((ref) => ref.kind === "codebox-transcript" && typeof ref.path === "string" && ref.path)
+  if (refs.length === 0) return undefined
+
+  const root = await realpath(artifactsPath)
+  const artifactRoot = resolve(artifactsPath)
+  const transcripts = new Map()
+  for (const ref of refs) {
+    // Resolve first so containment, rather than spelling, defines a trusted path.
+    const requested = resolve(artifactRoot, ref.path)
+    const canonical = await realpath(requested).catch((error) => error?.code === "ENOENT" ? "" : Promise.reject(error))
+    if (!canonical) continue
+    if (!underRoot(root, canonical)) throw new Error("Canonical transcript escapes the trusted artifact root.")
+    const requestedRelative = relative(artifactRoot, requested)
+    if (!underRoot(artifactRoot, requested)) throw new Error("Canonical transcript escapes the trusted artifact root.")
+    let current = artifactRoot
+    for (const part of requestedRelative.split("/").filter(Boolean)) {
+      current = join(current, part)
+      const metadata = await lstat(current)
+      if (metadata.isSymbolicLink()) throw new Error("Canonical transcript must not traverse symlinks.")
+    }
+    const metadata = await lstat(current)
+    if (!metadata.isFile()) throw new Error("Canonical transcript must be a regular file.")
+    const source = await realpath(current)
+    const bytes = await readFile(source)
+    const raw = JSON.parse(bytes.toString("utf8"))
+    if (raw?.schema !== "wp-codebox/agent-transcript/v1") throw new Error("Canonical transcript must use wp-codebox/agent-transcript/v1.")
+    transcripts.set(source, {
+      schema: raw.schema,
+      kind: "codebox-transcript",
+      path: relative(root, source).replaceAll("\\", "/"),
+      source_sha256: createHash("sha256").update(bytes).digest("hex"),
+      size_bytes: bytes.length,
+    })
+  }
+  if (transcripts.size === 0) return undefined
+  if (transcripts.size !== 1) throw new Error("Canonical transcript requires exactly one distinct existing file.")
+  return { transcript: [...transcripts.values()][0] }
+}
+
+async function redactArtifactFiles(directory, artifactRoot = directory) {
   const { readdir, stat } = await import("node:fs/promises")
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) await redactArtifactFiles(path)
+    if (reviewerEvidence?.transcript && path === resolve(artifactRoot, reviewerEvidence.transcript.path)) continue
+    if (entry.isDirectory()) await redactArtifactFiles(path, artifactRoot)
     if (entry.isFile() && path.endsWith(".json") && (await stat(path)).size <= 4 * 1024 * 1024) {
       const contents = await readFile(path, "utf8").catch(() => null)
       if (contents !== null) {
@@ -467,6 +518,7 @@ const nativeRuntimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
+reviewerEvidence = await canonicalReviewerTranscript(nativeRuntimeResult, artifactsPath)
 let runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
@@ -559,6 +611,7 @@ const result = {
   runtime_input_path: ".codebox/native-agent-task-input.json",
   execution: { stdout_truncated: execution.stdout_truncated, stderr_truncated: execution.stderr_truncated },
   runtime_result: redact(runtimeRecord),
+  ...(reviewerEvidence ? { reviewer_evidence: reviewerEvidence } : {}),
   verification,
   publication,
   transcript: { artifact_name: request.artifacts?.transcript_name || "agent-task-transcript" },
