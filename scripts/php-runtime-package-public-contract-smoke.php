@@ -125,7 +125,7 @@ $wpsg_like_task = array(
 	'schema'                => 'wp-codebox/runtime-package-task/v1',
 	'package'               => array( 'slug' => 'store-idea-agent', 'source' => $staged_bundle_file, 'external_source' => array( 'digest' => 'sha256-bytes-v1:' . hash_file( 'sha256', $staged_bundle_file ) ) ),
 	'workflow'              => array( 'id' => 'agents/chat' ),
-	'input'                 => array( 'prompt' => 'Industry: open' ),
+	'input'                 => array( 'prompt' => 'Industry: open', 'provider' => 'openai', 'model' => 'gpt-5.5' ),
 	'artifact_declarations' => array( array( 'name' => 'concept_packet', 'type' => 'typed_artifact', 'required' => true ) ),
 	'required_artifacts'    => array( 'concept_packet' ),
 	'metadata'              => array( 'caller' => 'wpsg-like-contract-smoke', 'imported_agent' => array( 'slug' => 'store-idea-agent' ) ),
@@ -140,6 +140,8 @@ assert( 'store-idea-agent' === $native['outputs']['agent'] );
 assert( 'agents/chat' === $native['metadata']['workflow_id'] );
 assert( 'concept_packet' === $native['artifacts'][0]['name'] );
 assert( 'Industry: open' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['message'] );
+assert( 'openai' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['provider'] );
+assert( 'gpt-5.5' === $GLOBALS['wp_codebox_runtime_package_smoke_input']['model'] );
 assert( 'codebox-runtime-package' === $native['metadata']['runtime_provider']['id'] );
 assert( 'store-idea-agent' === $GLOBALS['wp_codebox_runtime_package_imports']['bundles'][0]['slug'] );
 assert( 1 === $GLOBALS['wp_codebox_runtime_package_imports']['options']['owner_id'] );

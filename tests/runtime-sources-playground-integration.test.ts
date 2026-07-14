@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -63,6 +64,32 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
   const stdout = output.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? ""
   const checks = JSON.parse(stdout)
   assert.deepEqual(checks, { imported_slug: "flat-runtime-agent", agents_registry: true, provider_active: true, provider_class: "WordPress\\OpenAiAiProvider\\Provider\\OpenAiProvider", provider_resolved: true, client: true })
+  const packageBytes = await readFile(privatePackage)
+  const packageDigest = `sha256-bytes-v1:${createHash("sha256").update(packageBytes).digest("hex")}`
+  const providerRecipe = buildAgentTaskRecipe({
+    goal: "Prove explicit provider reaches the native runtime package",
+    artifacts_path: join(materialized.root, "private-artifacts"),
+    source_package_root: join(materialized.root, "prepared-runtime-sources"),
+    provider: "openai",
+    model: "gpt-5.5",
+    runtime_env: { OPENAI_API_KEY: "dummy-key" },
+    ...lowered,
+    runtime_task: {
+      ability: "wp-codebox/run-runtime-package",
+      input: {
+        schema: "wp-codebox/runtime-package-task/v1",
+        package: { slug: "flat-runtime-agent", source: "public-external-package", bootstrap: { encoding: "base64", bytes: packageBytes.toString("base64"), digest: packageDigest } },
+        workflow: { id: "agents/chat" },
+        input: { prompt: "Return the mocked response.", provider: "openai", model: "gpt-5.5" },
+        artifact_declarations: [],
+        required_artifacts: [],
+      },
+    },
+  }, normalizeTaskInput({ goal: "Prove explicit provider reaches the native runtime package" }), "latest")
+  const runtimeTaskArg = providerRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("runtime-task-json="))
+  assert.ok(runtimeTaskArg, "native runtime package task must be part of the Playground closure")
+  const runtimeTask = JSON.parse(runtimeTaskArg.slice("runtime-task-json=".length))
+  assert.deepEqual(runtimeTask.input.input, { prompt: "Return the mocked response.", provider: "openai", model: "gpt-5.5" })
   await rm(materialized.root, { recursive: true, force: true })
   await assert.rejects(access(privatePackage), /ENOENT/, "private source package must be removed with its materialization root")
   console.log(`runtime sources Playground integration ok: ${JSON.stringify(checks)}`)

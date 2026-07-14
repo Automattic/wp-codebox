@@ -2,7 +2,7 @@ import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
-import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
+import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
@@ -213,6 +213,7 @@ const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_
 const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.env.EXTERNAL_PACKAGE_SOURCE_POLICY))
 const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
 const runtimeSources = normalizeRuntimeSources(request.runtime_sources ?? [], externalPackagePolicy)
+const requestedModel = validateRuntimeSourceModel(request.model, runtimeSources)
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
@@ -265,7 +266,10 @@ const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
   return input
 }, {})
-const sourcePackageRoot = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "prepared-packages") : artifactsPath
+// Runtime source preparation must remain beside the private checkout, never in
+// the target artifact directory that is collected after the run.
+const privatePreparationRoot = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "prepared-runtime-sources") : ""
+const sourcePackageRoot = privatePreparationRoot || artifactsPath
 const executionInputPath = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "native-agent-task-input.json") : runtimeInputPath
 
 const taskInput = {
@@ -280,8 +284,8 @@ const taskInput = {
     target: { kind: "repo", materialization: { root: workspace } },
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
-    provider: request.model?.provider,
-    model: request.model?.name,
+    provider: requestedModel.provider,
+    model: requestedModel.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
     ...runtimeSourceInputs,
     allowed_tools: runnerWorkspaceTools,
@@ -306,6 +310,8 @@ const taskInput = {
         workflow: { id: "agents/chat" },
         input: {
           prompt: request.prompt,
+          provider: requestedModel.provider,
+          model: requestedModel.name,
           runner_workspace: { ...record(request.runner_workspace), allowed_repos: request.access.allowed_repos },
           target_repo: request.target_repo,
           writable_paths: request.writable_paths,
