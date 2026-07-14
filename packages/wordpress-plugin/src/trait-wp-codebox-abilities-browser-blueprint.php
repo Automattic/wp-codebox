@@ -56,6 +56,11 @@ private static function browser_blueprint_with_post_runtime( array $blueprint, a
 	$post_steps = is_array( $post_runtime_blueprint['steps'] ?? null ) ? $post_runtime_blueprint['steps'] : array();
 	$merged     = array_merge( $blueprint, $post_runtime_blueprint );
 	$merged['steps'] = array_values( array_merge( $steps, $post_steps ) );
+	if ( array_key_exists( 'preferredVersions', $blueprint ) ) {
+		$merged['preferredVersions'] = $blueprint['preferredVersions'];
+	} else {
+		unset( $merged['preferredVersions'] );
+	}
 
 	if ( isset( $blueprint['features'] ) && isset( $post_runtime_blueprint['features'] ) && is_array( $blueprint['features'] ) && is_array( $post_runtime_blueprint['features'] ) ) {
 		$merged['features'] = array_merge( $blueprint['features'], $post_runtime_blueprint['features'] );

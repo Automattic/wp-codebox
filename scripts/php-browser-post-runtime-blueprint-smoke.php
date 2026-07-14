@@ -15,7 +15,7 @@ final class WP_Codebox_Post_Runtime_Blueprint_Smoke {
 }
 
 $runtime_blueprint = array(
-	'preferredVersions' => array( 'php' => '8.3' ),
+	'preferredVersions' => array( 'wp' => '7.0', 'php' => '8.4' ),
 	'features'          => array( 'networking' => false ),
 	'steps'             => array(
 		array( 'step' => 'login' ),
@@ -23,8 +23,9 @@ $runtime_blueprint = array(
 	),
 );
 $post_runtime = array(
-	'features' => array( 'networking' => true ),
-	'steps'    => array( array( 'step' => 'runPHP', 'code' => '<?php import_site();' ) ),
+	'preferredVersions' => array( 'wp' => 'latest', 'php' => '8.2' ),
+	'features'          => array( 'networking' => true ),
+	'steps'             => array( array( 'step' => 'runPHP', 'code' => '<?php import_site();' ) ),
 );
 
 $merged = WP_Codebox_Post_Runtime_Blueprint_Smoke::merge( $runtime_blueprint, $post_runtime );
@@ -32,6 +33,10 @@ $steps  = array_column( $merged['steps'] ?? array(), 'step' );
 
 if ( array( 'login', 'installPlugin', 'runPHP' ) !== $steps ) {
 	fwrite( STDERR, 'Post-runtime blueprint steps were not appended after runtime materialization.' . PHP_EOL );
+	exit( 1 );
+}
+if ( array( 'wp' => '7.0', 'php' => '8.4' ) !== ( $merged['preferredVersions'] ?? null ) ) {
+	fwrite( STDERR, 'Post-runtime blueprint preferredVersions overwrote the runtime selection.' . PHP_EOL );
 	exit( 1 );
 }
 if ( true !== ( $merged['features']['networking'] ?? null ) ) {
