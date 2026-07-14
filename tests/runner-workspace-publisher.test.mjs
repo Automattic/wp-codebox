@@ -8,7 +8,7 @@ function response(status, body) { return { ok: status >= 200 && status < 300, st
 function fetchMock(existing = false) {
   const calls = []
   return { calls, fetch: async (url, init) => {
-    calls.push([url, init.method])
+    calls.push([url, init.method, init.body ? JSON.parse(init.body) : undefined])
     const parsed = new URL(url)
     const path = parsed.pathname.replace("/repos/owner/repo", "")
     if (path === "/git/ref/heads/main") return response(200, { object: { sha: "base" } })
@@ -36,6 +36,9 @@ function fetchMock(existing = false) {
   const result = await publishRunnerWorkspace({ request, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
   assert.equal(result.pull_request.reused, true)
   assert(mock.calls.some(([, method]) => method === "PATCH"))
+  const treeRequest = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/git/trees") && method === "POST")
+  assert.equal(treeRequest?.[2]?.base_tree, "prior-tree", "existing branch publication must extend its current tree")
+  assert.deepEqual(treeRequest?.[2]?.tree, [{ path: "README.md", mode: "100644", type: "blob", sha: "blob" }], "the prior branch tree remains the base while only approved changed files are replaced")
 }
 await assert.rejects(() => publishRunnerWorkspace({ request: { ...request, runner_workspace: { ...request.runner_workspace, repo: "other/repo" } }, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: fetchMock().fetch }), /not authorized/)
 await assert.rejects(() => publishRunnerWorkspace({ request, changedFiles: ["README.md"], publicationFiles, token: "", fetchImpl: fetchMock().fetch }), /No GitHub token/)

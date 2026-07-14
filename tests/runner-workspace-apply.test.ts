@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -75,6 +75,16 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
   const input = await fixture(patch, files)
   await assert.rejects(() => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"], verify: async () => { throw new Error("verification failed") } }), /verification failed/)
   assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "after\n")
+}
+
+{
+  const input = await fixture(patch, files)
+  const patchPath = join(input.artifacts, "files", "patch.diff")
+  const target = join(input.artifacts, "files", "patch-source.diff")
+  await writeFile(target, patch)
+  await rm(patchPath)
+  await symlink(target, patchPath)
+  await assert.rejects(() => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] }), /bounded regular file/)
 }
 
 console.log("runner workspace apply ok")

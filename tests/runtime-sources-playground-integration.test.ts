@@ -8,6 +8,7 @@ import { promisify } from "node:util"
 import { materializeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 import { buildAgentTaskRecipe } from "../packages/runtime-core/src/agent-task-recipe.js"
 import { normalizeTaskInput } from "../packages/runtime-core/src/task-input.js"
+import { sandboxToolPolicyFromAllowedTools } from "../packages/runtime-core/src/sandbox-tool-policy.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -24,8 +25,9 @@ try {
   const materialized = await materializeRuntimeSources(fixture.runtime_sources, { policy, tempRoot: root, forbiddenRoots: [join(root, "artifacts")] })
   const privatePackage = join(materialized.root, "flat-runtime-agent.agent.json")
   const interceptorPlugin = join(materialized.root, "openai-interceptor")
+  const workspaceSeed = join(materialized.root, "workspace-seed")
   const packageInstruction = "PACKAGE SYSTEM INSTRUCTION: selected imported agent"
-  const packageTool = "workspace_read"
+  const packageTools = ["workspace_read", "workspace_edit"]
   const genericSandboxInstruction = "Default sandbox agent"
   const genericSandboxTool = "deny-all"
   await mkdir(interceptorPlugin, { recursive: true })
@@ -42,9 +44,17 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
     $requests = is_array( $requests ) ? $requests : array();
     $requests[] = array( 'url' => $url, 'body' => $args['body'] ?? null );
     file_put_contents( $capture, wp_json_encode( $requests ) );
-    $body = str_ends_with( $url, '/models' )
-        ? array( 'object' => 'list', 'data' => array( array( 'id' => 'gpt-5.5', 'object' => 'model', 'created' => 0, 'owned_by' => 'openai' ) ) )
-        : array( 'id' => 'resp-fixture', 'object' => 'response', 'status' => 'completed', 'output' => array( array( 'id' => 'msg-fixture', 'type' => 'message', 'status' => 'completed', 'role' => 'assistant', 'content' => array( array( 'type' => 'output_text', 'text' => 'Mocked runtime-package reply', 'annotations' => array() ) ) ) ), 'usage' => array( 'input_tokens' => 1, 'output_tokens' => 1, 'total_tokens' => 2 ) );
+    if ( str_ends_with( $url, '/models' ) ) {
+        $body = array( 'object' => 'list', 'data' => array( array( 'id' => 'gpt-5.5', 'object' => 'model', 'created' => 0, 'owned_by' => 'openai' ) ) );
+    } else {
+        $turn = count( array_filter( $requests, static fn( $request ) => str_ends_with( (string) $request['url'], '/responses' ) ) );
+        $output = 1 === $turn
+            ? array( array( 'id' => 'fc-read', 'type' => 'function_call', 'call_id' => 'call-read', 'name' => 'workspace_read', 'arguments' => wp_json_encode( array( 'path' => 'README.md' ) ) ) )
+            : ( 2 === $turn
+                ? array( array( 'id' => 'fc-edit', 'type' => 'function_call', 'call_id' => 'call-edit', 'name' => 'workspace_edit', 'arguments' => wp_json_encode( array( 'path' => 'README.md', 'old_string' => 'before', 'new_string' => 'after' ) ) ) )
+                : array( array( 'id' => 'msg-fixture', 'type' => 'message', 'status' => 'completed', 'role' => 'assistant', 'content' => array( array( 'type' => 'output_text', 'text' => 'Workspace updated.', 'annotations' => array() ) ) ) ) );
+        $body = array( 'id' => 'resp-fixture-' . $turn, 'object' => 'response', 'status' => 'completed', 'output' => $output, 'usage' => array( 'input_tokens' => 1, 'output_tokens' => 1, 'total_tokens' => 2 ) );
+    }
     return array( 'headers' => array( 'content-type' => 'application/json' ), 'body' => wp_json_encode( $body ), 'response' => array( 'code' => 200, 'message' => 'OK' ), 'cookies' => array(), 'filename' => null );
 }, 1000, 3 );
 `)
@@ -57,11 +67,13 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
       description: "Playground imported-agent selection fixture.",
       agent_config: {
         instructions: packageInstruction,
-        enabled_tools: [packageTool],
+        enabled_tools: packageTools,
         modes: ["chat"],
       },
     },
   }) + "\n")
+  await mkdir(workspaceSeed, { recursive: true })
+  await writeFile(join(workspaceSeed, "README.md"), "before\n")
   const lowered = materialized.lowered.reduce((input: Record<string, unknown[]>, source: Record<string, unknown[]>) => {
     for (const [key, entries] of Object.entries(source)) input[key] = [...(input[key] ?? []), ...entries]
     return input
@@ -107,6 +119,8 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
     model: "gpt-5.5",
     runtime_env: { OPENAI_API_KEY: "dummy-key" },
     extra_plugins: [{ source: interceptorPlugin, slug: "openai-runtime-package-interceptor", pluginFile: "openai-runtime-package-interceptor/openai-interceptor.php", activate: true, loadAs: "plugin" }],
+    workspaces: [{ target: "/workspace", mode: "readwrite", seed: { type: "directory", source: workspaceSeed } }],
+    sandbox_tool_policy: sandboxToolPolicyFromAllowedTools(["workspace.read", "workspace.edit"], { source: "runtime-sources-playground-integration" }),
     ...lowered,
     runtime_task: {
       ability: "wp-codebox/run-runtime-package",
@@ -114,7 +128,7 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
         schema: "wp-codebox/runtime-package-task/v1",
         package: { slug: "flat-runtime-agent", source: "public-external-package", external_source: { digest: packageDigest }, bootstrap: { encoding: "base64", bytes: packageBytes.toString("base64"), digest: packageDigest } },
         workflow: { id: "agents/chat" },
-        input: { prompt: "Return the mocked response.", provider: "openai", model: "gpt-5.5" },
+        input: { prompt: "Read README.md, then replace before with after.", provider: "openai", model: "gpt-5.5", writable_paths: ["README.md"], runner_workspace_policy: { writable_paths: ["README.md"] } },
         artifact_declarations: [],
         required_artifacts: [],
       },
@@ -123,7 +137,7 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
   const runtimeTaskArg = providerRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("runtime-task-json="))
   assert.ok(runtimeTaskArg, "native runtime package task must be part of the Playground closure")
   const runtimeTask = JSON.parse(runtimeTaskArg.slice("runtime-task-json=".length))
-  assert.deepEqual(runtimeTask.input.input, { prompt: "Return the mocked response.", provider: "openai", model: "gpt-5.5" })
+  assert.deepEqual(runtimeTask.input.input, { prompt: "Read README.md, then replace before with after.", provider: "openai", model: "gpt-5.5", writable_paths: ["README.md"], runner_workspace_policy: { writable_paths: ["README.md"] } })
   assert.throws(() => validateRuntimeSourceModel({ provider: "undeclared", name: "gpt-5.5" }, materialized.descriptors.map((descriptor: Record<string, unknown>) => ({ ...descriptor, metadata: { providers: descriptor.providers } }))), /not declared/, "an undeclared provider must be rejected before a chat turn is constructed")
 
   const readCapturedRequests = { command: "wordpress.run-php", args: ["code=echo is_readable( WP_CONTENT_DIR . '/openai-runtime-package-requests.json' ) ? file_get_contents( WP_CONTENT_DIR . '/openai-runtime-package-requests.json' ) : '[]';"] }
@@ -145,20 +159,40 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
     }
   }
 
-  const runtimePackageOutput = await runRuntimePackage()
+   const runtimePackageOutput = await runRuntimePackage()
   const runtimeExecution = runtimePackageOutput.executions?.find((execution: { stdout?: string }) => execution.stdout?.includes("agent_runtime"))
-  const runtime = JSON.parse(JSON.parse(runtimeExecution?.stdout ?? "{}").output ?? "{}")
-  assert.equal(runtime.agent_runtime?.success, true, JSON.stringify(runtimePackageOutput.executions?.map((execution: { command?: string, stdout?: string }) => ({ command: execution.command, stdout: execution.stdout }))))
-  assert.equal(runtime.agent_runtime.result.package.slug, "flat-runtime-agent", "the generated runtime must execute the imported agent identity")
-  const requests = JSON.parse(runtimePackageOutput.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? "[]")
-  const providerTurn = requests.find((request: { url: string }) => request.url.endsWith("/responses"))
-  assert.ok(providerTurn, "the OpenAI provider transport must execute through the local interception fixture")
+   const runtime = JSON.parse(JSON.parse(runtimeExecution?.stdout ?? "{}").output ?? "{}")
+   assert.equal(runtime.agent_runtime?.success, true, JSON.stringify(runtimePackageOutput.executions?.map((execution: { command?: string, stdout?: string }) => ({ command: execution.command, stdout: execution.stdout }))))
+   assert.equal(runtime.agent_runtime.result.package.slug, "flat-runtime-agent", "the generated runtime must execute the imported agent identity")
+   const requests = JSON.parse(runtimePackageOutput.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? "[]")
+   const providerTurns = requests.filter((request: { url: string }) => request.url.endsWith("/responses"))
+   assert.equal(providerTurns.length, 3, "the intercepted provider must receive read, edit, and terminal turns")
+   const providerTurn = providerTurns[0]
+   assert.ok(providerTurn, "the OpenAI provider transport must execute through the local interception fixture")
   assert.equal(JSON.parse(providerTurn.body).model, "gpt-5.5", "the selected OpenAI model must reach the provider transport")
   assert.match(providerTurn.body, new RegExp(packageInstruction), "the selected imported agent instruction must reach the provider transport")
-  assert.match(providerTurn.body, new RegExp(packageTool), "the selected imported agent tool schema must reach the provider transport")
-  assert.doesNotMatch(providerTurn.body, new RegExp(genericSandboxInstruction), "the generic sandbox instruction must not reach an imported-agent model request")
-  assert.doesNotMatch(providerTurn.body, new RegExp(genericSandboxTool), "the generic sandbox tool must not reach an imported-agent model request")
-  assert.match(providerTurn.url, /^https:\/\/api\.openai\.com\/v1\/responses$/, "the selected OpenAI provider must reach its provider transport")
+  for (const packageTool of packageTools) assert.match(providerTurn.body, new RegExp(packageTool), "the selected imported agent tool schema must reach the provider transport")
+   assert.doesNotMatch(providerTurn.body, new RegExp(genericSandboxInstruction), "the generic sandbox instruction must not reach an imported-agent model request")
+   assert.doesNotMatch(providerTurn.body, new RegExp(genericSandboxTool), "the generic sandbox tool must not reach an imported-agent model request")
+   assert.match(providerTurn.url, /^https:\/\/api\.openai\.com\/v1\/responses$/, "the selected OpenAI provider must reach its provider transport")
+   const readTurn = JSON.parse(providerTurns[1].body)
+   const editTurn = JSON.parse(providerTurns[2].body)
+   const readOutput = readTurn.input.find((item: { type?: string, call_id?: string }) => item.type === "function_call_output" && item.call_id === "call-read")
+   const editOutput = editTurn.input.find((item: { type?: string, call_id?: string }) => item.type === "function_call_output" && item.call_id === "call-edit")
+   const readResult = JSON.parse(readOutput.output)
+   assert.equal(readResult.success, true, "the second provider request must contain a successful sandbox read result")
+   assert.equal(readResult.tool_name, "workspace_read")
+   assert.deepEqual(readResult.result, { success: true, path: "README.md", content: "before\n", size: 7, lines_read: 2, offset: 1 })
+   assert.deepEqual(readResult.runtime, { executor_target: "wp-codebox/sandbox-workspace", capability: "workspace.files.read", side_effects: [], side_effect_boundary: "wp-codebox-sandbox" })
+   assert.equal(JSON.parse(editOutput.output).success, true, "the third provider request must receive the sandbox edit result")
+   assert.equal(JSON.parse(editOutput.output).result.replacements, 1, `the sandbox executor must edit the seeded README: ${editOutput.output}`)
+   assert.equal(JSON.parse(editOutput.output).runtime.executor_target, "wp-codebox/sandbox-workspace")
+   assert.doesNotMatch(providerTurn.body, /workspace_worktree_add|workspace_worktree_remove|workspace_primary_/i, "parent workspace mutation tools must not be exposed to the provider")
+   assert.equal(runtimePackageOutput.agentResult?.changedFiles?.count, 1, "the runtime must capture the changed sandbox file")
+   assert.ok(runtimePackageOutput.agentResult?.patch?.bytes > 0, "the runtime must capture a canonical patch")
+   const artifactDirectory = runtimePackageOutput.agentResult?.artifacts?.directory
+   assert.equal(JSON.parse(await readFile(join(artifactDirectory, "files", "changed-files.json"), "utf8")).files[0].relativePath, "README.md")
+   assert.match(await readFile(join(artifactDirectory, "files", "patch.diff"), "utf8"), /-before\n\+after/)
 
   for (const [label, mutateTask] of [
     ["package", (task: Record<string, any>) => { task.input.package.slug = "spoofed-agent" }],

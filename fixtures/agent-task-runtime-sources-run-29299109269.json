@@ -1,7 +1,7 @@
 {
   "run_id": "29299109269",
   "runtime_sources": [
-    { "version": 1, "role": "component", "repository": "automattic/agents-api", "revision": "59d1e6b473f22498e40e279130bbb4f9bcde3b73", "path": ".", "metadata": { "slug": "agents-api", "loadAs": "mu-plugin", "activate": false } },
+    { "version": 1, "role": "component", "repository": "automattic/agents-api", "revision": "fbd5641d412af76a1b8288426a577e750838b4be", "path": ".", "metadata": { "slug": "agents-api", "loadAs": "mu-plugin", "activate": false } },
     { "version": 1, "role": "provider_plugin", "source": { "type": "https_zip", "url": "https://downloads.wordpress.org/plugin/ai-provider-for-openai.1.0.3.zip", "sha256": "48f3c0c714b3164cda79d320829830d5a0ea1116e0b19653da8af898a22d3bb6", "archive_root": "ai-provider-for-openai" }, "metadata": { "slug": "ai-provider-for-openai", "pluginFile": "plugin.php", "activate": true, "providers": ["openai"] } },
     { "version": 1, "role": "bundled_library", "repository": "wordpress/php-ai-client", "revision": "631704201d15ffeff7091ad3bc7156db74054956", "path": ".", "metadata": { "library": "php-ai-client", "strategy": "wordpress-scoped-bundle" } }
   ]

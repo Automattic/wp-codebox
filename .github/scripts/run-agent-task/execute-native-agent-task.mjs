@@ -426,7 +426,10 @@ if (execution.code === 0 && runtimeRecord.success === true && verificationPassed
   await runnerWorkspaceCore.verifyRunnerWorkspaceIntegrity(workspaceApply.integrity)
   const testPublisher = string(process.env.WP_CODEBOX_TEST_PUBLISHER_MODULE)
   const publisher = testPublisher ? (await import(pathToFileURL(resolve(testPublisher)).href)).publishRunnerWorkspace : publishRunnerWorkspace
-  publication = await publisher({ request, changedFiles: workspaceApply.changedFiles, publicationFiles: workspaceApply.publicationFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN })
+   const testHook = testPublisher && process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK
+     ? JSON.parse(process.env.WP_CODEBOX_TEST_PUBLISHER_HOOK)
+     : undefined
+   publication = await publisher({ request, changedFiles: workspaceApply.changedFiles, publicationFiles: workspaceApply.publicationFiles, token: process.env.ACCESS_TOKEN || process.env.GITHUB_TOKEN, ...(testHook ? { testHook } : {}) })
   runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
   runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
 }

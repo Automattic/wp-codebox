@@ -233,9 +233,6 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			return false;
 		}
 
-		add_filter( 'agents_api_tool_sources', array( self::class, 'register_tool_source' ), 20, 3 );
-		add_filter( 'agents_api_executor_targets', array( self::class, 'register_executor_target' ), 20, 2 );
-		add_filter( 'agents_api_execution_targets', array( self::class, 'register_executor_target' ), 20, 2 );
 		add_filter( 'agents_api_tool_executors', array( self::class, 'register_tool_executor' ), 20, 2 );
 
 		self::$registered = true;
@@ -251,50 +248,6 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	}
 
 	/**
-	 * Register this adapter as an Agents API tool source.
-	 *
-	 * @param array<string,callable> $sources Existing sources.
-	 * @param array<string,mixed>    $context Runtime context.
-	 * @param mixed                  $registry Source registry.
-	 * @return array<string,callable>
-	 */
-	public static function register_tool_source( array $sources, array $context = array(), $registry = null ): array {
-		unset( $context, $registry );
-
-		$existing                     = $sources[ self::SOURCE_SLUG ] ?? null;
-		$sources[ self::SOURCE_SLUG ] = static function ( array $source_context = array(), $source_registry = null ) use ( $existing ): array {
-			$tools = is_callable( $existing ) ? call_user_func( $existing, $source_context, $source_registry ) : array();
-			if ( ! is_array( $tools ) ) {
-				$tools = array();
-			}
-
-			foreach ( self::tool_declarations() as $tool_name => $tool_declaration ) {
-				if ( ! isset( $tools[ $tool_name ] ) ) {
-					$tools[ $tool_name ] = $tool_declaration;
-				}
-			}
-
-			return $tools;
-		};
-
-		return $sources;
-	}
-
-	/**
-	 * Register this adapter as an Agents API executor target.
-	 *
-	 * @param array<string,mixed> $targets Existing targets.
-	 * @param array<string,mixed> $context Runtime context.
-	 * @return array<string,mixed>
-	 */
-	public static function register_executor_target( array $targets, array $context = array() ): array {
-		unset( $context );
-
-		$targets[ self::TARGET_ID ] = self::target_metadata();
-		return $targets;
-	}
-
-	/**
 	 * Register the tool-call executor adapter for registry-based dispatch.
 	 *
 	 * @param array<string,mixed> $executors Existing executors.
@@ -302,35 +255,34 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	 * @return array<string,mixed>
 	 */
 	public static function register_tool_executor( array $executors, array $context = array() ): array {
-		unset( $context );
-
-		$executors[ self::TARGET_ID ] = new class( new self() ) implements \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
-			public function __construct( private WP_Codebox_Sandbox_Workspace_Executor $adapter ) {}
-
-			/**
-			 * @param array<string,mixed> $tool_call Tool call.
-			 * @param array<string,mixed> $tool_definition Tool declaration.
-			 * @param array<string,mixed> $context Runtime context.
-			 * @return array<string,mixed>
-			 */
-			public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
-				return $this->adapter->executeWP_Agent_Tool_Call( $tool_call, $tool_definition, $context );
-			}
-		};
+		$executors[ self::TARGET_ID ] = self::executor_for_context( $context );
 
 		return $executors;
 	}
 
+	/** @param array<string,mixed> $trusted_context */
+	public static function executor_for_context( array $trusted_context ): \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
+		return new class( new self(), $trusted_context ) implements \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
+			/** @param array<string,mixed> $trusted_context */
+			public function __construct( private WP_Codebox_Sandbox_Workspace_Executor $adapter, private array $trusted_context ) {}
+
+			/** @param array<string,mixed> $tool_call @param array<string,mixed> $tool_definition @param array<string,mixed> $context @return array<string,mixed> */
+			public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
+				return $this->adapter->executeWP_Agent_Tool_Call( $tool_call, $tool_definition, array_replace( $context, $this->trusted_context ) );
+			}
+		};
+	}
+
 	/**
-	 * Agents API runtime tool declarations for the git-less sandbox surface.
+	 * Canonical Agents API runtime tool declarations for the git-less sandbox surface.
 	 *
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function tool_declarations(): array {
 		$tools = array();
-		foreach ( self::TOOL_MAP as $tool_name => $config ) {
-			$tools[ $tool_name ] = array(
-				'name'        => $tool_name,
+		foreach ( self::TOOL_MAP as $config ) {
+			$declaration = array(
+				'name'        => $config['base'],
 				'source'      => self::SOURCE_SLUG,
 				'description' => $config['description'],
 				'parameters'  => $config['parameters'],
@@ -343,6 +295,29 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 					'side_effect_boundary' => 'wp-codebox-sandbox',
 				),
 			);
+			$tools[ $config['base'] ] = $declaration;
+		}
+
+		return $tools;
+	}
+
+	/**
+	 * Return declarations only for canonical workspace tools enabled by the selected agent.
+	 *
+	 * @param array<string,mixed> $agent_config
+	 * @param array<string,mixed> $context Trusted invocation-local context.
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function tool_declarations_for_enabled_tools( array $agent_config, array $context = array() ): array {
+		unset( $context );
+		$enabled = is_array( $agent_config['enabled_tools'] ?? null ) ? $agent_config['enabled_tools'] : array();
+		$all     = self::tool_declarations();
+		$tools   = array();
+		foreach ( $enabled as $name ) {
+			$name = is_string( $name ) ? trim( $name ) : '';
+			if ( '' !== $name && isset( $all[ $name ] ) ) {
+				$tools[ $name ] = $all[ $name ];
+			}
 		}
 
 		return $tools;
@@ -1130,51 +1105,17 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	/**
 	 * Resolve the bounded sandbox working root.
 	 *
-	 * Priority: explicit run context, tool parameter, filter, constant, cwd.
+	 * The host supplies this through the invocation-local executor context.
 	 *
 	 * @param array<string,mixed> $context Runtime context.
 	 * @param array<string,mixed> $parameters Tool parameters.
 	 * @return string Realpath of the working root, or '' when unavailable.
 	 */
 	private static function resolve_workspace_root( array $context, array $parameters ): string {
-		$candidates = array();
-
-		foreach ( array( 'workspace_root', 'sandbox_workspace_root' ) as $key ) {
-			if ( isset( $context[ $key ] ) && is_string( $context[ $key ] ) && '' !== trim( $context[ $key ] ) ) {
-				$candidates[] = trim( $context[ $key ] );
-			}
-		}
-		if ( isset( $context['workspace'] ) && is_array( $context['workspace'] ) && isset( $context['workspace']['root'] ) && is_string( $context['workspace']['root'] ) ) {
-			$candidates[] = trim( $context['workspace']['root'] );
-		}
-		if ( isset( $parameters['workspace_root'] ) && is_string( $parameters['workspace_root'] ) && '' !== trim( $parameters['workspace_root'] ) ) {
-			$candidates[] = trim( $parameters['workspace_root'] );
-		}
-
-		if ( function_exists( 'apply_filters' ) ) {
-			$filtered = apply_filters( 'wp_codebox_sandbox_workspace_root', '', $context, $parameters );
-			if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
-				$candidates[] = trim( $filtered );
-			}
-		}
-
-		if ( defined( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' ) && is_string( constant( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' ) ) ) {
-			$candidates[] = (string) constant( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' );
-		}
-
-		$cwd = getcwd();
-		if ( is_string( $cwd ) && '' !== $cwd ) {
-			$candidates[] = $cwd;
-		}
-
-		foreach ( $candidates as $candidate ) {
-			$real = realpath( $candidate );
-			if ( false !== $real && is_dir( $real ) ) {
-				return $real;
-			}
-		}
-
-		return '';
+		unset( $parameters );
+		$candidate = $context['workspace_root'] ?? '';
+		$real      = is_string( $candidate ) && '' !== trim( $candidate ) ? realpath( $candidate ) : false;
+		return false !== $real && is_dir( $real ) ? $real : '';
 	}
 
 	/** @return array<int,string> */
@@ -1182,7 +1123,8 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		$policy = is_array( $context['workflow_policy'] ?? null ) ? $context['workflow_policy'] : ( is_array( $context['runner_workspace_policy'] ?? null ) ? $context['runner_workspace_policy'] : array() );
 		$paths  = $policy['writable_paths'] ?? $context['writable_paths'] ?? array();
 		if ( is_string( $paths ) ) { $paths = preg_split( '/\s*,\s*/', trim( $paths ) ) ?: array(); }
-		return array_values( array_filter( array_map( static fn( $path ): string => is_scalar( $path ) ? trim( (string) $path ) : '', is_array( $paths ) ? $paths : array() ) ) );
+		$paths = array_values( array_filter( array_map( static fn( $path ): string => is_scalar( $path ) ? trim( (string) $path ) : '', is_array( $paths ) ? $paths : array() ) ) );
+		return is_array( $paths ) ? array_values( array_filter( array_map( static fn( $path ): string => is_scalar( $path ) ? trim( (string) $path ) : '', $paths ) ) ) : array();
 	}
 
 	private static function baseline_root( array $context ): string {

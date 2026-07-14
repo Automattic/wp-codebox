@@ -969,44 +969,6 @@ if ( preg_match( "/^(?:client\\/)?workspace_(?:show|ls|read|grep|write|edit|appl
 return \'\';
 }
 
-function wp_codebox_browser_runtime_tool_declarations( array $tool_names ): array {
-global $wp_codebox_browser_artifact_environment;
-
-$declarations = array();
-foreach ( WP_Codebox_Sandbox_Workspace_Executor::tool_declarations() as $name => $declaration ) {
-	$base = substr( $name, strlen( "client/" ) );
-	if ( in_array( $base, $tool_names, true ) ) {
-		$declarations[ $base ] = $declaration;
-	}
-}
-
-$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
-$root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
-$base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
-$declarations[\'filesystem_write\'] = array(
-	\'name\'        => \'filesystem_write\',
-	\'source\'      => \'client\',
-	\'description\' => sprintf( \'Write one generated artifact file inside %s/%s. Call this once per file required by the caller artifact contract.\', $base_path, $root ),
-	\'executor\'    => \'client\',
-	\'scope\'       => \'run\',
-	\'parameters\'  => array(
-		\'type\'       => \'object\',
-		\'required\'   => array( \'path\', \'content\' ),
-		\'properties\' => array(
-			\'path\'     => array( \'type\' => \'string\', \'description\' => sprintf( \'Relative artifact path under %s, for example %sindex.html.\', $root, $root ) ),
-			\'content\'  => array( \'type\' => \'string\', \'description\' => \'Full file contents. Use UTF-8 text unless encoding is base64.\' ),
-			\'encoding\' => array( \'type\' => \'string\', \'enum\' => array( \'utf-8\', \'base64\' ) ),
-		),
-	),
-	\'runtime\'     => array(
-		\'environment\'      => \'runtime_local\',
-		\'capability_scope\' => \'runtime_local\',
-	),
-);
-
-return $declarations;
-}
-
 function wp_codebox_browser_runtime_ability_tool_declarations( array $payload ): array {
 $task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
 $declared = is_array( $task_input[\'ability_tools\'] ?? null ) ? $task_input[\'ability_tools\'] : array();
@@ -1129,17 +1091,6 @@ return array(
 }
 
 function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
-
-$workspace_tool = (string) ( $request[\'tool_name\'] ?? \'\' );
-if ( preg_match( "/^(?:client\\/)?workspace_(?:show|ls|read|grep|write|edit|apply_patch|git_status|git_diff)$/", $workspace_tool ) ) {
-	$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
-	$context = array(
-		\'workspace_root\' => \'/workspace\',
-		\'writable_paths\' => is_array( $task_input[\'writable_paths\'] ?? null ) ? $task_input[\'writable_paths\'] : array(),
-	);
-	return ( new WP_Codebox_Sandbox_Workspace_Executor() )->executeWP_Agent_Tool_Call( $request, is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] : array(), $context );
-}
-
 if ( ! in_array( (string) ( $request[\'tool_name\'] ?? \'\' ), array( \'filesystem_write\', \'client/filesystem-write\' ), true ) ) {
 	return null;
 }

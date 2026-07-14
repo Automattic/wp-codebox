@@ -114,7 +114,10 @@ function exactlyOne(refs: RunnerWorkspaceArtifactRef[], kind: string): RunnerWor
 
 async function artifactPath(root: string, value: string): Promise<string> {
   if (!value) throw new Error("Artifact reference path is required.")
-  const candidate = await realpath(isAbsolute(value) ? resolve(value) : resolve(root, value))
+  const requested = isAbsolute(value) ? resolve(value) : resolve(root, value)
+  const requestedStat = await lstat(requested)
+  if (!requestedStat.isFile() || requestedStat.isSymbolicLink()) throw new Error("Artifact must be a bounded regular file.")
+  const candidate = await realpath(requested)
   if (!pathIsWithinRoot(candidate, root)) throw new Error("Artifact reference escapes the trusted artifact root.")
   return candidate
 }

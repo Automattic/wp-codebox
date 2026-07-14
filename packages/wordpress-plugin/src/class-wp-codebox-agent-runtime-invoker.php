@@ -194,7 +194,7 @@ $ability = wp_get_ability( $ability_name );
 return $ability->execute( $input );
 }
 
-function wp_codebox_browser_runtime_prepare_input( array $payload, array $invocation, string $session_id, array $runtime_tool_declarations, array $ability_tools, array $allowed_tool_ids, array $sandbox_tool_ids ): array {
+function wp_codebox_browser_runtime_prepare_input( array $payload, array $invocation, string $session_id, array $ability_tools, array $allowed_tool_ids, array $sandbox_tool_ids ): array {
 $agent = sanitize_key( (string) ( $payload['agent'] ?? '' ) );
 if ( '' === $agent ) {
 	$agent = 'wp-codebox-sandbox';
@@ -230,8 +230,6 @@ $base_input = array(
 		'client_name' => 'wp-codebox-browser-runner',
 		'caller_session_id' => $session_id,
 		'task_input' => $payload['task_input'] ?? array(),
-		'runtime_tools' => $runtime_tool_declarations,
-		'runtime_tool_callback' => 'wp_codebox_browser_runtime_tool_callback',
 		'ability_tools' => $ability_tools,
 	),
 );
@@ -249,7 +247,7 @@ if ( ! empty( $allowed_tool_ids ) ) {
 }
 
 $input = array_replace_recursive( $base_input, is_array( $invocation['input'] ?? null ) ? $invocation['input'] : array() );
-return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_runtime_invocation_input', $input, $payload, $invocation, $session_id, $runtime_tool_declarations, $ability_tools, $allowed_tool_ids, $sandbox_tool_ids ) : $input;
+return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_runtime_invocation_input', $input, $payload, $invocation, $session_id, $ability_tools, $allowed_tool_ids, $sandbox_tool_ids ) : $input;
 }
 
 function wp_codebox_browser_runtime_import_agent_bundles( array $bundle_specs ): array {

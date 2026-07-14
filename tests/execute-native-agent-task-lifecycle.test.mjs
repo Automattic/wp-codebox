@@ -99,11 +99,11 @@ await writeFile(output, JSON.stringify(result))
 `)
 
   const publisher = join(temp, "publisher.mjs")
+  const publisherOrderPath = join(workspace, ".codebox", "order")
   await writeFile(publisher, `
 import { appendFile } from "node:fs/promises"
-import { join } from "node:path"
-export async function publishRunnerWorkspace({ workspace }) {
-  await appendFile(join(workspace, ".codebox", "order"), "publish\\n")
+export async function publishRunnerWorkspace({ testHook }) {
+  await appendFile(testHook.orderPath, "publish\\n")
   return {
     schema: "wp-codebox/runner-workspace-publication-result/v1",
     success: true,
@@ -133,8 +133,9 @@ process.stdout.write(JSON.stringify({
         AGENT_TASK_WORKSPACE: workspace,
         WP_CODEBOX_WORKFLOW_ROOT: root,
         WP_CODEBOX_CLI_PATH: fakeCli,
-        WP_CODEBOX_TEST_SKIP_MATERIALIZATION: "true",
-        WP_CODEBOX_TEST_PUBLISHER_MODULE: publisher,
+         WP_CODEBOX_TEST_SKIP_MATERIALIZATION: "true",
+         WP_CODEBOX_TEST_PUBLISHER_MODULE: publisher,
+         WP_CODEBOX_TEST_PUBLISHER_HOOK: JSON.stringify({ orderPath: publisherOrderPath }),
         GITHUB_TOKEN: "token",
         EXPLICIT_ACCESS_TOKEN_CONFIGURED: "true",
         EXTERNAL_PACKAGE_SOURCE_POLICY: JSON.stringify({

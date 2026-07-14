@@ -323,10 +323,9 @@ if ( empty( $sandbox_tool_ids ) && is_array( $payload[\'task_input\'][\'allowed_
 }
 }
 $sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
-$runtime_tool_declarations = wp_codebox_browser_runtime_tool_declarations( $sandbox_tool_ids );
 $ability_tool_ids = array_values( array_map( \'strval\', array_keys( $wp_codebox_browser_runtime_ability_tools ) ) );
 $allowed_tool_ids = array_values( array_unique( array_merge( $sandbox_tool_ids, $ability_tool_ids ) ) );
-$input = wp_codebox_browser_runtime_prepare_input( $payload, $invocation, $session_id, $runtime_tool_declarations, $wp_codebox_browser_runtime_ability_tools, $allowed_tool_ids, $sandbox_tool_ids );
+$input = wp_codebox_browser_runtime_prepare_input( $payload, $invocation, $session_id, $wp_codebox_browser_runtime_ability_tools, $allowed_tool_ids, $sandbox_tool_ids );
 $event_sink_attached = false;
 
 $event_sink = wp_codebox_browser_runtime_event_sink( $event_path, $input, $payload );

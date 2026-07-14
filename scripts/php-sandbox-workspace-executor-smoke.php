@@ -205,10 +205,6 @@ namespace {
 	$registered = WP_Codebox_Sandbox_Workspace_Executor::register();
 	assert_true( true === $registered, 'register returns true when substrate present' );
 
-	$targets = apply_filters( 'agents_api_executor_targets', array() );
-	assert_true( isset( $targets['wp-codebox/sandbox-workspace'] ), 'executor target registered under target_id' );
-	assert_true( 'sandbox-workspace' === $targets['wp-codebox/sandbox-workspace']['kind'], 'target metadata kind' );
-
 	$executors = apply_filters( 'agents_api_tool_executors', array() );
 	assert_true( isset( $executors['wp-codebox/sandbox-workspace'] ), 'executor adapter registered under target_id' );
 	assert_true( $executors['wp-codebox/sandbox-workspace'] instanceof AgentsAPI\AI\Tools\WP_Agent_Tool_Executor, 'executor satisfies the contract interface' );
@@ -221,13 +217,14 @@ namespace {
 	assert_true( true === $dispatched['success'], 'registered executor dispatches client/-prefixed tool name' );
 	assert_true( str_contains( $dispatched['result']['content'], 'Needle' ), 'registered executor returns file content' );
 
-	$sources = apply_filters( 'agents_api_tool_sources', array() );
-	assert_true( isset( $sources['client'] ), 'client tool source registered' );
-	$tools = $sources['client']();
-	foreach ( array( 'client/workspace_read', 'client/workspace_ls', 'client/workspace_grep', 'client/workspace_write', 'client/workspace_edit', 'client/workspace_apply_patch', 'client/workspace_show', 'client/workspace_git_status', 'client/workspace_git_diff' ) as $tool_name ) {
-		assert_true( isset( $tools[ $tool_name ] ), "tool source declares {$tool_name}" );
-		assert_true( 'wp-codebox/sandbox-workspace' === $tools[ $tool_name ]['runtime']['executor_target'], "{$tool_name} routes to sandbox executor target" );
-		assert_true( 'client' === $tools[ $tool_name ]['executor'], "{$tool_name} is a client-executed tool" );
+	$tools = WP_Codebox_Sandbox_Workspace_Executor::tool_declarations_for_enabled_tools(
+		array( 'enabled_tools' => array( 'workspace_read', 'workspace_edit', 'workspace_worktree_add' ) )
+	);
+	assert_true( array( 'workspace_read', 'workspace_edit' ) === array_keys( $tools ), 'only enabled canonical workspace tools are declared' );
+	foreach ( $tools as $tool_name => $tool ) {
+		assert_true( $tool_name === $tool['name'], "{$tool_name} has a canonical name" );
+		assert_true( 'wp-codebox/sandbox-workspace' === $tool['runtime']['executor_target'], "{$tool_name} routes to sandbox executor target" );
+		assert_true( isset( $tool['parameters']['properties'] ), "{$tool_name} includes a parameter schema" );
 	}
 
 	// Cleanup.

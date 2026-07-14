@@ -124,12 +124,39 @@ final class WP_Codebox_Runtime_Package_Executor {
 			$input['message'] = $this->string_value( $input['prompt'] ?? '' );
 		}
 		$input['runtime_package_task'] = $task;
+		$input['run_id']               = $this->runtime_run_id( $input );
+		$workspace_context              = $this->sandbox_workspace_context( $input );
 		$ability_object = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability ) : null;
 		if ( ! is_object( $ability_object ) || ! method_exists( $ability_object, 'execute' ) ) {
 			return new WP_Error( 'wp_codebox_runtime_package_workflow_unavailable', 'Runtime package workflow ability is unavailable.', array( 'status' => 500, 'ability' => $ability ) );
 		}
 
-		$result = $ability_object->execute( $input );
+		$runtime_tool_declarations = static function ( array $declarations, $agent, array $runtime_context ) use ( $input, $workspace_context ): array {
+			if ( ! $agent instanceof \WP_Agent || ! hash_equals( (string) $input['agent'], (string) $runtime_context['agent_slug'] ) || ! hash_equals( (string) $input['run_id'], (string) $runtime_context['run_id'] ) ) {
+				return $declarations;
+			}
+			return array_merge( $declarations, WP_Codebox_Sandbox_Workspace_Executor::tool_declarations_for_enabled_tools( $agent->get_default_config(), $workspace_context ) );
+		};
+		$tool_executors = static function ( array $executors, array $runtime_context ) use ( $input, $workspace_context ): array {
+			if ( ! hash_equals( (string) $input['agent'], (string) ( $runtime_context['agent_slug'] ?? '' ) ) || ! hash_equals( (string) $input['run_id'], (string) ( $runtime_context['run_id'] ?? '' ) ) ) {
+				return $executors;
+			}
+			$executors[ WP_Codebox_Sandbox_Workspace_Executor::TARGET_ID ] = WP_Codebox_Sandbox_Workspace_Executor::executor_for_context( $workspace_context );
+			return $executors;
+		};
+		$filters_available = function_exists( 'add_filter' ) && function_exists( 'remove_filter' );
+		if ( $filters_available ) {
+			add_filter( 'agents_api_runtime_tool_declarations', $runtime_tool_declarations, 20, 3 );
+			add_filter( 'agents_api_tool_executors', $tool_executors, 20, 2 );
+		}
+		try {
+			$result = $ability_object->execute( $input );
+		} finally {
+			if ( $filters_available ) {
+				remove_filter( 'agents_api_runtime_tool_declarations', $runtime_tool_declarations, 20 );
+				remove_filter( 'agents_api_tool_executors', $tool_executors, 20 );
+			}
+		}
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -146,6 +173,19 @@ final class WP_Codebox_Runtime_Package_Executor {
 		);
 
 		return $result;
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	private function sandbox_workspace_context( array $input ): array {
+		$policy = is_array( $input['runner_workspace_policy'] ?? null ) ? $input['runner_workspace_policy'] : array();
+		$paths  = is_array( $policy['writable_paths'] ?? null ) ? $policy['writable_paths'] : array();
+		return array( 'workspace_root' => '/workspace', 'writable_paths' => $paths );
+	}
+
+	/** @param array<string,mixed> $input */
+	private function runtime_run_id( array $input ): string {
+		$run_id = $this->string_value( $input['run_id'] ?? '' );
+		return '' !== $run_id ? $run_id : 'wp-codebox-runtime-' . ( function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : uniqid( '', true ) );
 	}
 
 	/** @param array<string,mixed> $task Runtime package task. @param array<int,array<string,mixed>> $imports Import results. @return string|WP_Error */

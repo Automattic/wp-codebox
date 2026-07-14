@@ -182,7 +182,7 @@ $package_with_workspace_source = $adapter->run_runtime_package(
 assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['package'] );
 assert( true === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['wait_for_completion'] );
 assert( 'coffee' === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['topic'] );
-assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['options'] );
+assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true, 'required_artifacts' => array() ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['options'] );
 
 $package_with_options_only_controls = $adapter->run_runtime_package(
 	array(
@@ -194,7 +194,7 @@ $package_with_options_only_controls = $adapter->run_runtime_package(
 assert( 'tea' === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['topic'] );
 assert( true === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['wait_for_completion'] );
 assert( 1200000 === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['input']['time_budget_ms'] );
-assert( array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000 ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['options'] );
+assert( array( 'wait_for_completion' => true, 'time_budget_ms' => 1200000, 'required_artifacts' => array() ) === $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ]->last_input['options'] );
 
 $default_chat_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
 	array( 'client_context' => array() ),

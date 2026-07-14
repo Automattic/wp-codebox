@@ -105,13 +105,12 @@ package file is mounted into or visible from the agent workspace.
 ## Runtime Coverage
 
 The repository's native-loop and PHP runtime-package tests execute generated
-PHP with narrow WordPress and native agent-registry
-shims. They prove digest-then-schema validation, canonical import, exact slug
-resolution, `agents/chat` selection, invocation order, and temporary-file
-cleanup. They are not a WordPress Playground end-to-end test: this repository
-does not provide a fixture that boots both the agent-registry plugin and a real
-provider-backed chat turn in Playground. The existing Playground CLI tests use
-injected CLI modules and do not exercise that plugin/provider path.
+PHP with narrow WordPress and native agent-registry shims. The non-skippable
+Playground integration additionally boots the agent registry and OpenAI
+provider path with a local HTTP interceptor. Its deterministic three-turn
+fixture reads and edits a seeded sandbox workspace, verifies provider tool
+outputs, and captures the canonical changed-files manifest and patch without
+network access or provider billing.
 
 To run the optional cross-repository package coverage, use a Docs Agent checkout
 pinned to commit `3da1b8076359db9bf9f4ee7dadcc3932c080ed71`, which contains
