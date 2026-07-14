@@ -39,18 +39,20 @@ with `wp_codebox_release_ref: v0.12.3`. The accepted format is exactly
 `vX.Y.Z`; branches, commit SHAs, moving major tags, prereleases, and arbitrary
 refs are rejected.
 
-The workflow validates that its own `uses:` reference and
-`wp_codebox_release_ref` match exactly before checkout. It always checks helpers
-out from `Automattic/wp-codebox`, verifies the checked-out commit equals the
-remote release tag commit, and verifies the checked-out `package.json` version
-equals the requested tag without its `v` prefix. The caller cannot select a
-different helper repository.
+The workflow requires `wp_codebox_release_ref` to be an exact release tag. It
+always checks helpers out from `Automattic/wp-codebox`, verifies the checked-out
+commit equals the remote release tag commit, and verifies the checked-out
+`package.json` version equals the requested tag without its `v` prefix. The
+caller cannot select a different helper repository. GitHub nested workflows
+expose the caller's `github.workflow_ref`, and the running workflow cannot
+introspect its own `uses:` ref, so helper selection relies on the required input
+and verified checkout rather than that caller context.
 
 This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-codebox/issues/1759).
 
 ## Inputs
 
-- `wp_codebox_release_ref`: required exact immutable WP Codebox release tag. It must match the `@vX.Y.Z` tag in the caller's `uses:` declaration exactly.
+- `wp_codebox_release_ref`: required exact immutable WP Codebox release tag in `vX.Y.Z` form.
 - `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. Packages are supported only from publicly accessible GitHub repositories, fetched from canonical `https://github.com/OWNER/REPOSITORY.git` without credentials. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
 - `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
@@ -173,7 +175,9 @@ remain caller-workflow responsibilities. This is an intentional exposed-workflow
 
 `wp_codebox_release_ref` is a required v1 input. Existing callers must switch
 their `uses:` reference from a branch or other ref to an exact release tag and
-pass that identical tag through this input.
+pass that exact release tag through this input. Consumer contract tests can
+compare both values where the caller workflow is available; the reusable
+workflow itself cannot inspect the caller's `uses:` declaration at runtime.
 
 ## Upload safety limits
 

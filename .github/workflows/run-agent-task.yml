@@ -163,17 +163,10 @@ jobs:
       credential_mode: ${{ steps.execute.outputs.credential_mode }}
       declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
-      - name: Validate coherent WP Codebox release tag
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
+      - name: Validate WP Codebox release tag
         run: |
           if ! [[ "${WP_CODEBOX_RELEASE_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "wp_codebox_release_ref must be an immutable vX.Y.Z release tag" >&2
-            exit 1
-          fi
-          expected_workflow_ref="Automattic/wp-codebox/.github/workflows/run-agent-task.yml@${WP_CODEBOX_RELEASE_REF}"
-          if [[ "${WORKFLOW_REF}" != "${expected_workflow_ref}" ]]; then
-            echo "The reusable workflow tag and wp_codebox_release_ref must match exactly" >&2
             exit 1
           fi
 
