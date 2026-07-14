@@ -229,8 +229,9 @@ export interface BrowserEditorValidateBlocksSummary {
 export interface BrowserEditorReadinessSummary {
   schema: "wp-codebox/editor-readiness/v1"
   status: "ready"
-  storesAvailable: true
+  storesAvailable: boolean
   canSave: boolean
+  blockTypesRegistered?: number
   postId?: number
   postType?: string
 }

@@ -582,7 +582,7 @@ export async function runEditorOpenCommand({
         editorReadiness = readiness.editorReadiness
         editorCanvasReadiness = readiness.editorCanvasReadiness
         finalUrl = page.url()
-        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector ?? "wp.data core/editor + core/block-editor + core/editor.savePost" }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector ?? "wp.data core/block-editor.getBlocks" }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {
           editorReadiness,
           ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         } as never))
@@ -732,7 +732,7 @@ export function editorOpenArtifactFilesForCapture(capture: ReadonlySet<string>, 
 }
 
 export async function waitForEditorOpenReadiness(page: import("playwright").Page, waitSelector: string | undefined, timeoutMs: number): Promise<{ editorReadiness: BrowserEditorReadinessSummary; editorCanvasReadiness?: BrowserEditorCanvasProbeSummary }> {
-  const editorReadiness = await waitForEditorReadiness(page, timeoutMs)
+  const editorReadiness = await waitForEditorSemanticReadiness(page, timeoutMs)
   if (!waitSelector) {
     return { editorReadiness }
   }
@@ -1143,6 +1143,49 @@ async function waitForEditorReadiness(page: import("playwright").Page, timeoutMs
     const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
     if (!readiness) {
       throw new Error("wp-codebox-editor-readiness-timeout: WordPress editor data stores did not become available")
+    }
+    return readiness
+  })
+}
+
+// Opening and validating an editor require the block-editor data store. Global
+// block APIs and save availability are stricter, separate capabilities.
+async function waitForEditorSemanticReadiness(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorReadinessSummary> {
+  return page.waitForFunction(() => {
+    const win = window as unknown as {
+      wp?: {
+        blocks?: { parse?: unknown; getBlockTypes?: () => unknown[] }
+        data?: { select?: (store: string) => Record<string, unknown>; dispatch?: (store: string) => Record<string, unknown> }
+      }
+    }
+    const select = win.wp?.data?.select
+    if (typeof select !== "function") {
+      return false
+    }
+
+    const blockEditor = select("core/block-editor")
+    if (!blockEditor || typeof blockEditor.getBlocks !== "function") {
+      return false
+    }
+
+    const wpBlocks = win.wp?.blocks
+    const blockTypes = typeof wpBlocks?.getBlockTypes === "function" ? wpBlocks.getBlockTypes() : undefined
+    const dispatch = win.wp?.data?.dispatch
+    const editor = select("core/editor")
+    const editorDispatch = typeof dispatch === "function" ? dispatch("core/editor") : undefined
+    return {
+      schema: "wp-codebox/editor-readiness/v1",
+      status: "ready",
+      storesAvailable: Boolean(editor && blockEditor),
+      canSave: typeof editorDispatch?.savePost === "function",
+      ...(Array.isArray(blockTypes) ? { blockTypesRegistered: blockTypes.length } : {}),
+      postId: typeof editor?.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
+      postType: typeof editor?.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
+    }
+  }, undefined, { timeout: timeoutMs }).then(async (handle) => {
+    const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
+    if (!readiness) {
+      throw new Error("wp-codebox-editor-readiness-timeout: Gutenberg block runtime did not become available")
     }
     return readiness
   })

@@ -168,8 +168,10 @@ assert.throws(
   /relative artifact directory/,
 )
 
-// Semantic readiness is sufficient when legacy presentation-shell selectors are
-// absent or hidden. An explicitly supplied selector remains a caller assertion.
+// Live fixture evidence established that the block-editor store can be usable
+// before global block APIs, core/editor, or savePost are available. Opening the
+// editor must accept that state; an explicit selector remains an additional
+// caller assertion.
 const readinessCalls: Array<string | undefined> = []
 const semanticReadyPage = {
   waitForFunction: async (predicate: (selector?: string) => unknown, selector?: string) => {
@@ -182,10 +184,10 @@ const semanticReadyPage = {
     globals.window = {
       wp: {
         data: {
-          select: (store: string) => store === "core/editor"
-            ? { getCurrentPostId: () => 21, getCurrentPostType: () => "page" }
-            : store === "core/block-editor" ? {} : undefined,
-          dispatch: (store: string) => store === "core/editor" ? { savePost: () => undefined } : undefined,
+          select: (store: string) => store === "core/block-editor"
+            ? { getBlocks: () => Array.from({ length: 118 }) }
+            : undefined,
+          dispatch: () => ({}),
         },
       },
     }
@@ -199,7 +201,9 @@ const semanticReadyPage = {
   },
 } as never
 const semanticReadiness = await waitForEditorOpenReadiness(semanticReadyPage, undefined, 1)
-assert.equal(semanticReadiness.editorReadiness.canSave, true)
+assert.equal(semanticReadiness.editorReadiness.blockTypesRegistered, undefined)
+assert.equal(semanticReadiness.editorReadiness.storesAvailable, false)
+assert.equal(semanticReadiness.editorReadiness.canSave, false)
 await assert.rejects(
   () => waitForEditorOpenReadiness(semanticReadyPage, ".legacy-editor-shell", 1),
   /Timed out waiting for \.legacy-editor-shell/,
