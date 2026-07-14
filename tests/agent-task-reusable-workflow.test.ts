@@ -95,7 +95,7 @@ assert.match(docs, /wp-codebox\/reusable-workflow-interface\/v1/)
 assert.match(docs, /run-agent-task-reusable-workflow-interface\.v1\.json/)
 assert.match(docs, /WP_CODEBOX_DIR/)
 assert.match(docs, /Runtime Coverage/)
-assert.match(docs, /not a WordPress Playground end-to-end test/)
+assert.match(docs, /deterministic WordPress Playground end-to-end test/)
 assert.doesNotMatch(docs.slice(0, docs.indexOf("## Runtime Coverage")), /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))

@@ -30,6 +30,8 @@ function fetchMock(existing = false) {
   const result = await publishRunnerWorkspace({ request, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
   assert.equal(result.pull_request.opened, true)
   assert(mock.calls.some(([, method]) => method === "POST"))
+  const commitRequest = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/git/commits") && method === "POST")
+  assert.deepEqual(commitRequest?.[2]?.parents, ["base"], "new branch commits must use the base branch head as their parent")
 }
 {
   const mock = fetchMock(true)
@@ -39,6 +41,8 @@ function fetchMock(existing = false) {
   const treeRequest = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/git/trees") && method === "POST")
   assert.equal(treeRequest?.[2]?.base_tree, "prior-tree", "existing branch publication must extend its current tree")
   assert.deepEqual(treeRequest?.[2]?.tree, [{ path: "README.md", mode: "100644", type: "blob", sha: "blob" }], "the prior branch tree remains the base while only approved changed files are replaced")
+  const commitRequest = mock.calls.find(([url, method]) => new URL(url).pathname.endsWith("/git/commits") && method === "POST")
+  assert.deepEqual(commitRequest?.[2]?.parents, ["old"], "existing branch commits must use the existing branch head as their parent")
 }
 await assert.rejects(() => publishRunnerWorkspace({ request: { ...request, runner_workspace: { ...request.runner_workspace, repo: "other/repo" } }, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: fetchMock().fetch }), /not authorized/)
 await assert.rejects(() => publishRunnerWorkspace({ request, changedFiles: ["README.md"], publicationFiles, token: "", fetchImpl: fetchMock().fetch }), /No GitHub token/)

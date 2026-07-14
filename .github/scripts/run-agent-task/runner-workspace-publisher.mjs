@@ -41,7 +41,7 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
     tree.push({ path: relativePath, mode: changed.mode, type: "blob", sha: string(blob.sha) })
   }
   const nextTree = await api("POST", "/git/trees", { base_tree: string(baseCommit.tree?.sha), tree })
-  const commit = await api("POST", "/git/commits", { message: string(config.commit_message || request.workload?.label || "Apply agent task changes"), tree: string(nextTree.sha), parents: [parent] })
+  const commit = await api("POST", "/git/commits", { message: string(config.commit_message || request.workload?.label || "Apply agent task changes"), tree: string(nextTree.sha), parents: [baseSha] })
   if (existing) await api("PATCH", `/git/refs/heads/${head.split("/").map(encodeURIComponent).join("/")}`, { sha: string(commit.sha), force: false })
   else await api("POST", "/git/refs", { ref: `refs/heads/${head}`, sha: string(commit.sha) })
   const pulls = await api("GET", `/pulls?state=open&head=${encodeURIComponent(`${targetRepo.split("/")[0]}:${head}`)}&base=${encodeURIComponent(base)}`)

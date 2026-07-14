@@ -106,11 +106,11 @@ package file is mounted into or visible from the agent workspace.
 
 The repository's native-loop and PHP runtime-package tests execute generated
 PHP with narrow WordPress and native agent-registry shims. The non-skippable
-Playground integration additionally boots the agent registry and OpenAI
-provider path with a local HTTP interceptor. Its deterministic three-turn
-fixture reads and edits a seeded sandbox workspace, verifies provider tool
-outputs, and captures the canonical changed-files manifest and patch without
-network access or provider billing.
+deterministic WordPress Playground end-to-end test additionally boots the
+agent registry and OpenAI provider path with a local HTTP interceptor. Its
+three-turn fixture reads and edits a seeded sandbox workspace, verifies
+provider tool outputs, and captures the canonical changed-files manifest and
+patch without network access or provider billing.
 
 To run the optional cross-repository package coverage, use a Docs Agent checkout
 pinned to commit `3da1b8076359db9bf9f4ee7dadcc3932c080ed71`, which contains
