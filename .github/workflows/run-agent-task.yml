@@ -299,9 +299,8 @@ jobs:
         with:
           name: codebox-agent-task-request-${{ github.run_id }}
           path: |
-            workspace/.codebox/agent-task-upload/.codebox/agent-task-request.json
-            workspace/.codebox/agent-task-upload/.codebox/agent-task-workflow-result.json
-            workspace/.codebox/agent-task-upload/.codebox/native-agent-task-input.json
+            workspace/.codebox/agent-task-upload
+          include-hidden-files: true
 
       - name: Upload Codebox task result
         if: always()
@@ -309,6 +308,6 @@ jobs:
         with:
           name: codebox-agent-task-result-${{ github.run_id }}
           path: |
-            workspace/.codebox/agent-task-upload/.codebox/agent-task-workflow-result.json
-            workspace/.codebox/agent-task-upload/.codebox/agent-task-artifacts
+            workspace/.codebox/agent-task-upload
           if-no-files-found: ignore
+          include-hidden-files: true

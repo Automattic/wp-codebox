@@ -13,6 +13,10 @@ const execFileAsync = promisify(execFile)
 const hostedRegression = JSON.parse(await readFile(new URL("../fixtures/agent-task-runtime-sources-run-29299109269.json", import.meta.url), "utf8"))
 assert.equal(hostedRegression.run_id, "29299109269")
 assert.deepEqual(hostedRegression.runtime_sources.map((source: { role: string }) => source.role), ["component", "provider_plugin", "bundled_library"])
+const uploadLayoutRegression = JSON.parse(await readFile(new URL("../fixtures/agent-task-upload-run-29306539573.json", import.meta.url), "utf8"))
+assert.equal(uploadLayoutRegression.run_id, "29306539573")
+assert.equal(uploadLayoutRegression.observed.upload_preparation, "failed-on-runtime-source")
+assert.match(uploadLayoutRegression.raw_layout.runtime_source, /prepared-plugins\/agents-api\/agents-api\.php$/)
 const hostedPathRegression = JSON.parse(await readFile(new URL("../fixtures/agent-task-runtime-paths-run-29305012941.json", import.meta.url), "utf8"))
 for (const result of [hostedPathRegression.success, hostedPathRegression.failure]) {
   const sanitized = sanitizeRuntimeSourceValue(result, hostedPathRegression.runtime_root)
@@ -122,7 +126,12 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   const suffixedPrivateRoot = `${privateRoot}-actual-mkdtemp-suffix`
   await mkdir(artifacts, { recursive: true })
   await mkdir(privateRoot, { recursive: true })
+  await mkdir(join(workspace, ".codebox"), { recursive: true })
   await writeFile(join(privateRoot, "source.php"), "<?php // private runtime source\n")
+  await writeFile(join(workspace, ".codebox", "agent-task-request.json"), JSON.stringify({
+    runtime_sources: [{ role: "component", repository: "example/runtime", revision: "a".repeat(40), path: "plugin" }],
+    artifacts: { declarations: [{ name: "reviewer-report", type: "report" }] },
+  }))
   await writeFile(join(artifacts, "safe.json"), JSON.stringify({ provenance: { role: "component", repository: "example/runtime", revision: "a".repeat(40), path: "plugin" } }))
   await writeFile(join(workspace, ".codebox", "native-agent-task-input.json"), JSON.stringify({
     source_package_root: privateRoot,
@@ -132,27 +141,36 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
       metadata: { originalSource: privateRoot, nested: { preparedPath: privateRoot, requestedPath: privateRoot }, runtime_source: { role: "component", repository: "example/runtime", revision: "a".repeat(40), path: "plugin" } },
     }],
   }))
-  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ callback_data: { task_path: privateRoot, nested: { result_path: privateRoot } } }))
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ status: "failed", success: false, callback_data: { task_path: privateRoot, nested: { result_path: privateRoot } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "safe.json" } }] }))
   const script = new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url)
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
   const staged = await readFile(join(upload, ".codebox", "agent-task-artifacts", "safe.json"), "utf8")
   assert.doesNotMatch(staged, /private-runtime-source|private runtime source/)
   const stagedInput = await readFile(join(upload, ".codebox", "native-agent-task-input.json"), "utf8")
   assert.doesNotMatch(stagedInput, /private-runtime-source/)
-  assert.match(stagedInput, /"runtime_source"/)
+  assert.doesNotMatch(stagedInput, /component_contracts|source_package_root/)
   const stagedResult = await readFile(join(upload, ".codebox", "agent-task-workflow-result.json"), "utf8")
   assert.doesNotMatch(stagedResult, /private-runtime-source/)
   await writeFile(join(artifacts, "leak.json"), `runtime log ${privateRoot}/source.php`)
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ status: "failed", success: false, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "leak.json" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
   assert.doesNotMatch(await readFile(join(upload, ".codebox", "agent-task-artifacts", "leak.json"), "utf8"), /private-runtime-source/)
   assert.match(await readFile(join(upload, ".codebox", "agent-task-artifacts", "leak.json"), "utf8"), /\[runtime-source\]/)
   await rm(join(artifacts, "leak.json"))
   await mkdir(join(artifacts, "prepared-plugins", "agents-api"), { recursive: true })
   await writeFile(join(artifacts, "prepared-plugins", "agents-api", "agents-api.php"), "<?php /* Plugin Name: Agents API */\n")
-  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /Prepared runtime plugin sources/)
+  await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
+  assert.match(await readFile(join(upload, ".codebox", "agent-task-workflow-result.json"), "utf8"), /"status": "failed"/, "normalized failures upload even when raw source trees exist")
+  await assert.rejects(readFile(join(upload, ".codebox", "agent-task-artifacts", "prepared-plugins", "agents-api", "agents-api.php"), "utf8"), /ENOENT/)
+  const exclusionManifest = await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8")
+  assert.match(exclusionManifest, /"category": "source-tree"/)
+  assert.doesNotMatch(exclusionManifest, /prepared-plugins|agents-api|private-runtime-source/)
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /Declared reviewer artifacts/)
   await rm(join(artifacts, "prepared-plugins"), { recursive: true, force: true })
   await mkdir(suffixedPrivateRoot, { recursive: true })
   await writeFile(join(artifacts, "suffixed-root-leak.json"), suffixedPrivateRoot)
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "suffixed-root-leak.json" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: suffixedPrivateRoot } })
   assert.doesNotMatch(await readFile(join(upload, ".codebox", "agent-task-artifacts", "suffixed-root-leak.json"), "utf8"), /actual-mkdtemp-suffix/)
 })
@@ -222,14 +240,14 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   assert.match(output, /runtime_source_root<<__WP_CODEBOX_OUTPUT__\n\[runtime-source\]\n__WP_CODEBOX_OUTPUT__/, "executor must sanitize the private root in step output")
   await writeFile(join(codebox, "agent-task-artifacts", "exact-root-leak.json"), exactPrivateRuntimeRoot)
   await execFileAsync(process.execPath, [uploaderPath.pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: exactPrivateRuntimeRoot } })
-  assert.doesNotMatch(await readFile(join(upload, ".codebox", "agent-task-artifacts", "exact-root-leak.json"), "utf8"), new RegExp(exactPrivateRuntimeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+  assert.doesNotMatch(await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8"), new RegExp(exactPrivateRuntimeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   await rm(join(codebox, "agent-task-artifacts", "exact-root-leak.json"))
   await execFileAsync(process.execPath, [uploaderPath.pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: exactPrivateRuntimeRoot } })
   const privateRuntimePrefix = exactPrivateRuntimeRoot
-  for (const path of [".codebox/agent-task-request.json", ".codebox/agent-task-workflow-result.json", ".codebox/agent-task-artifacts/safe.json"]) {
+  for (const path of [".codebox/agent-task-request.json", ".codebox/agent-task-workflow-result.json", ".codebox/agent-task-artifacts/exclusions.json"]) {
     assert.ok(!(await readFile(join(upload, path), "utf8")).includes(privateRuntimePrefix))
   }
-  const downloadedArtifact = JSON.stringify(await Promise.all([".codebox/agent-task-request.json", ".codebox/agent-task-workflow-result.json", ".codebox/agent-task-artifacts/safe.json"].map((path) => readFile(join(upload, path), "utf8"))))
+  const downloadedArtifact = JSON.stringify(await Promise.all([".codebox/agent-task-request.json", ".codebox/agent-task-workflow-result.json", ".codebox/agent-task-artifacts/exclusions.json"].map((path) => readFile(join(upload, path), "utf8"))))
   assert.doesNotMatch(downloadedArtifact, /prepared-plugins|agents-api|ai-provider-for-openai|plugin\.php|private-runtime-source/)
   assert.match(downloadedArtifact, /\\"repository\\": \\"example\/source\\"/)
   assert.doesNotMatch(downloadedArtifact, /provider id is required/i)

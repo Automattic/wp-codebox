@@ -1,0 +1,15 @@
+{
+  "run_id": "29306539573",
+  "workflow": "Build With WordPress Skills Agent",
+  "raw_layout": {
+    "request": ".codebox/agent-task-request.json",
+    "result": "workspace/.codebox/agent-task-workflow-result.json",
+    "native_input": "workspace/.codebox/native-agent-task-input.json",
+    "runtime_source": "workspace/.codebox/agent-task-artifacts/prepared-plugins/agents-api/agents-api.php"
+  },
+  "observed": {
+    "native_execution": "failed",
+    "upload_preparation": "failed-on-runtime-source",
+    "uploaded": [".codebox/agent-task-request.json"]
+  }
+}
