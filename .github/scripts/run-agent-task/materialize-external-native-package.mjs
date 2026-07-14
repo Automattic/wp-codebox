@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { spawn } from "node:child_process"
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
@@ -178,6 +178,7 @@ export async function materializeRuntimeSources(sources, options = {}) {
   const descriptors = normalizeRuntimeSources(sources, options.policy)
   const root = await mkdtemp(join(options.tempRoot ?? tmpdir(), "wp-codebox-runtime-sources-"))
   try {
+    assertPrivateRuntimeRoot(root, options.forbiddenRoots)
     const lowered = []
     for (const [index, descriptor] of descriptors.entries()) {
       const checkout = join(root, `source-${index}`)
@@ -189,25 +190,42 @@ export async function materializeRuntimeSources(sources, options = {}) {
       await run("git", ["-c", "credential.helper=", "-c", "http.extraHeader=", "fetch", "--depth=1", "origin", descriptor.revision], { cwd: checkout, env: environment })
       const commit = (await run("git", ["rev-parse", "FETCH_HEAD^{commit}"], { cwd: checkout, env: environment })).toString("utf8").trim().toLowerCase()
       if (commit !== descriptor.revision) throw new Error("Runtime source revision did not resolve to the requested immutable commit.")
-      const objectType = (await run("git", ["cat-file", "-t", `${descriptor.revision}:${descriptor.path}`], { cwd: checkout, env: environment })).toString("utf8").trim()
+      const sourceObject = descriptor.path === "." ? `${descriptor.revision}^{tree}` : `${descriptor.revision}:${descriptor.path}`
+      const objectType = (await run("git", ["cat-file", "-t", sourceObject], { cwd: checkout, env: environment })).toString("utf8").trim()
       if (objectType !== "tree") throw new Error("Runtime source path must identify a directory.")
-      const entries = (await run("git", ["ls-tree", "-r", "-z", descriptor.revision, "--", descriptor.path], { cwd: checkout, env: environment })).toString("utf8").split("\0").filter(Boolean)
+      const entries = (await run("git", descriptor.path === "." ? ["ls-tree", "-r", "-z", descriptor.revision] : ["ls-tree", "-r", "-z", descriptor.revision, "--", descriptor.path], { cwd: checkout, env: environment })).toString("utf8").split("\0").filter(Boolean)
       if (entries.length === 0 || entries.some((entry) => !/^100(?:644|755)\s+blob\s+[0-9a-f]{40}\t/.test(entry))) throw new Error("Runtime source must contain only regular files; symlinks and special files are rejected.")
-      const archive = await run("git", ["archive", "--format=tar", descriptor.revision, descriptor.path], { cwd: checkout, env: environment })
+      const archive = await run("git", descriptor.path === "." ? ["archive", "--format=tar", descriptor.revision] : ["archive", "--format=tar", descriptor.revision, descriptor.path], { cwd: checkout, env: environment })
       if (descriptor.digest && sha256GitArchiveV1(archive) !== descriptor.digest) throw new Error("Runtime source archive digest does not match the trusted descriptor.")
       await mkdir(source, { recursive: true })
       const archivePath = join(checkout, "source.tar")
       await writeFile(archivePath, archive)
       await run("tar", ["-xf", archivePath, "-C", source], { cwd: checkout, env: environment })
-      const materializedPath = join(source, descriptor.path)
+      const materializedPath = descriptor.path === "." ? source : join(source, descriptor.path)
       lowered.push(lowerRuntimeSource(descriptor, materializedPath))
     }
-    return { root, descriptors, lowered }
+    return { root, descriptors: descriptors.map(runtimeSourceProvenance), lowered }
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error }
 }
 
+export function runtimeSourceProvenance(descriptor) {
+  return { role: descriptor.role, repository: descriptor.repository, revision: descriptor.revision, path: descriptor.path, ...(descriptor.digest ? { digest: descriptor.digest } : {}) }
+}
+
+export function assertPrivateRuntimeRoot(root, forbiddenRoots = []) {
+  const privateRoot = resolve(root)
+  for (const forbiddenRoot of forbiddenRoots) {
+    if (!forbiddenRoot) continue
+    const boundary = resolve(forbiddenRoot)
+    const path = relative(boundary, privateRoot)
+    if (privateRoot === boundary || (!path.startsWith(`..${String.fromCharCode(47)}`) && path !== ".." && !isAbsolute(path))) {
+      throw new Error("Runtime sources must be materialized outside target workspaces and artifacts.")
+    }
+  }
+}
+
 export function lowerRuntimeSource(descriptor, source) {
-  const provenance = { role: descriptor.role, repository: descriptor.repository, revision: descriptor.revision, path: descriptor.path, ...(descriptor.digest ? { digest: descriptor.digest } : {}) }
+  const provenance = runtimeSourceProvenance(descriptor)
   if (descriptor.role === "component") return { component_contracts: [{ path: source, ...descriptor.metadata, metadata: { runtime_source: provenance } }] }
   if (descriptor.role === "provider_plugin") return { provider_plugin_paths: [source], provider_plugins: [{ source, ...descriptor.metadata, metadata: { runtime_source: provenance } }] }
   return { runtime_overlays: [{ kind: "bundled-library", source, ...descriptor.metadata, metadata: { runtime_source: provenance } }] }

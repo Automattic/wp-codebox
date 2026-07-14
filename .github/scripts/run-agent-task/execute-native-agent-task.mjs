@@ -196,6 +196,19 @@ const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.js
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const controlledCodeboxPath = resolve(requestPath, "..")
 const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
+let privateRuntimeSourceRoot = ""
+let cleaningPrivateRuntimeSources = false
+async function cleanupPrivateRuntimeSources() {
+  if (cleaningPrivateRuntimeSources || !privateRuntimeSourceRoot) return
+  cleaningPrivateRuntimeSources = true
+  const root = privateRuntimeSourceRoot
+  privateRuntimeSourceRoot = ""
+  await rm(root, { recursive: true, force: true })
+}
+process.once("exit", () => { if (privateRuntimeSourceRoot) rmSync(privateRuntimeSourceRoot, { recursive: true, force: true }) })
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(signal, () => { cleanupPrivateRuntimeSources().finally(() => process.exit(128)) })
+}
 const runnerWorkspaceTools = [
   "workspace-read", "workspace-ls", "workspace-grep", "workspace-write", "workspace-edit", "workspace-apply-patch",
   "workspace-git-status", "workspace-git-diff", "workspace-git-add", "workspace-git-commit", "workspace-git-push",
@@ -223,9 +236,9 @@ const materializedPackage = request.run_agent && !request.dry_run
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy })
   : undefined
 const materializedRuntimeSources = request.run_agent && !request.dry_run
-  ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy })
+  ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy, forbiddenRoots: [workspace, artifactsPath] })
   : undefined
-process.once("exit", () => { if (materializedRuntimeSources?.root) rmSync(materializedRuntimeSources.root, { recursive: true, force: true }) })
+privateRuntimeSourceRoot = materializedRuntimeSources?.root ?? ""
 const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((input, lowered) => {
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
   return input
@@ -276,7 +289,7 @@ const taskInput = {
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
         output_projections: [],
-        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors.map(({ metadata, ...provenance }) => ({ ...provenance, metadata })) ?? [] },
+        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [] },
       },
     },
   },
@@ -296,7 +309,7 @@ const runtimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
-await rm(materializedRuntimeSources?.root ?? "", { recursive: true, force: true })
+await cleanupPrivateRuntimeSources()
 
 await redactArtifactFiles(artifactsPath)
 

@@ -35,6 +35,9 @@ await withTempDir("wp-codebox-runtime-sources-", async (repository) => {
   assert.equal(materialized.lowered[1].provider_plugins[0].slug, "example-provider")
   assert.equal(materialized.lowered[2].runtime_overlays[0].strategy, "scoped-bundle")
   assert.ok(relative(repository, materialized.root).startsWith(".."), "sources are outside the target workspace")
+  assert.deepEqual(Object.keys(materialized.descriptors[0]).sort(), ["path", "repository", "revision", "role"])
+  await mkdir(join(repository, "artifacts"), { recursive: true })
+  await assert.rejects(materializeRuntimeSources(sources, { policy, remotes: { "example/runtime": repository }, tempRoot: join(repository, "artifacts"), forbiddenRoots: [repository] }), /outside target workspaces and artifacts/)
   const loweredInput = materialized.lowered.reduce((input, lowered) => {
     for (const [key, entries] of Object.entries(lowered)) (input as Record<string, unknown[]>)[key] = [...((input as Record<string, unknown[]>)[key] ?? []), ...(entries as unknown[])]
     return input
@@ -55,5 +58,26 @@ await withTempDir("wp-codebox-runtime-sources-", async (repository) => {
   await assert.rejects(materializeRuntimeSources([{ ...sources[0], revision: symlinkRevision }], { policy, remotes: { "example/runtime": repository } }), /symlinks and special files/)
   await rm(materialized.root, { recursive: true, force: true })
 })
+
+await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
+  const workspace = join(directory, "workspace")
+  const artifacts = join(workspace, ".codebox", "agent-task-artifacts")
+  const upload = join(workspace, ".codebox", "agent-task-upload")
+  const privateRoot = join(directory, "private-runtime-source")
+  await mkdir(artifacts, { recursive: true })
+  await mkdir(privateRoot, { recursive: true })
+  await writeFile(join(privateRoot, "source.php"), "<?php // private runtime source\n")
+  await writeFile(join(artifacts, "safe.json"), JSON.stringify({ provenance: { role: "component", repository: "example/runtime", revision: "a".repeat(40), path: "plugin" } }))
+  const script = new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url)
+  await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
+  const staged = await readFile(join(upload, ".codebox", "agent-task-artifacts", "safe.json"), "utf8")
+  assert.doesNotMatch(staged, /private-runtime-source|private runtime source/)
+  await writeFile(join(artifacts, "leak.json"), privateRoot)
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /Runtime source paths must never be persisted/)
+})
+
+const executor = await readFile(new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url), "utf8")
+assert.match(executor, /for \(const signal of \["SIGINT", "SIGTERM", "SIGHUP"\]\)/)
+assert.match(executor, /cleanupPrivateRuntimeSources\(\)\.finally\(\(\) => process\.exit\(128\)\)/)
 
 console.log("runtime sources materialization ok")

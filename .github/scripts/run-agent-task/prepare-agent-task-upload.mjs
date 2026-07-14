@@ -8,12 +8,16 @@ const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace, ".codebox", "agent-task-upload"))
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
+const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT) : ""
 
 function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
 }
 
 async function stageFile(source, destination) {
+  if (runtimeSourceRoot && resolve(source).startsWith(runtimeSourceRoot)) {
+    throw new Error("Runtime source files must never be staged for artifact upload.")
+  }
   const metadata = await lstat(source).catch(() => null)
   if (!metadata?.isFile() || metadata.size > MAX_UPLOAD_FILE_BYTES) return false
   const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null)
@@ -23,7 +27,9 @@ async function stageFile(source, destination) {
   await handle.close()
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
   await mkdir(resolve(destination, ".."), { recursive: true })
-  await writeFile(destination, redact(contents.toString("utf8")))
+  const text = contents.toString("utf8")
+  if (runtimeSourceRoot && text.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
+  await writeFile(destination, redact(text))
   return true
 }
 
