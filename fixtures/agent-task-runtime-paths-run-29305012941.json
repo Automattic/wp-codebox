@@ -1,0 +1,38 @@
+{
+  "run_id": "29305012941",
+  "runtime_root": "/tmp/wp-codebox-runtime-sources-HrTMNi",
+  "success": {
+    "schema": "wp-codebox/agent-task-run/v1",
+    "success": true,
+    "status": "succeeded",
+    "agent_task_run_result": {
+      "schema": "wp-codebox/agent-task-run-result/v1",
+      "success": true,
+      "status": "succeeded"
+    },
+    "outputs": {
+      "metadata": {
+        "source_package_root": "/tmp/wp-codebox-runtime-sources-HrTMNi/prepared-runtime-sources",
+        "nested": {
+          "/tmp/wp-codebox-runtime-sources-HrTMNi/key": "/tmp/wp-codebox-runtime-sources-HrTMNi/value"
+        }
+      },
+      "command": {
+        "args": ["--source=/tmp/wp-codebox-runtime-sources-HrTMNi/source-0", "/tmp/wp-codebox-runtime-sources-HrTMNi/source-1"]
+      }
+    }
+  },
+  "failure": {
+    "schema": "wp-codebox/agent-task-run/v1",
+    "success": false,
+    "status": "failed",
+    "agent_task_run_result": {
+      "schema": "wp-codebox/agent-task-run-result/v1",
+      "success": false,
+      "status": "failed"
+    },
+    "diagnostics": [{ "message": "Prepared source at /tmp/wp-codebox-runtime-sources-HrTMNi/source-0 failed" }],
+    "stack": "Error: failed\n    at /tmp/wp-codebox-runtime-sources-HrTMNi/source-0/plugin.php:1:1",
+    "paths": ["/tmp/wp-codebox-runtime-sources-HrTMNi", "/tmp/wp-codebox-runtime-sources-HrTMNi-suffix"]
+  }
+}

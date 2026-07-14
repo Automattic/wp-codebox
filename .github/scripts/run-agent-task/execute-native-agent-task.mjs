@@ -1,9 +1,10 @@
 import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
+import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -13,7 +14,6 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
-const PRIVATE_RUNTIME_PATH_FIELDS = new Set(["source", "path", "sourceRoot", "originalSource", "preparedPath", "requestedPath", "source_package_root", "artifacts_path", "runtime_input_path", "task_path", "result_path", "event_stream_path", "materialization_result_path"])
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
   if (Array.isArray(value)) return value.map(redact)
@@ -22,7 +22,7 @@ function redact(value) {
 }
 
 function bounded(value, limit = MAX_CAPTURE_BYTES) {
-  const safe = redact(value)
+  const safe = sanitizeRuntimeSourceText(redact(value), privateRuntimeSourceRoot)
   if (typeof safe !== "string") return safe
   return safe.length > limit ? `${safe.slice(0, limit)}\n[TRUNCATED ${safe.length - limit} characters]` : safe
 }
@@ -94,28 +94,6 @@ function command(command, args, cwd, env = safeEnvironment()) {
 
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
-}
-
-function isPrivateRuntimePath(value) {
-  if (!privateRuntimeSourceRoot || typeof value !== "string") return false
-  const path = resolve(value)
-  const contained = relative(privateRuntimeSourceRoot, path)
-  return path === privateRuntimeSourceRoot || (contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained))
-}
-
-function omitPrivateRuntimeSourcePaths(value) {
-  if (Array.isArray(value)) return value.map(omitPrivateRuntimeSourcePaths)
-  if (!value || typeof value !== "object") return value
-  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
-    if (PRIVATE_RUNTIME_PATH_FIELDS.has(key) && isPrivateRuntimePath(entry)) return []
-    return [[key, omitPrivateRuntimeSourcePaths(entry)]]
-  }))
-}
-
-function assertNoPrivateRuntimePaths(value) {
-  if (privateRuntimeSourceRoot && JSON.stringify(value).includes(privateRuntimeSourceRoot)) {
-    throw new Error("Runtime source paths must never be persisted in workflow results or artifacts.")
-  }
 }
 
 function string(value) {
@@ -200,9 +178,13 @@ async function redactArtifactFiles(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) await redactArtifactFiles(path)
-    if (entry.isFile() && (await stat(path)).size <= 4 * 1024 * 1024) {
+    if (entry.isFile() && path.endsWith(".json") && (await stat(path)).size <= 4 * 1024 * 1024) {
       const contents = await readFile(path, "utf8").catch(() => null)
-      if (contents !== null) await writeFile(path, bounded(contents, 4 * 1024 * 1024))
+      if (contents !== null) {
+        const sanitized = sanitizeRuntimeSourceJson(bounded(contents, 4 * 1024 * 1024), privateRuntimeSourceRootForSanitization)
+        assertNoRuntimeSourcePaths(sanitized, privateRuntimeSourceRootForSanitization)
+        await writeFile(path, sanitized)
+      }
     }
   }
 }
@@ -221,6 +203,7 @@ const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json"
 const controlledCodeboxPath = resolve(requestPath, "..")
 const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
 let privateRuntimeSourceRoot = ""
+let privateRuntimeSourceRootForSanitization = ""
 let cleaningPrivateRuntimeSources = false
 async function cleanupPrivateRuntimeSources() {
   if (cleaningPrivateRuntimeSources || !privateRuntimeSourceRoot) return
@@ -263,6 +246,7 @@ const materializedRuntimeSources = request.run_agent && !request.dry_run
   ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy, forbiddenRoots: [workspace, artifactsPath] })
   : undefined
 privateRuntimeSourceRoot = materializedRuntimeSources?.root ?? ""
+privateRuntimeSourceRootForSanitization = privateRuntimeSourceRoot
 await output("runtime_source_root", privateRuntimeSourceRoot)
 const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((input, lowered) => {
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
@@ -340,11 +324,10 @@ const nativeRuntimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
-assertNoPrivateRuntimePaths(nativeRuntimeResult)
-const runtimeResult = omitPrivateRuntimeSourcePaths(nativeRuntimeResult)
-assertNoPrivateRuntimePaths(runtimeResult)
+const runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
+assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 await cleanupPrivateRuntimeSources()
-assertNoPrivateRuntimePaths(runtimeResult)
+assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 
 await redactArtifactFiles(artifactsPath)
 
@@ -408,7 +391,9 @@ const result = {
   ...(projectionError ? { projection_error: projectionError } : {}),
 }
 
-await writeFile(resultPath, `${JSON.stringify(redact(result), null, 2)}\n`)
+const sanitizedResult = sanitizeRuntimeSourceValue(redact(result), privateRuntimeSourceRootForSanitization)
+assertNoRuntimeSourcePaths(sanitizedResult, privateRuntimeSourceRootForSanitization)
+await writeFile(resultPath, `${JSON.stringify(sanitizedResult, null, 2)}\n`)
 await output("job_status", status)
 await output("transcript_json", JSON.stringify(agentResult.refs?.transcripts || []))
 await output("transcript_summary", `${request.workload?.label || "Run Agent Task"}: ${status}`)

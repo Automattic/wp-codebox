@@ -2,6 +2,7 @@ import { constants } from "node:fs"
 import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { isAbsolute, join, relative, resolve } from "node:path"
+import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
 
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -9,6 +10,8 @@ const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace,
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT) : ""
+const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX) : ""
+const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
 const RUNTIME_SOURCE_TREE = /(^|\/)(prepared-plugins|agents-api|ai-provider-for-openai)(\/|$)/
 const RUNTIME_SOURCE_FILE = /^(agents-api\.php|plugin\.php)$/
 const RUNTIME_SOURCE_CONTENT = /(?:Plugin Name:|WP_Agents_Registry|OpenAiProvider)/
@@ -17,8 +20,6 @@ function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
 }
 
-const PRIVATE_RUNTIME_PATH_FIELDS = new Set(["source", "path", "sourceRoot", "originalSource", "preparedPath", "requestedPath", "source_package_root", "artifacts_path", "runtime_input_path", "task_path", "result_path", "event_stream_path", "materialization_result_path"])
-
 function isPrivateRuntimePath(value) {
   if (!runtimeSourceRoot || typeof value !== "string") return false
   const path = resolve(value)
@@ -26,35 +27,8 @@ function isPrivateRuntimePath(value) {
   return path === runtimeSourceRoot || (contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained))
 }
 
-function omitPrivateRuntimeSourcePaths(value) {
-  if (Array.isArray(value)) return value.map(omitPrivateRuntimeSourcePaths)
-  if (!value || typeof value !== "object") return value
-  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
-    if (PRIVATE_RUNTIME_PATH_FIELDS.has(key) && isPrivateRuntimePath(entry)) return []
-    if (key === "runtime_sources" && Array.isArray(entry)) return [[key, entry.map(runtimeSourceProvenance)]]
-    return [[key, omitPrivateRuntimeSourcePaths(entry)]]
-  }))
-}
-
-function runtimeSourceProvenance(source) {
-  if (!source || typeof source !== "object" || Array.isArray(source)) return source
-  const descriptor = source
-  const provenance = { role: descriptor.role }
-  if (descriptor.source?.type === "https_zip") {
-    provenance.source = { type: "https_zip", url: descriptor.source.url, sha256: descriptor.source.sha256, ...(descriptor.source.archive_root ? { archive_root: descriptor.source.archive_root } : {}) }
-  } else {
-    Object.assign(provenance, ...["repository", "revision", "path", "digest"].flatMap((key) => descriptor[key] ? [{ [key]: descriptor[key] }] : []))
-  }
-  if (descriptor.role === "provider_plugin" && Array.isArray(descriptor.metadata?.providers)) provenance.providers = descriptor.metadata.providers
-  return provenance
-}
-
 function sanitizeText(text) {
-  try {
-    return `${JSON.stringify(omitPrivateRuntimeSourcePaths(JSON.parse(text)), null, 2)}\n`
-  } catch {
-    return text
-  }
+  return sanitizeRuntimeSourceJson(text, runtimeSourceRoots)
 }
 
 async function stageFile(source, destination) {
@@ -78,7 +52,7 @@ async function stageFile(source, destination) {
     throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
   }
   text = sanitizeText(text)
-  if (runtimeSourceRoot && text.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
+  assertNoRuntimeSourcePaths(text, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
   await writeFile(destination, redact(text))
   return true
 }
@@ -100,7 +74,7 @@ async function assertNoPrivateRuntimePaths(directory) {
     if (entry.isDirectory()) await assertNoPrivateRuntimePaths(path)
     else if (entry.isFile()) {
       const contents = await readFile(path, "utf8")
-      if (runtimeSourceRoot && contents.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
+      assertNoRuntimeSourcePaths(contents, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
       if (RUNTIME_SOURCE_TREE.test(path) || RUNTIME_SOURCE_FILE.test(entry.name) || RUNTIME_SOURCE_CONTENT.test(contents)) throw new Error("Prepared runtime plugin sources must never be persisted in artifact uploads.")
     }
   }
