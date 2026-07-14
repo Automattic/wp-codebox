@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.js"
 import { applyRecipeRuntimeSetup, assertResolvedInputMountPathArgs, recipeInputMountPathMap, rewriteInputMountPathArgs, type PreparedRecipeRuntimeSetup } from "../packages/cli/src/commands/recipe-runtime-setup.js"
 import { executeRecipeWorkflowStep } from "../packages/cli/src/commands/recipe-run-workflow-evidence.js"
 import type { ExecutionSpec, Runtime, WorkspaceRecipe } from "../packages/runtime-core/src/public.js"
@@ -201,17 +202,43 @@ assert.throws(
   /still references original input mount target.*\/home\/wpcom\/public_html/s,
 )
 
-await assert.rejects(
-  () => executeRecipeWorkflowStep(workflowRuntime, {
-    phase: "steps",
-    index: 1,
-    step: {
-      command: "wordpress.run-php",
-      args: ["code=require '/home/wpcom/public_html/bin/tests/i18n-tools/bootstrap.php';"],
-    },
-  }, process.cwd(), undefined, undefined, undefined, wpcomPathMap),
-  /still references original input mount target.*\/home\/wpcom\/public_html/s,
-)
+const agentMountPathMap = recipeInputMountPathMap({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    mounts: [{ source: "/workspace/example", target: "/workspace/example", mode: "readonly" }],
+  },
+  workflow: { steps: [] },
+})
+const agentRuntimeTask = {
+  bootstrap: "require '/workspace/example/bootstrap.php';",
+  nested: { source: "/workspace/example/task.json" },
+}
+const rewrittenAgentTaskArg = rewriteInputMountPathArgs([`runtime-task-json=${JSON.stringify(agentRuntimeTask)}`], agentMountPathMap)[0]
+assert.deepEqual(JSON.parse(rewrittenAgentTaskArg.slice("runtime-task-json=".length)), {
+  bootstrap: `require '${agentMountPathMap[0].canonicalTarget}/bootstrap.php';`,
+  nested: { source: `${agentMountPathMap[0].canonicalTarget}/task.json` },
+}, "serialized agent task payloads rewrite embedded input mount references")
+
+const agentSandboxSpec = await recipeExecutionSpec({
+  command: "wp-codebox.agent-sandbox-run",
+  args: [
+    "task=Inspect /workspace/example/task.json",
+    "code=require '/workspace/example/bootstrap.php';",
+    rewrittenAgentTaskArg,
+  ],
+}, process.cwd(), undefined, { inputMountPathMap: agentMountPathMap })
+assert.equal(agentSandboxSpec.args?.some((arg) => arg.includes("/workspace/example")), false, "generated agent sandbox bootstrap uses canonical input mount paths")
+assert.match(agentSandboxSpec.args?.[0] ?? "", new RegExp(agentMountPathMap[0].canonicalTarget.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+
+const embeddedPhpExecution = await executeRecipeWorkflowStep(workflowRuntime, {
+  phase: "steps",
+  index: 1,
+  step: {
+    command: "wordpress.run-php",
+    args: ["code=require '/home/wpcom/public_html/bin/tests/i18n-tools/bootstrap.php';"],
+  },
+}, process.cwd(), undefined, undefined, undefined, wpcomPathMap)
+assert.deepEqual(embeddedPhpExecution.args, [`code=require '${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools/bootstrap.php';`])
 
 executedWorkflowSpecs.length = 0
 const nestedWorkloadExecution = await executeRecipeWorkflowStep(workflowRuntime, {

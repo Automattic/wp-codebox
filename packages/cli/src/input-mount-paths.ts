@@ -19,18 +19,7 @@ export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings
   if (mappings.length === 0) {
     return [...args]
   }
-  return args.map((arg) => {
-    const separator = arg.indexOf("=")
-    if (separator <= 0) {
-      return arg
-    }
-    const value = arg.slice(separator + 1)
-    if (!value.startsWith("/")) {
-      return arg
-    }
-    const rewritten = rewriteInputMountPath(value, mappings)
-    return rewritten === value ? arg : `${arg.slice(0, separator + 1)}${rewritten}`
-  })
+  return args.map((arg) => rewriteInputMountPathReferences(arg, mappings))
 }
 
 export function rewriteInputMountPathJsonArgs(args: readonly string[] = [], names: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {
@@ -95,8 +84,14 @@ function rewriteInputMountPathsInJsonValue(value: unknown, mappings: readonly In
   return value
 }
 
-function originalPathReferencePattern(path: string): RegExp {
-  return new RegExp(`${escapeRegExp(path)}(?=$|[\\/\\s'"\\]\\}\\),:;])`)
+function rewriteInputMountPathReferences(value: string, mappings: readonly InputMountPathMapping[]): string {
+  return [...mappings]
+    .sort((a, b) => b.originalTarget.length - a.originalTarget.length)
+    .reduce((rewritten, mapping) => rewritten.replace(originalPathReferencePattern(mapping.originalTarget, "g"), mapping.canonicalTarget), value)
+}
+
+function originalPathReferencePattern(path: string, flags = ""): RegExp {
+  return new RegExp(`${escapeRegExp(path)}(?=$|[\\/\\s'"\\]\\}\\),:;])`, flags)
 }
 
 // Mounts targeting the WordPress install tree (ABSPATH is `/wordpress/` in the

@@ -119,7 +119,9 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   const originalArgs = step.args ?? []
   const resolvedStep = { ...step, args: rewriteRecipeExecutionArgs(step.command, originalArgs, options.inputMountPathMap) }
   const finish = (spec: ExecutionSpec & { args?: string[] }): ResolvedRecipeExecutionSpec => {
-    const resolvedArgs = spec.args ?? []
+    // Commands can generate PHP and serialized payloads after their source args
+    // are resolved, so canonicalize the generated execution spec as well.
+    const resolvedArgs = rewriteInputMountPathArgs(spec.args ?? [], options.inputMountPathMap)
     assertResolvedInputMountPathArgs(resolvedArgs, options.inputMountPathMap, `Recipe command ${step.command}`)
     return {
       ...spec,
