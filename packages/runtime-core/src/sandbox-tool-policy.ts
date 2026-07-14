@@ -153,6 +153,7 @@ export function validateSandboxToolPolicySnapshot(input: unknown): SandboxToolPo
     }
     const id = typeof tool.id === "string" ? tool.id.trim() : ""
     const runtimeToolId = typeof tool.runtime_tool_id === "string" ? tool.runtime_tool_id.trim() : ""
+    const executionLocation = typeof tool.execution_location === "string" ? tool.execution_location.trim() : ""
     const runtime = isPlainObject(tool.runtime) ? tool.runtime : {}
     const runtimeEnvironment = typeof runtime[AGENTS_API_RUNTIME_ENVIRONMENT] === "string" ? runtime[AGENTS_API_RUNTIME_ENVIRONMENT].trim() : ""
     const runtimeCapabilityScope = typeof runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE] === "string" ? runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE].trim() : ""
@@ -165,11 +166,19 @@ export function validateSandboxToolPolicySnapshot(input: unknown): SandboxToolPo
     if (!runtimeToolId) {
       issues.push({ code: "invalid-tool", field: `${field}.runtime_tool_id`, message: `${field}.runtime_tool_id must be a non-empty string.` })
     }
+    if (executionLocation !== "sandbox" && executionLocation !== "parent") {
+      issues.push({ code: "invalid-tool", field: `${field}.execution_location`, message: `${field}.execution_location must be sandbox or parent.` })
+    }
+    const canonicalRuntime = runtimeMetadataForExecutionLocation(executionLocation)
     if (!runtimeEnvironment) {
       issues.push({ code: "invalid-tool", field: `${field}.runtime.environment`, message: `${field}.runtime.environment must be a non-empty string.` })
+    } else if (canonicalRuntime && runtimeEnvironment !== canonicalRuntime.environment) {
+      issues.push({ code: "invalid-tool", field: `${field}.runtime.environment`, message: `${field}.runtime.environment must be ${canonicalRuntime.environment} for ${executionLocation} tools.` })
     }
     if (!runtimeCapabilityScope) {
       issues.push({ code: "invalid-tool", field: `${field}.runtime.capability_scope`, message: `${field}.runtime.capability_scope must be a non-empty string.` })
+    } else if (canonicalRuntime && runtimeCapabilityScope !== canonicalRuntime.capability_scope) {
+      issues.push({ code: "invalid-tool", field: `${field}.runtime.capability_scope`, message: `${field}.runtime.capability_scope must be ${canonicalRuntime.capability_scope} for ${executionLocation} tools.` })
     }
     if (typeof tool.allowed !== "boolean") {
       issues.push({ code: "invalid-tool", field: `${field}.allowed`, message: `${field}.allowed must be boolean.` })
@@ -260,18 +269,26 @@ export function resolveRuntimeToolAlias(policy: EffectiveRuntimeToolPolicy | San
 }
 
 export function sandboxToolRuntimeMetadata(tool: SandboxToolPolicyTool): Required<Pick<AgentsApiRuntimeToolMetadata, typeof AGENTS_API_RUNTIME_ENVIRONMENT | typeof AGENTS_API_RUNTIME_CAPABILITY_SCOPE>> {
-  const runtime = isPlainObject(tool.runtime) ? tool.runtime : {}
-  const environment = typeof runtime[AGENTS_API_RUNTIME_ENVIRONMENT] === "string"
-    ? runtime[AGENTS_API_RUNTIME_ENVIRONMENT]
-    : ""
-  const capabilityScope = typeof runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE] === "string"
-    ? runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE]
-    : ""
-
-  return {
-    environment,
-    capability_scope: capabilityScope,
+  return runtimeMetadataForExecutionLocation(tool.execution_location) ?? {
+    environment: "",
+    capability_scope: "",
   }
+}
+
+export function runtimeMetadataForExecutionLocation(executionLocation: SandboxToolExecutionLocation): Required<Pick<AgentsApiRuntimeToolMetadata, typeof AGENTS_API_RUNTIME_ENVIRONMENT | typeof AGENTS_API_RUNTIME_CAPABILITY_SCOPE>> | undefined {
+  if (executionLocation === "sandbox") {
+    return {
+      environment: AGENTS_API_RUNTIME_LOCAL,
+      capability_scope: AGENTS_API_RUNTIME_LOCAL,
+    }
+  }
+  if (executionLocation === "parent") {
+    return {
+      environment: AGENTS_API_CONTROL_PLANE,
+      capability_scope: AGENTS_API_CONTROL_PLANE,
+    }
+  }
+  return undefined
 }
 
 function runtimeToolDescriptor(tool: SandboxToolPolicyTool): RuntimeToolDescriptor {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, runtimeToolInputFromSandboxToolPolicy, sandboxAllowedRuntimeToolIds, sandboxToolPolicyFromAllowedTools, toolBridgeFromSandboxToolPolicy, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
+import { assertSandboxToolPolicySnapshot, resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, runtimeMetadataForExecutionLocation, runtimeToolInputFromSandboxToolPolicy, sandboxAllowedRuntimeToolIds, sandboxToolPolicyFromAllowedTools, toolBridgeFromSandboxToolPolicy, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
 
 const policy: SandboxToolPolicySnapshot = {
   schema: "wp-codebox/sandbox-tool-policy/v1",
@@ -56,6 +56,16 @@ assert.deepEqual(sandboxAllowedRuntimeToolIds(policy), ["client/filesystem-write
 
 assert.deepEqual(runtimeToolInputFromSandboxToolPolicy(policy).allowed_tools, ["client/filesystem-write"])
 assert.deepEqual(runtimeToolInputFromSandboxToolPolicy(policy).runtime_tools.map((tool) => tool.id), ["filesystem-write"])
+assert.deepEqual(runtimeMetadataForExecutionLocation("sandbox"), { environment: "runtime_local", capability_scope: "runtime_local" })
+assert.deepEqual(runtimeMetadataForExecutionLocation("parent"), { environment: "control_plane", capability_scope: "control_plane" })
+assert.equal(runtimeMetadataForExecutionLocation("external"), undefined)
+
+const contradictoryPolicy = structuredClone(policy)
+contradictoryPolicy.tools[1].runtime = { environment: "runtime_local", capability_scope: "runtime_local" }
+assert.throws(() => assertSandboxToolPolicySnapshot(contradictoryPolicy), /must be control_plane for parent tools/)
+const invalidLocationPolicy = structuredClone(policy)
+invalidLocationPolicy.tools[0].execution_location = "external"
+assert.throws(() => assertSandboxToolPolicySnapshot(invalidLocationPolicy), /must be sandbox or parent/)
 
 const canonicalPolicy = sandboxToolPolicyFromAllowedTools(["workspace.read", "workspace.search", "workspace.write", "workspace.edit"], { source: "test" })
 assert.equal(canonicalPolicy.schema, "wp-codebox/sandbox-tool-policy/v1")

@@ -210,6 +210,20 @@ assert.equal(result.success, true)
 assert.equal(result.runtime_input_path, ".codebox/native-agent-task-input.json")
 assert.deepEqual(result.verification, [])
 assert.doesNotMatch(JSON.stringify(result), /homeboy|agent-task-plan|run-plan/i)
+const nativeTaskInput = JSON.parse(await readFile(join(tmp, ".codebox", "native-agent-task-input.json"), "utf8"))
+const hostedDocsAgentToolSnapshot = [
+  "workspace-read", "workspace-ls", "workspace-grep", "workspace-write", "workspace-edit", "workspace-apply-patch",
+  "workspace-git-status", "workspace-git-diff", "workspace-git-add", "workspace-git-commit", "workspace-git-push",
+  "create-github-pull-request", "create-github-issue", "comment-github-pull-request",
+]
+assert.deepEqual(nativeTaskInput.task_input.sandbox_tool_policy.tools, hostedDocsAgentToolSnapshot.map((id) => ({
+  id,
+  runtime_tool_id: id,
+  execution_location: "parent",
+  transport_visibility: "visible",
+  allowed: true,
+  runtime: { environment: "control_plane", capability_scope: "control_plane" },
+})), "Hosted Docs Agent run 29298164272 must emit canonical control-plane metadata for every parent tool")
 
 const executeNativeAgentTask = new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url).pathname
 const executeAccessCase = async (candidate: Record<string, unknown>, environment: Record<string, string>) => {

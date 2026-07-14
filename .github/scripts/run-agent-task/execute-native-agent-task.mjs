@@ -200,6 +200,12 @@ const runnerWorkspaceTools = [
   "create-github-pull-request", "create-github-issue", "comment-github-pull-request",
 ]
 
+function runtimeMetadataForExecutionLocation(executionLocation) {
+  if (executionLocation === "sandbox") return { environment: "runtime_local", capability_scope: "runtime_local" }
+  if (executionLocation === "parent") return { environment: "control_plane", capability_scope: "control_plane" }
+  throw new Error(`Unsupported tool execution location: ${executionLocation}`)
+}
+
 await mkdir(artifactsPath, { recursive: true })
 
 const accessError = accessFailure(request)
@@ -233,7 +239,7 @@ const taskInput = {
     sandbox_tool_policy: {
       schema: "wp-codebox/sandbox-tool-policy/v1",
       version: 1,
-      tools: runnerWorkspaceTools.map((id) => ({ id, runtime_tool_id: id, execution_location: "parent", transport_visibility: "visible", allowed: true })),
+      tools: runnerWorkspaceTools.map((id) => ({ id, runtime_tool_id: id, execution_location: "parent", transport_visibility: "visible", allowed: true, runtime: runtimeMetadataForExecutionLocation("parent") })),
     },
     max_turns: request.limits?.max_turns,
     task_timeout_seconds: Math.ceil(Number(request.limits?.time_budget_ms || 0) / 1000),

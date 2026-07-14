@@ -122,6 +122,22 @@ assert.equal(stableRunRequestInput.goal, "Run the delegated task.")
 assert.equal(stableRunRequestInput.artifacts_path, "/tmp/stable-run-artifacts")
 assert.deepEqual(stableRunRequestInput.callback_data, { source: "external-orchestrator" })
 
+assert.throws(() => buildAgentTaskRecipe({
+  sandbox_tool_policy: {
+    schema: "wp-codebox/sandbox-tool-policy/v1",
+    version: 1,
+    tools: [{
+      id: "contradictory-parent-tool",
+      runtime_tool_id: "contradictory-parent-tool",
+      execution_location: "parent",
+      transport_visibility: "parent",
+      allowed: true,
+      runtime: { environment: "runtime_local", capability_scope: "runtime_local" },
+    }],
+    metadata: {},
+  },
+}, normalizeTaskInput({ goal: "Reject contradictory tool runtime metadata." }), "latest"), /must be control_plane for parent tools/)
+
 const headlessRequest = normalizeHeadlessAgentTaskRequest({
   schema: HEADLESS_AGENT_TASK_REQUEST_SCHEMA,
   task_input: {

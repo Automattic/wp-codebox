@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
+import { normalizeSandboxToolPolicySnapshot, type SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
@@ -811,14 +811,14 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): Sand
   const taskPolicy = objectValue(taskInput.sandbox_tool_policy) ?? {}
   const policy = Object.keys(inputPolicy).length > 0 ? inputPolicy : taskPolicy
   if (Object.keys(policy).length > 0) {
-    return policy as unknown as SandboxToolPolicySnapshot
+    return normalizeSandboxToolPolicySnapshot(policy)
   }
-  return {
+  return normalizeSandboxToolPolicySnapshot({
     schema: "wp-codebox/sandbox-tool-policy/v1",
     version: 1,
     tools: [{ id: "deny-all", runtime_tool_id: "deny-all", execution_location: "parent", transport_visibility: "hidden", allowed: false, runtime: { environment: "control_plane", capability_scope: "control_plane" } }],
     metadata: { source: "contained-runtime.agent-task-run.default-deny" },
-  }
+  })
 }
 
 function slugFromPath(source: string): string {
