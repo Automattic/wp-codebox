@@ -26,6 +26,7 @@ export interface AgentTaskRunInput {
   provider?: string
   model?: string
   provider_plugin_paths?: string[]
+  provider_plugins?: Array<Record<string, unknown>>
   runtime_overlay_profiles?: string[]
   runtime_env?: Record<string, unknown>
   runtimeEnv?: Record<string, unknown>
@@ -683,7 +684,8 @@ function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPl
 function providerPluginEntries(input: AgentTaskRunInput, artifactsRoot: string): WorkspaceRecipeExtraPlugin[] {
   const pathEntries: Array<Record<string, unknown>> = stringList(input.provider_plugin_paths).map((source) => ({ source }))
   const profileEntries = runtimeProfileObjectList(input, "provider_plugins")
-  return [...profileEntries, ...pathEntries].flatMap((entry) => {
+  const explicitEntries = objectList(input.provider_plugins)
+  return [...profileEntries, ...explicitEntries, ...pathEntries].flatMap((entry) => {
     const source = stringValue(entry.source) || stringValue(entry.path)
     if (!source) return []
     const slug = stringValue(entry.slug) || slugFromComposerPackage(source) || slugFromPath(source)

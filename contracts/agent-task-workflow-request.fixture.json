@@ -6,6 +6,7 @@
     "path": "packages/example-agent.agent.json",
     "digest": "sha256-bytes-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
+  "runtime_sources": [],
   "workload": {
     "id": "example-maintenance",
     "label": "Run example maintenance",

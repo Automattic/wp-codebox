@@ -11,6 +11,10 @@ name: Run Agent Task (reusable)
         description: "JSON descriptor for exactly one standalone .agent.json file: repository, immutable revision, file path, and sha256-bytes-v1 digest."
         type: string
         required: true
+      runtime_sources:
+        description: Versioned JSON array of trusted immutable public runtime source descriptors.
+        type: string
+        default: '[]'
       workload_id:
         description: Stable workload identifier for this run.
         type: string
@@ -219,6 +223,7 @@ jobs:
         id: plan
         env:
           EXTERNAL_PACKAGE_SOURCE: ${{ inputs.external_package_source }}
+          RUNTIME_SOURCES: ${{ inputs.runtime_sources }}
           EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}

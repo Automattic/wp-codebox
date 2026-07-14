@@ -1,7 +1,8 @@
+import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
-import { materializeExternalNativePackage, normalizeExternalPackageSource, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
+import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
@@ -189,6 +190,7 @@ const driftChecks = commandEntries(request.drift_checks, "drift_checks")
 const runId = `${request.workload?.id || "agent-task"}-${process.env.GITHUB_RUN_ID || "local"}`.replace(/[^A-Za-z0-9._-]+/g, "-")
 const externalPackagePolicy = parseExternalPackageSourcePolicy(string(process.env.EXTERNAL_PACKAGE_SOURCE_POLICY))
 const externalPackageSource = normalizeExternalPackageSource(request.external_package_source, externalPackagePolicy)
+const runtimeSources = normalizeRuntimeSources(request.runtime_sources ?? [], externalPackagePolicy)
 const artifactsPath = join(workspace, ".codebox", "agent-task-artifacts")
 const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.json")
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
@@ -220,6 +222,14 @@ if (accessError) {
 const materializedPackage = request.run_agent && !request.dry_run
   ? await materializeExternalNativePackage(externalPackageSource, { policy: externalPackagePolicy })
   : undefined
+const materializedRuntimeSources = request.run_agent && !request.dry_run
+  ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy })
+  : undefined
+process.once("exit", () => { if (materializedRuntimeSources?.root) rmSync(materializedRuntimeSources.root, { recursive: true, force: true }) })
+const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((input, lowered) => {
+  for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
+  return input
+}, {})
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -235,6 +245,7 @@ const taskInput = {
     provider: request.model?.provider,
     model: request.model?.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
+    ...runtimeSourceInputs,
     allowed_tools: runnerWorkspaceTools,
     sandbox_tool_policy: {
       schema: "wp-codebox/sandbox-tool-policy/v1",
@@ -265,7 +276,7 @@ const taskInput = {
         artifact_declarations: request.artifacts?.declarations || [],
         required_artifacts: request.artifacts?.expected || [],
         output_projections: [],
-        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}) },
+        metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors.map(({ metadata, ...provenance }) => ({ ...provenance, metadata })) ?? [] },
       },
     },
   },
@@ -285,6 +296,7 @@ const runtimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
+await rm(materializedRuntimeSources?.root ?? "", { recursive: true, force: true })
 
 await redactArtifactFiles(artifactsPath)
 

@@ -4,6 +4,7 @@
   "inputs": {
     "wp_codebox_release_ref": { "required": true, "type": "string" },
     "external_package_source": { "required": true, "type": "string" },
+    "runtime_sources": { "required": false, "type": "string", "default": "[]" },
     "workload_id": { "required": false, "type": "string", "default": "agent-task" },
     "workload_label": { "required": false, "type": "string", "default": "Run Agent Task" },
     "component_id": { "required": false, "type": "string", "default": "agent-task" },

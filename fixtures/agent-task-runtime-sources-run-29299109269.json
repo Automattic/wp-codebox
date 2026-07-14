@@ -1,0 +1,8 @@
+{
+  "run_id": "29299109269",
+  "runtime_sources": [
+    { "version": 1, "role": "component", "repository": "automattic/agents-api", "revision": "59d1e6b473f22498e40e279130bbb4f9bcde3b73", "path": ".", "metadata": { "slug": "agents-api", "loadAs": "mu-plugin", "activate": false } },
+    { "version": 1, "role": "provider_plugin", "repository": "wordpress/ai-provider-for-openai", "revision": "a400c158707e3d0b6fcd0f1502f6aa1085b01b9b", "path": ".", "metadata": { "slug": "ai-provider-for-openai", "activate": true } },
+    { "version": 1, "role": "bundled_library", "repository": "wordpress/php-ai-client", "revision": "631704201d15ffeff7091ad3bc7156db74054956", "path": ".", "metadata": { "library": "php-ai-client", "strategy": "wordpress-scoped-bundle" } }
+  ]
+}

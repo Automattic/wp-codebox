@@ -16,6 +16,7 @@ assert.match(workflow, /^name: Run Agent Task \(reusable\)$/m)
 assert.match(workflow, /workflow_call:/)
 assert.match(workflow, /wp_codebox_release_ref:/)
 assert.match(workflow, /external_package_source:/)
+assert.match(workflow, /runtime_sources:/)
 assert.match(workflow, /EXTERNAL_PACKAGE_SOURCE_POLICY:/)
 assert.doesNotMatch(publicWorkflowSurface, /external_package_allowed_repositories:|external_package_allowed_paths:/)
 assert.match(workflow, /runner_workspace:/)
@@ -151,6 +152,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     ...process.env,
     GITHUB_OUTPUT: outputPath,
     EXTERNAL_PACKAGE_SOURCE: '{"repository":"Automattic/example-agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"packages/example-agent.agent.json","digest":"sha256-bytes-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+    RUNTIME_SOURCES: "[]",
     EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
     WORKLOAD_ID: "example-maintenance",
     WORKLOAD_LABEL: "Run example maintenance",

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs"
-import { normalizeExternalPackageSource, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
+import { normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy } from "./materialize-external-native-package.mjs"
 
 function parseJson(name, fallback, expected) {
   const raw = process.env[name]
@@ -64,9 +64,11 @@ function commandList(name) {
 }
 
 const artifactDeclarations = parseJson("ARTIFACT_DECLARATIONS", [], "array")
+const externalPackagePolicy = parseExternalPackageSourcePolicy(requiredString("EXTERNAL_PACKAGE_SOURCE_POLICY"))
 const request = {
   schema: "wp-codebox/agent-task-workflow-request/v1",
-  external_package_source: normalizeExternalPackageSource(parseJson("EXTERNAL_PACKAGE_SOURCE", {}, "object"), parseExternalPackageSourcePolicy(requiredString("EXTERNAL_PACKAGE_SOURCE_POLICY"))),
+  external_package_source: normalizeExternalPackageSource(parseJson("EXTERNAL_PACKAGE_SOURCE", {}, "object"), externalPackagePolicy),
+  runtime_sources: normalizeRuntimeSources(parseJson("RUNTIME_SOURCES", [], "array"), externalPackagePolicy),
   workload: {
     id: process.env.WORKLOAD_ID || "agent-task",
     label: process.env.WORKLOAD_LABEL || "Run Agent Task",
