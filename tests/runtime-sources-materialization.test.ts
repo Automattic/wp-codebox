@@ -287,7 +287,11 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
 
 const executor = await readFile(new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url), "utf8")
 assert.match(executor, /for \(const signal of \["SIGINT", "SIGTERM", "SIGHUP"\]\)/)
-assert.match(executor, /cleanupPrivateRuntimeSources\(\)\.finally\(\(\) => process\.exit\(128\)\)/)
+assert.match(executor, /const SIGNAL_EXIT_CODES = \{ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 \}/)
+assert.match(executor, /cleanupMaterializedSources\(\)\.finally\(\(\) => process\.exit\(SIGNAL_EXIT_CODES\[signal\]\)\)/)
+assert.match(executor, /\} finally \{\n  await cleanupMaterializedSources\(\)\n\}/, "every top-level completion path routes through the single cleanup coordinator")
+assert.equal(executor.match(/function cleanupMaterializedSources/g)?.length, 1, "cleanup stays centralized in one coordinator")
+assert.doesNotMatch(executor, /cleanupPrivateRuntimeSources|cleanupRunnerWorkspaceSeedSnapshot/, "no duplicate independent cleanup logic")
 assert.match(executor, /const executionInputPath = privateRuntimeSourceRoot \? join\(privateRuntimeSourceRoot, "native-agent-task-input\.json"\) : runtimeInputPath/)
 assert.match(executor, /const privatePreparationRoot = privateRuntimeSourceRoot \? join\(privateRuntimeSourceRoot, "prepared-runtime-sources"\) : ""/)
 assert.match(executor, /sanitizeRuntimeSourceValue\(nativeRuntimeResult, privateRuntimeSourceRootForSanitization\)/)

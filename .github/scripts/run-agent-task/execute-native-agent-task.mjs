@@ -20,6 +20,41 @@ const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVID
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
 let runnerWorkspaceSeedSnapshot
+
+const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }
+let materializedSourceCleanup
+function claimMaterializedSourcePaths() {
+  const paths = []
+  if (runnerWorkspaceSeedSnapshot) {
+    paths.push(runnerWorkspaceSeedSnapshot.source)
+    runnerWorkspaceSeedSnapshot = undefined
+  }
+  if (privateRuntimeSourceRoot) {
+    paths.push(privateRuntimeSourceRoot)
+    privateRuntimeSourceRoot = ""
+  }
+  return paths
+}
+// Single idempotent cleanup coordinator for the private runtime source
+// materialization root and the runner workspace seed snapshot. Every
+// completion path (normal, failure, signal) awaits this coordinator; repeat
+// invocations chain onto the in-flight cleanup instead of racing it.
+function cleanupMaterializedSources() {
+  materializedSourceCleanup = (materializedSourceCleanup ?? Promise.resolve())
+    .then(() => Promise.all(claimMaterializedSourcePaths().map((path) => rm(path, { recursive: true, force: true }))))
+  return materializedSourceCleanup
+}
+process.once("exit", () => {
+  // Bounded synchronous best-effort fallback for abrupt exits; on every
+  // awaited path the coordinator has already claimed these roots.
+  for (const path of claimMaterializedSourcePaths()) {
+    try { rmSync(path, { recursive: true, force: true, maxRetries: 0 }) } catch { /* best effort */ }
+  }
+})
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(signal, () => { cleanupMaterializedSources().finally(() => process.exit(SIGNAL_EXIT_CODES[signal])) })
+}
+
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
   if (Array.isArray(value)) return value.map(redact)
@@ -220,6 +255,17 @@ async function testRuntimeFixtures(externalPackageSource) {
   return fixtures
 }
 
+// Test-only interruption hook: inert in production (requires NODE_ENV=test and
+// an explicit marker path). Publishes the seed snapshot location, then holds a
+// bounded window so a harness can deliver a termination signal.
+async function testPauseAfterSeedSnapshot(seedSnapshot) {
+  if (process.env.NODE_ENV !== "test") return
+  const markerPath = string(process.env.WP_CODEBOX_TEST_SEED_SNAPSHOT_PAUSE_FILE)
+  if (!markerPath) return
+  await writeFile(markerPath, `${JSON.stringify({ schema: "wp-codebox/test-seed-snapshot-pause/v1", seed_snapshot_source: seedSnapshot?.source ?? "" })}\n`)
+  await new Promise((resolvePause) => setTimeout(resolvePause, 120_000))
+}
+
 function runtimeSourceFixtureRoot(value) {
   const paths = []
   const collect = (entry) => {
@@ -307,24 +353,6 @@ const runtimeInputPath = join(workspace, ".codebox", "native-agent-task-input.js
 const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const controlledCodeboxPath = resolve(requestPath, "..")
  const nativeResultPath = join(controlledCodeboxPath, "native-agent-task-result.json")
-let cleaningPrivateRuntimeSources = false
- async function cleanupPrivateRuntimeSources() {
-  if (cleaningPrivateRuntimeSources || !privateRuntimeSourceRoot) return
-  cleaningPrivateRuntimeSources = true
-  const root = privateRuntimeSourceRoot
-  privateRuntimeSourceRoot = ""
-  await rm(root, { recursive: true, force: true })
- }
- async function cleanupRunnerWorkspaceSeedSnapshot() {
-   if (!runnerWorkspaceSeedSnapshot) return
-   const source = runnerWorkspaceSeedSnapshot.source
-   runnerWorkspaceSeedSnapshot = undefined
-   await rm(source, { recursive: true, force: true })
- }
-process.once("exit", () => { if (privateRuntimeSourceRoot) rmSync(privateRuntimeSourceRoot, { recursive: true, force: true }) })
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.once(signal, () => { cleanupPrivateRuntimeSources().finally(() => process.exit(128)) })
-}
   const runnerWorkspaceTools = [
    "workspace_read", "workspace_ls", "workspace_grep", "workspace_write", "workspace_edit", "workspace_apply_patch",
    "workspace_show", "workspace_git_status", "workspace_git_diff",
@@ -346,6 +374,7 @@ if (accessError) {
  }
 
  if (request.runner_workspace?.enabled) runnerWorkspaceSeedSnapshot = await createRunnerWorkspaceSeedSnapshot(workspace)
+ await testPauseAfterSeedSnapshot(runnerWorkspaceSeedSnapshot)
 
 const testFixtures = await testRuntimeFixtures(externalPackageSource)
 const skipMaterialization = process.env.NODE_ENV === "test" && (process.env.WP_CODEBOX_TEST_SKIP_MATERIALIZATION === "true" || Boolean(testFixtures.materializedPackage || testFixtures.runtimeSourceInputs))
@@ -430,7 +459,6 @@ let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stde
  if (request.run_agent && !request.dry_run) {
    execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
  }
- await cleanupRunnerWorkspaceSeedSnapshot()
 
 // Public package bytes are embedded in the runtime recipe and consumed only by
 // the Playground bootstrap before the agent's tools are resolved.
@@ -455,7 +483,6 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
   }
 }
-await cleanupPrivateRuntimeSources()
 runtimeResult = sanitizeRuntimeSourceValue(runtimeResult, runtimeSourceOutputRoots)
 privateRuntimeSourceRootForSanitization = runtimeSourceOutputRoots
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
@@ -565,20 +592,9 @@ if (!success) process.exitCode = 1
 try {
   await executeNativeAgentTask()
 } catch (error) {
-  try {
-    await writeNormalizedFailure(error)
-  } finally {
-    if (runnerWorkspaceSeedSnapshot) {
-      const source = runnerWorkspaceSeedSnapshot.source
-      runnerWorkspaceSeedSnapshot = undefined
-      await rm(source, { recursive: true, force: true })
-    }
-    if (privateRuntimeSourceRoot) {
-      const root = privateRuntimeSourceRoot
-      privateRuntimeSourceRoot = ""
-      await rm(root, { recursive: true, force: true })
-    }
-  }
+  await writeNormalizedFailure(error)
   console.error(bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS))
   process.exitCode = 1
+} finally {
+  await cleanupMaterializedSources()
 }
