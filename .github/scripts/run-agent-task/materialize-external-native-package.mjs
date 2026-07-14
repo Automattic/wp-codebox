@@ -164,8 +164,7 @@ export function normalizeRuntimeSources(value, policy = {}) {
 export function validateRuntimeSourceModel(model, sources) {
   const provider = string(model?.provider).toLowerCase()
   const name = string(model?.name)
-  if (!provider && !name) return {}
-  if (!PROVIDER_ID.test(provider) || !MODEL_ID.test(name)) throw new Error("model.provider and model.name must be non-empty valid identifiers when either is supplied.")
+  if (!PROVIDER_ID.test(provider) || !MODEL_ID.test(name)) throw new Error("model.provider and model.name must be non-empty valid identifiers.")
   const declaredProviders = new Set(sources
     .filter((source) => source.role === "provider_plugin")
     .flatMap((source) => source.metadata.providers ?? []))
@@ -243,9 +242,11 @@ function normalizeRuntimeMetadata(role, metadata, label) {
     if (slug && !SLUG.test(slug)) throw new Error(`${label}.metadata.slug must be a stable plugin slug.`)
     if (pluginFile && !normalizePath(pluginFile)) throw new Error(`${label}.metadata.pluginFile must be a safe relative path.`)
     if (activate !== undefined && typeof activate !== "boolean") throw new Error(`${label}.metadata.activate must be boolean when provided.`)
-    const providers = metadata.providers === undefined ? undefined : metadata.providers
-    if (providers !== undefined && (!Array.isArray(providers) || providers.length === 0 || providers.some((provider) => !PROVIDER_ID.test(string(provider))))) throw new Error(`${label}.metadata.providers must be a non-empty list of provider ids when supplied.`)
-    return { ...(slug ? { slug } : {}), ...(pluginFile ? { pluginFile } : {}), ...(activate === undefined ? { activate: true } : { activate }), ...(providers ? { providers: [...new Set(providers.map((provider) => string(provider).toLowerCase()))].sort() } : {}) }
+    const providers = metadata.providers
+    if (!Array.isArray(providers) || providers.length === 0 || providers.some((provider) => !PROVIDER_ID.test(string(provider)))) throw new Error(`${label}.metadata.providers must be a non-empty canonical list of provider ids.`)
+    const canonicalProviders = [...new Set(providers.map((provider) => string(provider).toLowerCase()))].sort()
+    if (canonicalProviders.length !== providers.length || providers.some((provider, index) => provider !== canonicalProviders[index])) throw new Error(`${label}.metadata.providers must be a sorted, lowercase, duplicate-free canonical allowlist.`)
+    return { ...(slug ? { slug } : {}), ...(pluginFile ? { pluginFile } : {}), ...(activate === undefined ? { activate: true } : { activate }), providers: canonicalProviders }
   }
   if (!SLUG.test(string(metadata.library)) || !SLUG.test(string(metadata.strategy))) throw new Error(`${label}.metadata must declare library and strategy for a bundled library.`)
   const target = string(metadata.target)

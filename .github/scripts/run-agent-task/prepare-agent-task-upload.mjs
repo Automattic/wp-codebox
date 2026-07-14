@@ -1,7 +1,7 @@
 import { constants } from "node:fs"
 import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
-import { join, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -22,7 +22,8 @@ const PRIVATE_RUNTIME_PATH_FIELDS = new Set(["source", "path", "sourceRoot", "or
 function isPrivateRuntimePath(value) {
   if (!runtimeSourceRoot || typeof value !== "string") return false
   const path = resolve(value)
-  return path === runtimeSourceRoot || path.startsWith(`${runtimeSourceRoot}/`)
+  const contained = relative(runtimeSourceRoot, path)
+  return path === runtimeSourceRoot || (contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained))
 }
 
 function omitPrivateRuntimeSourcePaths(value) {

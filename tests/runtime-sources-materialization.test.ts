@@ -50,6 +50,10 @@ await withTempDir("wp-codebox-runtime-sources-", async (repository) => {
   assert.equal(recipe.runtime?.overlays?.[0].strategy, "scoped-bundle")
   assert.deepEqual(validateRuntimeSourceModel({ provider: "example", name: "example-model" }, normalizeRuntimeSources(sources, policy)), { provider: "example", name: "example-model" })
   assert.throws(() => validateRuntimeSourceModel({ provider: "other", name: "example-model" }, normalizeRuntimeSources(sources, policy)), /not declared/)
+  assert.throws(() => validateRuntimeSourceModel({ provider: "example", name: "" }, normalizeRuntimeSources(sources, policy)), /non-empty/)
+  assert.throws(() => normalizeRuntimeSource({ ...sources[1], metadata: { slug: "example-provider", pluginFile: "provider.php" } }, policy), /providers must be a non-empty canonical/)
+  assert.throws(() => normalizeRuntimeSource({ ...sources[1], metadata: { ...sources[1].metadata, providers: ["Example"] } }, policy), /non-empty canonical/)
+  assert.throws(() => normalizeRuntimeSource({ ...sources[1], metadata: { ...sources[1].metadata, providers: ["example", "example"] } }, policy), /sorted, lowercase, duplicate-free/)
   await assert.rejects(materializeRuntimeSources([{ ...sources[0], revision: "main" }], { policy, remotes: { "example/runtime": repository } }), /immutable 40-character/)
   assert.throws(() => normalizeRuntimeSource({ ...sources[0], version: 2 }, policy), /version must be 1/)
   await assert.rejects(materializeRuntimeSources([{ ...sources[0], path: "../components/runtime" }], { policy, remotes: { "example/runtime": repository } }), /without traversal/)
@@ -102,6 +106,7 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   const artifacts = join(workspace, ".codebox", "agent-task-artifacts")
   const upload = join(workspace, ".codebox", "agent-task-upload")
   const privateRoot = join(directory, "private-runtime-source")
+  const suffixedPrivateRoot = `${privateRoot}-actual-mkdtemp-suffix`
   await mkdir(artifacts, { recursive: true })
   await mkdir(privateRoot, { recursive: true })
   await writeFile(join(privateRoot, "source.php"), "<?php // private runtime source\n")
@@ -130,6 +135,10 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   await mkdir(join(artifacts, "prepared-plugins", "agents-api"), { recursive: true })
   await writeFile(join(artifacts, "prepared-plugins", "agents-api", "agents-api.php"), "<?php /* Plugin Name: Agents API */\n")
   await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /Prepared runtime plugin sources/)
+  await rm(join(artifacts, "prepared-plugins"), { recursive: true, force: true })
+  await mkdir(suffixedPrivateRoot, { recursive: true })
+  await writeFile(join(artifacts, "suffixed-root-leak.json"), suffixedPrivateRoot)
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: suffixedPrivateRoot } }), /Runtime source paths must never be persisted/)
 })
 
 await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
@@ -176,16 +185,25 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   }
   await writeFile(join(codebox, "agent-task-request.json"), JSON.stringify(request))
   await writeFile(join(codebox, "agent-task-artifacts", "safe.json"), JSON.stringify({ provenance: { repository: "example/source", revision } }))
-  const environment = { ...process.env, PATH: `${tools}:${process.env.PATH}`, TMPDIR: temp, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_REQUEST_PATH: join(codebox, "agent-task-request.json"), WP_CODEBOX_CLI_PATH: join(directory, "fake-cli.mjs"), GITHUB_TOKEN: "test-token", EXTERNAL_PACKAGE_SOURCE_POLICY: JSON.stringify({ version: 1, repositories: { "example/source": ["fixture.agent.json"] }, runtime_sources: { "example/source": ["plugin"] } }) }
+  const githubOutput = join(directory, "github-output")
+  const environment = { ...process.env, PATH: `${tools}:${process.env.PATH}`, TMPDIR: temp, GITHUB_OUTPUT: githubOutput, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_REQUEST_PATH: join(codebox, "agent-task-request.json"), WP_CODEBOX_CLI_PATH: join(directory, "fake-cli.mjs"), GITHUB_TOKEN: "test-token", EXTERNAL_PACKAGE_SOURCE_POLICY: JSON.stringify({ version: 1, repositories: { "example/source": ["fixture.agent.json"] }, runtime_sources: { "example/source": ["plugin"] } }) }
   const executorPath = new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url)
   await execFileAsync(process.execPath, [executorPath.pathname], { env: environment })
   const nativeInput = JSON.parse(await readFile(capturedInput, "utf8"))
   assert.deepEqual(nativeInput.task_input.runtime_task.input.input.provider, "openai")
   assert.deepEqual(nativeInput.task_input.runtime_task.input.input.model, "gpt-5.5")
+  assert.equal("provider" in nativeInput.task_input, false, "provider belongs only to the selected runtime package turn")
+  assert.equal("model" in nativeInput.task_input, false, "model belongs only to the selected runtime package turn")
   await assert.rejects(access(join(codebox, "native-agent-task-input.json")), /ENOENT/, "runtime source native input must remain private")
   const uploaderPath = new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url)
-  await execFileAsync(process.execPath, [uploaderPath.pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: join(temp, "wp-codebox-runtime-sources-") } })
-  const privateRuntimePrefix = join(temp, "wp-codebox-runtime-sources-")
+  const output = await readFile(githubOutput, "utf8")
+  const exactPrivateRuntimeRoot = output.match(/runtime_source_root<<__WP_CODEBOX_OUTPUT__\n(.+)\n__WP_CODEBOX_OUTPUT__/s)?.[1]
+  assert.ok(exactPrivateRuntimeRoot?.startsWith(join(temp, "wp-codebox-runtime-sources-")), "executor must expose the exact mkdtemp root only as a step output")
+  await writeFile(join(codebox, "agent-task-artifacts", "exact-root-leak.json"), exactPrivateRuntimeRoot)
+  await assert.rejects(execFileAsync(process.execPath, [uploaderPath.pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: exactPrivateRuntimeRoot } }), /Runtime source paths must never be persisted/)
+  await rm(join(codebox, "agent-task-artifacts", "exact-root-leak.json"))
+  await execFileAsync(process.execPath, [uploaderPath.pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: exactPrivateRuntimeRoot } })
+  const privateRuntimePrefix = exactPrivateRuntimeRoot
   for (const path of [".codebox/agent-task-request.json", ".codebox/agent-task-workflow-result.json", ".codebox/agent-task-artifacts/safe.json"]) {
     assert.ok(!(await readFile(join(upload, path), "utf8")).includes(privateRuntimePrefix))
   }
@@ -201,5 +219,6 @@ assert.match(executor, /cleanupPrivateRuntimeSources\(\)\.finally\(\(\) => proce
 assert.match(executor, /const executionInputPath = privateRuntimeSourceRoot \? join\(privateRuntimeSourceRoot, "native-agent-task-input\.json"\) : runtimeInputPath/)
 assert.match(executor, /const privatePreparationRoot = privateRuntimeSourceRoot \? join\(privateRuntimeSourceRoot, "prepared-runtime-sources"\) : ""/)
 assert.match(executor, /assertNoPrivateRuntimePaths\(nativeRuntimeResult\)/)
+assert.match(executor, /await output\("runtime_source_root", privateRuntimeSourceRoot\)/)
 
 console.log("runtime sources materialization ok")

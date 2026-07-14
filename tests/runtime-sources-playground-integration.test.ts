@@ -5,7 +5,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { materializeRuntimeSources, parseExternalPackageSourcePolicy } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
+import { materializeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "../.github/scripts/run-agent-task/materialize-external-native-package.mjs"
 import { buildAgentTaskRecipe } from "../packages/runtime-core/src/agent-task-recipe.js"
 import { normalizeTaskInput } from "../packages/runtime-core/src/task-input.js"
 
@@ -90,6 +90,48 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
   assert.ok(runtimeTaskArg, "native runtime package task must be part of the Playground closure")
   const runtimeTask = JSON.parse(runtimeTaskArg.slice("runtime-task-json=".length))
   assert.deepEqual(runtimeTask.input.input, { prompt: "Return the mocked response.", provider: "openai", model: "gpt-5.5" })
+  assert.throws(() => validateRuntimeSourceModel({ provider: "undeclared", name: "gpt-5.5" }, materialized.descriptors.map((descriptor: Record<string, unknown>) => ({ ...descriptor, metadata: { providers: descriptor.providers } }))), /not declared/, "an undeclared provider must be rejected before a chat turn is constructed")
+
+  recipe.workflow = {
+    steps: [{
+      command: "wordpress.run-php",
+      args: ["code=" + String.raw`$imports = wp_agent_import_runtime_bundles( array( array( 'source' => '/tmp/flat-runtime-agent.agent.json', 'slug' => 'flat-runtime-agent', 'on_conflict' => 'upgrade' ) ), array( 'owner_id' => 1 ) );
+if ( ! is_array( $imports ) || empty( $imports[0]['success'] ) ) { throw new RuntimeException( 'Canonical importer did not import the flat package.' ); }
+$GLOBALS['wp_codebox_provider_http_requests'] = array();
+add_filter( 'agents_chat_permission', static fn() => true, 1000, 2 );
+add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
+    $GLOBALS['wp_codebox_provider_http_requests'][] = array( 'url' => $url, 'body' => $args['body'] ?? null );
+    $body = str_contains( $url, '/models' )
+        ? array( 'object' => 'list', 'data' => array( array( 'id' => 'gpt-5.5', 'object' => 'model', 'created' => 0, 'owned_by' => 'openai' ) ) )
+        : array( 'id' => 'resp-fixture', 'object' => 'response', 'status' => 'completed', 'output' => array( array( 'id' => 'msg-fixture', 'type' => 'message', 'status' => 'completed', 'role' => 'assistant', 'content' => array( array( 'type' => 'output_text', 'text' => 'Mocked terminal reply', 'annotations' => array() ) ) ) ), 'usage' => array( 'input_tokens' => 1, 'output_tokens' => 1, 'total_tokens' => 2 ) );
+    return array(
+        'headers' => array( 'content-type' => 'application/json' ),
+        'body' => wp_json_encode( $body ),
+        'response' => array( 'code' => 200, 'message' => 'OK' ),
+        'cookies' => array(),
+        'filename' => null,
+    );
+}, 1000, 3 );
+$chat = wp_get_ability( 'agents/chat' );
+if ( ! is_object( $chat ) || ! method_exists( $chat, 'execute' ) ) { throw new RuntimeException( 'Actual Agents API agents/chat ability is unavailable.' ); }
+$result = $chat->execute( array( 'agent' => 'flat-runtime-agent', 'message' => 'Return the mocked response.', 'provider' => 'openai', 'model' => 'gpt-5.5' ) );
+if ( is_wp_error( $result ) ) { throw new RuntimeException( $result->get_error_code() . ': ' . $result->get_error_message() ); }
+echo wp_json_encode( array( 'reply' => $result['reply'] ?? '', 'completed' => $result['completed'] ?? false, 'http_requests' => $GLOBALS['wp_codebox_provider_http_requests'] ) );`],
+    }],
+  }
+  await writeFile(recipePath, `${JSON.stringify(recipe)}\n`)
+  const chatResult = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--json"], {
+    cwd: process.cwd(), timeout: 300_000, env: { ...process.env, OPENAI_API_KEY: "dummy-key" }, maxBuffer: 2 * 1024 * 1024,
+  })
+  const chatOutput = JSON.parse(chatResult.stdout)
+  const chatStdout = chatOutput.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? ""
+  const chat = JSON.parse(chatStdout)
+  assert.equal(chat.reply, "Mocked terminal reply", JSON.stringify(chat))
+  assert.equal(chat.completed, true)
+  const providerTurn = chat.http_requests.find((request: { url: string }) => request.url.endsWith("/responses"))
+  assert.ok(providerTurn, "the OpenAI provider transport must execute through the local interception fixture")
+  assert.equal(JSON.parse(providerTurn.body).model, "gpt-5.5", "the selected OpenAI model must reach the provider transport")
+  assert.match(providerTurn.url, /^https:\/\/api\.openai\.com\/v1\/responses$/, "the selected OpenAI provider must reach its provider transport")
   await rm(materialized.root, { recursive: true, force: true })
   await assert.rejects(access(privatePackage), /ENOENT/, "private source package must be removed with its materialization root")
   console.log(`runtime sources Playground integration ok: ${JSON.stringify(checks)}`)

@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs"
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
@@ -99,7 +99,8 @@ function record(value) {
 function isPrivateRuntimePath(value) {
   if (!privateRuntimeSourceRoot || typeof value !== "string") return false
   const path = resolve(value)
-  return path === privateRuntimeSourceRoot || path.startsWith(`${privateRuntimeSourceRoot}/`)
+  const contained = relative(privateRuntimeSourceRoot, path)
+  return path === privateRuntimeSourceRoot || (contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained))
 }
 
 function omitPrivateRuntimeSourcePaths(value) {
@@ -262,6 +263,7 @@ const materializedRuntimeSources = request.run_agent && !request.dry_run
   ? await materializeRuntimeSources(runtimeSources, { policy: externalPackagePolicy, forbiddenRoots: [workspace, artifactsPath] })
   : undefined
 privateRuntimeSourceRoot = materializedRuntimeSources?.root ?? ""
+await output("runtime_source_root", privateRuntimeSourceRoot)
 const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((input, lowered) => {
   for (const [key, entries] of Object.entries(lowered)) input[key] = [...(input[key] ?? []), ...entries]
   return input
@@ -284,8 +286,6 @@ const taskInput = {
     target: { kind: "repo", materialization: { root: workspace } },
     expected_artifacts: request.artifacts?.expected || [],
     structured_artifacts: request.artifacts?.declarations || [],
-    provider: requestedModel.provider,
-    model: requestedModel.name,
     secret_env: ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5"].filter((name) => process.env[name]),
     ...runtimeSourceInputs,
     allowed_tools: runnerWorkspaceTools,
@@ -344,6 +344,7 @@ assertNoPrivateRuntimePaths(nativeRuntimeResult)
 const runtimeResult = omitPrivateRuntimeSourcePaths(nativeRuntimeResult)
 assertNoPrivateRuntimePaths(runtimeResult)
 await cleanupPrivateRuntimeSources()
+assertNoPrivateRuntimePaths(runtimeResult)
 
 await redactArtifactFiles(artifactsPath)
 

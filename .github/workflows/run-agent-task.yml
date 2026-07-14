@@ -283,7 +283,7 @@ jobs:
           AGENT_TASK_WORKSPACE: ${{ github.workspace }}/workspace
           AGENT_TASK_REQUEST_PATH: ${{ github.workspace }}/.codebox/agent-task-request.json
           AGENT_TASK_UPLOAD_PATH: ${{ github.workspace }}/workspace/.codebox/agent-task-upload
-          WP_CODEBOX_RUNTIME_SOURCE_ROOT: ${{ runner.temp }}/wp-codebox-runtime-sources-
+          WP_CODEBOX_RUNTIME_SOURCE_ROOT: ${{ steps.execute.outputs.runtime_source_root }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
           MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
