@@ -2,7 +2,6 @@ import { constants } from "node:fs"
 import { lstat, mkdir, open, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { createHash } from "node:crypto"
-import { fileURLToPath, pathToFileURL } from "node:url"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
 
@@ -18,7 +17,6 @@ const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(p
 const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX) : ""
 const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
 const privateUploadRoots = [...runtimeSourceRoots, workspace]
-const codeboxRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)))
 const SOURCE_TREE = /(^|\/)(prepared-plugins|prepared-source-packages|source-package[^/]*)(\/|$)/i
 const SOURCE_FILE = /\.(?:php|phtml|js|mjs|cjs|jsx|ts|tsx)$/i
 const PHP_OPENING_TAG = /<\?(?:php|=)(?:\s|$)/i
@@ -147,13 +145,21 @@ async function stageTextFile(source, destination, options = {}) {
   return true
 }
 
-async function canonicalTranscript(result) {
-  const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
-  const refs = publicCore.normalizePublicArtifactRefDTOs(record(result).runtime_result)
-    .filter((ref) => ref.kind === "codebox-transcript")
-  if (refs.length === 0) return undefined
-  if (refs.length !== 1 || !safeRelativeArtifactPath(refs[0].path)) throw new Error("Canonical transcript requires exactly one trusted codebox-transcript path.")
-  return refs[0]
+function canonicalTranscript(result) {
+  const descriptor = record(record(result).reviewer_evidence).transcript
+  if (descriptor === undefined) return undefined
+  const transcript = record(descriptor)
+  if (Object.keys(transcript).length !== 5
+    || transcript.schema !== "wp-codebox/agent-transcript/v1"
+    || transcript.kind !== "codebox-transcript"
+    || typeof transcript.path !== "string"
+    || !/^[a-f0-9]{64}$/.test(transcript.source_sha256)
+    || !Number.isSafeInteger(transcript.size_bytes)
+    || transcript.size_bytes < 0
+    || transcript.size_bytes > MAX_UPLOAD_FILE_BYTES) {
+    throw new Error("Reviewer evidence transcript descriptor is malformed.")
+  }
+  return transcript
 }
 
 function digest(bytes) {
@@ -214,7 +220,12 @@ function projectParsed(value) {
 async function trustedTranscriptFile(path) {
   const root = await realpath(artifactsPath).catch(() => "")
   if (!root) return { unavailable: "artifact-root-missing" }
-  const parts = path.split("/")
+  // Resolve before evaluating containment so harmless relative spelling is not
+  // mistaken for an escape while aliases and symlinks still fail closed.
+  const requested = resolve(root, path)
+  const requestedRelative = relative(root, requested)
+  if (requestedRelative === ".." || requestedRelative.startsWith(`..${String.fromCharCode(47)}`) || isAbsolute(requestedRelative)) throw new Error("Canonical transcript escapes the trusted artifact root.")
+  const parts = requestedRelative.split("/").filter(Boolean)
   let current = root
   for (const part of parts) {
     current = join(current, part)
@@ -233,18 +244,16 @@ async function trustedTranscriptFile(path) {
 async function stageCanonicalTranscript(result) {
   const ref = await canonicalTranscript(result)
   if (!ref) return undefined
-  const path = safeRelativeArtifactPath(ref.path)
-  if (sourceCategory(path, resolve(artifactsPath, path))) throw new Error("Canonical transcript must stay under the trusted artifact root.")
-  const trusted = await trustedTranscriptFile(path)
-  if (trusted.unavailable) return { unavailable: trusted.unavailable, provenance: { kind: ref.kind, artifact_path: path } }
+  const trusted = await trustedTranscriptFile(ref.path)
+  if (trusted.unavailable) return { unavailable: trusted.unavailable, provenance: { kind: ref.kind, artifact_path: ref.path } }
   const source = trusted.source
   const bytes = await readFile(source)
   if (bytes.includes(0) || !isUtf8(bytes)) throw new Error("Canonical transcript must be UTF-8 JSON.")
   const actualDigest = digest(bytes)
-  const expectedDigest = typeof ref.sha256 === "string" ? ref.sha256 : record(ref.digest).value
-  if (expectedDigest && expectedDigest !== actualDigest) throw new Error("Canonical transcript digest does not match its normalized ref.")
+  if (ref.source_sha256 !== actualDigest) throw new Error("Canonical transcript digest does not match its reviewer evidence descriptor.")
+  if (ref.size_bytes !== bytes.length) throw new Error("Canonical transcript size does not match its reviewer evidence descriptor.")
   const raw = parseJsonOrEmpty(bytes.toString("utf8"))
-  if (raw.schema !== "wp-codebox/agent-transcript/v1" || !Array.isArray(raw.executions) || raw.executions.length > MAX_TRANSCRIPT_EXECUTIONS) throw new Error("Canonical transcript must be a bounded wp-codebox/agent-transcript/v1 envelope.")
+  if (raw.schema !== ref.schema || !Array.isArray(raw.executions) || raw.executions.length > MAX_TRANSCRIPT_EXECUTIONS) throw new Error("Canonical transcript must be a bounded wp-codebox/agent-transcript/v1 envelope.")
   const projection = {
     schema: "wp-codebox/reviewer-agent-transcript/v1",
     executions: raw.executions.map((execution, index) => {
@@ -260,7 +269,7 @@ async function stageCanonicalTranscript(result) {
   return {
     path: ".codebox/agent-task-artifacts/transcript.json",
     sha256: projectionDigest,
-    provenance: { kind: ref.kind, artifact_path: path, source_sha256: actualDigest, projection_sha256: projectionDigest },
+    provenance: { kind: ref.kind, artifact_path: ref.path, source_sha256: actualDigest, projection_sha256: projectionDigest },
   }
 }
 

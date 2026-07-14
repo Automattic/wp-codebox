@@ -169,7 +169,8 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   const transcriptSource = JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [{ executionIndex: 0, command: "wp-codebox.agent-sandbox-run", exitCode: 1, stderr: "Repeated workspace error", parsed: { agent: { id: "fixture", provider: "openai" }, messages: [{ role: "assistant", content: "Target snippet: <?php final class Target_Plugin {}" }], tool_calls: [{ tool_id: "workspace.read", args: { path: "src/plugin.php" }, result: { content: "<?php final class Target_Plugin {}" }, error: "Repeated workspace error" }], token: "secret-transcript-value", private_path: `${privateRoot}/source.php`, host_path: "/Users/example/private-log.txt" } }] })
   await writeFile(join(artifacts, "files", "transcript.json"), transcriptSource)
   const transcriptDigest = createHash("sha256").update(transcriptSource).digest("hex")
-  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ runtime_result: { agent_task_run_result: { refs: { transcripts: [{ kind: "codebox-transcript", path: "files/transcript.json", sha256: transcriptDigest }] } } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
+  const reviewerEvidence = { transcript: { schema: "wp-codebox/agent-transcript/v1", kind: "codebox-transcript", path: "files/transcript.json", source_sha256: transcriptDigest, size_bytes: Buffer.byteLength(transcriptSource) } }
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ reviewer_evidence: reviewerEvidence, runtime_result: { agent_task_run_result: { refs: { transcripts: [{ kind: "codebox-transcript", path: "files/transcript.json", sha256: transcriptDigest }] } } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot, OPENAI_API_KEY: "secret-transcript-value" } })
   const transcript = await readFile(join(upload, ".codebox", "agent-task-artifacts", "transcript.json"), "utf8")
   assert.doesNotMatch(transcript, /<\?php final class Target_Plugin/)
@@ -182,6 +183,9 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   const transcriptExclusions = await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8")
   assert.match(transcriptExclusions, /canonical_transcripts/)
   assert.match(transcriptExclusions, /codebox-transcript/)
+  await writeFile(join(artifacts, "files", "transcript.json"), `${transcriptSource}\n`)
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /digest does not match/, "Uploader rejects stale reviewer evidence digests")
+  await writeFile(join(artifacts, "files", "transcript.json"), transcriptSource)
   const outsideTranscript = join(directory, "outside-transcript.json")
   await writeFile(outsideTranscript, JSON.stringify({ secret: "outside" }))
   await rm(join(artifacts, "files", "transcript.json"))
@@ -245,7 +249,7 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   await writeFile(join(tools, "git"), `#!${process.execPath}\nimport { spawnSync } from "node:child_process"\nconst args = process.argv.slice(2).map((value) => value.startsWith("https://github.com/") ? ${JSON.stringify(repository)} : value)\nconst result = spawnSync(${JSON.stringify(gitPath)}, args, { stdio: "inherit" })\nprocess.exit(result.status ?? 1)\n`)
   await chmod(join(tools, "git"), 0o755)
   const capturedInput = join(directory, "captured-native-input.json")
-  await writeFile(join(directory, "fake-cli.mjs"), `import { readFile, writeFile } from "node:fs/promises"\nconst input = process.argv[process.argv.indexOf("--input-file") + 1]\nconst result = process.argv[process.argv.indexOf("--result-file") + 1]\nconst taskInput = JSON.parse(await readFile(input))\nconst runtimeRoot = taskInput.source_package_root.replace(/\\/prepared-runtime-sources$/, "")\nconst nativeResult = JSON.parse(${JSON.stringify(JSON.stringify(hostedPathRegression.success))}.replaceAll(${JSON.stringify(hostedPathRegression.runtime_root)}, runtimeRoot))\nnativeResult.status = "no_op"\nnativeResult.agent_task_run_result.status = "no_op"\nawait writeFile(${JSON.stringify(capturedInput)}, JSON.stringify(taskInput))\nawait writeFile(result, JSON.stringify(nativeResult))\n`)
+  await writeFile(join(directory, "fake-cli.mjs"), `import { readFile, writeFile } from "node:fs/promises"\nconst input = process.argv[process.argv.indexOf("--input-file") + 1]\nconst result = process.argv[process.argv.indexOf("--result-file") + 1]\nconst taskInput = JSON.parse(await readFile(input))\nconst runtimeRoot = taskInput.source_package_root.replace(/\\/prepared-runtime-sources$/, "")\nconst nativeResult = JSON.parse(${JSON.stringify(JSON.stringify(hostedPathRegression.success))}.replaceAll(${JSON.stringify(hostedPathRegression.runtime_root)}, runtimeRoot))\nnativeResult.status = "no_op"\nnativeResult.agent_task_run_result.status = "no_op"\nconst transcriptPath = taskInput.artifacts_path + "/files/transcript.json"\nconst transcriptPaths = process.env.GITHUB_TOKEN === "distinct-token" ? [transcriptPath, taskInput.artifacts_path + "/files/transcript-2.json"] : Array.from({ length: 16 }, () => transcriptPath)\nnativeResult.agent_task_run_result.refs = { transcripts: transcriptPaths.map((path) => ({ kind: "codebox-transcript", path })) }\nawait writeFile(${JSON.stringify(capturedInput)}, JSON.stringify(taskInput))\nawait writeFile(result, JSON.stringify(nativeResult))\n`)
   const request = {
     workload: { id: "runtime-sources-workflow", label: "Runtime sources workflow" },
     access: { caller_repo: "example/target", allowed_repos: ["example/target"], access_token_repos: ["example/target"] },
@@ -265,11 +269,19 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   }
   await writeFile(join(codebox, "agent-task-request.json"), JSON.stringify(request))
   await writeFile(join(codebox, "agent-task-artifacts", "safe.json"), JSON.stringify({ provenance: { repository: "example/source", revision } }))
+  await mkdir(join(codebox, "agent-task-artifacts", "files"), { recursive: true })
+  await writeFile(join(codebox, "agent-task-artifacts", "files", "transcript.json"), JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [{ command: "fixture", exitCode: 0 }] }))
   const githubOutput = join(directory, "github-output")
   const environment = { ...process.env, PATH: `${tools}:${process.env.PATH}`, TMPDIR: temp, GITHUB_OUTPUT: githubOutput, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_REQUEST_PATH: join(codebox, "agent-task-request.json"), WP_CODEBOX_CLI_PATH: join(directory, "fake-cli.mjs"), GITHUB_TOKEN: "test-token", EXTERNAL_PACKAGE_SOURCE_POLICY: JSON.stringify({ version: 1, repositories: { "example/source": ["fixture.agent.json"] }, runtime_sources: { "example/source": ["plugin"] } }) }
   const executorPath = new URL("../.github/scripts/run-agent-task/execute-native-agent-task.mjs", import.meta.url)
   await execFileAsync(process.execPath, [executorPath.pathname], { env: environment })
   const workflowResult = await readFile(join(codebox, "agent-task-workflow-result.json"), "utf8")
+  const canonicalizedResult = JSON.parse(workflowResult)
+  assert.deepEqual(canonicalizedResult.reviewer_evidence, { transcript: { schema: "wp-codebox/agent-transcript/v1", kind: "codebox-transcript", path: "files/transcript.json", source_sha256: createHash("sha256").update(await readFile(join(codebox, "agent-task-artifacts", "files", "transcript.json"))).digest("hex"), size_bytes: (await readFile(join(codebox, "agent-task-artifacts", "files", "transcript.json"))).length } }, "hosted duplicate absolute refs reduce to one reviewer evidence descriptor")
+  await execFileAsync(process.execPath, [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], { env: { ...environment, AGENT_TASK_UPLOAD_PATH: upload } })
+  assert.ok(await readFile(join(upload, ".codebox", "agent-task-artifacts", "transcript.json"), "utf8"), "uploader uses the dedicated canonical descriptor")
+  await writeFile(join(codebox, "agent-task-artifacts", "files", "transcript-2.json"), JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [] }))
+  await assert.rejects(execFileAsync(process.execPath, [executorPath.pathname], { env: { ...environment, GITHUB_TOKEN: "distinct-token" } }), /exactly one distinct existing file/, "distinct transcript files fail closed")
   const exactRuntimeRoot = JSON.parse(await readFile(capturedInput, "utf8")).source_package_root.replace(/\/prepared-runtime-sources$/, "")
   assert.doesNotMatch(workflowResult, new RegExp(exactRuntimeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   assert.doesNotMatch(workflowResult, /source_package_root/)
