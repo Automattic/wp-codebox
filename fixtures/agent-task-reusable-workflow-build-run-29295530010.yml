@@ -1,6 +1,6 @@
 # Regression fixture from Build run 29295530010. In a nested workflow GitHub
 # exposed this caller context, not the reusable workflow's own uses ref.
-# github.workflow_ref: Automattic/wp-build/.github/workflows/build.yml@trunk
+# github.workflow_ref: Automattic/build-with-wordpress/.github/workflows/build.yml@trunk
 name: Build consumer with foreign caller workflow ref
 
 on: workflow_dispatch

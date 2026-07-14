@@ -66,7 +66,7 @@ const mismatchedConsumer = await readFile(new URL("../fixtures/agent-task-reusab
 const buildRunConsumer = await readFile(new URL("../fixtures/agent-task-reusable-workflow-build-run-29295530010.yml", import.meta.url), "utf8")
 assert.equal(isCoherentConsumer(coherentConsumer), true, "An exact matching workflow and helper release tag must succeed")
 assert.equal(isCoherentConsumer(mismatchedConsumer), false, "Mismatched workflow and helper release tags must fail")
-assert.match(buildRunConsumer, /github\.workflow_ref: Automattic\/wp-build\/\.github\/workflows\/build\.yml@trunk/)
+assert.match(buildRunConsumer, /github\.workflow_ref: Automattic\/build-with-wordpress\/\.github\/workflows\/build\.yml@trunk/)
 assert.equal(isCoherentConsumer(buildRunConsumer), true, "A foreign caller workflow_ref must not affect the paired release tags")
 for (const invalidRef of ["main", "v0", "v0.12", "v0.12.3-rc.1", "0123456789abcdef0123456789abcdef01234567"]) {
   assert.equal(isExactReleaseTag(invalidRef), false, `Non-release ref must fail: ${invalidRef}`)
