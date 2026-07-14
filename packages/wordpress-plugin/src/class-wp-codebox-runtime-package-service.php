@@ -31,6 +31,8 @@ final class WP_Codebox_Runtime_Package_Service {
 			return new WP_Error( 'wp_codebox_runtime_package_task_invalid', 'Runtime package task does not match wp-codebox/runtime-package-task/v1.', array( 'status' => 400, 'diagnostics' => $invalid ) );
 		}
 
+		$input['required_artifacts'] = $this->required_artifacts( $input );
+
 		return $input;
 	}
 
@@ -59,6 +61,14 @@ final class WP_Codebox_Runtime_Package_Service {
 		}
 		if ( ! is_array( $task['required_artifacts'] ?? null ) ) {
 			$errors[] = $this->diagnostic( 'runtime_package_task_invalid_required_artifacts', 'Runtime package task requires required_artifacts array.', 'required_artifacts' );
+		} else {
+			$declared_required = $this->required_artifacts( $task );
+			foreach ( $task['required_artifacts'] as $required ) {
+				$name = $this->string_value( $required );
+				if ( '' !== $name && ! in_array( $name, $declared_required, true ) ) {
+					$errors[] = $this->diagnostic( 'runtime_package_task_undeclared_required_artifact', 'Runtime package required_artifacts contains an artifact that is not declared as a required output artifact: ' . $name . '.', 'required_artifacts' );
+				}
+			}
 		}
 
 		return $errors;
@@ -66,10 +76,6 @@ final class WP_Codebox_Runtime_Package_Service {
 
 	/** @param array<string,mixed> $input Runtime package input. @return string[] */
 	private function required_artifacts( array $input ): array {
-		if ( is_array( $input['required_artifacts'] ?? null ) ) {
-			return array_values( array_unique( array_filter( array_map( 'strval', $input['required_artifacts'] ) ) ) );
-		}
-
 		$required = array();
 		foreach ( is_array( $input['artifact_declarations'] ?? null ) ? $input['artifact_declarations'] : array() as $artifact ) {
 			if ( is_array( $artifact ) && true === ( $artifact['required'] ?? false ) && 'input' !== (string) ( $artifact['direction'] ?? 'output' ) ) {

@@ -433,9 +433,10 @@ Runtime package callers use `wp-codebox/run-runtime-package` or
 `wp-codebox/runtime-package-output-projection/v1`; results use
 `wp-codebox/runtime-package-result/v1`. `package.slug` is package identity;
 `package.source` is the import path. Workspace-relative sources must be
-normalized against an explicit workspace root before execution. Required
-artifacts are declared explicitly, runtime import failures return structured
-diagnostics, and semantic outputs plus explicit typed/structured artifacts remain
+normalized against an explicit workspace root before execution. Required artifacts
+derive only from output declarations marked `required: true`. Runtime import
+failures return structured diagnostics, and semantic outputs plus
+explicit typed/structured artifacts remain
 separate result fields. These contracts are generic Codebox runtime/package
 shapes for consumers using the runtime package API.
 Consumers can read the same ids from `runtimeContractManifest().schemas` and

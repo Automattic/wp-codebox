@@ -164,15 +164,35 @@ async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
 function projections(value, runtimeResult) {
   const entries = Object.entries(record(value))
   const output = {}
-  for (const [name, source] of entries) {
-    if (typeof source !== "string" || !source.trim() || !/^[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9_.-]+)*$/.test(source)) {
-      throw new Error(`output_projections.${name} must be a dot-delimited result path.`)
+  for (const [name, declaration] of entries) {
+    const descriptor = typeof declaration === "string" ? { path: declaration, required: true } : record(declaration)
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      throw new Error(`output_projections.${name} must have a non-empty output name.`)
     }
-    const projected = resultValue(runtimeResult, source.trim())
-    if (projected === undefined) throw new Error(`output_projections.${name} did not resolve from ${source}.`)
+    if (Object.keys(descriptor).some((key) => key !== "path" && key !== "required")) {
+      throw new Error(`output_projections.${name} descriptor supports only path and required.`)
+    }
+    const path = string(descriptor.path)
+    if (!path || !/^[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9_.-]+)*$/.test(path)) {
+      throw new Error(`output_projections.${name}.path must be a dot-delimited result path.`)
+    }
+    if (typeof descriptor.required !== "boolean") {
+      throw new Error(`output_projections.${name}.required must be a boolean.`)
+    }
+    const projected = resultValue(runtimeResult, path)
+    if (projected === undefined && descriptor.required) throw new Error(`output_projections.${name} did not resolve from ${path}.`)
+    if (projected === undefined) continue
     output[name] = projected
   }
   return output
+}
+
+function requiredArtifacts(declarations) {
+  return Array.from(new Set((Array.isArray(declarations) ? declarations : []).flatMap((declaration) => {
+    const artifact = record(declaration)
+    const name = string(artifact.name)
+    return artifact.required === true && artifact.direction !== "input" && name ? [name] : []
+  })))
 }
 
 function workflowPath(path) {
@@ -340,7 +360,7 @@ const taskInput = {
           runner_workspace_policy: { allowed_repos: request.access.allowed_repos },
         },
         artifact_declarations: request.artifacts?.declarations || [],
-        required_artifacts: request.artifacts?.expected || [],
+        required_artifacts: requiredArtifacts(request.artifacts?.declarations),
         output_projections: [],
         metadata: { workload: request.workload, ...(materializedPackage ? { imported_agent: materializedPackage.identity } : {}), runtime_sources: materializedRuntimeSources?.descriptors ?? [] },
       },

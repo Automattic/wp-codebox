@@ -19,7 +19,7 @@ jobs:
       success_requires_pr: true
       access_token_repos: Automattic/example-target
       allowed_repos: '["Automattic/example-target"]'
-      output_projections: '{"pr_url":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url"}'
+      output_projections: '{"pr_url":{"path":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url","required":false}}'
     secrets:
       EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -65,7 +65,8 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 - `success_requires_pr`: require a successful, published runner-workspace pull request for `target_repo`.
 - `access_token_repos`: comma-separated repositories available to the supplied access token.
 - `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
-- `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. Every projection must resolve.
+- `expected_artifacts`: JSON allowlist and collection metadata. Required runtime artifacts are derived only from `artifact_declarations` entries with `required: true` and must be declared output artifacts.
+- `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. A string value remains a required projection for compatibility. A descriptor value has the exact shape `{ "path": "result.path", "required": false }`; unresolved optional projections are omitted, while unresolved required projections fail the run.
 
 ## Access And Publication
 

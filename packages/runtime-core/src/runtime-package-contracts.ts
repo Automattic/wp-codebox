@@ -104,7 +104,7 @@ export function normalizeRuntimePackageTask(options: RuntimePackageTaskOptions):
     input: isPlainObject(options.input) ? options.input : {},
     artifact_declarations: normalizeRuntimePackageArtifactDeclarations(options.artifact_declarations),
     output_projections: normalizeRuntimePackageOutputProjections(options.output_projections),
-    required_artifacts: runtimePackageRequiredArtifacts(options.required_artifacts, options.artifact_declarations),
+    required_artifacts: runtimePackageRequiredArtifacts(options.artifact_declarations),
     metadata,
   }) as RuntimePackageTask
 }
@@ -148,6 +148,13 @@ export function validateRuntimePackageTask(value: unknown): RuntimePackageTaskVa
   }
   if (!Array.isArray(value.required_artifacts)) {
     diagnostics.push(runtimePackageDiagnostic("missing_required_artifacts", "Runtime package task requires required_artifacts array.", { path: "required_artifacts" }))
+  } else {
+    const declaredRequired = runtimePackageRequiredArtifacts(value.artifact_declarations)
+    for (const name of stringList(value.required_artifacts)) {
+      if (!declaredRequired.includes(name)) {
+        diagnostics.push(runtimePackageDiagnostic("undeclared_required_artifact", `Runtime package required_artifacts contains ${name}, which is not declared as a required output artifact.`, { path: "required_artifacts", details: { name } }))
+      }
+    }
   }
   if (isPlainObject(value.package) && stringValue(value.package.source) && isWorkspaceRelativePackageSource(stringValue(value.package.source))) {
     diagnostics.push(runtimePackageDiagnostic("workspace_root_required", "Workspace-relative package.source requires explicit workspace root normalization before execution.", { path: "package.source" }))
@@ -197,9 +204,7 @@ function runtimePackageWorkflow(value: unknown, fallbackId: string): RuntimePack
   return fallbackId ? { id: fallbackId } : undefined
 }
 
-function runtimePackageRequiredArtifacts(value: unknown, declarations: unknown): string[] {
-  const explicit = stringList(value)
-  if (explicit.length > 0) return explicit
+function runtimePackageRequiredArtifacts(declarations: unknown): string[] {
   return normalizeRuntimePackageArtifactDeclarations(declarations)
     .filter((artifact) => artifact.direction !== "input" && artifact.required === true)
     .map((artifact) => artifact.name)

@@ -220,7 +220,7 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   await writeFile(join(tools, "git"), `#!${process.execPath}\nimport { spawnSync } from "node:child_process"\nconst args = process.argv.slice(2).map((value) => value.startsWith("https://github.com/") ? ${JSON.stringify(repository)} : value)\nconst result = spawnSync(${JSON.stringify(gitPath)}, args, { stdio: "inherit" })\nprocess.exit(result.status ?? 1)\n`)
   await chmod(join(tools, "git"), 0o755)
   const capturedInput = join(directory, "captured-native-input.json")
-  await writeFile(join(directory, "fake-cli.mjs"), `import { readFile, writeFile } from "node:fs/promises"\nconst input = process.argv[process.argv.indexOf("--input-file") + 1]\nconst result = process.argv[process.argv.indexOf("--result-file") + 1]\nconst taskInput = JSON.parse(await readFile(input))\nconst runtimeRoot = taskInput.source_package_root.replace(/\\/prepared-runtime-sources$/, "")\nconst nativeResult = JSON.parse(${JSON.stringify(JSON.stringify(hostedPathRegression.success))}.replaceAll(${JSON.stringify(hostedPathRegression.runtime_root)}, runtimeRoot))\nawait writeFile(${JSON.stringify(capturedInput)}, JSON.stringify(taskInput))\nawait writeFile(result, JSON.stringify(nativeResult))\n`)
+  await writeFile(join(directory, "fake-cli.mjs"), `import { readFile, writeFile } from "node:fs/promises"\nconst input = process.argv[process.argv.indexOf("--input-file") + 1]\nconst result = process.argv[process.argv.indexOf("--result-file") + 1]\nconst taskInput = JSON.parse(await readFile(input))\nconst runtimeRoot = taskInput.source_package_root.replace(/\\/prepared-runtime-sources$/, "")\nconst nativeResult = JSON.parse(${JSON.stringify(JSON.stringify(hostedPathRegression.success))}.replaceAll(${JSON.stringify(hostedPathRegression.runtime_root)}, runtimeRoot))\nnativeResult.status = "no_op"\nnativeResult.agent_task_run_result.status = "no_op"\nawait writeFile(${JSON.stringify(capturedInput)}, JSON.stringify(taskInput))\nawait writeFile(result, JSON.stringify(nativeResult))\n`)
   const request = {
     workload: { id: "runtime-sources-workflow", label: "Runtime sources workflow" },
     access: { caller_repo: "example/target", allowed_repos: ["example/target"], access_token_repos: ["example/target"] },
@@ -233,9 +233,9 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
     runtime_sources: [{ version: 1, role: "provider_plugin", repository: "example/source", revision, path: "plugin", metadata: { slug: "fixture", pluginFile: "plugin.php", activate: true, providers: ["openai"] } }],
     verification_commands: [],
     drift_checks: [],
-    artifacts: { declarations: [], expected: [] },
+    artifacts: { declarations: [{ name: "optional-publication", type: "publication", required: false }], expected: ["optional-publication"] },
     callback_data: {},
-    outputs: { projections: {} },
+    outputs: { projections: { optional_publication: { path: "outputs.artifact_result.result.outputs.runner_workspace_publication", required: false } } },
     success: { requires_pr: false },
   }
   await writeFile(join(codebox, "agent-task-request.json"), JSON.stringify(request))
@@ -254,6 +254,17 @@ await withTempDir("wp-codebox-runtime-sources-workflow-", async (directory) => {
   assert.deepEqual(nativeInput.task_input.runtime_task.input.input.model, "gpt-5.5")
   assert.equal("provider" in nativeInput.task_input, false, "provider belongs only to the selected runtime package turn")
   assert.equal("model" in nativeInput.task_input, false, "model belongs only to the selected runtime package turn")
+  assert.deepEqual(nativeInput.task_input.expected_artifacts, ["optional-publication"], "expected artifacts remain collection metadata")
+  assert.deepEqual(nativeInput.task_input.runtime_task.input.required_artifacts, [], "optional declarations never become required runtime artifacts")
+  assert.match(nativeInput.source_package_root, /prepared-runtime-sources$/, "runtime preparation stays in the private source root")
+  assert.equal(nativeInput.source_package_root, join(exactRuntimeRoot, "prepared-runtime-sources"), "the native task mounts the exact private preparation root")
+  assert.doesNotMatch(nativeInput.source_package_root, /agent-task-artifacts/, "runtime sources are mounted outside workspace artifacts")
+  const noOpResult = JSON.parse(workflowResult)
+  assert.equal(noOpResult.success, true, "a verifier-clean no-op with optional outputs succeeds")
+  assert.equal(noOpResult.status, "succeeded")
+  assert.equal(noOpResult.runtime_result.status, "no_op")
+  assert.deepEqual(noOpResult.outputs.projections, {}, "missing optional projections are omitted")
+  assert.equal("projection_error" in noOpResult, false)
   await assert.rejects(access(join(codebox, "native-agent-task-input.json")), /ENOENT/, "runtime source native input must remain private")
   const uploaderPath = new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url)
   const output = await readFile(githubOutput, "utf8")

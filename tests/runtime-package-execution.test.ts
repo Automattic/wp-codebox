@@ -59,11 +59,11 @@ assert.deepEqual(normalizeRuntimePackageOutputProjections([{ name: "artifactInde
 }])
 
 const task = normalizeRuntimePackageTask({
-  runtimePackage: "bundles/example-agent",
+  package: { slug: "example-agent", source: "bundles/example-agent" },
   workspaceRoot: "/workspace/example-project",
   input: { prompt: "collect typed outputs" },
-  artifactDeclarations: [{ name: "report", type: "markdown", required: true, path: "files/report.md" }],
-  outputProjections: [{ name: "summary", source: "result.summary", type: "text", required: true }],
+  artifact_declarations: [{ name: "report", type: "markdown", required: true, path: "files/report.md" }],
+  output_projections: [{ name: "summary", source: "result.summary", type: "text", required: true }],
   metadata: { caller: "contract-test" },
 })
 assert.equal(task.schema, RUNTIME_PACKAGE_TASK_SCHEMA)
@@ -71,6 +71,20 @@ assert.deepEqual(task.package, { slug: "example-agent", source: "/workspace/exam
 assert.deepEqual(task.workflow, { id: "example-agent" })
 assert.deepEqual(task.required_artifacts, ["report"])
 assert.deepEqual(validateRuntimePackageTask(task), { valid: true, task, diagnostics: [] })
+
+const optionalArtifactTask = normalizeRuntimePackageTask({
+  package: { slug: "example-agent", source: "/workspace/example-agent" },
+  input: {},
+  artifact_declarations: [
+    { name: "optional-report", type: "markdown", required: false },
+    { name: "required-report", type: "markdown", required: true },
+  ],
+  required_artifacts: ["optional-report"],
+})
+assert.deepEqual(optionalArtifactTask.required_artifacts, ["required-report"], "required artifacts derive only from required declarations")
+const undeclaredRequired = validateRuntimePackageTask({ ...optionalArtifactTask, required_artifacts: ["optional-report"] })
+assert.equal(undeclaredRequired.valid, false)
+assert.equal(undeclaredRequired.diagnostics.at(-1)?.code, "undeclared_required_artifact")
 
 const missingPublicFields = validateRuntimePackageTask({ schema: RUNTIME_PACKAGE_TASK_SCHEMA, package: { slug: "example-agent" } })
 assert.equal(missingPublicFields.valid, false)

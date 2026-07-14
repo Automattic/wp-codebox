@@ -654,10 +654,6 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
 	private static function runtime_package_required_artifacts_for_agents_api( array $input ): array {
-		if ( is_array( $input['required_artifacts'] ?? null ) ) {
-			return $input;
-		}
-
 		$required = array();
 		foreach ( is_array( $input['artifact_declarations'] ?? null ) ? $input['artifact_declarations'] : array() as $artifact ) {
 			if ( is_array( $artifact ) && true === ( $artifact['required'] ?? false ) && 'input' !== (string) ( $artifact['direction'] ?? 'output' ) ) {
@@ -667,9 +663,7 @@ final class WP_Codebox_Agents_API_Adapter {
 				}
 			}
 		}
-		if ( ! empty( $required ) ) {
-			$input['required_artifacts'] = array_values( array_unique( $required ) );
-		}
+		$input['required_artifacts'] = array_values( array_unique( $required ) );
 
 		return $input;
 	}

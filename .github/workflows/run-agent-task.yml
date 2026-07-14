@@ -84,7 +84,7 @@ name: Run Agent Task (reusable)
         type: number
         default: 600000
       output_projections:
-        description: JSON object mapping workflow output names to result paths.
+        description: JSON object mapping workflow output names to paths or {path,required} descriptors.
         type: string
         default: '{}'
       transcript_artifact_name:
@@ -96,7 +96,7 @@ name: Run Agent Task (reusable)
         type: string
         default: ""
       expected_artifacts:
-        description: JSON array of expected artifact names.
+        description: JSON array of expected artifact names used for collection; required outputs come from artifact_declarations.required.
         type: string
         default: '[]'
       artifact_declarations:

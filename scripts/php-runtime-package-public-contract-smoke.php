@@ -114,6 +114,16 @@ assert( array() === $result['diagnostics'] );
 assert( 'contract-runtime' === $result['metadata']['runtime_provider']['id'] );
 assert( isset( $result['metadata']['received'] ) );
 
+$optional_artifact_task = $task;
+$optional_artifact_task['artifact_declarations'] = array(
+	array( 'name' => 'optional-report', 'type' => 'markdown', 'required' => false ),
+	array( 'name' => 'required-report', 'type' => 'markdown', 'required' => true ),
+);
+$optional_artifact_task['required_artifacts'] = array( 'optional-report' );
+$undeclared_required = WP_Codebox_Abilities::run_runtime_package( $optional_artifact_task );
+assert( is_wp_error( $undeclared_required ) );
+assert( 'wp_codebox_runtime_package_task_invalid' === $undeclared_required->get_error_code() );
+
 $bundle_root = realpath( (string) ( getenv( 'WP_CODEBOX_RUNTIME_PACKAGE_FIXTURE' ) ?: __DIR__ . '/../tests/fixtures/wpsg-runtime-package' ) );
 assert( false !== $bundle_root );
 $staged_bundle_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . bin2hex( random_bytes( 8 ) );
