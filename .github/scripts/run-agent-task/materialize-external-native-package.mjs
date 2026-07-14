@@ -121,7 +121,7 @@ function normalizeRuntimeArtifactPolicy(value) {
   for (const entry of value) {
     const artifact = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {}
     const url = normalizeHttpsUrl(artifact.url, "EXTERNAL_PACKAGE_SOURCE_POLICY runtime_artifacts.url")
-    const sha256 = artifact.sha256 === undefined ? "" : normalizeSha256(artifact.sha256, "EXTERNAL_PACKAGE_SOURCE_POLICY runtime_artifacts.sha256")
+    const sha256 = normalizeSha256(artifact.sha256, "EXTERNAL_PACKAGE_SOURCE_POLICY runtime_artifacts.sha256")
     if (Object.hasOwn(artifacts, url)) throw new Error("EXTERNAL_PACKAGE_SOURCE_POLICY runtime_artifacts must not repeat URLs.")
     artifacts[url] = sha256
   }
@@ -189,7 +189,7 @@ function normalizeHttpsZipRuntimeSource(source, artifact, policy, label) {
   if (Object.keys(artifact).some((key) => !["type", "url", "sha256", "archive_root"].includes(key))) throw new Error(`${label}.source https_zip contains an unsupported field.`)
   const expectedDigest = policy.runtime_artifacts?.[url]
   if (expectedDigest === undefined) throw new Error("Runtime artifact URL is not authorized.")
-  if (expectedDigest && expectedDigest !== sha256) throw new Error("Runtime artifact digest does not match its trusted policy.")
+  if (expectedDigest !== sha256) throw new Error("Runtime artifact digest does not match its trusted policy.")
   const metadata = source.metadata && typeof source.metadata === "object" && !Array.isArray(source.metadata) ? source.metadata : {}
   return { version: 1, role, source: { type: "https_zip", url, sha256, ...(archive_root ? { archive_root } : {}) }, metadata: normalizeRuntimeMetadata(role, metadata, label) }
 }

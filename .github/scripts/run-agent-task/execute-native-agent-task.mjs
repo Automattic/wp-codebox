@@ -13,6 +13,7 @@ const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_OUTPUT_CHARS = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
+const PRIVATE_RUNTIME_PATH_FIELDS = new Set(["source", "path", "sourceRoot", "originalSource", "preparedPath", "requestedPath", "source_package_root", "artifacts_path", "runtime_input_path", "task_path", "result_path", "event_stream_path", "materialization_result_path"])
 function redact(value) {
   if (typeof value === "string") return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
   if (Array.isArray(value)) return value.map(redact)
@@ -93,6 +94,27 @@ function command(command, args, cwd, env = safeEnvironment()) {
 
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
+}
+
+function isPrivateRuntimePath(value) {
+  if (!privateRuntimeSourceRoot || typeof value !== "string") return false
+  const path = resolve(value)
+  return path === privateRuntimeSourceRoot || path.startsWith(`${privateRuntimeSourceRoot}/`)
+}
+
+function omitPrivateRuntimeSourcePaths(value) {
+  if (Array.isArray(value)) return value.map(omitPrivateRuntimeSourcePaths)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+    if (PRIVATE_RUNTIME_PATH_FIELDS.has(key) && isPrivateRuntimePath(entry)) return []
+    return [[key, omitPrivateRuntimeSourcePaths(entry)]]
+  }))
+}
+
+function assertNoPrivateRuntimePaths(value) {
+  if (privateRuntimeSourceRoot && JSON.stringify(value).includes(privateRuntimeSourceRoot)) {
+    throw new Error("Runtime source paths must never be persisted in workflow results or artifacts.")
+  }
 }
 
 function string(value) {
@@ -244,6 +266,7 @@ const runtimeSourceInputs = (materializedRuntimeSources?.lowered ?? []).reduce((
   return input
 }, {})
 const sourcePackageRoot = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "prepared-packages") : artifactsPath
+const executionInputPath = privateRuntimeSourceRoot ? join(privateRuntimeSourceRoot, "native-agent-task-input.json") : runtimeInputPath
 
 const taskInput = {
   schema: "wp-codebox/agent-task-run-request/v1",
@@ -297,20 +320,23 @@ const taskInput = {
   },
 }
 
-await writeFile(runtimeInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
+await writeFile(executionInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
 if (request.run_agent && !request.dry_run) {
-  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", runtimeInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
+  execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
 }
 
 // Public package bytes are embedded in the runtime recipe and consumed only by
 // the Playground bootstrap before the agent's tools are resolved.
 
-const runtimeResult = request.run_agent && !request.dry_run
+const nativeRuntimeResult = request.run_agent && !request.dry_run
   ? await readNativeResult(nativeResultPath, controlledCodeboxPath, secretValues, redact)
   : {}
 await rm(nativeResultPath, { force: true })
+assertNoPrivateRuntimePaths(nativeRuntimeResult)
+const runtimeResult = omitPrivateRuntimeSourcePaths(nativeRuntimeResult)
+assertNoPrivateRuntimePaths(runtimeResult)
 await cleanupPrivateRuntimeSources()
 
 await redactArtifactFiles(artifactsPath)

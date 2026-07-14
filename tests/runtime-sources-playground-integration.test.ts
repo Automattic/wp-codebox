@@ -45,9 +45,10 @@ try {
       command: "wordpress.run-php",
       args: ["code=" + String.raw`$imports = wp_agent_import_runtime_bundles( array( array( 'source' => '/tmp/flat-runtime-agent.agent.json', 'slug' => 'flat-runtime-agent', 'on_conflict' => 'upgrade' ) ), array( 'owner_id' => 1 ) );
 if ( ! is_array( $imports ) || empty( $imports[0]['success'] ) ) { throw new RuntimeException( 'Canonical importer did not import the flat package: ' . wp_json_encode( $imports ) ); }
-$providers = WP_Codebox_Runtime_Provider_Registry::providers();
 $client = \WordPress\AiClient\AiClient::defaultRegistry();
-echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 'agents_registry' => class_exists( 'WP_Agents_Registry' ), 'provider_active' => is_plugin_active( 'ai-provider-for-openai/plugin.php' ), 'provider_registry' => is_array( $providers ), 'client' => is_object( $client ) ) );`],
+$provider_class = 'WordPress\\OpenAiAiProvider\\Provider\\OpenAiProvider';
+$provider_resolved = is_object( $client ) && method_exists( $client, 'hasProvider' ) && class_exists( $provider_class ) && $client->hasProvider( $provider_class );
+echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 'agents_registry' => class_exists( 'WP_Agents_Registry' ), 'provider_active' => is_plugin_active( 'ai-provider-for-openai/plugin.php' ), 'provider_class' => $provider_class, 'provider_resolved' => $provider_resolved, 'client' => is_object( $client ) ) );`],
     }],
   }
   const recipePath = join(root, "recipe.json")
@@ -61,7 +62,7 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
   const output = JSON.parse(result.stdout)
   const stdout = output.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? ""
   const checks = JSON.parse(stdout)
-  assert.deepEqual(checks, { imported_slug: "flat-runtime-agent", agents_registry: true, provider_active: true, provider_registry: true, client: true })
+  assert.deepEqual(checks, { imported_slug: "flat-runtime-agent", agents_registry: true, provider_active: true, provider_class: "WordPress\\OpenAiAiProvider\\Provider\\OpenAiProvider", provider_resolved: true, client: true })
   await rm(materialized.root, { recursive: true, force: true })
   await assert.rejects(access(privatePackage), /ENOENT/, "private source package must be removed with its materialization root")
   console.log(`runtime sources Playground integration ok: ${JSON.stringify(checks)}`)
