@@ -1,0 +1,15 @@
+{
+  "run_id": "29307978522",
+  "workflow": "Build With WordPress Skills Agent",
+  "result": {
+    "schema": "wp-codebox/agent-task-workflow-result/v1",
+    "status": "failed",
+    "success": false,
+    "diagnostics": [
+      {
+        "message": "Unable to resolve WordPress\\OpenAiAiProvider\\Provider\\OpenAiProvider for the selected model.",
+        "stack": "Error: provider resolution failed\n    at WP_Agents_Registry::get_instance (runtime.php:42)\n    at executeAgentTask (runner.php:87)"
+      }
+    ]
+  }
+}

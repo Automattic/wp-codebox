@@ -15,7 +15,17 @@ const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resol
 const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
 const SOURCE_TREE = /(^|\/)(prepared-plugins|prepared-source-packages|source-package[^/]*)(\/|$)/i
 const SOURCE_FILE = /\.(?:php|phtml|js|mjs|cjs|jsx|ts|tsx)$/i
-const RUNTIME_SOURCE_CONTENT = /(?:Plugin Name:|WP_Agents_Registry|OpenAiProvider)/
+const PHP_OPENING_TAG = /<\?(?:php|=)(?:\s|$)/i
+const PHP_DECLARATION = /\b(?:namespace\s+\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*|(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+[A-Za-z_]\w*|function\s+&?\s*[A-Za-z_]\w*\s*\()/i
+const WORDPRESS_PLUGIN_HEADER = /\/\*[\s\S]{0,200}?\bPlugin Name\s*:/i
+
+// Diagnostics commonly name runtime classes. Reject only PHP-shaped source, even
+// when a source file has been disguised with a reviewer-safe extension.
+function containsRuntimeSourceContent(text) {
+  const hasPhpTag = PHP_OPENING_TAG.test(text)
+  const hasDeclaration = PHP_DECLARATION.test(text)
+  return (hasPhpTag && hasDeclaration) || (WORDPRESS_PLUGIN_HEADER.test(text) && (hasPhpTag || hasDeclaration))
+}
 
 function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
@@ -74,7 +84,7 @@ async function stageTextFile(source, destination, options = {}) {
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
   const text = redact(options.compactNativeInput ? compactNativeInput(contents.toString("utf8")) : sanitizeText(contents.toString("utf8")))
   assertNoRuntimeSourcePaths(text, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
-  if (RUNTIME_SOURCE_CONTENT.test(text)) throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
+  if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
   await mkdir(resolve(destination, ".."), { recursive: true })
   await writeFile(destination, text)
   return true
@@ -154,7 +164,7 @@ async function finalScan(directory) {
       const bytes = await readFile(path)
       const text = isUtf8(bytes) ? bytes.toString("utf8") : ""
       assertNoRuntimeSourcePaths(text, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
-      if (RUNTIME_SOURCE_CONTENT.test(text)) throw new Error("Prepared runtime plugin source contents must never be persisted in artifact uploads.")
+      if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be persisted in artifact uploads.")
     } else throw new Error("Only regular files may be persisted in artifact uploads.")
   }
 }
