@@ -1264,7 +1264,7 @@ export const commandRegistry = [
       { name: "post-id", description: "Existing post ID to open in the post editor.", format: "positive integer" },
       { name: "post-type", description: "Post type for post-new or post-id targets; defaults to post.", format: "post type slug" },
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
-      { name: "wait-selector", description: "Selector that marks the editor as ready; defaults to the block editor shell.", format: "CSS selector" },
+      { name: "wait-selector", description: "Optional visible selector assertion evaluated after semantic editor readiness.", format: "CSS selector" },
       { name: "wait-timeout", description: "Timeout for navigation and editor-ready waits.", format: "duration, e.g. 15s or 500ms" },
       { name: "capture", description: "Comma-separated artifacts to capture after opening the editor.", format: "steps,console,errors,html,screenshot,editor-state,editor-validity" },
       { name: "artifact-prefix", description: "Optional artifact directory relative to the runtime artifact root for this invocation; defaults to files/browser. Use files/browser/editor-open/<name> to isolate per-fixture editor-open evidence in a batch.", format: "relative artifact directory" },

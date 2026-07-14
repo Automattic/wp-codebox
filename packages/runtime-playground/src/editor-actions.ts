@@ -20,8 +20,10 @@ export interface EditorOpenTarget {
   postId?: number
   postSlug?: string
   postType?: string
-  waitSelector: string
+  waitSelector?: string
 }
+
+export const DEFAULT_EDITOR_WAIT_SELECTOR = ".edit-post-visual-editor, .editor-styles-wrapper, .block-editor, .interface-interface-skeleton"
 
 export type EditorActionStep =
   | { kind: "open"; timeout?: string }
@@ -31,11 +33,9 @@ export type EditorActionStep =
   | { kind: "savePost"; marker?: string; content?: string; timeout?: string }
   | { kind: "inspectState"; timeout?: string }
 
-const DEFAULT_EDITOR_WAIT_SELECTOR = ".edit-post-visual-editor, .editor-styles-wrapper, .block-editor, .interface-interface-skeleton"
-
 export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   const explicitUrl = argValue(args, "url")?.trim()
-  const waitSelector = argValue(args, "wait-selector")?.trim() || DEFAULT_EDITOR_WAIT_SELECTOR
+  const waitSelector = argValue(args, "wait-selector")?.trim() || undefined
   if (explicitUrl) {
     return { url: explicitUrl, kind: "url", waitSelector }
   }
