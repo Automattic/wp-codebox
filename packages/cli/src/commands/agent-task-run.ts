@@ -1,7 +1,7 @@
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, publicArtifactRefGroups, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type HeadlessAgentTaskResult, type SandboxToolPolicySnapshot, type TypedArtifactDTO } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -168,7 +168,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const agentBundle = objectValue(input.agent_bundle) || {}
     const metadataRuntime = objectValue(objectValue(run.metadata)?.agent_runtime)
     const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
-    const executionChanges = normalizeAgentRuntimeExecutionChanges(agentResult)
+    const executionChanges = await validatedExecutionChanges(agentResult, artifacts)
     const workload = normalizeAgentRuntimeWorkload(metadataRuntime?.workload ?? run, {
       requiredOutputs: stringRecord(agentBundle.engine_data_outputs),
       toolRecorders: agentBundle.tool_recorders,
@@ -713,6 +713,70 @@ function artifactResultDiagnostics(diagnostics: Array<Record<string, unknown>>):
     phase: stringValue(diagnostic.phase) || undefined,
     metadata: nonEmptyObject(objectValue(diagnostic.data ?? diagnostic.metadata)),
   }))
+}
+
+const MAX_CANONICAL_EXECUTION_ARTIFACT_BYTES = 5 * 1024 * 1024
+
+/**
+ * Counters are runner diagnostics, not proof of a change. Only captured canonical
+ * artifacts under the recipe's trusted root may satisfy semantic output policy.
+ */
+export async function validatedExecutionChanges(agentResult: Record<string, unknown>, artifactRoot: string) {
+  const counters = normalizeAgentRuntimeExecutionChanges(agentResult)
+  if (!counters || counters.changed_files_count <= 0 || counters.patch_bytes <= 0) return undefined
+
+  const groups = publicArtifactRefGroups(agentResult)
+  // Recipe capture exposes the canonical descriptors as changedFiles/patch; some
+  // runners additionally project them into public refs. Treat either shape as a
+  // single reference, never a counter-only substitute.
+  const directChanged = objectValue(agentResult.changedFiles)
+  const directPatch = objectValue(agentResult.patch)
+  const changedRefs = groups.changed_files.length > 0 ? groups.changed_files : (stringValue(directChanged?.artifact) ? [{ path: stringValue(directChanged?.artifact), sha256: stringValue(directChanged?.sha256) }] : [])
+  const patchRefs = groups.patches.length > 0 ? groups.patches : (stringValue(directPatch?.artifact) ? [{ path: stringValue(directPatch?.artifact), sha256: stringValue(directPatch?.sha256) }] : [])
+  if (changedRefs.length !== 1 || patchRefs.length !== 1) return undefined
+  const [changedRef] = changedRefs
+  const [patchRef] = patchRefs
+  if (!changedRef?.path || !patchRef?.path) return undefined
+
+  try {
+    const root = await realpath(resolve(artifactRoot))
+    const bundleDirectory = stringValue(objectValue(agentResult.artifacts)?.directory)
+    const base = bundleDirectory ? await trustedArtifactPath(root, bundleDirectory, true) : root
+    const [changedPath, patchPath] = await Promise.all([trustedArtifactPath(base, changedRef.path), trustedArtifactPath(base, patchRef.path)])
+    const [changedText, patch] = await Promise.all([readBoundedArtifact(changedPath), readBoundedArtifact(patchPath)])
+    const changed = objectValue(JSON.parse(changedText))
+    const files = Array.isArray(changed?.files) ? changed.files : []
+    const paths = files.map((file) => stringValue(objectValue(file)?.relativePath)).filter(Boolean)
+    if (changed?.schema !== "wp-codebox/changed-files/v1" || paths.length === 0 || paths.length !== counters.changed_files_count || !patch.trim() || Buffer.byteLength(patch) !== counters.patch_bytes) return undefined
+    const patchPaths = patch.split("\n").flatMap((line) => {
+      if (!line.startsWith("--- ") && !line.startsWith("+++ ")) return []
+      const path = line.slice(4).split("\t", 1)[0].trim().replace(/^[ab]\//, "")
+      return path === "/dev/null" ? [] : [path]
+    })
+    if (patchPaths.length === 0 || paths.some((path) => !patchPaths.includes(path)) || patchPaths.some((path) => !paths.includes(path))) return undefined
+    return normalizeAgentRuntimeExecutionChanges({
+      changedFiles: { count: paths.length, artifact: changedRef.path, bytes: Buffer.byteLength(changedText), sha256: changedRef.sha256 },
+      patch: { bytes: Buffer.byteLength(patch), artifact: patchRef.path, sha256: patchRef.sha256 },
+    })
+  } catch {
+    return undefined
+  }
+}
+
+async function trustedArtifactPath(root: string, artifactPath: string, directory = false): Promise<string> {
+  const candidate = isAbsolute(artifactPath) ? resolve(artifactPath) : resolve(root, artifactPath)
+  const stat = await lstat(candidate)
+  if ((!directory && !stat.isFile()) || (directory && !stat.isDirectory()) || stat.isSymbolicLink() || (!directory && stat.size > MAX_CANONICAL_EXECUTION_ARTIFACT_BYTES)) throw new Error("Canonical execution artifact must be a bounded regular file.")
+  const resolved = await realpath(candidate)
+  const contained = relative(root, resolved)
+  if (resolved !== root && (contained === ".." || contained.startsWith(`..${String.fromCharCode(47)}`) || isAbsolute(contained))) throw new Error("Canonical execution artifact escapes the trusted artifact root.")
+  return resolved
+}
+
+async function readBoundedArtifact(path: string): Promise<string> {
+  const bytes = await readFile(path)
+  if (bytes.length > MAX_CANONICAL_EXECUTION_ARTIFACT_BYTES || bytes.includes(0)) throw new Error("Canonical execution artifact must be bounded text.")
+  return bytes.toString("utf8")
 }
 
 async function readJsonRecord(path: string): Promise<Record<string, unknown> | undefined> {

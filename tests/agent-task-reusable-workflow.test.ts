@@ -237,14 +237,14 @@ assert.deepEqual(nativeTaskInput.task_input.sandbox_tool_policy.tools, hostedDoc
     seed: {
       type: "directory",
       source: "[external snapshot]",
-      excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"],
+      excludePaths: [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**", ".env", ".env.*", ".npmrc", ".yarnrc.yml", ".pypirc", ".netrc", "auth.json", "id_rsa", "id_ed25519", "*.pem", "*.key", "credential files"],
     },
   }], "Hosted failures 29324157852 and 29324563665 placed the runner seed outside task_input, so agent-task-run discarded it")
   const seed = nativeTaskInput.task_input.workspaces[0]
   assert.notEqual(seed.seed.source, tmp)
   const seedProvenance = nativeTaskInput.task_input.runtime_task.input.metadata.runner_workspace_seed
   assert.match(seedProvenance.digest.sha256, /^[a-f0-9]{64}$/)
-  assert.deepEqual(seedProvenance.excludes, [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"])
+  assert.deepEqual(seedProvenance.excludes, [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**", ".env", ".env.*", ".npmrc", ".yarnrc.yml", ".pypirc", ".netrc", "auth.json", "id_rsa", "id_ed25519", "*.pem", "*.key", "credential files"])
   assert.doesNotMatch(JSON.stringify(seedProvenance), new RegExp(tmp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
 assert.equal(nativeTaskInput.workspaces, undefined, "Runner workspace configuration must only use the canonical task_input.workspaces field")
 

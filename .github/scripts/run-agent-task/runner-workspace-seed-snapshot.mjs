@@ -3,8 +3,11 @@ import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm } from "n
 import { tmpdir } from "node:os"
 import { join, relative, resolve } from "node:path"
 
-export const RUNNER_WORKSPACE_SEED_EXCLUDES = [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**"]
-const EXCLUDED_ROOT_NAMES = new Set(RUNNER_WORKSPACE_SEED_EXCLUDES.map((pattern) => pattern.slice(0, -3)))
+// Snapshot policy is intentionally allow-by-exception: disposable build trees and
+// credential-bearing files never enter the agent-readable workspace. `.env.example`
+// is the one documented environment-template exception.
+export const RUNNER_WORKSPACE_SEED_EXCLUDES = [".git/**", ".codebox/**", "node_modules/**", "vendor/**", "dist/**", "build/**", "coverage/**", ".cache/**", ".env", ".env.*", ".npmrc", ".yarnrc.yml", ".pypirc", ".netrc", "auth.json", "id_rsa", "id_ed25519", "*.pem", "*.key", "credential files"]
+const EXCLUDED_ROOT_NAMES = new Set(RUNNER_WORKSPACE_SEED_EXCLUDES.filter((pattern) => pattern.endsWith("/**")).map((pattern) => pattern.slice(0, -3)))
 const MAX_FILES = 10_000
 const MAX_BYTES = 256 * 1024 * 1024
 
@@ -18,22 +21,40 @@ function fileMode(stat) {
   return stat.mode & 0o111 ? 0o755 : 0o644
 }
 
+function secretCategory(path) {
+  const name = path.split("/").at(-1)?.toLowerCase() || ""
+  if ((name === ".env" || name.startsWith(".env.")) && name !== ".env.example") return "environment"
+  if ([".npmrc", ".yarnrc.yml", ".pypirc", ".netrc", "auth.json", "credentials", "credentials.json", "secrets.json", "token.json"].includes(name)) return "credentials"
+  if (["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"].includes(name) || /\.(?:pem|key|p12|pfx)$/i.test(name)) return "private-key"
+  return ""
+}
+
 export async function createRunnerWorkspaceSeedSnapshot(source) {
   const sourceRoot = resolve(source)
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-runner-workspace-seed-"))
   const digest = createHash("sha256")
   let fileCount = 0
   let byteCount = 0
+  const excluded = new Map()
+  const exclude = (category) => excluded.set(category, (excluded.get(category) || 0) + 1)
 
   try {
     async function copyTree(currentSource, currentTarget) {
       const entries = await readdir(currentSource, { withFileTypes: true })
       for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-        if (EXCLUDED_ROOT_NAMES.has(entry.name)) continue
+        if (EXCLUDED_ROOT_NAMES.has(entry.name)) {
+          exclude("generated-tree")
+          continue
+        }
         const input = join(currentSource, entry.name)
         const output = join(currentTarget, entry.name)
         const stat = await lstat(input)
         const path = relative(sourceRoot, input).replaceAll("\\", "/")
+        const category = secretCategory(path)
+        if (category) {
+          exclude(category)
+          continue
+        }
         if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
           throw snapshotError(`Runner workspace seed contains unsupported filesystem entry: ${path}`)
         }
@@ -67,6 +88,10 @@ export async function createRunnerWorkspaceSeedSnapshot(source) {
         files: fileCount,
         bytes: byteCount,
         excludes: RUNNER_WORKSPACE_SEED_EXCLUDES,
+        excluded: {
+          files: [...excluded.values()].reduce((total, count) => total + count, 0),
+          categories: [...excluded.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, count]) => ({ category, count })),
+        },
       },
     }
   } catch (error) {

@@ -13,6 +13,7 @@ const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVID
 const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT) : ""
 const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX) : ""
 const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
+const privateUploadRoots = [...runtimeSourceRoots, workspace]
 const SOURCE_TREE = /(^|\/)(prepared-plugins|prepared-source-packages|source-package[^/]*)(\/|$)/i
 const SOURCE_FILE = /\.(?:php|phtml|js|mjs|cjs|jsx|ts|tsx)$/i
 const PHP_OPENING_TAG = /<\?(?:php|=)(?:\s|$)/i
@@ -32,21 +33,69 @@ function redact(value) {
 }
 
 function sanitizeText(text) {
-  return sanitizeRuntimeSourceJson(text, runtimeSourceRoots)
+  return sanitizeRuntimeSourceJson(text, privateUploadRoots)
 }
 
 function compactNativeInput(text) {
   const privateFields = new Set(["source_package_root", "component_contracts", "extra_plugins", "provider_plugins", "runtime_overlays", "prepared_sources"])
-  const compact = (value) => {
+  let seedProvenance = {}
+  try {
+    const parsed = JSON.parse(sanitizeText(text))
+    seedProvenance = record(record(record(parsed).task_input).runtime_task?.input?.metadata).runner_workspace_seed
+  } catch {}
+  const compact = (value, key = "") => {
     if (Array.isArray(value)) return value.map(compact)
     const entry = record(value)
     if (!Object.keys(entry).length) return value
-    return Object.fromEntries(Object.entries(entry).flatMap(([key, item]) => privateFields.has(key) ? [] : [[key, compact(item)]]))
+    if (key === "seed" && typeof entry.source === "string") {
+      const provenance = record(seedProvenance)
+      return {
+        kind: "runner-workspace-seed",
+        digest: record(provenance.digest).sha256,
+        files: provenance.files,
+        bytes: provenance.bytes,
+        excludes: provenance.excludes,
+        excluded: provenance.excluded,
+      }
+    }
+    return Object.fromEntries(Object.entries(entry).flatMap(([childKey, item]) => privateFields.has(childKey) ? [] : [[childKey, compact(item, childKey)]]))
   }
   try {
     return `${JSON.stringify(compact(JSON.parse(sanitizeText(text))), null, 2)}\n`
   } catch {
     return sanitizeText(text)
+  }
+}
+
+function assertNoSeedSnapshotPaths(text) {
+  if (/wp-codebox-runner-workspace-seed-/i.test(text)) throw new Error("Temporary runner workspace seed paths must never be persisted in artifact uploads.")
+  try {
+    const visit = (value) => {
+      if (Array.isArray(value)) return value.forEach(visit)
+      const entry = record(value)
+      if (!Object.keys(entry).length) return
+      if (record(entry.seed).source && isAbsolute(record(entry.seed).source)) throw new Error("Absolute runner workspace seed paths must never be persisted in artifact uploads.")
+      Object.values(entry).forEach(visit)
+    }
+    visit(JSON.parse(text))
+  } catch (error) {
+    if (error instanceof Error && /seed paths/.test(error.message)) throw error
+  }
+}
+
+function sanitizeSeedSnapshotJson(text) {
+  try {
+    const compact = (value, key = "") => {
+      if (typeof value === "string") return value.replace(/\/?[^\s"']*wp-codebox-runner-workspace-seed-[^\s"']*/gi, "[runner-workspace-seed]")
+      if (Array.isArray(value)) return value.map((entry) => compact(entry))
+      const entry = record(value)
+      if (!Object.keys(entry).length) return value
+      if (key === "seed" && typeof entry.source === "string") return { kind: "runner-workspace-seed" }
+      return Object.fromEntries(Object.entries(entry).map(([childKey, item]) => [childKey, compact(item, childKey)]))
+    }
+    return `${JSON.stringify(compact(JSON.parse(text)), null, 2)}\n`
+  } catch {
+    return text
   }
 }
 
@@ -82,8 +131,10 @@ async function stageTextFile(source, destination, options = {}) {
   const contents = openedMetadata.isFile() && openedMetadata.size <= MAX_UPLOAD_FILE_BYTES ? await handle.readFile() : null
   await handle.close()
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
-  const text = redact(options.compactNativeInput ? compactNativeInput(contents.toString("utf8")) : sanitizeText(contents.toString("utf8")))
-  assertNoRuntimeSourcePaths(text, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
+  const sanitized = options.compactNativeInput ? compactNativeInput(contents.toString("utf8")) : sanitizeText(contents.toString("utf8"))
+  const text = redact(sanitizeSeedSnapshotJson(sanitized))
+  assertNoRuntimeSourcePaths(text, privateUploadRoots, "Runtime source or workspace paths must never be persisted in artifact uploads.")
+  assertNoSeedSnapshotPaths(text)
   if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be staged for artifact upload.")
   await mkdir(resolve(destination, ".."), { recursive: true })
   await writeFile(destination, text)
@@ -163,7 +214,8 @@ async function finalScan(directory) {
     else if (entry.isFile()) {
       const bytes = await readFile(path)
       const text = isUtf8(bytes) ? bytes.toString("utf8") : ""
-      assertNoRuntimeSourcePaths(text, runtimeSourceRoots, "Runtime source paths must never be persisted in artifact uploads.")
+      assertNoRuntimeSourcePaths(text, privateUploadRoots, "Runtime source or workspace paths must never be persisted in artifact uploads.")
+      assertNoSeedSnapshotPaths(text)
       if (containsRuntimeSourceContent(text)) throw new Error("Prepared runtime plugin source contents must never be persisted in artifact uploads.")
     } else throw new Error("Only regular files may be persisted in artifact uploads.")
   }
