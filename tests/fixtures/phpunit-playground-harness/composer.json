@@ -1,0 +1,17 @@
+{
+  "name": "automattic/wp-codebox-phpunit-playground-harness",
+  "description": "Locked PHPUnit harness for the WP Codebox Playground integration test.",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "php": ">=8.1",
+    "phpunit/phpunit": "9.6.34",
+    "wp-phpunit/wp-phpunit": "6.9.4",
+    "yoast/phpunit-polyfills": "3.1.2"
+  },
+  "config": {
+    "platform": {
+      "php": "8.3.0"
+    },
+    "sort-packages": true
+  }
+}

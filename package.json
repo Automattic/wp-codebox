@@ -93,6 +93,7 @@
     "test:runtime-sources-playground-integration": "tsx tests/runtime-sources-playground-integration.test.ts",
     "test:playground-readonly-mounts": "tsx tests/playground-readonly-mounts.test.ts",
     "test:playground-readonly-mounts-integration": "tsx tests/playground-readonly-mounts-integration.test.ts",
+    "test:playground-phpunit-readonly-cache-integration": "tsx tests/playground-phpunit-readonly-cache.integration.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
     "test:browser-runtime-file-ops": "tsx tests/browser-runtime-file-ops.test.ts",

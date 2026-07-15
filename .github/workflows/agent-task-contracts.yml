@@ -54,11 +54,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+           cache: npm
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
       - run: npm ci
       - run: npm run build
       - run: npm run test:agent-task-contracts
       - run: npm run test:runtime-sources-playground-integration
+      - run: npm run test:playground-phpunit-readonly-cache-integration
       - run: npm run test:native-agent-task-playground-e2e
       - run: npm run test:native-agent-task-interruption
       - run: npm run test:redaction

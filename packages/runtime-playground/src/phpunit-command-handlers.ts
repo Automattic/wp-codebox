@@ -292,7 +292,17 @@ function phpunitArgsPhp(functionName: string, logFunction: string): string {
     if ($path === false) {
         throw new RuntimeException('Unable to allocate a private PHPUnit result cache file.');
     }
-    @chmod($path, 0600);
+    if (!@chmod($path, 0600)) {
+        @unlink($path);
+        throw new RuntimeException('Unable to restrict the private PHPUnit result cache file permissions.');
+    }
+    // fileperms() is meaningful on the POSIX filesystems used by Playground.
+    // Fail closed rather than passing a cache file with broader permissions.
+    $mode = @fileperms($path);
+    if ($mode !== false && (($mode & 0777) !== 0600)) {
+        @unlink($path);
+        throw new RuntimeException('Private PHPUnit result cache file permissions are not 0600.');
+    }
     register_shutdown_function(static function () use ($path): void {
         @unlink($path);
     });
