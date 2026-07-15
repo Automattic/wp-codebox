@@ -273,7 +273,23 @@ function ${options.relativeFunctionName}(string $path, string $${options.rootPar
 }
 
 function phpunitArgsPhp(functionName: string, logFunction: string): string {
-  return `function ${functionName}(array $argv) {
+  return `function ${functionName}_cache_result_file($value) {
+    if (!is_string($value) || $value === '' || strpos($value, '/tmp/') !== 0 || substr($value, -1) === '/') {
+        return null;
+    }
+    $segments = explode('/', $value);
+    foreach ($segments as $index => $segment) {
+        if ($index === 0) {
+            continue;
+        }
+        if ($segment === '' || $segment === '.' || $segment === '..') {
+            return null;
+        }
+    }
+    return $value;
+}
+
+function ${functionName}(array $argv) {
     $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'extensions' => array());
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
@@ -300,16 +316,27 @@ function phpunitArgsPhp(functionName: string, logFunction: string): string {
             $arguments['verbose'] = true;
             continue;
         }
-        if ($arg === '--cache-result-file' && isset($args[$i + 1]) && $args[$i + 1] !== '') {
+        if ($arg === '--cache-result-file') {
+            $candidate = isset($args[$i + 1]) && strpos((string) $args[$i + 1], '--') !== 0 ? $args[++$i] : '';
+            $cache_result_file = ${functionName}_cache_result_file($candidate);
+            if ($cache_result_file === null) {
+                ${logFunction}('NOTICE:ignoring PHPUnit --cache-result-file; use a normalized absolute sandbox path below /tmp/.');
+                continue;
+            }
             $arguments['cacheResult'] = true;
-            $arguments['cacheResultFile'] = $args[++$i];
-            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $arguments['cacheResultFile']);
+            $arguments['cacheResultFile'] = $cache_result_file;
+            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $cache_result_file);
             continue;
         }
-        if (strpos($arg, '--cache-result-file=') === 0 && substr($arg, strlen('--cache-result-file=')) !== '') {
+        if (strpos($arg, '--cache-result-file=') === 0) {
+            $cache_result_file = ${functionName}_cache_result_file(substr($arg, strlen('--cache-result-file=')));
+            if ($cache_result_file === null) {
+                ${logFunction}('NOTICE:ignoring PHPUnit --cache-result-file; use a normalized absolute sandbox path below /tmp/.');
+                continue;
+            }
             $arguments['cacheResult'] = true;
-            $arguments['cacheResultFile'] = substr($arg, strlen('--cache-result-file='));
-            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $arguments['cacheResultFile']);
+            $arguments['cacheResultFile'] = $cache_result_file;
+            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $cache_result_file);
             continue;
         }
     }

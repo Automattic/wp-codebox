@@ -325,19 +325,36 @@ assert.ok(managedModeCode.includes("'cacheResult' => false"))
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")
 const phpunitArgsProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-cache-args-")), "probe.php")
 writeFileSync(phpunitArgsProbe, `<?php
-function pg_log($message) {}
+$logs = array();
+function pg_log($message) { global $logs; $logs[] = $message; }
+${extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_cache_result_file")}
 ${phpunitArgsFunction}
 echo json_encode(array(
   'default' => wp_codebox_phpunit_args(array('phpunit')),
-  'redirected' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=/tmp/wp-codebox-phpunit.result.cache')),
+  'equals' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=/tmp/wp-codebox-phpunit.result.cache')),
+  'separate' => wp_codebox_phpunit_args(array('phpunit', '--filter', 'OnlyTest', '--cache-result-file', '/tmp/wp-codebox-phpunit.result.cache')),
+  'relative' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file', 'cache.result')),
+  'sourceMount' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=/wordpress/wp-content/plugins/example/cache.result')),
+  'unnormalized' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=/tmp/../wordpress/cache.result')),
+  'empty' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=', '--filter', 'OnlyTest')),
+  'logs' => $logs,
 ));
 `)
 const phpunitArgs = JSON.parse(execFileSync("php", [phpunitArgsProbe], { encoding: "utf8" })) as {
-  default: Record<string, unknown>
-  redirected: Record<string, unknown>
+  [key: string]: Record<string, unknown> | string[]
 }
-assert.equal(phpunitArgs.default.cacheResult, false, "PHPUnit result caching must be disabled when no sandbox cache path is requested")
-assert.equal(phpunitArgs.redirected.cacheResult, true)
-assert.equal(phpunitArgs.redirected.cacheResultFile, "/tmp/wp-codebox-phpunit.result.cache")
+const argumentSet = (name: string) => phpunitArgs[name] as Record<string, unknown>
+assert.equal(argumentSet("default").cacheResult, false, "PHPUnit result caching must be disabled when no sandbox cache path is requested")
+for (const form of ["equals", "separate"]) {
+  assert.equal(argumentSet(form).cacheResult, true, `${form} cache argument must enable the requested private cache`)
+  assert.equal(argumentSet(form).cacheResultFile, "/tmp/wp-codebox-phpunit.result.cache")
+}
+assert.equal(argumentSet("separate").filter, "OnlyTest", "cache parsing must preserve preceding arguments")
+for (const form of ["relative", "sourceMount", "unnormalized", "empty"]) {
+  assert.equal(argumentSet(form).cacheResult, false, `${form} cache argument must not enable a source-mount write`)
+  assert.equal(argumentSet(form).cacheResultFile, undefined)
+}
+assert.equal(argumentSet("empty").filter, "OnlyTest", "an empty cache value must not consume the following PHPUnit argument")
+assert.equal((phpunitArgs.logs as string[]).filter((message) => message.includes("ignoring PHPUnit --cache-result-file")).length, 4, "invalid cache paths must produce actionable diagnostics")
 
 console.log("phpunit project autoload ok")
