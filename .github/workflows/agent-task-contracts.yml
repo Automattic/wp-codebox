@@ -22,6 +22,9 @@ on:
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
+      - "packages/runtime-playground/src/phpunit-command-handlers.ts"
+      - "tests/playground-phpunit-readonly-cache.integration.test.ts"
+      - "tests/fixtures/phpunit-playground-harness/**"
   push:
     paths:
       - ".github/scripts/run-agent-task/**"
@@ -43,6 +46,9 @@ on:
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
+      - "packages/runtime-playground/src/phpunit-command-handlers.ts"
+      - "tests/playground-phpunit-readonly-cache.integration.test.ts"
+      - "tests/fixtures/phpunit-playground-harness/**"
 
 jobs:
   contracts:
@@ -54,7 +60,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-           cache: npm
+          cache: npm
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
@@ -76,4 +82,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker://rhysd/actionlint:1.7.7
         with:
-          args: .github/workflows/run-agent-task.yml
+          args: .github/workflows/agent-task-contracts.yml .github/workflows/run-agent-task.yml
