@@ -18,6 +18,41 @@ assert.equal(succeeded.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(succeeded.status, "succeeded")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: succeeded }), 0)
 
+const toolObservability = normalizeAgentTaskRunResult({
+  success: true,
+  metadata: {
+    agents_api: {
+      tool_observability: {
+        version: 1,
+        calls: [
+          { sequence: 1, turn: 1, tool_call_id: "call-success", tool_name: "workspace.read", status: "succeeded", arguments: { keys: ["path"], count: 1, redacted: true }, result: { type: "object", count: 2 }, result_body: "secret-sentinel" },
+          { sequence: 2, turn: 1, tool_call_id: "call-failure", tool_name: "workspace.write", status: "failed", arguments: { keys: [], count: 0, redacted: true }, error: { code: "raw-secret", message: "secret-sentinel" } },
+          { sequence: 3, turn: 2, tool_call_id: "call-rejected", tool_name: "workspace.delete", status: "rejected", arguments: { keys: ["path"], count: 1, redacted: true } },
+          { sequence: 4, turn: 2, tool_call_id: "call-pending", tool_name: "workspace.grep", status: "pending", arguments: { keys: ["query"], count: 1, redacted: true } },
+          { sequence: 5, turn: 2, tool_call_id: "malformed", tool_name: "workspace.read", status: "succeeded", arguments: { keys: ["path"], count: 2, redacted: true } },
+          { sequence: 6, turn: 2, tool_call_id: "untrusted secret sentinel", tool_name: "workspace.read", status: "pending", arguments: { keys: [], count: 0, redacted: true } },
+          { sequence: 7, turn: 2, tool_call_id: "call-secret-name", tool_name: "untrusted secret sentinel", status: "pending", arguments: { keys: [], count: 0, redacted: true } },
+          { sequence: 8, turn: 2, tool_call_id: "call-secret-key", tool_name: "workspace.read", status: "pending", arguments: { keys: ["untrusted secret sentinel"], count: 1, redacted: true } },
+          { sequence: 9, turn: 2, tool_call_id: "call-secret-type", tool_name: "workspace.read", status: "succeeded", arguments: { keys: [], count: 0, redacted: true }, result: { type: "untrusted secret sentinel", count: 1 } },
+        ],
+      },
+    },
+  },
+})
+assert.deepEqual((toolObservability.metadata.tool_observability as any)?.calls.map((call: any) => call.status), ["succeeded", "failed", "rejected", "pending"])
+assert.deepEqual((toolObservability.metadata.tool_observability as any)?.calls[0].result, { type: "object", count: 2 })
+assert.deepEqual((toolObservability.metadata.tool_observability as any)?.calls[1].error, { code: "tool_call_failed", message: "Tool call failed." })
+assert.equal(JSON.stringify(toolObservability).includes("secret-sentinel"), false, "normalized tool observability never retains payloads or raw errors")
+assert.equal(JSON.stringify(toolObservability).includes("untrusted secret sentinel"), false, "normalized tool observability rejects non-identifier summary strings")
+for (const resultShape of [{ type: "string", size: 12 }, { type: "integer" }]) {
+  const normalized = normalizeAgentTaskRunResult({ metadata: { agents_api: { tool_observability: { version: 1, calls: [{ sequence: 1, turn: 1, tool_call_id: "call-shape", tool_name: "workspace.read", status: "succeeded", arguments: { keys: [], count: 0, redacted: true }, result: resultShape }] } } } })
+  assert.deepEqual((normalized.metadata.tool_observability as any)?.calls[0].result, resultShape)
+}
+for (const unsupported of [0, 2, "1"]) {
+  const result = normalizeAgentTaskRunResult({ metadata: { agents_api: { tool_observability: { version: unsupported, calls: [{ sequence: 1, turn: 1, tool_call_id: "call", tool_name: "tool", status: "pending", arguments: { keys: [], count: 0, redacted: true } }] } } } })
+  assert.equal("tool_observability" in result.metadata, false, "only canonical version 1 tool observability is consumed")
+}
+
 const resultFileDirectory = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-result-file-"))
 const resultFilePath = join(resultFileDirectory, "result.json")
 const atomicResult = { schema: "wp-codebox/agent-task-run/v1", success: true, status: "succeeded", padding: "x".repeat(40 * 1024) }

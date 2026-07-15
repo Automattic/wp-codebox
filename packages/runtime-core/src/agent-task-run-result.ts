@@ -2,6 +2,7 @@ import { isPlainObject, numberValue, objectValue, stringValue, stripUndefined } 
 import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
 import { RUNTIME_ACCESS_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
 import { normalizeAgentTaskStatus } from "./status-taxonomy.js"
+import { normalizeToolObservability } from "./tool-observability.js"
 
 export const AGENT_TASK_RUN_RESULT_SCHEMA = "wp-codebox/agent-task-run-result/v1" as const
 
@@ -137,6 +138,7 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       provider_error: objectValue(result.provider_error),
       timeout: result.timeout === true ? true : undefined,
       failure_evidence: objectValue(result.failure_evidence),
+      tool_observability: normalizeToolObservability(result.metadata) ?? normalizeToolObservability(agentResult.metadata),
     }),
     terminal_result: terminalResult,
     runtime_access: agentTaskRuntimeAccess(result),

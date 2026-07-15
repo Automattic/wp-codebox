@@ -8,6 +8,7 @@ import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const MAX_TRANSCRIPT_EXECUTIONS = 64
 const MAX_REVIEW_TEXT_BYTES = 32 * 1024
+const MAX_TOOL_ARGUMENT_KEYS = 32
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace, ".codebox", "agent-task-upload"))
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
@@ -208,13 +209,62 @@ function projectParsed(value) {
   const results = Array.isArray(parsed.tool_results) ? parsed.tool_results : Array.isArray(parsed.toolResults) ? parsed.toolResults : []
   const errors = Array.isArray(parsed.errors) ? parsed.errors : parsed.error ? [parsed.error] : []
   const agent = record(parsed.agent ?? parsed.agent_metadata)
+  const toolObservability = canonicalToolObservability(parsed.metadata)
+    ?? canonicalToolObservability(record(parsed.agent_runtime).result?.metadata)
   return Object.fromEntries(Object.entries({
-    agent: Object.fromEntries(["id", "name", "model", "provider", "status"].flatMap((key) => boundedText(agent[key]) ? [[key, boundedText(agent[key])]] : [])),
+    agent: Object.fromEntries(["id", "name", "status"].flatMap((key) => boundedText(agent[key]) ? [[key, boundedText(agent[key])]] : [])),
     model_messages: messages.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((message) => boundedText(record(message).content ?? record(message).text ?? message) ? [{ role: boundedText(record(message).role), content: boundedText(record(message).content ?? record(message).text ?? message) }] : []),
     tool_calls: tools.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
     tool_results: results.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
     errors: errors.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((error) => boundedText(record(error).message ?? error) ? [boundedText(record(error).message ?? error)] : []),
+    tool_observability: toolObservability,
   }).filter(([, item]) => Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0))
+}
+
+// This is deliberately limited to the public Agents API summary. Tool payloads
+// and provider-specific tool records are not inputs to reviewer artifacts.
+function canonicalToolObservability(metadata) {
+  const source = record(record(record(metadata).agents_api).tool_observability)
+  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > MAX_TRANSCRIPT_EXECUTIONS) return undefined
+  const calls = source.calls.map(projectCanonicalToolCall).filter(Boolean)
+  return calls.length ? { version: 1, calls } : undefined
+}
+
+function projectCanonicalToolCall(value) {
+  const call = record(value)
+  const argumentsSummary = record(call.arguments)
+  const keys = Array.isArray(argumentsSummary.keys) ? argumentsSummary.keys : []
+  if (!Number.isSafeInteger(call.sequence) || call.sequence < 1 || !Number.isSafeInteger(call.turn) || call.turn < 1
+    || !safeToolIdentifier(call.tool_call_id) || !safeToolIdentifier(call.tool_name)
+    || !["succeeded", "failed", "rejected", "pending"].includes(call.status)
+    || argumentsSummary.redacted !== true || !Number.isSafeInteger(argumentsSummary.count) || argumentsSummary.count < 0
+    || argumentsSummary.count !== keys.length || keys.length > MAX_TOOL_ARGUMENT_KEYS || !keys.every(safeToolIdentifier)) return undefined
+  const resultSummary = projectCanonicalToolResult(call.result)
+  if (call.result !== undefined && !resultSummary) return undefined
+  return Object.fromEntries(Object.entries({
+    sequence: call.sequence,
+    turn: call.turn,
+    tool_call_id: call.tool_call_id,
+    tool_name: call.tool_name,
+    status: call.status,
+    arguments: { keys, count: argumentsSummary.count, redacted: true },
+    result: resultSummary,
+    error: call.status === "failed" ? { code: "tool_call_failed", message: "Tool call failed." }
+      : call.status === "rejected" ? { code: "tool_call_rejected", message: "Tool call was rejected." }
+        : undefined,
+  }).filter(([, item]) => item !== undefined))
+}
+
+function projectCanonicalToolResult(value) {
+  const result = record(value)
+  if (Object.keys(result).length === 0) return undefined
+  if (["array", "object"].includes(result.type)) return Number.isSafeInteger(result.count) && result.count >= 0 ? { type: result.type, count: result.count } : undefined
+  if (result.type === "string") return Number.isSafeInteger(result.size) && result.size >= 0 ? { type: result.type, size: result.size } : undefined
+  return ["integer", "double", "boolean", "null"].includes(result.type) ? { type: result.type } : undefined
+}
+
+function safeToolIdentifier(value) {
+  return typeof value === "string" && value.length <= 256 && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
 }
 
 async function trustedTranscriptFile(path) {

@@ -139,6 +139,56 @@ function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
 }
 
+function canonicalToolObservability(metadata) {
+  const source = record(record(record(metadata).agents_api).tool_observability)
+  if (source.version !== 1 || !Array.isArray(source.calls) || source.calls.length > 64) return undefined
+  const calls = source.calls.map(projectCanonicalToolCall).filter(Boolean)
+  return calls.length ? { version: 1, calls } : undefined
+}
+
+function projectCanonicalToolCall(value) {
+  const call = record(value)
+  const argumentsSummary = record(call.arguments)
+  const keys = Array.isArray(argumentsSummary.keys) ? argumentsSummary.keys : []
+  if (!Number.isSafeInteger(call.sequence) || call.sequence < 1 || !Number.isSafeInteger(call.turn) || call.turn < 1
+    || !safeToolIdentifier(call.tool_call_id) || !safeToolIdentifier(call.tool_name)
+    || !["succeeded", "failed", "rejected", "pending"].includes(call.status)
+    || argumentsSummary.redacted !== true || !Number.isSafeInteger(argumentsSummary.count) || argumentsSummary.count < 0
+    || argumentsSummary.count !== keys.length || keys.length > 32 || !keys.every(safeToolIdentifier)) return undefined
+  const resultSummary = projectCanonicalToolResult(call.result)
+  if (call.result !== undefined && !resultSummary) return undefined
+  return Object.fromEntries(Object.entries({
+    sequence: call.sequence, turn: call.turn, tool_call_id: call.tool_call_id, tool_name: call.tool_name, status: call.status,
+    arguments: { keys, count: argumentsSummary.count, redacted: true }, result: resultSummary,
+    error: call.status === "failed" ? { code: "tool_call_failed", message: "Tool call failed." }
+      : call.status === "rejected" ? { code: "tool_call_rejected", message: "Tool call was rejected." } : undefined,
+  }).filter(([, item]) => item !== undefined))
+}
+
+function projectCanonicalToolResult(value) {
+  const result = record(value)
+  if (Object.keys(result).length === 0) return undefined
+  if (["array", "object"].includes(result.type)) return Number.isSafeInteger(result.count) && result.count >= 0 ? { type: result.type, count: result.count } : undefined
+  if (result.type === "string") return Number.isSafeInteger(result.size) && result.size >= 0 ? { type: result.type, size: result.size } : undefined
+  return ["integer", "double", "boolean", "null"].includes(result.type) ? { type: result.type } : undefined
+}
+
+function safeToolIdentifier(value) {
+  return typeof value === "string" && value.length <= 256 && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
+}
+
+function removeRawToolObservability(metadata) {
+  const visit = (value) => {
+    if (Array.isArray(value)) return value.forEach(visit)
+    const entry = record(value)
+    if (!Object.keys(entry).length) return
+    const agentsApi = record(record(entry.metadata).agents_api)
+    delete agentsApi.tool_observability
+    Object.values(entry).forEach(visit)
+  }
+  visit(metadata)
+}
+
 function string(value) {
   return typeof value === "string" ? value.trim() : ""
 }
@@ -519,7 +569,17 @@ const nativeRuntimeResult = request.run_agent && !request.dry_run
   : {}
 await rm(nativeResultPath, { force: true })
 reviewerEvidence = await canonicalReviewerTranscript(nativeRuntimeResult, artifactsPath)
+const toolObservability = canonicalToolObservability(record(nativeRuntimeResult).metadata)
+  ?? canonicalToolObservability(record(record(nativeRuntimeResult).agent_task_run_result).metadata)
 let runtimeResult = sanitizeRuntimeSourceValue(nativeRuntimeResult, privateRuntimeSourceRootForSanitization)
+removeRawToolObservability(runtimeResult)
+const normalizedAgentTaskResult = record(record(runtimeResult).agent_task_run_result)
+if (toolObservability) {
+  normalizedAgentTaskResult.metadata = {
+    ...record(normalizedAgentTaskResult.metadata),
+    tool_observability: toolObservability,
+  }
+}
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
 let runnerWorkspaceCore = null
