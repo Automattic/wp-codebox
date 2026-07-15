@@ -300,6 +300,18 @@ function phpunitArgsPhp(functionName: string, logFunction: string): string {
             $arguments['verbose'] = true;
             continue;
         }
+        if ($arg === '--cache-result-file' && isset($args[$i + 1]) && $args[$i + 1] !== '') {
+            $arguments['cacheResult'] = true;
+            $arguments['cacheResultFile'] = $args[++$i];
+            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $arguments['cacheResultFile']);
+            continue;
+        }
+        if (strpos($arg, '--cache-result-file=') === 0 && substr($arg, strlen('--cache-result-file=')) !== '') {
+            $arguments['cacheResult'] = true;
+            $arguments['cacheResultFile'] = substr($arg, strlen('--cache-result-file='));
+            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $arguments['cacheResultFile']);
+            continue;
+        }
     }
     return $arguments;
 }`

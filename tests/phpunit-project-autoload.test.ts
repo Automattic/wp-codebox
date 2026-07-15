@@ -322,4 +322,22 @@ const managedModeCode = phpunitRunCode({
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
 
+const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")
+const phpunitArgsProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-cache-args-")), "probe.php")
+writeFileSync(phpunitArgsProbe, `<?php
+function pg_log($message) {}
+${phpunitArgsFunction}
+echo json_encode(array(
+  'default' => wp_codebox_phpunit_args(array('phpunit')),
+  'redirected' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file=/tmp/wp-codebox-phpunit.result.cache')),
+));
+`)
+const phpunitArgs = JSON.parse(execFileSync("php", [phpunitArgsProbe], { encoding: "utf8" })) as {
+  default: Record<string, unknown>
+  redirected: Record<string, unknown>
+}
+assert.equal(phpunitArgs.default.cacheResult, false, "PHPUnit result caching must be disabled when no sandbox cache path is requested")
+assert.equal(phpunitArgs.redirected.cacheResult, true)
+assert.equal(phpunitArgs.redirected.cacheResultFile, "/tmp/wp-codebox-phpunit.result.cache")
+
 console.log("phpunit project autoload ok")
