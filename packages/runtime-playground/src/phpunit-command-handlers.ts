@@ -273,24 +273,34 @@ function ${options.relativeFunctionName}(string $path, string $${options.rootPar
 }
 
 function phpunitArgsPhp(functionName: string, logFunction: string): string {
-  return `function ${functionName}_cache_result_file($value) {
-    if (!is_string($value) || $value === '' || strpos($value, '/tmp/') !== 0 || substr($value, -1) === '/') {
-        return null;
-    }
-    $segments = explode('/', $value);
-    foreach ($segments as $index => $segment) {
-        if ($index === 0) {
-            continue;
+  return `function ${functionName}_private_cache_result_file() {
+    $path = false;
+    try {
+        $candidate = '/tmp/wp-codebox-phpunit-' . bin2hex(random_bytes(24)) . '.cache';
+        $handle = @fopen($candidate, 'x');
+        if ($handle !== false) {
+            fclose($handle);
+            $path = $candidate;
         }
-        if ($segment === '' || $segment === '.' || $segment === '..') {
-            return null;
-        }
+    } catch (Throwable $e) {
+        // tempnam() asks the operating system to allocate a unique file when
+        // cryptographic randomness is unavailable.
     }
-    return $value;
+    if ($path === false) {
+        $path = tempnam('/tmp', 'wp-codebox-phpunit-');
+    }
+    if ($path === false) {
+        throw new RuntimeException('Unable to allocate a private PHPUnit result cache file.');
+    }
+    @chmod($path, 0600);
+    register_shutdown_function(static function () use ($path): void {
+        @unlink($path);
+    });
+    return $path;
 }
 
 function ${functionName}(array $argv) {
-    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'extensions' => array());
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'cacheResultFile' => ${functionName}_private_cache_result_file(), 'extensions' => array());
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
         $arg = $args[$i];
@@ -314,29 +324,6 @@ function ${functionName}(array $argv) {
         }
         if ($arg === '--verbose' || $arg === '-v') {
             $arguments['verbose'] = true;
-            continue;
-        }
-        if ($arg === '--cache-result-file') {
-            $candidate = isset($args[$i + 1]) && strpos((string) $args[$i + 1], '--') !== 0 ? $args[++$i] : '';
-            $cache_result_file = ${functionName}_cache_result_file($candidate);
-            if ($cache_result_file === null) {
-                ${logFunction}('NOTICE:ignoring PHPUnit --cache-result-file; use a normalized absolute sandbox path below /tmp/.');
-                continue;
-            }
-            $arguments['cacheResult'] = true;
-            $arguments['cacheResultFile'] = $cache_result_file;
-            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $cache_result_file);
-            continue;
-        }
-        if (strpos($arg, '--cache-result-file=') === 0) {
-            $cache_result_file = ${functionName}_cache_result_file(substr($arg, strlen('--cache-result-file=')));
-            if ($cache_result_file === null) {
-                ${logFunction}('NOTICE:ignoring PHPUnit --cache-result-file; use a normalized absolute sandbox path below /tmp/.');
-                continue;
-            }
-            $arguments['cacheResult'] = true;
-            $arguments['cacheResultFile'] = $cache_result_file;
-            ${logFunction}('NOTICE:phpunit result cache redirected to: ' . $cache_result_file);
             continue;
         }
     }
