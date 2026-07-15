@@ -320,5 +320,6 @@ const managedModeCode = phpunitRunCode({
 })
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
+assert.ok(managedModeCode.includes("'cacheResult' => false"))
 
 console.log("phpunit project autoload ok")

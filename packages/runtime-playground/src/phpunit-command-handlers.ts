@@ -274,7 +274,7 @@ function ${options.relativeFunctionName}(string $path, string $${options.rootPar
 
 function phpunitArgsPhp(functionName: string, logFunction: string): string {
   return `function ${functionName}(array $argv) {
-    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'extensions' => array());
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
         $arg = $args[$i];
