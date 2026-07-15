@@ -218,7 +218,7 @@ function projectParsed(value) {
     tool_results: results.slice(0, MAX_TRANSCRIPT_EXECUTIONS).map(projectToolCall),
     errors: errors.slice(0, MAX_TRANSCRIPT_EXECUTIONS).flatMap((error) => boundedText(record(error).message ?? error) ? [boundedText(record(error).message ?? error)] : []),
     tool_observability: toolObservability,
-  }).filter(([, item]) => Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0))
+  }).filter(([, item]) => item !== undefined && (Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0)))
 }
 
 // This is deliberately limited to the public Agents API summary. Tool payloads

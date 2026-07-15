@@ -90,6 +90,7 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
   assert.equal(exclusions.canonical_transcripts.length, 1, "available canonical evidence is projected once")
   assert.match(exclusions.canonical_transcripts[0].provenance.artifact_path, /^runtime-[a-z0-9-]+\/files\/transcript\.json$/)
   const staged = JSON.stringify(await Promise.all((await readdir(join(workspace, ".codebox", "agent-task-upload"), { recursive: true })).map((path) => readFile(join(workspace, ".codebox", "agent-task-upload", path), "utf8").catch(() => ""))))
+  assert.doesNotMatch(staged, /"tool_observability"/, "absent optional tool observability is omitted during upload staging")
   for (const privateValue of ["wp-codebox-runner-workspace-seed-", workspace, "PRIVATE_WORKSPACE_SENTINEL", "PRIVATE_NPM_SENTINEL", "PRIVATE_NETRC_SENTINEL", "PRIVATE_KEY_SENTINEL"]) assert.doesNotMatch(staged, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   const stagedInput = JSON.parse(await readFile(join(workspace, ".codebox", "agent-task-upload", ".codebox", "native-agent-task-input.json"), "utf8"))
   assert.deepEqual(stagedInput.task_input.workspaces[0].seed, { kind: "runner-workspace-seed", digest: seedProvenance.digest.sha256, files: 2, bytes: seedProvenance.bytes, excludes: seedProvenance.excludes, excluded: seedProvenance.excluded })
