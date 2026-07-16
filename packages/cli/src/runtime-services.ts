@@ -83,11 +83,20 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
     throw new RuntimeServiceProvisionError("Managed runtime service provisioning failed", evidence)
   }
 
+  // A provisioned host service is an active runtime resource. Keep Node alive
+  // until release so temporarily handle-free PHP-WASM startup can still reach
+  // its timeout/cancellation finalizer instead of exiting with unsettled await.
+  const lease = provisioned.length > 0 ? setInterval(() => undefined, 1_000) : undefined
+
   return {
     env: Object.assign({}, ...provisioned.map((service) => service.env)),
     evidence,
     async release() {
-      await releaseServices(provisioned)
+      try {
+        await releaseServices(provisioned)
+      } finally {
+        if (lease) clearInterval(lease)
+      }
     },
   }
 }
