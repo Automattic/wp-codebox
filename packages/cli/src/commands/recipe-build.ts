@@ -23,6 +23,8 @@ interface WordPressPhpunitBuilderOptions {
   autoloadFile?: string
   projectAutoloadFile?: string
   testsDir?: string
+  testRoot?: string
+  phpunitXml?: string
   dependencyMounts?: string[]
   bootstrapFiles?: string[]
   preloadFiles?: string[]
@@ -87,6 +89,8 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         autoloadFile: stringOrUndefined(phpunitOptions.autoloadFile),
         projectAutoloadFile: stringOrUndefined(phpunitOptions.projectAutoloadFile),
         testsDir: stringOrUndefined(phpunitOptions.testsDir),
+        testRoot: stringOrUndefined(phpunitOptions.testRoot),
+        phpunitXml: stringOrUndefined(phpunitOptions.phpunitXml),
         dependencyMounts: Array.isArray(phpunitOptions.dependencyMounts) ? phpunitOptions.dependencyMounts : [],
         bootstrapFiles: Array.isArray(phpunitOptions.bootstrapFiles) ? phpunitOptions.bootstrapFiles : [],
         preloadFiles: Array.isArray(phpunitOptions.preloadFiles) ? phpunitOptions.preloadFiles : [],

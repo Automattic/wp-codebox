@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
 import { parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
@@ -19,6 +23,22 @@ assert.equal(unsafe.valid, false)
 const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [emptyRootService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: [emptyRootService] }).inputs?.services, [emptyRootService])
+const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
+try {
+  const optionsPath = join(builderDirectory, "options.json")
+  const recipePath = join(builderDirectory, "recipe.json")
+  await writeFile(optionsPath, JSON.stringify({
+    pluginSlug: "example",
+    testRoot: "/home/example/bin/tests/core",
+    phpunitXml: "/home/example/bin/tests/core/phpunit.xml",
+  }))
+  assert.equal(await runRecipeBuildCommand(["phpunit", "--options", optionsPath, "--output", recipePath]), 0)
+  const builtRecipe = JSON.parse(await readFile(recipePath, "utf8")) as WorkspaceRecipe
+  assert.ok(builtRecipe.workflow.steps[0].args?.includes("test-root=/home/example/bin/tests/core"))
+  assert.ok(builtRecipe.workflow.steps[0].args?.includes("phpunit-xml=/home/example/bin/tests/core/phpunit.xml"))
+} finally {
+  await rm(builderDirectory, { recursive: true, force: true })
+}
 const recipe: WorkspaceRecipe = { schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 'ok';"] }] } }
 assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, "recipe.json"), [])
 const dryRun = await planWorkspaceRecipe(recipe, process.cwd(), { recipePath: "recipe.json" }, {
