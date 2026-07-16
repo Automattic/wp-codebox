@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:net"
-import { parseLoopbackPort, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { parseLoopbackPort, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateWorkspaceRecipeJsonSchema } from "../packages/runtime-core/src/recipe-schema.ts"
 
 const service = { id: "test-db", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", password: "DB_PASSWORD" } } as const
@@ -35,9 +35,11 @@ const dependencies: RuntimeServiceDependencies = {
 const provisioned = await provisionRuntimeServices([service], { dependencies })
 assert.equal(provisioned.env.DB_PORT, "41001")
 assert.equal(provisioned.env.DB_PASSWORD, Buffer.alloc(24, 7).toString("base64url"))
-assert.ok(calls[0]?.args.includes("MYSQL_PASSWORD"))
-assert.equal(calls[0]?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "credentials never enter Docker argv")
+const runCall = calls.find((call) => call.args[0] === "run")
+assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
+assert.equal(runCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "credentials never enter Docker argv")
 assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PASSWORD), false, "credentials never enter evidence")
+assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
@@ -71,4 +73,8 @@ assert.equal(failedCleanup, true)
 const controller = new AbortController()
 controller.abort()
 await assert.rejects(provisionRuntimeServices([service], { dependencies, signal: controller.signal }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "interrupted")
+
+const nestedEvidence = [{ id: "nested", kind: "mysql", provider: "test", version: "test", readiness: "failed", lifecycle: "failed" }] satisfies import("../packages/cli/src/runtime-services.ts").RuntimeServiceEvidence[]
+const nestedError = new Error("phase failed", { cause: new RuntimeServiceProvisionError("service failed", nestedEvidence) })
+assert.equal(runtimeServiceEvidenceFromError(nestedError), nestedEvidence, "phase wrappers retain structured service evidence")
 console.log("runtime services tests passed")

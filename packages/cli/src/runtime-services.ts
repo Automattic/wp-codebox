@@ -25,6 +25,17 @@ export class RuntimeServiceProvisionError extends Error {
   }
 }
 
+export function runtimeServiceEvidenceFromError(error: unknown): RuntimeServiceEvidence[] | undefined {
+  let current = error
+  const seen = new Set<unknown>()
+  while (current instanceof Error && !seen.has(current)) {
+    if (current instanceof RuntimeServiceProvisionError) return current.evidence
+    seen.add(current)
+    current = current.cause
+  }
+  return undefined
+}
+
 interface ManagedRuntimeService {
   env: Record<string, string>
   evidence: RuntimeServiceEvidence
@@ -103,6 +114,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   let started = false
   try {
     throwIfAborted(signal)
+    await ensureDockerImage(dependencies, signal)
     await dependencies.execute("docker", runArgs, { env: childEnvironment, signal, timeout: 30_000 })
     started = true
     const { stdout } = await dependencies.execute("docker", ["port", container, "3306/tcp"], { signal, timeout: 10_000 })
@@ -119,6 +131,15 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     evidence.diagnostic = { code: signal?.aborted ? "interrupted" : started ? "readiness-failed" : "provision-failed" }
     if (started) await releaseService(container, evidence, dependencies, undefined).catch(() => undefined)
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
+  }
+}
+
+async function ensureDockerImage(dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {
+  try {
+    await dependencies.execute("docker", ["image", "inspect", MYSQL_IMAGE], { signal, timeout: 10_000 })
+  } catch {
+    throwIfAborted(signal)
+    await dependencies.execute("docker", ["pull", MYSQL_IMAGE], { signal, timeout: 5 * 60_000 })
   }
 }
 
