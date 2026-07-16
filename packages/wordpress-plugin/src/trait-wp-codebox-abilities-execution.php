@@ -195,10 +195,13 @@ public static function create_browser_playground_session( array $input ): array|
 		return $site_blueprint_artifact;
 	}
 
-	$base_blueprint = self::browser_blueprint_with_site_artifact( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $site_blueprint_artifact );
-	$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
-	$blueprint      = self::browser_blueprint_with_post_runtime( $blueprint, is_array( $input['post_runtime_blueprint'] ?? null ) ? $input['post_runtime_blueprint'] : array() );
-	$prepared_runtime = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $blueprint, $playground );
+	$base_blueprint        = self::browser_blueprint_with_site_artifact( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $site_blueprint_artifact );
+	$runtime_blueprint     = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
+	$post_runtime_blueprint = is_array( $input['post_runtime_blueprint'] ?? null ) ? $input['post_runtime_blueprint'] : array();
+	$prepared_runtime      = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $runtime_blueprint, $playground );
+	$runtime_blueprint     = self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $runtime_blueprint );
+	$blueprint             = self::browser_blueprint_with_post_runtime( $runtime_blueprint, $post_runtime_blueprint );
+	$prepared_runtime['has_post_runtime_blueprint'] = ! empty( $post_runtime_blueprint );
 	$runtime['prepared_runtime'] = $prepared_runtime;
 	$contained_site  = self::browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'ready' );
 	$artifacts       = self::browser_artifact_files( $input );
@@ -214,7 +217,7 @@ public static function create_browser_playground_session( array $input ): array|
 	$task_payload = array();
 	$recipe       = array();
 	$materialization = array();
-	$recipe_blueprint = self::browser_playground_blueprint( self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint ), $playground );
+	$recipe_blueprint = self::browser_playground_blueprint( $blueprint, $playground );
 	if ( ! $preview_only ) {
 		$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
 		$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground, $task_payload );
@@ -225,7 +228,7 @@ public static function create_browser_playground_session( array $input ): array|
 		$materialization = self::browser_materialization_contract( $recipe );
 	}
 	if ( is_array( $runtime['prepared_runtime'] ?? null ) ) {
-		self::browser_prepared_runtime_cache_store( $runtime['prepared_runtime'], $recipe_blueprint );
+		self::browser_prepared_runtime_cache_store( $runtime['prepared_runtime'], $runtime_blueprint );
 	}
 	$blueprint = $recipe_blueprint;
 

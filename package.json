@@ -154,6 +154,7 @@
     "test:php-agent-runtime-execution": "php scripts/php-agent-runtime-execution-smoke.php",
     "test:php-runtime-provider-registry": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-runtime-provider-registry-smoke.php",
     "test:php-browser-provider-auth-strategy": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-provider-auth-strategy-smoke.php",
+    "test:php-browser-preview-only-session": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-preview-only-session-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
     "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",

@@ -131,6 +131,9 @@ $input = array(
 			'steps' => array( array( 'step' => 'setSiteOptions', 'options' => array( 'description' => 'Site artifact applied' ) ) ),
 		),
 	),
+	'post_runtime_blueprint' => array(
+		'steps' => array( array( 'step' => 'importWxr', 'file' => 'https://example.test/first-caller.xml' ) ),
+	),
 	'include_internal_browser_session' => true,
 );
 
@@ -139,10 +142,17 @@ if ( is_wp_error( $preview ) ) {
 	fail( 'preview failed: ' . $preview->get_error_code() . ': ' . $preview->get_error_message() );
 }
 $hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $preview['product']['preview_boot']['blueprint_ref'] ?? '' ) );
+$second_input = $input;
+$second_input['sandbox_session_id'] = 'preview-only-session-second';
+$second_input['post_runtime_blueprint'] = array(
+	'steps' => array( array( 'step' => 'importWxr', 'file' => 'https://example.test/second-caller.xml' ) ),
+);
+$second = WP_Codebox_Abilities::create_browser_playground_session( $second_input + array( 'preview_only' => true ) );
+$second_hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $second['product']['preview_boot']['blueprint_ref'] ?? '' ) );
 $agentic  = WP_Codebox_Abilities::create_browser_playground_session( $input );
 $task     = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'preview_only' => true, 'include_internal_browser_contract' => true ) );
 
-foreach ( array( 'hydrated' => $hydrated, 'agentic' => $agentic, 'task' => $task ) as $name => $result ) {
+foreach ( array( 'hydrated' => $hydrated, 'second' => $second, 'second_hydrated' => $second_hydrated, 'agentic' => $agentic, 'task' => $task ) as $name => $result ) {
 	if ( is_wp_error( $result ) ) {
 		fail( $name . ' failed: ' . $result->get_error_code() . ': ' . $result->get_error_message() );
 	}
@@ -170,7 +180,16 @@ expect( 'ready' === ( $preview['product']['runtime_readiness']['status'] ?? '' )
 expect( true === ( $preview['product']['preview_boot']['blueprint_ref_dto']['hydratable'] ?? false ), 'Preview-only product DTO must expose a hydratable blueprint ref.' );
 
 expect( ! is_wp_error( $hydrated ), 'Preview-only prepared runtime blueprint ref must hydrate.' );
-expect( $preview['playground']['blueprint'] === ( $hydrated['blueprint'] ?? null ), 'Preview-only boot blueprint must be the cached executable runtime blueprint.' );
+expect( 'miss' === ( $preview['runtime']['prepared_runtime']['status'] ?? '' ), 'First caller tail must materialize the shared runtime cache.' );
+expect( 'hit' === ( $second['runtime']['prepared_runtime']['status'] ?? '' ), 'Second caller tail must reuse the shared runtime cache.' );
+expect( $preview['playground']['blueprint'] === ( $hydrated['blueprint'] ?? null ), 'First caller hydration must return its executable blueprint.' );
+expect( $second['playground']['blueprint'] === ( $second_hydrated['blueprint'] ?? null ), 'Second caller hydration must return its executable blueprint.' );
+expect( str_contains( wp_json_encode( $hydrated['blueprint']['steps'] ?? array() ) ?: '', 'first-caller.xml' ), 'First caller hydration must retain its SSI import.' );
+expect( ! str_contains( wp_json_encode( $hydrated['blueprint']['steps'] ?? array() ) ?: '', 'second-caller.xml' ), 'First caller hydration must not contain the second caller import.' );
+expect( str_contains( wp_json_encode( $second_hydrated['blueprint']['steps'] ?? array() ) ?: '', 'second-caller.xml' ), 'Second caller hydration must retain its SSI import.' );
+expect( ! str_contains( wp_json_encode( $second_hydrated['blueprint']['steps'] ?? array() ) ?: '', 'first-caller.xml' ), 'Second caller hydration must not contain the first caller import.' );
+expect( 'importWxr' === ( $hydrated['blueprint']['steps'][ count( $hydrated['blueprint']['steps'] ?? array() ) - 1 ]['step'] ?? '' ), 'First caller import must run after shared runtime steps.' );
+expect( 'importWxr' === ( $second_hydrated['blueprint']['steps'][ count( $second_hydrated['blueprint']['steps'] ?? array() ) - 1 ]['step'] ?? '' ), 'Second caller import must run after shared runtime steps.' );
 
 expect( false === ( $agentic['preview_only'] ?? true ), 'Default browser session must remain agentic.' );
 expect( 'inherited-provider' === ( $agentic['provider'] ?? '' ), 'Default browser session must retain provider inheritance.' );
