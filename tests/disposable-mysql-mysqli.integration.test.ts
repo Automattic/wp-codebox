@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
+import { runRecipe } from "../packages/cli/src/commands/recipe-run.ts"
 
 const execFileAsync = promisify(execFile)
 
@@ -30,8 +31,16 @@ if (!await dockerAvailable()) {
       },
       workflow: { steps: [{ command: "wordpress.run-php", args: [`code=${code}`] }] },
     }))
-    const { stdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--json"], { cwd: process.cwd(), timeout: 180_000, maxBuffer: 2 * 1024 * 1024 })
-    const result = JSON.parse(stdout) as { success: boolean; executions: Array<{ stdout: string }> }
+    const result = await runRecipe({
+      recipePath,
+      previewHoldBlocking: false,
+      previewLeaseRequested: false,
+      previewLeaseChild: false,
+      timeoutMs: 180_000,
+      json: true,
+      summary: false,
+      dryRun: false,
+    })
     assert.equal(result.success, true)
     assert.equal(result.executions.at(-1)?.stdout.trim(), "1")
     console.log("disposable MySQL mysqli E2E passed")

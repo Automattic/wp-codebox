@@ -96,7 +96,7 @@ export async function runRecipeValidateCommand(args: string[]): Promise<number> 
   return output.success ? 0 : 1
 }
 
-async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
+export async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const mountConflictFailure = await recipeArtifactsMountConflictFailure(options)
   if (mountConflictFailure) {
     return mountConflictFailure
