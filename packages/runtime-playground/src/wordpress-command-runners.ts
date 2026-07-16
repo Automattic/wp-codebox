@@ -909,11 +909,13 @@ export async function runPhpunitCommand({
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
+  const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const resultFile = PLUGIN_PHPUNIT_RESULT_FILE
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit") : normalizePhpCode(phpunitRunCode({
     pluginSlug,
     cwd: argValue(args, "cwd")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}`,
     autoloadFile,
+    autoloadFileRole,
     projectAutoloadFile: argValue(args, "project-autoload-file")?.trim() || "",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
     testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,

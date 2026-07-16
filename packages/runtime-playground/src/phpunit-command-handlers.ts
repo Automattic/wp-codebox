@@ -4,6 +4,7 @@ export interface PhpunitRunCodeOptions {
   pluginSlug: string
   cwd: string
   autoloadFile: string
+  autoloadFileRole?: "harness"
   projectAutoloadFile?: string
   testsDir: string
   testRoot?: string
@@ -353,6 +354,7 @@ $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE
 $current_stage = 'preboot';
 $pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
+$autoload_file_role = ${JSON.stringify(options.autoloadFileRole ?? "")};
 $project_autoload_file = ${JSON.stringify(options.projectAutoloadFile ?? "")};
 $tests_dir = ${JSON.stringify(options.testsDir)};
 $test_root = ${JSON.stringify(options.testRoot || `/wordpress/wp-content/plugins/${options.pluginSlug}/tests`)};
@@ -1062,7 +1064,7 @@ if ($multisite) {
 }
 
 $legacy_project_autoload_file = '';
-if ($bootstrap_mode === 'project' && $project_autoload_file === '' && $autoload_file !== '' && $autoload_file !== '/wp-codebox-vendor/autoload.php') {
+if ($autoload_file_role === '' && $bootstrap_mode === 'project' && $project_autoload_file === '' && $autoload_file !== '' && $autoload_file !== '/wp-codebox-vendor/autoload.php') {
     $legacy_project_autoload_file = $autoload_file;
 }
 $harness_autoload_file = $legacy_project_autoload_file !== '' ? '/wp-codebox-vendor/autoload.php' : $autoload_file;

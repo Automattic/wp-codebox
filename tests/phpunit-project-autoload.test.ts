@@ -201,10 +201,12 @@ assert.deepEqual(recipe.workflow.steps[0].args.filter((arg) => arg.includes("aut
   "autoload-file=/wp-codebox-vendor/autoload.php",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
+assert.ok(recipe.workflow.steps[0].args.includes("autoload-file-role=harness"), "modern PHPUnit recipes explicitly preserve harness autoload intent")
 assert.deepEqual(rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).filter((arg) => arg.includes("autoload-file=")), [
   "autoload-file=/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
+assert.ok(rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).includes("autoload-file-role=harness"), "CLI path canonicalization preserves autoload intent")
 assert.ok(recipe.workflow.steps[0].args.includes("cwd=/home/example/public_html"))
 assert.ok(recipe.workflow.steps[0].args.includes("test-root=/home/example/public_html/bin/tests/phpunit"))
 assert.ok(recipe.workflow.steps[0].args.includes("phpunit-xml=/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist"))
@@ -236,6 +238,8 @@ assert.ok(projectBootstrapIndex > bootIndex)
 assert.ok(projectAutoloadIndex > projectBootstrapIndex)
 assert.ok(projectModeCode.includes("'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== ''"))
 assert.ok(projectModeCode.includes("$legacy_project_autoload_file = $autoload_file"))
+assert.ok(projectModeCode.includes('$autoload_file_role = "";'), "direct callers without an explicit role retain the legacy compatibility path")
+assert.ok(projectModeCode.includes("if ($autoload_file_role === '' && $bootstrap_mode === 'project'"))
 assert.ok(projectModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(projectModeCode.includes("NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload"))
 assert.ok(projectModeCode.includes("$test_root = \"/home/example/public_html/bin/tests/phpunit\";"))
@@ -262,12 +266,47 @@ assert.ok(verifyHarnessIndex > 0, "verify_harness stage must be present")
 assert.ok(projectModeTestsuiteIndex > verifyHarnessIndex, "harness verification must precede TestSuite construction")
 assertProjectBootstrapHarnessGuard(projectModeCode)
 
-let capturedDefaultProjectCode = ""
+const canonicalHarnessProjectModeCode = phpunitRunCode({
+  pluginSlug: "woocommerce",
+  cwd: "/wordpress/wp-content/plugins/woocommerce",
+  autoloadFile: "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php",
+  autoloadFileRole: "harness",
+  projectAutoloadFile: woocommerceAutoload,
+  testsDir: "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/wp-phpunit/wp-phpunit",
+  testRoot: "/home/example/public_html/bin/tests/phpunit",
+  phpunitXml: "/wordpress/wp-content/plugins/woocommerce/phpunit.xml.dist",
+  selectedTestFile: "",
+  changedTestFiles: [],
+  phpunitArgs: [],
+  env: {},
+  wpConfigDefines: {},
+  dependencyMounts: [],
+  bootstrapFiles: [],
+  bootstrapMode: "project",
+  projectBootstrap: "tests/legacy/bootstrap.php",
+  multisite: false,
+})
+assert.ok(canonicalHarnessProjectModeCode.includes('$autoload_file_role = "harness";'))
+assert.ok(canonicalHarnessProjectModeCode.includes('$harness_autoload_file = $legacy_project_autoload_file !== \'\' ? \'/wp-codebox-vendor/autoload.php\' : $autoload_file;'))
+const canonicalHarnessResolution = canonicalHarnessProjectModeCode.match(/\$legacy_project_autoload_file = '';[\s\S]*?\$harness_autoload_file = [^;]+;/)?.[0]
+assert.ok(canonicalHarnessResolution, "generated project-mode code must resolve harness autoload intent")
+const canonicalHarnessProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-canonical-harness-")), "probe.php")
+writeFileSync(canonicalHarnessProbe, `<?php
+$bootstrap_mode = 'project';
+$autoload_file = '/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php';
+$autoload_file_role = 'harness';
+$project_autoload_file = ${phpString(woocommerceAutoload)};
+${canonicalHarnessResolution}
+echo json_encode(array($legacy_project_autoload_file, $harness_autoload_file));
+`)
+assert.deepEqual(JSON.parse(execFileSync("php", [canonicalHarnessProbe], { encoding: "utf8" })), ["", "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php"], "a canonical staged harness path remains the harness in project mode")
+
+let capturedCanonicalHarnessCode = ""
 await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
-    capturedDefaultProjectCode = input.code
+    capturedCanonicalHarnessCode = input.code
     return { text: "ok", exitCode: 0 }
   },
   server: { playground: {} } as never,
@@ -276,13 +315,15 @@ await runPhpunitCommand({
     args: [
       "plugin-slug=ai-provider-for-openai",
       "bootstrap-mode=project",
+      "autoload-file=/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php",
+      "autoload-file-role=harness",
       "phpunit-xml=phpunit.xml.dist",
       "test-file=tests/unit/Models/OpenAiEmbeddingGenerationModelTest.php",
     ],
   },
 })
-assert.ok(capturedDefaultProjectCode.includes('$autoload_file = "";'))
-assert.ok(capturedDefaultProjectCode.includes("NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload"))
+assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
+assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",

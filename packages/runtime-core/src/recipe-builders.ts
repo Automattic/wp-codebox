@@ -94,6 +94,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandJsonArg("env-json", options.env ?? {}),
           commandJsonArg("wp-config-defines-json", options.wpConfigDefines ?? {}),
           commandArg("autoload-file", options.autoloadFile ?? "/wp-codebox-vendor/autoload.php"),
+          commandArg("autoload-file-role", "harness"),
           commandArg("project-autoload-file", options.projectAutoloadFile ?? ""),
           commandArg("tests-dir", options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"),
           commandArg("test-root", options.testRoot ?? `${pluginTarget}/tests`),
