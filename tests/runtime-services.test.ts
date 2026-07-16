@@ -22,6 +22,13 @@ await waitForMysqlProtocol("127.0.0.1", address.port, 250)
 await new Promise<void>((resolve) => server.close(() => resolve()))
 await assert.rejects(waitForMysqlProtocol("127.0.0.1", address.port, 25), /readiness timed out/)
 
+const closingServer = createServer((socket) => socket.end())
+await new Promise<void>((resolve) => closingServer.listen(0, "127.0.0.1", resolve))
+const closingAddress = closingServer.address()
+assert.ok(closingAddress && typeof closingAddress !== "string")
+await assert.rejects(waitForMysqlProtocol("127.0.0.1", closingAddress.port, 25), /readiness timed out/, "a pre-handshake close remains retryable instead of leaving an unsettled promise")
+await new Promise<void>((resolve) => closingServer.close(() => resolve()))
+
 const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv; signal?: AbortSignal }> = []
 const dependencies: RuntimeServiceDependencies = {
   randomBytes: (size) => Buffer.alloc(size, 7),

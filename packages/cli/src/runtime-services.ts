@@ -197,17 +197,29 @@ export async function waitForMysqlProtocol(host: string, port: number, timeoutMs
 function mysqlHandshake(host: string, port: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host, port })
+    let settled = false
     const timer = setTimeout(() => socket.destroy(new Error("connection timeout")), 1_000)
     const abort = () => socket.destroy(new Error("aborted"))
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
     signal?.addEventListener("abort", abort, { once: true })
-    socket.once("error", reject)
+    socket.once("error", fail)
     socket.once("data", (chunk: Buffer) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       socket.destroy()
       if (chunk.length < 5 || chunk[4] !== 10) reject(new Error("invalid MySQL protocol handshake"))
       else resolve()
     })
-    socket.once("close", () => { clearTimeout(timer); signal?.removeEventListener("abort", abort) })
+    socket.once("close", () => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", abort)
+      fail(new Error("connection closed before MySQL protocol handshake"))
+    })
   })
 }
 
