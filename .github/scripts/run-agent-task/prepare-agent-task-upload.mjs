@@ -9,6 +9,8 @@ const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const MAX_TRANSCRIPT_EXECUTIONS = 64
 const MAX_REVIEW_TEXT_BYTES = 32 * 1024
 const MAX_TOOL_ARGUMENT_KEYS = 32
+const MAX_REVIEW_COLLECTION_ENTRIES = 64
+const MAX_REVIEW_VALUE_DEPTH = 8
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace, ".codebox", "agent-task-upload"))
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
@@ -136,7 +138,10 @@ async function stageTextFile(source, destination, options = {}) {
   const contents = openedMetadata.isFile() && openedMetadata.size <= MAX_UPLOAD_FILE_BYTES ? await handle.readFile() : null
   await handle.close()
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
-  const sanitized = options.compactNativeInput ? compactNativeInput(contents.toString("utf8")) : sanitizeText(contents.toString("utf8"))
+  const sourceText = contents.toString("utf8")
+  const sanitized = options.projectWorkflowResult
+    ? `${JSON.stringify(projectWorkflowResult(parseJsonOrEmpty(sourceText)), null, 2)}\n`
+    : options.compactNativeInput ? compactNativeInput(sourceText) : sanitizeText(sourceText)
   const text = redact(sanitizeSeedSnapshotJson(sanitized))
   assertNoRuntimeSourcePaths(text, privateUploadRoots, "Runtime source or workspace paths must never be persisted in artifact uploads.")
   assertNoSeedSnapshotPaths(text)
@@ -171,6 +176,51 @@ function boundedText(value) {
   if (typeof value !== "string") return undefined
   const text = redact(sanitizeText(value)).slice(0, MAX_REVIEW_TEXT_BYTES)
   return containsRuntimeSourceContent(text) ? "[redacted-source-content]" : text
+}
+
+function projectReviewValue(value, depth = 0) {
+  if (depth >= MAX_REVIEW_VALUE_DEPTH) return undefined
+  if (typeof value === "string") return boundedText(value)
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value
+  if (Array.isArray(value)) return value.slice(0, MAX_REVIEW_COLLECTION_ENTRIES).flatMap((entry) => {
+    const projected = projectReviewValue(entry, depth + 1)
+    return projected === undefined ? [] : [projected]
+  })
+  return Object.fromEntries(Object.entries(record(value)).slice(0, MAX_REVIEW_COLLECTION_ENTRIES).flatMap(([key, entry]) => {
+    const projectedKey = boundedText(key)
+    const projected = projectReviewValue(entry, depth + 1)
+    return projectedKey === undefined || projected === undefined ? [] : [[projectedKey, projected]]
+  }))
+}
+
+function projectWorkflowResult(value) {
+  const result = record(value)
+  const execution = record(result.execution)
+  const outputs = record(result.outputs)
+  const reviewerEvidence = record(result.reviewer_evidence)
+  const verification = Array.isArray(result.verification) ? result.verification.slice(0, MAX_REVIEW_COLLECTION_ENTRIES).map((value) => {
+    const check = record(value)
+    return projectReviewValue(Object.fromEntries(["kind", "command", "description", "success", "exit_code", "stdout_truncated", "stderr_truncated"].flatMap((key) => check[key] === undefined ? [] : [[key, check[key]]])))
+  }) : undefined
+  return projectReviewValue(Object.fromEntries(Object.entries({
+    schema: result.schema,
+    run_id: result.run_id,
+    status: result.status,
+    success: result.success,
+    request_path: result.request_path,
+    execution: Object.keys(execution).length ? { stdout_truncated: execution.stdout_truncated, stderr_truncated: execution.stderr_truncated } : undefined,
+    reviewer_evidence: reviewerEvidence.transcript === undefined ? undefined : { transcript: reviewerEvidence.transcript },
+    verification,
+    publication: result.publication,
+    transcript: result.transcript,
+    artifacts: result.artifacts,
+    outputs: outputs.projections === undefined ? undefined : { projections: outputs.projections },
+    access: result.access,
+    publication_verification: result.publication_verification,
+    publication_error: result.publication_error,
+    failure: result.failure,
+    projection_error: result.projection_error,
+  }).filter(([, entry]) => entry !== undefined)))
 }
 
 function safeTargetPath(value) {
@@ -417,7 +467,7 @@ const declaredPaths = new Set(declaredArtifactPaths(result, declarations(request
 await rm(uploadPath, { recursive: true, force: true })
 await mkdir(uploadPath, { recursive: true })
 await stageTextFile(requestPath, join(uploadPath, ".codebox", "agent-task-request.json"))
-await stageTextFile(resultSource, join(uploadPath, ".codebox", "agent-task-workflow-result.json"))
+await stageTextFile(resultSource, join(uploadPath, ".codebox", "agent-task-workflow-result.json"), { projectWorkflowResult: true })
 await stageTextFile(join(workspace, ".codebox", "native-agent-task-input.json"), join(uploadPath, ".codebox", "native-agent-task-input.json"), { compactNativeInput: true })
 for (const path of declaredPaths) {
   const source = resolve(artifactsPath, path)
