@@ -3,32 +3,42 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { RuntimeRunRegistry } from "../packages/runtime-core/src/run-registry.ts"
-import { runRecipeCleanup } from "../packages/cli/src/commands/recipe-run-finalizer.ts"
+import { runManagedServiceCleanup } from "../packages/cli/src/commands/recipe-run.ts"
+import { RunResourceCleanupError } from "../packages/cli/src/commands/recipe-run-finalizer.ts"
 import type { RuntimeServiceEvidence } from "../packages/cli/src/runtime-services.ts"
 
-async function assertTerminalCleanup(terminal: string): Promise<void> {
-  const directory = await mkdtemp(join(tmpdir(), "wp-codebox-service-lifecycle-"))
-  try {
-    const registry = new RuntimeRunRegistry(directory)
-    const run = await registry.create({ runId: `service-${terminal}`, status: "running", metadata: {} })
-    const evidence: RuntimeServiceEvidence[] = [{ id: "mysql", kind: "mysql", provider: "test", version: "test", readiness: "ready", lifecycle: "provisioned" }]
-    let releases = 0
-    await runRecipeCleanup(registry, run, async () => {
-      releases += 1
-      evidence[0]!.lifecycle = "released"
-      evidence[0]!.teardown = "completed"
-    })
-    await registry.update(run.runId, { metadata: { managedRuntimeServices: evidence, terminal } })
-    const completed = await registry.read(run.runId)
-    assert.equal(releases, 1, `${terminal} releases services once`)
-    assert.deepEqual(completed.metadata.managedRuntimeServices, evidence, `${terminal} persists final service evidence`)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}
+const directory = await mkdtemp(join(tmpdir(), "wp-codebox-service-lifecycle-"))
+try {
+  const registry = new RuntimeRunRegistry(directory)
 
-for (const terminal of ["runtime-creation-failure", "workflow-failure", "timeout", "cancellation", "interruption", "success"]) {
-  await assertTerminalCleanup(terminal)
+  const succeeded = await registry.create({ runId: "service-success", status: "running", metadata: {} })
+  const succeededEvidence: RuntimeServiceEvidence[] = [{ id: "mysql", kind: "mysql", provider: "test", version: "test", readiness: "ready", lifecycle: "provisioned" }]
+  const cleanup = await runManagedServiceCleanup(registry, succeeded, succeededEvidence, false, async () => {
+    succeededEvidence[0]!.lifecycle = "released"
+    succeededEvidence[0]!.teardown = "completed"
+  })
+  assert.equal(cleanup.state, "completed")
+  assert.deepEqual((await registry.read(succeeded.runId)).metadata.managedRuntimeServices, succeededEvidence)
+
+  const failed = await registry.create({ runId: "service-failure", status: "running", metadata: {} })
+  const failedEvidence: RuntimeServiceEvidence[] = [{ id: "mysql", kind: "mysql", provider: "test", version: "test", readiness: "ready", lifecycle: "provisioned" }]
+  const preserved = await runManagedServiceCleanup(registry, failed, failedEvidence, true, async () => {
+    failedEvidence[0]!.lifecycle = "failed"
+    failedEvidence[0]!.teardown = "failed"
+    failedEvidence[0]!.diagnostic = { code: "teardown-failed" }
+    throw new Error("fixture teardown failure")
+  })
+  assert.equal(preserved.state, "failed", "a primary recipe failure keeps structured cleanup evidence")
+  assert.deepEqual((await registry.read(failed.runId)).metadata.managedRuntimeServices, failedEvidence)
+
+  const terminal = await registry.create({ runId: "service-terminal-cleanup-failure", status: "running", metadata: {} })
+  await assert.rejects(
+    runManagedServiceCleanup(registry, terminal, [], false, async () => { throw new Error("fixture teardown failure") }),
+    (error: unknown) => error instanceof RunResourceCleanupError && error.evidence.state === "failed",
+    "cleanup failure becomes the terminal error when there is no earlier recipe failure",
+  )
+} finally {
+  await rm(directory, { recursive: true, force: true })
 }
 
 console.log("runtime service lifecycle cleanup tests passed")

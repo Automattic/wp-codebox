@@ -17,6 +17,13 @@ export interface RunResourceCleanupEvidence {
   error?: RunOutput["error"]
 }
 
+export class RunResourceCleanupError extends Error {
+  constructor(readonly evidence: RunResourceCleanupEvidence, options: ErrorOptions) {
+    super("Recipe resource cleanup failed", options)
+    this.name = "RunResourceCleanupError"
+  }
+}
+
 interface RunResourceEvidenceOptions {
   startedAtMs: number
   status: RuntimeRunRecord["status"]
@@ -227,8 +234,10 @@ export async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecor
   } catch (error) {
     const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "failed", error: serializeError(error) } })
     const cleanupError = serializeRecipeRunError(error)
-    cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs, cleanupError)
-    throw error
+    throw new RunResourceCleanupError(
+      cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs, cleanupError),
+      { cause: error },
+    )
   }
 }
 

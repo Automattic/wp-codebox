@@ -20,7 +20,7 @@ import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "..
 import { artifactManifestFilesByPath, parseBenchResults, writeBenchmarkArtifactEvidence } from "./recipe-run-benchmark-artifacts.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
-import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
+import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, RunResourceCleanupError, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./recipe-run-artifacts-mount-guard.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
@@ -353,7 +353,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await markPreviewLeaseAvailable(options.previewLeaseFile, { runId: runRecord.runId, preview: artifacts.preview, holdSeconds: options.previewHoldSeconds })
     }
     const activeRuntime = runtime
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
+    cleanupEvidence = await runManagedServiceCleanup(runRegistry, runRecord, serviceEvidence, false, async () => {
       await awaitRecipe("runtime.release", async () => {
         try {
           await releaseRuntime(activeRuntime, successfulRecipe && options.previewHoldBlocking ? options.previewHoldSeconds : 0, async () => {
@@ -371,7 +371,6 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
-    runRecord = await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: serviceEvidence } })
     runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
 
@@ -506,12 +505,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ])
     }
 
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
+    cleanupEvidence = await runManagedServiceCleanup(runRegistry, runRecord, serviceEvidence, true, async () => {
       await managedServices?.release()
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
-    runRecord = await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: serviceEvidence } })
     runRecord = await runRegistry.read(runRecord.runId)
     const fuzzRunResult = recipeFuzzRunResult(recipe, executions)
     return await finalizeRecoveredRecipeFailure({
@@ -550,6 +548,27 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     })
   } finally {
     cancellationWatcher?.dispose()
+  }
+}
+
+export async function runManagedServiceCleanup(
+  runRegistry: RuntimeRunRegistry,
+  runRecord: Awaited<ReturnType<RuntimeRunRegistry["read"]>>,
+  serviceEvidence: RuntimeServiceEvidence[],
+  preservePrimaryFailure: boolean,
+  cleanup: () => Promise<void>,
+): Promise<RunResourceCleanupEvidence> {
+  try {
+    return await runRecipeCleanup(runRegistry, runRecord, cleanup)
+  } catch (error) {
+    if (preservePrimaryFailure && error instanceof RunResourceCleanupError) {
+      return error.evidence
+    }
+    throw error
+  } finally {
+    await runRegistry.update(runRecord.runId, {
+      metadata: { managedRuntimeServices: serviceEvidence },
+    })
   }
 }
 

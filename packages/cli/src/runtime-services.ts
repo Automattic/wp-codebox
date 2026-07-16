@@ -129,7 +129,7 @@ async function releaseServices(services: ManagedRuntimeService[]): Promise<void>
 }
 
 async function releaseService(container: string, evidence: RuntimeServiceEvidence, dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {
-  if (evidence.teardown) return
+  if (evidence.teardown === "completed") return
   try {
     await dependencies.execute("docker", ["rm", "--force", container], { signal, timeout: 30_000 })
     evidence.lifecycle = "released"
