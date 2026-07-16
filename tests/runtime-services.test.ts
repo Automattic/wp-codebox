@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:net"
-import { parseLoopbackPort, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
-import { validateWorkspaceRecipeJsonSchema } from "../packages/runtime-core/src/recipe-schema.ts"
+import { parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
+import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
+import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.ts"
 
 const service = { id: "test-db", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", password: "DB_PASSWORD" } } as const
 const plan = runtimeServicePlan([service])
@@ -13,6 +15,22 @@ const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-
 assert.equal(valid.valid, true)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
+const recipe: WorkspaceRecipe = { schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 'ok';"] }] } }
+assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, "recipe.json"), [])
+const dryRun = await planWorkspaceRecipe(recipe, process.cwd(), { recipePath: "recipe.json" }, {
+  defaultWordPressVersion: "latest",
+  resolveExecutionSpec: async (step) => ({ command: step.command, args: step.args ?? [] }),
+})
+assert.deepEqual(dryRun.services, plan)
+const collisions: WorkspaceRecipe = {
+  ...recipe,
+  distribution: { name: "fixture", wordpress: { root: "/wordpress" }, env: { DB_HOST: "distribution" } },
+  inputs: { runtimeEnv: { DB_PORT: "3306" }, secretEnv: ["DB_PASSWORD"], services: [service] },
+}
+assert.deepEqual(
+  (await validateWorkspaceRecipeSemantics(collisions, "recipe.json")).map((issue) => issue.code),
+  ["duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
+)
 
 const server = createServer((socket) => socket.end(Buffer.from([1, 0, 0, 0, 10])))
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -44,8 +62,12 @@ assert.equal(provisioned.env.DB_PORT, "41001")
 assert.equal(provisioned.env.DB_PASSWORD, Buffer.alloc(24, 7).toString("base64url"))
 const runCall = calls.find((call) => call.args[0] === "run")
 assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
+assert.ok(runCall?.args.includes("127.0.0.1::3306"), "Docker publishes MySQL on a loopback ephemeral port")
+assert.deepEqual(runCall?.args.slice(runCall.args.indexOf("--tmpfs"), runCall.args.indexOf("--tmpfs") + 2), ["--tmpfs", "/var/lib/mysql"])
+assert.equal(runCall?.args.includes("--volume") || runCall?.args.includes("--mount"), false, "Docker uses no persistent volume")
 assert.equal(runCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "credentials never enter Docker argv")
 assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PASSWORD), false, "credentials never enter evidence")
+assert.equal(runCall?.env?.DOCKER_HOST, process.env.DOCKER_HOST, "Docker provider context is preserved")
 assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()
 await provisioned.release()
@@ -57,6 +79,40 @@ interruptedAfterProvision.abort()
 await provisionedBeforeAbort.release()
 const cleanupCall = calls.filter((call) => call.args[0] === "rm").at(-1)
 assert.equal(cleanupCall?.signal, undefined, "teardown has an independent cleanup context after interruption")
+
+let finishLateProvisioning: (() => void) | undefined
+let lateRemoval = false
+const lateDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "run") await new Promise<void>((resolve) => { finishLateProvisioning = resolve })
+    if (args[0] === "rm") lateRemoval = true
+    return dependencies.execute(command, args, options)
+  },
+}
+const guardedProvisioning = provisionRuntimeServicesForRecipe([service], async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 5))
+  throw new Error("recipe timeout")
+}, { dependencies: lateDependencies })
+while (!finishLateProvisioning) await new Promise<void>((resolve) => setTimeout(resolve, 1))
+finishLateProvisioning()
+await assert.rejects(guardedProvisioning, /recipe timeout/)
+assert.equal(lateRemoval, true, "a timeout waits for and tears down late provisioning")
+
+const absentDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "rm") {
+      const error = new Error("docker rm failed") as Error & { stderr: string }
+      error.stderr = `Error response from daemon: No such container: fixture`
+      throw error
+    }
+    return dependencies.execute(command, args, options)
+  },
+}
+const alreadyAbsent = await provisionRuntimeServices([service], { dependencies: absentDependencies })
+await alreadyAbsent.release()
+assert.equal(alreadyAbsent.evidence[0]?.teardown, "completed", "an already absent container is idempotently released")
 
 let failedCleanup = false
 const failingDependencies: RuntimeServiceDependencies = {

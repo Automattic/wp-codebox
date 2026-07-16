@@ -353,6 +353,7 @@ function classifyRunResourceFailure(status: RuntimeRunRecord["status"], failure:
 
 function classifyRecipePhaseFailure(phase: string): string {
   switch (phase) {
+    case "provision_runtime_services":
     case "runtime_startup":
     case "run_blueprint_steps":
       return "startup"

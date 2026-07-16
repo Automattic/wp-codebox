@@ -78,7 +78,7 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
       provisioned.push(managed)
     }
   } catch (error) {
-    await releaseServices(provisioned)
+    await releaseServices(provisioned).catch(() => undefined)
     if (error instanceof RuntimeServiceProvisionError) throw error
     throw new RuntimeServiceProvisionError("Managed runtime service provisioning failed", evidence)
   }
@@ -101,6 +101,37 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
   }
 }
 
+export async function provisionRuntimeServicesForRecipe(
+  services: WorkspaceRecipeRuntimeService[],
+  guard: <T>(promise: Promise<T>) => Promise<T>,
+  options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies; onEvidence?: (evidence: RuntimeServiceEvidence[]) => void } = {},
+): Promise<Awaited<ReturnType<typeof provisionRuntimeServices>>> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  options.signal?.addEventListener("abort", abort, { once: true })
+  if (options.signal?.aborted) controller.abort()
+  const provisioning = provisionRuntimeServices(services, { signal: controller.signal, dependencies: options.dependencies })
+  try {
+    return await guard(provisioning)
+  } catch (error) {
+    controller.abort()
+    try {
+      const provisioned = await provisioning
+      try {
+        await provisioned.release()
+      } finally {
+        options.onEvidence?.(provisioned.evidence)
+      }
+    } catch (provisionError) {
+      const evidence = runtimeServiceEvidenceFromError(provisionError)
+      if (evidence) options.onEvidence?.(evidence)
+    }
+    throw error
+  } finally {
+    options.signal?.removeEventListener("abort", abort)
+  }
+}
+
 const mysqlDockerProvider: RuntimeServiceProvider = {
   name: "docker",
   kind: "mysql",
@@ -118,7 +149,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   evidenceList.push(evidence)
   const container = `wp-codebox-${service.id}-${dependencies.randomBytes(6).toString("hex")}`
   const password = dependencies.randomBytes(24).toString("base64url")
-  const childEnvironment = { PATH: process.env.PATH, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, MYSQL_ROOT_PASSWORD: password }
+  const childEnvironment = { ...process.env, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, MYSQL_ROOT_PASSWORD: password }
   const runArgs = ["run", "--detach", "--rm", "--name", container, "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", "MYSQL_DATABASE", "--env", "MYSQL_USER", "--env", "MYSQL_PASSWORD", "--env", "MYSQL_ROOT_PASSWORD", MYSQL_IMAGE]
   let started = false
   try {
@@ -164,12 +195,23 @@ async function releaseService(container: string, evidence: RuntimeServiceEvidenc
     await dependencies.execute("docker", ["rm", "--force", container], { signal, timeout: 30_000 })
     evidence.lifecycle = "released"
     evidence.teardown = "completed"
-  } catch {
+  } catch (error) {
+    if (dockerContainerIsAbsent(error)) {
+      evidence.lifecycle = "released"
+      evidence.teardown = "completed"
+      return
+    }
     evidence.lifecycle = "failed"
     evidence.teardown = "failed"
     evidence.diagnostic = { code: "teardown-failed" }
     throw new Error(`Managed runtime service teardown failed: ${evidence.id}`)
   }
+}
+
+function dockerContainerIsAbsent(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const stderr = "stderr" in error && typeof error.stderr === "string" ? error.stderr : ""
+  return /No such container/i.test(`${error.message}\n${stderr}`)
 }
 
 export function parseLoopbackPort(output: string): number {

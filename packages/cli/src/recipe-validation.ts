@@ -702,7 +702,11 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
-  const environment = new Set<string>(Object.keys(recipe.inputs?.runtimeEnv ?? {}))
+  const environment = new Set<string>([
+    ...Object.keys(recipe.distribution?.env ?? {}),
+    ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
+    ...(recipe.inputs?.secretEnv ?? []),
+  ])
   for (const [index, service] of (recipe.inputs?.services ?? []).entries()) {
     const path = `$.inputs.services[${index}]`
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
