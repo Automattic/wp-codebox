@@ -579,6 +579,9 @@ final class WP_Codebox_Browser_Task_Builder {
 
 	/** @param array<string,mixed> $prepared Prepared runtime descriptor. @param array<string,mixed> $session Optional source session. @return array<string,mixed> */
 	public static function browser_blueprint_ref( array $prepared, array $session = array() ): array {
+		if ( ! empty( $prepared['has_post_runtime_blueprint'] ) && is_array( $session['playground']['blueprint'] ?? null ) ) {
+			$prepared = self::browser_session_blueprint_ref_prepared( $prepared, $session, $session['playground']['blueprint'] );
+		}
 		$cache_key  = self::safe_key( (string) ( $prepared['cache_key'] ?? $prepared['key'] ?? '' ) );
 		$input_hash = strtolower( trim( (string) ( $prepared['input_hash'] ?? $prepared['hash'] ?? '' ) ) );
 		$ref        = '' !== $cache_key && preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ? 'prepared:' . $cache_key . ':' . $input_hash : '';
@@ -603,6 +606,30 @@ final class WP_Codebox_Browser_Task_Builder {
 			),
 			static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
 		);
+	}
+
+	/** @param array<string,mixed> $prepared @param array<string,mixed> $session @param array<string,mixed> $blueprint @return array<string,mixed> */
+	private static function browser_session_blueprint_ref_prepared( array $prepared, array $session, array $blueprint ): array {
+		$cache_key  = self::safe_key( (string) ( $prepared['cache_key'] ?? $prepared['key'] ?? '' ) );
+		$input_hash = strtolower( trim( (string) ( $prepared['input_hash'] ?? $prepared['hash'] ?? '' ) ) );
+		if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) || ! function_exists( 'set_transient' ) ) {
+			return $prepared;
+		}
+
+		$session_id = (string) ( $session['session']['id'] ?? $session['session_id'] ?? '' );
+		$payload    = function_exists( 'wp_json_encode' ) ? wp_json_encode( array( 'prepared' => $input_hash, 'session' => $session_id, 'blueprint' => $blueprint ) ) : json_encode( array( 'prepared' => $input_hash, 'session' => $session_id, 'blueprint' => $blueprint ) );
+		$ref_hash   = hash( 'sha256', 'wp-codebox/browser-session-blueprint-ref/v1' . "\n" . (string) $payload );
+		$artifact   = array(
+			'schema'     => 'wp-codebox/browser-prepared-runtime-artifact/v1',
+			'cache_key'  => $cache_key,
+			'input_hash' => $ref_hash,
+			'blueprint'  => $blueprint,
+		);
+		$ttl        = defined( 'WEEK_IN_SECONDS' ) ? WEEK_IN_SECONDS : 604800;
+		set_transient( self::prepared_runtime_transient_key( $cache_key, $ref_hash ), $artifact, $ttl );
+		$prepared['input_hash'] = $ref_hash;
+
+		return $prepared;
 	}
 
 	/** @param array<string,mixed> $input Prepared runtime, full session, or executable ref request. @return array<string,mixed> */
