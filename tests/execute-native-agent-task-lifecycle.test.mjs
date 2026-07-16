@@ -3,9 +3,13 @@ import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 
 const root = resolve(".")
 const executor = join(root, ".github/scripts/run-agent-task/execute-native-agent-task.mjs")
+const uploader = join(root, ".github/scripts/run-agent-task/prepare-agent-task-upload.mjs")
+const execFileAsync = promisify(execFile)
 
 async function run(mode = "success") {
   const temp = await mkdtemp(join(tmpdir(), "wp-codebox-native-lifecycle-"))
@@ -61,6 +65,8 @@ async function run(mode = "success") {
 
   const fakeCli = join(temp, "fake-cli.mjs")
   const noOp = mode.startsWith("no-op")
+  const mismatch = mode === "mismatch"
+  const applyReject = mode === "apply-reject"
   await writeFile(fakeCli, `
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -68,12 +74,13 @@ const output = process.argv[process.argv.indexOf("--result-file") + 1]
 const input = JSON.parse(await readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8"))
 const root = join(process.cwd(), ".codebox", "agent-task-artifacts", "files")
 await mkdir(root, { recursive: true })
-const patch = ${noOp} ? "" : "--- a/README.md\\n+++ b/README.md\\n@@ -1 +1 @@\\n-before\\n+after\\n"
+const patch = ${JSON.stringify(noOp ? "" : applyReject ? "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-not-before\n+after\n" : "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n")}
 await writeFile(join(root, "patch.diff"), patch)
 await writeFile(join(root, "changed-files.json"), JSON.stringify({
   schema: "wp-codebox/changed-files/v1",
   files: ${noOp} ? [] : [{ path: "/workspace/README.md", relativePath: "README.md", status: "modified", beforeMode: "100644", afterMode: "100644" }],
 }))
+${mismatch ? "await writeFile(join(process.cwd(), \"README.md\"), \"diverged\\n\")" : ""}
 await writeFile(join(process.cwd(), ".codebox", "order"), "runtime\\n")
 const summary = {
   schema: "wp-codebox/agent-task-run-result/v1",
@@ -189,5 +196,45 @@ assert.equal(noOpRequired.result.runtime_result.success, true, "downstream failu
 const noOpMaintenance = await run("no-op-maintenance")
 assert.equal(noOpMaintenance.code, 0)
 assert(!noOpMaintenance.order.includes("publish"))
+
+const mismatch = await run("mismatch")
+assert.equal(mismatch.code, 1)
+assert.equal(await readFile(join(mismatch.workspace, "README.md"), "utf8"), "diverged\n", "base mismatch fails before the rejected patch can mutate the host workspace")
+assert.equal(mismatch.result.failure.stage, "apply")
+assert.match(mismatch.result.failure.message, /seed identity does not match/)
+assert.notEqual(mismatch.result.failure.evidence.expected_identity.content_digest.value, mismatch.result.failure.evidence.actual_identity.content_digest.value)
+assert.equal(mismatch.result.failure.evidence.patch.artifact_path, "files/patch.diff")
+assert.equal(mismatch.result.failure.evidence.changed_files.artifact_path, "files/changed-files.json")
+await execFileAsync(process.execPath, [uploader], {
+  cwd: mismatch.workspace,
+  env: {
+    ...process.env,
+    AGENT_TASK_WORKSPACE: mismatch.workspace,
+    AGENT_TASK_REQUEST_PATH: join(mismatch.workspace, ".codebox", "agent-task-request.json"),
+    AGENT_TASK_UPLOAD_PATH: join(mismatch.workspace, ".codebox", "agent-task-upload"),
+  },
+})
+assert.equal(await readFile(join(mismatch.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n")
+assert.match(await readFile(join(mismatch.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "changed-files.json"), "utf8"), /README\.md/)
+
+const applyReject = await run("apply-reject")
+assert.equal(applyReject.code, 1)
+assert.equal(await readFile(join(applyReject.workspace, "README.md"), "utf8"), "before\n", "a rejected patch does not partially mutate the matching host workspace")
+assert.equal(applyReject.result.failure.stage, "apply")
+assert.match(applyReject.result.failure.message, /Host git apply failed/)
+assert.deepEqual(applyReject.result.failure.evidence.expected_identity, applyReject.result.failure.evidence.actual_identity, "the failure records the matching seed and host identities")
+assert.equal(applyReject.result.failure.evidence.patch.artifact_path, "files/patch.diff")
+assert.equal(applyReject.result.failure.evidence.changed_files.artifact_path, "files/changed-files.json")
+await execFileAsync(process.execPath, [uploader], {
+  cwd: applyReject.workspace,
+  env: {
+    ...process.env,
+    AGENT_TASK_WORKSPACE: applyReject.workspace,
+    AGENT_TASK_REQUEST_PATH: join(applyReject.workspace, ".codebox", "agent-task-request.json"),
+    AGENT_TASK_UPLOAD_PATH: join(applyReject.workspace, ".codebox", "agent-task-upload"),
+  },
+})
+assert.match(await readFile(join(applyReject.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), /-not-before/)
+assert.match(await readFile(join(applyReject.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "changed-files.json"), "utf8"), /README\.md/)
 
 console.log("native agent task lifecycle ok")

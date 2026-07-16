@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { createHash } from "node:crypto"
-import { applyRunnerWorkspacePatch, verifyRunnerWorkspaceIntegrity } from "../packages/runtime-core/src/runner-workspace-apply.js"
+import { applyRunnerWorkspacePatch, runnerWorkspaceIdentity, verifyRunnerWorkspaceIntegrity } from "../packages/runtime-core/src/runner-workspace-apply.js"
 
 const exec = promisify(execFile)
 
@@ -17,6 +17,10 @@ async function fixture(patch: string, files: unknown[]): Promise<{ workspace: st
   await mkdir(join(artifacts, "files"), { recursive: true })
   await writeFile(join(workspace, "README.md"), "before\n")
   await exec("git", ["init", "--quiet"], { cwd: workspace })
+  await exec("git", ["config", "user.email", "tests@example.invalid"], { cwd: workspace })
+  await exec("git", ["config", "user.name", "Tests"], { cwd: workspace })
+  await exec("git", ["add", "README.md"], { cwd: workspace })
+  await exec("git", ["commit", "--quiet", "-m", "seed"], { cwd: workspace })
   await writeFile(join(artifacts, "files", "patch.diff"), patch)
   await writeFile(join(artifacts, "files", "changed-files.json"), JSON.stringify({ schema: "wp-codebox/changed-files/v1", files }))
   return { workspace, artifacts, refs: [
@@ -36,6 +40,48 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
   assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "after\n")
   assert.deepEqual(order, ["verify"])
   await verifyRunnerWorkspaceIntegrity(result.integrity!)
+}
+
+{
+  const input = await fixture(patch, files)
+  const seedIdentity = await runnerWorkspaceIdentity(input.workspace)
+  assert.match(seedIdentity.git?.head ?? "", /^[a-f0-9]{40}$/)
+  const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"], seedIdentity })
+  assert.equal(result.status, "applied", "a matching seed identity permits the canonical patch")
+}
+
+{
+  const input = await fixture(patch, files)
+  const seedIdentity = await runnerWorkspaceIdentity(input.workspace)
+  await writeFile(join(input.workspace, "README.md"), "diverged\n")
+  await assert.rejects(
+    () => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"], seedIdentity }),
+    (error: Error & { evidence?: Record<string, any> }) => {
+      assert.match(error.message, /seed identity does not match/)
+      assert.equal(error.evidence?.expected_identity.content_digest.value, seedIdentity.content_digest.value)
+      assert.notEqual(error.evidence?.actual_identity.content_digest.value, seedIdentity.content_digest.value)
+      assert.equal(error.evidence?.patch.artifact_path, "files/patch.diff")
+      assert.equal(error.evidence?.changed_files.artifact_path, "files/changed-files.json")
+      return true
+    },
+  )
+  assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "diverged\n", "identity mismatch rejects before git apply can mutate the workspace")
+}
+
+{
+  const input = await fixture(patch, files)
+  await writeFile(join(input.workspace, "README.md"), "other change\n")
+  await assert.rejects(
+    () => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] }),
+    (error: Error & { evidence?: Record<string, any> }) => {
+      assert.match(error.message, /Host git apply failed/)
+      assert.equal(error.evidence?.expected_identity, undefined, "legacy apply callers do not claim a seed baseline")
+      assert.equal(error.evidence?.patch.artifact_path, "files/patch.diff")
+      assert.equal(error.evidence?.changed_files.artifact_path, "files/changed-files.json")
+      return true
+    },
+  )
+  assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "other change\n", "a rejected patch leaves the host workspace unchanged")
 }
 
 {

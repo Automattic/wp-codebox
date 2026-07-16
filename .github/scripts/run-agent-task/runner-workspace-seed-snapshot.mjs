@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, relative, resolve } from "node:path"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 
 // Snapshot policy is intentionally allow-by-exception: disposable build trees and
 // credential-bearing files never enter the agent-readable workspace. `.env.example`
@@ -10,6 +12,7 @@ export const RUNNER_WORKSPACE_SEED_EXCLUDES = [".git/**", ".codebox/**", "node_m
 const EXCLUDED_ROOT_NAMES = new Set(RUNNER_WORKSPACE_SEED_EXCLUDES.filter((pattern) => pattern.endsWith("/**")).map((pattern) => pattern.slice(0, -3)))
 const MAX_FILES = 10_000
 const MAX_BYTES = 256 * 1024 * 1024
+const execFileAsync = promisify(execFile)
 
 function snapshotError(message) {
   const error = new Error(message)
@@ -80,11 +83,17 @@ export async function createRunnerWorkspaceSeedSnapshot(source) {
     const sourceStat = await lstat(sourceRoot)
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw snapshotError("Runner workspace seed source must be a real directory.")
     await copyTree(sourceRoot, root)
+    const contentDigest = digest.digest("hex")
+    const head = await gitHead(sourceRoot)
     return {
       source: root,
       provenance: {
         schema: "wp-codebox/runner-workspace-seed-snapshot/v1",
-        digest: { sha256: digest.digest("hex") },
+        digest: { sha256: contentDigest },
+        identity: {
+          content_digest: { algorithm: "sha256", value: contentDigest },
+          ...(head ? { git: { head } } : {}),
+        },
         files: fileCount,
         bytes: byteCount,
         excludes: RUNNER_WORKSPACE_SEED_EXCLUDES,
@@ -97,5 +106,15 @@ export async function createRunnerWorkspaceSeedSnapshot(source) {
   } catch (error) {
     await rm(root, { recursive: true, force: true })
     throw error
+  }
+}
+
+async function gitHead(source) {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: source })
+    const head = stdout.trim()
+    return /^[a-f0-9]{40}$/i.test(head) ? head : ""
+  } catch {
+    return ""
   }
 }

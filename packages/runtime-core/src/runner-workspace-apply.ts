@@ -28,7 +28,20 @@ export interface RunnerWorkspaceApplyRequest {
   artifactRefs: RunnerWorkspaceArtifactRef[]
   workspaceRoot: string
   writablePaths: string[]
+  seedIdentity?: RunnerWorkspaceSeedIdentity
   verify?: () => Promise<void>
+}
+
+export interface RunnerWorkspaceSeedIdentity {
+  content_digest: { algorithm: "sha256"; value: string }
+  git?: { head: string }
+}
+
+export interface RunnerWorkspaceApplyFailureEvidence {
+  expected_identity?: RunnerWorkspaceSeedIdentity
+  actual_identity: RunnerWorkspaceSeedIdentity
+  patch: { artifact_path: string; sha256: string }
+  changed_files: { artifact_path: string; sha256: string }
 }
 
 export interface RunnerWorkspaceApplyResult {
@@ -72,6 +85,14 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
 
   const changed = parseChangedFiles(changedRaw)
   validateChangedFiles(changed, request.writablePaths)
+  const failureEvidence = runnerWorkspaceFailureEvidence(request.seedIdentity, await runnerWorkspaceIdentity(workspaceRoot), artifactRoot, patchPath, patch, changedPath, changedRaw)
+  if (request.seedIdentity) {
+    if (!sameIdentity(request.seedIdentity, failureEvidence.actual_identity)) {
+      throw applyFailure("Runner workspace seed identity does not match the host workspace; refusing to apply patch.", {
+        ...failureEvidence,
+      })
+    }
+  }
   if (changed.length === 0) {
     if (patch.trim()) throw new Error("Canonical patch is non-empty but changed-files declares no changes.")
     return { schema: "wp-codebox/runner-workspace-apply-result/v1", status: "no-op", changedFiles: [] }
@@ -79,8 +100,12 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
   if (!patch.trim()) throw new Error("Canonical changed-files declares changes but patch is empty.")
   validatePatchPaths(patch, changed)
 
-  await execGit(workspaceRoot, ["apply", "--check", "--whitespace=error", "--", patchPath])
-  await execGit(workspaceRoot, ["apply", "--whitespace=error", "--", patchPath])
+  try {
+    await execGit(workspaceRoot, ["apply", "--check", "--whitespace=error", "--", patchPath])
+    await execGit(workspaceRoot, ["apply", "--whitespace=error", "--", patchPath])
+  } catch (error) {
+    throw applyFailure(error instanceof Error ? error.message : String(error), failureEvidence)
+  }
   const files = await snapshotWorkspace(workspaceRoot)
   validateAppliedWorkspace(baseline, files, changed)
   if (request.verify) await request.verify()
@@ -96,6 +121,36 @@ export async function applyRunnerWorkspacePatch(request: RunnerWorkspaceApplyReq
       return file ? file : { path: change.relativePath, mode: "100644", deleted: true }
     }),
   }
+}
+
+export async function runnerWorkspaceIdentity(root: string): Promise<RunnerWorkspaceSeedIdentity> {
+  const digest = createHash("sha256")
+  async function visit(directory: string): Promise<void> {
+    for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name))) {
+      if ([".git", ".codebox", "node_modules", "vendor", "dist", "build", "coverage", ".cache"].includes(entry.name)) continue
+      const absolute = resolve(directory, entry.name)
+      const path = relative(root, absolute).replaceAll("\\", "/")
+      const stat = await lstat(absolute)
+      if (excludedSeedFile(path)) continue
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
+      if (stat.isDirectory()) {
+        digest.update(`directory\0${path}\n`)
+        await visit(absolute)
+        continue
+      }
+      const bytes = await readFile(absolute)
+      digest.update(`file\0${path}\0${(stat.mode & 0o111 ? 0o755 : 0o644).toString(8)}\0${bytes.length}\n`)
+      digest.update(bytes)
+    }
+  }
+  await visit(root)
+  const identity: RunnerWorkspaceSeedIdentity = { content_digest: { algorithm: "sha256", value: digest.digest("hex") } }
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root, maxBuffer: 1024 })
+    const head = stdout.trim()
+    if (/^[a-f0-9]{40}$/i.test(head)) identity.git = { head }
+  } catch { /* A non-git workspace still has a content identity. */ }
+  return identity
 }
 
 /** Ensures checks did not mutate approved output or introduce unrelated files. */
@@ -215,6 +270,34 @@ function validateAppliedWorkspace(baseline: RunnerWorkspacePublicationFile[], cu
     }
     if (!value || value.mode !== file.afterMode) throw new Error(`Applied file mode does not match canonical manifest: ${file.relativePath}`)
   }
+}
+
+function sameIdentity(expected: RunnerWorkspaceSeedIdentity, actual: RunnerWorkspaceSeedIdentity): boolean {
+  return expected.content_digest.algorithm === "sha256"
+    && expected.content_digest.value === actual.content_digest.value
+    && (!expected.git?.head || expected.git.head === actual.git?.head)
+}
+
+function runnerWorkspaceFailureEvidence(expected: RunnerWorkspaceSeedIdentity | undefined, actual: RunnerWorkspaceSeedIdentity, artifactRoot: string, patchPath: string, patch: string, changedPath: string, changedRaw: string): RunnerWorkspaceApplyFailureEvidence {
+  return {
+    ...(expected ? { expected_identity: expected } : {}),
+    actual_identity: actual,
+    patch: { artifact_path: relative(artifactRoot, patchPath).replaceAll("\\", "/"), sha256: createHash("sha256").update(patch).digest("hex") },
+    changed_files: { artifact_path: relative(artifactRoot, changedPath).replaceAll("\\", "/"), sha256: createHash("sha256").update(changedRaw).digest("hex") },
+  }
+}
+
+function excludedSeedFile(path: string): boolean {
+  const name = path.split("/").at(-1)?.toLowerCase() ?? ""
+  return (name === ".env" || (name.startsWith(".env.") && name !== ".env.example"))
+    || [".npmrc", ".yarnrc.yml", ".pypirc", ".netrc", "auth.json", "credentials", "credentials.json", "secrets.json", "token.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"].includes(name)
+    || /\.(?:pem|key|p12|pfx)$/i.test(name)
+}
+
+function applyFailure(message: string, evidence: RunnerWorkspaceApplyFailureEvidence): Error {
+  const error = new Error(message) as Error & { evidence?: RunnerWorkspaceApplyFailureEvidence }
+  error.evidence = evidence
+  return error
 }
 
 async function execGit(cwd: string, args: string[]): Promise<void> {

@@ -590,9 +590,9 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
     const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-     workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths })
+      workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
   } catch (error) {
-    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
+    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }
 }
 runtimeResult = sanitizeRuntimeSourceValue(runtimeResult, runtimeSourceOutputRoots)

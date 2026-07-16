@@ -223,6 +223,22 @@ function projectWorkflowResult(value) {
   }).filter(([, entry]) => entry !== undefined)))
 }
 
+async function stageApplyFailureEvidence(result) {
+  const evidence = record(record(result.failure).evidence)
+  const files = [
+    ["patch", record(evidence.patch)],
+    ["changed-files", record(evidence.changed_files)],
+  ]
+  for (const [name, descriptor] of files) {
+    const artifactPath = safeRelativeArtifactPath(descriptor.artifact_path)
+    if (!artifactPath) continue
+    const source = resolve(artifactsPath, artifactPath)
+    if (relative(artifactsPath, source).startsWith("..")) continue
+    const destination = join(uploadPath, ".codebox", "agent-task-artifacts", "apply-failure", name === "patch" ? "rejected.patch" : "changed-files.json")
+    await stageTextFile(source, destination, { allowTargetCode: true })
+  }
+}
+
 function safeTargetPath(value) {
   const path = safeRelativeArtifactPath(value)
   return path ? `workspace/${path}` : undefined
@@ -469,6 +485,7 @@ await mkdir(uploadPath, { recursive: true })
 await stageTextFile(requestPath, join(uploadPath, ".codebox", "agent-task-request.json"))
 await stageTextFile(resultSource, join(uploadPath, ".codebox", "agent-task-workflow-result.json"), { projectWorkflowResult: true })
 await stageTextFile(join(workspace, ".codebox", "native-agent-task-input.json"), join(uploadPath, ".codebox", "native-agent-task-input.json"), { compactNativeInput: true })
+await stageApplyFailureEvidence(result)
 for (const path of declaredPaths) {
   const source = resolve(artifactsPath, path)
   if (relative(artifactsPath, source).startsWith("..") || sourceCategory(path, source)) {
