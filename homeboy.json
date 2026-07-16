@@ -6,6 +6,18 @@
     "nodejs": {}
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
+  "release": {
+    "package_coverage": [
+      {
+        "artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
+        "artifact_match": "exact",
+        "source_roots": [
+          "packages/wordpress-plugin"
+        ],
+        "archive_root": "wp-codebox"
+      }
+    ]
+  },
   "version_targets": [
     {
       "file": "package.json",
@@ -45,6 +57,7 @@
     ],
     "test": [
       "npm run smoke -- --group package",
+      "npm run test:release-package-coverage",
       "npm run release:package"
     ]
   }

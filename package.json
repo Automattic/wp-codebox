@@ -79,6 +79,7 @@
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
+    "test:release-package-coverage": "tsx tests/release-package-coverage.test.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "wp-codebox:source": "node bin/wp-codebox-source.mjs",
     "generate:browser-fanout-aggregation-runtime": "tsx scripts/generate-browser-fanout-aggregation-runtime.ts",
