@@ -1,4 +1,4 @@
-import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
+import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeRuntimeService, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
 export { buildRuntimePackageRunRecipe, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA, runtimePackageExecutionInput, type RuntimePackageArtifactDeclaration, type RuntimePackageExecutionInput, type RuntimePackageOutputProjection, type RuntimePackageRunRecipeOptions } from "./runtime-package-execution.js"
 export { RUNTIME_PACKAGE_DIAGNOSTIC_SCHEMA, RUNTIME_PACKAGE_RESULT_SCHEMA, RUNTIME_PACKAGE_TASK_SCHEMA, normalizeRuntimePackageResult, normalizeRuntimePackageTask, validateRuntimePackageTask, type RuntimePackageDiagnostic, type RuntimePackageResult, type RuntimePackageTask } from "./runtime-package-contracts.js"
@@ -15,6 +15,7 @@ export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   blueprint?: unknown
   mounts?: WorkspaceRecipeMount[]
+  services?: WorkspaceRecipeRuntimeService[]
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
   pluginSource?: string
   pluginSlug: string
@@ -75,6 +76,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
     },
     inputs: {
       extra_plugins: normalizeExtraPlugins(options.extra_plugins),
+      ...(options.services && options.services.length > 0 ? { services: options.services } : {}),
       mounts: normalizeRecipeMounts([
         ...(options.pluginSource ? [{ source: options.pluginSource, target: pluginTarget } satisfies WorkspaceRecipeMount] : []),
         ...(options.mounts ?? []),

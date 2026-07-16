@@ -723,6 +723,14 @@ runners:
 {
   "pluginSlug": "woocommerce",
   "pluginSource": "../woocommerce/plugins/woocommerce",
+  "services": [
+    {
+      "id": "mysql",
+      "kind": "mysql",
+      "configuration": { "rootAuthentication": "empty-password" },
+      "outputs": { "port": "TC_MYSQL_PORT" }
+    }
+  ],
   "cwd": "/wordpress/wp-content/plugins/woocommerce",
   "autoloadFile": "/wp-codebox-vendor/autoload.php",
   "testsDir": "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
