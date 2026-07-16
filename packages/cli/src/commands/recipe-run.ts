@@ -371,6 +371,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
+    runRecord = await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: serviceEvidence } })
     runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
 
@@ -510,6 +511,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
+    runRecord = await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: serviceEvidence } })
     runRecord = await runRegistry.read(runRecord.runId)
     const fuzzRunResult = recipeFuzzRunResult(recipe, executions)
     return await finalizeRecoveredRecipeFailure({

@@ -37,6 +37,13 @@ export interface RuntimeServiceDependencies {
   randomBytes(size: number): Buffer
 }
 
+export interface RuntimeServiceProvider {
+  readonly name: string
+  readonly kind: string
+  readonly version: string
+  provision(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidence: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService>
+}
+
 const defaultDependencies: RuntimeServiceDependencies = {
   execute: async (command, args, options) => await execFileAsync(command, args, options),
   waitForReady: waitForMysqlProtocol,
@@ -44,7 +51,10 @@ const defaultDependencies: RuntimeServiceDependencies = {
 }
 
 export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; outputs: Record<string, string> }> {
-  return services.map((service) => ({ id: service.id, kind: service.kind, provider: "docker", version: MYSQL_IMAGE, bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }))
+  return services.map((service) => {
+    const provider = runtimeServiceProvider(service.kind)
+    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version, bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }
+  })
 }
 
 export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies } = {}): Promise<{ env: Record<string, string>; evidence: RuntimeServiceEvidence[]; release(): Promise<void> }> {
@@ -53,7 +63,7 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
   const evidence: RuntimeServiceEvidence[] = []
   try {
     for (const service of services) {
-      const managed = await provisionRuntimeService(service, dependencies, options.signal, evidence)
+      const managed = await runtimeServiceProvider(service.kind).provision(service, dependencies, options.signal, evidence)
       provisioned.push(managed)
     }
   } catch (error) {
@@ -71,15 +81,21 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
   }
 }
 
-async function provisionRuntimeService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+const mysqlDockerProvider: RuntimeServiceProvider = {
+  name: "docker",
+  kind: "mysql",
+  version: MYSQL_IMAGE,
+  provision: provisionMysqlDockerService,
+}
+
+function runtimeServiceProvider(kind: string): RuntimeServiceProvider {
+  if (kind === mysqlDockerProvider.kind) return mysqlDockerProvider
+  throw new Error(`Unsupported managed runtime service kind: ${kind}`)
+}
+
+async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
   const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: MYSQL_IMAGE, readiness: "pending", lifecycle: "provisioning" }
   evidenceList.push(evidence)
-  if (service.kind !== "mysql") {
-    evidence.lifecycle = "failed"
-    evidence.diagnostic = { code: "provision-failed" }
-    throw new RuntimeServiceProvisionError(`Unsupported managed runtime service kind: ${service.kind}`, evidenceList)
-  }
-
   const container = `wp-codebox-${service.id}-${dependencies.randomBytes(6).toString("hex")}`
   const password = dependencies.randomBytes(24).toString("base64url")
   const childEnvironment = { PATH: process.env.PATH, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, MYSQL_ROOT_PASSWORD: password }
@@ -96,7 +112,7 @@ async function provisionRuntimeService(service: WorkspaceRecipeRuntimeService, d
     evidence.readiness = "ready"
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
-    return { env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])), evidence, async release() { await releaseService(container, evidence, dependencies, signal) } }
+    return { env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])), evidence, async release() { await releaseService(container, evidence, dependencies) } }
   } catch (error) {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"

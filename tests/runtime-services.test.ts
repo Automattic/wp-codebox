@@ -22,11 +22,11 @@ await waitForMysqlProtocol("127.0.0.1", address.port, 250)
 await new Promise<void>((resolve) => server.close(() => resolve()))
 await assert.rejects(waitForMysqlProtocol("127.0.0.1", address.port, 25), /readiness timed out/)
 
-const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
+const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv; signal?: AbortSignal }> = []
 const dependencies: RuntimeServiceDependencies = {
   randomBytes: (size) => Buffer.alloc(size, 7),
   async execute(_command, args, options) {
-    calls.push({ args, env: options.env })
+    calls.push({ args, env: options.env, signal: options.signal })
     if (args[0] === "port") return { stdout: "127.0.0.1:41001\n" }
     return { stdout: "" }
   },
@@ -41,6 +41,13 @@ assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PA
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+
+const interruptedAfterProvision = new AbortController()
+const provisionedBeforeAbort = await provisionRuntimeServices([service], { dependencies, signal: interruptedAfterProvision.signal })
+interruptedAfterProvision.abort()
+await provisionedBeforeAbort.release()
+const cleanupCall = calls.filter((call) => call.args[0] === "rm").at(-1)
+assert.equal(cleanupCall?.signal, undefined, "teardown has an independent cleanup context after interruption")
 
 let failedCleanup = false
 const failingDependencies: RuntimeServiceDependencies = {
