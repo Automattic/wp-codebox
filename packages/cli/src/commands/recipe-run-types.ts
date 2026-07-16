@@ -439,6 +439,7 @@ export interface RecipeInterruptionMetadata {
 
 export interface RecipeInterruptionController {
   readonly metadata: RecipeInterruptionMetadata | undefined
+  readonly signal: AbortSignal
   install(): void
   dispose(): void
   interruptible<T>(promise: Promise<T>): Promise<T>

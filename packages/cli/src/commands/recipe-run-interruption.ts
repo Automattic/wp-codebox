@@ -18,11 +18,13 @@ export function createRecipeInterruptionController(): RecipeInterruptionControll
   let parentWatcher: NodeJS.Timeout | undefined
   let stdinWatcherInstalled = false
   let stdioErrorWatcherInstalled = false
+  const abortController = new AbortController()
   const initialParentPid = process.ppid
   const signals: RecipeInterruptionSignal[] = ["SIGINT", "SIGTERM", "SIGHUP"]
   const interrupt = (signal: RecipeInterruptionSignal, reason: RecipeInterruptionReason): void => {
     if (!metadata) {
       metadata = { signal, reason, receivedAt: new Date().toISOString(), artifactsFinalized: false }
+      abortController.abort()
     }
     rejectInterrupted?.(new RecipeInterruptedError(metadata.signal, metadata.reason, metadata.receivedAt))
   }
@@ -44,6 +46,9 @@ export function createRecipeInterruptionController(): RecipeInterruptionControll
   const controller: RecipeInterruptionController = {
     get metadata() {
       return metadata
+    },
+    get signal() {
+      return abortController.signal
     },
     install() {
       if (installed) {
