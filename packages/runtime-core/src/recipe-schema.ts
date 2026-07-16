@@ -899,6 +899,13 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         properties: {
           id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
           kind: { const: "mysql" },
+          configuration: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              rootAuthentication: { enum: ["generated-password", "empty-password"] },
+            },
+          },
           outputs: {
             type: "object",
             minProperties: 1,

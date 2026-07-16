@@ -61,10 +61,10 @@ const defaultDependencies: RuntimeServiceDependencies = {
   randomBytes,
 }
 
-export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; outputs: Record<string, string> }> {
+export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
   return services.map((service) => {
     const provider = runtimeServiceProvider(service.kind)
-    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version, bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }
+    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version, bind: "loopback", port: "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
   })
 }
 
@@ -149,8 +149,11 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   evidenceList.push(evidence)
   const container = `wp-codebox-${service.id}-${dependencies.randomBytes(6).toString("hex")}`
   const password = dependencies.randomBytes(24).toString("base64url")
-  const childEnvironment = { ...process.env, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, MYSQL_ROOT_PASSWORD: password }
-  const runArgs = ["run", "--detach", "--rm", "--name", container, "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", "MYSQL_DATABASE", "--env", "MYSQL_USER", "--env", "MYSQL_PASSWORD", "--env", "MYSQL_ROOT_PASSWORD", MYSQL_IMAGE]
+  const emptyRootPassword = service.configuration?.rootAuthentication === "empty-password"
+  const rootEnvironment = emptyRootPassword ? { MYSQL_ALLOW_EMPTY_PASSWORD: "yes" } : { MYSQL_ROOT_PASSWORD: password }
+  const childEnvironment = { ...process.env, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, ...rootEnvironment }
+  const rootEnvironmentName = emptyRootPassword ? "MYSQL_ALLOW_EMPTY_PASSWORD" : "MYSQL_ROOT_PASSWORD"
+  const runArgs = ["run", "--detach", "--rm", "--name", container, "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", "MYSQL_DATABASE", "--env", "MYSQL_USER", "--env", "MYSQL_PASSWORD", "--env", rootEnvironmentName, MYSQL_IMAGE]
   let started = false
   try {
     throwIfAborted(signal)

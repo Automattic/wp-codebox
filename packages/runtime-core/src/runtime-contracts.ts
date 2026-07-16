@@ -135,6 +135,9 @@ export interface WorkspaceRecipeExternalServiceBoundary {
 export interface WorkspaceRecipeRuntimeService {
   id: string
   kind: "mysql" | (string & {})
+  configuration?: {
+    rootAuthentication?: "generated-password" | "empty-password"
+  }
   /** Explicit map from a provider output (for example `port`) to a runtime env name. */
   outputs: Record<string, string>
 }

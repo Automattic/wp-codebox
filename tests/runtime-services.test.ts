@@ -15,6 +15,8 @@ const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-
 assert.equal(valid.valid, true)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
+const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [emptyRootService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 const recipe: WorkspaceRecipe = { schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 'ok';"] }] } }
 assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, "recipe.json"), [])
 const dryRun = await planWorkspaceRecipe(recipe, process.cwd(), { recipePath: "recipe.json" }, {
@@ -72,6 +74,22 @@ assert.equal(calls[0]?.args[0], "image", "the provider checks the image before s
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+
+const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
+const emptyRootDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    emptyRootCalls.push({ args, env: options.env })
+    return dependencies.execute(command, args, options)
+  },
+}
+const emptyRoot = await provisionRuntimeServices([emptyRootService], { dependencies: emptyRootDependencies })
+const emptyRootRun = emptyRootCalls.find((call) => call.args[0] === "run")
+assert.ok(emptyRootRun?.args.includes("MYSQL_ALLOW_EMPTY_PASSWORD"), "empty root auth is explicit in the provider plan")
+assert.equal(emptyRootRun?.args.includes("MYSQL_ROOT_PASSWORD"), false)
+assert.equal(emptyRootRun?.env?.MYSQL_ALLOW_EMPTY_PASSWORD, "yes")
+assert.equal(emptyRootRun?.env?.MYSQL_ROOT_PASSWORD, undefined)
+await emptyRoot.release()
 
 const interruptedAfterProvision = new AbortController()
 const provisionedBeforeAbort = await provisionRuntimeServices([service], { dependencies, signal: interruptedAfterProvision.signal })

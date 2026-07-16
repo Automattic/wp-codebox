@@ -23,11 +23,11 @@ if (!await dockerAvailable()) {
   const directory = await mkdtemp(join(tmpdir(), "wp-codebox-mysql-e2e-"))
   try {
     const recipePath = join(directory, "recipe.json")
-    const code = "if (!function_exists('mysqli_init')) { throw new RuntimeException('mysqli is unavailable'); } $db = mysqli_init(); if (!mysqli_real_connect($db, getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASSWORD'), getenv('DB_NAME'), (int) getenv('DB_PORT'))) { throw new RuntimeException(mysqli_connect_error()); } $result = mysqli_query($db, 'SELECT 1 AS connected'); echo mysqli_fetch_assoc($result)['connected'];"
+    const code = "if (!function_exists('mysqli_init')) { throw new RuntimeException('mysqli is unavailable'); } $db = mysqli_init(); if (!mysqli_real_connect($db, getenv('DB_HOST'), 'root', '', null, (int) getenv('DB_PORT'))) { throw new RuntimeException(mysqli_connect_error()); } $result = mysqli_query($db, 'SELECT 1 AS connected'); echo mysqli_fetch_assoc($result)['connected'];"
     await writeFile(recipePath, JSON.stringify({
       schema: "wp-codebox/workspace-recipe/v1",
       inputs: {
-        services: [{ id: "mysql", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" } }],
+        services: [{ id: "mysql", kind: "mysql", configuration: { rootAuthentication: "empty-password" }, outputs: { host: "DB_HOST", port: "DB_PORT" } }],
       },
       workflow: { steps: [{ command: "wordpress.run-php", args: [`code=${code}`] }] },
     }))
