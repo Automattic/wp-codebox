@@ -38,6 +38,7 @@ export const smokeGroups = {
     description: "Build and core command contract smoke checks.",
     commands: [
       npmScript("build"),
+      npmScript("test:runtime-services"),
       npmScript("test:generic-primitives"),
       npmScript("test:php-json-codec"),
       npmScript("test:primitive-contract-parity"),

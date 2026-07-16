@@ -131,6 +131,14 @@ export interface WorkspaceRecipeExternalServiceBoundary {
   metadata?: Record<string, unknown>
 }
 
+/** A short-lived host resource provisioned before the sandbox runtime starts. */
+export interface WorkspaceRecipeRuntimeService {
+  id: string
+  kind: "mysql" | (string & {})
+  /** Explicit map from a provider output (for example `port`) to a runtime env name. */
+  outputs: Record<string, string>
+}
+
 export interface WorkspaceRecipeRuntimeStack {
   mounts?: WorkspaceRecipeMount[]
 }
@@ -583,6 +591,7 @@ export interface WorkspaceRecipe {
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
     runtimeEnv?: Record<string, string>
     secretEnv?: string[]
+    services?: WorkspaceRecipeRuntimeService[]
     externalServices?: WorkspaceRecipeExternalServiceBoundary[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]

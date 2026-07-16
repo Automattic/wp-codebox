@@ -8,6 +8,7 @@ import { recipeExternalServiceBoundarySummaries, type RecipeExternalServiceBound
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
+import { runtimeServicePlan } from "./runtime-services.js"
 
 export interface RecipeDryRunOptions {
   recipePath: string
@@ -69,6 +70,7 @@ export interface RecipePlan {
   siteSeeds: RecipeDryRunSiteSeed[]
   stagedFiles: RecipeDryRunStagedFile[]
   externalServices: RecipeExternalServiceBoundarySummary[]
+  services: ReturnType<typeof runtimeServicePlan>
   probes: RecipeDryRunProbe[]
   secretEnv: Array<{ name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
   policy: RuntimePolicy & {
@@ -453,6 +455,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
     siteSeeds,
     stagedFiles,
     externalServices: recipeExternalServiceBoundarySummaries(recipe),
+    services: runtimeServicePlan(recipe.inputs?.services ?? []),
     probes,
     secretEnv: secretEnvSummary.map(recipeDryRunSecretEnvEntry),
     policy: {

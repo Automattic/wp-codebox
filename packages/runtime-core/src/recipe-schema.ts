@@ -171,6 +171,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
           },
+          services: {
+            type: "array",
+            description: "Disposable host services provisioned before runtime creation. Outputs must be explicitly mapped into runtime environment variable names.",
+            items: { $ref: "#/$defs/runtimeService" },
+          },
           externalServices: {
             type: "array",
             description: "Declared external service boundaries used for reviewer-safe browser and recipe evidence correlation. Secret material is represented by environment variable names only.",
@@ -885,6 +890,20 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             },
           },
           metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeService: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "kind", "outputs"],
+        properties: {
+          id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          kind: { const: "mysql" },
+          outputs: {
+            type: "object",
+            minProperties: 1,
+            additionalProperties: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+          },
         },
       },
       fixtureUser: {

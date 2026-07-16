@@ -201,6 +201,7 @@
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:runtime-requirements-readiness": "tsx tests/runtime-requirements-readiness.test.ts",
+    "test:runtime-services": "tsx tests/runtime-services.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
     "test:runtime-command-result-envelope": "tsx tests/runtime-command-result-envelope.test.ts",
