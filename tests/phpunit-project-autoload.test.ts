@@ -13,6 +13,27 @@ import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
 
+function phpunitRecipeArgs(options: Omit<Parameters<typeof buildWordPressPhpunitRecipe>[0], "pluginSlug">): string[] {
+  return buildWordPressPhpunitRecipe({ pluginSlug: "demo-plugin", ...options }).workflow.steps[0].args
+}
+
+const projectRecipeWithoutAutoload = phpunitRecipeArgs({ bootstrapMode: "project" })
+assert.ok(projectRecipeWithoutAutoload.includes("autoload-file="))
+assert.ok(!projectRecipeWithoutAutoload.some((arg) => arg === "autoload-file-role=harness"), "project mode without an autoload file must not require the harness")
+
+const managedRecipe = phpunitRecipeArgs({})
+assert.ok(managedRecipe.includes("autoload-file=/wp-codebox-vendor/autoload.php"))
+assert.ok(managedRecipe.includes("autoload-file-role=harness"))
+
+const explicitAutoloadRecipe = phpunitRecipeArgs({
+  bootstrapMode: "project",
+  autoloadFile: "/wp-codebox-vendor/autoload.php",
+  projectAutoloadFile: "/workspace/project/vendor/autoload.php",
+})
+assert.ok(explicitAutoloadRecipe.includes("autoload-file=/wp-codebox-vendor/autoload.php"))
+assert.ok(explicitAutoloadRecipe.includes("autoload-file-role=harness"))
+assert.ok(explicitAutoloadRecipe.includes("project-autoload-file=/workspace/project/vendor/autoload.php"))
+
 function extractPhpFunction(source: string, functionName: string): string {
   const start = source.indexOf(`function ${functionName}(`)
   assert.notEqual(start, -1)
@@ -198,15 +219,15 @@ assert.deepEqual(recipe.inputs.mounts?.filter((mount) => mount.target === "/wp-c
 ])
 
 assert.deepEqual(recipe.workflow.steps[0].args.filter((arg) => arg.includes("autoload-file=")), [
-  "autoload-file=/wp-codebox-vendor/autoload.php",
+  "autoload-file=",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
-assert.ok(recipe.workflow.steps[0].args.includes("autoload-file-role=harness"), "modern PHPUnit recipes explicitly preserve harness autoload intent")
+assert.ok(!recipe.workflow.steps[0].args.includes("autoload-file-role=harness"), "project mode without an explicit autoload file preserves project-owned harness setup")
 assert.deepEqual(rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).filter((arg) => arg.includes("autoload-file=")), [
-  "autoload-file=/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php",
+  "autoload-file=",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
-assert.ok(rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).includes("autoload-file-role=harness"), "CLI path canonicalization preserves autoload intent")
+assert.ok(!rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).includes("autoload-file-role=harness"), "CLI path canonicalization preserves absent harness autoload intent")
 assert.ok(recipe.workflow.steps[0].args.includes("cwd=/home/example/public_html"))
 assert.ok(recipe.workflow.steps[0].args.includes("test-root=/home/example/public_html/bin/tests/phpunit"))
 assert.ok(recipe.workflow.steps[0].args.includes("phpunit-xml=/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist"))

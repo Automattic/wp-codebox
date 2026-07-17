@@ -67,6 +67,7 @@ export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = 
 export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptions): WorkspaceRecipe {
   const pluginSlug = requiredPluginSlug(options.pluginSlug, "buildWordPressPhpunitRecipe")
   const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
+  const autoloadFile = options.autoloadFile ?? (options.bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
@@ -93,8 +94,8 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandJsonArg("changed-tests-json", options.changedTestFiles ?? []),
           commandJsonArg("env-json", options.env ?? {}),
           commandJsonArg("wp-config-defines-json", options.wpConfigDefines ?? {}),
-          commandArg("autoload-file", options.autoloadFile ?? "/wp-codebox-vendor/autoload.php"),
-          commandArg("autoload-file-role", "harness"),
+          commandArg("autoload-file", autoloadFile),
+          commandArg("autoload-file-role", autoloadFile ? "harness" : ""),
           commandArg("project-autoload-file", options.projectAutoloadFile ?? ""),
           commandArg("tests-dir", options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"),
           commandArg("test-root", options.testRoot ?? `${pluginTarget}/tests`),
