@@ -262,7 +262,9 @@ class PreviewLeaseProbeError extends Error {
 }
 
 export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}): boolean {
-  return !options.cliModule && Boolean(spec.environment.assets?.wordpressDirectory) && Boolean(runtimeBootstrapPhpIniEntries(spec))
+  return !options.cliModule
+    && Boolean(spec.environment.assets?.wordpressDirectory)
+    && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
 
 async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string } | undefined> {

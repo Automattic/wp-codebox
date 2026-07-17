@@ -56,6 +56,7 @@ export interface RecipePlan {
     phpVersion?: string
     wordpressInstallMode?: RuntimeWordPressInstallMode
     blueprint: unknown
+    extensions?: Array<{ manifest: string }>
   }
   distribution?: RecipeDryRunDistribution
   artifacts: {
@@ -440,6 +441,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
       ...(recipe.runtime?.phpVersion ? { phpVersion: recipe.runtime.phpVersion } : {}),
       ...(recipe.runtime?.wordpressInstallMode ? { wordpressInstallMode: recipe.runtime.wordpressInstallMode } : {}),
+      ...(recipe.runtime?.extensions ? { extensions: recipe.runtime.extensions } : {}),
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
     },
     ...(distribution ? { distribution } : {}),

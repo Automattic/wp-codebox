@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, validateRuntimePolicy, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -204,6 +204,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       wordpressInstallMode: plan.runtime.wordpressInstallMode,
       blueprint: plan.runtime.blueprint,
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
+      extensions: resolveRecipeRuntimeExtensionManifests(recipe, recipeDirectory),
     }
     const effectivePreview = effectiveRecipePreview(recipe.runtime?.preview, options)
     const runtimeCreateSpec = {
@@ -653,6 +654,33 @@ function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: st
     ...(assets.wordpressDirectory ? { wordpressDirectory: resolve(recipeDirectory, assets.wordpressDirectory) } : {}),
     ...(assets.wordpressZip ? { wordpressZip: isUrl(assets.wordpressZip) ? assets.wordpressZip : resolve(recipeDirectory, assets.wordpressZip) } : {}),
   }
+}
+
+export function resolveRecipeRuntimeExtensionManifests(recipe: WorkspaceRecipe, recipeDirectory: string): Array<{ manifest: string }> | undefined {
+  const extensions = recipe.runtime?.extensions
+  if (!extensions || extensions.length === 0) {
+    return undefined
+  }
+
+  const root = resolve(recipeDirectory)
+  return extensions.map((extension, index) => {
+    const manifest = extension.manifest.trim()
+    if (!manifest || manifest.includes("\0")) {
+      throw new Error(`Recipe runtime extension ${index} requires a non-empty manifest path or HTTPS URL`)
+    }
+    if (/^https:\/\//i.test(manifest)) {
+      return { manifest }
+    }
+    if (isAbsolute(manifest)) {
+      throw new Error(`Recipe runtime extension ${index} manifest must be an HTTPS URL or a recipe-local path`)
+    }
+    const resolved = resolve(root, manifest)
+    const pathFromRoot = relative(root, resolved)
+    if (!pathFromRoot || pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) {
+      throw new Error(`Recipe runtime extension ${index} manifest resolves outside the recipe directory`)
+    }
+    return { manifest: resolved }
+  })
 }
 
 function isUrl(value: string): boolean {

@@ -136,6 +136,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateRecipeRuntimeBackendPackage(recipe.runtime?.backendPackage, recipePath)
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
+  validateRecipeRuntimeExtensions(recipe.runtime?.extensions, recipePath)
   validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
@@ -335,6 +336,23 @@ function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recip
 
   if (assets.wordpressZip !== undefined && typeof assets.wordpressZip !== "string") {
     throw new Error(`Recipe runtime assets wordpressZip must be a string: ${recipePath}`)
+  }
+}
+
+function validateRecipeRuntimeExtensions(extensions: NonNullable<WorkspaceRecipe["runtime"]>["extensions"] | undefined, recipePath: string): void {
+  if (extensions === undefined) {
+    return
+  }
+  if (!Array.isArray(extensions)) {
+    throw new Error(`Recipe runtime extensions must be an array: ${recipePath}`)
+  }
+  for (const [index, extension] of extensions.entries()) {
+    if (!extension || typeof extension !== "object" || Array.isArray(extension) || typeof extension.manifest !== "string" || !extension.manifest.trim() || extension.manifest.includes("\0")) {
+      throw new Error(`Recipe runtime extensions[${index}] requires a non-empty manifest: ${recipePath}`)
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(extension.manifest) && !/^https:\/\//i.test(extension.manifest)) {
+      throw new Error(`Recipe runtime extensions[${index}] manifest URL must use HTTPS: ${recipePath}`)
+    }
   }
 }
 

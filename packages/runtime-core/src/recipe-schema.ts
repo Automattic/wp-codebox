@@ -126,6 +126,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           blueprint: { type: "object" },
           preview: { $ref: "#/$defs/runtimePreview" },
           assets: { $ref: "#/$defs/runtimeAssets" },
+          extensions: {
+            type: "array",
+            description: "External PHP.wasm extension manifests loaded before PHP starts. External extensions require a JSPI runtime.",
+            items: { $ref: "#/$defs/phpWasmExtensionManifest" },
+          },
           backendPackage: { $ref: "#/$defs/runtimeBackendPackage" },
           stack: { $ref: "#/$defs/runtimeStack" },
           overlays: {
@@ -508,6 +513,14 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "string",
             description: "Local path or HTTP(S) URL for a WordPress release zip used to boot the Playground runtime.",
           },
+        },
+      },
+      phpWasmExtensionManifest: {
+        type: "object",
+        additionalProperties: false,
+        required: ["manifest"],
+        properties: {
+          manifest: { type: "string", minLength: 1, description: "HTTPS URL or recipe-local path to a PHP.wasm extension manifest." },
         },
       },
       mount: {

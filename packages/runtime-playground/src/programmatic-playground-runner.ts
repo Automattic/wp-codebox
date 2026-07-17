@@ -5,11 +5,12 @@ import type { MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
 import { dirname } from "node:path"
 import { playgroundBlueprint } from "./blueprint.js"
+import { assertPhpWasmExternalExtensionsSupported } from "./php-wasm-preflight.js"
 import type { PlaygroundCliServer, PlaygroundServerRunResponse } from "./preview-server.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
   createNodeFsMountHandler(localPath: string): unknown
-  loadNodeRuntime(phpVersion: AllPHPVersion, options?: { followSymlinks?: boolean; emscriptenOptions?: { processId?: number } }): Promise<number>
+  loadNodeRuntime(phpVersion: AllPHPVersion, options?: { followSymlinks?: boolean; emscriptenOptions?: { processId?: number }; extensions?: Array<{ source: { format: "manifest"; manifestUrl: string } }> }): Promise<number>
 }
 
 type AllPHPVersion = "8.5" | "8.4" | "8.3" | "8.2" | "8.1" | "8.0" | "7.4" | "5.2"
@@ -40,16 +41,14 @@ export interface ProgrammaticPlaygroundStartupOptions {
 
 export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: ProgrammaticPlaygroundStartupOptions): Promise<PlaygroundCliServer> {
   const phpVersion = (spec.environment.phpVersion ?? "8.4") as AllPHPVersion
+  await assertPhpWasmExternalExtensionsSupported(spec.environment.extensions)
   let nextProcessId = 1
   const phpIniEntries = {
     ...options.bootstrapIniEntries,
     ...options.phpIniEntries,
   }
   const requestHandler = await bootWordPressAndRequestHandler({
-    createPhpRuntime: () => loadNodeRuntime(phpVersion, {
-      followSymlinks: true,
-      emscriptenOptions: { processId: nextProcessId++ },
-    }),
+    createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
     phpVersion,
     siteUrl: spec.preview?.siteUrl ?? "http://127.0.0.1",
     documentRoot: "/wordpress",
@@ -98,6 +97,15 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
       await closeHttpServer(httpServer)
       await requestHandler[Symbol.asyncDispose]()
     },
+  }
+}
+
+export function programmaticNodeRuntimeOptions(spec: RuntimeCreateSpec, processId: number): { followSymlinks: true; emscriptenOptions: { processId: number }; extensions?: Array<{ source: { format: "manifest"; manifestUrl: string } }> } {
+  const extensions = spec.environment.extensions?.map((extension) => ({ source: { format: "manifest" as const, manifestUrl: extension.manifest } }))
+  return {
+    followSymlinks: true,
+    emscriptenOptions: { processId },
+    ...(extensions && extensions.length > 0 ? { extensions } : {}),
   }
 }
 

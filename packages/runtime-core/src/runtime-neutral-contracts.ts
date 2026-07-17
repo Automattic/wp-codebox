@@ -52,11 +52,17 @@ export interface RuntimeWordPressAssetSpec extends BackendNeutralRuntimeAssetSpe
   wordpressZip?: string
 }
 
+/** A startup-time PHP.wasm extension manifest. External extensions are JSPI-only. */
+export interface RuntimePHPWasmExtensionManifest {
+  manifest: string
+}
+
 export interface RuntimeWordPressEnvironmentSpec extends BackendNeutralEnvironmentSpec {
   blueprint?: unknown
   phpVersion?: string
   assets?: RuntimeWordPressAssetSpec
   wordpressInstallMode?: RuntimeWordPressInstallModeContract
+  extensions?: RuntimePHPWasmExtensionManifest[]
 }
 
 export type BackendNeutralReplayStatus = "metadata-only" | "partial-replay" | "replayable-runtime-state" | "runtime-state-artifact" | "not-replayable" | (string & {})
@@ -109,6 +115,18 @@ export function normalizeRuntimeWordPressEnvironmentSpec(input: unknown): Runtim
     phpVersion: optionalString(value.phpVersion, "environment.phpVersion"),
     assets: normalizeRuntimeWordPressAssetSpec(value.assets),
     wordpressInstallMode: optionalString(value.wordpressInstallMode, "environment.wordpressInstallMode") as RuntimeWordPressInstallModeContract | undefined,
+    extensions: normalizeRuntimePHPWasmExtensionManifests(value.extensions),
+  })
+}
+
+function normalizeRuntimePHPWasmExtensionManifests(input: unknown): RuntimePHPWasmExtensionManifest[] | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) throw new Error("environment.extensions must be an array.")
+  return input.map((entry, index) => {
+    const value = requireObject(entry, `environment.extensions[${index}]`) as Partial<RuntimePHPWasmExtensionManifest>
+    const manifest = requiredString(value.manifest, `environment.extensions[${index}].manifest`)
+    if (manifest.includes("\0")) throw new Error(`environment.extensions[${index}].manifest must not contain a null byte.`)
+    return { manifest }
   })
 }
 

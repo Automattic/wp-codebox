@@ -25,6 +25,27 @@ export interface PhpWasmRuntimeAssetPreflightOptions {
   mode?: "jspi" | "asyncify"
 }
 
+export class PhpWasmExternalExtensionCapabilityError extends Error {
+  readonly code = "wp-codebox-php-wasm-external-extensions-require-jspi"
+  readonly diagnostic: { capability: "jspi"; selectedMode: "asyncify"; message: string }
+
+  constructor() {
+    const message = "External PHP.wasm extension manifests require a JSPI runtime; the selected runtime uses Asyncify."
+    super(message)
+    this.name = "PhpWasmExternalExtensionCapabilityError"
+    this.diagnostic = { capability: "jspi", selectedMode: "asyncify", message }
+  }
+}
+
+export async function assertPhpWasmExternalExtensionsSupported(extensions: readonly unknown[] | undefined, mode?: "jspi" | "asyncify"): Promise<void> {
+  if (!extensions || extensions.length === 0) {
+    return
+  }
+  if ((mode ?? phpWasmModeFromEnv() ?? await selectedPhpWasmMode()) !== "jspi") {
+    throw new PhpWasmExternalExtensionCapabilityError()
+  }
+}
+
 const repairHint = "Repair the PHP wasm runtime package by reinstalling dependencies, for example: remove node_modules and package-lock drift, then run npm install; if using a package cache, clear the broken @php-wasm package cache first."
 const compiledWasmCache = new Map<string, PhpWasmRuntimeAssetPreflight>()
 const requireFromHere = createRequire(import.meta.url)

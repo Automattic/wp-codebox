@@ -3,7 +3,7 @@ import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
-import type { BackendNeutralRuntimeProvenance, RuntimeWordPressAssetSpec, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
+import type { BackendNeutralRuntimeProvenance, RuntimePHPWasmExtensionManifest, RuntimeWordPressAssetSpec, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -167,6 +167,9 @@ export interface WorkspaceRecipeRuntimeBackendPackage {
   entrypoint?: string
   metadata?: Record<string, unknown>
 }
+
+/** A recipe-owned external PHP.wasm extension manifest loaded before PHP starts. */
+export interface WorkspaceRecipePHPWasmExtensionManifest extends RuntimePHPWasmExtensionManifest {}
 
 export interface WorkspaceRecipeDistributionSourceMount extends WorkspaceRecipeMount {
   role?: "wordpress-root" | "dependency" | "fixtures" | (string & {})
@@ -581,6 +584,7 @@ export interface WorkspaceRecipe {
     blueprint?: unknown
     preview?: RuntimePreviewSpec
     assets?: RuntimeAssetSpec
+    extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
     backendPackage?: WorkspaceRecipeRuntimeBackendPackage
     stack?: WorkspaceRecipeRuntimeStack
     overlays?: WorkspaceRecipeRuntimeOverlay[]
