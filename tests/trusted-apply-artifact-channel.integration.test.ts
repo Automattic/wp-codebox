@@ -49,6 +49,19 @@ try {
   const durablePatch = await readFile(join(artifactRoot, "files", "patch.diff"), "utf8")
   assert(!durablePatch.includes(secretName), "durable artifact redacts configured secret names")
   assert.match(durablePatch, /\[REDACTED:configured-secret-name\]/)
+  await assert.rejects(
+    applyRunnerWorkspacePatch({
+      artifactRoot,
+      artifactRefs: [
+        { kind: "codebox-patch", path: "files/patch.diff" },
+        { kind: "codebox-changed-files", path: "files/changed-files.json" },
+      ],
+      workspaceRoot: host,
+      writablePaths: ["README.md"],
+    }),
+    /Host git apply failed/,
+    "the durable redacted patch cannot apply where configured secret context is unchanged",
+  )
   const trustedPatch = await readFile(join(trustedRoot, "files", "patch.diff"), "utf8")
   assert.match(trustedPatch, new RegExp(secretName), "private apply bytes retain unchanged diff context")
 
