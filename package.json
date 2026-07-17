@@ -132,6 +132,7 @@
     "test:source-root-preparation": "tsx tests/source-root-preparation.test.ts",
     "test:workspace-preload-artifacts": "tsx tests/workspace-preload-artifacts.test.ts",
     "test:runner-workspace-apply": "tsx tests/runner-workspace-apply.test.ts",
+    "test:trusted-apply-artifact-channel": "tsx tests/trusted-apply-artifact-channel.integration.test.ts",
     "test:runner-workspace-publisher": "node tests/runner-workspace-publisher.test.mjs",
     "test:native-agent-task-lifecycle": "node tests/execute-native-agent-task-lifecycle.test.mjs",
     "test:native-agent-task-interruption": "node tests/execute-native-agent-task-interruption.test.mjs",

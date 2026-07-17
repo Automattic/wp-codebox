@@ -74,12 +74,21 @@ const output = process.argv[process.argv.indexOf("--result-file") + 1]
 const input = JSON.parse(await readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8"))
 const root = join(process.cwd(), ".codebox", "agent-task-artifacts", "files")
 await mkdir(root, { recursive: true })
+const trustedRoot = process.env.WP_CODEBOX_TRUSTED_APPLY_ARTIFACT_ROOT
+if (trustedRoot) await mkdir(join(trustedRoot, "files"), { recursive: true })
 const patch = ${JSON.stringify(noOp ? "" : applyReject ? "--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n OPENAI_API_KEY\n-not-before\n+after\n" : "--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n OPENAI_API_KEY\n-before\n+after\n")}
 await writeFile(join(root, "patch.diff"), patch)
 await writeFile(join(root, "changed-files.json"), JSON.stringify({
   schema: "wp-codebox/changed-files/v1",
   files: ${noOp} ? [] : [{ path: "/workspace/README.md", relativePath: "README.md", status: "modified", beforeMode: "100644", afterMode: "100644" }],
 }))
+if (trustedRoot) {
+   await writeFile(join(trustedRoot, "files", "patch.diff"), patch)
+   await writeFile(join(trustedRoot, "files", "changed-files.json"), JSON.stringify({
+     schema: "wp-codebox/changed-files/v1",
+     files: ${noOp} ? [] : [{ path: "/workspace/README.md", relativePath: "README.md", status: "modified", beforeMode: "100644", afterMode: "100644" }],
+   }))
+ }
 ${mismatch ? "await writeFile(join(process.cwd(), \"README.md\"), \"diverged\\n\")" : ""}
 await writeFile(join(process.cwd(), ".codebox", "order"), "runtime\\n")
 const summary = {
@@ -169,7 +178,7 @@ process.stdout.write(JSON.stringify({
 }
 
 const success = await run()
-assert.equal(success.code, 0, success.stderr)
+assert.equal(success.code, 0, `${success.stderr}\n${JSON.stringify(success.result)}`)
 assert.equal(await readFile(join(success.workspace, "README.md"), "utf8"), "OPENAI_API_KEY\nafter\n")
 const durablePatch = await readFile(join(success.workspace, ".codebox", "agent-task-artifacts", "files", "patch.diff"), "utf8")
 assert(!durablePatch.includes("OPENAI_API_KEY"), "durable patch artifacts redact configured secret values")
