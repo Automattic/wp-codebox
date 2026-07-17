@@ -19,6 +19,7 @@ on:
       - "tests/runtime-sources-playground-integration.test.ts"
       - "tests/execute-native-agent-task-playground-e2e.test.ts"
       - "tests/execute-native-agent-task-interruption.test.mjs"
+      - "tests/trusted-apply-artifact-channel.integration.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -43,6 +44,7 @@ on:
       - "tests/runtime-sources-playground-integration.test.ts"
       - "tests/execute-native-agent-task-playground-e2e.test.ts"
       - "tests/execute-native-agent-task-interruption.test.mjs"
+      - "tests/trusted-apply-artifact-channel.integration.test.ts"
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
@@ -72,6 +74,7 @@ jobs:
       - run: npm run test:playground-phpunit-readonly-cache-integration
       - run: npm run test:native-agent-task-playground-e2e
       - run: npm run test:native-agent-task-interruption
+      - run: npm run test:trusted-apply-artifact-channel
       - run: npm run test:redaction
       - run: npm run test:production-boundary-enforcement
       - run: npm run test:runtime-tool-policy
