@@ -2,6 +2,7 @@ import { AGENT_TASK_RUN_RESULT_SCHEMA, type AgentTaskRunResultSummary } from "./
 import { RUNTIME_PROFILE_SCHEMA, normalizeRuntimeAccess, normalizeRuntimeProfile, type RuntimeAccess, type RuntimeProfile } from "./runtime-boundary-contracts.js"
 import { TASK_INPUT_JSON_SCHEMA, normalizeTaskInput, type TaskInput, type TaskInputRequest } from "./task-input.js"
 import { isPlainObject, objectValue, stringList, stringValue, stripUndefined } from "./object-utils.js"
+import { WORKSPACE_DELTA_JSON_SCHEMA, workspaceDeltaFromAgentTaskRunResult, type WorkspaceDelta } from "./workspace-delta.js"
 
 export const HEADLESS_AGENT_TASK_REQUEST_SCHEMA = "wp-codebox/headless-agent-task-request/v1" as const
 export const HEADLESS_AGENT_TASK_RESULT_SCHEMA = "wp-codebox/headless-agent-task-result/v1" as const
@@ -34,6 +35,7 @@ export interface HeadlessAgentTaskResult {
   refs: AgentTaskRunResultSummary["refs"]
   artifacts: AgentTaskRunResultSummary["artifacts"]
   evidence_refs: AgentTaskRunResultSummary["refs"]["evidence_bundles"]
+  workspace_delta: WorkspaceDelta
   diagnostics: Array<Record<string, unknown>>
   metadata: Record<string, unknown>
   agent_task_run_result: AgentTaskRunResultSummary
@@ -69,7 +71,7 @@ export const HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA = {
 export const HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA = {
   $id: HEADLESS_AGENT_TASK_RESULT_SCHEMA,
   type: "object",
-  required: ["schema", "success", "status", "summary", "refs", "artifacts", "evidence_refs", "diagnostics", "metadata", "agent_task_run_result"],
+  required: ["schema", "success", "status", "summary", "refs", "artifacts", "evidence_refs", "workspace_delta", "diagnostics", "metadata", "agent_task_run_result"],
   additionalProperties: false,
   properties: {
     schema: { type: "string", const: HEADLESS_AGENT_TASK_RESULT_SCHEMA },
@@ -80,6 +82,7 @@ export const HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA = {
     refs: { type: "object" },
     artifacts: { type: "array", items: { type: "object" } },
     evidence_refs: { type: "array", items: { type: "object" } },
+    workspace_delta: WORKSPACE_DELTA_JSON_SCHEMA,
     diagnostics: { type: "array", items: { type: "object" } },
     metadata: { type: "object" },
     agent_task_run_result: { type: "object", properties: { schema: { type: "string", const: AGENT_TASK_RUN_RESULT_SCHEMA } } },
@@ -124,6 +127,7 @@ export function headlessAgentTaskRequestToRunInput(request: HeadlessAgentTaskReq
 }
 
 export function normalizeHeadlessAgentTaskResult(result: AgentTaskRunResultSummary, metadata: Record<string, unknown> = {}): HeadlessAgentTaskResult {
+  const workspaceDelta = workspaceDeltaFromAgentTaskRunResult(result)
   return {
     schema: HEADLESS_AGENT_TASK_RESULT_SCHEMA,
     success: result.success,
@@ -133,7 +137,8 @@ export function normalizeHeadlessAgentTaskResult(result: AgentTaskRunResultSumma
     refs: result.refs,
     artifacts: result.artifacts,
     evidence_refs: result.refs.evidence_bundles,
-    diagnostics: result.diagnostics,
+    workspace_delta: workspaceDelta,
+    diagnostics: result.diagnostics.concat(workspaceDelta.diagnostics),
     metadata: stripUndefined({ ...metadata, ...result.metadata }),
     agent_task_run_result: result,
   }

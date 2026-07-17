@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chdir, cwd } from "node:process"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, TYPED_ARTIFACT_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, TYPED_ARTIFACT_SCHEMA, WORKSPACE_DELTA_JSON_SCHEMA, WORKSPACE_DELTA_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeExecutionChanges, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeArtifactResultTypedArtifacts, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput, workspaceDeltaFromAgentTaskRunResult } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunJsonOutput, normalizeAgentTaskRunCliInput, writeAgentTaskRunResultFile } from "../packages/cli/src/commands/agent-task-run.js"
@@ -221,6 +221,60 @@ assert.equal(headlessResult.schema, HEADLESS_AGENT_TASK_RESULT_SCHEMA)
 assert.equal(headlessResult.preview?.public_url, "https://preview.example.test/")
 assert.equal(headlessResult.evidence_refs[0].kind, "codebox-evidence-bundle")
 assert.equal(headlessResult.agent_task_run_result.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+
+const workspaceDeltaResult = normalizeAgentTaskRunResult({
+  success: true,
+  artifacts: [
+    { kind: "codebox-changed-files", path: "files/changed-files.json", bytes: 128, sha256: "changed" },
+    { kind: "codebox-patch", path: "files/patch.diff", bytes: 256, sha256: "patch" },
+  ],
+  agent_result: {
+    changedFiles: { artifact: "files/changed-files.json", bytes: 128, count: 1, sha256: "changed" },
+    patch: { artifact: "files/patch.diff", bytes: 256, sha256: "patch" },
+  },
+})
+const workspaceDelta = workspaceDeltaFromAgentTaskRunResult(workspaceDeltaResult)
+assert.equal(workspaceDelta.schema, WORKSPACE_DELTA_SCHEMA)
+assert.equal(workspaceDelta.status, "changed")
+assert.equal(workspaceDelta.changed_files?.path, "files/changed-files.json")
+assert.equal(workspaceDelta.patch?.path, "files/patch.diff")
+assert.equal(normalizeHeadlessAgentTaskResult(workspaceDeltaResult).workspace_delta.status, "changed")
+assert.equal(WORKSPACE_DELTA_JSON_SCHEMA.additionalProperties, false)
+assert.equal(WORKSPACE_DELTA_JSON_SCHEMA.properties.changed_files.required.includes("path"), true)
+
+assert.equal(workspaceDeltaFromAgentTaskRunResult(normalizeAgentTaskRunResult({ success: true, no_op: true })).status, "no_op")
+
+const hostPathDelta = workspaceDeltaFromAgentTaskRunResult(normalizeAgentTaskRunResult({
+  success: true,
+  artifacts: [
+    { kind: "codebox-changed-files", path: "/private/codebox/files/changed-files.json" },
+    { kind: "codebox-patch", path: "/private/codebox/files/patch.diff" },
+  ],
+}))
+assert.equal(hostPathDelta.status, "unavailable")
+assert.equal(hostPathDelta.diagnostics.filter((diagnostic) => diagnostic.code === "workspace_delta.artifact_not_portable").length, 2)
+
+for (const path of ["\\private\\codebox\\files\\changed-files.json", "\\\\host\\share\\files\\changed-files.json", "C:\\codebox\\files\\changed-files.json", "files/../changed-files.json"]) {
+  const malformedDelta = workspaceDeltaFromAgentTaskRunResult(normalizeAgentTaskRunResult({
+    success: true,
+    artifacts: [
+      { kind: "codebox-changed-files", path },
+      { kind: "codebox-patch", path: "files/patch.diff" },
+    ],
+  }))
+  assert.equal(malformedDelta.status, "unavailable")
+  assert.equal(malformedDelta.changed_files, undefined)
+  assert.equal(JSON.stringify(malformedDelta).includes("private/codebox"), false, "workspace delta never leaks a host artifact path")
+}
+
+const inferredFilenameDelta = workspaceDeltaFromAgentTaskRunResult(normalizeAgentTaskRunResult({
+  success: true,
+  artifacts: [
+    { kind: "artifact", path: "files/changed-files.json" },
+    { kind: "artifact", path: "files/patch.diff" },
+  ],
+}))
+assert.equal(inferredFilenameDelta.status, "unavailable", "workspace delta only accepts explicitly typed artifacts")
 
 const headlessJsonOutput = agentTaskRunJsonOutput({
   success: true,
