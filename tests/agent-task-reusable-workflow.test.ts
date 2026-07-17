@@ -412,4 +412,105 @@ for (const name of ["oversize.txt", "binary.bin", "linked-secret.txt"]) {
   await assert.rejects(readFile(join(uploadArtifactsPath, name), "utf8"), /ENOENT/)
 }
 
+// Workflow output limits are measured in UTF-8 bytes, never by JS code units.
+// Oversized system outputs become artifact references; caller projections fail
+// before they can produce malformed GitHub Actions JSON.
+const fakeCliPath = join(tmp, "fake-agent-task-cli.mjs")
+const outputValueAtBytes = (bytes: number) => {
+  const overhead = Buffer.byteLength(JSON.stringify({ value: "" }))
+  return { value: "x".repeat(bytes - overhead) }
+}
+const readWorkflowOutput = (contents: string, name: string) => {
+  const match = contents.match(new RegExp(`${name}<<__WP_CODEBOX_OUTPUT__\\n([\\s\\S]*?)\\n__WP_CODEBOX_OUTPUT__`))
+  assert.ok(match, `Missing ${name} output`)
+  return JSON.parse(match[1])
+}
+const runWorkflowOutputCase = async (nativeOutputs: Record<string, unknown>, outputProjections = {}) => {
+  const caseOutputPath = join(tmp, `github-output-${Math.random().toString(16).slice(2)}.txt`)
+  const caseRequest = {
+    ...request,
+    external_package_source: nativeSource,
+    runner_workspace: { enabled: false },
+    validation_dependencies: "",
+    verification_commands: [],
+    drift_checks: [],
+    run_agent: true,
+    dry_run: false,
+    outputs: { projections: outputProjections },
+  }
+  await writeFile(requestPath, `${JSON.stringify(caseRequest, null, 2)}\n`)
+  const nativeResultForOutput = {
+    schema: "wp-codebox/agent-task-run/v1",
+    success: true,
+    status: "succeeded",
+    agent_task_run_result: { schema: "wp-codebox/agent-task-run-result/v1", success: true, status: "succeeded" },
+    outputs: nativeOutputs,
+  }
+  await writeFile(fakeCliPath, [
+    'import { writeFile } from "node:fs/promises"',
+    'const path = process.argv[process.argv.indexOf("--result-file") + 1]',
+    `await writeFile(path, ${JSON.stringify(JSON.stringify(nativeResultForOutput))})`,
+  ].join("\n"))
+  const execution = execFileAsync("node", [executeNativeAgentTask], {
+    cwd: tmp,
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      GITHUB_OUTPUT: caseOutputPath,
+      AGENT_TASK_REQUEST_PATH: requestPath,
+      AGENT_TASK_WORKSPACE: tmp,
+      WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+      WP_CODEBOX_CLI_PATH: fakeCliPath,
+      WP_CODEBOX_TEST_SKIP_MATERIALIZATION: "true",
+      WP_CODEBOX_TEST_EXTERNAL_PACKAGE_PATH: nativePackagePath,
+      GITHUB_TOKEN: "test-caller-token",
+      EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
+    },
+  }).catch(async (error: any) => {
+    const workflowResult = await readFile(resultPath, "utf8").catch(() => "missing")
+    error.message = `${error.message}\n${error.stderr || ""}\n${workflowResult}`
+    throw error
+  })
+  return { execution, result: () => readFile(resultPath, "utf8").then(JSON.parse), outputs: () => readFile(caseOutputPath, "utf8") }
+}
+
+const exactBoundaryEngineData = outputValueAtBytes(8192)
+const exactBoundaryCase = await runWorkflowOutputCase(exactBoundaryEngineData)
+await exactBoundaryCase.execution
+assert.deepEqual(readWorkflowOutput(await exactBoundaryCase.outputs(), "engine_data_json"), exactBoundaryEngineData)
+assert.equal((await exactBoundaryCase.result()).workflow_output_artifacts, undefined)
+
+const overBoundaryEngineData = outputValueAtBytes(8193)
+const overBoundaryCase = await runWorkflowOutputCase(overBoundaryEngineData)
+await overBoundaryCase.execution
+const overBoundaryReference = readWorkflowOutput(await overBoundaryCase.outputs(), "engine_data_json")
+assert.deepEqual(overBoundaryReference, (await overBoundaryCase.result()).workflow_output_artifacts.engine_data_json)
+assert.deepEqual(JSON.parse(await readFile(join(tmp, ".codebox", "agent-task-artifacts", overBoundaryReference.artifact_path), "utf8")), overBoundaryEngineData)
+await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/prepare-agent-task-upload.mjs", import.meta.url).pathname], {
+  cwd: tmp,
+  env: { ...process.env, AGENT_TASK_WORKSPACE: tmp, AGENT_TASK_REQUEST_PATH: requestPath },
+})
+assert.deepEqual(JSON.parse(await readFile(join(tmp, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", overBoundaryReference.artifact_path), "utf8")), overBoundaryEngineData)
+
+const multibyteCase = await runWorkflowOutputCase({ value: "😀".repeat(2048) })
+await multibyteCase.execution
+assert.equal(readWorkflowOutput(await multibyteCase.outputs(), "engine_data_json").schema, "wp-codebox/workflow-output-reference/v1")
+
+const nestedProjectionCase = await runWorkflowOutputCase(
+  { nested: { result: { value: "x".repeat(8193) } } },
+  { nested_output: "outputs.nested" },
+)
+await assert.rejects(nestedProjectionCase.execution)
+const nestedProjectionResult = await nestedProjectionCase.result()
+assert.equal(nestedProjectionResult.success, false)
+assert.deepEqual(nestedProjectionResult.projection_error, {
+  code: "wp-codebox.agent-task.output-projection-too-large",
+  classification: "output-projection",
+  message: nestedProjectionResult.projection_error.message,
+  output_name: "nested_output",
+  bytes: Buffer.byteLength(JSON.stringify({ result: { value: "x".repeat(8193) } })),
+  max_bytes: 8192,
+})
+assert.deepEqual(readWorkflowOutput(await nestedProjectionCase.outputs(), "projected_outputs_json"), { error: nestedProjectionResult.projection_error })
+
 console.log("agent task reusable workflow ok")

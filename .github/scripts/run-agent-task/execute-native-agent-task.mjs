@@ -16,7 +16,7 @@ const codeboxRoot = resolve(process.env.WP_CODEBOX_WORKFLOW_ROOT || ".")
 const codeboxCliPath = process.env.WP_CODEBOX_CLI_PATH || join(codeboxRoot, "packages/cli/dist/index.js")
 const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
-const MAX_OUTPUT_CHARS = 8192
+const MAX_WORKFLOW_OUTPUT_BYTES = 8192
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
@@ -97,7 +97,53 @@ function capturedStream(limit = MAX_CAPTURE_BYTES) {
 function output(name, value) {
   if (!outputPath) return Promise.resolve()
   const rendered = typeof value === "string" ? value : JSON.stringify(value)
-  return appendFile(outputPath, `${name}<<__WP_CODEBOX_OUTPUT__\n${bounded(rendered, MAX_OUTPUT_CHARS)}\n__WP_CODEBOX_OUTPUT__\n`)
+  const safe = sanitizeRuntimeSourceText(redact(rendered), privateRuntimeSourceRootForSanitization)
+  const bytes = Buffer.byteLength(safe)
+  if (bytes > MAX_WORKFLOW_OUTPUT_BYTES) {
+    throw new Error(`${name} exceeds the ${MAX_WORKFLOW_OUTPUT_BYTES}-byte workflow output limit.`)
+  }
+  return appendFile(outputPath, `${name}<<__WP_CODEBOX_OUTPUT__\n${safe}\n__WP_CODEBOX_OUTPUT__\n`)
+}
+
+function serializedJson(value) {
+  return JSON.stringify(value)
+}
+
+function workflowOutputReference(name, rendered, artifactsPath) {
+  const bytes = Buffer.byteLength(rendered)
+  if (bytes <= MAX_WORKFLOW_OUTPUT_BYTES) return Promise.resolve({ rendered })
+
+  const artifactPath = `workflow-outputs/${name}.json`
+  const reference = {
+    schema: "wp-codebox/workflow-output-reference/v1",
+    kind: "codebox-workflow-output",
+    output: name,
+    artifact_path: artifactPath,
+    bytes,
+    sha256: createHash("sha256").update(rendered).digest("hex"),
+  }
+  return mkdir(join(artifactsPath, "workflow-outputs"), { recursive: true })
+    .then(() => writeFile(join(artifactsPath, artifactPath), `${rendered}\n`))
+    .then(() => ({ rendered: serializedJson(reference), reference }))
+}
+
+function projectionOutputLimitError(name, bytes) {
+  const error = new Error(`output_projections.${name} serializes to ${bytes} bytes, exceeding the ${MAX_WORKFLOW_OUTPUT_BYTES}-byte workflow output limit. Store the canonical value as a declared artifact and project its artifact-relative reference.`)
+  error.code = "wp-codebox.agent-task.output-projection-too-large"
+  error.output_name = name
+  error.bytes = bytes
+  error.max_bytes = MAX_WORKFLOW_OUTPUT_BYTES
+  return error
+}
+
+function validateProjectionOutputSize(value) {
+  for (const [name, projected] of Object.entries(value)) {
+    const projectedBytes = Buffer.byteLength(serializedJson(projected))
+    if (projectedBytes > MAX_WORKFLOW_OUTPUT_BYTES) throw projectionOutputLimitError(name, projectedBytes)
+  }
+  const rendered = serializedJson(value)
+  const bytes = Buffer.byteLength(rendered)
+  if (bytes > MAX_WORKFLOW_OUTPUT_BYTES) throw projectionOutputLimitError("projected_outputs_json", bytes)
 }
 
 function safeEnvironment(extra = {}) {
@@ -355,7 +401,7 @@ function failureClassification(error) {
 async function writeNormalizedFailure(error, request = {}) {
   const resultPath = join(workspace, ".codebox", "agent-task-workflow-result.json")
   const failure = failureClassification(error)
-  const message = bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS)
+  const message = bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES)
   const accessError = failure.classification === "policy" && /allowed_repos|ACCESS_TOKEN|GitHub token|Caller repository|authorized/i.test(message)
   const result = {
     schema: "wp-codebox/agent-task-workflow-result/v1",
@@ -592,7 +638,7 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
       workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
   } catch (error) {
-    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS), ...(error?.evidence ? { evidence: error.evidence } : {}) }
+    downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }
 }
 runtimeResult = sanitizeRuntimeSourceValue(runtimeResult, runtimeSourceOutputRoots)
@@ -637,18 +683,26 @@ if (execution.code === 0 && runtimeRecord.success === true && verificationPassed
     runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
     runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
   } catch (error) {
-    downstreamFailure = { stage: "publication", message: bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS) }
+    downstreamFailure = { stage: "publication", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES) }
   }
 }
 if (request.success?.requires_pr === true && workspaceApply.status === "no-op" && !publication) {
   downstreamFailure ??= { stage: "no-op", message: "success_requires_pr cannot succeed for a no-op runner workspace task." }
 }
 let evaluatedProjections = {}
-let projectionError = ""
+let projectionError
 try {
   evaluatedProjections = projections(request.outputs?.projections, runtimeRecord)
+  validateProjectionOutputSize(evaluatedProjections)
 } catch (error) {
-  projectionError = error instanceof Error ? error.message : String(error)
+  projectionError = {
+    code: typeof error?.code === "string" ? error.code : "wp-codebox.agent-task.output-projection",
+    classification: "output-projection",
+    message: error instanceof Error ? error.message : String(error),
+    ...(typeof error?.output_name === "string" ? { output_name: error.output_name } : {}),
+    ...(Number.isSafeInteger(error?.bytes) ? { bytes: error.bytes } : {}),
+    ...(Number.isSafeInteger(error?.max_bytes) ? { max_bytes: error.max_bytes } : {}),
+  }
 }
 const publicationRequired = request.success?.requires_pr === true
 const publicationVerification = publicationRequired && execution.code === 0 && runtimeRecord.success === true
@@ -662,6 +716,12 @@ const success = request.run_agent && !request.dry_run
   ? execution.code === 0 && runtimeRecord.success === true && verificationPassed && publicationPassed && !projectionError && !downstreamFailure
   : true
 const status = request.run_agent && !request.dry_run ? (success ? "succeeded" : "failed") : "skipped"
+const workflowOutputs = {
+  transcript_json: await workflowOutputReference("transcript_json", serializedJson(agentResult.refs?.transcripts || []), artifactsPath),
+  engine_data_json: await workflowOutputReference("engine_data_json", serializedJson(redact(record(runtimeRecord.outputs))), artifactsPath),
+  projected_outputs_json: { rendered: serializedJson(projectionError ? { error: projectionError } : evaluatedProjections) },
+  declared_artifacts_json: await workflowOutputReference("declared_artifacts_json", serializedJson(request.artifacts?.declarations || []), artifactsPath),
+}
 const result = {
   schema: "wp-codebox/agent-task-workflow-result/v1",
   run_id: runId,
@@ -680,6 +740,10 @@ const result = {
     engine_data: record(runtimeRecord.outputs),
     projections: evaluatedProjections,
   },
+  ...(Object.values(workflowOutputs).some((output) => output.reference) ? {
+    workflow_output_artifacts: Object.fromEntries(Object.entries(workflowOutputs)
+      .flatMap(([name, output]) => output.reference ? [[name, output.reference]] : [])),
+  } : {}),
   access: { authorized: true, credential_mode: process.env.GITHUB_TOKEN ? "runner-access-token" : (process.env.OPENAI_API_KEY ? "runner-provider-credentials" : "runner-default-credentials"), policy: { allowed_repos: request.access.allowed_repos } },
   ...(publicationRequired ? { publication_verification: publicationVerification } : {}),
   ...(publicationRequired && !publicationPassed ? { publication_error: "success_requires_pr requires a valid published runner-workspace pull request for target_repo." } : {}),
@@ -691,12 +755,12 @@ const sanitizedResult = sanitizeRuntimeSourceValue(redact(result), privateRuntim
 assertNoRuntimeSourcePaths(sanitizedResult, privateRuntimeSourceRootForSanitization)
 await writeFile(resultPath, `${JSON.stringify(sanitizedResult, null, 2)}\n`)
 await output("job_status", status)
-await output("transcript_json", JSON.stringify(agentResult.refs?.transcripts || []))
+await output("transcript_json", workflowOutputs.transcript_json.rendered)
 await output("transcript_summary", `${request.workload?.label || "Run Agent Task"}: ${status}`)
-await output("engine_data_json", result.outputs.engine_data)
-await output("projected_outputs_json", result.outputs.projections)
+await output("engine_data_json", workflowOutputs.engine_data_json.rendered)
+await output("projected_outputs_json", workflowOutputs.projected_outputs_json.rendered)
 await output("credential_mode", result.access.credential_mode)
-await output("declared_artifacts_json", result.artifacts.declarations)
+await output("declared_artifacts_json", workflowOutputs.declared_artifacts_json.rendered)
 await output("result_path", ".codebox/agent-task-workflow-result.json")
 
 if (!success) process.exitCode = 1
@@ -706,7 +770,7 @@ try {
   await executeNativeAgentTask()
 } catch (error) {
   await writeNormalizedFailure(error)
-  console.error(bounded(error instanceof Error ? error.message : String(error), MAX_OUTPUT_CHARS))
+  console.error(bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES))
   process.exitCode = 1
 } finally {
   await cleanupMaterializedSources()

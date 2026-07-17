@@ -66,7 +66,7 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 - `access_token_repos`: comma-separated repositories available to the supplied access token.
 - `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
 - `expected_artifacts`: JSON allowlist and collection metadata. Required runtime artifacts are derived only from `artifact_declarations` entries with `required: true` and must be declared output artifacts.
-- `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. A string value remains a required projection for compatibility. A descriptor value has the exact shape `{ "path": "result.path", "required": false }`; unresolved optional projections are omitted, while unresolved required projections fail the run.
+- `output_projections`: JSON object mapping output names to dot-delimited paths in the native result. A string value remains a required projection for compatibility. A descriptor value has the exact shape `{ "path": "result.path", "required": false }`; unresolved optional projections are omitted, while unresolved required projections fail the run. Each evaluated projection and the combined projection object must serialize to 8,192 bytes or less. Oversized projections fail before success with `wp-codebox.agent-task.output-projection-too-large`; declare an artifact and project its artifact-relative reference instead.
 
 ## Access And Publication
 
@@ -82,7 +82,7 @@ fail closed for every PR, issue, and comment operation outside that set. The
 checkout does not persist credentials. Verification, dependency, and drift
 commands run with a clean environment that excludes provider and GitHub secrets.
 Known secret values are redacted before result or artifact persistence; captured
-stdout/stderr is capped at 32 KiB and workflow outputs at 8 KiB.
+stdout/stderr is capped at 32 KiB and workflow outputs at 8,192 bytes.
 
 `EXTERNAL_PACKAGE_SOURCE_POLICY` is treated as a secret even when it contains
 only repository and path metadata. It is redacted from runner output, excluded
@@ -136,6 +136,15 @@ runner token, so a fabricated publication result cannot satisfy the gate.
 - `projected_outputs_json`: evaluated values from `output_projections`.
 - `credential_mode`: redacted credential source classification.
 - `declared_artifacts_json`: accepted typed artifact declarations.
+
+Every structured workflow output is serialized as complete JSON. When a
+system-owned structured value exceeds 8,192 bytes, its workflow output becomes a
+`wp-codebox/workflow-output-reference/v1` object with an artifact-relative path,
+byte count, and SHA-256; the canonical JSON is collected from
+`.codebox/agent-task-artifacts/workflow-outputs/`. The workflow result records
+these references in `workflow_output_artifacts`. User-declared projections are
+validated instead of truncated, so a success result never omits or corrupts a
+projection.
 
 The result artifact includes the executable task input, normalized runtime
 result, evaluated projections, verification records, and runner-owned

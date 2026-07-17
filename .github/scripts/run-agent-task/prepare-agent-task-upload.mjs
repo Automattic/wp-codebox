@@ -419,6 +419,24 @@ function declaredArtifactPaths(result, allowed) {
   return [...paths].sort()
 }
 
+function workflowOutputArtifacts(result) {
+  return Object.entries(record(result.workflow_output_artifacts)).flatMap(([name, value]) => {
+    const reference = record(value)
+    const path = safeRelativeArtifactPath(reference.artifact_path)
+    if (reference.schema !== "wp-codebox/workflow-output-reference/v1"
+      || reference.kind !== "codebox-workflow-output"
+      || reference.output !== name
+      || !/^[A-Za-z0-9_.-]+$/.test(name)
+      || path !== `workflow-outputs/${name}.json`
+      || !Number.isSafeInteger(reference.bytes)
+      || reference.bytes <= 0
+      || !/^[a-f0-9]{64}$/.test(reference.sha256)) {
+      throw new Error("Workflow output artifact reference is malformed.")
+    }
+    return [[path, reference]]
+  })
+}
+
 async function exclusions(root, declaredPaths, transcript) {
   const counts = new Map()
   const count = (category) => counts.set(category, (counts.get(category) || 0) + 1)
@@ -479,6 +497,7 @@ const request = parseJsonOrEmpty(await readFile(requestPath, "utf8").catch(() =>
 const resultSource = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const result = parseJsonOrEmpty(await readFile(resultSource, "utf8").catch(() => "{}"))
 const declaredPaths = new Set(declaredArtifactPaths(result, declarations(request)))
+const workflowOutputArtifactsToStage = workflowOutputArtifacts(result)
 
 await rm(uploadPath, { recursive: true, force: true })
 await mkdir(uploadPath, { recursive: true })
@@ -492,6 +511,16 @@ for (const path of declaredPaths) {
     // Package declarations cannot authorize source trees or escape the root.
     // Keep staging independent of an untrusted alias, including transcripts.
     continue
+  }
+  await stageTextFile(source, join(uploadPath, ".codebox", "agent-task-artifacts", path))
+}
+for (const [path, reference] of workflowOutputArtifactsToStage) {
+  const source = resolve(artifactsPath, path)
+  if (relative(artifactsPath, source).startsWith("..") || sourceCategory(path, source)) continue
+  const bytes = await readFile(source)
+  const canonical = bytes.subarray(bytes.length - 1)[0] === 10 ? bytes.subarray(0, -1) : bytes
+  if (canonical.length !== reference.bytes || digest(canonical) !== reference.sha256) {
+    throw new Error("Workflow output artifact does not match its reference.")
   }
   await stageTextFile(source, join(uploadPath, ".codebox", "agent-task-artifacts", path))
 }
