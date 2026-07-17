@@ -10,7 +10,7 @@ import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
-import { createTrustedArtifactSnapshot } from "./trusted-artifact-snapshot.mjs"
+import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -24,6 +24,7 @@ let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
 let runnerWorkspaceSeedSnapshot
 let reviewerEvidence
+let trustedApplyArtifactRoot
 
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }
 let materializedSourceCleanup
@@ -36,6 +37,10 @@ function claimMaterializedSourcePaths() {
   if (privateRuntimeSourceRoot) {
     paths.push(privateRuntimeSourceRoot)
     privateRuntimeSourceRoot = ""
+  }
+  if (trustedApplyArtifactRoot) {
+    paths.push(trustedApplyArtifactRoot)
+    trustedApplyArtifactRoot = ""
   }
   return paths
 }
@@ -152,8 +157,8 @@ function safeEnvironment(extra = {}) {
   return { PATH: process.env.PATH || "", HOME: process.env.HOME || "", CI: process.env.CI || "true", ...extra }
 }
 
-function agentEnvironment() {
-  return safeEnvironment(Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN"].map((name) => [name, process.env[name]]).filter(([, value]) => value)))
+function agentEnvironment(extra = {}) {
+  return safeEnvironment({ ...Object.fromEntries(["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN"].map((name) => [name, process.env[name]]).filter(([, value]) => value)), ...extra })
 }
 
 function command(command, args, cwd, env = safeEnvironment()) {
@@ -605,8 +610,9 @@ const taskInput = {
 await writeFile(executionInputPath, `${JSON.stringify(taskInput, null, 2)}\n`)
 
 let execution = { code: 0, stdout: "", stderr: "", stdout_truncated: false, stderr_truncated: false }
- if (request.run_agent && !request.dry_run) {
-   execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment())
+if (request.run_agent && !request.dry_run) {
+   if (request.runner_workspace?.enabled) trustedApplyArtifactRoot = await createTrustedArtifactApplyChannel()
+   execution = await command("node", [codeboxCliPath, "agent-task-run", "--input-file", executionInputPath, "--result-file", nativeResultPath], workspace, agentEnvironment(trustedApplyArtifactRoot ? { WP_CODEBOX_TRUSTED_APPLY_ARTIFACT_ROOT: trustedApplyArtifactRoot } : {}))
  }
 
 // Public package bytes are embedded in the runtime recipe and consumed only by
@@ -638,15 +644,15 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
     const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-    const trustedArtifacts = await createTrustedArtifactSnapshot(artifactsPath, refs)
-    try {
-      workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: trustedArtifacts.root, artifactRefs: trustedArtifacts.refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
-    } finally {
-      await rm(trustedArtifacts.root, { recursive: true, force: true })
-    }
+    const trustedArtifacts = await trustedArtifactApplyRefs(trustedApplyArtifactRoot, refs)
+    workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: trustedArtifacts.root, artifactRefs: trustedArtifacts.refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
   } catch (error) {
     downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }
+}
+if (trustedApplyArtifactRoot) {
+  await rm(trustedApplyArtifactRoot, { recursive: true, force: true })
+  trustedApplyArtifactRoot = ""
 }
 runtimeResult = sanitizeRuntimeSourceValue(runtimeResult, runtimeSourceOutputRoots)
 privateRuntimeSourceRootForSanitization = runtimeSourceOutputRoots

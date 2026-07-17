@@ -1,4 +1,5 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { lstat, mkdtemp, readFile, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 
@@ -10,29 +11,30 @@ function underRoot(root, candidate) {
 }
 
 /**
- * Copies selected regular artifacts to a private temporary root before a later
- * durable-artifact transformation. Callers retain their artifact references,
- * with paths rewritten relative to the trusted copy.
+ * Opens a workflow-owned private root that the runtime may use before durable
+ * artifact redaction. This root is never part of the artifact bundle.
  */
-export async function createTrustedArtifactSnapshot(artifactRoot, refs, maxFileBytes = MAX_SNAPSHOT_FILE_BYTES) {
-  const root = await realpath(resolve(artifactRoot))
-  const snapshotRoot = await mkdtemp(join(tmpdir(), "wp-codebox-trusted-artifacts-"))
-  try {
-    const copiedRefs = await Promise.all(refs.map(async (ref) => {
-      const requested = isAbsolute(ref.path) ? resolve(ref.path) : resolve(root, ref.path)
-      const stat = await lstat(requested)
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxFileBytes) throw new Error("Trusted artifact snapshot requires a bounded regular file.")
-      const source = await realpath(requested)
-      if (!underRoot(root, source)) throw new Error("Trusted artifact snapshot escapes the artifact root.")
-      const path = relative(root, source).replaceAll("\\", "/")
-      const destination = join(snapshotRoot, path)
-      await mkdir(resolve(destination, ".."), { recursive: true })
-      await writeFile(destination, await readFile(source))
-      return { ...ref, path }
-    }))
-    return { root: snapshotRoot, refs: copiedRefs }
-  } catch (error) {
-    await rm(snapshotRoot, { recursive: true, force: true })
-    throw error
+export async function createTrustedArtifactApplyChannel() {
+  return mkdtemp(join(tmpdir(), "wp-codebox-trusted-apply-"))
+}
+
+/** Validates and projects only the two canonical private apply artifacts. */
+export async function trustedArtifactApplyRefs(root, refs, maxFileBytes = MAX_SNAPSHOT_FILE_BYTES) {
+  const channelRoot = await realpath(resolve(root))
+  const expectedPaths = {
+    "codebox-patch": "files/patch.diff",
+    "codebox-changed-files": "files/changed-files.json",
   }
+  const copiedRefs = await Promise.all(refs.map(async (ref) => {
+    const path = expectedPaths[ref.kind]
+    if (!path) throw new Error("Trusted apply artifacts must use canonical artifact kinds.")
+    const requested = join(channelRoot, path)
+    const stat = await lstat(requested)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxFileBytes) throw new Error("Trusted artifact snapshot requires a bounded regular file.")
+    const source = await realpath(requested)
+    if (!underRoot(channelRoot, source)) throw new Error("Trusted artifact snapshot escapes the artifact root.")
+    const bytes = await readFile(source)
+    return { ...ref, path, ...(ref.kind === "codebox-patch" ? { sha256: createHash("sha256").update(bytes).digest("hex") } : {}) }
+  }))
+  return { root: channelRoot, refs: copiedRefs }
 }

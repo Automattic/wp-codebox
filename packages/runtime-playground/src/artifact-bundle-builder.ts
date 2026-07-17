@@ -45,6 +45,7 @@ import {
 import { normalizeJsonValue, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
+import { writeTrustedApplyArtifacts } from "./trusted-apply-artifact-channel.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
@@ -160,6 +161,7 @@ export class ArtifactBundleBuilder {
     const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
+    await writeTrustedApplyArtifacts(changedFiles, patch)
     const changedFilesJson = redactor.redact(CHANGED_FILES_ARTIFACT_PATH, `${JSON.stringify(changedFiles, null, 2)}\n`)
     const redactedPatch = redactor.redact("files/patch.diff", patch)
     const patchContentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
