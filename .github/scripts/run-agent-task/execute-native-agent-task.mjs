@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs"
 import { appendFile, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { isUtf8 } from "node:buffer"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { spawn } from "node:child_process"
@@ -9,6 +10,7 @@ import { readNativeResult } from "./native-result-file.mjs"
 import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
+import { createTrustedArtifactSnapshot } from "./trusted-artifact-snapshot.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -474,10 +476,10 @@ async function redactArtifactFiles(directory, artifactRoot = directory) {
     const path = join(directory, entry.name)
     if (reviewerEvidence?.transcript && path === resolve(artifactRoot, reviewerEvidence.transcript.path)) continue
     if (entry.isDirectory()) await redactArtifactFiles(path, artifactRoot)
-    if (entry.isFile() && path.endsWith(".json") && (await stat(path)).size <= 4 * 1024 * 1024) {
-      const contents = await readFile(path, "utf8").catch(() => null)
-      if (contents !== null) {
-        const sanitized = sanitizeRuntimeSourceJson(bounded(contents, 4 * 1024 * 1024), privateRuntimeSourceRootForSanitization)
+    if (entry.isFile() && (await stat(path)).size <= 4 * 1024 * 1024) {
+      const contents = await readFile(path).catch(() => null)
+      if (contents && !contents.includes(0) && isUtf8(contents)) {
+        const sanitized = sanitizeRuntimeSourceJson(redact(bounded(contents.toString("utf8"), 4 * 1024 * 1024)), privateRuntimeSourceRootForSanitization)
         assertNoRuntimeSourcePaths(sanitized, privateRuntimeSourceRootForSanitization)
         await writeFile(path, sanitized)
       }
@@ -636,7 +638,12 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
     const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
-      workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: artifactsPath, artifactRefs: refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
+    const trustedArtifacts = await createTrustedArtifactSnapshot(artifactsPath, refs)
+    try {
+      workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: trustedArtifacts.root, artifactRefs: trustedArtifacts.refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
+    } finally {
+      await rm(trustedArtifacts.root, { recursive: true, force: true })
+    }
   } catch (error) {
     downstreamFailure = { stage: "apply", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }

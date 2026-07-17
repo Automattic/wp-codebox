@@ -15,7 +15,7 @@ async function run(mode = "success") {
   const temp = await mkdtemp(join(tmpdir(), "wp-codebox-native-lifecycle-"))
   const workspace = join(temp, "workspace")
   await mkdir(join(workspace, ".codebox"), { recursive: true })
-  await writeFile(join(workspace, "README.md"), "before\n")
+  await writeFile(join(workspace, "README.md"), "OPENAI_API_KEY\nbefore\n")
 
   const request = {
     schema: "wp-codebox/agent-task-workflow-request/v1",
@@ -74,7 +74,7 @@ const output = process.argv[process.argv.indexOf("--result-file") + 1]
 const input = JSON.parse(await readFile(process.argv[process.argv.indexOf("--input-file") + 1], "utf8"))
 const root = join(process.cwd(), ".codebox", "agent-task-artifacts", "files")
 await mkdir(root, { recursive: true })
-const patch = ${JSON.stringify(noOp ? "" : applyReject ? "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-not-before\n+after\n" : "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n")}
+const patch = ${JSON.stringify(noOp ? "" : applyReject ? "--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n OPENAI_API_KEY\n-not-before\n+after\n" : "--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n OPENAI_API_KEY\n-before\n+after\n")}
 await writeFile(join(root, "patch.diff"), patch)
 await writeFile(join(root, "changed-files.json"), JSON.stringify({
   schema: "wp-codebox/changed-files/v1",
@@ -146,6 +146,7 @@ process.stdout.write(JSON.stringify({
          WP_CODEBOX_TEST_PUBLISHER_MODULE: publisher,
          WP_CODEBOX_TEST_PUBLISHER_HOOK: JSON.stringify({ orderPath: publisherOrderPath }),
         GITHUB_TOKEN: "token",
+        MODEL_PROVIDER_SECRET_1: "OPENAI_API_KEY",
         EXPLICIT_ACCESS_TOKEN_CONFIGURED: "true",
         EXTERNAL_PACKAGE_SOURCE_POLICY: JSON.stringify({
           version: 1,
@@ -169,7 +170,10 @@ process.stdout.write(JSON.stringify({
 
 const success = await run()
 assert.equal(success.code, 0, success.stderr)
-assert.equal(await readFile(join(success.workspace, "README.md"), "utf8"), "after\n")
+assert.equal(await readFile(join(success.workspace, "README.md"), "utf8"), "OPENAI_API_KEY\nafter\n")
+const durablePatch = await readFile(join(success.workspace, ".codebox", "agent-task-artifacts", "files", "patch.diff"), "utf8")
+assert(!durablePatch.includes("OPENAI_API_KEY"), "durable patch artifacts redact configured secret values")
+assert.match(durablePatch, /\[REDACTED\]/)
 assert.match(success.order, /runtime\nvalidation\nverification\ndrift\npublish\n/)
 assert.equal(success.result.runtime_result.metadata.runner_workspace_publication.pull_request.url, "https://github.com/owner/repo/pull/1")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].target, "/workspace")
@@ -214,12 +218,12 @@ await execFileAsync(process.execPath, [uploader], {
     AGENT_TASK_UPLOAD_PATH: join(mismatch.workspace, ".codebox", "agent-task-upload"),
   },
 })
-assert.equal(await readFile(join(mismatch.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n")
+assert.equal(await readFile(join(mismatch.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), "--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n [REDACTED]\n-before\n+after\n")
 assert.match(await readFile(join(mismatch.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "changed-files.json"), "utf8"), /README\.md/)
 
 const applyReject = await run("apply-reject")
 assert.equal(applyReject.code, 1)
-assert.equal(await readFile(join(applyReject.workspace, "README.md"), "utf8"), "before\n", "a rejected patch does not partially mutate the matching host workspace")
+assert.equal(await readFile(join(applyReject.workspace, "README.md"), "utf8"), "OPENAI_API_KEY\nbefore\n", "a rejected patch does not partially mutate the matching host workspace")
 assert.equal(applyReject.result.failure.stage, "apply")
 assert.match(applyReject.result.failure.message, /Host git apply failed/)
 assert.deepEqual(applyReject.result.failure.evidence.expected_identity, applyReject.result.failure.evidence.actual_identity, "the failure records the matching seed and host identities")
