@@ -36,6 +36,12 @@ try {
   const builtRecipe = JSON.parse(await readFile(recipePath, "utf8")) as WorkspaceRecipe
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("test-root=/home/example/bin/tests/core"))
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("phpunit-xml=/home/example/bin/tests/core/phpunit.xml"))
+
+  await writeFile(optionsPath, JSON.stringify({ pluginSlug: "example" }))
+  assert.equal(await runRecipeBuildCommand(["phpunit", "--options", optionsPath, "--output", recipePath]), 0)
+  const defaultRecipe = JSON.parse(await readFile(recipePath, "utf8")) as WorkspaceRecipe
+  assert.ok(defaultRecipe.workflow.steps[0].args?.includes("test-root=/wordpress/wp-content/plugins/example/tests"))
+  assert.ok(defaultRecipe.workflow.steps[0].args?.includes("phpunit-xml=/wordpress/wp-content/plugins/example/phpunit.xml.dist"))
 } finally {
   await rm(builderDirectory, { recursive: true, force: true })
 }
