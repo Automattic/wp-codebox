@@ -1,4 +1,4 @@
-import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeRuntimeService, WorkspaceRecipeStep } from "./runtime-contracts.js"
+import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipePHPWasmExtensionManifest, WorkspaceRecipeRuntimeBackendPackage, WorkspaceRecipeRuntimeService, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
 export { buildRuntimePackageRunRecipe, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA, runtimePackageExecutionInput, type RuntimePackageArtifactDeclaration, type RuntimePackageExecutionInput, type RuntimePackageOutputProjection, type RuntimePackageRunRecipeOptions } from "./runtime-package-execution.js"
 export { RUNTIME_PACKAGE_DIAGNOSTIC_SCHEMA, RUNTIME_PACKAGE_RESULT_SCHEMA, RUNTIME_PACKAGE_TASK_SCHEMA, normalizeRuntimePackageResult, normalizeRuntimePackageTask, validateRuntimePackageTask, type RuntimePackageDiagnostic, type RuntimePackageResult, type RuntimePackageTask } from "./runtime-package-contracts.js"
@@ -13,7 +13,10 @@ export interface NormalizeRecipeMountsOptions {
 
 export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
+  phpVersion?: string
   blueprint?: unknown
+  extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
+  backendPackage?: WorkspaceRecipeRuntimeBackendPackage
   mounts?: WorkspaceRecipeMount[]
   services?: WorkspaceRecipeRuntimeService[]
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
@@ -73,7 +76,10 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: {
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
+      ...(options.phpVersion ? { phpVersion: options.phpVersion } : {}),
       blueprint: options.blueprint ?? { steps: [] },
+      ...(options.extensions?.length ? { extensions: options.extensions } : {}),
+      ...(options.backendPackage ? { backendPackage: options.backendPackage } : {}),
     },
     inputs: {
       extra_plugins: normalizeExtraPlugins(options.extra_plugins),

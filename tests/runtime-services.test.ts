@@ -29,6 +29,9 @@ try {
   const recipePath = join(builderDirectory, "recipe.json")
   await writeFile(optionsPath, JSON.stringify({
     pluginSlug: "example",
+    phpVersion: "8.3",
+    extensions: [{ manifest: "./sodium/manifest.json" }],
+    backendPackage: { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" },
     testRoot: "/home/example/bin/tests/core",
     phpunitXml: "/home/example/bin/tests/core/phpunit.xml",
   }))
@@ -36,6 +39,9 @@ try {
   const builtRecipe = JSON.parse(await readFile(recipePath, "utf8")) as WorkspaceRecipe
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("test-root=/home/example/bin/tests/core"))
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("phpunit-xml=/home/example/bin/tests/core/phpunit.xml"))
+  assert.equal(builtRecipe.runtime?.phpVersion, "8.3")
+  assert.deepEqual(builtRecipe.runtime?.extensions, [{ manifest: "./sodium/manifest.json" }])
+  assert.deepEqual(builtRecipe.runtime?.backendPackage, { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" })
 
   await writeFile(optionsPath, JSON.stringify({ pluginSlug: "example" }))
   assert.equal(await runRecipeBuildCommand(["phpunit", "--options", optionsPath, "--output", recipePath]), 0)
