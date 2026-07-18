@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 
 import { fuzzSuiteContract, type RuntimeEpisodeStepResult } from "../packages/runtime-core/src/public.js"
+import { BrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { createWordPressFuzzSuiteCommandExecutor, executeWordPressFuzzSuite } from "../packages/runtime-playground/src/public.js"
 
 const steps: Array<{ command: string; args?: string[]; observation?: unknown }> = []
@@ -357,6 +358,62 @@ const restoreFailureResult = await executeWordPressFuzzSuite(restoreFailureEpiso
 }), { requireCoverage: true })
 assert.equal(restoreFailureResult.status, "passed")
 assert.deepEqual(restoreFailureResult.cases[0]?.diagnostics, [])
+
+let nestedProofResets = 0
+const nestedProofEpisode = {
+  async reset() {
+    nestedProofResets += 1
+    return episode.reset()
+  },
+  async step(action: { command: string; args?: string[] }, observation?: unknown) {
+    return episode.step(action, observation)
+  },
+}
+const nestedProofResult = await executeWordPressFuzzSuite(nestedProofEpisode, fuzzSuiteContract({
+  id: "runtime-backed-nested-editor-proof",
+  cases: [{ id: "nested-editor-save", target: { kind: "runtime-action" }, input: { type: "sequence", steps: [{ type: "editor_actions", steps: [{ kind: "insertBlock", name: "core/paragraph" }, { kind: "savePost" }] }] } }],
+}), { requireCoverage: true })
+assert.equal(nestedProofResult.status, "passed")
+assert.equal(nestedProofResets > 0, true)
+assert.equal(steps.some((step) => step.command === "wordpress.editor-actions"), true)
+
+const failureArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-editor-fuzz-failure-"))
+try {
+  const failureEpisode = {
+    async reset() {
+      return episode.reset()
+    },
+    async step(action: { command: string; args?: string[] }) {
+      const files = action.command === "wordpress.editor-actions"
+        ? { actions: "files/browser/editor-action-steps.jsonl", editorState: "files/browser/editor-action-state.json", summary: "files/browser/editor-action-summary.json" }
+        : { validateBlocks: "files/browser/editor-validate-blocks.json", summary: "files/browser/editor-validate-blocks-summary.json" }
+      throw new BrowserCommandArtifactError(`${action.command} failed`, {
+        artifactType: action.command === "wordpress.editor-actions" ? "editor-actions" : "editor-validate-blocks",
+        requestedUrl: "/wp-admin/post-new.php",
+        url: "/wp-admin/post-new.php",
+        preview: { mode: "direct" },
+        files,
+        summary: { consoleMessages: 0, errors: 1, finalUrl: "/wp-admin/post-new.php", htmlSnapshot: false, networkEvents: 0, replayability: "artifact-backed", screenshot: false },
+      } as never)
+    },
+  }
+  const failureResult = await executeWordPressFuzzSuite(failureEpisode, fuzzSuiteContract({
+    id: "runtime-backed-editor-artifact-failures",
+    cases: [
+      { id: "editor-actions-failure", target: { kind: "runtime-action" }, input: { type: "editor_actions", steps: [{ kind: "inspectState" }] } },
+      { id: "editor-validate-failure", target: { kind: "runtime-action" }, input: { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>Failure</p><!-- /wp:paragraph -->" } },
+    ],
+  }), { artifactStorage: { root: failureArtifactRoot }, requireCoverage: true })
+  assert.equal(failureResult.status, "error")
+  assert.deepEqual(failureResult.cases[0]?.artifactRefs?.map((ref) => ref.path), ["files/browser/editor-action-steps.jsonl", "files/browser/editor-action-state.json", "files/browser/editor-action-summary.json"])
+  assert.deepEqual(failureResult.cases[1]?.artifactRefs?.map((ref) => ref.path), ["files/browser/editor-validate-blocks.json", "files/browser/editor-validate-blocks-summary.json"])
+  const failureBundle = failureResult.metadata?.artifacts as { fuzzBundle?: { replayCaseRefs?: Array<{ caseId?: string; path?: string }> } } | undefined
+  const replayRef = failureBundle?.fuzzBundle?.replayCaseRefs?.find((ref) => ref.caseId === "editor-validate-failure")
+  const replayArtifact = JSON.parse(await readFile(join(failureArtifactRoot, replayRef?.path ?? ""), "utf8"))
+  assert.equal(replayArtifact.artifactRefs.some((ref: { path?: string }) => ref.path === "files/browser/editor-validate-blocks.json"), true)
+} finally {
+  await rm(failureArtifactRoot, { recursive: true, force: true })
+}
 
 console.log("playground fuzz suite public ok")
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
+import { isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 
 import {
   ArtifactBundleWriter,
@@ -24,6 +25,7 @@ import {
   renderWordPressBlock,
   exerciseWordPressBlock,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+  RuntimeActionExecutionError,
   WORDPRESS_DB_OPERATION_SCHEMA,
   planBrowserRandomWalk,
   runWordPressCrudOperation,
@@ -222,14 +224,20 @@ function suiteRequiresDestructiveSandboxProof(suite: FuzzSuiteContract): boolean
     if (mutation?.destructive === true || ["write", "delete", "destructive"].includes(stringValue(mutation?.intent) ?? "")) return true
     const target = fuzzCase.target ?? suite.target
     if (target?.kind !== "runtime-action") return false
-    const input = recordValue(fuzzCase.input)
-    const actionType = stringValue(input?.type)
-    if (actionType === "rest_request") return isRestMutationMethod(stringValue(input?.method) ?? "GET")
-    if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(input?.operation) ?? "")
-    if (actionType === "crud_operation") return stringValue(input?.operation) !== "read"
-    if (actionType === "editor_actions") return Array.isArray(input?.steps) && input.steps.some((step) => recordValue(step)?.kind === "savePost")
-    return false
+    return runtimeActionRequiresDestructiveSandboxProof(recordValue(fuzzCase.input))
   })
+}
+
+function runtimeActionRequiresDestructiveSandboxProof(action: Record<string, unknown> | undefined): boolean {
+  const actionType = stringValue(action?.type)
+  if (actionType === "sequence") {
+    return Array.isArray(action?.steps) && action.steps.some((step) => runtimeActionRequiresDestructiveSandboxProof(recordValue(step)))
+  }
+  if (actionType === "rest_request") return isRestMutationMethod(stringValue(action?.method) ?? "GET")
+  if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(action?.operation) ?? "")
+  if (actionType === "crud_operation") return stringValue(action?.operation) !== "read"
+  if (actionType === "editor_actions") return Array.isArray(action?.steps) && action.steps.some((step) => recordValue(step)?.kind === "savePost")
+  return false
 }
 
 async function createRuntimeDestructiveSandboxProof(episode: Pick<RuntimeEpisode, "reset">, suite: FuzzSuiteContract): Promise<DestructiveSandboxProof> {
@@ -420,7 +428,12 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       if (action.type === "editor_actions" || action.type === "editor_validate_blocks") {
         const command = action.type === "editor_actions" ? "wordpress.editor-actions" : "wordpress.editor-validate-blocks"
         const args = action.type === "editor_actions" ? runtimeEditorActionsArgs(action) : runtimeEditorValidateBlocksArgs(action)
-        const step = await episode.step({ kind: "browser", command, args, ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}), operation: action.type }, { type: "browser-result" })
+        let step: RuntimeEpisodeStepResult
+        try {
+          step = await episode.step({ kind: "browser", command, args, ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}), operation: action.type }, { type: "browser-result" })
+        } catch (error) {
+          throw runtimeActionExecutionError(error)
+        }
         const data = { mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id }
         return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
       }
@@ -433,6 +446,15 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
   }
+}
+
+function runtimeActionExecutionError(error: unknown): Error {
+  if (!isBrowserCommandArtifactError(error)) return error instanceof Error ? error : new Error(String(error))
+  return new RuntimeActionExecutionError(error.message, browserArtifactTraceRefs(error.artifact))
+}
+
+function browserArtifactTraceRefs(artifact: import("./browser-artifacts.js").BrowserArtifact): RuntimeEpisodeTraceRef[] {
+  return Object.entries(artifact.files).flatMap(([kind, value]) => (Array.isArray(value) ? value : [value]).flatMap((path, index) => typeof path === "string" ? [{ kind: `browser-${kind}`, id: `${artifact.artifactType}:${kind}:${index}`, path }] : []))
 }
 
 function runtimeEditorActionTargetArgs(action: { target?: string; post_id?: number; post_type?: string; url?: string; wait_selector?: string; capture?: string[]; timeout_ms?: number }): string[] {

@@ -2,7 +2,7 @@ import { stripUndefined } from "./object-utils.js"
 import { planBrowserRandomWalk } from "./browser-interaction.js"
 import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
-import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
+import { RuntimeActionExecutionError, type RuntimeAction, type RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
@@ -249,7 +249,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         } catch (error) {
           const diagnostic: FuzzSuiteDiagnostic = { severity: "error", code: "fuzz_suite_runtime_action_sequence_execution_error", caseId: fuzzCase.id, target, message: error instanceof Error ? error.message : String(error) }
           diagnostics.push(diagnostic)
-          cases.push({ id: fuzzCase.id, status: "error", success: false, target, reset, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode" } }) })
+          cases.push({ id: fuzzCase.id, status: "error", success: false, target, reset, diagnostics: [diagnostic], artifactRefs: fuzzSuiteRuntimeActionErrorArtifactRefs(error), metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode" } }) })
         }
         continue
       }
@@ -304,6 +304,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           target,
           reset,
           diagnostics: [diagnostic],
+          artifactRefs: fuzzSuiteRuntimeActionErrorArtifactRefs(error),
           metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" } }),
         })
       }
@@ -1441,6 +1442,12 @@ function fuzzSuiteExecutionArtifactRefs(execution: ExecutionResult): FuzzSuiteAr
 
 function fuzzSuiteRuntimeActionArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] | undefined {
   const refs = [...(observation.artifactRefs ?? []), ...(observation.step?.execution.artifactRefs ?? []), ...(observation.step?.execution.result?.artifactRefs ?? [])].map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
+  return refs.length > 0 ? refs : undefined
+}
+
+function fuzzSuiteRuntimeActionErrorArtifactRefs(error: unknown): FuzzSuiteArtifactRef[] | undefined {
+  if (!(error instanceof RuntimeActionExecutionError)) return undefined
+  const refs = error.artifactRefs.map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
   return refs.length > 0 ? refs : undefined
 }
 

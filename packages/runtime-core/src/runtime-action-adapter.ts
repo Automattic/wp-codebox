@@ -250,6 +250,13 @@ export class RuntimeActionPolicyError extends Error {
   }
 }
 
+export class RuntimeActionExecutionError extends Error {
+  constructor(message: string, readonly artifactRefs: RuntimeEpisodeTraceRef[]) {
+    super(message)
+    this.name = "RuntimeActionExecutionError"
+  }
+}
+
 export async function runRuntimeAction(
   episode: RuntimeEpisode,
   action: RuntimeAction,
