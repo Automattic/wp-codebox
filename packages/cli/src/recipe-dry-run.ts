@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path"
-import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./commands/recipe-run-artifacts-mount-guard.js"
@@ -55,6 +55,7 @@ export interface RecipePlan {
     wp: string
     phpVersion?: string
     wordpressInstallMode?: RuntimeWordPressInstallMode
+    assets?: RuntimeAssetSpec
     blueprint: unknown
     extensions?: Array<{ manifest: string }>
   }
@@ -441,6 +442,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
       ...(recipe.runtime?.phpVersion ? { phpVersion: recipe.runtime.phpVersion } : {}),
       ...(recipe.runtime?.wordpressInstallMode ? { wordpressInstallMode: recipe.runtime.wordpressInstallMode } : {}),
+      ...(recipe.runtime?.assets ? { assets: recipe.runtime.assets } : {}),
       ...(recipe.runtime?.extensions ? { extensions: recipe.runtime.extensions } : {}),
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
     },

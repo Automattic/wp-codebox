@@ -442,7 +442,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 		return match ( $command ) {
 			'wordpress.ensure-plugin-active' => self::execute_fuzz_suite_plugin_activation( $args, $observation, $case_id ),
 			'wordpress.ensure-external-http-guardrail' => self::execute_fuzz_suite_external_http_guardrail( $args, $observation ),
-			'wordpress.inventory-rest-routes', 'wordpress.rest-route-inventory' => self::execute_fuzz_suite_rest_route_inventory( $args, $observation, $case_id ),
+			'wordpress.rest-route-inventory' => self::execute_fuzz_suite_rest_route_inventory( $args, $observation, $case_id ),
 			'wordpress.inventory-database' => self::execute_fuzz_suite_database_inventory( $args, $observation, $case_id ),
 			'wordpress.admin-page-inventory' => self::execute_fuzz_suite_admin_page_inventory( $args, $observation ),
 			'wordpress.fuzz-admin-pages' => self::execute_fuzz_suite_admin_page_fuzz( $args, $observation ),
@@ -517,7 +517,7 @@ private static function execute_fuzz_suite_rest_route_inventory( array $args, ar
 	$observation['namespaces'] = array_values( array_unique( $namespaces ) );
 	$observation['payload'] = array(
 		'schema'     => 'wp-codebox/wordpress-rest-route-inventory/v1',
-		'command'    => 'wordpress.inventory-rest-routes',
+		'command'    => 'wordpress.rest-route-inventory',
 		'routes'     => $items,
 		'namespaces' => $observation['namespaces'],
 	);

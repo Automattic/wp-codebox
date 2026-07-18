@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 
-const wordpressDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-wordpress-source-"))
+const wordpressDevelopDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-wordpress-develop-"))
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-artifacts-"))
 const calls: Parameters<PlaygroundCliModule["runCLI"]>[0][] = []
 
@@ -32,7 +32,7 @@ try {
       version: "mounted-wordpress-source",
       phpVersion: "8.4",
       wordpressInstallMode: "do-not-attempt-installing",
-      assets: { wordpressDirectory },
+      assets: { wordpressDirectory: wordpressDevelopDirectory },
       extensions: [{ manifest: "/tmp/sodium/manifest.json" }],
       blueprint: {},
     },
@@ -64,7 +64,8 @@ try {
   assert.equal(calls.length, 1)
   assert.equal(calls[0]["mount-before-install"]?.length, 2)
   assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared")
-  assert.deepEqual(calls[0]["mount-before-install"]?.[1], { hostPath: wordpressDirectory, vfsPath: "/wordpress" })
+  // A wordpress-develop checkout is the runtime root, not an ordinary post-startup mount.
+  assert.deepEqual(calls[0]["mount-before-install"]?.[1], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
@@ -121,7 +122,7 @@ try {
   assert.match(distributionAutoPrepend, /define\("WPCOM_IS_BRANCH_PREVIEW", true\)/)
   assert.match(distributionAutoPrepend, /define\("WPCOM_BRANCH_ID", 123\)/)
 } finally {
-  await rm(wordpressDirectory, { recursive: true, force: true })
+  await rm(wordpressDevelopDirectory, { recursive: true, force: true })
   await rm(artifactsDirectory, { recursive: true, force: true })
 }
 

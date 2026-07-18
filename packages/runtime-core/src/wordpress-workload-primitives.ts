@@ -20,6 +20,8 @@ export interface WordPressAbilityStepOptions {
 
 export interface WordPressWorkloadRunRecipeOptions {
   wordpressVersion?: string
+  /** Local WordPress core source mounted at /wordpress before Playground starts. */
+  wordpressDirectory?: string
   blueprint?: unknown
   preview?: RuntimePreviewSpec
   mounts?: WorkspaceRecipeMount[]
@@ -80,6 +82,7 @@ export function wordpressWorkloadRunRecipe(options: WordPressWorkloadRunRecipeOp
     runtime: stripUndefined({
       backend: "wordpress-playground",
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
+      assets: options.wordpressDirectory ? { wordpressDirectory: options.wordpressDirectory } : undefined,
       blueprint: options.blueprint ?? { steps: [] },
       preview: options.preview,
       stack: Array.isArray(options.runtimeStackMounts) && options.runtimeStackMounts.length > 0 ? { mounts: options.runtimeStackMounts } : undefined,

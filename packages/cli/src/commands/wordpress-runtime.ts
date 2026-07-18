@@ -183,7 +183,7 @@ function runtimeBackedFuzzSuitePolicy(suite: FuzzSuiteContract): RuntimePolicy {
 
 function fuzzSuiteRequiresRecipeRuntime(input: Record<string, unknown>): boolean {
   const requirements = fuzzSuiteRuntimeRequirements(input)
-  return arrayOption(requirements?.extra_plugins).length > 0 || arrayOption(requirements?.component_contracts).length > 0
+  return arrayOption(requirements?.extra_plugins).length > 0 || arrayOption(requirements?.component_contracts).length > 0 || Boolean(runtimeRequirementWordPressDirectory(requirements))
 }
 
 function runtimeBackedFuzzSuiteCommands(suite: FuzzSuiteContract): string[] {
@@ -310,12 +310,19 @@ function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, requirements
   }
   recipe.runtime = {
     ...runtime,
+    assets: runtimeRequirementWordPressDirectory(requirements)
+      ? { ...(runtime.assets ?? {}), wordpressDirectory: runtimeRequirementWordPressDirectory(requirements) }
+      : runtime.assets,
     stack: arrayOption(requirements.runtime_mounts).length > 0 ? { ...(runtime.stack ?? {}), mounts: arrayOption(requirements.runtime_mounts) as WorkspaceRecipeMount[] } : runtime.stack,
   }
   recipe.metadata = {
     ...(recipe.metadata ?? {}),
     runtime_requirements: requirements,
   }
+}
+
+function runtimeRequirementWordPressDirectory(requirements: Record<string, unknown> | undefined): string | undefined {
+  return requirements ? stringValue(requirements.wordpress_directory) : undefined
 }
 
 function fuzzSuiteRuntimeRequirements(suiteInput: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -428,6 +435,7 @@ function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequiremen
   const steps = workloadRecipeSteps(input, runtimeRequirements)
   return {
     wordpressVersion: stringValue(input.wordpressVersion ?? input.wordpress_version ?? input.wp),
+    wordpressDirectory: stringValue(input.wordpress_directory),
     blueprint: input.blueprint,
     preview: objectOption(input.preview) as WordPressWorkloadRunRecipeOptions["preview"],
     mounts: arrayOption(input.mounts) as WordPressWorkloadRunRecipeOptions["mounts"],

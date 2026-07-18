@@ -337,6 +337,10 @@ function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recip
   if (assets.wordpressZip !== undefined && typeof assets.wordpressZip !== "string") {
     throw new Error(`Recipe runtime assets wordpressZip must be a string: ${recipePath}`)
   }
+
+  if (assets.wordpressDirectory !== undefined && typeof assets.wordpressDirectory !== "string") {
+    throw new Error(`Recipe runtime assets wordpressDirectory must be a string: ${recipePath}`)
+  }
 }
 
 function validateRecipeRuntimeExtensions(extensions: NonNullable<WorkspaceRecipe["runtime"]>["extensions"] | undefined, recipePath: string): void {

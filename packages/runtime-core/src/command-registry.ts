@@ -628,20 +628,6 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runRestRouteInventory" },
   },
   {
-    id: "wordpress.inventory-rest-routes",
-    description: "Inventory registered WordPress REST routes for fuzzing seed discovery using rest_get_server()->get_routes().",
-    acceptedArgs: [],
-    outputShape: "wp-codebox/wordpress-rest-route-inventory/v1 JSON with route, namespace, methods, bounded endpoint permission descriptors, bounded arg/schema descriptors, status, and diagnostics.",
-    outputSchema: objectEnvelopeSchema(WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, {
-      routes: { type: "array" },
-      namespaces: { type: "array" },
-      diagnostics: { type: "array" },
-    }),
-    policyRequirement: "Runtime policy commands must include wordpress.inventory-rest-routes.",
-    recipe: true,
-    handler: { kind: "playground", method: "runRestRouteInventory" },
-  },
-  {
     id: "wordpress.admin-page-inventory",
     description: "Inventory already-loaded WordPress admin menu pages for fuzzing target discovery without crawling the browser UI.",
     acceptedArgs: [],

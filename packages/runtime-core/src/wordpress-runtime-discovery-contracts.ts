@@ -9,7 +9,6 @@ export const WORDPRESS_EXECUTION_ACTION_RESULT_SCHEMA = "wp-codebox/wordpress-ex
 
 export type WordPressRuntimeInventoryCommand =
   | "wordpress.rest-route-inventory"
-  | "wordpress.inventory-rest-routes"
   | "wordpress.admin-page-inventory"
   | "wordpress.admin-action-inventory"
   | "wordpress.inventory-database"
@@ -48,7 +47,7 @@ export interface WordPressRestRouteDiscovery {
 
 export interface WordPressRestRouteInventory {
   schema: typeof WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA
-  command: "wordpress.rest-route-inventory" | "wordpress.inventory-rest-routes"
+  command: "wordpress.rest-route-inventory"
   status: "ok" | "unsupported"
   routes: WordPressRestRouteDescriptor[]
   namespaces: string[]

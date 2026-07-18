@@ -40,6 +40,8 @@ return static function ( array $input, array $args ): array {
     );
 };
   `, "utf8")
+  const wordpressDevelopSource = join(directory, "wordpress-develop")
+  await mkdir(wordpressDevelopSource)
 
   const descriptorOutput = await captureStdout(async () => {
     assert.equal(await runCli(["fuzz", "descriptor", "--format=json"]), 0)
@@ -149,7 +151,7 @@ return static function ( array $input, array $args ): array {
     id: "public-cli-runtime-command-suite",
     cases: [{
       id: "rest-route-inventory",
-      target: { kind: "runtime", id: "wordpress.inventory-rest-routes", entrypoint: "wordpress.inventory-rest-routes" },
+      target: { kind: "runtime", id: "wordpress.rest-route-inventory", entrypoint: "wordpress.rest-route-inventory" },
       input: { args: [] },
     }],
   }), "utf8")
@@ -163,7 +165,33 @@ return static function ( array $input, array $args ): array {
   assert.notEqual(runtimeCommandFuzzJson.cases[0].skipReason, "fuzz_suite_executor_unavailable")
   assert.equal(runtimeCommandFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime")
   assert.equal(runtimeCommandFuzzJson.cases[0].metadata.execution.result.json.schema, "wp-codebox/recipe-run-dry-run/v1")
-  assert.equal(runtimeCommandFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.inventory-rest-routes")
+  assert.equal(runtimeCommandFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.rest-route-inventory")
+
+  const coreRuntimeFuzzInput = join(directory, "core-runtime-fuzz.json")
+  await writeFile(coreRuntimeFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-core-runtime-suite",
+    metadata: {
+      runtime_requirements: {
+        wordpress_directory: wordpressDevelopSource,
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, loadAs: "plugin", activate: true }],
+      },
+    },
+    cases: [{
+      id: "core-phpunit",
+      target: { kind: "runtime", id: "wordpress.core-phpunit", entrypoint: "wordpress.core-phpunit" },
+      input: { args: ["test-root=/wordpress/tests/phpunit"] },
+    }],
+  }), "utf8")
+  const coreRuntimeFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", coreRuntimeFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const coreRuntimeFuzzJson = JSON.parse(coreRuntimeFuzzOutput)
+  const coreRuntimePlan = coreRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan
+  assert.equal(coreRuntimePlan.runtime.assets.wordpressDirectory, wordpressDevelopSource)
+  assert.equal(coreRuntimePlan.runtime.stack, undefined)
+  assert.deepEqual(coreRuntimePlan.extra_plugins.map((plugin: { slug: string }) => plugin.slug), ["sample-plugin"])
+  assert.equal(coreRuntimePlan.workflow.steps[0].command, "wordpress.core-phpunit")
 
   const phpRuntimeFuzzInput = join(directory, "runtime-php-workload-fuzz.json")
   await writeFile(phpRuntimeFuzzInput, JSON.stringify({

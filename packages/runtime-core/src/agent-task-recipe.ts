@@ -39,7 +39,6 @@ export interface AgentTaskRunInput {
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
   dependency_overlays?: NonNullable<WorkspaceRecipe["inputs"]>["dependency_overlays"]
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
-  extraPlugins?: WorkspaceRecipeExtraPlugin[]
   runtime_stack_mounts?: WorkspaceRecipeMount[]
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
@@ -677,9 +676,7 @@ function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPl
     ...normalizeAgentTaskExtraPlugins(runtimeProfileRecord(input).plugins),
     ...normalizeAgentTaskExtraPlugins(runtimeProfileRecord(input).mu_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
-    ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
     ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extra_plugins),
-    ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extraPlugins),
   ]
 }
 

@@ -397,7 +397,7 @@ $result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 				'id'     => 'rest-route-inventory',
 				'phases' => array(
 					'action' => array(
-						array( 'command' => 'wordpress.inventory-rest-routes', 'args' => array( 'namespaces=sample/v1', 'artifact=route_inventory' ) ),
+						array( 'command' => 'wordpress.rest-route-inventory', 'args' => array( 'namespaces=sample/v1', 'artifact=route_inventory' ) ),
 					),
 				),
 			),

@@ -146,7 +146,6 @@ assert.equal(executionSurfaces.surfaces[0]?.invocation.resultSchema, WORDPRESS_E
 
 const inventoryDefinitions = [
   ["wordpress.rest-route-inventory", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
-  ["wordpress.inventory-rest-routes", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
   ["wordpress.admin-page-inventory", "runAdminPageInventory", WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA],
   ["wordpress.admin-action-inventory", "runAdminActionInventory", WORDPRESS_ADMIN_ACTION_INVENTORY_SCHEMA],
   ["wordpress.inventory-database", "runDatabaseInventory", WORDPRESS_DATABASE_INVENTORY_SCHEMA],
@@ -234,7 +233,7 @@ assert.deepEqual(route?.endpoints?.[0]?.args[1]?.enum, ["view", "edit"])
 assert.equal(route?.endpoints?.[0]?.args[1]?.defaultPresent, true)
 assert.deepEqual(route?.schema?.properties, ["id", "name"])
 
-const inventoryPhp = runtimeInventoryPhpCode("rest", "wordpress.inventory-rest-routes", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA).replace(/^<\?php\n/, "")
+const inventoryPhp = runtimeInventoryPhpCode("rest", "wordpress.rest-route-inventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA).replace(/^<\?php\n/, "")
 const inventoryDiscovered = await runPhpJson<WordPressRestRouteInventory>(`
 function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
 function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
@@ -256,7 +255,7 @@ function rest_get_server() {
 ${inventoryPhp}
 `)
 
-assert.equal(inventoryDiscovered.command, "wordpress.inventory-rest-routes")
+assert.equal(inventoryDiscovered.command, "wordpress.rest-route-inventory")
 assert.equal(inventoryDiscovered.schema, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
 assert.equal(inventoryDiscovered.routes[0]?.route, "/demo/v1/items")
 

@@ -630,8 +630,7 @@ try {
       activate: false,
       pluginFile: "agent-runtime-tool-bridge/agent-runtime-tool-bridge.php",
       metadata: { source: "agent-task-input" },
-    }],
-    extraPlugins: [{
+    }, {
       source: providerSource,
       slug: "test-provider",
       loadAs: "plugin",
