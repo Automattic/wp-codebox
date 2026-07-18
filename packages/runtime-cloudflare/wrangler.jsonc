@@ -1,0 +1,7 @@
+{
+  "name": "wp-codebox-cloudflare-runtime",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }]
+}

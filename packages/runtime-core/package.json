@@ -25,6 +25,10 @@
       "types": "./dist/run-results.d.ts",
       "import": "./dist/run-results.js"
     },
+    "./runtime-command-result": {
+      "types": "./dist/runtime-command-result.d.ts",
+      "import": "./dist/runtime-command-result.js"
+    },
     "./php-snippets": {
       "types": "./dist/runtime-php-snippets.d.ts",
       "import": "./dist/runtime-php-snippets.js"

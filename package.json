@@ -36,6 +36,10 @@
       "types": "./packages/runtime-core/dist/run-results.d.ts",
       "import": "./packages/runtime-core/dist/run-results.js"
     },
+    "./runtime-command-result": {
+      "types": "./packages/runtime-core/dist/runtime-command-result.d.ts",
+      "import": "./packages/runtime-core/dist/runtime-command-result.js"
+    },
     "./agent-task-recipe": {
       "types": "./packages/runtime-core/dist/agent-task-recipe.d.ts",
       "import": "./packages/runtime-core/dist/agent-task-recipe.js"
@@ -76,6 +80,8 @@
   ],
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
+    "cloudflare:dry-run": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
+    "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
@@ -86,6 +92,7 @@
     "generate:fanout-aggregation-contract": "tsx scripts/generate-fanout-aggregation-contract-fixture.ts",
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
+    "test:cloudflare-runtime": "tsx tests/cloudflare-runtime.test.ts && node ./node_modules/typescript/bin/tsc -p packages/runtime-cloudflare --noEmit",
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts && tsx tests/agent-task-canonical-evidence.test.ts && npm run test:agent-task-workflow-interface && npm run test:runtime-sources-materialization && tsx tests/agent-task-reusable-workflow.test.ts",
     "test:agent-task-workflow-interface": "tsx tests/run-agent-task-reusable-workflow-interface.test.ts",
     "test:agent-task-runtime-package-staging": "tsx tests/agent-task-runtime-package-staging.test.ts",
@@ -240,8 +247,10 @@
     "packages/*"
   ],
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260718.1",
     "@types/node": "^24.0.0",
-    "tsx": "^4.20.0"
+    "tsx": "^4.20.0",
+    "wrangler": "^4.112.0"
   },
   "description": "**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely — every sandbox is a disposable WordPress Playground that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.",
   "main": "index.js",
