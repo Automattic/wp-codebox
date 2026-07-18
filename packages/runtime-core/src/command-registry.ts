@@ -1217,7 +1217,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "source-url", description: "Source browser target path or absolute URL.", format: "path or URL" },
       { name: "candidate-url", description: "Candidate browser target path or absolute URL.", format: "path or URL" },
-      { name: "matrix-json", description: "Optional comparison matrix object with comparisons and optional viewports arrays; each comparison may provide source/candidate targets, labels, viewport, and wait settings.", format: "JSON object" },
+      { name: "matrix-json", description: "Optional comparison matrix object with comparisons and optional viewports arrays; each comparison may provide source/candidate targets, labels, viewport, wait settings, maxExplanationElements/maxExplanationCandidates/explainSelectors, or their kebab-case max-explanation-elements/max-explanation-candidates/explain-selector aliases.", format: "JSON object" },
       { name: "source-screenshot", description: "Existing source PNG screenshot path on the host.", format: "path" },
       { name: "candidate-screenshot", description: "Existing candidate PNG screenshot path on the host.", format: "path" },
       { name: "source-dom-snapshot", description: "Optional source DOM/style sidecar snapshot path for screenshot-backed visual explanations.", format: "path" },
@@ -1232,6 +1232,9 @@ export const commandRegistry = [
       { name: "threshold", description: "Pixelmatch color threshold; defaults to 0.1.", format: "number between 0 and 1" },
       { name: "include-aa", description: "Include anti-aliased pixels in mismatch count; defaults to false.", format: "boolean" },
       { name: "max-regions", description: "Maximum mismatch regions to report; defaults to 8.", format: "positive integer" },
+      { name: "max-explanation-elements", description: "Maximum DOM elements included in visual explanation attribution; defaults to 25.", format: "positive integer" },
+      { name: "max-explanation-candidates", description: "Maximum visible DOM elements captured from each target before visual explanation attribution; defaults to 160.", format: "positive integer" },
+      { name: "explain-selector", description: "Targeted selector included in visual explanation attribution. Supply once per selector.", repeatable: true, format: "CSS selector" },
     ],
     outputShape: "wp-codebox/visual-compare/v1 JSON summary plus files/browser/visual-compare/source.png, candidate.png, diff.png, visual-diff.json, visual-explanation.json when DOM/style context is available, and optional baseline delta evidence when a previous visual comparison artifact is supplied. Matrix runs emit wp-codebox/visual-compare-matrix/v1 in files/browser/visual-compare/matrix-summary.json plus per-comparison subdirectories.",
     outputSchema: objectEnvelopeSchema("wp-codebox/visual-compare/v1", {

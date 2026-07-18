@@ -110,6 +110,7 @@
     "test:browser-visual-compare-fair-ratio": "tsx tests/browser-visual-compare-fair-ratio.test.ts",
     "test:browser-visual-compare-layout-drift": "tsx tests/browser-visual-compare-layout-drift.test.ts",
     "test:browser-visual-compare-capture-reliability": "tsx tests/browser-visual-compare-capture-reliability.test.ts",
+    "test:browser-visual-compare-contract": "npm run build && tsx tests/browser-visual-compare-contract.test.ts",
     "test:browser-visual-compare-dom-snapshots": "npm run build && tsx tests/browser-visual-compare-dom-snapshots.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
     "test:browser-playground-session-run": "tsx tests/browser-playground-session-run.test.ts",

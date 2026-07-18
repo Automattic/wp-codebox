@@ -1233,6 +1233,7 @@ function visualCompareMatrixEndpoint(args: string[], role: "source" | "candidate
 
 function visualCompareMatrixOptions(args: string[]): Record<string, unknown> {
   const requestedViewport = viewportArg(args, "viewport")
+  const explainSelectors = visualCompareExplainSelectors(args)
   return {
     waitFor: argValue(args, "wait-for")?.trim() || "domcontentloaded",
     durationMs: durationArg(args, "duration", 0),
@@ -1243,6 +1244,7 @@ function visualCompareMatrixOptions(args: string[]): Record<string, unknown> {
     maxRegions: positiveIntegerArg(args, "max-regions", 8),
     maxExplanationElements: positiveIntegerArg(args, "max-explanation-elements", 25),
     maxExplanationCandidates: positiveIntegerArg(args, "max-explanation-candidates", 160),
+    ...(explainSelectors.length > 0 ? { explainSelectors } : {}),
   }
 }
 
@@ -1420,10 +1422,31 @@ function visualCompareMatrixArgs(record: Record<string, unknown>): string[] {
     ["max-explanation-elements", ["max-explanation-elements", "maxExplanationElements"]],
     ["max-explanation-candidates", ["max-explanation-candidates", "maxExplanationCandidates"]],
   ]
-  return fields.flatMap(([argName, keys]) => {
+  const args = fields.flatMap(([argName, keys]) => {
     const value = visualCompareMatrixValue(record, keys)
     return value === undefined ? [] : [`${argName}=${String(value)}`]
   })
+  const selectors = visualCompareMatrixSelectors(record)
+  return [...args, ...selectors.map((selector) => `explain-selector=${selector}`)]
+}
+
+function visualCompareMatrixSelectors(record: Record<string, unknown>): string[] {
+  const raw = visualCompareMatrixValue(record, ["explain-selector", "explainSelector", "explain-selectors", "explainSelectors"])
+  if (raw === undefined) {
+    return []
+  }
+  const values = Array.isArray(raw) ? raw : [raw]
+  const selectors = new Set<string>()
+  for (const value of values) {
+    if (typeof value !== "string") {
+      throw new Error("matrix-json explainSelectors must be a string or an array of strings")
+    }
+    const selector = value.trim()
+    if (selector) {
+      selectors.add(selector)
+    }
+  }
+  return [...selectors]
 }
 
 function visualCompareMatrixString(record: Record<string, unknown>, keys: string[]): string | undefined {
@@ -1445,7 +1468,7 @@ function sanitizeVisualCompareMatrixName(name: string): string {
 }
 
 function mergeVisualCompareMatrixArgs(baseArgs: string[], entryArgs: string[]): string[] {
-  const merged = baseArgs.filter((arg) => !entryArgs.some((entryArg) => arg.slice(0, arg.indexOf("=") + 1) === entryArg.slice(0, entryArg.indexOf("=") + 1)))
+  const merged = baseArgs.filter((arg) => arg.startsWith("explain-selector=") || !entryArgs.some((entryArg) => arg.slice(0, arg.indexOf("=") + 1) === entryArg.slice(0, entryArg.indexOf("=") + 1)))
   merged.push(...entryArgs)
   return merged
 }
@@ -2914,9 +2937,9 @@ function positiveIntegerArg(args: string[], name: string, fallback: number): num
   if (!raw) {
     return fallback
   }
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!/^[1-9]\d*$/.test(raw)) {
     throw new Error(`${name} must be a positive integer`)
   }
+  const parsed = Number.parseInt(raw, 10)
   return parsed
 }
