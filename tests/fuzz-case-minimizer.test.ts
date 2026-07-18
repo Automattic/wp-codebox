@@ -18,10 +18,10 @@ const result = await minimizeFuzzCase({
     sequence: {
       schema: "wp-codebox/runtime-action-sequence/v1",
       steps: [
-        { type: "php", code: "// setup", metadata: { id: "setup" } },
-        { type: "php", code: "// noise-a", metadata: { id: "noise-a" } },
-        { type: "php", code: "// failing", metadata: { id: "failing", fail: true } },
-        { type: "php", code: "// noise-b", metadata: { id: "noise-b" } },
+        { type: "editor_actions", steps: [{ kind: "inspectState" }], metadata: { id: "setup" } },
+        { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>noise</p><!-- /wp:paragraph -->", metadata: { id: "noise-a" } },
+        { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>failing</p><!-- /wp:paragraph -->", metadata: { id: "failing", fail: true } },
+        { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>noise</p><!-- /wp:paragraph -->", metadata: { id: "noise-b" } },
       ],
     },
   },

@@ -277,6 +277,35 @@ assert.equal(plannedEditor.status, "supported")
 assert.deepEqual(plannedEditor.spec, { command: "wordpress.editor-open", args: ["target=site"] })
 assert.equal(plannedEditor.replayMetadata.caseId, "editor")
 
+const plannedEditorActions = planFuzzSuiteCaseExecutionSpec({
+  suite: fuzzSuiteContract({ id: "planner", cases: [] }),
+  case: { id: "editor-actions", target: { kind: "runtime-action" }, input: { type: "editor_actions", target: "post-new", post_type: "page", steps: [{ kind: "insertBlock", name: "core/paragraph", attributes: { content: "Hello" } }, { kind: "savePost" }] } },
+  caseIndex: 0,
+})
+assert.equal(plannedEditorActions.status, "supported")
+assert.deepEqual(plannedEditorActions.spec, { command: "wordpress.editor-actions", args: ["target=post-new", "post-type=page", 'steps-json=[{"kind":"insertBlock","name":"core/paragraph","attributes":{"content":"Hello"}},{"kind":"savePost"}]'] })
+
+const plannedEditorValidation = planFuzzSuiteCaseExecutionSpec({
+  suite: fuzzSuiteContract({ id: "planner", cases: [] }),
+  case: { id: "editor-validation", target: { kind: "runtime-action" }, input: { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>Hello</p><!-- /wp:paragraph -->", validation_provider: "editor" } },
+  caseIndex: 0,
+})
+assert.equal(plannedEditorValidation.status, "supported")
+assert.deepEqual(plannedEditorValidation.spec, { command: "wordpress.editor-validate-blocks", args: ["content=<!-- wp:paragraph --><p>Hello</p><!-- /wp:paragraph -->", "validation-provider=editor"] })
+
+const editorSequence = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-editor-sequence",
+  metadata: { destructiveSandboxProof },
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "editor-baseline" },
+  cases: [{ id: "editor-sequence", target: { kind: "runtime-action" }, input: { type: "sequence", steps: [{ type: "editor_actions", steps: [{ kind: "insertBlock", name: "core/paragraph" }, { kind: "savePost" }] }, { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>Hello</p><!-- /wp:paragraph -->" }] } }],
+}), {
+  resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed" }),
+  runtimeActionExecutor: async ({ action }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: {}, observedAt: "2026-01-01T00:00:00.000Z", step: { id: `editor-${action.type}`, index: 0, action: { schema: "wp-codebox/runtime-episode-action/v1", id: action.type, kind: "command", command: action.type === "editor_actions" ? "wordpress.editor-actions" : "wordpress.editor-validate-blocks", args: [], digest: { algorithm: "sha256", value: action.type } }, actionRef: { kind: "action", id: action.type }, execution: { id: `execution-${action.type}`, command: action.type === "editor_actions" ? "wordpress.editor-actions" : "wordpress.editor-validate-blocks", args: [], exitCode: 0, stdout: "{}", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z", artifactRefs: [{ kind: "browser", id: action.type, path: `files/${action.type}.json` }] }, executionRef: { kind: "execution", id: `execution-${action.type}` } }, digest: { algorithm: "sha256", value: action.type } }),
+})
+assert.equal(editorSequence.status, "passed")
+assert.deepEqual(editorSequence.cases[0]?.artifactRefs?.map((ref) => ref.path), ["files/editor_actions.json", "files/editor_validate_blocks.json"])
+assert.equal(((editorSequence.cases[0]?.metadata?.replay as { sequence?: { steps?: Array<{ type?: string }> } } | undefined)?.sequence?.steps?.[1]?.type), "editor_validate_blocks")
+
 const workloadExecutions: Record<string, unknown>[] = []
 const runtimeWorkloadResult = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-runtime-workload",

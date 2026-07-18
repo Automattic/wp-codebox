@@ -227,6 +227,7 @@ function suiteRequiresDestructiveSandboxProof(suite: FuzzSuiteContract): boolean
     if (actionType === "rest_request") return isRestMutationMethod(stringValue(input?.method) ?? "GET")
     if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(input?.operation) ?? "")
     if (actionType === "crud_operation") return stringValue(input?.operation) !== "read"
+    if (actionType === "editor_actions") return Array.isArray(input?.steps) && input.steps.some((step) => recordValue(step)?.kind === "savePost")
     return false
   })
 }
@@ -416,6 +417,13 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       if (action.type === "editor_open") {
         return openWordPressEditor(episode, action)
       }
+      if (action.type === "editor_actions" || action.type === "editor_validate_blocks") {
+        const command = action.type === "editor_actions" ? "wordpress.editor-actions" : "wordpress.editor-validate-blocks"
+        const args = action.type === "editor_actions" ? runtimeEditorActionsArgs(action) : runtimeEditorValidateBlocksArgs(action)
+        const step = await episode.step({ kind: "browser", command, args, ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}), operation: action.type }, { type: "browser-result" })
+        const data = { mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id }
+        return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
+      }
       if (action.type === "admin_page") {
         return openWordPressAdminPage(episode, action)
       }
@@ -425,6 +433,31 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
   }
+}
+
+function runtimeEditorActionTargetArgs(action: { target?: string; post_id?: number; post_type?: string; url?: string; wait_selector?: string; capture?: string[]; timeout_ms?: number }): string[] {
+  return [
+    action.target ? `target=${action.target}` : undefined,
+    action.post_id !== undefined ? `post-id=${action.post_id}` : undefined,
+    action.post_type ? `post-type=${action.post_type}` : undefined,
+    action.url ? `url=${action.url}` : undefined,
+    action.wait_selector ? `wait-selector=${action.wait_selector}` : undefined,
+    action.timeout_ms !== undefined ? `wait-timeout=${action.timeout_ms}ms` : undefined,
+    action.capture?.length ? `capture=${action.capture.join(",")}` : undefined,
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function runtimeEditorActionsArgs(action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "editor_actions" }>): string[] {
+  return [...runtimeEditorActionTargetArgs(action), `steps-json=${JSON.stringify(action.steps)}`, ...(action.wait_timeout_ms !== undefined ? [`wait-timeout=${action.wait_timeout_ms}ms`] : []), ...(action.step_timeout_ms !== undefined ? [`step-timeout=${action.step_timeout_ms}ms`] : [])]
+}
+
+function runtimeEditorValidateBlocksArgs(action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "editor_validate_blocks" }>): string[] {
+  return [
+    ...(action.content !== undefined ? [`content=${action.content}`] : []),
+    ...(action.content_file ? [`content-file=${action.content_file}`] : []),
+    ...runtimeEditorActionTargetArgs(action),
+    ...(action.validation_provider ? [`validation-provider=${action.validation_provider}`] : []),
+  ]
 }
 
 async function executeDisposableSandboxDbMutation(

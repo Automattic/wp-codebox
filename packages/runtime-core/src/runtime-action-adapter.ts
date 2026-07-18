@@ -13,7 +13,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeActionSequenceAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction | RuntimeWordPressHookAction | RuntimeWordPressCronEventAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserRandomWalkAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeEditorActionsAction | RuntimeEditorValidateBlocksAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeActionSequenceAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction | RuntimeWordPressHookAction | RuntimeWordPressCronEventAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -108,6 +108,33 @@ export interface RuntimeEditorOpenAction {
   url?: string
   wait_selector?: string
   capture?: string[]
+  timeout_ms?: number
+}
+
+export interface RuntimeEditorActionsAction {
+  type: "editor_actions"
+  steps: Array<Record<string, unknown>>
+  target?: "post-new" | "site" | "front-page"
+  post_id?: number
+  post_type?: string
+  url?: string
+  wait_selector?: string
+  wait_timeout_ms?: number
+  step_timeout_ms?: number
+  capture?: string[]
+  timeout_ms?: number
+}
+
+export interface RuntimeEditorValidateBlocksAction {
+  type: "editor_validate_blocks"
+  content?: string
+  content_file?: string
+  target?: "post-new" | "site" | "front-page"
+  post_id?: number
+  post_type?: string
+  url?: string
+  validation_provider?: string
+  wait_selector?: string
   timeout_ms?: number
 }
 
@@ -262,6 +289,14 @@ export async function runRuntimeAction(
 
   if (action.type === "editor_open") {
     return runRuntimeEditorOpenAction(episode, action)
+  }
+
+  if (action.type === "editor_actions") {
+    return runRuntimeEditorActionsAction(episode, action)
+  }
+
+  if (action.type === "editor_validate_blocks") {
+    return runRuntimeEditorValidateBlocksAction(episode, action)
   }
 
   if (action.type === "admin_page") {
@@ -818,6 +853,31 @@ async function runRuntimeEditorOpenAction(episode: RuntimeEpisode, action: Runti
   })
 }
 
+async function runRuntimeEditorActionsAction(episode: RuntimeEpisode, action: RuntimeEditorActionsAction): Promise<RuntimeActionObservation> {
+  return runRuntimeEditorCommandAction(episode, action, "wordpress.editor-actions", runtimeEditorActionsArgs(action))
+}
+
+async function runRuntimeEditorValidateBlocksAction(episode: RuntimeEpisode, action: RuntimeEditorValidateBlocksAction): Promise<RuntimeActionObservation> {
+  return runRuntimeEditorCommandAction(episode, action, "wordpress.editor-validate-blocks", runtimeEditorValidateBlocksArgs(action))
+}
+
+async function runRuntimeEditorCommandAction(episode: RuntimeEpisode, action: RuntimeEditorActionsAction | RuntimeEditorValidateBlocksAction, command: string, args: string[]): Promise<RuntimeActionObservation> {
+  const step = await episode.step({ kind: "browser", command, args, ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}), operation: action.type }, { type: "browser-result" })
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: { mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
 async function runRuntimeAdminPageAction(episode: RuntimeEpisode, action: RuntimeAdminPageAction): Promise<RuntimeActionObservation> {
   const path = action.path.startsWith("/wp-admin/") ? action.path : `/wp-admin/${action.path.replace(/^\/+/, "")}`
   const observation = await runRuntimeBrowserProbeAction(episode, {
@@ -853,7 +913,7 @@ async function runRuntimePageAction(episode: RuntimeEpisode, action: RuntimePage
   })
 }
 
-function runtimeEditorOpenArgs(action: RuntimeEditorOpenAction): string[] {
+function runtimeEditorOpenArgs(action: { target?: string; post_id?: number; post_type?: string; url?: string; wait_selector?: string; capture?: string[]; timeout_ms?: number }): string[] {
   const args: string[] = []
   if (action.target) {
     args.push(`target=${action.target}`)
@@ -877,6 +937,24 @@ function runtimeEditorOpenArgs(action: RuntimeEditorOpenAction): string[] {
     args.push(`capture=${action.capture.join(",")}`)
   }
   return args
+}
+
+function runtimeEditorActionsArgs(action: RuntimeEditorActionsAction): string[] {
+  return [
+    ...runtimeEditorOpenArgs(action),
+    `steps-json=${JSON.stringify(action.steps)}`,
+    ...(action.wait_timeout_ms !== undefined ? [`wait-timeout=${action.wait_timeout_ms}ms`] : []),
+    ...(action.step_timeout_ms !== undefined ? [`step-timeout=${action.step_timeout_ms}ms`] : []),
+  ]
+}
+
+function runtimeEditorValidateBlocksArgs(action: RuntimeEditorValidateBlocksAction): string[] {
+  return [
+    ...(action.content !== undefined ? [`content=${action.content}`] : []),
+    ...(action.content_file ? [`content-file=${action.content_file}`] : []),
+    ...runtimeEditorOpenArgs(action),
+    ...(action.validation_provider ? [`validation-provider=${action.validation_provider}`] : []),
+  ]
 }
 
 function normalizeWpCliRuntimeActionCommand(command: string): string {

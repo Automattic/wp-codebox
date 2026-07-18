@@ -14,7 +14,7 @@ export interface WordPressBlockFuzzSuiteOptions {
 
 const DEFAULT_BLOCK_FUZZ_SUITE_ID = "wordpress-block-discovery"
 const BLOCK_SERVER_RENDER_CAPABILITIES = ["target:runtime", "runtime"] as const
-const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime", "runtime", "runtime-action:editor_open"] as const
+const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime-action", "runtime-action:editor_actions"] as const
 const BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
   id: "wordpress.block-attribute-samples",
   label: "WordPress block attribute sample generator",
@@ -57,11 +57,11 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
           ...(includeServerRender ? BLOCK_SERVER_RENDER_CAPABILITIES : []),
           ...(includeEditorInsert ? BLOCK_EDITOR_INSERT_CAPABILITIES : []),
         ])],
-        targetKinds: ["runtime"],
-        runtimeActionTypes: includeEditorInsert ? ["editor_open"] : undefined,
+        targetKinds: includeEditorInsert ? ["runtime", "runtime-action"] : ["runtime"],
+        runtimeActionTypes: includeEditorInsert ? ["editor_actions"] : undefined,
         commands: [
           includeServerRender ? "wordpress.block-render" : undefined,
-          includeEditorInsert ? "wordpress.block-exercise" : undefined,
+          includeEditorInsert ? "wordpress.editor-actions" : undefined,
         ].filter((command): command is string => Boolean(command)),
       }),
     }),
@@ -119,15 +119,22 @@ function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPre
 
   return {
     id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-${sampleKind}`,
-    target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
+    target: { kind: "runtime-action", entrypoint: "wordpress.editor-actions" },
     input: {
-      args: [
-        `block-name=${block.name}`,
-        `attrs-json=${JSON.stringify(attributes)}`,
-        "mode=editor-insert-save",
-        "source=wordpress-block-fuzz-suite",
-      ],
+      type: "sequence",
+      action_families: ["editor"],
+      steps: [{
+        type: "editor_actions",
+        target: "post-new",
+        post_type: postType.name,
+        capture: ["steps", "editor-state", "editor-validity"],
+        steps: [
+          { kind: "insertBlock", name: block.name, attributes, select: true },
+          { kind: "savePost" },
+        ],
+      }],
     },
+    mutation: { intent: "write", destructive: true, intensity: "low" },
     description: `Insert ${block.name} into a new ${postType.name} editor canvas with ${sampleKind.replace("-", " ")}.`,
     metadata: blockCaseMetadata(block, "editor-insert", { attributes, editorPostType: postType.name }),
   }
@@ -146,13 +153,12 @@ function serverRenderCoveragePlanItem(block: WordPressBlockTypeDescriptor): Fuzz
 }
 
 function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor | undefined): FuzzCoveragePlanItem {
-  const unsupportedReason = { code: "block_editor_insert_save_runtime_unsupported", message: "Editor insert/save coverage requires a browser/editor runtime backend; the current runtime command returns unsupported for this mode.", data: { unsupportedCapabilities: ["runtime-action:editor_open", "browser-editor-runtime"] } }
   if (!postType) {
     return stripUndefined({
       id: `block-${caseIdPart(block.name)}-editor-insert-untested`,
-      target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
+      target: { kind: "runtime-action", entrypoint: "wordpress.editor-actions" },
       description: `Insert ${block.name} into an editor canvas with empty attributes.`,
-      reason: { code: "block_editor_post_type_unavailable", message: "No discovered editor post type is available for editor-insert fuzz coverage.", data: { unsupportedCapabilities: ["runtime-action:editor_open"] } },
+      reason: { code: "block_editor_post_type_unavailable", message: "No discovered editor post type is available for editor-insert fuzz coverage.", data: { unsupportedCapabilities: ["runtime-action:editor_actions"] } },
       parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
       metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {} }),
     })
@@ -160,7 +166,7 @@ function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postT
   if (!block.supportsInserter) {
     return stripUndefined({
       id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-empty-attributes`,
-      target: { kind: "runtime", entrypoint: "wordpress.block-exercise" },
+      target: { kind: "runtime-action", entrypoint: "wordpress.editor-actions" },
       description: `Insert ${block.name} into a new ${postType.name} editor canvas with empty attributes.`,
       reason: { code: "block_inserter_unsupported", message: "The block does not support inserter-based editor coverage.", data: { unsupportedCapabilities: ["block:inserter"] } },
       parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
@@ -170,10 +176,8 @@ function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postT
   const fuzzCase = editorInsertCase(block, postType)
   return stripUndefined({
     ...fuzzCase,
-    input: undefined,
-    reason: unsupportedReason,
     parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
-    metadata: { ...fuzzCase.metadata, observationCapture: missingCaptureMetadata() },
+    metadata: { ...fuzzCase.metadata, observationCapture: { status: "requested", supported: true, capture: ["steps", "editor-state", "editor-validity"] } },
   })
 }
 

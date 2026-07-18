@@ -193,6 +193,8 @@ const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
     { id: "browser", input: { type: "browser", operation: "capture", capture: ["html"] } },
     { id: "random-walk", input: { type: "random_walk", context: "admin", seed: "runtime-random", max_steps: 3, action_families: ["capture", "press"], start_url: "/wp-admin/", capture: ["html"] } },
     { id: "editor", input: { type: "editor_open", target: "post-new", post_type: "page" } },
+    { id: "editor-actions", input: { type: "editor_actions", target: "post-new", post_type: "page", steps: [{ kind: "insertBlock", name: "core/paragraph", attributes: { content: "Hello" } }, { kind: "savePost" }] } },
+    { id: "editor-validation", input: { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>Hello</p><!-- /wp:paragraph -->" } },
     { id: "admin", input: { type: "admin_page", path: "plugins.php" } },
     { id: "page", input: { type: "page", path: "/sample-page/" } },
     { id: "crud", input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
@@ -205,11 +207,13 @@ const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
   resetExecutor: async ({ policy }) => ({ mode: policy.mode, status: "passed", checkpointName: policy.checkpointName }),
 })
 assert.equal(runtimeActionFuzzResult.status, "passed")
-assert.deepEqual(runtimeActionFuzzResult.summary, { total: 9, passed: 9, failed: 0, error: 0, skipped: 0 })
+assert.deepEqual(runtimeActionFuzzResult.summary, { total: 11, passed: 11, failed: 0, error: 0, skipped: 0 })
 assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-actions",
   "wordpress.browser-actions",
   "wordpress.editor-open",
+  "wordpress.editor-actions",
+  "wordpress.editor-validate-blocks",
   "wordpress.browser-probe",
   "wordpress.browser-probe",
   "wordpress.crud-operation",
@@ -218,7 +222,7 @@ assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.invoke-cron-event",
 ])
 assert.equal((runtimeActionFuzzResult.cases[1]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "random_walk")
-assert.equal((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactKind, "mutation-isolation")
-assert.equal(((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.sandboxBoundary as Record<string, unknown> | undefined)?.destructivePermission, true)
+assert.equal((runtimeActionFuzzResult.cases[8]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactKind, "mutation-isolation")
+assert.equal(((runtimeActionFuzzResult.cases[8]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.sandboxBoundary as Record<string, unknown> | undefined)?.destructivePermission, true)
 
 console.log("wordpress runtime actions ok")
