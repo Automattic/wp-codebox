@@ -77,7 +77,6 @@ return array(
   'versions' => array(
     'acme/package' => array(
       'pretty_version' => '1.0.0+no-version-set',
-      'reference' => NULL,
     ),
     'acme/non-git-package' => array(
       'pretty_version' => '1.0.0+no-version-set',
@@ -199,6 +198,15 @@ try {
   const runtimePhpVersions = JSON.parse(runtimeInstalledPhp) as { versions: Record<string, { reference?: string | null }> }
   assert.equal(runtimePhpVersions.versions["acme/package"]?.reference, dependencyReference.trim(), "Composer runtime metadata includes the immutable source reference")
   assert.equal(runtimePhpVersions.versions["acme/non-git-package"]?.reference, null, "Composer runtime metadata leaves unresolved references unchanged")
+  const runtimePackageRow = runtimePhpVersions.versions["acme/package"]
+  assert.deepEqual(runtimePackageRow, {
+    pretty_version: "1.0.0+no-version-set",
+    reference: dependencyReference.trim(),
+  }, "the final PHP-visible package row exposes the clean Git reference")
+  assert.deepEqual(runtimePhpVersions.versions["acme/non-git-package"], {
+    pretty_version: "1.0.0+no-version-set",
+    reference: null,
+  }, "the final PHP-visible package row leaves an unavailable reference unchanged")
   assert.match(await readFile(join(overlays[0].source, "src", "Client.php"), "utf8"), /WordPress\\AiClientDependencies\\Psr\\Log\\LoggerInterface/)
 } finally {
   await Promise.all([...overlays, ...dependencyOverlays, ...consumers].flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))

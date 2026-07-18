@@ -202,6 +202,7 @@
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:composer-package-overlay-revision": "tsx scripts/composer-backed-source-hydration-smoke.ts",
+    "test:composer-installed-versions-loader-order": "tsx scripts/composer-installed-versions-loader-order-smoke.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",

@@ -453,11 +453,12 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
   const source = resolve(recipeDirectory, overlay.source)
   await validateExistingDirectoryForOverlay(source, overlay.source)
   const reference = await resolvedGitSourceReference(source)
-  if (reference) {
-    await preserveComposerDependencyReference(consumer, overlay.package, reference, stagedConsumers)
-  }
   const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-dependency-overlay-"))
   const preparedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
+  if (reference) {
+    await preserveComposerDependencyReference(consumer, overlay.package, reference, stagedConsumers)
+    await preserveComposerPackageReference(preparedSource, overlay.package, reference)
+  }
   const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
   const digest = await directoryContentDigest(preparedSource)
 
@@ -540,6 +541,11 @@ async function preserveComposerDependencyReference(consumer: PreparedExtraPlugin
   await writeComposerInstalledPhpReference(join(consumer.source, "vendor", "composer", "installed.php"), packageName, reference)
 }
 
+async function preserveComposerPackageReference(source: string, packageName: string, reference: string): Promise<void> {
+  await writeComposerDependencyReference(join(source, "vendor", "composer", "installed.json"), packageName, reference)
+  await writeComposerInstalledPhpReference(join(source, "vendor", "composer", "installed.php"), packageName, reference)
+}
+
 async function composerInstalledJsonHasPackage(path: string, packageName: string): Promise<boolean> {
   try {
     return composerInstalledPackageRecords(JSON.parse(await readFile(path, "utf8"))).some((pkg) => pkg.name === packageName)
@@ -569,10 +575,57 @@ async function writeComposerInstalledPhpReference(path: string, packageName: str
   }
   const before = contents.slice(0, packageStart)
   const entry = contents.slice(packageStart)
-  const updatedEntry = entry.replace(/(['"]reference['"]\s*=>\s*)(?:NULL|null|'[^']*'|"[^"]*")/, `$1'${reference}'`)
-  if (updatedEntry !== entry) {
-    await writeFile(path, before + updatedEntry)
+  const packageEntryEnd = composerInstalledPhpPackageEntryEnd(entry, packageName)
+  if (packageEntryEnd === undefined) {
+    return
   }
+  const packageEntry = entry.slice(0, packageEntryEnd)
+  const remainingEntries = entry.slice(packageEntryEnd)
+  const updatedEntry = packageEntry.replace(/(['"]reference['"]\s*=>\s*)(?:NULL|null|'[^']*'|"[^"]*")/, `$1'${reference}'`)
+  if (updatedEntry !== packageEntry) {
+    await writeFile(path, before + updatedEntry + remainingEntries)
+    return
+  }
+
+  // Composer may omit an unavailable reference entirely. Add it to this
+  // package record so InstalledVersions exposes the clean overlay revision.
+  const entryWithReference = packageEntry.replace(
+    new RegExp(`((?:['"]${escapeRegExp(packageName)}['"]\\s*=>\\s*array\\s*\\(\\s*))`),
+    `$1'reference' => '${reference}',\n`,
+  )
+  if (entryWithReference !== packageEntry) {
+    await writeFile(path, before + entryWithReference + remainingEntries)
+  }
+}
+
+function composerInstalledPhpPackageEntryEnd(entry: string, packageName: string): number | undefined {
+  const header = new RegExp(`['"]${escapeRegExp(packageName)}['"]\\s*=>\\s*array\\s*\\(`).exec(entry)
+  if (!header || header.index === undefined) {
+    return undefined
+  }
+
+  const openingParenthesis = header.index + header[0].lastIndexOf("(")
+  let depth = 0
+  let quote = ""
+  for (let index = openingParenthesis; index < entry.length; index++) {
+    const character = entry[index]
+    if (quote) {
+      if (character === "\\") {
+        index++
+      } else if (character === quote) {
+        quote = ""
+      }
+      continue
+    }
+    if (character === "'" || character === '"') {
+      quote = character
+    } else if (character === "(") {
+      depth++
+    } else if (character === ")" && --depth === 0) {
+      return index + 1
+    }
+  }
+  return undefined
 }
 
 function composerInstalledPackageRecords(installed: unknown): Array<Record<string, unknown> & { name?: string }> {
