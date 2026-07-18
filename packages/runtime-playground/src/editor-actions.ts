@@ -29,9 +29,31 @@ export type EditorActionStep =
   | { kind: "open"; timeout?: string }
   | { kind: "waitForReady"; timeout?: string }
   | { kind: "insertBlock"; name?: string; attributes?: Record<string, unknown>; content?: string; select?: boolean; timeout?: string }
-  | { kind: "selectBlock"; clientId?: string; index?: number; timeout?: string }
+  | ({ kind: "selectBlock"; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "updateBlockAttributes"; attributes: Record<string, unknown>; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "removeBlock"; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "moveBlock"; position: number; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "duplicateBlock"; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "replaceBlock"; block: EditorBlockSpec; timeout?: string } & EditorBlockTarget)
+  | ({ kind: "replaceInnerBlocks"; blocks: EditorBlockSpec[]; timeout?: string } & EditorBlockTarget)
+  | { kind: "undo"; timeout?: string }
+  | { kind: "redo"; timeout?: string }
+  | { kind: "reload"; timeout?: string }
+  | { kind: "reopen"; timeout?: string }
   | { kind: "savePost"; marker?: string; content?: string; timeout?: string }
   | { kind: "inspectState"; timeout?: string }
+
+export interface EditorBlockTarget {
+  clientId?: string
+  index?: number
+  path?: number[]
+}
+
+export interface EditorBlockSpec {
+  name: string
+  attributes?: Record<string, unknown>
+  innerBlocks?: EditorBlockSpec[]
+}
 
 export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   const explicitUrl = argValue(args, "url")?.trim()
@@ -228,18 +250,31 @@ function normalizeEditorActionStep(step: unknown, index: number): EditorActionSt
     return { kind: "waitForReady", ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}) }
   }
   if (input.kind === "selectBlock") {
-    if (input.clientId !== undefined && typeof input.clientId !== "string") {
-      throw new Error(`wordpress.editor-actions steps-json[${index}].clientId must be a string`)
+    return { kind: "selectBlock", ...normalizeEditorBlockTarget(input, index), ...editorActionTimeout(input) }
+  }
+  if (input.kind === "updateBlockAttributes") {
+    return { kind: "updateBlockAttributes", ...normalizeEditorBlockTarget(input, index), attributes: normalizeAttributes(input.attributes, index), ...editorActionTimeout(input) }
+  }
+  if (input.kind === "removeBlock" || input.kind === "duplicateBlock") {
+    return { kind: input.kind, ...normalizeEditorBlockTarget(input, index), ...editorActionTimeout(input) }
+  }
+  if (input.kind === "moveBlock") {
+    if (typeof input.position !== "number" || !Number.isInteger(input.position) || input.position < 0) {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].position must be a non-negative integer`)
     }
-    if (input.index !== undefined && (typeof input.index !== "number" || !Number.isInteger(input.index) || input.index < 0)) {
-      throw new Error(`wordpress.editor-actions steps-json[${index}].index must be a non-negative integer`)
+    return { kind: "moveBlock", ...normalizeEditorBlockTarget(input, index), position: input.position, ...editorActionTimeout(input) }
+  }
+  if (input.kind === "replaceBlock") {
+    return { kind: "replaceBlock", ...normalizeEditorBlockTarget(input, index), block: normalizeEditorBlockSpec(input.block, index, "block"), ...editorActionTimeout(input) }
+  }
+  if (input.kind === "replaceInnerBlocks") {
+    if (!Array.isArray(input.blocks)) {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].blocks must be a JSON array`)
     }
-    return {
-      kind: "selectBlock",
-      ...(typeof input.clientId === "string" ? { clientId: input.clientId } : {}),
-      ...(Number.isInteger(input.index) && (input.index as number) >= 0 ? { index: input.index as number } : {}),
-      ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
-    }
+    return { kind: "replaceInnerBlocks", ...normalizeEditorBlockTarget(input, index), blocks: input.blocks.map((block, blockIndex) => normalizeEditorBlockSpec(block, index, `blocks[${blockIndex}]`)), ...editorActionTimeout(input) }
+  }
+  if (input.kind === "undo" || input.kind === "redo" || input.kind === "reload" || input.kind === "reopen") {
+    return { kind: input.kind, ...editorActionTimeout(input) }
   }
   if (input.kind === "savePost") {
     if (input.marker !== undefined && typeof input.marker !== "string") {
@@ -260,4 +295,39 @@ function normalizeEditorActionStep(step: unknown, index: number): EditorActionSt
   }
 
   throw new Error(`wordpress.editor-actions step kind is not supported: ${String(input.kind)}`)
+}
+
+function normalizeEditorBlockTarget(input: Record<string, unknown>, index: number): EditorBlockTarget {
+  const targetCount = Number(typeof input.clientId === "string") + Number(input.index !== undefined) + Number(input.path !== undefined)
+  if (targetCount !== 1) {
+    throw new Error(`wordpress.editor-actions steps-json[${index}] requires exactly one target: clientId, index, or path`)
+  }
+  if (typeof input.clientId === "string" && input.clientId.length > 0) return { clientId: input.clientId }
+  if (typeof input.index === "number" && Number.isInteger(input.index) && input.index >= 0) return { index: input.index }
+  if (Array.isArray(input.path) && input.path.length > 0 && input.path.every((part) => typeof part === "number" && Number.isInteger(part) && part >= 0)) return { path: input.path as number[] }
+  throw new Error(`wordpress.editor-actions steps-json[${index}] target must be a non-empty clientId, non-negative index, or non-empty path of non-negative indexes`)
+}
+
+function normalizeAttributes(value: unknown, index: number): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`wordpress.editor-actions steps-json[${index}].attributes must be a JSON object`)
+  }
+  return value as Record<string, unknown>
+}
+
+function normalizeEditorBlockSpec(value: unknown, index: number, field: string): EditorBlockSpec {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`wordpress.editor-actions steps-json[${index}].${field} must be an object`)
+  const input = value as Record<string, unknown>
+  if (typeof input.name !== "string" || input.name.length === 0) throw new Error(`wordpress.editor-actions steps-json[${index}].${field}.name must be a block name string`)
+  if (input.attributes !== undefined) normalizeAttributes(input.attributes, index)
+  if (input.innerBlocks !== undefined && !Array.isArray(input.innerBlocks)) throw new Error(`wordpress.editor-actions steps-json[${index}].${field}.innerBlocks must be a JSON array`)
+  return {
+    name: input.name,
+    ...(input.attributes !== undefined ? { attributes: input.attributes as Record<string, unknown> } : {}),
+    ...(Array.isArray(input.innerBlocks) ? { innerBlocks: input.innerBlocks.map((block, childIndex) => normalizeEditorBlockSpec(block, index, `${field}.innerBlocks[${childIndex}]`)) } : {}),
+  }
+}
+
+function editorActionTimeout(input: Record<string, unknown>): { timeout?: string } {
+  return typeof input.timeout === "string" ? { timeout: input.timeout } : {}
 }

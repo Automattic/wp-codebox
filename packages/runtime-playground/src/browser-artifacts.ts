@@ -137,6 +137,7 @@ export interface BrowserArtifactSummary {
   editorReadiness?: BrowserEditorReadinessSummary
   editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
+  editorCapabilities?: { clipboard: "unsupported" }
   steps?: number
   assertions?: BrowserAssertionsSummary
   consoleMessages: number
@@ -805,6 +806,21 @@ export interface BrowserStepRecord {
   verifierResult?: string
   finalUrl?: string
   error?: BrowserProbeErrorRecord
+  editorMutation?: BrowserEditorMutationSummary
+}
+
+export interface BrowserEditorMutationSummary {
+  before: BrowserEditorStateSummary
+  after?: BrowserEditorStateSummary
+  failure?: string
+}
+
+export interface BrowserEditorStateSummary {
+  blockCount?: number
+  contentSha256?: string
+  dirty?: boolean
+  saving?: boolean
+  savedContentSha256?: string
 }
 
 export interface BrowserStepScreenshotFallback {

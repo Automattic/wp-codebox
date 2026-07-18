@@ -2,7 +2,7 @@ import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import { now } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorMutationSummary, BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserCommandLivenessPolicy, withBrowserCommandLiveness } from "./browser-liveness.js"
 
 export interface BrowserStepOutcome {
@@ -14,6 +14,7 @@ export interface BrowserStepOutcome {
   screenshotFallback?: { reason: string; mode: "page-screenshot" }
   verifierResult?: string
   error?: BrowserProbeErrorRecord
+  editorMutation?: BrowserEditorMutationSummary
 }
 
 export interface BrowserStepScreenshotWriterResult {
@@ -386,6 +387,7 @@ export function browserStepRecord(
     ...(outcome.verifierResult ? { verifierResult: outcome.verifierResult } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),
+    ...(outcome.editorMutation ? { editorMutation: outcome.editorMutation } : {}),
   }
 }
 
