@@ -249,6 +249,7 @@ export function recipeRunDependencyOverlay(overlay: PreparedDependencyOverlay): 
   return {
     source: overlay.source,
     sourceRef: overlay.sourceRef,
+    ...(overlay.reference ? { reference: overlay.reference } : {}),
     target: overlay.target,
     package: overlay.package,
     consumer: overlay.consumer,

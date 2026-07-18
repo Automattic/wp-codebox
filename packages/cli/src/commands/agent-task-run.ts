@@ -793,7 +793,7 @@ function compactPreparedPaths(context: Record<string, unknown>, recipeInputs: Re
     component_contracts: arrayRecords(context.preparedComponentContracts).map((contract) => compactRecord(contract, ["slug", "requestedPath", "preparedPath", "pluginFile", "loadAs", "activate", "status"])),
     workspaces: arrayRecords(context.preparedWorkspaces).map((workspace) => compactRecord(workspace, ["target", "mode", "metadata"])),
     staged_files: arrayRecords(context.preparedStagedFiles).map((file) => compactRecord(file, ["sourceRef", "target", "type", "provenance", "metadata"])),
-    dependency_overlays: arrayRecords(context.preparedDependencyOverlays).map((overlay) => compactRecord(overlay, ["package", "target", "type", "mode", "metadata"])),
+    dependency_overlays: arrayRecords(context.preparedDependencyOverlays).map((overlay) => compactRecord(overlay, ["package", "reference", "target", "type", "mode", "metadata"])),
     runtime_overlays: arrayRecords(context.preparedRuntimeOverlays).map((overlay) => compactRecord(overlay, ["target", "type", "mode", "metadata"])),
     requested_component_contracts: arrayRecords(recipeInputs.component_contracts ?? taskInputs.component_contracts).map((contract) => compactRecord(contract, ["slug", "path", "loadAs", "activate"])),
   })
