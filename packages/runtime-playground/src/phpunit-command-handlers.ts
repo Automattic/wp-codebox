@@ -370,6 +370,18 @@ $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
 
+function pg_build_phpunit_argv($raw): array {
+    $phpunit_argv = array('phpunit');
+    if (is_array($raw)) {
+        foreach ($raw as $arg) {
+            if (is_scalar($arg)) {
+                $phpunit_argv[] = (string) $arg;
+            }
+        }
+    }
+    return $phpunit_argv;
+}
+
 @file_put_contents($result_file, '');
 
 function pg_log($msg) {
@@ -1045,6 +1057,10 @@ try {
 }
 
 pg_apply_env($bench_env);
+$phpunit_argv = pg_build_phpunit_argv($phpunit_args_raw);
+$argv = $phpunit_argv;
+$_SERVER['argv'] = $phpunit_argv;
+$_SERVER['argc'] = count($phpunit_argv);
 
 if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
@@ -1291,14 +1307,6 @@ function wp_codebox_phpunit_print_test_list($test) {
 pg_stage_begin('run_tests');
 pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
 try {
-    $phpunit_argv = array('phpunit');
-    if (is_array($phpunit_args_raw)) {
-        foreach ($phpunit_args_raw as $arg) {
-            if (is_scalar($arg)) {
-                $phpunit_argv[] = (string) $arg;
-            }
-        }
-    }
     $phpunit_args = wp_codebox_phpunit_args($phpunit_argv);
     if (!empty($phpunit_args['listTests'])) {
         wp_codebox_phpunit_print_test_list($suite);
