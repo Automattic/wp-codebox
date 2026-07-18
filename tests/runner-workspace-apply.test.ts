@@ -132,6 +132,24 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
 
 {
   const input = await fixture(patch, files)
+  const controlDirectory = join(input.workspace, ".codebox")
+  await mkdir(controlDirectory)
+  await writeFile(join(controlDirectory, "request.json"), "before\n")
+  const result = await applyRunnerWorkspacePatch({
+    artifactRoot: input.artifacts,
+    artifactRefs: input.refs,
+    workspaceRoot: input.workspace,
+    writablePaths: ["README.md"],
+    verify: async () => {
+      await writeFile(join(controlDirectory, "request.json"), "after\n")
+      await writeFile(join(controlDirectory, "result.json"), "complete\n")
+    },
+  })
+  await verifyRunnerWorkspaceIntegrity(result.integrity!)
+}
+
+{
+  const input = await fixture(patch, files)
   await symlink(input.artifacts, join(input.workspace, "publishable-link"))
   await assert.rejects(
     () => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] }),

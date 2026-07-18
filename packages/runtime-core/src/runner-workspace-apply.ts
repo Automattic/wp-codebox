@@ -236,7 +236,9 @@ function validatePatchPaths(patch: string, changed: RunnerWorkspaceChangedFile[]
 async function snapshotWorkspace(root: string): Promise<RunnerWorkspacePublicationFile[]> {
   const output: RunnerWorkspacePublicationFile[] = []
   const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root, maxBuffer: MAX_PATCH_BYTES })
-  const paths = stdout.split("\0").filter(Boolean).sort((left, right) => left.localeCompare(right))
+  const paths = stdout.split("\0")
+    .filter((path) => path && path !== ".codebox" && !path.startsWith(".codebox/"))
+    .sort((left, right) => left.localeCompare(right))
   for (const path of paths) {
     const absolute = resolve(root, path)
     if (!pathIsWithinRoot(absolute, root)) throw new Error(`Runner workspace contains a denied path: ${path}`)
