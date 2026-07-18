@@ -952,6 +952,10 @@ export async function runPhpunitCommand({
   await persistPluginPhpunitResult(server, resultFile, artifactRoot)
   await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
   assertPlaygroundResponseOk("wordpress.phpunit", response)
+  const structured = await readPluginPhpunitDiagnostic(server, resultFile)
+  if (structured) {
+    throw new Error(`wordpress.phpunit could not run: ${structured}`)
+  }
 
   return response.text
 }
