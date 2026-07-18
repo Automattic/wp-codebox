@@ -352,7 +352,8 @@ await runPhpunitCommand({
 assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
 assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 assert.ok(capturedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
-assert.ok(capturedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
+assert.ok(capturedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedCanonicalHarnessCode.indexOf("pg_run_project_bootstrap_stage"), "runtime environment is available to project bootstrap code")
+assert.equal(capturedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), false, "project PHPUnit bootstrap owns WordPress loading")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({

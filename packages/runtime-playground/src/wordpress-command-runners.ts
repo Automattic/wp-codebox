@@ -49,7 +49,7 @@ import {
   themeCheckRunCode,
   themeSetupInputFromArgs,
 } from "./commands.js"
-import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
+import { bootstrapAbilityPhpCode, bootstrapPhpCode, bootstrapPhpEnvironmentCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
@@ -940,7 +940,7 @@ export async function runPhpunitCommand({
   }
   let response: PlaygroundRunResponse
   try {
-    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args) })
+    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpEnvironmentCode(runtimeSpec, code, args) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot)
     await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)

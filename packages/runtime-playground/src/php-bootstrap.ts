@@ -42,6 +42,23 @@ putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)
 ${command.body}`
 }
 
+export function bootstrapPhpEnvironmentCode(spec: RuntimeCreateSpec, code: string, args: string[]): string {
+  if (argValue(args, "bootstrap") === "none") {
+    return code
+  }
+
+  const command = splitLeadingStrictTypesDeclare(code)
+
+  return `<?php
+${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
+${pluginRuntimeBootstrapPhp(spec)}
+${saveQueriesBootstrapPhp(args)}
+${runtimeEnvPhp(spec)}
+${secretEnvPhp(spec)}
+${componentManifestPhp(spec)}
+${command.body}`
+}
+
 export function splitLeadingStrictTypesDeclare(code: string): { strictTypesDeclare: string; body: string } {
   const normalized = normalizePhpCode(code)
   const match = normalized.match(/^<\?php\s*(declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;)\s*/i)
