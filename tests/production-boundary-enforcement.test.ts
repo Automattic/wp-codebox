@@ -39,6 +39,10 @@ const forbiddenPublicExportTargets = [
 const forbiddenPublicImportSpecifiers = [
   /@wp-playground\//,
 ]
+const runtimeBackendPackages = new Set([
+  "@automattic/wp-codebox-playground",
+  "@automattic/wp-codebox-runtime-cloudflare",
+])
 const forbiddenRuntimeCoreBackendSpecifiers = [
   /@automattic\/wp-codebox-playground(?:\/|$)/,
   /@wp-playground\//,
@@ -88,7 +92,7 @@ for (const manifest of await packageManifests(packagesDir)) {
   }
 
   for (const dependency of Object.keys(source.dependencies ?? {})) {
-    if (source.name !== "@automattic/wp-codebox-playground" && forbiddenPublicImportSpecifiers.some((forbidden) => forbidden.test(dependency))) {
+    if (!runtimeBackendPackages.has(source.name ?? "") && forbiddenPublicImportSpecifiers.some((forbidden) => forbidden.test(dependency))) {
       violations.push(`${rel} depends on backend-internal package ${dependency}`)
     }
   }
