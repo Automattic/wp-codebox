@@ -33,6 +33,7 @@ try {
       phpVersion: "8.4",
       wordpressInstallMode: "do-not-attempt-installing",
       assets: { wordpressDirectory },
+      extensions: [{ manifest: "/tmp/sodium/manifest.json" }],
       blueprint: {},
     },
     policy: {
@@ -68,6 +69,7 @@ try {
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+  assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
   const sharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
   assert.equal(typeof sharedMount, "string")
   const sharedPhpIni = await readFile(join(sharedMount as string, "php.ini"), "utf8")

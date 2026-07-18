@@ -33,6 +33,7 @@ export interface PlaygroundCliModule {
     wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
     "site-url"?: string
     phpIniEntries?: Record<string, string>
+    phpExtension?: string[]
   }): Promise<PlaygroundCliServer>
 }
 
@@ -137,6 +138,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
+          ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
