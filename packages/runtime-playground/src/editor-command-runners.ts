@@ -884,7 +884,7 @@ export async function runEditorActionsCommand({
       const before = await captureEditorState(page, target)
       let after: EditorStateSnapshot | undefined
       try {
-        const result = await executeEditorActionStep(page, step, stepTimeoutMs, targetUrl)
+        const result = await executeEditorActionStep(page, step, stepTimeoutMs, targetUrl, before)
         if (result?.state) {
           editorState = { schema: "wp-codebox/editor-state/v1", capturedAt: now(), target, ...result.state }
         }
@@ -1039,7 +1039,7 @@ interface EditorActionStepResult {
   save?: BrowserEditorSaveSummary
 }
 
-export async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number, targetUrl: string): Promise<EditorActionStepResult | undefined> {
+export async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number, targetUrl: string, beforeState?: EditorStateSnapshot): Promise<EditorActionStepResult | undefined> {
   switch (step.kind) {
     case "open":
       return undefined
@@ -1070,12 +1070,29 @@ export async function executeEditorActionStep(page: import("playwright").Page, s
         }
         blockEditor.insertBlocks([block], undefined, undefined, Boolean(input.select))
       }, { name: step.name ?? "core/paragraph", attributes: step.attributes, content: step.content, select: step.select !== false })
-      await page.waitForFunction((count) => {
-        const select = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select
-        const blockEditor = typeof select === "function" ? select("core/block-editor") : undefined
-        const blocks = typeof blockEditor?.getBlocks === "function" ? blockEditor.getBlocks() as unknown[] : []
-        return blocks.length > count
-      }, beforeCount, { timeout: stepTimeoutMs(step, timeoutMs) })
+      try {
+        await page.waitForFunction((count) => {
+          const select = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select
+          const blockEditor = typeof select === "function" ? select("core/block-editor") : undefined
+          const blocks = typeof blockEditor?.getBlocks === "function" ? blockEditor.getBlocks() as unknown[] : []
+          return blocks.length > count
+        }, beforeCount, { timeout: stepTimeoutMs(step, timeoutMs) })
+      } catch (error) {
+        if (beforeState) {
+          try {
+            const afterState = await captureEditorState(page, beforeState.target)
+            if (!beforeState.storesAvailable || !afterState.storesAvailable) {
+              throw error
+            }
+            assertEditorMutationPostcondition(step, beforeState, afterState)
+          } catch (postconditionError) {
+            if (postconditionError instanceof Error && postconditionError.message.startsWith("wp-codebox-editor-mutation-noop:")) {
+              throw postconditionError
+            }
+          }
+        }
+        throw error
+      }
       return undefined
     }
     case "selectBlock": {

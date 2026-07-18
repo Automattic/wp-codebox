@@ -130,8 +130,11 @@ await executeEditorActionStep(runnerPage, { kind: "redo" }, 1, "http://example.t
 const saveResult = await executeEditorActionStep(runnerPage, { kind: "savePost" }, 1, "http://example.test/editor")
 assert.equal(saveResult?.save?.status, "saved")
 assert.ok(saveResult?.save?.contentSha256)
+const stateBeforeReload = await captureEditorState(runnerPage, target)
 await executeEditorActionStep(runnerPage, { kind: "reload" }, 1, "http://example.test/editor")
+assert.equal((await captureEditorState(runnerPage, target)).serializedContentSha256, stateBeforeReload.serializedContentSha256)
 await executeEditorActionStep(runnerPage, { kind: "reopen" }, 1, "http://example.test/editor")
+assert.equal((await captureEditorState(runnerPage, target)).savedContentSha256, stateBeforeReload.savedContentSha256)
 assert.deepEqual(runnerCalls.map(({ action }) => action), ["updateBlockAttributes", "moveBlocksToPosition", "replaceInnerBlocks", "undo", "redo"])
 assert.equal(runnerCalls[0]?.args[0], "child")
 await assert.rejects(() => executeEditorActionStep(runnerPage, { kind: "removeBlock", clientId: "missing" }, 1, "http://example.test/editor"), /target-not-found/)
@@ -140,6 +143,54 @@ assert.equal(capturedRunnerState.blocks?.[0]?.innerBlocks?.[0]?.clientId, "child
 assert.equal(capturedRunnerState.blocks?.[0]?.isValid, undefined)
 assert.ok(capturedRunnerState.serializedContentSha256)
 assert.equal(capturedRunnerState.dirty, false)
+
+const insertTimeoutPage = (applyInsert: boolean) => {
+  const blocks = [{ name: "core/paragraph", clientId: "existing", attributes: { content: "Before" }, innerBlocks: [] }] as Array<Record<string, unknown>>
+  const timeoutWindow = {
+    wp: {
+      blocks: {
+        createBlock: (name: string, attributes: Record<string, unknown>) => ({ name, clientId: "inserted", attributes, innerBlocks: [] }),
+        serialize: (items: unknown[]) => JSON.stringify(items),
+      },
+      data: {
+        select: (store: string) => store === "core/block-editor" ? { getBlocks: () => blocks } : store === "core/editor" ? {
+          getCurrentPost: () => ({ content: { raw: "saved" } }),
+          getEditedPostContent: () => JSON.stringify(blocks),
+          isEditedPostDirty: () => false,
+          isSavingPost: () => false,
+        } : undefined,
+        dispatch: (store: string) => store === "core/block-editor" ? {
+          insertBlocks: (inserted: Array<Record<string, unknown>>) => { if (applyInsert) blocks.push(...inserted) },
+        } : undefined,
+      },
+    },
+  }
+  return {
+    evaluate: async (callback: (...args: never[]) => unknown, input?: never) => {
+      const globals = globalThis as typeof globalThis & { window?: unknown }
+      const previous = globals.window
+      globals.window = timeoutWindow
+      try { return await callback(input as never) } finally { globals.window = previous }
+    },
+    waitForFunction: async () => { throw new Error("insert count wait timed out") },
+  } as never
+}
+
+// A rejected insert is a typed no-op once its post-timeout snapshot matches the
+// pre-step state. A changed snapshot remains the original timeout because the
+// count wait did not establish the requested insertion deterministically.
+const rejectedInsertPage = insertTimeoutPage(false)
+const rejectedInsertBefore = await captureEditorState(rejectedInsertPage, target)
+await assert.rejects(
+  () => executeEditorActionStep(rejectedInsertPage, { kind: "insertBlock", name: "core/paragraph", content: "Rejected" }, 1, "http://example.test/editor", rejectedInsertBefore),
+  /wp-codebox-editor-mutation-noop:insertBlock:editor state did not change/,
+)
+const ambiguousInsertPage = insertTimeoutPage(true)
+const ambiguousInsertBefore = await captureEditorState(ambiguousInsertPage, target)
+await assert.rejects(
+  () => executeEditorActionStep(ambiguousInsertPage, { kind: "insertBlock", name: "core/paragraph", content: "Changed" }, 1, "http://example.test/editor", ambiguousInsertBefore),
+  /insert count wait timed out/,
+)
 
 const state = (blocks: EditorStateSnapshot["blocks"], content: string): EditorStateSnapshot => ({
   schema: "wp-codebox/editor-state/v1",
