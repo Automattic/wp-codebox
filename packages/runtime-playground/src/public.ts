@@ -1339,13 +1339,11 @@ async function writeFuzzArtifactBundle(input: {
   const wordpressHotspots = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/wordpress-hotspots.json", "wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, input.content, input.artifact)
   const fuzzObservationSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-observations.json", "fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", input.observationContent, input.observationSet)
   const fuzzHotspotSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-hotspots.json", "fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", input.hotspotContent, input.hotspotSet)
-  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
-  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
   const replayCaseRefs: FuzzReplayCaseRef[] = []
   const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
   const restDbQueryProfileArtifacts: Array<ReturnType<typeof restDbQueryProfileArtifactMetadata>> = []
 
-  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
+  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref)
 
   for (const [index, observation] of input.queryObservations.entries()) {
     const path = `files/query-observations/${safeArtifactSegment(observation.caseId ?? "case")}-${index + 1}.json`
@@ -1407,6 +1405,9 @@ async function writeFuzzArtifactBundle(input: {
     ...(input.result.artifactRefs ?? []).filter((ref) => !stringValue(ref.metadata?.sourcePath)),
     ...input.result.cases.flatMap((fuzzCase) => fuzzCase.artifactRefs ?? []),
   ])
+  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
+  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
+  artifactRefs.push(caseResultStream.ref)
 
   const createdAt = new Date().toISOString()
   const manifestInput: ArtifactManifest = {
