@@ -113,6 +113,34 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
 
 {
   const input = await fixture(patch, files)
+  await writeFile(join(input.workspace, ".gitignore"), "node_modules/\n")
+  await exec("git", ["add", ".gitignore"], { cwd: input.workspace })
+  await exec("git", ["commit", "--quiet", "-m", "ignore dependencies"], { cwd: input.workspace })
+  const result = await applyRunnerWorkspacePatch({
+    artifactRoot: input.artifacts,
+    artifactRefs: input.refs,
+    workspaceRoot: input.workspace,
+    writablePaths: ["README.md"],
+    verify: async () => {
+      const packageLinks = join(input.workspace, "node_modules", ".pnpm", "hono", "node_modules")
+      await mkdir(packageLinks, { recursive: true })
+      await symlink(input.artifacts, join(packageLinks, "hono"))
+    },
+  })
+  await verifyRunnerWorkspaceIntegrity(result.integrity!)
+}
+
+{
+  const input = await fixture(patch, files)
+  await symlink(input.artifacts, join(input.workspace, "publishable-link"))
+  await assert.rejects(
+    () => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] }),
+    /unsupported path type: publishable-link/,
+  )
+}
+
+{
+  const input = await fixture(patch, files)
   await assert.rejects(() => applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["src/**"] }), /outside writable_paths/)
   assert.equal(await readFile(join(input.workspace, "README.md"), "utf8"), "before\n")
 }

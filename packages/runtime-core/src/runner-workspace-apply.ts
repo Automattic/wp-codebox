@@ -235,25 +235,24 @@ function validatePatchPaths(patch: string, changed: RunnerWorkspaceChangedFile[]
 
 async function snapshotWorkspace(root: string): Promise<RunnerWorkspacePublicationFile[]> {
   const output: RunnerWorkspacePublicationFile[] = []
-  async function visit(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.name === ".git" || entry.name === ".codebox") continue
-      const absolute = resolve(directory, entry.name)
-      const path = relative(root, absolute).replaceAll("\\", "/")
-      const stat = await lstat(absolute)
-      if (stat.isSymbolicLink()) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
-      if (stat.isDirectory()) {
-        await visit(absolute)
-        continue
-      }
-      if (!stat.isFile()) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
-      const mode = (stat.mode & 0o111) ? "100755" : "100644"
-      const bytes = await readFile(absolute)
-      output.push({ path, mode, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex"), deleted: false })
+  const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root, maxBuffer: MAX_PATCH_BYTES })
+  const paths = stdout.split("\0").filter(Boolean).sort((left, right) => left.localeCompare(right))
+  for (const path of paths) {
+    const absolute = resolve(root, path)
+    if (!pathIsWithinRoot(absolute, root)) throw new Error(`Runner workspace contains a denied path: ${path}`)
+    let stat
+    try {
+      stat = await lstat(absolute)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      throw error
     }
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Runner workspace contains an unsupported path type: ${path}`)
+    const mode = (stat.mode & 0o111) ? "100755" : "100644"
+    const bytes = await readFile(absolute)
+    output.push({ path, mode, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex"), deleted: false })
   }
-  await visit(root)
-  return output.sort((a, b) => a.path.localeCompare(b.path))
+  return output
 }
 
 function validateAppliedWorkspace(baseline: RunnerWorkspacePublicationFile[], current: RunnerWorkspacePublicationFile[], changed: RunnerWorkspaceChangedFile[]): void {
