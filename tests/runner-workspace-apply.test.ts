@@ -108,7 +108,19 @@ const files = [{ path: "/workspace/README.md", relativePath: "README.md", status
   const input = await fixture(patch, files)
   const result = await applyRunnerWorkspacePatch({ artifactRoot: input.artifacts, artifactRefs: input.refs, workspaceRoot: input.workspace, writablePaths: ["README.md"] })
   await writeFile(join(input.workspace, "extra.txt"), "unexpected\n")
-  await assert.rejects(() => verifyRunnerWorkspaceIntegrity(result.integrity!), /changed after approval/)
+  await assert.rejects(
+    () => verifyRunnerWorkspaceIntegrity(result.integrity!),
+    (error: Error & { evidence?: Record<string, any> }) => {
+      assert.match(error.message, /Changed paths: extra.txt/)
+      assert.equal(error.evidence?.schema, "wp-codebox/runner-workspace-integrity-failure/v1")
+      assert.deepEqual(error.evidence?.added, ["extra.txt"])
+      assert.deepEqual(error.evidence?.modified, [])
+      assert.deepEqual(error.evidence?.deleted, [])
+      assert.equal(error.evidence?.total, 1)
+      assert.equal(error.evidence?.truncated, false)
+      return true
+    },
+  )
 }
 
 {

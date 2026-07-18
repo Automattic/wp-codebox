@@ -696,7 +696,7 @@ if (execution.code === 0 && runtimeRecord.success === true && verificationPassed
     runtimeRecord.metadata = { ...record(runtimeRecord.metadata), runner_workspace_publication: publication }
     runtimeRecord.outputs = { ...record(runtimeRecord.outputs), runner_workspace_publication: publication }
   } catch (error) {
-    downstreamFailure = { stage: "publication", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES) }
+    downstreamFailure = { stage: "publication", message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES), ...(error?.evidence ? { evidence: error.evidence } : {}) }
   }
 }
 if (request.success?.requires_pr === true && workspaceApply.status === "no-op" && !publication) {

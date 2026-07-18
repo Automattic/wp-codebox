@@ -67,6 +67,15 @@ export interface RunnerWorkspaceIntegritySnapshot {
   baseline: RunnerWorkspacePublicationFile[]
 }
 
+export interface RunnerWorkspaceIntegrityFailureEvidence {
+  schema: "wp-codebox/runner-workspace-integrity-failure/v1"
+  added: string[]
+  modified: string[]
+  deleted: string[]
+  total: number
+  truncated: boolean
+}
+
 /**
  * Promotes the canonical sandbox patch artifact into the checked-out workspace.
  * Artifact references are treated as locators only after containment and digest
@@ -157,7 +166,23 @@ export async function runnerWorkspaceIdentity(root: string): Promise<RunnerWorks
 export async function verifyRunnerWorkspaceIntegrity(snapshot: RunnerWorkspaceIntegritySnapshot): Promise<void> {
   const current = await snapshotWorkspace(snapshot.workspaceRoot)
   if (JSON.stringify(current) !== JSON.stringify(snapshot.files)) {
-    throw new Error("Runner workspace changed after approval; refusing publication.")
+    const approved = new Map(snapshot.files.map((file) => [file.path, file]))
+    const actual = new Map(current.map((file) => [file.path, file]))
+    const added = [...actual.keys()].filter((path) => !approved.has(path)).sort()
+    const deleted = [...approved.keys()].filter((path) => !actual.has(path)).sort()
+    const modified = [...approved.keys()].filter((path) => actual.has(path) && JSON.stringify(approved.get(path)) !== JSON.stringify(actual.get(path))).sort()
+    const changed = [...added, ...modified, ...deleted]
+    const limit = 100
+    const error = new Error(`Runner workspace changed after approval; refusing publication. Changed paths: ${changed.slice(0, 10).join(", ")}`) as Error & { evidence?: RunnerWorkspaceIntegrityFailureEvidence }
+    error.evidence = {
+      schema: "wp-codebox/runner-workspace-integrity-failure/v1",
+      added: added.slice(0, limit),
+      modified: modified.slice(0, limit),
+      deleted: deleted.slice(0, limit),
+      total: changed.length,
+      truncated: changed.length > limit,
+    }
+    throw error
   }
 }
 
@@ -235,10 +260,7 @@ function validatePatchPaths(patch: string, changed: RunnerWorkspaceChangedFile[]
 
 async function snapshotWorkspace(root: string): Promise<RunnerWorkspacePublicationFile[]> {
   const output: RunnerWorkspacePublicationFile[] = []
-  const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root, maxBuffer: MAX_PATCH_BYTES })
-  const paths = stdout.split("\0")
-    .filter((path) => path && path !== ".codebox" && !path.startsWith(".codebox/"))
-    .sort((left, right) => left.localeCompare(right))
+  const paths = await workspaceSnapshotPaths(root)
   for (const path of paths) {
     const absolute = resolve(root, path)
     if (!pathIsWithinRoot(absolute, root)) throw new Error(`Runner workspace contains a denied path: ${path}`)
@@ -255,6 +277,31 @@ async function snapshotWorkspace(root: string): Promise<RunnerWorkspacePublicati
     output.push({ path, mode, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex"), deleted: false })
   }
   return output
+}
+
+async function workspaceSnapshotPaths(root: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root, maxBuffer: MAX_PATCH_BYTES })
+    return stdout.split("\0")
+      .filter((path) => path && path !== ".codebox" && !path.startsWith(".codebox/"))
+      .sort((left, right) => left.localeCompare(right))
+  } catch {
+    const paths: string[] = []
+    async function visit(directory: string): Promise<void> {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if ([".git", ".codebox", "node_modules", "vendor"].includes(entry.name)) continue
+        const absolute = resolve(directory, entry.name)
+        const path = relative(root, absolute).replaceAll("\\", "/")
+        if (entry.isDirectory()) {
+          await visit(absolute)
+        } else {
+          paths.push(path)
+        }
+      }
+    }
+    await visit(root)
+    return paths.sort((left, right) => left.localeCompare(right))
+  }
 }
 
 function validateAppliedWorkspace(baseline: RunnerWorkspacePublicationFile[], current: RunnerWorkspacePublicationFile[], changed: RunnerWorkspaceChangedFile[]): void {
