@@ -9,10 +9,22 @@ export interface InputMountPathMapping {
 }
 
 export function recipeInputMountPathMap(recipe: WorkspaceRecipe): InputMountPathMapping[] {
-  return (recipe.inputs?.mounts ?? []).map((mount, index) => ({
-    originalTarget: normalizeSandboxPath(mount.target),
-    canonicalTarget: canonicalInputMountTarget(mount.target, index),
-  }))
+  return (recipe.inputs?.mounts ?? []).reduce<InputMountPathMapping[]>((mappings, mount, index) => {
+    const originalTarget = normalizeSandboxPath(mount.target)
+    // Later declarations overlay the most-specific earlier target. Declaration
+    // order therefore determines ownership for equal or otherwise ambiguous
+    // overlaps, matching the order mounts are materialized into Playground.
+    const parent = [...mappings]
+      .filter((mapping) => pathHasMappedPrefix(originalTarget, mapping.originalTarget))
+      .sort((a, b) => b.originalTarget.length - a.originalTarget.length)[0]
+    mappings.push({
+      originalTarget,
+      canonicalTarget: parent
+        ? `${parent.canonicalTarget}${originalTarget.slice(parent.originalTarget.length)}`
+        : canonicalInputMountTarget(originalTarget, index),
+    })
+    return mappings
+  }, [])
 }
 
 export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {

@@ -11,6 +11,7 @@ export interface HostMountSnapshot {
   mountIndex: number
   target: string
   files: Record<string, string>
+  excludedPaths?: string[]
 }
 
 export interface VfsMountSnapshot {
@@ -122,12 +123,22 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
       mountIndex,
       target: mount.target,
       files: await hostFileHashes(mount.source),
+      excludedPaths: nestedMountPaths(mounts, mountIndex, mount.target),
     })
   }
 
   const response = await server.playground.run({ code: vfsMountSnapshotPhp(hostSnapshots) })
   const parsed = JSON.parse(response.text || "{}") as { mounts?: VfsMountSnapshot[] }
   return applyVfsMountSnapshots(mounts, parsed.mounts ?? [])
+}
+
+function nestedMountPaths(mounts: MountSpec[], mountIndex: number, parentTarget: string): string[] {
+  const normalizedParent = parentTarget.replace(/\/+$/, "")
+  return mounts
+    .slice(mountIndex + 1)
+    .map((mount) => mount.target.replace(/\/+$/, ""))
+    .filter((target) => target.startsWith(`${normalizedParent}/`))
+    .map((target) => target.slice(normalizedParent.length + 1))
 }
 
 function mountMaterializesVfsToHost(mount: MountSpec): boolean {
@@ -536,9 +547,9 @@ export function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string 
 $payload = json_decode(${payload}, true);
 $skip = array_fill_keys(${skipList}, true);
 
-function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $skip): array {
+function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $skip, array $excluded_paths): array {
     $files = array();
-    $walk = function (string $directory, string $relative_directory) use (&$walk, &$files, $root, $host_hashes, $skip): void {
+    $walk = function (string $directory, string $relative_directory) use (&$walk, &$files, $root, $host_hashes, $skip, $excluded_paths): void {
         if (!is_dir($directory)) {
             return;
         }
@@ -555,6 +566,16 @@ function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $ski
             }
             $relative_path = '' === $relative_directory ? $entry : $relative_directory . '/' . $entry;
             $path = $directory . '/' . $entry;
+            $excluded = false;
+            foreach ($excluded_paths as $excluded_path) {
+                if ($relative_path === $excluded_path || str_starts_with($relative_path, $excluded_path . '/')) {
+                    $excluded = true;
+                    break;
+                }
+            }
+            if ($excluded) {
+                continue;
+            }
             if (is_dir($path)) {
                 $walk($path, $relative_path);
                 continue;
@@ -594,7 +615,7 @@ foreach (($payload['mounts'] ?? array()) as $mount) {
         'mountIndex' => (int) ($mount['mountIndex'] ?? -1),
         'target' => $target,
         'authoritative' => true,
-        'files' => wp_codebox_vfs_mount_files($target, is_array($mount['files'] ?? null) ? $mount['files'] : array(), $skip),
+        'files' => wp_codebox_vfs_mount_files($target, is_array($mount['files'] ?? null) ? $mount['files'] : array(), $skip, is_array($mount['excludedPaths'] ?? null) ? $mount['excludedPaths'] : array()),
     );
 }
 

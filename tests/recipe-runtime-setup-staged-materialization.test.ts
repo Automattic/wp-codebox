@@ -161,6 +161,30 @@ assert.deepEqual(rewriteInputMountPathArgs(["cwd=/home/example/public_html/bin/t
   { originalTarget: "/home/example/public_html/bin/tests", canonicalTarget: "/tmp/wp-codebox-inputs/tests" },
 ]), ["cwd=/tmp/wp-codebox-inputs/tests/foo"])
 
+const nestedInputMountPathMap = recipeInputMountPathMap({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    mounts: [
+      { source: "/workspace/project", target: "/home/project", mode: "readwrite" },
+      { source: "/workspace/config.php", target: "/home/project/config.php", mode: "readonly" },
+    ],
+  },
+  workflow: { steps: [] },
+})
+assert.equal(nestedInputMountPathMap[1].canonicalTarget, `${nestedInputMountPathMap[0].canonicalTarget}/config.php`, "a later nested mount overlays its earlier parent target")
+assert.deepEqual(rewriteInputMountPathArgs(["config=/home/project/config.php"], nestedInputMountPathMap), [`config=${nestedInputMountPathMap[1].canonicalTarget}`], "nested paths rewrite to their effective overlay target")
+const reverseNestedInputMountPathMap = recipeInputMountPathMap({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    mounts: [
+      { source: "/workspace/config.php", target: "/home/project/config.php", mode: "readonly" },
+      { source: "/workspace/project", target: "/home/project", mode: "readwrite" },
+    ],
+  },
+  workflow: { steps: [] },
+})
+assert.match(reverseNestedInputMountPathMap[1].canonicalTarget, /^\/tmp\/wp-codebox-inputs\/1-project-[a-f0-9]{12}$/, "an earlier nested declaration does not alter a later parent target")
+
 const wpcomPathMap = recipeInputMountPathMap({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
