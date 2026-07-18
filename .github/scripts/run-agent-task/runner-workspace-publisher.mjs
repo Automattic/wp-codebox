@@ -9,17 +9,20 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
   const allowed = Array.isArray(record(request.access).allowed_repos) ? request.access.allowed_repos.map((value) => string(value).toLowerCase()) : []
   if (!token) throw new Error("No GitHub token is available for runner workspace publication.")
   if (!targetRepo || targetRepo !== configuredRepo || !allowed.includes(targetRepo)) throw new Error("Runner workspace publication repository is not authorized.")
-  const base = string(config.base || config.base_branch || "main")
+  let base = string(config.base) || string(config.base_branch)
+  const hasConfiguredBase = Boolean(base)
   const prefix = string(config.branch_prefix || "wp-codebox/agent-task/")
   const runId = string(config.run_id || request.workload?.id || "agent-task").replace(/[^A-Za-z0-9._/-]+/g, "-")
   const head = `${prefix}${runId}`
-  if (!/^[A-Za-z0-9._/-]+$/.test(prefix) || !head.startsWith(prefix) || head.includes("..") || !/^[A-Za-z0-9._/-]+$/.test(base)) throw new Error("Runner workspace branch configuration is invalid.")
-
   const api = async (method, path, body) => {
     const response = await fetchImpl(`https://api.github.com/repos/${targetRepo}${path}`, { method, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(`GitHub API ${method} ${path} failed with ${response.status}.`)
     return payload
+  }
+  if (!base) base = string((await api("GET", "")).default_branch)
+  if (!/^[A-Za-z0-9._/-]+$/.test(prefix) || !head.startsWith(prefix) || head.includes("..") || !/^[A-Za-z0-9._/-]+$/.test(base)) {
+    throw new Error(hasConfiguredBase ? "Runner workspace branch configuration is invalid." : "Runner workspace branch configuration is invalid: repository metadata must provide a valid default branch when base is omitted.")
   }
   let existing = null
   try { existing = await api("GET", `/git/ref/heads/${head.split("/").map(encodeURIComponent).join("/")}`) } catch (error) { if (!String(error.message).includes(" 404.")) throw error }

@@ -5,13 +5,14 @@ const request = { target_repo: "owner/repo", workload: { id: "run-1", label: "Up
 const publicationFiles = [{ path: "README.md", mode: "100644", content: Buffer.from("changed\n").toString("base64"), deleted: false }]
 
 function response(status, body) { return { ok: status >= 200 && status < 300, status, json: async () => body } }
-function fetchMock(existing = false) {
+function fetchMock(existing = false, base = "main", defaultBranch) {
   const calls = []
   return { calls, fetch: async (url, init) => {
     calls.push([url, init.method, init.body ? JSON.parse(init.body) : undefined])
     const parsed = new URL(url)
     const path = parsed.pathname.replace("/repos/owner/repo", "")
-    if (path === "/git/ref/heads/main") return response(200, { object: { sha: "base" } })
+    if (path === "") return response(200, { default_branch: defaultBranch })
+    if (path === `/git/ref/heads/${base}`) return response(200, { object: { sha: "base" } })
     if (path === "/git/commits/base" || path === "/git/commits/old") return response(200, { tree: { sha: path.endsWith("old") ? "prior-tree" : "tree" } })
     if (path.includes("/git/ref/heads/wp-codebox/agent-task/run-1")) return existing ? response(200, { object: { sha: "old" } }) : response(404, {})
     if (path === "/git/blobs") return response(201, { sha: "blob" })
@@ -19,10 +20,35 @@ function fetchMock(existing = false) {
     if (path === "/git/commits") return response(201, { sha: "commit" })
     if (path === "/git/refs") return response(201, {})
     if (path.includes("/git/refs/heads/")) return response(200, {})
-    if (path === "/pulls" && parsed.search) return response(200, existing ? [{ number: 4, html_url: "https://github.com/owner/repo/pull/4", base: { repo: { full_name: "owner/repo" }, ref: "main" }, head: { ref: "wp-codebox/agent-task/run-1" } }] : [])
-    if (path === "/pulls") return response(201, { number: 5, html_url: "https://github.com/owner/repo/pull/5", base: { repo: { full_name: "owner/repo" }, ref: "main" }, head: { ref: "wp-codebox/agent-task/run-1" } })
+    if (path === "/pulls" && parsed.search) return response(200, existing ? [{ number: 4, html_url: "https://github.com/owner/repo/pull/4", base: { repo: { full_name: "owner/repo" }, ref: base }, head: { ref: "wp-codebox/agent-task/run-1" } }] : [])
+    if (path === "/pulls") return response(201, { number: 5, html_url: "https://github.com/owner/repo/pull/5", base: { repo: { full_name: "owner/repo" }, ref: base }, head: { ref: "wp-codebox/agent-task/run-1" } })
     throw new Error(`unexpected ${path}`)
   } }
+}
+{
+  const nonMainRequest = { ...request, runner_workspace: { ...request.runner_workspace, base: "release", base_branch: "legacy" } }
+  const mock = fetchMock(false, "release")
+  const result = await publishRunnerWorkspace({ request: nonMainRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
+  assert.equal(result.branch.base, "release", "explicit base must remain authoritative")
+  assert(!mock.calls.some(([url]) => new URL(url).pathname === "/repos/owner/repo"), "explicit base must not look up repository metadata")
+}
+{
+  const aliasRequest = { ...request, runner_workspace: { ...request.runner_workspace, base: undefined, base_branch: "stable" } }
+  const mock = fetchMock(false, "stable")
+  const result = await publishRunnerWorkspace({ request: aliasRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
+  assert.equal(result.branch.base, "stable", "base_branch remains a supported base alias")
+  assert(!mock.calls.some(([url]) => new URL(url).pathname === "/repos/owner/repo"), "base_branch must not look up repository metadata")
+}
+{
+  const metadataRequest = { ...request, runner_workspace: { ...request.runner_workspace, base: undefined, base_branch: undefined } }
+  const mock = fetchMock(false, "trunk", "trunk")
+  const result = await publishRunnerWorkspace({ request: metadataRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: mock.fetch })
+  assert.equal(result.branch.base, "trunk", "omitted base must use the repository default branch")
+  assert(mock.calls.some(([url]) => new URL(url).pathname === "/repos/owner/repo"), "omitted base must look up repository metadata")
+}
+for (const defaultBranch of [undefined, "invalid branch"]) {
+  const metadataRequest = { ...request, runner_workspace: { ...request.runner_workspace, base: undefined, base_branch: undefined } }
+  await assert.rejects(() => publishRunnerWorkspace({ request: metadataRequest, changedFiles: ["README.md"], publicationFiles, token: "secret", fetchImpl: fetchMock(false, "main", defaultBranch).fetch }), /metadata must provide a valid default branch/)
 }
 
 {
