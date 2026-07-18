@@ -2,7 +2,7 @@
 
 This additive integration is the first acceptance gate for [wp-codebox#1838](https://github.com/Automattic/wp-codebox/issues/1838). It compiles the current PHP 8.5 Asyncify Wasm asset for workerd, boots WordPress through Playground with the current SQLite integration release, executes PHP, and returns a Codebox runtime-command-result envelope containing the stable `wp-codebox/cloudflare-runtime-health/v1` health payload.
 
-The Worker owns Cloudflare transport and isolate lifecycle. This gate uses one Playground PHP instance per isolate; Durable Objects will serialize site mutation in a later gate. The response identifies the generic `wordpress-playground` backend and `wordpress` environment; callers do not receive Cloudflare binding or limit details. Runtime snapshots, restore, R2, serialization, and cold restoration are deferred to later gates.
+The Worker owns Cloudflare transport and isolate lifecycle. Full WordPress initialization requires the paid-plan five-minute CPU allowance, declared as `limits.cpu_ms: 300000`; Cloudflare's fixed 128 MB isolate memory limit remains unchanged. This gate uses one Playground PHP instance per isolate; Durable Objects will serialize site mutation in a later gate. The response identifies the generic `wordpress-playground` backend and `wordpress` environment; callers do not receive Cloudflare binding or limit details. Runtime snapshots, restore, R2, serialization, and cold restoration are deferred to later gates.
 
 ## Verification
 

@@ -3,5 +3,6 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-18",
   "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 300000 },
   "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }]
 }
