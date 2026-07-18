@@ -1,6 +1,6 @@
 {
   "name": "@automattic/wp-codebox-runtime-cloudflare",
-  "version": "0.12.26",
+  "version": "0.12.27",
   "private": true,
   "type": "module",
   "dependencies": {
