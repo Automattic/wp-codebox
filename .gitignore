@@ -5,3 +5,4 @@ artifacts/
 scripts/uploads/
 *.tsbuildinfo
 .DS_Store
+.wrangler/
