@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -378,7 +378,17 @@ assert.equal(nestedProofResets > 0, true)
 assert.equal(steps.some((step) => step.command === "wordpress.editor-actions"), true)
 
 const failureArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-editor-fuzz-failure-"))
+const failureSourceRoot = await mkdtemp(join(tmpdir(), "wp-codebox-editor-fuzz-source-"))
 try {
+  await mkdir(join(failureSourceRoot, "files", "browser"), { recursive: true })
+  const failureContents = new Map([
+    ["files/browser/editor-action-steps.jsonl", "{\"schema\":\"wp-codebox/editor-actions/v1\",\"step\":\"failed\"}\n"],
+    ["files/browser/editor-action-state.json", "{\"schema\":\"wp-codebox/editor-state/v1\",\"status\":\"failed\"}\n"],
+    ["files/browser/editor-action-summary.json", "{\"schema\":\"wp-codebox/editor-actions/v1\",\"status\":\"failed\"}\n"],
+    ["files/browser/editor-validate-blocks.json", "{\"schema\":\"wp-codebox/editor-validate-blocks/v1\",\"status\":\"failed\"}\n"],
+    ["files/browser/editor-validate-blocks-summary.json", "{\"schema\":\"wp-codebox/editor-validate-blocks/v1\",\"status\":\"failed\"}\n"],
+  ])
+  await Promise.all([...failureContents].map(([path, content]) => writeFile(join(failureSourceRoot, path), content, "utf8")))
   const failureEpisode = {
     async reset() {
       return episode.reset()
@@ -394,7 +404,7 @@ try {
         preview: { mode: "direct" },
         files,
         summary: { consoleMessages: 0, errors: 1, finalUrl: "/wp-admin/post-new.php", htmlSnapshot: false, networkEvents: 0, replayability: "artifact-backed", screenshot: false },
-      } as never)
+      } as never, failureSourceRoot)
     },
   }
   const failureResult = await executeWordPressFuzzSuite(failureEpisode, fuzzSuiteContract({
@@ -405,14 +415,22 @@ try {
     ],
   }), { artifactStorage: { root: failureArtifactRoot }, requireCoverage: true })
   assert.equal(failureResult.status, "error")
-  assert.deepEqual(failureResult.cases[0]?.artifactRefs?.map((ref) => ref.path), ["files/browser/editor-action-steps.jsonl", "files/browser/editor-action-state.json", "files/browser/editor-action-summary.json"])
-  assert.deepEqual(failureResult.cases[1]?.artifactRefs?.map((ref) => ref.path), ["files/browser/editor-validate-blocks.json", "files/browser/editor-validate-blocks-summary.json"])
+  assert.deepEqual(failureResult.cases[0]?.artifactRefs?.map((ref) => ref.path), ["fuzz/runtime-backed-editor-artifact-failures/files/browser/editor-action-steps.jsonl", "fuzz/runtime-backed-editor-artifact-failures/files/browser/editor-action-state.json", "fuzz/runtime-backed-editor-artifact-failures/files/browser/editor-action-summary.json"])
+  assert.deepEqual(failureResult.cases[1]?.artifactRefs?.map((ref) => ref.path), ["fuzz/runtime-backed-editor-artifact-failures/files/browser/editor-validate-blocks.json", "fuzz/runtime-backed-editor-artifact-failures/files/browser/editor-validate-blocks-summary.json"])
   const failureBundle = failureResult.metadata?.artifacts as { fuzzBundle?: { replayCaseRefs?: Array<{ caseId?: string; path?: string }> } } | undefined
-  const replayRef = failureBundle?.fuzzBundle?.replayCaseRefs?.find((ref) => ref.caseId === "editor-validate-failure")
-  const replayArtifact = JSON.parse(await readFile(join(failureArtifactRoot, replayRef?.path ?? ""), "utf8"))
-  assert.equal(replayArtifact.artifactRefs.some((ref: { path?: string }) => ref.path === "files/browser/editor-validate-blocks.json"), true)
+  for (const replayRef of failureBundle?.fuzzBundle?.replayCaseRefs ?? []) {
+    const replayArtifact = JSON.parse(await readFile(join(failureArtifactRoot, replayRef.path ?? ""), "utf8"))
+    for (const ref of replayArtifact.artifactRefs as Array<{ path: string; sha256?: string; bytes?: number }>) {
+      const content = await readFile(join(failureArtifactRoot, ref.path), "utf8")
+      assert.equal(content, failureContents.get(ref.path.replace("fuzz/runtime-backed-editor-artifact-failures/", "")))
+      assert.equal(typeof ref.sha256, "string")
+      assert.equal(ref.bytes, Buffer.byteLength(content))
+      assert.equal(typeof JSON.parse(content).schema, "string")
+    }
+  }
 } finally {
   await rm(failureArtifactRoot, { recursive: true, force: true })
+  await rm(failureSourceRoot, { recursive: true, force: true })
 }
 
 console.log("playground fuzz suite public ok")

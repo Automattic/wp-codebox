@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 
 import { artifactManifestFile, refreshArtifactManifestFileSha256s, type ArtifactManifest, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactViewerMetadata } from "./artifact-manifest.js"
@@ -71,6 +71,12 @@ export class ArtifactBundleWriter {
     this.artifacts.add({ path, ...manifest })
     await mkdir(dirname(this.path(path)), { recursive: true })
     await write(this.path(path))
+  }
+
+  async importFile(path: string, sourcePath: string, manifest: Omit<ManifestedArtifactFileInput, "path">): Promise<void> {
+    await this.writeGenerated(path, manifest, async (destinationPath) => {
+      await copyFile(sourcePath, destinationPath)
+    })
   }
 
   async writeManifest<T extends ArtifactManifest>(manifest: T): Promise<T> {

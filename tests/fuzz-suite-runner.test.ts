@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzFixturePlanContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, mutationFixtureSeedOperation, normalizeFuzzSuiteResetPolicy, planBrowserRandomWalk, planFuzzSuiteCaseExecutionSpec, restMutationFixtureOptInContract, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, RuntimeActionExecutionError, fuzzRunnerCapabilitiesContract, fuzzFixturePlanContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, mutationFixtureSeedOperation, normalizeFuzzSuiteResetPolicy, planBrowserRandomWalk, planFuzzSuiteCaseExecutionSpec, restMutationFixtureOptInContract, runFuzzSuite, runRuntimeAction, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const disposableSandboxBoundary = { disposable: true, destructivePermission: true, teardown: "discard", hostAccess: "declared-mounts-only" }
 const destructiveSandboxProof = { schema: "wp-codebox/destructive-sandbox-proof/v1", artifactKind: "destructive-sandbox-proof", version: 1, runtimeId: "runtime-1", createdAt: "2026-01-01T00:00:00.000Z", boundarySource: "runtime-created", boundary: { ...disposableSandboxBoundary, backend: "wordpress-playground", environment: "wordpress" } }
@@ -305,6 +305,16 @@ const editorSequence = await runFuzzSuite(fuzzSuiteContract({
 assert.equal(editorSequence.status, "passed")
 assert.deepEqual(editorSequence.cases[0]?.artifactRefs?.map((ref) => ref.path), ["files/editor_actions.json", "files/editor_validate_blocks.json"])
 assert.equal(((editorSequence.cases[0]?.metadata?.replay as { sequence?: { steps?: Array<{ type?: string }> } } | undefined)?.sequence?.steps?.[1]?.type), "editor_validate_blocks")
+
+const genericAdapterFailure = new RuntimeActionExecutionError("editor validation failed", [{ kind: "browser-editor-validate-blocks", id: "validation", path: "files/browser/editor-validate-blocks.json", sourcePath: "/runtime-artifacts/files/browser/editor-validate-blocks.json", contentType: "application/json" }])
+const genericAdapterFailureResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-generic-editor-adapter-failure",
+  cases: [{ id: "editor-validation-failure", target: { kind: "runtime-action" }, input: { type: "editor_validate_blocks", content: "<!-- wp:paragraph --><p>Failure</p><!-- /wp:paragraph -->" } }],
+}), {
+  runtimeActionExecutor: ({ action }) => runRuntimeAction({ step: async () => { throw genericAdapterFailure } } as never, action),
+})
+assert.equal(genericAdapterFailureResult.status, "error")
+assert.deepEqual(genericAdapterFailureResult.cases[0]?.artifactRefs?.[0], { path: "files/browser/editor-validate-blocks.json", kind: "browser-editor-validate-blocks", contentType: "application/json", metadata: { id: "validation", sourcePath: "/runtime-artifacts/files/browser/editor-validate-blocks.json" } })
 
 const workloadExecutions: Record<string, unknown>[] = []
 const runtimeWorkloadResult = await runFuzzSuite(fuzzSuiteContract({

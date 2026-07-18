@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
-import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
+import { browserArtifactFileManifest, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact, type BrowserArtifactFiles } from "./browser-artifacts.js"
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
 import { adminFuzzInputFromArgs, adminFuzzPhpCode } from "./admin-fuzz-command-handlers.js"
 import { adminActionInputFromArgs, adminActionPhpCode } from "./admin-action-command-handlers.js"
@@ -57,6 +57,14 @@ import type {
 } from "@automattic/wp-codebox-core"
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function runtimeActionExecutionError(error: { message: string; artifact: BrowserArtifact }, artifactRoot: string): RuntimeActionExecutionError {
+  return new RuntimeActionExecutionError(error.message, Object.entries(error.artifact.files).flatMap(([key, value]) => {
+    const fileKey = key as keyof BrowserArtifactFiles
+    const manifest = browserArtifactFileManifest(fileKey)
+    return (Array.isArray(value) ? value : [value]).flatMap((path, index) => typeof path === "string" ? [{ kind: manifest.kind, id: `${error.artifact.artifactType}:${key}:${index}`, path, sourcePath: resolveArtifactPath(artifactRoot, path).absolutePath, contentType: manifest.contentType }] : [])
+  }))
 }
 
 function pluginModuleOptionsTablesInventoryPhpCode(): string {
@@ -957,6 +965,7 @@ class PlaygroundRuntime implements Runtime {
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
+        throw runtimeActionExecutionError(error, this.artifactRoot)
       }
       throw error
     }
@@ -978,6 +987,7 @@ class PlaygroundRuntime implements Runtime {
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
+        throw runtimeActionExecutionError(error, this.artifactRoot)
       }
       throw error
     }

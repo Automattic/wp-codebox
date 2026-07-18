@@ -735,6 +735,8 @@ export interface RuntimeEpisodeTraceRef {
   digest?: RuntimeEpisodeContentDigest
   artifactId?: string
   path?: string
+  sourcePath?: string
+  contentType?: string
 }
 
 export interface RuntimeEpisodeActionRecord {

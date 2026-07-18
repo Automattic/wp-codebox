@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
 import { isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
+import { browserArtifactFileManifest, type BrowserArtifactFiles } from "./browser-artifacts.js"
 
 import {
   ArtifactBundleWriter,
@@ -449,12 +450,16 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
 }
 
 function runtimeActionExecutionError(error: unknown): Error {
+  if (error instanceof RuntimeActionExecutionError) return error
   if (!isBrowserCommandArtifactError(error)) return error instanceof Error ? error : new Error(String(error))
-  return new RuntimeActionExecutionError(error.message, browserArtifactTraceRefs(error.artifact))
+  return new RuntimeActionExecutionError(error.message, browserArtifactTraceRefs(error.artifact, error.artifactRoot))
 }
 
-function browserArtifactTraceRefs(artifact: import("./browser-artifacts.js").BrowserArtifact): RuntimeEpisodeTraceRef[] {
-  return Object.entries(artifact.files).flatMap(([kind, value]) => (Array.isArray(value) ? value : [value]).flatMap((path, index) => typeof path === "string" ? [{ kind: `browser-${kind}`, id: `${artifact.artifactType}:${kind}:${index}`, path }] : []))
+function browserArtifactTraceRefs(artifact: import("./browser-artifacts.js").BrowserArtifact, artifactRoot?: string): RuntimeEpisodeTraceRef[] {
+  return Object.entries(artifact.files).flatMap(([key, value]) => {
+    const manifest = browserArtifactFileManifest(key as keyof BrowserArtifactFiles)
+    return (Array.isArray(value) ? value : [value]).flatMap((path, index) => typeof path === "string" ? [{ kind: manifest.kind, id: `${artifact.artifactType}:${key}:${index}`, path, ...(artifactRoot ? { sourcePath: resolveArtifactPath(artifactRoot, path).absolutePath } : {}), contentType: manifest.contentType }] : [])
+  })
 }
 
 function runtimeEditorActionTargetArgs(action: { target?: string; post_id?: number; post_type?: string; url?: string; wait_selector?: string; capture?: string[]; timeout_ms?: number }): string[] {
@@ -1364,7 +1369,9 @@ async function writeFuzzArtifactBundle(input: {
 
   for (const fuzzCase of input.result.cases) {
     const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
-    const caseArtifactRefs = [...(fuzzCase.artifactRefs ?? [])]
+    const caseArtifactRefs = await Promise.all((fuzzCase.artifactRefs ?? []).map((ref) => importFuzzCaseArtifactRef(writer, storage, bundlePath, ref)))
+    fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
+    artifactRefs.push(...caseArtifactRefs)
     if (dbWriteSet) {
       const path = `files/db-write-sets/${safeArtifactSegment(fuzzCase.id)}.json`
       const content = `${JSON.stringify({ ...dbWriteSet, artifactPath: path, persisted: true }, null, 2)}\n`
@@ -1396,6 +1403,10 @@ async function writeFuzzArtifactBundle(input: {
       metadata: { storage: "runtime-artifact-layout" },
     }))
   }
+  input.result.artifactRefs = dedupeFuzzSuiteArtifactRefs([
+    ...(input.result.artifactRefs ?? []).filter((ref) => !stringValue(ref.metadata?.sourcePath)),
+    ...input.result.cases.flatMap((fuzzCase) => fuzzCase.artifactRefs ?? []),
+  ])
 
   const createdAt = new Date().toISOString()
   const manifestInput: ArtifactManifest = {
@@ -1449,6 +1460,22 @@ async function writeFuzzArtifactBundle(input: {
       await writer.writeManifest(manifest)
       return written.metadata
     },
+  }
+}
+
+async function importFuzzCaseArtifactRef(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, ref: FuzzSuiteArtifactRef): Promise<FuzzSuiteArtifactRef> {
+  const sourcePath = stringValue(ref.metadata?.sourcePath)
+  if (!sourcePath) return ref
+  await writer.importFile(ref.path, sourcePath, {
+    kind: ref.kind,
+    contentType: ref.contentType ?? "application/octet-stream",
+    provenance: { source: "runtime-action", operation: "import-fuzz-case-artifact" },
+  })
+  const content = await readFile(writer.path(ref.path))
+  const digest = artifactFileDigest(content)
+  return {
+    ...fuzzArtifactRef(storage, bundlePath, ref.path, ref.kind, ref.contentType ?? "application/octet-stream", digest.value, content.byteLength),
+    metadata: stripUndefined({ ...(ref.metadata ?? {}), sourcePath: undefined, importedFrom: ref.path, storage: "runtime-artifact-layout" }),
   }
 }
 
