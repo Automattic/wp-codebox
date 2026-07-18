@@ -810,6 +810,7 @@ export interface BrowserStepRecord {
 }
 
 export interface BrowserEditorMutationSummary {
+  status: "applied" | "no-op" | "failed"
   before: BrowserEditorStateSummary
   after?: BrowserEditorStateSummary
   failure?: string

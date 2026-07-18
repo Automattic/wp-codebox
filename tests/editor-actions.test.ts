@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { captureEditorState, captureEditorValidity, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
@@ -141,6 +141,47 @@ assert.equal(capturedRunnerState.blocks?.[0]?.isValid, undefined)
 assert.ok(capturedRunnerState.serializedContentSha256)
 assert.equal(capturedRunnerState.dirty, false)
 
+const state = (blocks: EditorStateSnapshot["blocks"], content: string): EditorStateSnapshot => ({
+  schema: "wp-codebox/editor-state/v1",
+  capturedAt: "2026-01-01T00:00:00.000Z",
+  target,
+  storesAvailable: true,
+  blocks,
+  serializedContentSha256: content,
+})
+const block = (clientId: string, attributes: Record<string, unknown> = {}, innerBlocks: NonNullable<EditorStateSnapshot["blocks"]> = []) => ({ name: "core/paragraph", clientId, attributes, innerBlocks })
+
+// Stateful actions must prove their requested transition from the captured editor
+// tree. Dispatches that Gutenberg silently ignores are typed no-ops, not success.
+assertEditorMutationPostcondition(
+  { kind: "moveBlock", clientId: "b", position: 0 },
+  state([block("a"), block("b")], "before"),
+  state([block("b"), block("a")], "after"),
+)
+assertEditorMutationPostcondition(
+  { kind: "duplicateBlock", clientId: "a" },
+  state([block("a", { content: "A" })], "before"),
+  state([block("a", { content: "A" }), block("copy", { content: "A" })], "after"),
+)
+assertEditorMutationPostcondition(
+  { kind: "updateBlockAttributes", clientId: "a", attributes: { content: "Updated" } },
+  state([block("a", { content: "Before" })], "before"),
+  state([block("a", { content: "Updated" })], "after"),
+)
+assertEditorMutationPostcondition(
+  { kind: "removeBlock", clientId: "a" },
+  state([block("a"), block("b")], "before"),
+  state([block("b")], "after"),
+)
+for (const [step, before, after] of [
+  [{ kind: "moveBlock", clientId: "b", position: 1 }, state([block("a"), block("b")], "same"), state([block("a"), block("b")], "same")],
+  [{ kind: "duplicateBlock", clientId: "a" }, state([block("a")], "same"), state([block("a")], "same")],
+  [{ kind: "updateBlockAttributes", clientId: "a", attributes: { content: "Same" } }, state([block("a", { content: "Same" })], "same"), state([block("a", { content: "Same" })], "same")],
+  [{ kind: "removeBlock", clientId: "a" }, state([block("a")], "same"), state([block("a")], "same")],
+] as const) {
+  assert.throws(() => assertEditorMutationPostcondition(step, before, after), new RegExp(`wp-codebox-editor-mutation-noop:${step.kind}`))
+}
+
 const validity = await captureEditorValidity({
   evaluate: async (_callback: unknown, selectors: string[]) => ([{
     source: "dom",
@@ -156,6 +197,33 @@ assert.equal(validity.schema, "wp-codebox/editor-validity/v1")
 assert.equal(validity.summary.status, "warnings")
 assert.equal(validity.summary.warningCount, 1)
 assert.deepEqual(validity.summary.messages, ["This block contains unexpected or invalid content."])
+
+const nestedValidity = await captureEditorValidity({
+  evaluate: async (callback: (selectors: string[]) => unknown, selectors: string[]) => {
+    const globals = globalThis as typeof globalThis & { window?: unknown; document?: unknown }
+    const previousWindow = globals.window
+    const previousDocument = globals.document
+    globals.document = { querySelectorAll: () => [] }
+    globals.window = {
+      wp: {
+        data: {
+          select: (store: string) => store === "core/block-editor" ? {
+            getBlocks: () => [{ name: "core/group", clientId: "parent", isValid: true, innerBlocks: [{ name: "core/paragraph", clientId: "nested-invalid", isValid: false, innerBlocks: [] }] }],
+          } : undefined,
+        },
+      },
+    }
+    try {
+      return callback(selectors)
+    } finally {
+      globals.window = previousWindow
+      globals.document = previousDocument
+    }
+  },
+} as never, target)
+assert.equal(nestedValidity.summary.status, "warnings")
+assert.equal(nestedValidity.summary.warningCount, 1)
+assert.equal(nestedValidity.warnings[0]?.clientId, "nested-invalid")
 
 // target=front-page parses to a runtime-resolved target with an empty URL until
 // resolveEditorOpenTarget pins it to the static front page.

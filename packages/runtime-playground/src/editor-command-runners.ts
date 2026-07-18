@@ -9,7 +9,7 @@ import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep } from "./editor-actions.js"
+import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget } from "./editor-actions.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
@@ -882,6 +882,7 @@ export async function runEditorActionsCommand({
       const actionStartedAt = now()
       const actionStartedAtMs = Date.now()
       const before = await captureEditorState(page, target)
+      let after: EditorStateSnapshot | undefined
       try {
         const result = await executeEditorActionStep(page, step, stepTimeoutMs, targetUrl)
         if (result?.state) {
@@ -894,17 +895,23 @@ export async function runEditorActionsCommand({
           editorSave = result.save
         }
         finalUrl = page.url()
-        const after = await captureEditorState(page, target)
+        after = await captureEditorState(page, target)
+        assertEditorMutationPostcondition(step, before, after)
         editorState = after
         stepRecords.push(browserStepRecord(index + 2, { kind: step.kind } as never, "ok", actionStartedAt, actionStartedAtMs, finalUrl, {
           ...(result?.readiness ? { editorReadiness: result.readiness } : {}),
           ...(result?.save ? { editorSave: result.save } : {}),
-          editorMutation: { before: summarizeEditorStateForStep(before), after: summarizeEditorStateForStep(after) },
+          ...(editorActionMutatesState(step) ? { editorMutation: { status: "applied", before: summarizeEditorStateForStep(before), after: summarizeEditorStateForStep(after) } } : {}),
         } as never))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
-        stepRecords.push(browserStepRecord(index + 2, { kind: step.kind } as never, "failed", actionStartedAt, actionStartedAtMs, page.url(), { error: serialized, editorMutation: { before: summarizeEditorStateForStep(before), failure: serialized.message } }))
+        after ??= await captureEditorState(page, target).catch(() => undefined)
+        const noOp = serialized.message.startsWith("wp-codebox-editor-mutation-noop:")
+        stepRecords.push(browserStepRecord(index + 2, { kind: step.kind } as never, "failed", actionStartedAt, actionStartedAtMs, page.url(), {
+          error: serialized,
+          ...(editorActionMutatesState(step) ? { editorMutation: { status: noOp ? "no-op" : "failed", before: summarizeEditorStateForStep(before), ...(after ? { after: summarizeEditorStateForStep(after) } : {}), failure: serialized.message } } : {}),
+        }))
         pendingError = error instanceof Error ? error : new Error(String(error))
       }
     }
@@ -1363,7 +1370,7 @@ async function waitForAnyVisibleSelector(page: import("playwright").Page, select
   }, selector, { timeout: timeoutMs })
 }
 
-interface EditorStateSnapshot {
+export interface EditorStateSnapshot {
   schema: "wp-codebox/editor-state/v1"
   capturedAt: string
   target: ReturnType<typeof editorOpenTargetFromArgs>
@@ -1470,6 +1477,122 @@ function summarizeEditorStateForStep(state: EditorStateSnapshot): { blockCount?:
   }
 }
 
+function editorActionMutatesState(step: EditorActionStep): boolean {
+  return ["insertBlock", "updateBlockAttributes", "removeBlock", "moveBlock", "duplicateBlock", "replaceBlock", "replaceInnerBlocks", "undo", "redo"].includes(step.kind)
+}
+
+interface EditorStateBlock {
+  name: string
+  clientId?: string
+  attributes?: Record<string, unknown>
+  innerBlocks?: EditorStateBlock[]
+}
+
+interface EditorStateBlockLocation {
+  block: EditorStateBlock
+  siblings: EditorStateBlock[]
+  index: number
+  parentClientId?: string
+}
+
+function editorStateBlocks(state: EditorStateSnapshot): EditorStateBlock[] {
+  return state.blocks ?? []
+}
+
+function locateEditorStateBlock(blocks: EditorStateBlock[], target: EditorBlockTarget): EditorStateBlockLocation | undefined {
+  if (typeof target.clientId === "string") {
+    const visit = (items: EditorStateBlock[], parentClientId?: string): EditorStateBlockLocation | undefined => {
+      for (const [index, block] of items.entries()) {
+        if (block.clientId === target.clientId) return { block, siblings: items, index, parentClientId }
+        const found = visit(block.innerBlocks ?? [], block.clientId)
+        if (found) return found
+      }
+      return undefined
+    }
+    return visit(blocks)
+  }
+  const path = target.path ?? (typeof target.index === "number" ? [target.index] : [])
+  let siblings = blocks
+  let parentClientId: string | undefined
+  for (const [depth, index] of path.entries()) {
+    const block = siblings[index]
+    if (!block) return undefined
+    if (depth === path.length - 1) return { block, siblings, index, parentClientId }
+    parentClientId = block.clientId
+    siblings = block.innerBlocks ?? []
+  }
+  return undefined
+}
+
+function countEditorStateBlocks(blocks: EditorStateBlock[]): number {
+  return blocks.reduce((count, block) => count + 1 + countEditorStateBlocks(block.innerBlocks ?? []), 0)
+}
+
+function editorValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => editorValuesEqual(value, right[index]))
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).sort()
+  const rightKeys = Object.keys(rightRecord).sort()
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && editorValuesEqual(leftRecord[key], rightRecord[key]))
+}
+
+function blockMatchesEditorSpec(block: EditorStateBlock | undefined, spec: EditorBlockSpec): boolean {
+  if (!block || block.name !== spec.name) return false
+  if (spec.attributes && !Object.entries(spec.attributes).every(([key, value]) => editorValuesEqual(block.attributes?.[key], value))) return false
+  const expectedChildren = spec.innerBlocks ?? []
+  const actualChildren = block.innerBlocks ?? []
+  return actualChildren.length === expectedChildren.length && expectedChildren.every((child, index) => blockMatchesEditorSpec(actualChildren[index], child))
+}
+
+// Gutenberg dispatchers can silently decline locked or unsupported changes. Verify
+// the intended state transition instead of treating a successful dispatch as success.
+export function assertEditorMutationPostcondition(step: EditorActionStep, before: EditorStateSnapshot, after: EditorStateSnapshot): void {
+  if (!editorActionMutatesState(step)) return
+  const fail = (reason: string): never => { throw new Error(`wp-codebox-editor-mutation-noop:${step.kind}:${reason}`) }
+  if (step.kind === "insertBlock" || step.kind === "undo" || step.kind === "redo") {
+    if (before.serializedContentSha256 === after.serializedContentSha256 && editorValuesEqual(editorStateBlocks(before), editorStateBlocks(after))) fail("editor state did not change")
+    return
+  }
+  const blockStep = step as EditorBlockTarget
+  const beforeTarget = locateEditorStateBlock(editorStateBlocks(before), blockStep)
+  if (!beforeTarget) throw new Error(`wp-codebox-editor-mutation-noop:${step.kind}:target was absent from the before state`)
+  const afterTarget = beforeTarget.block.clientId ? locateEditorStateBlock(editorStateBlocks(after), { clientId: beforeTarget.block.clientId }) : undefined
+  if (step.kind === "updateBlockAttributes") {
+    if (!afterTarget) throw new Error(`wp-codebox-editor-mutation-noop:${step.kind}:target was absent after dispatch`)
+    if (!Object.entries(step.attributes).every(([key, value]) => editorValuesEqual(afterTarget.block.attributes?.[key], value))) fail("updated attributes were not present after dispatch")
+    if (editorValuesEqual(beforeTarget.block.attributes, afterTarget.block.attributes)) fail("attributes were unchanged")
+    return
+  }
+  if (step.kind === "removeBlock") {
+    if (afterTarget || countEditorStateBlocks(editorStateBlocks(after)) >= countEditorStateBlocks(editorStateBlocks(before))) fail("target remained after remove dispatch")
+    return
+  }
+  if (step.kind === "moveBlock") {
+    if (!afterTarget) throw new Error(`wp-codebox-editor-mutation-noop:${step.kind}:target was absent after dispatch`)
+    if (afterTarget.index !== step.position) fail("target did not reach the requested position")
+    if (beforeTarget.parentClientId === afterTarget.parentClientId && beforeTarget.index === afterTarget.index) fail("target position was unchanged")
+    return
+  }
+  if (step.kind === "duplicateBlock") {
+    if (!afterTarget) throw new Error(`wp-codebox-editor-mutation-noop:${step.kind}:target was absent after dispatch`)
+    if (afterTarget.siblings.length <= beforeTarget.siblings.length) fail("sibling count did not increase")
+    const duplicate = afterTarget.siblings.some((block) => block.clientId !== afterTarget.block.clientId && block.name === beforeTarget.block.name && editorValuesEqual(block.attributes, beforeTarget.block.attributes))
+    if (!duplicate) fail("no duplicate sibling matched the target")
+    return
+  }
+  if (step.kind === "replaceBlock") {
+    const afterAtPosition = afterTarget?.siblings[beforeTarget.index] ?? (beforeTarget.parentClientId ? locateEditorStateBlock(editorStateBlocks(after), { clientId: beforeTarget.parentClientId })?.block.innerBlocks?.[beforeTarget.index] : editorStateBlocks(after)[beforeTarget.index])
+    if (!blockMatchesEditorSpec(afterAtPosition, step.block)) fail("replacement block did not match the requested specification")
+    return
+  }
+  if (step.kind === "replaceInnerBlocks") {
+    if (!afterTarget || !blockMatchesEditorSpec(afterTarget.block, { name: afterTarget.block.name, innerBlocks: step.blocks })) fail("inner blocks did not match the requested specification")
+  }
+}
+
 export async function captureEditorValidity(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorValidityArtifact> {
   const selectors = EDITOR_VALIDITY_WARNING_SELECTORS
   const warnings = await page.evaluate((warningSelectors) => {
@@ -1534,24 +1657,28 @@ export async function captureEditorValidity(page: import("playwright").Page, tar
     const select = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select
     const blockEditor = typeof select === "function" ? select("core/block-editor") : undefined
     const blocks = typeof blockEditor?.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
-    for (const block of blocks) {
-      if (block.isValid !== false) {
-        continue
+    const visitBlocks = (items: Array<Record<string, unknown>>): void => {
+      for (const block of items) {
+        if (block.isValid === false) {
+          const clientId = typeof block.clientId === "string" ? block.clientId : undefined
+          const name = typeof block.name === "string" ? block.name : undefined
+          const key = `store:${clientId ?? ""}:${name ?? ""}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            warnings.push({
+              source: "block-editor-store",
+              message: "Block editor store reported an invalid block.",
+              blockName: name,
+              clientId,
+            })
+          }
+        }
+        if (Array.isArray(block.innerBlocks)) {
+          visitBlocks(block.innerBlocks as Array<Record<string, unknown>>)
+        }
       }
-      const clientId = typeof block.clientId === "string" ? block.clientId : undefined
-      const name = typeof block.name === "string" ? block.name : undefined
-      const key = `store:${clientId ?? ""}:${name ?? ""}`
-      if (seen.has(key)) {
-        continue
-      }
-      seen.add(key)
-      warnings.push({
-        source: "block-editor-store",
-        message: "Block editor store reported an invalid block.",
-        blockName: name,
-        clientId,
-      })
     }
+    visitBlocks(blocks)
     return warnings
   }, selectors)
   const messages = [...new Set(warnings.map((warning) => warning.message).filter((message) => message.length > 0))]
