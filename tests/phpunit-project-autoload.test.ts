@@ -413,9 +413,15 @@ assert.ok(managedModeCode.includes("'cacheResult' => false"))
 const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
 const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)
 const activationStageIndex = managedModeCode.indexOf("pg_run_activation_stage", dependencyLoadStageIndex)
+const dependencyPluginsLoadedSnapshotIndex = managedModeCode.indexOf("$pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');", installStageIndex)
+const dependencyPluginsLoadedDeferIndex = managedModeCode.indexOf("$deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);", dependencyLoadStageIndex)
+const dependencyPluginsLoadedReplayIndex = managedModeCode.indexOf("pg_run_deferred_wordpress_hook_callbacks($deferred_dependency_plugins_loaded_callbacks, array(), 'plugins_loaded');", activationStageIndex)
 assert.ok(installStageIndex > 0)
+assert.ok(dependencyPluginsLoadedSnapshotIndex > installStageIndex && dependencyPluginsLoadedSnapshotIndex < dependencyLoadStageIndex, "dependency plugins_loaded callbacks must be scoped to dependency loading")
 assert.ok(dependencyLoadStageIndex > installStageIndex, "dependency plugins must load after managed PHPUnit installation")
+assert.ok(dependencyPluginsLoadedDeferIndex > dependencyLoadStageIndex && dependencyPluginsLoadedDeferIndex < activationStageIndex, "dependency plugins_loaded callbacks must defer until activation completes")
 assert.ok(activationStageIndex > dependencyLoadStageIndex, "dependency plugins must activate after loading and before tests execute")
+assert.ok(dependencyPluginsLoadedReplayIndex > activationStageIndex, "dependency plugins_loaded callbacks must run once after activation")
 
 const dependencyRecipe = buildWordPressPhpunitRecipe({
   pluginSlug: "demo-plugin",

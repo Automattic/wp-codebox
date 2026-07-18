@@ -1112,7 +1112,9 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
 
 pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
+$pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
+$deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);
 $activation_files = $loaded_dep_files;
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
@@ -1123,6 +1125,7 @@ $pre_replayed_plugins_loaded_init_callbacks = pg_snapshot_wordpress_hook_callbac
 $reopened_ability_categories_init = pg_reopen_wordpress_action('wp_abilities_api_categories_init');
 $reopened_ability_init = pg_reopen_wordpress_action('wp_abilities_api_init');
 pg_run_deferred_wordpress_hook_callbacks($deferred_install_plugins_loaded_callbacks, array(), 'plugins_loaded');
+pg_run_deferred_wordpress_hook_callbacks($deferred_dependency_plugins_loaded_callbacks, array(), 'plugins_loaded');
 $deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
 usort($deferred_install_init_callbacks, static function (array $left, array $right): int {
     return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
