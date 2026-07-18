@@ -410,6 +410,30 @@ const managedModeCode = phpunitRunCode({
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
+const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
+const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)
+const activationStageIndex = managedModeCode.indexOf("pg_run_activation_stage", dependencyLoadStageIndex)
+assert.ok(installStageIndex > 0)
+assert.ok(dependencyLoadStageIndex > installStageIndex, "dependency plugins must load after managed PHPUnit installation")
+assert.ok(activationStageIndex > dependencyLoadStageIndex, "dependency plugins must activate after loading and before tests execute")
+
+const dependencyRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "demo-plugin",
+  extra_plugins: [{
+    source: "/workspace/dependency",
+    slug: "dependency",
+    pluginFile: "dependency/dependency.php",
+    activate: false,
+  }],
+  dependencyMounts: ["/wordpress/wp-content/plugins/dependency"],
+})
+assert.deepEqual(dependencyRecipe.inputs.extra_plugins, [{
+  source: "/workspace/dependency",
+  slug: "dependency",
+  pluginFile: "dependency/dependency.php",
+  activate: false,
+}])
+assert.ok(dependencyRecipe.workflow.steps[0].args.includes("dependency-mounts=/wordpress/wp-content/plugins/dependency"))
 
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")

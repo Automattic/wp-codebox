@@ -948,7 +948,7 @@ export const commandRegistry = [
       { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
       { name: "env-json", description: "PHPUnit environment values.", format: "JSON object" },
       { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
-      { name: "dependency-mounts", description: "Comma-separated mounted dependency paths.", format: "comma-separated sandbox paths" },
+      { name: "dependency-mounts", description: "Comma-separated mounted dependency paths loaded and activated after managed PHPUnit installation, before tests execute.", format: "comma-separated sandbox paths" },
       { name: "bootstrap-files-json", description: "Plugin-relative bootstrap file fallbacks loaded in managed mode after wp-phpunit fixtures.", format: "JSON array" },
       { name: "phpunit-args-json", description: "Structured PHPUnit CLI arguments such as [\"--filter\", \"MyTest::test_case\"].", format: "JSON array" },
       { name: "bootstrap-mode", description: "Bootstrap strategy: managed keeps WP Codebox-owned setup; project requires the plugin's native PHPUnit bootstrap.", format: "managed|project" },

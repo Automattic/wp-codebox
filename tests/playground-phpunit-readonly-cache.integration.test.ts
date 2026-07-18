@@ -11,6 +11,7 @@ import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe
 const execFileAsync = promisify(execFile)
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-readonly-"))
 const plugin = join(root, "plugin")
+const dependency = join(root, "dependency")
 const harness = join(root, "harness")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
@@ -24,6 +25,13 @@ try {
 
   const recipe = buildWordPressPhpunitRecipe({
     pluginSlug: "readonly-phpunit-fixture",
+    extra_plugins: [{
+      source: dependency,
+      slug: "activation-dependency",
+      pluginFile: "activation-dependency/activation-dependency.php",
+      activate: false,
+    }],
+    dependencyMounts: ["/wordpress/wp-content/plugins/activation-dependency"],
     mounts: [
       { source: plugin, target: "/wordpress/wp-content/plugins/readonly-phpunit-fixture", mode: "readonly" },
       { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },
@@ -49,9 +57,11 @@ try {
 
 async function writeFixture(): Promise<void> {
   await mkdir(join(plugin, "tests"), { recursive: true })
+  await mkdir(dependency, { recursive: true })
   await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\n")
   await writeFile(join(plugin, "source-sentinel.bin"), sentinel)
-  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } }\n")
+  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } public function test_dependency_activation_runs_after_install(): void { $this->assertGreaterThanOrEqual(1, get_option(\'wp_codebox_dependency_activation_users\')); } }\n")
+  await writeFile(join(dependency, "activation-dependency.php"), "<?php\n/**\n * Plugin Name: Activation Dependency\n */\nregister_activation_hook(__FILE__, static function (): void { update_option('wp_codebox_dependency_activation_users', count(get_users(array('number' => 1)))); });\n")
 }
 
 async function digestTree(directory: string): Promise<string> {
