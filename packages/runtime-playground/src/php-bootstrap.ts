@@ -134,15 +134,16 @@ function recipeActivePluginMetadata(spec: RuntimeCreateSpec): RecipePluginMetada
   return plugins.filter((plugin) => typeof plugin.pluginFile === "string")
 }
 
-export async function phpCodeFromArgs(args: string[], command = "wordpress.run-php"): Promise<string> {
+export async function phpCodeFromArgs(args: string[], command = "wordpress.run-php", normalize = true): Promise<string> {
   const inlineCode = argValue(args, "code")
   if (inlineCode) {
-    return normalizePhpCode(inlineCode)
+    return normalize ? normalizePhpCode(inlineCode) : inlineCode
   }
 
   const codeFile = argValue(args, "code-file")
   if (codeFile) {
-    return normalizePhpCode(await readFile(resolveCommandPath(codeFile), "utf8"))
+    const code = await readFile(resolveCommandPath(codeFile), "utf8")
+    return normalize ? normalizePhpCode(code) : code
   }
 
   throw new Error(`${command} requires code=<php> or code-file=<path>`)

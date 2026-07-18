@@ -895,12 +895,14 @@ export async function runPhpunitCommand({
   artifactRoot,
   mounts,
   runPlaygroundCommand,
+  runtimeSpec,
   server,
   spec,
 }: {
   artifactRoot: string
   mounts: MountSpec[]
   runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<string> {
@@ -911,7 +913,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const resultFile = PLUGIN_PHPUNIT_RESULT_FILE
-  const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit") : normalizePhpCode(phpunitRunCode({
+  const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
     pluginSlug,
     cwd: argValue(args, "cwd")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}`,
     autoloadFile,
@@ -932,13 +934,13 @@ export async function runPhpunitCommand({
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
     multisite: booleanArg(args, "multisite"),
     resultFile,
-  }))
+  })
   if (!explicitCode && !pluginSlug) {
     throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
   }
   let response: PlaygroundRunResponse
   try {
-    response = await runPlaygroundCommand("wordpress.phpunit", server, { code })
+    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot)
     await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)

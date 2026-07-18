@@ -1725,6 +1725,7 @@ class PlaygroundRuntime implements Runtime {
       artifactRoot: this.artifactRoot,
       mounts: this.mounts,
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
       server,
       spec,
     })

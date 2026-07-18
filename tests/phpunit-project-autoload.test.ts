@@ -12,6 +12,9 @@ import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sourc
 import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
+const phpunitRuntimeSpec = {
+  runtimeEnv: { TC_MYSQL_PORT: "3306" },
+} as never
 
 function phpunitRecipeArgs(options: Omit<Parameters<typeof buildWordPressPhpunitRecipe>[0], "pluginSlug">): string[] {
   return buildWordPressPhpunitRecipe({ pluginSlug: "demo-plugin", ...options }).workflow.steps[0].args
@@ -332,6 +335,7 @@ await runPhpunitCommand({
     capturedCanonicalHarnessCode = input.code
     return { text: "ok", exitCode: 0 }
   },
+  runtimeSpec: phpunitRuntimeSpec,
   server: { playground: {} } as never,
   spec: {
     command: "wordpress.phpunit",
@@ -347,6 +351,27 @@ await runPhpunitCommand({
 })
 assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
 assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
+assert.ok(capturedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
+assert.ok(capturedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
+
+let capturedExplicitCode = ""
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    capturedExplicitCode = input.code
+    return { text: "ok", exitCode: 0 }
+  },
+  runtimeSpec: phpunitRuntimeSpec,
+  server: { playground: {} } as never,
+  spec: {
+    command: "wordpress.phpunit",
+    args: ["code=<?php declare(strict_types=1); echo getenv('TC_MYSQL_PORT');", "env-json={\"TC_MYSQL_PORT\":\"3307\"}"],
+  },
+})
+assert.equal((capturedExplicitCode.match(/declare\(strict_types=1\);/g) ?? []).length, 1, "explicit PHP is normalized once at the runtime bootstrap boundary")
+assert.ok(capturedExplicitCode.includes("echo getenv('TC_MYSQL_PORT');"), "explicit PHPUnit code receives the same runtime bootstrap")
+assert.ok(capturedExplicitCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedExplicitCode.lastIndexOf("TC_MYSQL_PORT"), "explicit env-json handling remains after runtime environment bootstrap")
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
