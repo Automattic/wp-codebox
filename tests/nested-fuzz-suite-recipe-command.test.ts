@@ -318,4 +318,36 @@ assert.equal(fallbackExecution.exitCode, 0)
 assert.equal(fallbackResult.status, "passed")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php", "wordpress.run-php"])
 
+executed.length = 0
+const collectableFuzzSuiteWorkload: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{ command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(suite)}`] }],
+      after: [
+        { command: "wordpress.collect-workload-result", args: ["artifact=wp-codebox-fuzz-suite-result"] },
+        { command: "wordpress.collect-workload-result", args: ["artifact=case-log"] },
+        { command: "wordpress.collect-workload-result", args: ["artifact=coverage-summary"] },
+        { command: "wordpress.collect-workload-result", args: ["artifact=result-envelope"] },
+        { command: "wordpress.collect-workload-result", args: ["artifact=replay-data"] },
+      ],
+    })}`] }],
+  },
+}
+assertWorkspaceRecipeJsonSchema(collectableFuzzSuiteWorkload, { recipeCommandIds: ["wordpress.run-workload", "wp-codebox/run-fuzz-suite", "wordpress.run-php", "wordpress.collect-workload-result"] })
+const collectableFuzzSuiteExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: collectableFuzzSuiteWorkload.workflow.steps[0]! }, process.cwd())
+const collectableFuzzSuiteResult = JSON.parse(collectableFuzzSuiteExecution.stdout)
+assert.equal(collectableFuzzSuiteExecution.exitCode, 0)
+assert.equal(collectableFuzzSuiteResult.steps, 6)
+for (const artifact of ["wp-codebox-fuzz-suite-result", "case-log", "coverage-summary", "result-envelope", "replay-data"]) {
+  const payload = collectableFuzzSuiteResult.artifacts[artifact]
+  assert.equal(payload.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(payload.status, "passed")
+  assert.equal(payload.cases[0].id, "case-one")
+}
+assert.equal(collectableFuzzSuiteResult.artifacts["coverage-summary"].coverageSummary.executed, 1)
+assert.equal(collectableFuzzSuiteResult.artifacts["replay-data"].cases[0].metadata.replay.caseId, "case-one")
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
 console.log("nested fuzz suite recipe command ok")

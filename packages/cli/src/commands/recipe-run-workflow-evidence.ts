@@ -395,6 +395,7 @@ function recipeWorkloadArtifactPayloads(execution: ExecutionResult, artifact: st
 
 function collectRecipeArtifactPayloadsFromContainer(container: Record<string, unknown> | undefined, artifact: string, expectedSchema: string | undefined, out: Array<{ name: string; payload: Record<string, unknown> }>): void {
   if (!container) return
+  collectRecipeFuzzSuiteArtifactPayloads(container, artifact, expectedSchema, out)
   const artifacts = isRecord(container.artifacts) ? container.artifacts : undefined
   for (const [name, value] of Object.entries(artifacts ?? {})) {
     if (!artifactNameMatches(name, artifact)) continue
@@ -406,6 +407,22 @@ function collectRecipeArtifactPayloadsFromContainer(container: Record<string, un
   }
   for (const nestedStep of Array.isArray(container.steps) ? container.steps : []) {
     if (isRecord(nestedStep)) collectRecipeArtifactPayloadsFromContainer(nestedStep, artifact, expectedSchema, out)
+  }
+}
+
+function collectRecipeFuzzSuiteArtifactPayloads(result: Record<string, unknown>, artifact: string, expectedSchema: string | undefined, out: Array<{ name: string; payload: Record<string, unknown> }>): void {
+  if (result.schema !== "wp-codebox/fuzz-suite-result/v1" || (expectedSchema && result.schema !== expectedSchema)) return
+  const add = (name: string) => {
+    if (!artifact || artifactNameMatches(name, artifact)) out.push({ name, payload: result })
+  }
+
+  // Keep the normalized result envelope intact; consumers receive real fuzz evidence, not a lossy wrapper.
+  add("wp-codebox-fuzz-suite-result")
+  add("result-envelope")
+  if (Array.isArray(result.cases)) add("case-log")
+  if (isRecord(result.coverageSummary)) add("coverage-summary")
+  if (Array.isArray(result.cases) && result.cases.some((fuzzCase) => isRecord(fuzzCase) && isRecord(fuzzCase.metadata) && isRecord(fuzzCase.metadata.replay))) {
+    add("replay-data")
   }
 }
 
