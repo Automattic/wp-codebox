@@ -7,12 +7,13 @@ const port = 8792
 const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
-const cookies = new Map()
+const cookies = []
 let child
 let output = ""
 
 try {
   await startWorker()
+  await assertConcurrentMutations()
   const adminHtml = await login()
   const post = await createPost(adminHtml)
   const frontPage = await assertWordPressPage(`${origin}/${post.slug}/`, "published post")
@@ -22,13 +23,13 @@ try {
   await assertLinkedAssets(adminHtml, "admin")
   await stopWorker()
 
-  cookies.clear()
+  cookies.length = 0
   await startWorker()
   const restartedAdmin = await login()
   const restartedPost = await assertWordPressPage(`${origin}/${post.slug}/`, "post after cold restart")
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
-  console.log("Cloudflare local runtime gate passed: login, authenticated REST post creation, frontend/admin assets, and cold-restart persistence.")
+  console.log("Cloudflare local runtime gate passed: login, concurrent canonical mutations, authenticated REST post creation, frontend/admin assets, and cold-restart persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -76,7 +77,11 @@ async function login() {
   if (![301, 302].includes(response.status)) throw new Error(`Expected login redirect, received ${response.status}: ${await response.text()}`)
   const location = response.headers.get("location")
   if (!location?.includes("/wp-admin/")) throw new Error(`Login did not redirect to wp-admin: ${location}`)
-  return assertWordPressPage(new URL(location, origin), "wp-admin")
+  const admin = await assertAuthenticatedDashboard(new URL(location, origin))
+  const session = await (await request(`${origin}/?phase=canonical-session`)).json()
+  if (!session.hasSessionTokens || session.sessionTokenRows < 1) throw new Error(`Login did not persist a canonical WordPress session token: ${JSON.stringify(session)}`)
+  console.log(`Canonical login session: revision ${session.pointerRevision}, session-token rows ${session.sessionTokenRows}, usermeta keys ${session.usermetaKeys.join(", ")}`)
+  return admin
 }
 
 async function createPost(adminHtml) {
@@ -96,6 +101,23 @@ async function createPost(adminHtml) {
   return { slug: post.slug, title }
 }
 
+async function assertConcurrentMutations() {
+  const responses = await Promise.all([
+    fetch(`${origin}/?phase=r2-mutate`, { method: "POST" }),
+    fetch(`${origin}/?phase=r2-mutate`, { method: "POST" }),
+  ])
+  const mutations = await Promise.all(responses.map(async (response) => {
+    const body = await response.text()
+    assertNoPhpDiagnostics(body, "concurrent canonical mutation")
+    if (response.status !== 200) throw new Error(`Expected concurrent canonical mutation, received ${response.status}: ${body}`)
+    return JSON.parse(body)
+  }))
+  const revisions = mutations.map((mutation) => mutation.revisionValue).sort((left, right) => left - right)
+  if (revisions[1] !== revisions[0] + 1 || !mutations.some((mutation) => mutation.previousPostFound)) {
+    throw new Error(`Concurrent canonical mutations were not serialized: ${JSON.stringify(mutations)}`)
+  }
+}
+
 async function assertHealthResponse() {
   const response = await request(`${origin}/?phase=health`)
   const body = await response.json()
@@ -107,6 +129,16 @@ async function assertWordPressPage(target, label) {
   const body = await response.text()
   assertNoPhpDiagnostics(body, label)
   if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) throw new Error(`Expected an HTML ${label}, received ${response.status}: ${body}`)
+  return body
+}
+
+async function assertAuthenticatedDashboard(target) {
+  const response = await request(target)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "wp-admin")
+  if (response.url.includes("wp-login.php") || response.redirected || response.status !== 200 || !/id=["']wpadminbar["']/.test(body) || !/id=["']dashboard-widgets["']/.test(body)) {
+    throw new Error(`Expected an authenticated wp-admin dashboard, received ${response.status} at ${response.url}; cookie names: ${cookieNames().join(", ")}`)
+  }
   return body
 }
 
@@ -123,15 +155,48 @@ async function assertLinkedAssets(html, label) {
 
 async function request(target, options = {}) {
   const headers = new Headers(options.headers)
-  if (cookies.size) headers.set("cookie", [...cookies].map(([name, value]) => `${name}=${value}`).join("; "))
+  const requestUrl = new URL(target)
+  const requestCookies = cookiesFor(requestUrl)
+  if (requestCookies.length) headers.set("cookie", requestCookies.join("; "))
   const response = await fetch(target, { ...options, headers })
-  const setCookies = response.headers.getSetCookie?.() ?? (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")] : [])
-  for (const cookie of setCookies) {
-    const [pair] = cookie.split(";", 1)
-    const separator = pair.indexOf("=")
-    if (separator > 0) cookies.set(pair.slice(0, separator), pair.slice(separator + 1))
-  }
+  const setCookies = response.headers.getSetCookie?.()
+  if (!setCookies) throw new Error("The local gate requires Headers.getSetCookie() to preserve distinct WordPress login cookies.")
+  for (const cookie of setCookies) storeCookie(cookie, requestUrl)
+  if (new URL(target).pathname === "/wp-login.php" && options.method === "POST") console.log(`Login response cookie names: ${cookieNames().join(", ")}`)
   return response
+}
+
+function storeCookie(header, requestUrl) {
+  const parts = header.split(";").map((part) => part.trim())
+  const separator = parts[0].indexOf("=")
+  if (separator <= 0) throw new Error("Invalid Set-Cookie header.")
+  const name = parts[0].slice(0, separator)
+  const value = parts[0].slice(separator + 1)
+  const attributes = new Map(parts.slice(1).map((part) => {
+    const index = part.indexOf("=")
+    return [index === -1 ? part.toLowerCase() : part.slice(0, index).toLowerCase(), index === -1 ? "" : part.slice(index + 1)]
+  }))
+  const hostOnly = !attributes.has("domain")
+  const domain = (attributes.get("domain") || requestUrl.hostname).replace(/^\./, "").toLowerCase()
+  if (!hostOnly && requestUrl.hostname !== domain && !requestUrl.hostname.endsWith(`.${domain}`)) throw new Error(`Set-Cookie domain ${domain} does not match ${requestUrl.hostname}.`)
+  const path = attributes.get("path") || requestUrl.pathname.slice(0, requestUrl.pathname.lastIndexOf("/") + 1) || "/"
+  const expires = attributes.get("max-age") === "0" ? 0 : attributes.has("expires") ? Date.parse(attributes.get("expires")) : undefined
+  const index = cookies.findIndex((cookie) => cookie.name === name && cookie.domain === domain && cookie.path === path)
+  if (expires === 0 || (expires && expires <= Date.now())) {
+    if (index !== -1) cookies.splice(index, 1)
+    return
+  }
+  const cookie = { name, value, domain, hostOnly, path, secure: attributes.has("secure"), expires }
+  if (index === -1) cookies.push(cookie)
+  else cookies[index] = cookie
+}
+
+function cookiesFor(url) {
+  return cookies.filter((cookie) => (!cookie.secure || url.protocol === "https:") && (url.hostname === cookie.domain || (!cookie.hostOnly && url.hostname.endsWith(`.${cookie.domain}`))) && url.pathname.startsWith(cookie.path) && (!cookie.expires || cookie.expires > Date.now())).map((cookie) => `${cookie.name}=${cookie.value}`)
+}
+
+function cookieNames() {
+  return cookies.map((cookie) => cookie.name).sort()
 }
 
 function assertIncludes(html, expected, label) {

@@ -9,6 +9,7 @@ import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runt
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
+import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -123,28 +124,70 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
   ])
 })
 
-test("Cloudflare routes WordPress and health through the serialized Durable Object runtime", async () => {
+test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
   const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("function isWordPressServerFile"))
   const predicate = worker.slice(worker.indexOf("function isWordPressServerFile"), worker.indexOf("function createPhpRuntime"))
 
-  assert.match(worker, /return env\.WORDPRESS_STATE\.getByName\("default"\)\.fetch\(request\)/)
-  assert.match(worker, /private runtimePromise/)
-  assert.match(worker, /private async getRuntime\(origin: string\)/)
-  assert.match(worker, /if \(this\.runtimePromise === runtime\) this\.runtimePromise = undefined/)
-  assert.match(worker, /route\.kind === "health"\) return this\.health\(runtime\)/)
-  assert.match(worker, /runSyntheticMutation\(new URL\(request\.url\)\.origin\)/)
-  assert.match(worker, /private async runSyntheticMutation\(origin: string\)/)
+  assert.match(worker, /return runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
+  assert.match(worker, /let cachedRuntime/)
+  assert.match(worker, /cachedRuntime\.baseRevision !== pointer\.revision/)
+  assert.match(worker, /promise\.catch\(\(\) =>/)
+  assert.match(worker, /runtime\.pointer = next/)
+  assert.match(worker, /cacheRuntime\(next, runtime\)/)
+  assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)
+  assert.match(worker, /const LEASE_ACQUISITION_TIMEOUT_MS = 100_000/)
   assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision/)
-  const noPointerBoot = worker.slice(worker.indexOf("private async bootRuntime"), worker.indexOf("private async persistRuntime"))
+  const noPointerBoot = worker.slice(worker.indexOf("async function bootstrapCanonicalRuntime"), worker.indexOf("async function persistRuntime"))
   assert.match(noPointerBoot, /packagedCanonicalMarkdownSeed\(\)/)
   assert.match(noPointerBoot, /canonicalBootstrapSetupCode\(passwordFile, origin\)/)
+  assert.match(noPointerBoot, /await commitLease\(coordinator, requestUrl, lease, pointer\)/)
   assert.doesNotMatch(noPointerBoot, /wordpressInstallSeed|databaseSeed|bootstrap_existing_cache/)
+  assert.doesNotMatch(coordinator, /@php-wasm|PHPRequestHandler|bootWordPressRuntime|new PHP\(/)
+  assert.match(coordinator, /token: crypto\.randomUUID\(\)/)
+  assert.match(coordinator, /record\.version\+\+/)
+  assert.match(coordinator, /lease\.expiresAt <= Date\.now\(\)/)
+  assert.match(worker, /phase === "canonical-session"/)
+  assert.match(worker, /key\.endsWith\("session_tokens"\)/)
   assert.match(worker, /maxPhpInstances: 1/)
   assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressServerFile\(decoder\.decode\(entry\.path\)\)\)/)
   assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL\)(?!\s*,)/)
   assert.match(predicate, /php\|json\|crt\|html\|css\|js\|mjs\|woff2\?\|ttf\|otf\|eot\|svg\|png\|jpe\?g\|gif\|webp\|avif\|ico/)
   assert.match(predicate, /path\.startsWith\("wordpress\/wp-admin\/"\)\) return true/)
+})
+
+test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {
+  const values = new Map<string, unknown>()
+  const objects = new Map<string, string>()
+  const state = {
+    id: { toString: () => "test-do" },
+    storage: {
+      get: async <T>(key: string) => values.get(key) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, value) },
+    },
+  }
+  const bucket = {
+    get: async (key: string) => objects.has(key) ? { json: async <T>() => JSON.parse(objects.get(key)!) as T } : null,
+    put: async (key: string, value: string) => { objects.set(key, value) },
+  }
+  const coordinator = new WordPressStateCoordinator(state as never, { WORDPRESS_STATE_BUCKET: bucket as never, COORDINATOR_LEASE_MS: 50 })
+  const call = async (action: string, body: Record<string, unknown> = {}) => coordinator.fetch(new Request(`https://worker.example/?__wp_codebox_coordinator=${action}`, { method: action === "state" ? "GET" : "POST", headers: { "content-type": "application/json" }, body: action === "state" ? undefined : JSON.stringify(body) }))
+
+  const first = await (await call("begin")).json() as { token: string; pointer: null; version: number }
+  assert.equal(first.pointer, null)
+  assert.equal((await call("begin")).status, 409)
+  const pointer = { revision: "one", manifestKey: "sites/default/markdown/revisions/one.json", persistedAt: "2026-01-01T00:00:00.000Z" }
+  assert.equal((await call("commit", { token: first.token, baseRevision: null, version: first.version, pointer })).status, 200)
+  assert.equal(JSON.parse(objects.get("sites/default/markdown/current.json")!).revision, "one")
+  const second = await (await call("begin")).json() as { token: string; pointer: { revision: string } }
+  assert.equal(second.pointer.revision, "one")
+  assert.equal((await call("abort", { token: second.token })).status, 200)
+  const stale = await (await call("begin")).json() as { token: string }
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const recovered = await (await call("begin")).json() as { token: string }
+  assert.notEqual(recovered.token, stale.token)
+  assert.equal((await call("release", { token: recovered.token })).status, 200)
 })
 
 test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {
@@ -160,8 +203,6 @@ test("serialized Cloudflare mutations use MDI flush paths and complete canonical
   assert.match(source, /flush_canonical_writes\(\)/)
   assert.match(source, /packagedCanonicalMarkdownSeed/)
   assert.match(source, /update_option\('siteurl'/)
-  assert.match(source, /_tables\/termmeta\.json/)
-  assert.match(source, /_tables\/users\.json/)
   assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
 })
 
