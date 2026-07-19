@@ -556,7 +556,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
@@ -659,7 +659,7 @@ function wordpressProbeCode(phase: string): string {
     return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
   }
 
-  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"]
+  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"]
   if (widgetPhases.includes(phase)) {
     return `<?php
 $settings_path = '/wordpress/wp-settings.php';
@@ -758,15 +758,22 @@ function wp_codebox_widgets_probe_get_settings($class_names) {
     return array('completedClassNames' => $completed, 'settingsShapes' => $settings_shapes);
 }
 $direct_groups = array(
-    'mdi-widgets-direct-basic-classic-first' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'),
+    'mdi-widgets-direct-basic-classic-first' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'),
+    'mdi-widgets-direct-basic-classic-first-pages' => array('WP_Widget_Pages'),
+    'mdi-widgets-direct-basic-classic-first-calendar' => array('WP_Widget_Calendar'),
+    'mdi-widgets-direct-basic-classic-first-archives' => array('WP_Widget_Archives'),
+    'mdi-widgets-direct-basic-classic-first-meta' => array('WP_Widget_Meta'),
+    'mdi-widgets-direct-basic-classic-first-search' => array('WP_Widget_Search'),
+    'mdi-widgets-direct-basic-classic-first-text' => array('WP_Widget_Text'),
     'mdi-widgets-direct-basic-classic-second' => array('WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget'),
     'mdi-widgets-direct-media' => array('WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video'),
     'mdi-widgets-direct-custom-html-block' => array('WP_Widget_Custom_HTML', 'WP_Widget_Block'),
     'mdi-widgets-direct-block' => array('WP_Widget_Block'),
     'mdi-widgets-direct-custom-html' => array('WP_Widget_Custom_HTML'),
+    'mdi-widgets-direct-factory-all' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block'),
 );
 $widget_option_id_bases = array('archives', 'block', 'calendar', 'categories', 'custom_html', 'links', 'media_audio', 'media_gallery', 'media_image', 'media_video', 'meta', 'nav_menu', 'pages', 'recent-comments', 'recent-posts', 'rss', 'search', 'tag_cloud', 'text');
-$widget_classes = array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block');
+$widget_classes = array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block');
 $get_settings_groups = array(
     'mdi-widgets-get-settings' => $widget_classes,
     'mdi-widgets-get-settings-first' => array_slice($widget_classes, 0, 10),
