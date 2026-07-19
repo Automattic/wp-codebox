@@ -566,6 +566,16 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
+  if (["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded"].includes(phase)) {
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
+    try {
+      const evidence = (await runtime.php.run({ code: canonicalLifecycleProbeCode(phase) })).text.trim()
+      return probeResponse(phase, JSON.parse(evidence) as Record<string, boolean | number | string>)
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
   if (phase === "canonical-wordpress" || phase === "canonical-bootstrap-setup") {
     const canonicalSeed = await packagedCanonicalMarkdownSeed()
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, canonicalSeed, new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
@@ -993,6 +1003,41 @@ file_put_contents($settings_path, str_replace($needle, $replacement, $settings))
 require '/wordpress/wp-load.php';`
 }
 
+function canonicalLifecycleProbeCode(phase: string): string {
+  const stops: Record<string, { needle: string; after?: boolean }> = {
+    "canonical-current-user": { needle: "// Set up current user." },
+    "canonical-init": { needle: "do_action( 'init' );", after: true },
+    "canonical-site-status": { needle: "// Check site status." },
+    "canonical-wp-loaded": { needle: "do_action( 'wp_loaded' );", after: true },
+  }
+  const stop = stops[phase]
+  if (!stop) throw new Error(`Unknown canonical lifecycle probe phase: ${phase}`)
+
+  return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = ${JSON.stringify(stop.needle)};
+if (substr_count($settings, $needle) !== 1) {
+    throw new Exception('WordPress canonical lifecycle probe needle was not uniquely found.');
+}
+$stop = <<<'PHP'
+echo json_encode(array(
+    'wordpressVersion' => $wp_version,
+    'bootstrapPhase' => '${phase}',
+    'completed' => true,
+    'memoryBytes' => memory_get_usage(true),
+    'peakMemoryBytes' => memory_get_peak_usage(true),
+    'wpCronInitAttached' => false !== has_action('init', 'wp_cron'),
+    'updateScheduleInitAttached' => false !== has_action('init', 'wp_schedule_update_checks'),
+    'privacyScheduleInitAttached' => false !== has_action('init', 'wp_schedule_delete_old_privacy_export_files'),
+));
+return;
+PHP;
+$replacement = ${stop.after ? "$needle . \"\\n\" . \$stop" : "$stop . \"\\n\" . $needle"};
+file_put_contents($settings_path, str_replace($needle, $replacement, $settings));
+require '/wordpress/wp-load.php';`
+}
+
 async function bootWordPressRuntime(
   wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
   includeSqlite = true,
@@ -1195,6 +1240,6 @@ function instantiatePrecompiledWasm(module: WebAssembly.Module) {
   return (imports: WebAssembly.Imports, receiveInstance: (instance: WebAssembly.Instance, wasmModule: WebAssembly.Module) => void) => receiveInstance(new WebAssembly.Instance(module, imports), module)
 }
 
-function probeResponse(phase: string, evidence: Record<string, number | string>): Response {
+function probeResponse(phase: string, evidence: Record<string, boolean | number | string>): Response {
   return Response.json({ schema: "wp-codebox/cloudflare-boot-probe/v1", phase, completed: true, evidence })
 }

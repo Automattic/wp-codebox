@@ -313,6 +313,29 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(worker, /function canonicalChangedPathCounts/)
 })
 
+test("Cloudflare canonical lifecycle diagnostics compose the disabled-cron patch with unique bounded stops", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
+  const lifecycle = worker.slice(worker.indexOf("function canonicalLifecycleProbeCode"), worker.indexOf("\nasync function bootWordPressRuntime"))
+
+  for (const phase of ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded"]) {
+    assert.match(probes, new RegExp(`"${phase}"`))
+    assert.match(lifecycle, new RegExp(`"${phase}"`))
+  }
+  assert.match(probes, /packagedCanonicalMarkdownSeed\(\), new Uint8Array\(markdownPrimaryBootstrapIndex\), "https:\/\/canonical-probe\.invalid", \{\}, bucket, true\)/)
+  assert.match(lifecycle, /substr_count\(\$settings, \$needle\) !== 1/)
+  assert.match(lifecycle, /WordPress canonical lifecycle probe needle was not uniquely found\./)
+  assert.match(lifecycle, /'completed' => true/)
+  assert.match(lifecycle, /'wpCronInitAttached' => false !== has_action\('init', 'wp_cron'\)/)
+  assert.match(lifecycle, /'updateScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_update_checks'\)/)
+  assert.match(lifecycle, /'privacyScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_delete_old_privacy_export_files'\)/)
+  assert.doesNotMatch(lifecycle, /get_option|\$wpdb|\$_COOKIE|AUTH_KEY|password|token/i)
+  assert.equal((lifecycle.match(/do_action\( 'init' \);/g) ?? []).length, 1)
+  assert.equal((lifecycle.match(/do_action\( 'wp_loaded' \);/g) ?? []).length, 1)
+  assert.match(lifecycle, /stop\.after \? "\$needle/)
+  assert.match(lifecycle, /: "\$stop/)
+})
+
 test("Cloudflare canonical runtime patches the unique init call with the disabled-cron scheduling policy", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const patcher = worker.slice(worker.indexOf("function patchCanonicalDisabledCronSchedulingPolicyAtInit"), worker.indexOf("\nfunction collectRuntimeFiles"))
