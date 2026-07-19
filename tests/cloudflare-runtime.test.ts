@@ -318,6 +318,10 @@ test("Cloudflare canonical lifecycle diagnostics compose the disabled-cron patch
   const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
   const lifecycle = worker.slice(worker.indexOf("function canonicalLifecycleProbeCode"), worker.indexOf("\nasync function bootWordPressRuntime"))
   const aliases = {
+    cwr: "canonical-wp-loaded-exclude-rewrite-flush",
+    cwc: "canonical-wp-loaded-exclude-core-template-header",
+    cwp: "canonical-wp-loaded-exclude-playground",
+    cwcron: "canonical-wp-loaded-exclude-wp-cron",
     "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
     "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
     "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
@@ -332,7 +336,7 @@ test("Cloudflare canonical lifecycle diagnostics compose the disabled-cron patch
   for (const [alias, phase] of Object.entries(aliases)) {
     assert.ok(alias.length <= 24)
     assert.match(worker, new RegExp(`"${alias}"`))
-    assert.match(worker, new RegExp(`"${alias}": "${phase}"`))
+    assert.match(worker, new RegExp(`(?:"${alias}"|${alias}): "${phase}"`))
     assert.deepEqual(routeWorkerRequest(new Request(`https://worker.example/?phase=${alias}`)), { kind: "probe", phase: alias })
   }
   assert.match(lifecycle, /const canonicalPhase = canonicalLifecyclePhaseAliases\[phase\] \?\? phase/)

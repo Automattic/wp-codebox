@@ -566,7 +566,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (canonicalLifecyclePhaseAliases[phase] || ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"].includes(phase)) {
+  if (phase === "cwr" || phase === "cwc" || phase === "cwp" || phase === "cwcron" || canonicalLifecyclePhaseAliases[phase] || ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
     try {
       const evidence = (await runtime.php.run({ code: canonicalLifecycleProbeCode(phase) })).text.trim()
@@ -1004,6 +1004,10 @@ require '/wordpress/wp-load.php';`
 }
 
 const canonicalLifecyclePhaseAliases: Record<string, string> = {
+  cwr: "canonical-wp-loaded-exclude-rewrite-flush",
+  cwc: "canonical-wp-loaded-exclude-core-template-header",
+  cwp: "canonical-wp-loaded-exclude-playground",
+  cwcron: "canonical-wp-loaded-exclude-wp-cron",
   "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
   "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
   "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
