@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 
-const revision = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
+const revision = "6244f244f47f99af3261ba0948262cebe79e5a73"
 const archiveUrl = `https://codeload.github.com/Automattic/markdown-database-integration/zip/${revision}`
 const sourceDirectory = process.env.MDI_RUNTIME_SOURCE
 const output = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url)

@@ -24,12 +24,13 @@ const PHP_VERSION = "8.5.8"
 // Browser assets must come from the same immutable WordPress release as the server corpus.
 const WORDPRESS_ARCHIVE_URL = (wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest).source.url
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
-const MARKDOWN_DATABASE_INTEGRATION_REVISION = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
+const MARKDOWN_DATABASE_INTEGRATION_REVISION = "6244f244f47f99af3261ba0948262cebe79e5a73"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
 const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
+const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
 const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
@@ -172,17 +173,23 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     }
     const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
     let response: Response
+    let canonicalChanges: MarkdownChanges | undefined
     if (route === "r2-mutate") {
-      response = await runSyntheticMutation(runtime)
+      const mutation = await runSyntheticMutation(runtime)
+      response = mutation.response
+      canonicalChanges = mutation.canonicalChanges
     } else if (route === "health") {
       response = await health(runtime)
     } else if (route === "canonical-auth") {
       response = await canonicalAuthProbe(runtime, request)
     } else {
+      if (isMutation(request, route)) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+      if (isMutation(request, route)) canonicalChanges = readCanonicalChanges(runtime.php)
     }
     if (isMutation(request, route)) {
-      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime)
+      if (!canonicalChanges) throw new Error("Canonical mutation completed without an MDI change set.")
+      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
       await commitLease(coordinator, request.url, lease, next)
       // The runtime now represents the promoted revision, including login session state.
       runtime.pointer = next
@@ -313,17 +320,24 @@ async function canonicalWordPressAuthConstants(env: Env): Promise<Record<WordPre
   return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", "default")
 }
 
-async function persistRuntime(bucket: R2Bucket, runtime: Runtime): Promise<MarkdownPointer> {
-  const output = (await runtime.php.run({ code: "<?php require '/wordpress/wp-load.php'; $GLOBALS['wpdb']->flush_canonical_writes(); echo 'flushed';" })).text.trim()
-  if (output !== "flushed") throw new Error("MDI did not confirm its canonical flush.")
-  return persistMarkdownRevision(bucket, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT), runtime.pointer)
+async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges): Promise<MarkdownPointer> {
+  validateMarkdownChanges(changes)
+  const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
+  return persistMarkdownRevision(bucket, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT, changedPaths), runtime.pointer, changes)
 }
 
-async function runSyntheticMutation(runtime: Runtime): Promise<Response> {
+function readCanonicalChanges(php: PHP): MarkdownChanges {
+  const raw = new TextDecoder().decode(php.readFileAsBuffer(MARKDOWN_CHANGES_PATH)).trim()
+  const changes = JSON.parse(raw) as MarkdownChanges
+  validateMarkdownChanges(changes)
+  return changes
+}
+
+async function runSyntheticMutation(runtime: Runtime): Promise<{ response: Response; canonicalChanges: MarkdownChanges }> {
   const mutationOutput = (await runtime.php.run({ code: SERIALIZED_MARKDOWN_MUTATION_CODE })).text.trim()
   const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
   validateMarkdownChanges(mutation.canonicalChanges)
-  return Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: collectRuntimeFiles(runtime.php, MARKDOWN_ROOT).length, markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false })
+  return { response: Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: collectRuntimeFiles(runtime.php, MARKDOWN_ROOT).length, markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false }), canonicalChanges: mutation.canonicalChanges }
 }
 
 async function health(runtime: Runtime): Promise<Response> {
@@ -422,23 +436,47 @@ async function readMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPointer):
   }))
 }
 
-async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer): Promise<MarkdownPointer> {
+async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer, changes?: MarkdownChanges): Promise<MarkdownPointer> {
+  const currentManifest = current ? await readMarkdownManifest(bucket, current) : null
+  if (current && !currentManifest) throw new Error(`R2 Markdown manifest is missing: ${current.manifestKey}`)
+  if (current && currentManifest && changes) {
+    validateMarkdownChanges(changes)
+    if (!changes.created.length && !changes.changed.length && !changes.deleted.length) return current
+    const manifestFiles = new Map(currentManifest.files.map((file) => [file.path, file]))
+    for (const path of changes.deleted) manifestFiles.delete(path)
+    const filesByPath = new Map(files.map((file) => [file.path, file]))
+    for (const path of [...changes.created, ...changes.changed]) {
+      const file = filesByPath.get(path)
+      if (!file) throw new Error(`MDI changed path is missing from the canonical runtime: ${path}`)
+      const sha256 = await sha256Hex(file.bytes)
+      const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
+      await bucket.put(objectKey, file.bytes)
+      manifestFiles.set(path, { path, objectKey, sha256, size: file.bytes.byteLength })
+    }
+    return persistMarkdownManifest(bucket, [...manifestFiles.values()].sort((left, right) => left.path.localeCompare(right.path)))
+  }
+  const currentFiles = new Map(currentManifest?.files.map((file) => [file.path, file]) ?? [])
   const manifestFiles = await Promise.all(files.map(async (file): Promise<MarkdownManifestFile> => {
     const sha256 = await sha256Hex(file.bytes)
+    const existing = currentFiles.get(file.path)
+    if (existing?.sha256 === sha256 && existing.size === file.bytes.byteLength) return existing
     const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
-    if (!await bucket.head(objectKey)) await bucket.put(objectKey, file.bytes)
+    if (current || !await bucket.head(objectKey)) await bucket.put(objectKey, file.bytes)
     return { path: file.path, objectKey, sha256, size: file.bytes.byteLength }
   }))
-  if (current) {
-    const currentManifest = await readMarkdownManifest(bucket, current)
-    if (currentManifest && JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles)) return current
+  if (current && currentManifest) {
+    if (JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles)) return current
   }
 
+  return persistMarkdownManifest(bucket, manifestFiles)
+}
+
+async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifestFile[]): Promise<MarkdownPointer> {
   const revision = crypto.randomUUID()
   const manifestKey = `${R2_MARKDOWN_REVISION_PREFIX}/${revision}.json`
   const persistedAt = new Date().toISOString()
   const pointer: MarkdownPointer = { revision, manifestKey, persistedAt }
-  const manifest: MarkdownManifest = { ...pointer, files: manifestFiles }
+  const manifest: MarkdownManifest = { ...pointer, files }
   await bucket.put(manifestKey, JSON.stringify(manifest), {
     httpMetadata: { contentType: "application/json" },
   })
@@ -1179,6 +1217,7 @@ async function bootWordPressRuntime(
         if (streamWordPressFiles) await materializeWordPressServerFiles(php, runtimeBucket)
         if (markdownFiles) {
           await materializeMarkdownDatabaseIntegration(php)
+          materializeCanonicalChangeAdapter(php)
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
@@ -1231,7 +1270,15 @@ ${needle}`
   php.writeFile(settingsPath, new TextEncoder().encode(`${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`))
 }
 
-function collectRuntimeFiles(php: PHP, root: string): RuntimeFile[] {
+function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeFile[] {
+  if (paths) {
+    return paths.map((path) => {
+      if (!isCanonicalRelativePath(path)) throw new Error(`Invalid canonical runtime path: ${path}`)
+      const absolute = `${root}/${path}`
+      if (php.isDir(absolute)) throw new Error(`Canonical runtime file is missing: ${path}`)
+      return { path, bytes: php.readFileAsBuffer(absolute) }
+    })
+  }
   const files: RuntimeFile[] = []
   const visit = (directory: string): void => {
     for (const name of php.listFiles(directory)) {
@@ -1281,6 +1328,19 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
     php.writeFile(destination, bytes)
     if (relative === "db.php") php.writeFile("/wordpress/wp-content/db.php", bytes)
   }
+}
+
+function materializeCanonicalChangeAdapter(php: PHP): void {
+  const path = "/wordpress/wp-content/mu-plugins/wp-codebox-cloudflare-canonical-changes.php"
+  const source = `<?php
+add_action( 'markdown_database_integration_flushed', static function ( $changes ) {
+	$json = json_encode( $changes, JSON_UNESCAPED_SLASHES );
+	if ( false === $json || false === file_put_contents( '${MARKDOWN_CHANGES_PATH}', $json, LOCK_EX ) ) {
+		throw new RuntimeException( 'Failed to expose the canonical MDI change set.' );
+	}
+}, PHP_INT_MAX );`
+  php.mkdir(path.slice(0, path.lastIndexOf("/")))
+  php.writeFile(path, new TextEncoder().encode(source))
 }
 
 async function materializeWordPressServerFiles(php: PHP, bucket: R2Bucket | undefined): Promise<{ materializedFiles: number; materializedBytes: number }> {

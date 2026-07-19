@@ -122,7 +122,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
   assert.equal(canonicalSeed.subarray(0, 4).toString("hex"), "504b0304")
-  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3")
+  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "6244f244f47f99af3261ba0948262cebe79e5a73")
   assert.equal(canonicalManifest.wordpressInstallSeedSha256, createHash("sha256").update(sqliteInput).digest("hex"))
   assert.equal(canonicalManifest.archiveSha256, createHash("sha256").update(canonicalSeed).digest("hex"))
   assert.ok(canonicalManifest.files.some((file) => file.path.endsWith(".md")))
@@ -134,7 +134,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 })
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
-  const revision = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
+  const revision = "6244f244f47f99af3261ba0948262cebe79e5a73"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
