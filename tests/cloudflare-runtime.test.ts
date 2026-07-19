@@ -320,7 +320,7 @@ test("Cloudflare canonical runtime materializes a conditional cron policy withou
   assert.ok(adapter, "The canonical cron policy materializer is present.")
   assert.match(adapter, /wp-content\/mu-plugins\/wp-codebox-canonical-cron-policy\.php/)
   assert.match(adapter, /defined\( 'DISABLE_WP_CRON' \) && DISABLE_WP_CRON/)
-  assert.match(adapter, /remove_action\( 'init', 'wp_cron' \)/)
+  assert.match(adapter, /add_action\([\s\S]*'init'[\s\S]*remove_action\( 'init', 'wp_cron' \)[\s\S]*PHP_INT_MIN/)
   assert.doesNotMatch(adapter, /wp_schedule_update_checks|wp_schedule_delete_old_privacy_export_files|\$GLOBALS\['wp_filter'\]/)
   assert.match(worker, /runtimeBucket\?: R2Bucket,\n  canonicalCronAdapter = false,/)
   assert.match(worker, /authConstants, bucket, true\), pointer/)

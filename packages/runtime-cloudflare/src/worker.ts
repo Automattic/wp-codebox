@@ -1072,7 +1072,13 @@ function materializeCanonicalCronAdapter(php: PHP): void {
  */
 
 if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
-	remove_action( 'init', 'wp_cron' );
+	add_action(
+		'init',
+		static function (): void {
+			remove_action( 'init', 'wp_cron' );
+		},
+		PHP_INT_MIN
+	);
 }
 `))
 }
