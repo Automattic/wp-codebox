@@ -566,7 +566,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (phase === "cwr" || phase === "cwc" || phase === "cwp" || phase === "cwcron" || canonicalLifecyclePhaseAliases[phase] || ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"].includes(phase)) {
+  if (phase === "cwr" || phase === "cwc" || phase === "cwp" || phase === "cwcron" || phase === "cwu" || canonicalLifecyclePhaseAliases[phase] || ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all", "canonical-wp-loaded-suppress-rewrite-persist"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
     try {
       const evidence = (await runtime.php.run({ code: canonicalLifecycleProbeCode(phase) })).text.trim()
@@ -1008,6 +1008,7 @@ const canonicalLifecyclePhaseAliases: Record<string, string> = {
   cwc: "canonical-wp-loaded-exclude-core-template-header",
   cwp: "canonical-wp-loaded-exclude-playground",
   cwcron: "canonical-wp-loaded-exclude-wp-cron",
+  cwu: "canonical-wp-loaded-suppress-rewrite-persist",
   "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
   "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
   "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
@@ -1022,6 +1023,7 @@ function canonicalLifecycleProbeCode(phase: string): string {
     "canonical-wp-loaded-exclude-playground": { identifiers: ["playground_maybe_flush_rewrite_rules", "playground_save_wp_env_info"], retain: false },
     "canonical-wp-loaded-exclude-wp-cron": { identifiers: ["_wp_cron"], retain: false },
     "canonical-wp-loaded-exclude-all": { identifiers: [], retain: true },
+    "canonical-wp-loaded-suppress-rewrite-persist": { identifiers: [], retain: false },
   }
   const wpLoadedNeedle = "do_action( 'wp_loaded' );"
   const stops: Record<string, { needle: string; after?: boolean }> = {
@@ -1087,6 +1089,7 @@ function wp_codebox_canonical_wp_loaded_remove_snapshot($identifiers, $retain) {
 $inventory = wp_codebox_canonical_wp_loaded_inventory();
 ${canonicalPhase === "canonical-wp-loaded-callbacks" ? `echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => '${phase}', 'callbacks' => $inventory, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
 return;` : `$removed = wp_codebox_canonical_wp_loaded_remove_snapshot(${JSON.stringify(exclusion?.identifiers ?? [])}, ${exclusion?.retain ? "true" : "false"});
+${canonicalPhase === "canonical-wp-loaded-suppress-rewrite-persist" ? "add_filter('pre_update_option_rewrite_rules', static function($value, $old_value) { return $old_value; }, PHP_INT_MAX, 2);" : ""}
 $memory_before = memory_get_usage(true);
 do_action('wp_loaded');
 echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => '${phase}', 'completed' => true, 'callbacks' => $inventory, 'removedCallbacks' => $removed, 'memoryBeforeBytes' => $memory_before, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));

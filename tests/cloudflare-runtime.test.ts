@@ -322,17 +322,19 @@ test("Cloudflare canonical lifecycle diagnostics compose the disabled-cron patch
     cwc: "canonical-wp-loaded-exclude-core-template-header",
     cwp: "canonical-wp-loaded-exclude-playground",
     cwcron: "canonical-wp-loaded-exclude-wp-cron",
+    cwu: "canonical-wp-loaded-suppress-rewrite-persist",
     "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
     "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
     "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
     "canon-wpl-no-cron": "canonical-wp-loaded-exclude-wp-cron",
   }
 
-  for (const phase of ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"]) {
+  for (const phase of ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all", "canonical-wp-loaded-suppress-rewrite-persist"]) {
     assert.match(probes, new RegExp(`"${phase}"`))
     assert.match(lifecycle, new RegExp(`"${phase}"`))
     assert.deepEqual(routeWorkerRequest(new Request(`https://worker.example/?phase=${phase}`)), { kind: "probe", phase })
   }
+  assert.match(lifecycle, /pre_update_option_rewrite_rules/)
   for (const [alias, phase] of Object.entries(aliases)) {
     assert.ok(alias.length <= 24)
     assert.match(worker, new RegExp(`"${alias}"`))
