@@ -1,11 +1,16 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import test from "node:test"
 import { decodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
+
+const execFileAsync = promisify(execFile)
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {
   const health = {
@@ -68,20 +73,26 @@ test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", asyn
   assert.equal(config.limits?.cpu_ms, 300_000)
 })
 
-test("Cloudflare runtime packages the disposable WordPress install seed", async () => {
+test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {
   const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as {
     rules?: Array<{ type?: string; globs?: string[] }>
     r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
     durable_objects?: { bindings?: Array<{ name?: string; class_name?: string }> }
     migrations?: Array<{ new_sqlite_classes?: string[] }>
   }
-  const seed = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
   const markdownIndex = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-primary-bootstrap-index.sqlite", import.meta.url))
   const markdownRuntime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
+  const canonicalSeed = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const sqliteInput = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
+  const canonicalManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { markdownDatabaseIntegrationRevision: string; wordpressInstallSeedSha256: string; archiveSha256: string; files: Array<{ path: string }> }
 
-  assert.equal(seed.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
+  assert.equal(canonicalSeed.subarray(0, 4).toString("hex"), "504b0304")
+  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3")
+  assert.equal(canonicalManifest.wordpressInstallSeedSha256, createHash("sha256").update(sqliteInput).digest("hex"))
+  assert.equal(canonicalManifest.archiveSha256, createHash("sha256").update(canonicalSeed).digest("hex"))
+  assert.ok(canonicalManifest.files.some((file) => file.path.endsWith(".md")))
   assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*.sqlite")))
   assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*-runtime.zip")))
   assert.deepEqual(config.r2_buckets, [{ binding: "WORDPRESS_STATE_BUCKET", bucket_name: "wp-codebox-runtime-chubes" }])
@@ -125,6 +136,10 @@ test("Cloudflare routes WordPress and health through the serialized Durable Obje
   assert.match(worker, /runSyntheticMutation\(new URL\(request\.url\)\.origin\)/)
   assert.match(worker, /private async runSyntheticMutation\(origin: string\)/)
   assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision/)
+  const noPointerBoot = worker.slice(worker.indexOf("private async bootRuntime"), worker.indexOf("private async persistRuntime"))
+  assert.match(noPointerBoot, /packagedCanonicalMarkdownSeed\(\)/)
+  assert.match(noPointerBoot, /canonicalBootstrapSetupCode\(passwordFile, origin\)/)
+  assert.doesNotMatch(noPointerBoot, /wordpressInstallSeed|databaseSeed|bootstrap_existing_cache/)
   assert.match(worker, /maxPhpInstances: 1/)
   assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressServerFile\(decoder\.decode\(entry\.path\)\)\)/)
   assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL\)(?!\s*,)/)
@@ -143,9 +158,22 @@ test("serialized Cloudflare mutations use MDI flush paths and complete canonical
   assert.doesNotMatch(mutation, /write_post|file_put_contents|wp_codebox_mdi_revision\.json/)
   assert.match(source, /validateMarkdownChanges\(mutation\.canonicalChanges\)/)
   assert.match(source, /flush_canonical_writes\(\)/)
-  assert.match(source, /bootstrap_existing_cache/)
+  assert.match(source, /packagedCanonicalMarkdownSeed/)
   assert.match(source, /update_option\('siteurl'/)
   assert.match(source, /_tables\/termmeta\.json/)
   assert.match(source, /_tables\/users\.json/)
   assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
+})
+
+test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {
+  const generator = new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url)
+  const archive = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url)
+  const before = createHash("sha256").update(await readFile(archive)).digest("hex")
+  await execFileAsync("php", [generator.pathname], { cwd: new URL("..", import.meta.url).pathname })
+  const after = createHash("sha256").update(await readFile(archive)).digest("hex")
+  assert.equal(after, before)
+  const source = await readFile(generator, "utf8")
+  assert.match(source, /bootstrap_existing_cache/)
+  assert.match(source, /SELECT ID FROM wp_posts ORDER BY ID/)
+  assert.match(source, /MDI_REVISION/)
 })

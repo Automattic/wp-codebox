@@ -91,6 +91,7 @@
     "generate:browser-fanout-aggregation-runtime": "tsx scripts/generate-browser-fanout-aggregation-runtime.ts",
     "generate:fanout-aggregation-contract": "tsx scripts/generate-fanout-aggregation-contract-fixture.ts",
     "generate:cloudflare-mdi-runtime-bundle": "node scripts/build-cloudflare-mdi-runtime-bundle.mjs",
+    "generate:cloudflare-canonical-mdi-seed": "npm run generate:cloudflare-mdi-runtime-bundle && php scripts/build-cloudflare-canonical-mdi-seed.php",
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:cloudflare-runtime": "tsx tests/cloudflare-runtime.test.ts && node ./node_modules/typescript/bin/tsc -p packages/runtime-cloudflare --noEmit",

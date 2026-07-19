@@ -9,6 +9,8 @@ import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, clo
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
+import canonicalMarkdownSeed from "../assets/markdown-database-integration-canonical-seed.zip"
+import canonicalMarkdownSeedManifest from "../assets/markdown-database-integration-canonical-seed.json" with { type: "json" }
 import markdownPrimaryBootstrapIndex from "../assets/markdown-primary-bootstrap-index.sqlite"
 import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 
@@ -97,6 +99,13 @@ interface RuntimeFile {
   bytes: Uint8Array
 }
 
+interface CanonicalSeedManifest {
+  schema: string
+  markdownDatabaseIntegrationRevision: string
+  archiveSha256: string
+  files: Array<{ path: string; sha256: string; size: number }>
+}
+
 export class WordPressStateCoordinator implements DurableObject {
   private tail: Promise<void> = Promise.resolve()
   private runtimePromise: Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string; pointer: MarkdownPointer }> | undefined
@@ -157,23 +166,18 @@ export class WordPressStateCoordinator implements DurableObject {
       return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin), pointer }
     }
     if (!this.env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
-    const seed = await bootWordPressRuntime("do-not-attempt-installing", true, true, new Uint8Array(wordpressInstallSeed), undefined, undefined, origin)
-    let seedExited = false
+    const files = await packagedCanonicalMarkdownSeed()
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, files, new Uint8Array(markdownPrimaryBootstrapIndex), origin)
     try {
-      await materializeMarkdownDatabaseIntegration(seed.php)
       const passwordFile = "/tmp/wordpress-admin-password"
-      seed.php.writeFile(passwordFile, new TextEncoder().encode(this.env.WORDPRESS_ADMIN_PASSWORD))
-      const output = (await seed.php.run({ code: canonicalSeedExportCode(passwordFile, origin) })).text.trim()
-      const changes = JSON.parse(output) as MarkdownChanges
-      validateMarkdownChanges(changes)
-      const files = collectRuntimeFiles(seed.php, MARKDOWN_ROOT)
-      const nextPointer = await persistMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, files)
+      runtime.php.writeFile(passwordFile, new TextEncoder().encode(this.env.WORDPRESS_ADMIN_PASSWORD))
+      const output = (await runtime.php.run({ code: canonicalBootstrapSetupCode(passwordFile, origin) })).text.trim()
+      if (output !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
+      const nextPointer = await persistMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT))
       await this.env.WORDPRESS_STATE_BUCKET.put(R2_MARKDOWN_POINTER_KEY, JSON.stringify(nextPointer), { httpMetadata: { contentType: "application/json" } })
-      seed.php.exit()
-      seedExited = true
-      return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, files, new Uint8Array(markdownPrimaryBootstrapIndex), origin), pointer: nextPointer }
+      return { ...runtime, pointer: nextPointer }
     } catch (error) {
-      if (!seedExited) seed.php.exit()
+      runtime.php.exit()
       throw error
     }
   }
@@ -289,10 +293,8 @@ async function isCompleteMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPoi
   return Boolean(admin?.ID && usermetaRows.some((row) => row.user_id === admin.ID))
 }
 
-function canonicalSeedExportCode(passwordFile: string, origin: string): string {
+function canonicalBootstrapSetupCode(passwordFile: string, origin: string): string {
   return `<?php
-define('MARKDOWN_DB_VERSION', '0.8.3');
-define('MARKDOWN_DB_EXCLUDED_TYPES', 'revision,auto-draft,nav_menu_item,customize_changeset,oembed_cache,wp_navigation,wp_global_styles,wp_template,wp_template_part');
 require '/wordpress/wp-load.php';
 $password = file_get_contents(${JSON.stringify(passwordFile)});
 @unlink(${JSON.stringify(passwordFile)});
@@ -303,16 +305,24 @@ wp_set_password($password, $admin->ID);
 $password = null;
 update_option('siteurl', ${JSON.stringify(origin)});
 update_option('home', ${JSON.stringify(origin)});
-foreach (['class-wp-markdown-frontmatter-profiles.php', 'class-wp-markdown-storage.php', 'class-wp-markdown-driver.php', 'class-wp-markdown-search.php', 'class-wp-markdown-write-engine.php', 'class-wp-markdown-loader.php', 'class-wp-markdown-primary-storage-runtime.php'] as $file) require_once '/wordpress/wp-content/plugins/markdown-database-integration/inc/' . $file;
-$connection = new WP_SQLite_Connection(['pdo' => $GLOBALS['@pdo'], 'path' => FQDB]);
-$runtime = WP_Markdown_Primary_Storage_Runtime::bootstrap_existing_cache(['content_root' => '${MARKDOWN_ROOT}', 'state_root' => '${MARKDOWN_ROOT}'], $connection, defined('DB_NAME') && '' !== DB_NAME ? DB_NAME : 'database_name_here', array_filter(array_map('trim', explode(',', MARKDOWN_DB_EXCLUDED_TYPES))), $wpdb->prefix);
-$driver = $runtime->get_driver();
-$prefix = $wpdb->prefix;
-foreach ($driver->query("SELECT ID FROM " . $prefix . "posts") as $row) $driver->query("UPDATE " . $prefix . "posts SET post_modified = post_modified WHERE ID = " . (int) $row->ID);
-foreach (['options' => 'option_id', 'users' => 'ID', 'usermeta' => 'umeta_id', 'postmeta' => 'meta_id', 'terms' => 'term_id', 'term_taxonomy' => 'term_taxonomy_id', 'termmeta' => 'meta_id', 'term_relationships' => 'object_id', 'comments' => 'comment_ID', 'commentmeta' => 'meta_id', 'links' => 'link_id'] as $table => $column) {
-  try { $driver->query("UPDATE " . $prefix . $table . " SET " . $column . " = " . $column); } catch (Throwable $ignored) {}
+$GLOBALS['wpdb']->flush_canonical_writes();
+echo 'flushed';`
 }
-echo json_encode($runtime->flush());`
+
+async function packagedCanonicalMarkdownSeed(): Promise<RuntimeFile[]> {
+  const manifest = canonicalMarkdownSeedManifest as CanonicalSeedManifest
+  if (manifest.schema !== "wp-codebox/cloudflare-canonical-mdi-seed/v1" || manifest.markdownDatabaseIntegrationRevision !== MARKDOWN_DATABASE_INTEGRATION_REVISION) throw new Error("Packaged canonical MDI seed provenance is invalid.")
+  if (await sha256Hex(new Uint8Array(canonicalMarkdownSeed)) !== manifest.archiveSha256) throw new Error("Packaged canonical MDI seed hash is invalid.")
+  const expected = new Map(manifest.files.map((file) => [file.path, file]))
+  const files: RuntimeFile[] = []
+  for await (const entry of decodeZip(new Blob([canonicalMarkdownSeed]).stream())) {
+    const bytes = new Uint8Array(await entry.arrayBuffer())
+    const expectedFile = expected.get(entry.name)
+    if (!expectedFile || expectedFile.size !== bytes.byteLength || expectedFile.sha256 !== await sha256Hex(bytes)) throw new Error("Packaged canonical MDI seed file validation failed.")
+    files.push({ path: entry.name, bytes })
+  }
+  if (files.length !== expected.size) throw new Error("Packaged canonical MDI seed archive is incomplete.")
+  return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
 async function runBootProbe(phase: string): Promise<Response> {
