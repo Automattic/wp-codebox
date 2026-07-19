@@ -38,6 +38,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=health")), { kind: "health" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-state")), { kind: "r2-state" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=canonical-auth")), { kind: "canonical-auth" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
 
@@ -70,12 +71,12 @@ test("Cloudflare translates Fetch requests and PHP responses without losing brow
 })
 
 test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", async () => {
-  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as { limits?: { cpu_ms?: number } }
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { limits?: { cpu_ms?: number } }
   assert.equal(config.limits?.cpu_ms, 300_000)
 })
 
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {
-  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as {
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     rules?: Array<{ type?: string; globs?: string[] }>
     r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
     durable_objects?: { bindings?: Array<{ name?: string; class_name?: string }> }
@@ -127,8 +128,8 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
-  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("function isWordPressServerFile"))
-  const predicate = worker.slice(worker.indexOf("function isWordPressServerFile"), worker.indexOf("function createPhpRuntime"))
+  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("function createPhpRuntime"))
+  const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
   assert.match(worker, /let cachedRuntime/)
@@ -149,12 +150,23 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(coordinator, /record\.version\+\+/)
   assert.match(coordinator, /lease\.expiresAt <= Date\.now\(\)/)
   assert.match(worker, /phase === "canonical-session"/)
-  assert.match(worker, /key\.endsWith\("session_tokens"\)/)
+  assert.match(worker, /canonicalAuthProbe\(runtime, request\)/)
+  assert.match(worker, /WP_Session_Tokens::get_instance/)
+  assert.match(worker, /wp_validate_auth_cookie\('', 'logged_in'\)/)
+  assert.match(worker, /authConstantsDefined/)
+  assert.match(worker, /adminCookieValidated/)
+  assert.match(worker, /cookieStore: false/)
+  assert.match(worker, /meta_key\?\.endsWith\("session_tokens"\)/)
   assert.match(worker, /maxPhpInstances: 1/)
-  assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressServerFile\(decoder\.decode\(entry\.path\)\)\)/)
-  assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL\)(?!\s*,)/)
-  assert.match(predicate, /php\|json\|crt\|html\|css\|js\|mjs\|woff2\?\|ttf\|otf\|eot\|svg\|png\|jpe\?g\|gif\|webp\|avif\|ico/)
-  assert.match(predicate, /path\.startsWith\("wordpress\/wp-admin\/"\)\) return true/)
+  assert.match(worker, /WORDPRESS_AUTH_SECRET/)
+  assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
+  assert.match(worker, /authConstants/)
+  assert.match(materializer, /const archivePaths = await wordPressArchivePaths\(decoder\)/)
+  assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressRuntimeFile\(decoder\.decode\(entry\.path\), archivePaths\)\)/)
+  assert.match(materializer, /return false/)
+  assert.match(corpus, /path\.endsWith\("\.map"\)/)
+  assert.match(corpus, /path\.startsWith\("wordpress\/wp-content\/themes\/"\)/)
+  assert.match(corpus, /minifiedSibling/)
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {

@@ -8,6 +8,8 @@ import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
+import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
+import { isWordPressRuntimeFile } from "./wordpress-runtime-corpus.js"
 import type { MarkdownPointer } from "./state-coordinator.js"
 export { WordPressStateCoordinator } from "./state-coordinator.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
@@ -68,6 +70,7 @@ interface Env {
   WORDPRESS_STATE: DurableObjectNamespace
   WORDPRESS_STATE_BUCKET: R2Bucket
   WORDPRESS_ADMIN_PASSWORD?: string
+  WORDPRESS_AUTH_SECRET?: string
 }
 
 export default {
@@ -82,6 +85,7 @@ export default {
       if (request.method !== "GET") return new Response("WordPress state read requires GET.", { status: 405 })
       return coordinator.fetch(new Request(coordinatorUrl(request.url, "state")))
     }
+    if (route.kind === "canonical-auth") return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
     return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
   },
 }
@@ -126,7 +130,7 @@ interface Runtime {
 let cachedRuntime: { baseRevision: string; promise: Promise<Runtime> } | undefined
 const LEASE_ACQUISITION_TIMEOUT_MS = 100_000
 
-async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate"): Promise<Response> {
+async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate" | "canonical-auth"): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
   let lease = await acquireLease(coordinator, request.url)
   let finalized = false
@@ -144,6 +148,8 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       response = await runSyntheticMutation(runtime)
     } else if (route === "health") {
       response = await health(runtime)
+    } else if (route === "canonical-auth") {
+      response = await canonicalAuthProbe(runtime, request)
     } else {
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
     }
@@ -164,7 +170,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
   }
 }
 
-function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate"): boolean {
+function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate" | "canonical-auth"): boolean {
   return route === "r2-mutate" || !["GET", "HEAD", "OPTIONS"].includes(request.method)
 }
 
@@ -218,7 +224,7 @@ function commitLease(coordinator: DurableObjectStub, requestUrl: string, lease: 
 async function getRuntime(env: Env, pointer: MarkdownPointer, origin: string): Promise<Runtime> {
   if (cachedRuntime && cachedRuntime.baseRevision !== pointer.revision) await discardCachedRuntime()
   if (!cachedRuntime) {
-    const promise = bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, origin)
+    const promise = bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, origin, await canonicalWordPressAuthConstants(env))
     cachedRuntime = { baseRevision: pointer.revision, promise }
     promise.catch(() => {
       if (cachedRuntime?.promise === promise) cachedRuntime = undefined
@@ -253,14 +259,14 @@ async function discardRuntime(runtime: Runtime): Promise<void> {
   runtime.php.exit()
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string): Promise<Runtime> {
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin), pointer }
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
+  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants), pointer }
 }
 
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin)
+  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env))
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
@@ -273,6 +279,10 @@ async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStu
     runtime.php.exit()
     throw error
   }
+}
+
+async function canonicalWordPressAuthConstants(env: Env): Promise<Record<WordPressAuthConstant, string>> {
+  return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", "default")
 }
 
 async function persistRuntime(bucket: R2Bucket, runtime: Runtime): Promise<MarkdownPointer> {
@@ -293,16 +303,57 @@ async function health(runtime: Runtime): Promise<Response> {
   return cloudflareRuntimeHealthResponse({ schema: CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, marker: CLOUDFLARE_RUNTIME_HEALTH_MARKER, wordpressVersion: runtime.wordpressVersion, phpVersion, runtime: { backend: "wordpress-playground", environment: "wordpress" }, evidence: { initialization: "completed", execution: "completed", initializationScope: "isolate" } })
 }
 
+async function canonicalAuthProbe(runtime: Runtime, request: Request): Promise<Response> {
+  const cookiePath = "/tmp/wp-codebox-canonical-auth-cookie"
+  runtime.php.writeFile(cookiePath, new TextEncoder().encode(request.headers.get("cookie") ?? ""))
+  const output = (await runtime.php.run({ code: `<?php
+$raw = file_get_contents('${cookiePath}');
+@unlink('${cookiePath}');
+foreach (explode(';', is_string($raw) ? $raw : '') as $part) {
+  $pair = explode('=', trim($part), 2);
+  if (count($pair) === 2 && $pair[0] !== '') $_COOKIE[$pair[0]] = urldecode($pair[1]);
+}
+require '/wordpress/wp-load.php';
+$parsed = wp_parse_auth_cookie('', 'logged_in');
+$admin_parsed = wp_parse_auth_cookie('', 'auth');
+$user = is_array($parsed) && isset($parsed['username']) ? get_user_by('login', $parsed['username']) : false;
+$token = is_array($parsed) && isset($parsed['token']) ? $parsed['token'] : '';
+$session = $user && is_string($token) && $token !== '' ? WP_Session_Tokens::get_instance($user->ID) : null;
+$session_row = $user ? $GLOBALS['wpdb']->get_var($GLOBALS['wpdb']->prepare("SELECT meta_value FROM {$GLOBALS['wpdb']->usermeta} WHERE user_id = %d AND meta_key LIKE %s", $user->ID, '%session_tokens')) : null;
+$session_value = is_string($session_row) ? maybe_unserialize($session_row) : null;
+$auth_constants = ['AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT'];
+echo json_encode([
+  'schema' => 'wp-codebox/cloudflare-canonical-auth/v1',
+  'authCookiePresent' => isset($_COOKIE[LOGGED_IN_COOKIE]),
+  'authCookieParsed' => is_array($parsed) && isset($parsed['username'], $parsed['expiration'], $parsed['token'], $parsed['hmac']),
+  'adminCookiePresent' => isset($_COOKIE[AUTH_COOKIE]),
+  'adminCookieParsed' => is_array($admin_parsed) && isset($admin_parsed['username'], $admin_parsed['expiration'], $admin_parsed['token'], $admin_parsed['hmac']),
+  'userFound' => false !== $user,
+  'sessionTokenRowPresent' => is_string($session_row) && $session_row !== '',
+  'sessionTokenSerializedArray' => is_array($session_value),
+  'sessionTokenVerified' => $session instanceof WP_Session_Tokens && is_string($token) && $token !== '' && $session->verify($token),
+  'authConstantsDefined' => !array_diff($auth_constants, array_filter($auth_constants, 'defined')),
+  'adminCookieValidated' => false !== wp_validate_auth_cookie('', 'auth'),
+  'loggedInCookieValidated' => false !== wp_validate_auth_cookie('', 'logged_in'),
+]);` })).text.trim()
+  return Response.json(JSON.parse(output) as Record<string, boolean | string>)
+}
+
 async function canonicalSessionProbe(bucket: R2Bucket, state: { pointer: MarkdownPointer | null }): Promise<Response> {
   if (!state.pointer) return Response.json({ schema: "wp-codebox/cloudflare-canonical-session/v1", pointerRevision: null, sessionTokenRows: 0 })
   const manifest = await readMarkdownManifest(bucket, state.pointer)
+  const users = manifest?.files.find((file) => file.path === "_tables/users.json")
   const usermeta = manifest?.files.find((file) => file.path === "_tables/usermeta.json")
-  if (!usermeta) throw new Error("The canonical WordPress revision is missing usermeta.")
+  if (!users || !usermeta) throw new Error("The canonical WordPress revision is missing users or usermeta.")
+  const usersObject = await bucket.get(users.objectKey)
   const object = await bucket.get(usermeta.objectKey)
-  if (!object) throw new Error("The canonical WordPress usermeta object is missing.")
-  const rows = await object.json<Array<{ meta_key?: string }>>()
+  if (!usersObject || !object) throw new Error("The canonical WordPress user identity objects are missing.")
+  const usersRows = await usersObject.json<Array<{ ID?: unknown; user_login?: unknown; user_pass?: unknown }>>()
+  const rows = await object.json<Array<{ meta_key?: string; meta_value?: unknown }>>()
   const usermetaKeys = rows.map((row) => row.meta_key).filter((key): key is string => typeof key === "string").sort()
-  return Response.json({ schema: "wp-codebox/cloudflare-canonical-session/v1", pointerRevision: state.pointer.revision, sessionTokenRows: usermetaKeys.filter((key) => key.endsWith("session_tokens")).length, hasSessionTokens: usermetaKeys.some((key) => key.endsWith("session_tokens")), usermetaKeys })
+  const sessionTokenRows = rows.filter((row) => row.meta_key?.endsWith("session_tokens"))
+  const adminRow = usersRows.find((row) => typeof row.user_login === "string")
+  return Response.json({ schema: "wp-codebox/cloudflare-canonical-session/v1", pointerRevision: state.pointer.revision, sessionTokenRows: sessionTokenRows.length, hasSessionTokens: sessionTokenRows.some((row) => typeof row.meta_value === "string" && row.meta_value.length > 0), usersTableStructurallyValid: !!adminRow && (typeof adminRow.ID === "number" || (typeof adminRow.ID === "string" && /^\d+$/.test(adminRow.ID))) && typeof adminRow.user_pass === "string", usersTableFieldTypes: { id: typeof adminRow?.ID, login: typeof adminRow?.user_login, password: typeof adminRow?.user_pass }, usermetaTableStructurallyValid: rows.every((row) => typeof row.meta_key === "string" && typeof row.meta_value === "string"), usermetaKeys })
 }
 
 class CoordinatorRequestError extends Error {
@@ -389,6 +440,7 @@ update_option('home', ${JSON.stringify(origin)});
 $GLOBALS['wpdb']->flush_canonical_writes();
 echo 'flushed';`
 }
+
 
 async function packagedCanonicalMarkdownSeed(): Promise<RuntimeFile[]> {
   const manifest = canonicalMarkdownSeedManifest as CanonicalSeedManifest
@@ -600,12 +652,14 @@ async function bootWordPressRuntime(
   markdownFiles?: RuntimeFile[],
   markdownIndexSeed?: Uint8Array,
   siteUrl = SITE_URL,
+  authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
     constants: {
       AUTOMATIC_UPDATER_DISABLED: true,
       DISABLE_WP_CRON: true,
+      ...authConstants,
       ...(markdownFiles ? {
         MARKDOWN_DB_CONTENT_DIR: MARKDOWN_ROOT,
         MARKDOWN_DB_EXCLUDED_TYPES: "revision,auto-draft,nav_menu_item,customize_changeset,oembed_cache,wp_navigation,wp_global_styles,wp_template,wp_template_part",
@@ -617,6 +671,9 @@ async function bootWordPressRuntime(
       WP_HTTP_BLOCK_EXTERNAL: true,
     },
     dataSqlPath: DATABASE_PATH,
+    // Browser cookies are carried by the Worker Fetch request; Playground's
+    // internal store would overwrite that header after an isolate restart.
+    cookieStore: false,
     hooks: streamWordPressFiles || databaseSeed || markdownFiles ? {
       beforeWordPressFiles: streamWordPressFiles || markdownFiles ? async (php: PHP) => {
         if (streamWordPressFiles) await materializeWordPressServerFiles(php)
@@ -710,13 +767,14 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
   const decoder = new TextDecoder()
   let materializedFiles = 0
   let materializedBytes = 0
-  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => isWordPressServerFile(decoder.decode(entry.path)))
+  const archivePaths = await wordPressArchivePaths(decoder)
+  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => isWordPressRuntimeFile(decoder.decode(entry.path), archivePaths))
   const reader = stream.getReader()
   while (true) {
     const { done, value: entry } = await reader.read()
     if (done) break
     const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
-    if (!isWordPressServerFile(path) || path.endsWith("/")) continue
+    if (!isWordPressRuntimeFile(path, archivePaths)) continue
 
     const destination = `/${path}`
     const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
@@ -728,9 +786,17 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
   return { materializedFiles, materializedBytes }
 }
 
-function isWordPressServerFile(path: string): boolean {
-  if (path.startsWith("wordpress/wp-admin/")) return true
-  return /\.(?:php|json|crt|html|css|js|mjs|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/.test(path)
+async function wordPressArchivePaths(decoder: TextDecoder): Promise<Set<string>> {
+  const paths = new Set<string>()
+  // decodeRemoteZip filters central-directory entries before requesting file ranges.
+  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => {
+    paths.add(decoder.decode(entry.path))
+    return false
+  })
+  for await (const _ of stream) {
+    // Draining the metadata-only stream completes central-directory parsing.
+  }
+  return paths
 }
 
 function createPhpRuntime() {

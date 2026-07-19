@@ -6,6 +6,7 @@ import { join } from "node:path"
 const port = 8792
 const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
+const authSecret = "cloudflare-runtime-test-auth-secret"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
 let child
@@ -15,21 +16,27 @@ try {
   await startWorker()
   await assertConcurrentMutations()
   const adminHtml = await login()
+  const editorHtml = await assertPostNewEditor()
   const post = await createPost(adminHtml)
   const frontPage = await assertWordPressPage(`${origin}/${post.slug}/`, "published post")
   assertIncludes(frontPage, post.title, "published post")
   await assertHealthResponse()
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
+  await assertLinkedAssets(editorHtml, "editor")
+  await assertCanonicalAuth("before restart")
   await stopWorker()
 
-  cookies.length = 0
   await startWorker()
-  const restartedAdmin = await login()
+  await assertCanonicalIdentity("after restart")
+  await assertCanonicalAuth("after restart")
+  const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
   const restartedPost = await assertWordPressPage(`${origin}/${post.slug}/`, "post after cold restart")
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
-  console.log("Cloudflare local runtime gate passed: login, concurrent canonical mutations, authenticated REST post creation, frontend/admin assets, and cold-restart persistence.")
+  cookies.length = 0
+  await login()
+  console.log("Cloudflare local runtime gate passed: login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -37,7 +44,7 @@ try {
 
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`], {
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -78,10 +85,24 @@ async function login() {
   const location = response.headers.get("location")
   if (!location?.includes("/wp-admin/")) throw new Error(`Login did not redirect to wp-admin: ${location}`)
   const admin = await assertAuthenticatedDashboard(new URL(location, origin))
-  const session = await (await request(`${origin}/?phase=canonical-session`)).json()
-  if (!session.hasSessionTokens || session.sessionTokenRows < 1) throw new Error(`Login did not persist a canonical WordPress session token: ${JSON.stringify(session)}`)
-  console.log(`Canonical login session: revision ${session.pointerRevision}, session-token rows ${session.sessionTokenRows}, usermeta keys ${session.usermetaKeys.join(", ")}`)
+  await assertCanonicalIdentity("after login")
   return admin
+}
+
+async function assertCanonicalIdentity(stage) {
+  const session = await (await request(`${origin}/?phase=canonical-session`)).json()
+  if (!session.hasSessionTokens || session.sessionTokenRows < 1 || !session.usersTableStructurallyValid || !session.usermetaTableStructurallyValid) throw new Error(`Login did not persist a structurally valid canonical identity: ${JSON.stringify(session)}`)
+  console.log(`Canonical identity ${stage}: revision ${session.pointerRevision}, session-token rows ${session.sessionTokenRows}, users field types ${JSON.stringify(session.usersTableFieldTypes)}, usermeta keys ${session.usermetaKeys.join(", ")}`)
+}
+
+async function assertCanonicalAuth(stage) {
+  const response = await request(`${origin}/wp-admin/?phase=canonical-auth`)
+  const diagnostic = await response.json()
+  console.log(`Canonical auth ${stage}: ${JSON.stringify(diagnostic)}`)
+  const checks = ["authCookiePresent", "authCookieParsed", "adminCookiePresent", "adminCookieParsed", "userFound", "sessionTokenRowPresent", "sessionTokenSerializedArray", "sessionTokenVerified", "authConstantsDefined", "adminCookieValidated", "loggedInCookieValidated"]
+  if (!response.ok || diagnostic.schema !== "wp-codebox/cloudflare-canonical-auth/v1" || checks.some((check) => diagnostic[check] !== true)) {
+    throw new Error(`Canonical auth diagnostic failed ${stage}: ${JSON.stringify(diagnostic)}`)
+  }
 }
 
 async function createPost(adminHtml) {
@@ -99,6 +120,16 @@ async function createPost(adminHtml) {
   const post = JSON.parse(body)
   if (typeof post.slug !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
   return { slug: post.slug, title }
+}
+
+async function assertPostNewEditor() {
+  const response = await request(`${origin}/wp-admin/post-new.php`)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "post editor")
+  if (response.status !== 200 || response.url.includes("wp-login.php") || !/wp-edit-post|block-editor/i.test(body)) {
+    throw new Error(`Expected the authenticated block editor, received ${response.status} at ${response.url}.`)
+  }
+  return body
 }
 
 async function assertConcurrentMutations() {
@@ -143,9 +174,10 @@ async function assertAuthenticatedDashboard(target) {
 }
 
 async function assertLinkedAssets(html, label) {
-  const links = [...html.matchAll(/<(?:link|script)\b[^>]*?\b(?:href|src)=["']([^"']+\.(?:css|js)(?:\?[^"']*)?)["']/gi)].slice(0, 2)
-  if (!links.length) throw new Error(`Expected ${label} HTML to link CSS or JavaScript assets.`)
-  for (const match of links) {
+  const links = [...html.matchAll(/<(?:link|script)\b[^>]*?\b(?:href|src)=["']([^"']+\.(?:css|js)(?:\?[^"']*)?)["']/gi)]
+  const representatives = [links.find((match) => /\.css(?:\?|$)/i.test(match[1])), links.find((match) => /\.js(?:\?|$)/i.test(match[1]))]
+  if (representatives.some((match) => !match)) throw new Error(`Expected ${label} HTML to link both CSS and JavaScript assets.`)
+  for (const match of representatives) {
     const response = await request(new URL(match[1], origin))
     const body = await response.text()
     assertNoPhpDiagnostics(body, `${label} asset ${match[1]}`)

@@ -95,6 +95,8 @@
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:cloudflare-runtime": "tsx tests/cloudflare-runtime.test.ts && node ./node_modules/typescript/bin/tsc -p packages/runtime-cloudflare --noEmit",
+    "test:cloudflare-wordpress-auth": "tsx tests/cloudflare-wordpress-auth.test.ts",
+    "test:cloudflare-wordpress-archive-corpus": "tsx tests/cloudflare-wordpress-archive-corpus.test.ts",
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts && tsx tests/agent-task-canonical-evidence.test.ts && npm run test:agent-task-workflow-interface && npm run test:runtime-sources-materialization && tsx tests/agent-task-reusable-workflow.test.ts",
     "test:agent-task-workflow-interface": "tsx tests/run-agent-task-reusable-workflow-interface.test.ts",
     "test:agent-task-runtime-package-staging": "tsx tests/agent-task-runtime-package-staging.test.ts",
