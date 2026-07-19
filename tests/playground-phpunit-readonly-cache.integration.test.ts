@@ -26,14 +26,16 @@ try {
   const recipe = buildWordPressPhpunitRecipe({
     pluginSlug: "readonly-phpunit-fixture",
     extra_plugins: [{
+      source: plugin,
+      slug: "readonly-phpunit-fixture",
+      activate: false,
+    }, {
       source: dependency,
       slug: "activation-dependency",
-      pluginFile: "activation-dependency/activation-dependency.php",
       activate: false,
     }],
-    dependencyMounts: ["/wordpress/wp-content/plugins/activation-dependency"],
+    dependencyMounts: ["/wordpress/wp-content/plugins/readonly-phpunit-fixture", "/wordpress/wp-content/plugins/activation-dependency"],
     mounts: [
-      { source: plugin, target: "/wordpress/wp-content/plugins/readonly-phpunit-fixture", mode: "readonly" },
       { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },
     ],
   })

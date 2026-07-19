@@ -401,7 +401,7 @@ const managedModeCode = phpunitRunCode({
   phpunitArgs: [],
   env: {},
   wpConfigDefines: {},
-  dependencyMounts: [],
+  dependencyMounts: ["/wordpress/wp-content/plugins/demo-plugin", "/wordpress/wp-content/plugins/dependency"],
   bootstrapFiles: [],
   bootstrapMode: "managed",
   projectBootstrap: "",
@@ -410,6 +410,7 @@ const managedModeCode = phpunitRunCode({
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
+assert.ok(managedModeCode.includes('$dep_mounts = "/wordpress/wp-content/plugins/demo-plugin\\n/wordpress/wp-content/plugins/dependency";'), "dependency mounts must be newline-delimited for the generated PHP runner")
 const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
 const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)
 const activationStageIndex = managedModeCode.indexOf("pg_run_activation_stage", dependencyLoadStageIndex)
