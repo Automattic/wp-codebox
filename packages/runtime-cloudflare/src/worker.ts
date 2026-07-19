@@ -265,13 +265,13 @@ async function discardRuntime(runtime: Runtime): Promise<void> {
 }
 
 async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket), pointer }
+  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true), pointer }
 }
 
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET)
+  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET, true)
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
@@ -568,7 +568,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
 
   if (phase === "canonical-wordpress" || phase === "canonical-bootstrap-setup") {
     const canonicalSeed = await packagedCanonicalMarkdownSeed()
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, canonicalSeed, new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, canonicalSeed, new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
     try {
       if (phase === "canonical-bootstrap-setup") {
         const passwordFile = "/tmp/wp-codebox-canonical-bootstrap-probe-password"
@@ -588,6 +588,9 @@ echo json_encode([
   'optionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options}"),
   'widgetOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%'"),
   'widgetStateOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%' OR option_name = 'sidebars_widgets'"),
+  'wpCronInitAttached' => false !== has_action('init', 'wp_cron'),
+  'updateScheduleInitAttached' => false !== has_action('init', 'wp_schedule_update_checks'),
+  'privacyScheduleInitAttached' => false !== has_action('init', 'wp_schedule_delete_old_privacy_export_files'),
   'memoryBytes' => memory_get_usage(true),
   'peakMemoryBytes' => memory_get_peak_usage(true),
 ]);` })).text.trim()
@@ -1000,6 +1003,7 @@ async function bootWordPressRuntime(
   siteUrl = SITE_URL,
   authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
   runtimeBucket?: R2Bucket,
+  canonicalCronAdapter = false,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
@@ -1031,6 +1035,7 @@ async function bootWordPressRuntime(
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
+        if (canonicalCronAdapter) materializeCanonicalCronAdapter(php)
       } : undefined,
       beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
         php.mkdir("/wordpress/wp-content/database")
@@ -1056,6 +1061,20 @@ function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): 
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
     php.writeFile(destination, file.bytes)
   }
+}
+
+function materializeCanonicalCronAdapter(php: PHP): void {
+  const path = "/wordpress/wp-content/mu-plugins/wp-codebox-canonical-cron-policy.php"
+  php.mkdir(path.slice(0, path.lastIndexOf("/")))
+  php.writeFile(path, new TextEncoder().encode(`<?php
+/**
+ * Plugin Name: WP Codebox Canonical Cron Policy
+ */
+
+if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
+	remove_action( 'init', 'wp_cron' );
+}
+`))
 }
 
 function collectRuntimeFiles(php: PHP, root: string): RuntimeFile[] {

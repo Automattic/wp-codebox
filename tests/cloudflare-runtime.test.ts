@@ -313,6 +313,24 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(worker, /function canonicalChangedPathCounts/)
 })
 
+test("Cloudflare canonical runtime materializes a conditional cron policy without removing other scheduling callbacks", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const adapter = worker.match(/function materializeCanonicalCronAdapter\(php: PHP\): void \{[\s\S]*?\n\}/)?.[0]
+
+  assert.ok(adapter, "The canonical cron policy materializer is present.")
+  assert.match(adapter, /wp-content\/mu-plugins\/wp-codebox-canonical-cron-policy\.php/)
+  assert.match(adapter, /defined\( 'DISABLE_WP_CRON' \) && DISABLE_WP_CRON/)
+  assert.match(adapter, /remove_action\( 'init', 'wp_cron' \)/)
+  assert.doesNotMatch(adapter, /wp_schedule_update_checks|wp_schedule_delete_old_privacy_export_files|\$GLOBALS\['wp_filter'\]/)
+  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  canonicalCronAdapter = false,/)
+  assert.match(worker, /authConstants, bucket, true\), pointer/)
+  assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
+  assert.match(worker, /canonical-probe\.invalid", \{\}, bucket, true\)/)
+  assert.match(worker, /'wpCronInitAttached' => false !== has_action\('init', 'wp_cron'\)/)
+  assert.match(worker, /'updateScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_update_checks'\)/)
+  assert.match(worker, /'privacyScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_delete_old_privacy_export_files'\)/)
+})
+
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
