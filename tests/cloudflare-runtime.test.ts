@@ -171,6 +171,13 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
     "mdi-widgets-hooks",
     "mdi-widgets-factory",
     "mdi-widgets-remaining-hooks",
+    "mdi-widgets-direct-basic-classic-first",
+    "mdi-widgets-direct-basic-classic-second",
+    "mdi-widgets-direct-media",
+    "mdi-widgets-direct-custom-html-block",
+    "mdi-widgets-direct-block",
+    "mdi-widgets-direct-custom-html",
+    "mdi-widgets-option-reads",
   ]) assert.match(worker, new RegExp(`"${phase}"`))
 
   assert.match(worker, /\$needle = "do_action\( 'init' \);"/)
@@ -187,6 +194,17 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /if \(get_option\('link_manager_enabled'\)\) register_widget\('WP_Widget_Links'\);/)
   assert.match(worker, /'widgetClassCount' => \$widget_class_count/)
   assert.match(worker, /wp_codebox_widgets_probe_inventory\('widgets_init'\)/)
+  assert.match(worker, /function wp_codebox_widgets_probe_register_selected\(\$class_names\)/)
+  assert.match(worker, /\$registered\[\$class_name\]\->_register\(\)/)
+  assert.match(worker, /'mdi-widgets-direct-basic-classic-first' => array\('WP_Widget_Pages'/)
+  assert.match(worker, /'mdi-widgets-direct-media' => array\('WP_Widget_Media_Audio'/)
+  assert.match(worker, /'mdi-widgets-direct-custom-html-block' => array\('WP_Widget_Custom_HTML', 'WP_Widget_Block'\)/)
+  assert.match(worker, /'mdi-widgets-direct-block' => array\('WP_Widget_Block'\)/)
+  assert.match(worker, /'mdi-widgets-direct-custom-html' => array\('WP_Widget_Custom_HTML'\)/)
+  assert.match(worker, /foreach \(\$widget_option_id_bases as \$id_base\) get_option\('widget_' \. \$id_base\)/)
+  assert.match(worker, /'classNamesAttempted' => \$direct_groups\[\$phase\]/)
+  assert.match(worker, /'optionCount' => count\(\$widget_option_id_bases\)/)
+  assert.doesNotMatch(worker, /get_option\('widget_' \. \$id_base\).*json_encode/)
   assert.match(worker, /"rest_api_init"/)
   assert.match(worker, /"create_initial_taxonomies"/)
   assert.match(worker, /"wp_create_initial_post_meta"/)
