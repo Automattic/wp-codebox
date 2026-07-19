@@ -28,7 +28,17 @@ const recipe: WorkspaceRecipe = {
 assertWorkspaceRecipeJsonSchema(recipe, { recipeCommandIds: ["wp-codebox/run-fuzz-suite", "wordpress.run-php"] })
 
 const executed: ExecutionSpec[] = []
+let checkpointCreates = 0
+let checkpointRestores = 0
 const runtime = {
+  async createCheckpoint({ name }: { name: string }) {
+    checkpointCreates += 1
+    return { schema: "wp-codebox/runtime-checkpoint-result/v1" as const, status: "created", operation: "create" as const, checkpoint: { name, snapshotId: `snapshot-${name}`, createdAt: "2026-01-01T00:00:00.000Z" } }
+  },
+  async restoreCheckpoint(name: string) {
+    checkpointRestores += 1
+    return { schema: "wp-codebox/runtime-checkpoint-result/v1" as const, status: "restored", operation: "restore" as const, checkpoint: { name, snapshotId: `snapshot-${name}`, createdAt: "2026-01-01T00:00:00.000Z", restoredAt: "2026-01-01T00:00:01.000Z" } }
+  },
   async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
     executed.push(spec)
     if (spec.command === "wordpress.run-php" && (spec.args ?? []).some((arg) => arg.includes("emit-rest-db-profile"))) {
@@ -103,6 +113,24 @@ assert.equal(execution.exitCode, 0)
 assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.status, "passed")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
+executed.length = 0
+const checkpointSuite = fuzzSuiteContract({
+  id: "nested-checkpoint-suite",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "nested-baseline" },
+  cases: [
+    { id: "checkpoint-case-one", target: { kind: "command", id: "wordpress.run-php", entrypoint: "wordpress.run-php" }, input: { args: ["code=echo 'one';"] } },
+    { id: "checkpoint-case-two", target: { kind: "command", id: "wordpress.run-php", entrypoint: "wordpress.run-php" }, input: { args: ["code=echo 'two';"] } },
+  ],
+})
+const checkpointExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(checkpointSuite)}`] } }, process.cwd())
+const checkpointResult = JSON.parse(checkpointExecution.stdout)
+assert.equal(checkpointExecution.exitCode, 0)
+assert.equal(checkpointResult.status, "passed")
+assert.equal(checkpointCreates, 1)
+assert.equal(checkpointRestores, 2)
+assert.deepEqual(checkpointResult.cases.map((fuzzCase: { id: string; reset: { mode: string; status: string } }) => [fuzzCase.id, fuzzCase.reset.mode, fuzzCase.reset.status]), [["checkpoint-case-one", "checkpoint-per-case", "passed"], ["checkpoint-case-two", "checkpoint-per-case", "passed"]])
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php", "wordpress.run-php"])
 
 const suiteAliasDir = await mkdtemp(join(tmpdir(), "wp-codebox-nested-fuzz-suite-alias-"))
 await writeFile(join(suiteAliasDir, "suite.json"), JSON.stringify(suite), "utf8")

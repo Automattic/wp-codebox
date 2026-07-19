@@ -213,7 +213,8 @@ export interface WordPressFuzzSuiteExecutionOptions extends Omit<FuzzSuiteRunOpt
   artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
   artifactStorage?: RuntimeArtifactStorageInput | RuntimeArtifactStorageDescriptor
 }
-type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
+type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
+type WordPressFuzzSuiteExecutionEpisode = WordPressFuzzSuiteResetEpisode & Pick<RuntimeEpisode, "reset">
 
 export interface WordPressFuzzSuiteResetExecutorOptions {
   artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
@@ -1217,7 +1218,7 @@ export function createWordPressFuzzSuiteResetExecutor(episode: WordPressFuzzSuit
 }
 
 export async function executeWordPressFuzzSuite(
-  episode: WordPressFuzzSuiteResetEpisode,
+  episode: WordPressFuzzSuiteExecutionEpisode,
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
 ): Promise<FuzzSuiteResultEnvelope> {

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { commandArgValue, parseCommandJson, parseCommandJsonObject, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type FuzzSuiteContract, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { createWordPressFuzzSuiteResetExecutor } from "@automattic/wp-codebox-playground/public"
 import { correlateObservedHostsToExternalServiceBoundaries, recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
@@ -523,6 +524,7 @@ async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[]
   const result = await runFuzzSuite(suite, {
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     executor: async (spec) => executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: workflowStepFromExecutionSpec(spec) }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap),
+    resetExecutor: createWordPressFuzzSuiteResetExecutor(recipeRuntimeFuzzSuiteResetEpisode(runtime, recipeDirectory, sandboxWorkspace, inputMountPathMap)),
     runtimeWorkloadExecutor: async ({ suite, workload, case: fuzzCase }) => {
       const workloadJson = JSON.stringify(workload)
       const execution = await executeWordPressRunWorkloadJsonRecipeCommand(runtime, [`workload-json=${workloadJson}`], recipeDirectory, sandboxWorkspace, suite, fuzzCase, inputMountPathMap)
@@ -549,6 +551,37 @@ async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[]
     startedAt,
     finishedAt: new Date().toISOString(),
     artifactRefs: result.artifactRefs?.map((ref) => ({ id: ref.path, path: ref.path, kind: ref.kind, digest: ref.sha256 ? { algorithm: "sha256", value: ref.sha256 } : undefined, metadata: ref.metadata })) ?? [],
+  }
+}
+
+function recipeRuntimeFuzzSuiteResetEpisode(runtime: Runtime, recipeDirectory: string, sandboxWorkspace: ReturnType<typeof sandboxWorkspaceContract> | undefined, inputMountPathMap: readonly InputMountPathMapping[]) {
+  let index = 0
+  return {
+    async step(action: { command: string; args?: string[]; metadata?: Record<string, unknown> }) {
+      index += 1
+      const id = `recipe-fuzz-reset-${index}`
+      const execution = await executeRecipeWorkflowStep(runtime, {
+        phase: "steps",
+        index,
+        step: { command: action.command, args: action.args, metadata: action.metadata },
+      }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap)
+      return {
+        id,
+        index,
+        action: {
+          schema: "wp-codebox/runtime-episode-action/v1" as const,
+          id,
+          kind: "command" as const,
+          command: action.command,
+          args: action.args ?? [],
+          metadata: action.metadata,
+          digest: { algorithm: "sha256" as const, value: createHash("sha256").update(JSON.stringify(action)).digest("hex") },
+        },
+        actionRef: { kind: "action", id },
+        execution,
+        executionRef: { kind: "execution", id: execution.id },
+      }
+    },
   }
 }
 
