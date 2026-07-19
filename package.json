@@ -82,6 +82,8 @@
     "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
     "cloudflare:dry-run": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
     "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
+    "generate:cloudflare-wordpress-runtime-corpus": "tsx scripts/generate-cloudflare-wordpress-runtime-corpus.ts",
+    "provision:cloudflare-wordpress-runtime-corpus": "node scripts/provision-cloudflare-wordpress-runtime-corpus.mjs",
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",

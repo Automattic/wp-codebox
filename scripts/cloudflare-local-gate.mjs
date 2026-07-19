@@ -13,6 +13,8 @@ let child
 let output = ""
 
 try {
+  await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
+  await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
   await assertConcurrentMutations()
   const adminHtml = await login()
@@ -41,6 +43,14 @@ try {
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
+}
+
+async function run(command, args) {
+  await new Promise((resolve, reject) => {
+    const childProcess = spawn(command, args, { cwd: process.cwd(), stdio: "inherit" })
+    childProcess.on("error", reject)
+    childProcess.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`${command} ${args.join(" ")} failed with status ${code}.`)))
+  })
 }
 
 async function startWorker() {

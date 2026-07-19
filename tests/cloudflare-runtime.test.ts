@@ -4,13 +4,14 @@ import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import test from "node:test"
-import { decodeZip } from "@php-wasm/stream-compression"
+import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
+import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -157,7 +158,7 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
-  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("function createPhpRuntime"))
+  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("async function serveWordPressStaticAsset"))
   const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
@@ -199,13 +200,62 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /"x-wp-codebox-static": "wordpress-archive"/)
   assert.match(worker, /cache\.match\(request\)/)
   assert.match(worker, /cache\.put\(request, response\.clone\(\)\)/)
-  assert.match(materializer, /const archivePaths = await wordPressArchivePaths\(decoder\)/)
-  assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressRuntimeFile\(decoder\.decode\(entry\.path\), archivePaths\)\)/)
-  assert.match(materializer, /return false/)
+  assert.match(materializer, /materializeWordPressRuntimeArtifact\(php, bucket, wordpressRuntimeArtifactManifest/)
+  assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL/)
   assert.match(corpus, /path\.endsWith\("\.map"\)/)
   assert.match(corpus, /SERVER_READ_EXTENSION/)
   assert.match(corpus, /path\.endsWith\("\/style\.css"\)/)
   assert.match(corpus, /STATIC_ARCHIVE_ROOTS/)
+})
+
+test("WordPress runtime artifacts are content-addressed and reject unavailable or corrupt R2 objects", async () => {
+  const source = new TextEncoder().encode("<?php $wp_version = '6.8.1';")
+  const archive = new Uint8Array(await new Response(encodeZip([new File([source], "wordpress/wp-includes/version.php", { lastModified: 0 })])).arrayBuffer())
+  const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+  const manifest: WordPressRuntimeArtifactManifest = {
+    schema: WORDPRESS_RUNTIME_ARTIFACT_SCHEMA,
+    key: wordpressRuntimeArtifactKey(sha256(archive)),
+    archive: { sha256: sha256(archive), size: archive.byteLength },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-6.8.1.zip", version: "6.8.1" },
+    files: [{ path: "wordpress/wp-includes/version.php", size: source.byteLength, sha256: sha256(source) }],
+  }
+  const writes = new Map<string, Uint8Array>()
+  const php = { mkdir: () => {}, writeFile: (path: string, bytes: Uint8Array) => writes.set(path, bytes) }
+  const bucket = (bytes: Uint8Array | null) => ({ get: async () => bytes === null ? null : { size: bytes.byteLength, body: new Blob([bytes]).stream() } })
+
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(null) as never, manifest), /unavailable/)
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(new Uint8Array([...archive, 0])) as never, manifest), /size does not match/)
+  const corrupted = archive.slice()
+  corrupted[100] ^= 1
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(corrupted) as never, manifest), /validation failed|archive hash/)
+  const evidence = await materializeWordPressRuntimeArtifact(php, bucket(archive) as never, manifest)
+  assert.deepEqual(evidence, { materializedFiles: 1, materializedBytes: source.byteLength })
+  assert.deepEqual(writes.get("/wordpress/wp-includes/version.php"), source)
+})
+
+test("WordPress runtime artifact validation rejects path traversal and invalid budgets", async () => {
+  const manifest: WordPressRuntimeArtifactManifest = {
+    schema: WORDPRESS_RUNTIME_ARTIFACT_SCHEMA,
+    key: wordpressRuntimeArtifactKey("a".repeat(64)),
+    archive: { sha256: "a".repeat(64), size: 1 },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-6.8.1.zip" },
+    files: [{ path: "wordpress/../wp-includes/version.php", size: 9 * 1024 * 1024, sha256: "b".repeat(64) }],
+  }
+  const php = { mkdir: () => {}, writeFile: () => {} }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, { get: async () => null } as never, manifest), /invalid file path/)
+})
+
+test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
+  const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+  const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
+  const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
+  assert.match(generator, /decodeRemoteZip\(sourceUrl/)
+  assert.match(generator, /encodeZip\(selected\)/)
+  assert.match(generator, /lastModified: 0/)
+  assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
+  assert.match(artifact, /decodeZip\(zipBody\)/)
+  assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
+  assert.ok(manifest.files.length > 0)
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {

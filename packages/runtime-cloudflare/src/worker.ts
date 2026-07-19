@@ -10,6 +10,7 @@ import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
+import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
 import type { MarkdownPointer } from "./state-coordinator.js"
 export { WordPressStateCoordinator } from "./state-coordinator.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
@@ -17,9 +18,11 @@ import canonicalMarkdownSeed from "../assets/markdown-database-integration-canon
 import canonicalMarkdownSeedManifest from "../assets/markdown-database-integration-canonical-seed.json" with { type: "json" }
 import markdownPrimaryBootstrapIndex from "../assets/markdown-primary-bootstrap-index.sqlite"
 import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
+import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifact.json" with { type: "json" }
 
 const PHP_VERSION = "8.5.8"
-const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
+// Browser assets must come from the same immutable WordPress release as the server corpus.
+const WORDPRESS_ARCHIVE_URL = (wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest).source.url
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const MARKDOWN_DATABASE_INTEGRATION_REVISION = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
@@ -81,7 +84,7 @@ export default {
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "probe") {
       if (route.phase === "canonical-session") return canonicalSessionProbe(env.WORDPRESS_STATE_BUCKET, await coordinatorCall<{ pointer: MarkdownPointer | null }>(coordinator, request.url, "state"))
-      return runBootProbe(route.phase)
+      return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
     }
     if (route.kind === "r2-state") {
       if (request.method !== "GET") return new Response("WordPress state read requires GET.", { status: 405 })
@@ -262,13 +265,13 @@ async function discardRuntime(runtime: Runtime): Promise<void> {
 }
 
 async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants), pointer }
+  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket), pointer }
 }
 
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env))
+  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET)
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
@@ -460,7 +463,7 @@ async function packagedCanonicalMarkdownSeed(): Promise<RuntimeFile[]> {
   return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
-async function runBootProbe(phase: string): Promise<Response> {
+async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> {
   if (phase === "wordpress-archive" || phase === "sqlite-archive") {
     const archive = phase === "wordpress-archive"
       ? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
@@ -501,7 +504,7 @@ async function runBootProbe(phase: string): Promise<Response> {
   if (phase === "streamed-files") {
     const php = new PHP(await createPhpRuntime())
     try {
-      const evidence = await materializeWordPressServerFiles(php)
+      const evidence = await materializeWordPressServerFiles(php, bucket)
       const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
       return probeResponse(phase, { ...evidence, wordpressVersion })
     } finally {
@@ -512,7 +515,7 @@ async function runBootProbe(phase: string): Promise<Response> {
   if (phase === "mdi-files") {
     const php = new PHP(await createPhpRuntime())
     try {
-      const wordpress = await materializeWordPressServerFiles(php)
+      const wordpress = await materializeWordPressServerFiles(php, bucket)
       await materializeMarkdownDatabaseIntegration(php)
       materializeRuntimeFiles(php, MARKDOWN_ROOT, initialMarkdownFiles())
       const evidence = (await php.run({
@@ -525,7 +528,7 @@ async function runBootProbe(phase: string): Promise<Response> {
   }
 
   if (phase === "mdi-shortinit") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex))
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({
         code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'markdownDropin' => defined('MARKDOWN_DB_DROPIN'), 'markdownMode' => defined('MARKDOWN_DB_MODE') ? MARKDOWN_DB_MODE : '']);",
@@ -537,7 +540,7 @@ async function runBootProbe(phase: string): Promise<Response> {
   }
 
   if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex))
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
@@ -554,7 +557,7 @@ async function runBootProbe(phase: string): Promise<Response> {
   }
 
   if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded"].includes(phase)) {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex))
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
       return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
@@ -569,6 +572,11 @@ async function runBootProbe(phase: string): Promise<Response> {
       true,
       true,
       new Uint8Array(wordpressInstallSeed),
+      undefined,
+      undefined,
+      SITE_URL,
+      {},
+      bucket,
     )
     try {
       const wordpress = (await runtime.php.run({
@@ -594,6 +602,12 @@ async function runBootProbe(phase: string): Promise<Response> {
       phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
       phase !== "wordpress-files",
       phase === "streamed-sqlite" || phase === "streamed-wordpress",
+      undefined,
+      undefined,
+      undefined,
+      SITE_URL,
+      {},
+      bucket,
     )
     try {
       const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
@@ -655,6 +669,7 @@ async function bootWordPressRuntime(
   markdownIndexSeed?: Uint8Array,
   siteUrl = SITE_URL,
   authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
+  runtimeBucket?: R2Bucket,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
@@ -680,7 +695,7 @@ async function bootWordPressRuntime(
     cookieStore: false,
     hooks: streamWordPressFiles || databaseSeed || markdownFiles ? {
       beforeWordPressFiles: streamWordPressFiles || markdownFiles ? async (php: PHP) => {
-        if (streamWordPressFiles) await materializeWordPressServerFiles(php)
+        if (streamWordPressFiles) await materializeWordPressServerFiles(php, runtimeBucket)
         if (markdownFiles) {
           await materializeMarkdownDatabaseIntegration(php)
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
@@ -762,27 +777,9 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
   }
 }
 
-async function materializeWordPressServerFiles(php: PHP): Promise<{ materializedFiles: number; materializedBytes: number }> {
-  const decoder = new TextDecoder()
-  let materializedFiles = 0
-  let materializedBytes = 0
-  const archivePaths = await wordPressArchivePaths(decoder)
-  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => isWordPressRuntimeFile(decoder.decode(entry.path), archivePaths))
-  const reader = stream.getReader()
-  while (true) {
-    const { done, value: entry } = await reader.read()
-    if (done) break
-    const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
-    if (!isWordPressRuntimeFile(path, archivePaths)) continue
-
-    const destination = `/${path}`
-    const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
-    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
-    php.writeFile(destination, bytes)
-    materializedFiles++
-    materializedBytes += bytes.byteLength
-  }
-  return { materializedFiles, materializedBytes }
+async function materializeWordPressServerFiles(php: PHP, bucket: R2Bucket | undefined): Promise<{ materializedFiles: number; materializedBytes: number }> {
+  if (!bucket) throw new Error("WordPress runtime corpus artifact requires WORDPRESS_STATE_BUCKET.")
+  return materializeWordPressRuntimeArtifact(php, bucket, wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest)
 }
 
 async function serveWordPressStaticAsset(request: Request): Promise<Response | null> {
@@ -825,18 +822,6 @@ async function serveWordPressStaticAsset(request: Request): Promise<Response | n
   return response
 }
 
-async function wordPressArchivePaths(decoder: TextDecoder): Promise<Set<string>> {
-  const paths = new Set<string>()
-  // decodeRemoteZip filters central-directory entries before requesting file ranges.
-  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => {
-    paths.add(decoder.decode(entry.path))
-    return false
-  })
-  for await (const _ of stream) {
-    // Draining the metadata-only stream completes central-directory parsing.
-  }
-  return paths
-}
 
 function createPhpRuntime() {
   return loadPHPRuntime(

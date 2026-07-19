@@ -16,11 +16,14 @@ The Worker forwards browser cookies directly to Playground and disables Playgrou
 
 The bundled MDI source is pinned to immutable commit `1870fb41279e7eb5946e506c9c7406f1f1ea6dc3` from [MDI PR #127](https://github.com/Automattic/markdown-database-integration/pull/127). The bundle generator, worker provenance, and source-contract test use the same revision.
 
+The WordPress server corpus is a separate deployment artifact, never a Worker-module import. `generate:cloudflare-wordpress-runtime-corpus` uses bounded ZIP Range decoding against the pinned WordPress release, retains only `isWordPressRuntimeFile()` entries, and emits a deterministic ZIP under `artifacts/` plus the checked-in `assets/wordpress-runtime-artifact.json` provenance manifest. The immutable R2 key is derived from the corpus ZIP SHA-256. Cold boot fetches that exact object through `WORDPRESS_STATE_BUCKET`, validates the manifest and archive/file hashes and budgets, then streams it into PHP MEMFS. Static browser assets continue to use lazy exact archive ranges and Worker cache.
+
 ## Verification
 
-1. Run `npm run generate:cloudflare-canonical-mdi-seed` to regenerate the deterministic canonical MDI archive and provenance manifest.
-2. Run `npm run test:cloudflare-runtime` for routing, canonical-state, generator reproducibility, filtered archive, source contract, and TypeScript coverage.
-3. Run `npm run cloudflare:dry-run` to compile the Worker without creating Cloudflare resources.
-4. Run `npm run cloudflare:local-gate` for isolated local workerd evidence. It injects stable test-only admin-password and auth-secret values, verifies the login form, cookie-authenticated admin redirect, authenticated REST post publication, public rendering, representative frontend/admin/editor assets, PHP diagnostics, an existing authenticated cookie after cold restart, and a fresh login after restart.
+1. Run `npm run generate:cloudflare-canonical-mdi-seed` and `npm run generate:cloudflare-wordpress-runtime-corpus` to regenerate deterministic runtime artifacts and manifests.
+2. Run `npm run provision:cloudflare-wordpress-runtime-corpus -- --local --persist-to <directory>` to verify and upload the exact content-addressed artifact into isolated local R2 storage. Use `--remote` only for an explicit deployment operation.
+3. Run `npm run test:cloudflare-runtime` for routing, canonical-state, artifact validation, source contract, and TypeScript coverage.
+4. Run `npm run cloudflare:dry-run` to compile the Worker without creating Cloudflare resources.
+5. Run `npm run cloudflare:local-gate` for isolated local workerd evidence. It generates and provisions the artifact before workerd starts, then injects stable test-only admin-password and auth-secret values, verifies the login form, cookie-authenticated admin redirect, authenticated REST post publication, public rendering, representative frontend/admin/editor assets, PHP diagnostics, an existing authenticated cookie after cold restart, and a fresh login after restart.
 
 This document describes local candidate verification only. It does not claim remote deployment.
