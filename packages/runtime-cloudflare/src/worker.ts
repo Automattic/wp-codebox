@@ -15,7 +15,7 @@ import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 const PHP_VERSION = "8.5.8"
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
-const MARKDOWN_DATABASE_INTEGRATION_REVISION = "94b9f875ffb8402d5e8eb726893a12324e20f45c"
+const MARKDOWN_DATABASE_INTEGRATION_REVISION = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
@@ -24,11 +24,10 @@ const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const R2_MARKDOWN_POINTER_KEY = "sites/default/markdown/current.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
-const MUTATION_LEASE_VERSION = "mdi-canonical-v1"
 const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
 define('SHORTINIT', true);
 require '/wordpress/wp-load.php';
-require_once '/wordpress/wp-content/plugins/markdown-database-integration/inc/class-wp-markdown-primary-storage-runtime.php';
+foreach (['class-wp-markdown-frontmatter-profiles.php', 'class-wp-markdown-storage.php', 'class-wp-markdown-driver.php', 'class-wp-markdown-search.php', 'class-wp-markdown-write-engine.php', 'class-wp-markdown-loader.php', 'class-wp-markdown-primary-storage-runtime.php'] as $file) require_once '/wordpress/wp-content/plugins/markdown-database-integration/inc/' . $file;
 if (!isset($GLOBALS['@pdo']) || !($GLOBALS['@pdo'] instanceof PDO)) {
   throw new Exception('MDI disposable index connection is unavailable.');
 }
@@ -62,47 +61,17 @@ if (empty($option_rows)) {
 }
 $changes = $runtime->flush();
 echo json_encode(['revisionValue' => $value, 'previousPostFound' => !empty($previous_rows), 'postId' => $post_id, 'wordpressVersion' => $wp_version, 'canonicalChanges' => $changes]);`
-let bootPromise: Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> | undefined
-
 interface Env {
   WORDPRESS_STATE: DurableObjectNamespace
   WORDPRESS_STATE_BUCKET: R2Bucket
+  WORDPRESS_ADMIN_PASSWORD?: string
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const route = routeWorkerRequest(request)
-    if (route.kind === "r2-state" || route.kind === "r2-mutate") {
-      const expectedMethod = route.kind === "r2-mutate" ? "POST" : "GET"
-      if (request.method !== expectedMethod) {
-        return new Response(`WordPress state ${route.kind === "r2-mutate" ? "mutation" : "read"} requires ${expectedMethod}.`, { status: 405 })
-      }
-      const coordinator = env.WORDPRESS_STATE.getByName("default")
-      return route.kind === "r2-state"
-        ? coordinator.fetch(new Request("https://coordinator/state"))
-        : runSerializedMarkdownMutation(env, coordinator)
-    }
     if (route.kind === "probe") return runBootProbe(route.phase)
-
-    const runtime = await (bootPromise ??= bootWordPressRuntime(
-      "do-not-attempt-installing",
-      true,
-      false,
-      new Uint8Array(wordpressInstallSeed),
-      undefined,
-      undefined,
-      new URL(request.url).origin,
-    ))
-    if (route.kind === "wordpress") return toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-    const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
-    return cloudflareRuntimeHealthResponse({
-      schema: CLOUDFLARE_RUNTIME_HEALTH_SCHEMA,
-      marker: CLOUDFLARE_RUNTIME_HEALTH_MARKER,
-      wordpressVersion: runtime.wordpressVersion,
-      phpVersion,
-      runtime: { backend: "wordpress-playground", environment: "wordpress" },
-      evidence: { initialization: "completed", execution: "completed", initializationScope: "isolate" },
-    })
+    return env.WORDPRESS_STATE.getByName("default").fetch(request)
   },
 }
 
@@ -128,19 +97,9 @@ interface RuntimeFile {
   bytes: Uint8Array
 }
 
-interface MutationLease {
-  token: string
-  version: string
-  baseRevision: string | null
-  expiresAt: number
-}
-
-interface AcquiredLease extends MutationLease {
-  pointer: MarkdownPointer | null
-}
-
 export class WordPressStateCoordinator implements DurableObject {
   private tail: Promise<void> = Promise.resolve()
+  private runtimePromise: Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string; pointer: MarkdownPointer }> | undefined
 
   constructor(
     private readonly state: DurableObjectState,
@@ -160,8 +119,9 @@ export class WordPressStateCoordinator implements DurableObject {
   }
 
   private async handleRequest(request: Request): Promise<Response> {
-    const action = new URL(request.url).pathname
-    if (request.method === "GET" && action === "/state") {
+    const route = routeWorkerRequest(request)
+    if (route.kind === "r2-state") {
+      if (request.method !== "GET") return new Response("WordPress state read requires GET.", { status: 405 })
       const pointer = await readMarkdownPointer(this.env.WORDPRESS_STATE_BUCKET)
       return Response.json({
         schema: "wp-codebox/cloudflare-wordpress-state/v1",
@@ -169,95 +129,77 @@ export class WordPressStateCoordinator implements DurableObject {
         pointer,
       })
     }
-    if (request.method !== "POST") return new Response("Method not allowed.", { status: 405 })
-
-    if (action === "/begin") {
-      const existing = await this.state.storage.get<MutationLease>("mutation-lease")
-      if (existing?.version === MUTATION_LEASE_VERSION && existing.expiresAt > Date.now()) {
-        return Response.json({ retryAfterMs: 1_000 }, { status: 409 })
-      }
-      const pointer = await readMarkdownPointer(this.env.WORDPRESS_STATE_BUCKET)
-      const lease: MutationLease = {
-        token: crypto.randomUUID(),
-        version: MUTATION_LEASE_VERSION,
-        baseRevision: pointer?.revision ?? null,
-        expiresAt: Date.now() + 2 * 60_000,
-      }
-      await this.state.storage.put("mutation-lease", lease)
-      return Response.json({ ...lease, pointer } satisfies AcquiredLease)
+    if (route.kind === "r2-mutate") {
+      if (request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
+      return this.runSyntheticMutation(new URL(request.url).origin)
     }
-    if (action === "/commit") {
-      const body = await request.json<{ token: string; pointer: MarkdownPointer }>()
-      const lease = await this.state.storage.get<MutationLease>("mutation-lease")
-      if (!lease || lease.token !== body.token) return new Response("Mutation lease is invalid.", { status: 409 })
-      const current = await readMarkdownPointer(this.env.WORDPRESS_STATE_BUCKET)
-      if ((current?.revision ?? null) !== lease.baseRevision) return new Response("Canonical revision changed during mutation.", { status: 409 })
-      await this.env.WORDPRESS_STATE_BUCKET.put(R2_MARKDOWN_POINTER_KEY, JSON.stringify(body.pointer), {
-        httpMetadata: { contentType: "application/json" },
-      })
-      await this.state.storage.delete("mutation-lease")
-      return Response.json(body.pointer)
-    }
-    if (action === "/abort") {
-      const body = await request.json<{ token: string }>()
-      const lease = await this.state.storage.get<MutationLease>("mutation-lease")
-      if (lease?.token === body.token) {
-        await this.state.storage.delete("mutation-lease")
-      }
-      return new Response(null, { status: 204 })
-    }
-    return new Response("Unknown coordinator action.", { status: 404 })
+    const runtime = await this.getRuntime(new URL(request.url).origin)
+    if (route.kind === "health") return this.health(runtime)
+    const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) await this.persistRuntime(runtime)
+    return response
   }
-}
 
-async function runSerializedMarkdownMutation(env: Env, coordinator: DurableObjectStub): Promise<Response> {
-  const lease = await acquireMutationLease(coordinator)
-  try {
-    const markdownFiles = lease.pointer
-      ? await readMarkdownRevision(env.WORDPRESS_STATE_BUCKET, lease.pointer)
-      : initialMarkdownFiles()
-    const runtime = await bootWordPressRuntime(
-      "do-not-attempt-installing",
-      true,
-      true,
-      undefined,
-      markdownFiles,
-      new Uint8Array(markdownPrimaryBootstrapIndex),
-    )
-    let canonicalFiles: RuntimeFile[]
-    let mutation: { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
+  private async getRuntime(origin: string) {
+    const runtime = this.runtimePromise ?? this.bootRuntime(origin)
+    this.runtimePromise = runtime
     try {
-      const mutationOutput = (await runtime.php.run({
-        code: SERIALIZED_MARKDOWN_MUTATION_CODE,
-      })).text.trim()
-      mutation = JSON.parse(mutationOutput) as typeof mutation
-      validateMarkdownChanges(mutation.canonicalChanges)
-      canonicalFiles = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
-    } finally {
-      runtime.php.exit()
+      return await runtime
+    } catch (error) {
+      if (this.runtimePromise === runtime) this.runtimePromise = undefined
+      throw error
     }
+  }
 
-    const nextPointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, canonicalFiles)
-    const commit = await coordinator.fetch(new Request("https://coordinator/commit", {
-      method: "POST",
-      body: JSON.stringify({ token: lease.token, pointer: nextPointer }),
-    }))
-    if (!commit.ok) throw new Error(`Unable to promote canonical Markdown revision: ${commit.status} ${await commit.text()}`)
-    return Response.json({
-      schema: "wp-codebox/cloudflare-wordpress-mutation/v1",
-      source: lease.pointer ? "r2-markdown-revision" : "packaged-markdown-seed",
-      ...mutation,
-      canonicalFiles: canonicalFiles.length,
-      markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION,
-      sqlitePersisted: false,
-      pointer: nextPointer,
-    })
-  } catch (error) {
-    await coordinator.fetch(new Request("https://coordinator/abort", {
-      method: "POST",
-      body: JSON.stringify({ token: lease.token }),
-    }))
-    throw error
+  private async bootRuntime(origin: string) {
+    const pointer = await readMarkdownPointer(this.env.WORDPRESS_STATE_BUCKET)
+    if (pointer && await isCompleteMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, pointer)) {
+      return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin), pointer }
+    }
+    if (!this.env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
+    const seed = await bootWordPressRuntime("do-not-attempt-installing", true, true, new Uint8Array(wordpressInstallSeed), undefined, undefined, origin)
+    let seedExited = false
+    try {
+      await materializeMarkdownDatabaseIntegration(seed.php)
+      const passwordFile = "/tmp/wordpress-admin-password"
+      seed.php.writeFile(passwordFile, new TextEncoder().encode(this.env.WORDPRESS_ADMIN_PASSWORD))
+      const output = (await seed.php.run({ code: canonicalSeedExportCode(passwordFile, origin) })).text.trim()
+      const changes = JSON.parse(output) as MarkdownChanges
+      validateMarkdownChanges(changes)
+      const files = collectRuntimeFiles(seed.php, MARKDOWN_ROOT)
+      const nextPointer = await persistMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, files)
+      await this.env.WORDPRESS_STATE_BUCKET.put(R2_MARKDOWN_POINTER_KEY, JSON.stringify(nextPointer), { httpMetadata: { contentType: "application/json" } })
+      seed.php.exit()
+      seedExited = true
+      return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, files, new Uint8Array(markdownPrimaryBootstrapIndex), origin), pointer: nextPointer }
+    } catch (error) {
+      if (!seedExited) seed.php.exit()
+      throw error
+    }
+  }
+
+  private async persistRuntime(runtime: { php: PHP; pointer: MarkdownPointer }): Promise<void> {
+    const output = (await runtime.php.run({ code: "<?php require '/wordpress/wp-load.php'; $GLOBALS['wpdb']->flush_canonical_writes(); echo 'flushed';" })).text.trim()
+    if (output !== "flushed") throw new Error("MDI did not confirm its canonical flush.")
+    const next = await persistMarkdownRevision(this.env.WORDPRESS_STATE_BUCKET, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT), runtime.pointer)
+    if (next.revision !== runtime.pointer.revision) {
+      await this.env.WORDPRESS_STATE_BUCKET.put(R2_MARKDOWN_POINTER_KEY, JSON.stringify(next), { httpMetadata: { contentType: "application/json" } })
+      runtime.pointer = next
+    }
+  }
+
+  private async runSyntheticMutation(origin: string): Promise<Response> {
+    const runtime = await this.getRuntime(origin)
+    const mutationOutput = (await runtime.php.run({ code: SERIALIZED_MARKDOWN_MUTATION_CODE })).text.trim()
+    const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
+    validateMarkdownChanges(mutation.canonicalChanges)
+    await this.persistRuntime(runtime)
+    return Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "durable-object-primary-runtime", ...mutation, canonicalFiles: collectRuntimeFiles(runtime.php, MARKDOWN_ROOT).length, markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false, pointer: runtime.pointer })
+  }
+
+  private async health(runtime: { php: PHP; wordpressVersion: string }): Promise<Response> {
+    const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
+    return cloudflareRuntimeHealthResponse({ schema: CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, marker: CLOUDFLARE_RUNTIME_HEALTH_MARKER, wordpressVersion: runtime.wordpressVersion, phpVersion, runtime: { backend: "wordpress-playground", environment: "wordpress" }, evidence: { initialization: "completed", execution: "completed", initializationScope: "isolate" } })
   }
 }
 
@@ -282,16 +224,6 @@ function isCanonicalRelativePath(path: string): boolean {
   return path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..")
 }
 
-async function acquireMutationLease(coordinator: DurableObjectStub): Promise<AcquiredLease> {
-  for (let attempt = 0; attempt < 300; attempt++) {
-    const response = await coordinator.fetch(new Request("https://coordinator/begin", { method: "POST" }))
-    if (response.ok) return response.json<AcquiredLease>()
-    if (response.status !== 409) throw new Error(`Unable to acquire mutation lease: ${response.status} ${await response.text()}`)
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
-  }
-  throw new Error("Timed out waiting for the WordPress mutation lease.")
-}
-
 async function readMarkdownPointer(bucket: R2Bucket): Promise<MarkdownPointer | null> {
   const object = await bucket.get(R2_MARKDOWN_POINTER_KEY)
   return object ? object.json<MarkdownPointer>() : null
@@ -310,13 +242,17 @@ async function readMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPointer):
   return files
 }
 
-async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[]): Promise<MarkdownPointer> {
+async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer): Promise<MarkdownPointer> {
   const manifestFiles: MarkdownManifestFile[] = []
   for (const file of files) {
     const sha256 = await sha256Hex(file.bytes)
     const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
     if (!await bucket.head(objectKey)) await bucket.put(objectKey, file.bytes)
     manifestFiles.push({ path: file.path, objectKey, sha256, size: file.bytes.byteLength })
+  }
+  if (current) {
+    const currentManifest = await readMarkdownManifest(bucket, current)
+    if (currentManifest && JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles)) return current
   }
 
   const revision = crypto.randomUUID()
@@ -328,6 +264,55 @@ async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[]): 
     httpMetadata: { contentType: "application/json" },
   })
   return pointer
+}
+
+async function readMarkdownManifest(bucket: R2Bucket, pointer: MarkdownPointer): Promise<MarkdownManifest | null> {
+  const object = await bucket.get(pointer.manifestKey)
+  return object ? object.json<MarkdownManifest>() : null
+}
+
+async function isCompleteMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPointer): Promise<boolean> {
+  const manifest = await readMarkdownManifest(bucket, pointer)
+  if (!manifest || manifest.revision !== pointer.revision) return false
+  const paths = new Set(manifest.files.map((file) => file.path))
+  if (!["_options/siteurl.json", "_options/home.json", "_tables/users.json", "_tables/usermeta.json", "_tables/terms.json", "_tables/term_taxonomy.json", "_tables/termmeta.json", "_tables/postmeta.json", "_tables/term_relationships.json", "_tables/comments.json", "_tables/commentmeta.json", "_tables/links.json"].every((path) => paths.has(path)) || !manifest.files.some((file) => file.path.endsWith(".md"))) return false
+  const users = manifest.files.find((file) => file.path === "_tables/users.json")
+  const usermeta = manifest.files.find((file) => file.path === "_tables/usermeta.json")
+  if (!users || !usermeta) return false
+  const [usersObject, usermetaObject] = await Promise.all([bucket.get(users.objectKey), bucket.get(usermeta.objectKey)])
+  if (!usersObject || !usermetaObject) return false
+  const [usersRows, usermetaRows] = await Promise.all([
+    usersObject.json<Array<{ ID?: number; user_login?: string }>>(),
+    usermetaObject.json<Array<{ user_id?: number }>>(),
+  ])
+  const admin = usersRows.find((row) => row.user_login === "admin")
+  return Boolean(admin?.ID && usermetaRows.some((row) => row.user_id === admin.ID))
+}
+
+function canonicalSeedExportCode(passwordFile: string, origin: string): string {
+  return `<?php
+define('MARKDOWN_DB_VERSION', '0.8.3');
+define('MARKDOWN_DB_EXCLUDED_TYPES', 'revision,auto-draft,nav_menu_item,customize_changeset,oembed_cache,wp_navigation,wp_global_styles,wp_template,wp_template_part');
+require '/wordpress/wp-load.php';
+$password = file_get_contents(${JSON.stringify(passwordFile)});
+@unlink(${JSON.stringify(passwordFile)});
+if (!is_string($password) || $password === '') throw new Exception('WORDPRESS_ADMIN_PASSWORD was unavailable during canonical bootstrap.');
+$admin = get_user_by('login', 'admin');
+if (!$admin) throw new Exception('The WordPress seed does not contain the admin user.');
+wp_set_password($password, $admin->ID);
+$password = null;
+update_option('siteurl', ${JSON.stringify(origin)});
+update_option('home', ${JSON.stringify(origin)});
+foreach (['class-wp-markdown-frontmatter-profiles.php', 'class-wp-markdown-storage.php', 'class-wp-markdown-driver.php', 'class-wp-markdown-search.php', 'class-wp-markdown-write-engine.php', 'class-wp-markdown-loader.php', 'class-wp-markdown-primary-storage-runtime.php'] as $file) require_once '/wordpress/wp-content/plugins/markdown-database-integration/inc/' . $file;
+$connection = new WP_SQLite_Connection(['pdo' => $GLOBALS['@pdo'], 'path' => FQDB]);
+$runtime = WP_Markdown_Primary_Storage_Runtime::bootstrap_existing_cache(['content_root' => '${MARKDOWN_ROOT}', 'state_root' => '${MARKDOWN_ROOT}'], $connection, defined('DB_NAME') && '' !== DB_NAME ? DB_NAME : 'database_name_here', array_filter(array_map('trim', explode(',', MARKDOWN_DB_EXCLUDED_TYPES))), $wpdb->prefix);
+$driver = $runtime->get_driver();
+$prefix = $wpdb->prefix;
+foreach ($driver->query("SELECT ID FROM " . $prefix . "posts") as $row) $driver->query("UPDATE " . $prefix . "posts SET post_modified = post_modified WHERE ID = " . (int) $row->ID);
+foreach (['options' => 'option_id', 'users' => 'ID', 'usermeta' => 'umeta_id', 'postmeta' => 'meta_id', 'terms' => 'term_id', 'term_taxonomy' => 'term_taxonomy_id', 'termmeta' => 'meta_id', 'term_relationships' => 'object_id', 'comments' => 'comment_ID', 'commentmeta' => 'meta_id', 'links' => 'link_id'] as $table => $column) {
+  try { $driver->query("UPDATE " . $prefix . $table . " SET " . $column . " = " . $column); } catch (Throwable $ignored) {}
+}
+echo json_encode($runtime->flush());`
 }
 
 async function runBootProbe(phase: string): Promise<Response> {
@@ -640,7 +625,7 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
     const { done, value: entry } = await reader.read()
     if (done) break
     const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
-    if (!path.startsWith("wordpress/") || path.endsWith("/")) continue
+    if (!isWordPressServerFile(path) || path.endsWith("/")) continue
 
     const destination = `/${path}`
     const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
@@ -653,12 +638,8 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
 }
 
 function isWordPressServerFile(path: string): boolean {
-  if (path.startsWith("wordpress/wp-admin/")) {
-    return path === "wordpress/wp-admin/includes/plugin.php"
-      || path === "wordpress/wp-admin/includes/class-wp-site-health.php"
-  }
-  return /\.(?:php|json|crt|html)$/.test(path)
-    || path.endsWith("/style.css")
+  if (path.startsWith("wordpress/wp-admin/")) return true
+  return /\.(?:php|json|crt|html|css|js|mjs|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/.test(path)
 }
 
 function createPhpRuntime() {

@@ -90,7 +90,7 @@ test("Cloudflare runtime packages the disposable WordPress install seed", async 
 })
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
-  const revision = "94b9f875ffb8402d5e8eb726893a12324e20f45c"
+  const revision = "1870fb41279e7eb5946e506c9c7406f1f1ea6dc3"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
@@ -112,14 +112,40 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
   ])
 })
 
-test("serialized Cloudflare mutations use the public MDI runtime and its flush paths", async () => {
+test("Cloudflare routes WordPress and health through the serialized Durable Object runtime", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("function isWordPressServerFile"))
+  const predicate = worker.slice(worker.indexOf("function isWordPressServerFile"), worker.indexOf("function createPhpRuntime"))
+
+  assert.match(worker, /return env\.WORDPRESS_STATE\.getByName\("default"\)\.fetch\(request\)/)
+  assert.match(worker, /private runtimePromise/)
+  assert.match(worker, /private async getRuntime\(origin: string\)/)
+  assert.match(worker, /if \(this\.runtimePromise === runtime\) this\.runtimePromise = undefined/)
+  assert.match(worker, /route\.kind === "health"\) return this\.health\(runtime\)/)
+  assert.match(worker, /runSyntheticMutation\(new URL\(request\.url\)\.origin\)/)
+  assert.match(worker, /private async runSyntheticMutation\(origin: string\)/)
+  assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision/)
+  assert.match(worker, /maxPhpInstances: 1/)
+  assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressServerFile\(decoder\.decode\(entry\.path\)\)\)/)
+  assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL\)(?!\s*,)/)
+  assert.match(predicate, /php\|json\|crt\|html\|css\|js\|mjs\|woff2\?\|ttf\|otf\|eot\|svg\|png\|jpe\?g\|gif\|webp\|avif\|ico/)
+  assert.match(predicate, /path\.startsWith\("wordpress\/wp-admin\/"\)\) return true/)
+})
+
+test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {
   const source = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const mutation = source.slice(source.indexOf("const SERIALIZED_MARKDOWN_MUTATION_CODE"), source.indexOf("let bootPromise"))
+  const mutation = source.slice(source.indexOf("const SERIALIZED_MARKDOWN_MUTATION_CODE"), source.indexOf("interface Env"))
 
   assert.match(mutation, /WP_Markdown_Primary_Storage_Runtime::bootstrap/)
   assert.match(mutation, /new WP_SQLite_Connection\(\['pdo' => \$GLOBALS\['@pdo'\], 'path' => FQDB\]\)/)
   assert.match(mutation, /\$runtime->get_driver\(\)/)
   assert.match(mutation, /\$runtime->flush\(\)/)
-  assert.doesNotMatch(mutation, /\$wpdb->dbh|\{\$\{prefix\}|WP_Markdown_Storage|write_post|file_put_contents|wp_codebox_mdi_revision\.json/)
+  assert.doesNotMatch(mutation, /write_post|file_put_contents|wp_codebox_mdi_revision\.json/)
   assert.match(source, /validateMarkdownChanges\(mutation\.canonicalChanges\)/)
+  assert.match(source, /flush_canonical_writes\(\)/)
+  assert.match(source, /bootstrap_existing_cache/)
+  assert.match(source, /update_option\('siteurl'/)
+  assert.match(source, /_tables\/termmeta\.json/)
+  assert.match(source, /_tables\/users\.json/)
+  assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
 })
