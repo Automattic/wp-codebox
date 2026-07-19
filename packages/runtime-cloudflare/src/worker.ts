@@ -556,7 +556,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types"].includes(phase)) {
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
@@ -626,6 +626,104 @@ function wordpressProbeCode(phase: string): string {
   }
   if (phase === "seeded-wordpress") {
     return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
+  }
+
+  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks"]
+  if (widgetPhases.includes(phase)) {
+    return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = "do_action( 'init' );";
+if (substr_count($settings, $needle) !== 1) {
+    throw new Exception('WordPress widget probe needle was not uniquely found.');
+}
+$phase = ${JSON.stringify(phase)};
+$probe = <<<'PHP'
+function wp_codebox_widgets_probe_callback_identifier($callback) {
+    if (is_string($callback)) return $callback;
+    if ($callback instanceof Closure) return 'Closure';
+    if (is_array($callback) && count($callback) === 2 && is_string($callback[1])) {
+        $class = is_object($callback[0]) ? get_class($callback[0]) : $callback[0];
+        return is_string($class) ? $class . '::' . $callback[1] : 'Closure';
+    }
+    if (is_object($callback) && method_exists($callback, '__invoke')) return get_class($callback) . '::__invoke';
+    return 'Closure';
+}
+function wp_codebox_widgets_probe_inventory($hook_name) {
+    $inventory = array();
+    $hook = isset($GLOBALS['wp_filter'][$hook_name]) ? $GLOBALS['wp_filter'][$hook_name] : null;
+    if (!$hook || !isset($hook->callbacks) || !is_array($hook->callbacks)) return $inventory;
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        $identifiers = array();
+        foreach ($callbacks as $registered) $identifiers[] = wp_codebox_widgets_probe_callback_identifier($registered['function']);
+        sort($identifiers, SORT_STRING);
+        $inventory[(string) $priority] = $identifiers;
+    }
+    ksort($inventory, SORT_NUMERIC);
+    return $inventory;
+}
+function wp_codebox_widgets_probe_remove_callbacks($hook_name, $identifiers, $retain) {
+    $removed = array();
+    $hook = isset($GLOBALS['wp_filter'][$hook_name]) ? $GLOBALS['wp_filter'][$hook_name] : null;
+    if (!$hook || !isset($hook->callbacks) || !is_array($hook->callbacks)) return $removed;
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        foreach ($callbacks as $index => $registered) {
+            $identifier = wp_codebox_widgets_probe_callback_identifier($registered['function']);
+            if (in_array($identifier, $identifiers, true) !== $retain) {
+                unset($hook->callbacks[$priority][$index]);
+                $removed[] = $identifier;
+            }
+        }
+        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
+    }
+    sort($removed, SORT_STRING);
+    return $removed;
+}
+function wp_codebox_widgets_probe_register_defaults() {
+    if (!is_blog_installed()) return;
+    register_widget('WP_Widget_Pages');
+    register_widget('WP_Widget_Calendar');
+    register_widget('WP_Widget_Archives');
+    if (get_option('link_manager_enabled')) register_widget('WP_Widget_Links');
+    register_widget('WP_Widget_Media_Audio');
+    register_widget('WP_Widget_Media_Image');
+    register_widget('WP_Widget_Media_Gallery');
+    register_widget('WP_Widget_Media_Video');
+    register_widget('WP_Widget_Meta');
+    register_widget('WP_Widget_Search');
+    register_widget('WP_Widget_Text');
+    register_widget('WP_Widget_Categories');
+    register_widget('WP_Widget_Recent_Posts');
+    register_widget('WP_Widget_Recent_Comments');
+    register_widget('WP_Widget_RSS');
+    register_widget('WP_Widget_Tag_Cloud');
+    register_widget('WP_Nav_Menu_Widget');
+    register_widget('WP_Widget_Custom_HTML');
+    register_widget('WP_Widget_Block');
+}
+if ($phase === 'mdi-widgets-callbacks') {
+    echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'callbacks' => wp_codebox_widgets_probe_inventory('widgets_init'), 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+    return;
+}
+$removed_init = wp_codebox_widgets_probe_remove_callbacks('init', array('wp_widgets_init'), false);
+$memory_before = memory_get_usage(true);
+wp_codebox_widgets_probe_register_defaults();
+$removed_widgets = array();
+if ($phase === 'mdi-widgets-hooks') {
+    do_action('widgets_init');
+} elseif ($phase === 'mdi-widgets-factory') {
+    $removed_widgets = wp_codebox_widgets_probe_remove_callbacks('widgets_init', array('WP_Widget_Factory::_register_widgets'), true);
+    do_action('widgets_init');
+} elseif ($phase === 'mdi-widgets-remaining-hooks') {
+    $removed_widgets = wp_codebox_widgets_probe_remove_callbacks('widgets_init', array('WP_Widget_Factory::_register_widgets'), false);
+    do_action('widgets_init');
+}
+$widget_class_count = isset($GLOBALS['wp_widget_factory']->widgets) && is_array($GLOBALS['wp_widget_factory']->widgets) ? count($GLOBALS['wp_widget_factory']->widgets) : 0;
+echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true, 'removedInitCallbacks' => $removed_init, 'removedWidgetsCallbacks' => $removed_widgets, 'widgetClassCount' => $widget_class_count, 'memoryBeforeBytes' => $memory_before, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+return;
+PHP;
+file_put_contents($settings_path, str_replace($needle, $probe, $settings));
+require '/wordpress/wp-load.php';`
   }
 
   const initExclusions: Record<string, string[]> = {

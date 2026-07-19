@@ -20,7 +20,9 @@ The WordPress server corpus is a separate deployment artifact, never a Worker-mo
 
 ## MDI Init Diagnostics
 
-The diagnostic-only `?phase=` probes `mdi-init-callbacks`, `mdi-init-exclude-scheduling`, `mdi-init-exclude-block-registration`, `mdi-init-exclude-theme-patterns-styles`, `mdi-init-exclude-widgets`, `mdi-init-exclude-rest-connectors-sitemaps`, and `mdi-init-exclude-initial-content-types` stop at `init`. The inventory probe returns sorted callback identifiers by priority. Each exclusion probe removes only its fixed callback group, runs `init` once, and returns before subsequent WordPress lifecycle work. These phases never accept callback names or removal rules from request input.
+The diagnostic-only `?phase=` probes `mdi-init-callbacks`, `mdi-init-exclude-scheduling`, `mdi-init-exclude-block-registration`, `mdi-init-exclude-theme-patterns-styles`, `mdi-init-exclude-widgets`, `mdi-init-exclude-rest-connectors-sitemaps`, and `mdi-init-exclude-initial-content-types` stop at `init`. The inventory probe returns sorted callback identifiers by priority. Each exclusion probe removes only its fixed callback group, runs `init` once, and returns before subsequent WordPress lifecycle work.
+
+The fixed widget probes split `wp_widgets_init` without changing its normal path: `mdi-widgets-callbacks` returns the sorted nested `widgets_init` inventory before `init`; `mdi-widgets-constructors` runs only the core default widget registrations and reports widget class count; `mdi-widgets-hooks` adds the nested action; `mdi-widgets-factory` runs only `WP_Widget_Factory::_register_widgets`; and `mdi-widgets-remaining-hooks` runs the remaining nested callbacks. Every phase uses fixed source identities and returns before later lifecycle work; none accepts callback names or removal rules from request input.
 
 ## Verification
 
