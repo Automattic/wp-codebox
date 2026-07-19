@@ -59,6 +59,7 @@ export class WordPressStateCoordinator implements DurableObject {
     if (action === "release") return Response.json(await this.release(body))
     if (action === "abort") return Response.json(await this.abort(body))
     if (action === "commit") return Response.json(await this.commit(body))
+    if (action === "reset") return Response.json(await this.reset())
     return new Response("Unknown coordinator action.", { status: 404 })
   }
 
@@ -118,6 +119,12 @@ export class WordPressStateCoordinator implements DurableObject {
     if (!lease || lease.expiresAt <= Date.now()) throw new CoordinatorConflict("The canonical WordPress lease has expired.")
     if (body.token !== lease.token) throw new CoordinatorConflict("The canonical WordPress lease token is invalid.")
     return lease
+  }
+
+  private async reset(): Promise<{ reset: true }> {
+    await this.env.WORDPRESS_STATE_BUCKET.delete(POINTER_KEY)
+    await this.state.storage.delete(STORAGE_KEY)
+    return { reset: true }
   }
 
   private async record(): Promise<CoordinatorRecord> {

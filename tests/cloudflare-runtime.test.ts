@@ -41,6 +41,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-state")), { kind: "r2-state" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=canonical-auth")), { kind: "canonical-auth" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
 
@@ -543,11 +544,13 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
     storage: {
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value) },
+      delete: async (key: string) => { values.delete(key) },
     },
   }
   const bucket = {
     get: async (key: string) => objects.has(key) ? { json: async <T>() => JSON.parse(objects.get(key)!) as T } : null,
     put: async (key: string, value: string) => { objects.set(key, value) },
+    delete: async (key: string) => { objects.delete(key) },
   }
   const coordinator = new WordPressStateCoordinator(state as never, { WORDPRESS_STATE_BUCKET: bucket as never, COORDINATOR_LEASE_MS: 50 })
   const call = async (action: string, body: Record<string, unknown> = {}) => coordinator.fetch(new Request(`https://worker.example/?__wp_codebox_coordinator=${action}`, { method: action === "state" ? "GET" : "POST", headers: { "content-type": "application/json" }, body: action === "state" ? undefined : JSON.stringify(body) }))
@@ -566,6 +569,10 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   const recovered = await (await call("begin")).json() as { token: string }
   assert.notEqual(recovered.token, stale.token)
   assert.equal((await call("release", { token: recovered.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
+  const resetState = await (await call("state")).json() as { pointer: null; version: number }
+  assert.equal(resetState.pointer, null)
+  assert.equal(resetState.version, 0)
 })
 
 test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {

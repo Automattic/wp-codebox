@@ -74,6 +74,7 @@ interface Env {
   WORDPRESS_STATE_BUCKET: R2Bucket
   WORDPRESS_ADMIN_PASSWORD?: string
   WORDPRESS_AUTH_SECRET?: string
+  WORDPRESS_OPERATOR_TOKEN?: string
 }
 
 export default {
@@ -82,6 +83,7 @@ export default {
     if (staticResponse) return staticResponse
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
+    if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
     if (route.kind === "probe") {
       if (route.phase === "canonical-session") return canonicalSessionProbe(env.WORDPRESS_STATE_BUCKET, await coordinatorCall<{ pointer: MarkdownPointer | null }>(coordinator, request.url, "state"))
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -134,6 +136,27 @@ interface Runtime {
 
 let cachedRuntime: { baseRevision: string; promise: Promise<Runtime> } | undefined
 const LEASE_ACQUISITION_TIMEOUT_MS = 100_000
+
+async function resetCanonicalWordPress(request: Request, env: Env, coordinator: DurableObjectStub): Promise<Response> {
+  if (request.method !== "POST") return new Response("Canonical reset requires POST.", { status: 405 })
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Canonical reset authorization failed.", { status: 401 })
+  }
+  const response = await coordinator.fetch(new Request(coordinatorUrl(request.url, "reset"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }))
+  if (response.ok) await discardCachedRuntime()
+  return response
+}
+
+async function secretsMatch(left: string, right: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const [leftHash, rightHash] = await Promise.all([crypto.subtle.digest("SHA-256", encoder.encode(left)), crypto.subtle.digest("SHA-256", encoder.encode(right))])
+  const leftBytes = new Uint8Array(leftHash)
+  const rightBytes = new Uint8Array(rightHash)
+  let difference = 0
+  for (let index = 0; index < leftBytes.length; index++) difference |= leftBytes[index] ^ rightBytes[index]
+  return difference === 0
+}
 
 async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate" | "canonical-auth"): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
