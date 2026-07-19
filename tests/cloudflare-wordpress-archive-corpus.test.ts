@@ -4,9 +4,7 @@ import { decodeRemoteZip, type CentralDirectoryEntry } from "@php-wasm/stream-co
 import { isWordPressRuntimeFile, summarizeWordPressRuntimeCorpus, type WordPressArchiveEntry } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
-// The legacy selection is 85 MB; 64 MiB preserves 13 MiB of growth room while
-// remaining safely below the entry Worker's 128 MB memory ceiling.
-const MAX_RUNTIME_CORPUS_BYTES = 64 * 1024 * 1024
+const MAX_RUNTIME_CORPUS_BYTES = 32 * 1024 * 1024
 
 test("WordPress production runtime corpus stays within the Worker materialization budget", async () => {
   const decoder = new TextDecoder()

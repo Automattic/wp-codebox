@@ -24,6 +24,7 @@ try {
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
   await assertLinkedAssets(editorHtml, "editor")
+  await assertStaticResponseSemantics()
   await assertCanonicalAuth("before restart")
   await stopWorker()
 
@@ -182,7 +183,20 @@ async function assertLinkedAssets(html, label) {
     const body = await response.text()
     assertNoPhpDiagnostics(body, `${label} asset ${match[1]}`)
     if (!response.ok || !body.length) throw new Error(`Missing ${label} asset ${match[1]}: ${response.status}`)
+    if (response.headers.get("x-wp-codebox-static") !== "wordpress-archive") throw new Error(`${label} asset ${match[1]} did not bypass PHP through the WordPress archive static path.`)
   }
+}
+
+async function assertStaticResponseSemantics() {
+  const asset = `${origin}/wp-includes/js/jquery/jquery.min.js?ver=3.7.1`
+  const get = await request(asset)
+  if (!get.ok || !get.headers.get("content-type")?.includes("javascript") || get.headers.get("x-wp-codebox-static") !== "wordpress-archive" || !get.headers.get("cache-control")?.includes("max-age")) throw new Error(`Unexpected static asset response: ${get.status}`)
+  const head = await request(asset, { method: "HEAD" })
+  if (!head.ok || head.headers.get("x-wp-codebox-static") !== "wordpress-archive" || (await head.text()) !== "") throw new Error("Static HEAD did not preserve headers with an empty body.")
+  const missing = await request(`${origin}/wp-includes/js/does-not-exist.min.js`)
+  if (missing.status !== 404) throw new Error(`Missing static archive asset returned ${missing.status}, not 404.`)
+  const source = await request(`${origin}/wp-includes/version.php`)
+  if (source.headers.get("x-wp-codebox-static") === "wordpress-archive") throw new Error("Static handler exposed a PHP source file.")
 }
 
 async function request(target, options = {}) {

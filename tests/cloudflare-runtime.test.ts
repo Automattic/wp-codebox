@@ -10,6 +10,7 @@ import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, clo
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
+import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -40,6 +41,34 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=canonical-auth")), { kind: "canonical-auth" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
+})
+
+test("Cloudflare serves only safe browser assets from the WordPress archive", () => {
+  assert.equal(wordpressStaticArchivePath("/wp-includes/js/jquery/jquery.min.js"), "wordpress/wp-includes/js/jquery/jquery.min.js")
+  assert.equal(wordpressStaticArchivePath("/wp-admin/css/common.min.css"), "wordpress/wp-admin/css/common.min.css")
+  assert.equal(wordpressStaticArchivePath("/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2"), "wordpress/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2")
+  assert.equal(wordpressStaticArchivePath("/wp-content/themes/twentytwentyfive/style.css"), "wordpress/wp-content/themes/twentytwentyfive/style.css")
+  assert.equal(wordpressStaticArchivePath("/wp-admin/admin-ajax.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/version.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-content/plugins/example/app.js"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/%2e%2e/wp-config.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/..%2fwp-config.php"), null)
+  assert.equal(wordpressStaticContentType("wordpress/wp-includes/js/jquery/jquery.min.js"), "text/javascript; charset=utf-8")
+  assert.equal(wordpressStaticContentType("wordpress/wp-content/themes/example/assets/font.woff2"), "font/woff2")
+  assert.equal(wordpressStaticContentType("wordpress/wp-admin/images/logo.png"), "image/png")
+})
+
+test("WordPress boot corpus excludes browser assets while retaining server metadata", () => {
+  const paths = new Set<string>()
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/version.php", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/paragraph/block.json", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-content/themes/twentytwentyfive/style.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-admin/css/view-transitions.min.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/js/wp-emoji-loader.min.js", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-admin/images/dashboard-background.svg", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-includes/js/jquery/jquery.min.js", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-admin/css/common.min.css", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2", paths))
 })
 
 test("Cloudflare translates Fetch requests and PHP responses without losing browser data", async () => {
@@ -161,12 +190,22 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /WORDPRESS_AUTH_SECRET/)
   assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
   assert.match(worker, /authConstants/)
+  assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request\)/)
+  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request)") < worker.indexOf("const coordinator = env.WORDPRESS_STATE.getByName"))
+  assert.match(worker, /CONCATENATE_SCRIPTS: false/)
+  assert.match(worker, /SCRIPT_DEBUG: false/)
+  assert.match(worker, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL, \(entry: \{ path: Uint8Array \}\) => decoder\.decode\(entry\.path\) === archivePath\)/)
+  assert.match(worker, /request\.method === "HEAD" \? null : bytes/)
+  assert.match(worker, /"x-wp-codebox-static": "wordpress-archive"/)
+  assert.match(worker, /cache\.match\(request\)/)
+  assert.match(worker, /cache\.put\(request, response\.clone\(\)\)/)
   assert.match(materializer, /const archivePaths = await wordPressArchivePaths\(decoder\)/)
   assert.match(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL,\s*\(entry: \{ path: Uint8Array \}\) => isWordPressRuntimeFile\(decoder\.decode\(entry\.path\), archivePaths\)\)/)
   assert.match(materializer, /return false/)
   assert.match(corpus, /path\.endsWith\("\.map"\)/)
-  assert.match(corpus, /path\.startsWith\("wordpress\/wp-content\/themes\/"\)/)
-  assert.match(corpus, /minifiedSibling/)
+  assert.match(corpus, /SERVER_READ_EXTENSION/)
+  assert.match(corpus, /path\.endsWith\("\/style\.css"\)/)
+  assert.match(corpus, /STATIC_ARCHIVE_ROOTS/)
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {

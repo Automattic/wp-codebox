@@ -9,7 +9,7 @@ import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, clo
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
-import { isWordPressRuntimeFile } from "./wordpress-runtime-corpus.js"
+import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import type { MarkdownPointer } from "./state-coordinator.js"
 export { WordPressStateCoordinator } from "./state-coordinator.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
@@ -75,6 +75,8 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const staticResponse = await serveWordPressStaticAsset(request)
+    if (staticResponse) return staticResponse
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "probe") {
@@ -658,7 +660,9 @@ async function bootWordPressRuntime(
     createPhpRuntime,
     constants: {
       AUTOMATIC_UPDATER_DISABLED: true,
+      CONCATENATE_SCRIPTS: false,
       DISABLE_WP_CRON: true,
+      SCRIPT_DEBUG: false,
       ...authConstants,
       ...(markdownFiles ? {
         MARKDOWN_DB_CONTENT_DIR: MARKDOWN_ROOT,
@@ -758,11 +762,6 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
   }
 }
 
-function archiveRelativePath(path: string): string {
-  const separator = path.indexOf("/")
-  return separator === -1 ? "" : path.slice(separator + 1)
-}
-
 async function materializeWordPressServerFiles(php: PHP): Promise<{ materializedFiles: number; materializedBytes: number }> {
   const decoder = new TextDecoder()
   let materializedFiles = 0
@@ -784,6 +783,46 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
     materializedBytes += bytes.byteLength
   }
   return { materializedFiles, materializedBytes }
+}
+
+async function serveWordPressStaticAsset(request: Request): Promise<Response | null> {
+  if (request.method !== "GET" && request.method !== "HEAD") return null
+  const archivePath = wordpressStaticArchivePath(new URL(request.url).pathname)
+  if (!archivePath) return null
+
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  if (request.method === "GET" && cache) {
+    try {
+      const cached = await cache.match(request)
+      if (cached) return cached
+    } catch {
+      // Cache availability is an optimization, never a dependency.
+    }
+  }
+
+  const decoder = new TextDecoder()
+  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => decoder.decode(entry.path) === archivePath)
+  const reader = stream.getReader()
+  const { done, value: entry } = await reader.read()
+  if (done || !entry) return new Response("Not found", { status: 404 })
+  const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
+  if (path !== archivePath) return new Response("Not found", { status: 404 })
+  const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
+  const response = new Response(request.method === "HEAD" ? null : bytes, {
+    headers: {
+      "cache-control": "public, max-age=3600",
+      "content-type": wordpressStaticContentType(archivePath),
+      "x-wp-codebox-static": "wordpress-archive",
+    },
+  })
+  if (request.method === "GET" && cache) {
+    try {
+      await cache.put(request, response.clone())
+    } catch {
+      // A full or unavailable Worker cache must not affect the archive response.
+    }
+  }
+  return response
 }
 
 async function wordPressArchivePaths(decoder: TextDecoder): Promise<Set<string>> {
