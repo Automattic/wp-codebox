@@ -556,7 +556,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-wp-cron", "mdi-init-exclude-privacy-schedule", "mdi-init-exclude-update-schedule", "mdi-init-exclude-wp-cron-privacy-schedule", "mdi-init-exclude-wp-cron-update-schedule", "mdi-init-exclude-privacy-update-schedule", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
@@ -851,6 +851,12 @@ require '/wordpress/wp-load.php';`
       "wp_schedule_site_health_cron",
       "WP_Site_Health::maybe_create_scheduled_event",
     ],
+    "mdi-init-exclude-wp-cron": ["wp_cron"],
+    "mdi-init-exclude-privacy-schedule": ["wp_schedule_delete_old_privacy_export_files"],
+    "mdi-init-exclude-update-schedule": ["wp_schedule_update_checks"],
+    "mdi-init-exclude-wp-cron-privacy-schedule": ["wp_cron", "wp_schedule_delete_old_privacy_export_files"],
+    "mdi-init-exclude-wp-cron-update-schedule": ["wp_cron", "wp_schedule_update_checks"],
+    "mdi-init-exclude-privacy-update-schedule": ["wp_schedule_delete_old_privacy_export_files", "wp_schedule_update_checks"],
     "mdi-init-exclude-block-registration": [
       "register_block_core_*",
       "register_core_block_*",

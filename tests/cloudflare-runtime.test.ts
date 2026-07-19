@@ -161,6 +161,12 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   for (const phase of [
     "mdi-init-callbacks",
     "mdi-init-exclude-scheduling",
+    "mdi-init-exclude-wp-cron",
+    "mdi-init-exclude-privacy-schedule",
+    "mdi-init-exclude-update-schedule",
+    "mdi-init-exclude-wp-cron-privacy-schedule",
+    "mdi-init-exclude-wp-cron-update-schedule",
+    "mdi-init-exclude-privacy-update-schedule",
     "mdi-init-exclude-block-registration",
     "mdi-init-exclude-theme-patterns-styles",
     "mdi-init-exclude-widgets",
@@ -189,6 +195,12 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /sort\(\$identifiers, SORT_STRING\)/)
   assert.match(worker, /ksort\(\$inventory, SORT_NUMERIC\)/)
   assert.match(worker, /"wp_schedule_update_checks"/)
+  assert.match(worker, /"mdi-init-exclude-wp-cron": \["wp_cron"\]/)
+  assert.match(worker, /"mdi-init-exclude-privacy-schedule": \["wp_schedule_delete_old_privacy_export_files"\]/)
+  assert.match(worker, /"mdi-init-exclude-update-schedule": \["wp_schedule_update_checks"\]/)
+  assert.match(worker, /"mdi-init-exclude-wp-cron-privacy-schedule": \["wp_cron", "wp_schedule_delete_old_privacy_export_files"\]/)
+  assert.match(worker, /"mdi-init-exclude-wp-cron-update-schedule": \["wp_cron", "wp_schedule_update_checks"\]/)
+  assert.match(worker, /"mdi-init-exclude-privacy-update-schedule": \["wp_schedule_delete_old_privacy_export_files", "wp_schedule_update_checks"\]/)
   assert.match(worker, /"WP_Site_Health::maybe_create_scheduled_event"/)
   assert.match(worker, /"register_block_core_\*"/)
   assert.match(worker, /"WP_Block_Supports::init"/)
@@ -229,6 +241,7 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /"create_initial_taxonomies"/)
   assert.match(worker, /"wp_create_initial_post_meta"/)
   assert.match(worker, /do_action\('init'\);/)
+  assert.match(worker, /'completed' => true, 'removedCallbacks' => \$removed, 'memoryBeforeBytes' => \$memory_before, 'memoryBytes' => memory_get_usage\(true\), 'peakMemoryBytes' => memory_get_peak_usage\(true\)/)
   assert.doesNotMatch(worker, /searchParams\.get\([^)]*callback|searchParams\.get\([^)]*exclude|searchParams\.get\([^)]*widget/)
 })
 
