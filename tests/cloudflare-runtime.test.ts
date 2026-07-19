@@ -155,6 +155,35 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
   ])
 })
 
+test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusion groups", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+
+  for (const phase of [
+    "mdi-init-callbacks",
+    "mdi-init-exclude-scheduling",
+    "mdi-init-exclude-block-registration",
+    "mdi-init-exclude-theme-patterns-styles",
+    "mdi-init-exclude-widgets",
+    "mdi-init-exclude-rest-connectors-sitemaps",
+    "mdi-init-exclude-initial-content-types",
+  ]) assert.match(worker, new RegExp(`"${phase}"`))
+
+  assert.match(worker, /\$needle = "do_action\( 'init' \);"/)
+  assert.match(worker, /substr_count\(\$settings, \$needle\) !== 1/)
+  assert.match(worker, /sort\(\$identifiers, SORT_STRING\)/)
+  assert.match(worker, /ksort\(\$inventory, SORT_NUMERIC\)/)
+  assert.match(worker, /"wp_schedule_update_checks"/)
+  assert.match(worker, /"WP_Site_Health::maybe_create_scheduled_event"/)
+  assert.match(worker, /"register_block_core_\*"/)
+  assert.match(worker, /"WP_Block_Supports::init"/)
+  assert.match(worker, /"wp_widgets_init"/)
+  assert.match(worker, /"rest_api_init"/)
+  assert.match(worker, /"create_initial_taxonomies"/)
+  assert.match(worker, /"wp_create_initial_post_meta"/)
+  assert.match(worker, /do_action\('init'\);/)
+  assert.doesNotMatch(worker, /searchParams\.get\([^)]*callback|searchParams\.get\([^)]*exclude/)
+})
+
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")

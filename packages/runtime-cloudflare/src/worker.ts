@@ -556,7 +556,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded"].includes(phase)) {
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
@@ -626,6 +626,116 @@ function wordpressProbeCode(phase: string): string {
   }
   if (phase === "seeded-wordpress") {
     return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
+  }
+
+  const initExclusions: Record<string, string[]> = {
+    "mdi-init-exclude-scheduling": [
+      "wp_schedule_update_checks",
+      "wp_schedule_delete_old_privacy_export_files",
+      "wp_cron",
+      "WP_Site_Health::schedule_cron",
+      "wp_schedule_site_health_cron",
+      "WP_Site_Health::maybe_create_scheduled_event",
+    ],
+    "mdi-init-exclude-block-registration": [
+      "register_block_core_*",
+      "register_core_block_*",
+      "register_core_block_types_from_metadata",
+      "register_core_block_style_handles",
+      "wp_register_core_block_style_handles",
+      "WP_Block_Supports::init",
+    ],
+    "mdi-init-exclude-theme-patterns-styles": [
+      "_register_theme_block_patterns",
+      "_register_theme_block_pattern_categories",
+      "_register_core_block_patterns_and_categories",
+      "wp_register_global_styles",
+      "wp_register_global_styles_custom_css",
+      "wp_register_typography_support",
+    ],
+    "mdi-init-exclude-widgets": ["wp_widgets_init"],
+    "mdi-init-exclude-rest-connectors-sitemaps": [
+      "rest_api_init",
+      "wp_sitemaps_get_server",
+      "WP_Sitemaps::init",
+      "WP_Sitemaps_Registry::init",
+    ],
+    "mdi-init-exclude-initial-content-types": [
+      "create_initial_taxonomies",
+      "create_initial_post_types",
+      "create_initial_post_statuses",
+      "wp_create_initial_post_meta",
+    ],
+  }
+  if (phase === "mdi-init-callbacks" || initExclusions[phase]) {
+    const excluded = initExclusions[phase] ?? []
+    return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = "do_action( 'init' );";
+if (substr_count($settings, $needle) !== 1) {
+    throw new Exception('WordPress init probe needle was not uniquely found.');
+}
+$phase = ${JSON.stringify(phase)};
+$excluded = ${JSON.stringify(excluded)};
+$probe = <<<'PHP'
+function wp_codebox_init_probe_callback_identifier($callback) {
+    if (is_string($callback)) return $callback;
+    if ($callback instanceof Closure) return 'Closure';
+    if (is_array($callback) && count($callback) === 2 && is_string($callback[1])) {
+        $class = is_object($callback[0]) ? get_class($callback[0]) : $callback[0];
+        return is_string($class) ? $class . '::' . $callback[1] : 'Closure';
+    }
+    if (is_object($callback) && method_exists($callback, '__invoke')) return get_class($callback) . '::__invoke';
+    return 'Closure';
+}
+function wp_codebox_init_probe_inventory() {
+    $inventory = array();
+    $hook = isset($GLOBALS['wp_filter']['init']) ? $GLOBALS['wp_filter']['init'] : null;
+    if (!$hook || !isset($hook->callbacks) || !is_array($hook->callbacks)) return $inventory;
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        $identifiers = array();
+        foreach ($callbacks as $registered) $identifiers[] = wp_codebox_init_probe_callback_identifier($registered['function']);
+        sort($identifiers, SORT_STRING);
+        $inventory[(string) $priority] = $identifiers;
+    }
+    ksort($inventory, SORT_NUMERIC);
+    return $inventory;
+}
+function wp_codebox_init_probe_matches($identifier, $patterns) {
+    foreach ($patterns as $pattern) {
+        if (str_ends_with($pattern, '*') && str_starts_with($identifier, substr($pattern, 0, -1))) return true;
+        if ($identifier === $pattern) return true;
+    }
+    return false;
+}
+$inventory = wp_codebox_init_probe_inventory();
+if ($phase === 'mdi-init-callbacks') {
+    echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'callbacks' => $inventory, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+    return;
+}
+$removed = array();
+$hook = isset($GLOBALS['wp_filter']['init']) ? $GLOBALS['wp_filter']['init'] : null;
+if ($hook && isset($hook->callbacks) && is_array($hook->callbacks)) {
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        foreach ($callbacks as $index => $registered) {
+            $identifier = wp_codebox_init_probe_callback_identifier($registered['function']);
+            if (wp_codebox_init_probe_matches($identifier, $excluded)) {
+                unset($hook->callbacks[$priority][$index]);
+                $removed[] = $identifier;
+            }
+        }
+        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
+    }
+}
+sort($removed, SORT_STRING);
+$memory_before = memory_get_usage(true);
+do_action('init');
+echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true, 'removedCallbacks' => $removed, 'memoryBeforeBytes' => $memory_before, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+return;
+PHP;
+file_put_contents($settings_path, str_replace($needle, $probe, $settings));
+require '/wordpress/wp-load.php';`
   }
 
   const stops: Record<string, { needle: string; after?: boolean }> = {

@@ -18,6 +18,10 @@ The bundled MDI source is pinned to immutable commit `1870fb41279e7eb5946e506c9c
 
 The WordPress server corpus is a separate deployment artifact, never a Worker-module import. `generate:cloudflare-wordpress-runtime-corpus` uses bounded ZIP Range decoding against the pinned WordPress release, retains only `isWordPressRuntimeFile()` entries, and emits a deterministic ZIP under `artifacts/` plus the checked-in `assets/wordpress-runtime-artifact.json` provenance manifest. The immutable R2 key is derived from the corpus ZIP SHA-256. Cold boot fetches that exact object through `WORDPRESS_STATE_BUCKET`, validates the manifest and archive/file hashes and budgets, then streams it into PHP MEMFS. Static browser assets continue to use lazy exact archive ranges and Worker cache.
 
+## MDI Init Diagnostics
+
+The diagnostic-only `?phase=` probes `mdi-init-callbacks`, `mdi-init-exclude-scheduling`, `mdi-init-exclude-block-registration`, `mdi-init-exclude-theme-patterns-styles`, `mdi-init-exclude-widgets`, `mdi-init-exclude-rest-connectors-sitemaps`, and `mdi-init-exclude-initial-content-types` stop at `init`. The inventory probe returns sorted callback identifiers by priority. Each exclusion probe removes only its fixed callback group, runs `init` once, and returns before subsequent WordPress lifecycle work. These phases never accept callback names or removal rules from request input.
+
 ## Verification
 
 1. Run `npm run generate:cloudflare-canonical-mdi-seed` and `npm run generate:cloudflare-wordpress-runtime-corpus` to regenerate deterministic runtime artifacts and manifests.
