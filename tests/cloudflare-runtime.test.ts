@@ -178,6 +178,10 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
     "mdi-widgets-direct-block",
     "mdi-widgets-direct-custom-html",
     "mdi-widgets-option-reads",
+    "mdi-widgets-get-settings",
+    "mdi-widgets-get-settings-first",
+    "mdi-widgets-get-settings-second",
+    "mdi-widgets-register-one",
   ]) assert.match(worker, new RegExp(`"${phase}"`))
 
   assert.match(worker, /\$needle = "do_action\( 'init' \);"/)
@@ -201,10 +205,19 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /'mdi-widgets-direct-custom-html-block' => array\('WP_Widget_Custom_HTML', 'WP_Widget_Block'\)/)
   assert.match(worker, /'mdi-widgets-direct-block' => array\('WP_Widget_Block'\)/)
   assert.match(worker, /'mdi-widgets-direct-custom-html' => array\('WP_Widget_Custom_HTML'\)/)
-  assert.match(worker, /foreach \(\$widget_option_id_bases as \$id_base\) get_option\('widget_' \. \$id_base\)/)
+  assert.match(worker, /if \(get_option\(\$option_name, false\) === false\) \$get_option_missing\[\] = \$option_name/)
+  assert.match(worker, /\$wpdb->get_var\(\$wpdb->prepare\("SELECT 1 FROM \{\$wpdb->options\} WHERE option_name = %s LIMIT 1", \$option_name\)\)/)
+  assert.match(worker, /'getOption' => array\('found' => \$get_option_found, 'missing' => \$get_option_missing\)/)
+  assert.match(worker, /'sqliteRows' => array\('present' => \$sqlite_present, 'missing' => \$sqlite_missing\)/)
+  assert.match(worker, /function wp_codebox_widgets_probe_get_settings\(\$class_names\)/)
+  assert.match(worker, /\$settings = \$registered\[\$class_name\]->get_settings\(\)/)
+  assert.match(worker, /'mdi-widgets-get-settings-first' => array_slice\(\$widget_classes, 0, 10\)/)
+  assert.match(worker, /'mdi-widgets-get-settings-second' => array_slice\(\$widget_classes, 10\)/)
+  assert.match(worker, /\$widget->_register_one\(\$instance_number\)/)
+  assert.match(worker, /update_option\(\$option_name, array\(\$instance_number => array\('title' => 'Widget probe'\)\)\)/)
   assert.match(worker, /'classNamesAttempted' => \$direct_groups\[\$phase\]/)
-  assert.match(worker, /'optionCount' => count\(\$widget_option_id_bases\)/)
-  assert.doesNotMatch(worker, /get_option\('widget_' \. \$id_base\).*json_encode/)
+  assert.doesNotMatch(worker, /json_encode\(\$settings\)/)
+  assert.doesNotMatch(worker, /json_encode\(get_option/)
   assert.match(worker, /"rest_api_init"/)
   assert.match(worker, /"create_initial_taxonomies"/)
   assert.match(worker, /"wp_create_initial_post_meta"/)

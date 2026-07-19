@@ -556,7 +556,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads"].includes(phase)) {
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
@@ -628,7 +628,7 @@ function wordpressProbeCode(phase: string): string {
     return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
   }
 
-  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads"]
+  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"]
   if (widgetPhases.includes(phase)) {
     return `<?php
 $settings_path = '/wordpress/wp-settings.php';
@@ -708,6 +708,24 @@ function wp_codebox_widgets_probe_register_selected($class_names) {
         $registered[$class_name]->_register();
     }
 }
+function wp_codebox_widgets_probe_array_dimensions($value) {
+    if (!is_array($value)) return 0;
+    $dimensions = 1;
+    foreach ($value as $item) $dimensions = max($dimensions, 1 + wp_codebox_widgets_probe_array_dimensions($item));
+    return $dimensions;
+}
+function wp_codebox_widgets_probe_get_settings($class_names) {
+    $registered = isset($GLOBALS['wp_widget_factory']->widgets) && is_array($GLOBALS['wp_widget_factory']->widgets) ? $GLOBALS['wp_widget_factory']->widgets : array();
+    $completed = array();
+    $settings_shapes = array();
+    foreach ($class_names as $class_name) {
+        if (!isset($registered[$class_name])) throw new Exception('Widget probe class was not registered: ' . $class_name);
+        $settings = $registered[$class_name]->get_settings();
+        $completed[] = $class_name;
+        $settings_shapes[$class_name] = array('arrayLike' => is_array($settings), 'dimensions' => wp_codebox_widgets_probe_array_dimensions($settings));
+    }
+    return array('completedClassNames' => $completed, 'settingsShapes' => $settings_shapes);
+}
 $direct_groups = array(
     'mdi-widgets-direct-basic-classic-first' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'),
     'mdi-widgets-direct-basic-classic-second' => array('WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget'),
@@ -717,6 +735,12 @@ $direct_groups = array(
     'mdi-widgets-direct-custom-html' => array('WP_Widget_Custom_HTML'),
 );
 $widget_option_id_bases = array('archives', 'block', 'calendar', 'categories', 'custom_html', 'links', 'media_audio', 'media_gallery', 'media_image', 'media_video', 'meta', 'nav_menu', 'pages', 'recent-comments', 'recent-posts', 'rss', 'search', 'tag_cloud', 'text');
+$widget_classes = array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block');
+$get_settings_groups = array(
+    'mdi-widgets-get-settings' => $widget_classes,
+    'mdi-widgets-get-settings-first' => array_slice($widget_classes, 0, 10),
+    'mdi-widgets-get-settings-second' => array_slice($widget_classes, 10),
+);
 if ($phase === 'mdi-widgets-callbacks') {
     echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'callbacks' => wp_codebox_widgets_probe_inventory('widgets_init'), 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
     return;
@@ -724,12 +748,40 @@ if ($phase === 'mdi-widgets-callbacks') {
 $removed_init = wp_codebox_widgets_probe_remove_callbacks('init', array('wp_widgets_init'), false);
 $memory_before = memory_get_usage(true);
 if ($phase === 'mdi-widgets-option-reads') {
-    foreach ($widget_option_id_bases as $id_base) get_option('widget_' . $id_base);
-    echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true, 'optionCount' => count($widget_option_id_bases), 'memoryBeforeBytes' => $memory_before, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+    $get_option_found = array();
+    $get_option_missing = array();
+    $sqlite_present = array();
+    $sqlite_missing = array();
+    foreach ($widget_option_id_bases as $id_base) {
+        $option_name = 'widget_' . $id_base;
+        if (get_option($option_name, false) === false) $get_option_missing[] = $option_name;
+        else $get_option_found[] = $option_name;
+        $row_present = $wpdb->get_var($wpdb->prepare("SELECT 1 FROM {$wpdb->options} WHERE option_name = %s LIMIT 1", $option_name));
+        if ($row_present === '1') $sqlite_present[] = $option_name;
+        else $sqlite_missing[] = $option_name;
+    }
+    echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true, 'getOption' => array('found' => $get_option_found, 'missing' => $get_option_missing), 'sqliteRows' => array('present' => $sqlite_present, 'missing' => $sqlite_missing), 'memoryBeforeBytes' => $memory_before, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
     return;
 }
 $removed_widgets = array();
 wp_codebox_widgets_probe_register_defaults();
+if (isset($get_settings_groups[$phase])) {
+    $settings_probe = wp_codebox_widgets_probe_get_settings($get_settings_groups[$phase]);
+    echo json_encode(array_merge(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true), $settings_probe));
+    return;
+}
+if ($phase === 'mdi-widgets-register-one') {
+    $class_name = 'WP_Widget_Text';
+    $option_name = 'widget_text';
+    $instance_number = 2;
+    if (!isset($GLOBALS['wp_widget_factory']->widgets[$class_name])) throw new Exception('Widget probe class was not registered: ' . $class_name);
+    update_option($option_name, array($instance_number => array('title' => 'Widget probe')));
+    $widget = $GLOBALS['wp_widget_factory']->widgets[$class_name];
+    $settings = $widget->get_settings();
+    $widget->_register_one($instance_number);
+    echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => $phase, 'completed' => true, 'widgetClassName' => $class_name, 'preloadedOptionName' => $option_name, 'getSettingsShape' => array('arrayLike' => is_array($settings), 'dimensions' => wp_codebox_widgets_probe_array_dimensions($settings)), 'registerOneCompleted' => true));
+    return;
+}
 if (isset($direct_groups[$phase])) {
     $removed_widgets = wp_codebox_widgets_probe_remove_callbacks('widgets_init', array(), true);
     wp_codebox_widgets_probe_register_selected($direct_groups[$phase]);
