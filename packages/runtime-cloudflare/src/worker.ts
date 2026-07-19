@@ -1003,7 +1003,7 @@ async function bootWordPressRuntime(
   siteUrl = SITE_URL,
   authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
   runtimeBucket?: R2Bucket,
-  canonicalCronAdapter = false,
+  shouldPatchCanonicalCronAtInit = false,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
@@ -1035,7 +1035,7 @@ async function bootWordPressRuntime(
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
-        if (canonicalCronAdapter) materializeCanonicalCronAdapter(php)
+        if (shouldPatchCanonicalCronAtInit) patchCanonicalCronAtInit(php)
       } : undefined,
       beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
         php.mkdir("/wordpress/wp-content/database")
@@ -1063,24 +1063,19 @@ function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): 
   }
 }
 
-function materializeCanonicalCronAdapter(php: PHP): void {
-  const path = "/wordpress/wp-content/mu-plugins/wp-codebox-canonical-cron-policy.php"
-  php.mkdir(path.slice(0, path.lastIndexOf("/")))
-  php.writeFile(path, new TextEncoder().encode(`<?php
-/**
- * Plugin Name: WP Codebox Canonical Cron Policy
- */
-
-if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
-	add_action(
-		'init',
-		static function (): void {
-			remove_action( 'init', 'wp_cron' );
-		},
-		PHP_INT_MIN
-	);
+function patchCanonicalCronAtInit(php: PHP): void {
+  const settingsPath = "/wordpress/wp-settings.php"
+  const needle = "do_action( 'init' );"
+  const settings = new TextDecoder().decode(php.readFileAsBuffer(settingsPath))
+  const firstNeedle = settings.indexOf(needle)
+  if (firstNeedle === -1 || firstNeedle !== settings.lastIndexOf(needle)) {
+    throw new Error("WordPress canonical cron patch needle was not uniquely found.")
+  }
+  const replacement = `if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
+	remove_action( 'init', 'wp_cron' );
 }
-`))
+${needle}`
+  php.writeFile(settingsPath, new TextEncoder().encode(`${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`))
 }
 
 function collectRuntimeFiles(php: PHP, root: string): RuntimeFile[] {

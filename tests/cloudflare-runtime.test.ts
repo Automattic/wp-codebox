@@ -313,16 +313,22 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(worker, /function canonicalChangedPathCounts/)
 })
 
-test("Cloudflare canonical runtime materializes a conditional cron policy without removing other scheduling callbacks", async () => {
+test("Cloudflare canonical runtime patches the unique init call in MEMFS without removing other scheduling callbacks", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const adapter = worker.match(/function materializeCanonicalCronAdapter\(php: PHP\): void \{[\s\S]*?\n\}/)?.[0]
+  const patcher = worker.slice(worker.indexOf("function patchCanonicalCronAtInit"), worker.indexOf("\nfunction collectRuntimeFiles"))
 
-  assert.ok(adapter, "The canonical cron policy materializer is present.")
-  assert.match(adapter, /wp-content\/mu-plugins\/wp-codebox-canonical-cron-policy\.php/)
-  assert.match(adapter, /defined\( 'DISABLE_WP_CRON' \) && DISABLE_WP_CRON/)
-  assert.match(adapter, /add_action\([\s\S]*'init'[\s\S]*remove_action\( 'init', 'wp_cron' \)[\s\S]*PHP_INT_MIN/)
-  assert.doesNotMatch(adapter, /wp_schedule_update_checks|wp_schedule_delete_old_privacy_export_files|\$GLOBALS\['wp_filter'\]/)
-  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  canonicalCronAdapter = false,/)
+  assert.ok(patcher.startsWith("function patchCanonicalCronAtInit"), "The canonical cron init patcher is present.")
+  assert.match(patcher, /const settingsPath = "\/wordpress\/wp-settings\.php"/)
+  assert.match(patcher, /php\.readFileAsBuffer\(settingsPath\)/)
+  assert.match(patcher, /firstNeedle === -1 \|\| firstNeedle !== settings\.lastIndexOf\(needle\)/)
+  assert.match(patcher, /throw new Error\("WordPress canonical cron patch needle was not uniquely found\."\)/)
+  assert.match(patcher, /defined\( 'DISABLE_WP_CRON' \) && DISABLE_WP_CRON/)
+  assert.match(patcher, /remove_action\( 'init', 'wp_cron' \)/)
+  assert.equal((patcher.match(/do_action\( 'init' \);/g) ?? []).length, 1)
+  assert.match(patcher, /php\.writeFile\(settingsPath/)
+  assert.doesNotMatch(patcher, /mu-plugins|add_action\(|wp_schedule_update_checks|wp_schedule_delete_old_privacy_export_files|\$GLOBALS\['wp_filter'\]/)
+  assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
+  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalCronAtInit = false,/)
   assert.match(worker, /authConstants, bucket, true\), pointer/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
   assert.match(worker, /canonical-probe\.invalid", \{\}, bucket, true\)/)
