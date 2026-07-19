@@ -1130,7 +1130,7 @@ async function bootWordPressRuntime(
   siteUrl = SITE_URL,
   authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
   runtimeBucket?: R2Bucket,
-  shouldPatchCanonicalDisabledCronSchedulingPolicyAtInit = false,
+  shouldPatchCanonicalRuntimePoliciesAtInit = false,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
@@ -1162,7 +1162,7 @@ async function bootWordPressRuntime(
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
-        if (shouldPatchCanonicalDisabledCronSchedulingPolicyAtInit) patchCanonicalDisabledCronSchedulingPolicyAtInit(php)
+        if (shouldPatchCanonicalRuntimePoliciesAtInit) patchCanonicalRuntimePoliciesAtInit(php)
       } : undefined,
       beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
         php.mkdir("/wordpress/wp-content/database")
@@ -1190,19 +1190,23 @@ function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): 
   }
 }
 
-function patchCanonicalDisabledCronSchedulingPolicyAtInit(php: PHP): void {
+function patchCanonicalRuntimePoliciesAtInit(php: PHP): void {
   const settingsPath = "/wordpress/wp-settings.php"
   const needle = "do_action( 'init' );"
   const settings = new TextDecoder().decode(php.readFileAsBuffer(settingsPath))
   const firstNeedle = settings.indexOf(needle)
   if (firstNeedle === -1 || firstNeedle !== settings.lastIndexOf(needle)) {
-    throw new Error("WordPress canonical disabled-cron scheduling policy patch needle was not uniquely found.")
+    throw new Error("WordPress canonical runtime policy patch needle was not uniquely found.")
   }
   const replacement = `if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) {
 	remove_action( 'init', 'wp_cron' );
 	remove_action( 'init', 'wp_schedule_delete_old_privacy_export_files' );
 	remove_action( 'init', 'wp_schedule_update_checks' );
 }
+// Rewrite rules are derived for each runtime; keep them out of canonical MDI state.
+add_filter( 'pre_update_option_rewrite_rules', static function ( $value, $old_value ) {
+	return $old_value;
+}, PHP_INT_MAX, 2 );
 ${needle}`
   php.writeFile(settingsPath, new TextEncoder().encode(`${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`))
 }
