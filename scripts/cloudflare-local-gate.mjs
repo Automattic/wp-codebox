@@ -172,14 +172,14 @@ async function assertCanonicalProbes() {
   const wordpress = await (await request(`${origin}/?phase=canonical-wordpress`)).json()
   const setup = await (await request(`${origin}/?phase=canonical-bootstrap-setup`)).json()
   const counts = ["canonicalSeedFiles", "postCount", "pageCount", "userCount", "optionCount", "widgetOptionCount", "widgetStateOptionCount", "memoryBytes", "peakMemoryBytes"]
-  if (wordpress.completed !== true || typeof wordpress.evidence?.wordpressVersion !== "string" || counts.some((key) => !Number.isInteger(wordpress.evidence?.[key])) || wordpress.evidence.widgetStateOptionCount !== 19 || wordpress.evidence.wpCronInitAttached !== false || wordpress.evidence.updateScheduleInitAttached !== true || wordpress.evidence.privacyScheduleInitAttached !== true) {
+  if (wordpress.completed !== true || typeof wordpress.evidence?.wordpressVersion !== "string" || counts.some((key) => !Number.isInteger(wordpress.evidence?.[key])) || wordpress.evidence.widgetStateOptionCount !== 19 || wordpress.evidence.wpCronInitAttached !== false || wordpress.evidence.updateScheduleInitAttached !== false || wordpress.evidence.privacyScheduleInitAttached !== false) {
     throw new Error(`Canonical WordPress probe did not boot the complete seed: ${JSON.stringify(wordpress)}`)
   }
   const changedCounts = ["createdPathCount", "changedPathCount", "deletedPathCount"]
   if (setup.completed !== true || typeof setup.evidence?.wordpressVersion !== "string" || changedCounts.some((key) => !Number.isInteger(setup.evidence?.[key])) || setup.evidence.changedPathCount < 1) {
     throw new Error(`Canonical bootstrap setup probe did not produce ephemeral changes: ${JSON.stringify(setup)}`)
   }
-  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, cron init disabled while update/privacy scheduling remain registered, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
+  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, disabled-cron scheduling callbacks absent at init, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
 }
 
 async function assertMdiDiagnostics() {
