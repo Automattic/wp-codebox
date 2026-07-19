@@ -16,6 +16,7 @@ try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
+  await assertCanonicalProbes()
   await assertConcurrentMutations()
   const adminHtml = await login()
   const editorHtml = await assertPostNewEditor()
@@ -164,6 +165,20 @@ async function assertHealthResponse() {
   const response = await request(`${origin}/?phase=health`)
   const body = await response.json()
   if (response.status !== 200 || body.schema !== "wp-codebox/cloudflare-runtime-health/v1" || body.marker !== "wp-codebox-cloudflare-runtime-health" || body.phpVersion !== "8.5.8" || typeof body.wordpressVersion !== "string" || body.execution?.status !== "ok") throw new Error(`Unexpected Cloudflare runtime health envelope: ${JSON.stringify(body)}`)
+}
+
+async function assertCanonicalProbes() {
+  const wordpress = await (await request(`${origin}/?phase=canonical-wordpress`)).json()
+  const setup = await (await request(`${origin}/?phase=canonical-bootstrap-setup`)).json()
+  const counts = ["canonicalSeedFiles", "postCount", "pageCount", "userCount", "optionCount", "widgetOptionCount", "widgetStateOptionCount", "memoryBytes", "peakMemoryBytes"]
+  if (wordpress.completed !== true || typeof wordpress.evidence?.wordpressVersion !== "string" || counts.some((key) => !Number.isInteger(wordpress.evidence?.[key])) || wordpress.evidence.widgetStateOptionCount !== 19) {
+    throw new Error(`Canonical WordPress probe did not boot the complete seed: ${JSON.stringify(wordpress)}`)
+  }
+  const changedCounts = ["createdPathCount", "changedPathCount", "deletedPathCount"]
+  if (setup.completed !== true || typeof setup.evidence?.wordpressVersion !== "string" || changedCounts.some((key) => !Number.isInteger(setup.evidence?.[key])) || setup.evidence.changedPathCount < 1) {
+    throw new Error(`Canonical bootstrap setup probe did not produce ephemeral changes: ${JSON.stringify(setup)}`)
+  }
+  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
 }
 
 async function assertWordPressPage(target, label) {

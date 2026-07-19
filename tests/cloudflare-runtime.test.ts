@@ -225,6 +225,21 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.doesNotMatch(worker, /searchParams\.get\([^)]*callback|searchParams\.get\([^)]*exclude|searchParams\.get\([^)]*widget/)
 })
 
+test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed without canonical persistence", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
+
+  assert.equal((probes.match(/initialMarkdownFiles/g) ?? []).length, 0)
+  assert.ok((probes.match(/await packagedCanonicalMarkdownSeed\(\)/g) ?? []).length >= 4)
+  assert.match(probes, /phase === "canonical-wordpress" \|\| phase === "canonical-bootstrap-setup"/)
+  assert.match(probes, /materializeWordPressServerFiles/)
+  assert.match(probes, /canonicalBootstrapSetupCode\(passwordFile, "https:\/\/canonical-probe\.invalid"\)/)
+  assert.match(probes, /canonicalChangedPathCounts\(canonicalSeed, collectRuntimeFiles/)
+  assert.doesNotMatch(probes, /persistMarkdownRevision|commitLease|coordinatorCall/)
+  assert.match(worker, /'widgetOptionCount' => \(int\) \$wpdb->get_var/)
+  assert.match(worker, /function canonicalChangedPathCounts/)
+})
+
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")

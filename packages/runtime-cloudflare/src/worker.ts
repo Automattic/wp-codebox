@@ -517,7 +517,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     try {
       const wordpress = await materializeWordPressServerFiles(php, bucket)
       await materializeMarkdownDatabaseIntegration(php)
-      materializeRuntimeFiles(php, MARKDOWN_ROOT, initialMarkdownFiles())
+      materializeRuntimeFiles(php, MARKDOWN_ROOT, await packagedCanonicalMarkdownSeed())
       const evidence = (await php.run({
         code: "<?php echo json_encode(['dropin' => file_exists('/wordpress/wp-content/db.php'), 'storage' => file_exists('/wordpress/wp-content/plugins/markdown-database-integration/inc/class-wp-markdown-storage.php'), 'siteurl' => file_exists('/wordpress/wp-content/markdown/_options/siteurl.json')]);",
       })).text.trim()
@@ -528,7 +528,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (phase === "mdi-shortinit") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({
         code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'markdownDropin' => defined('MARKDOWN_DB_DROPIN'), 'markdownMode' => defined('MARKDOWN_DB_MODE') ? MARKDOWN_DB_MODE : '']);",
@@ -540,7 +540,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
@@ -557,10 +557,41 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
       return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  if (phase === "canonical-wordpress" || phase === "canonical-bootstrap-setup") {
+    const canonicalSeed = await packagedCanonicalMarkdownSeed()
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, canonicalSeed, new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket)
+    try {
+      if (phase === "canonical-bootstrap-setup") {
+        const passwordFile = "/tmp/wp-codebox-canonical-bootstrap-probe-password"
+        runtime.php.writeFile(passwordFile, new TextEncoder().encode("probe-only-password"))
+        const output = (await runtime.php.run({ code: canonicalBootstrapSetupCode(passwordFile, "https://canonical-probe.invalid") })).text.trim()
+        if (output !== "flushed") throw new Error("Canonical bootstrap setup probe did not confirm its ephemeral flush.")
+        const changes = canonicalChangedPathCounts(canonicalSeed, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT))
+        return probeResponse(phase, { wordpressVersion: runtime.wordpressVersion, canonicalSeedFiles: canonicalSeed.length, ...changes })
+      }
+      const evidence = (await runtime.php.run({ code: `<?php
+require '/wordpress/wp-load.php';
+echo json_encode([
+  'wordpressVersion' => get_bloginfo('version'),
+  'postCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->posts}"),
+  'pageCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->posts} WHERE post_type = 'page'"),
+  'userCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->users}"),
+  'optionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options}"),
+  'widgetOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%'"),
+  'widgetStateOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%' OR option_name = 'sidebars_widgets'"),
+  'memoryBytes' => memory_get_usage(true),
+  'peakMemoryBytes' => memory_get_peak_usage(true),
+]);` })).text.trim()
+      return probeResponse(phase, { canonicalSeedFiles: canonicalSeed.length, ...JSON.parse(evidence) as Record<string, number | string> })
     } finally {
       runtime.php.exit()
     }
@@ -1006,18 +1037,6 @@ async function bootWordPressRuntime(
   return { php, requestHandler, wordpressVersion }
 }
 
-function initialMarkdownFiles(): RuntimeFile[] {
-  const options = [
-    { option_id: 1, option_name: "siteurl", option_value: SITE_URL, autoload: "on" },
-    { option_id: 2, option_name: "home", option_value: SITE_URL, autoload: "on" },
-    { option_id: 3, option_name: "blogname", option_value: "WP Codebox Cloudflare Runtime", autoload: "on" },
-  ]
-  return options.map((option) => ({
-    path: `_options/${option.option_name}.json`,
-    bytes: new TextEncoder().encode(JSON.stringify(option, null, 2)),
-  }))
-}
-
 function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): void {
   for (const file of files) {
     const destination = `${root}/${file.path}`
@@ -1041,6 +1060,21 @@ function collectRuntimeFiles(php: PHP, root: string): RuntimeFile[] {
   }
   visit(root)
   return files.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function canonicalChangedPathCounts(before: RuntimeFile[], after: RuntimeFile[]): { createdPathCount: number; changedPathCount: number; deletedPathCount: number } {
+  const beforeByPath = new Map(before.map((file) => [file.path, file.bytes]))
+  const afterByPath = new Map(after.map((file) => [file.path, file.bytes]))
+  let createdPathCount = 0
+  let changedPathCount = 0
+  let deletedPathCount = 0
+  for (const [path, bytes] of afterByPath) {
+    const previous = beforeByPath.get(path)
+    if (!previous) createdPathCount++
+    else if (previous.byteLength !== bytes.byteLength || previous.some((byte, index) => byte !== bytes[index])) changedPathCount++
+  }
+  for (const path of beforeByPath.keys()) if (!afterByPath.has(path)) deletedPathCount++
+  return { createdPathCount, changedPathCount, deletedPathCount }
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
