@@ -221,14 +221,26 @@ test("WordPress runtime artifacts are content-addressed and reject unavailable o
   }
   const writes = new Map<string, Uint8Array>()
   const php = { mkdir: () => {}, writeFile: (path: string, bytes: Uint8Array) => writes.set(path, bytes) }
-  const bucket = (bytes: Uint8Array | null) => ({ get: async () => bytes === null ? null : { size: bytes.byteLength, body: new Blob([bytes]).stream() } })
+  let arrayBufferReads = 0
+  const bucket = (bytes: Uint8Array | null) => ({ get: async () => bytes === null ? null : {
+    size: bytes.byteLength,
+    // R2 supplies both helpers. Reading body would fail this production-shaped mock.
+    body: new ReadableStream({ pull: (controller) => controller.error(new Error("R2 body stream should not be read directly.")) }),
+    arrayBuffer: async () => {
+      arrayBufferReads++
+      return new Blob([bytes]).arrayBuffer()
+    },
+  } })
 
   await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(null) as never, manifest), /unavailable/)
   await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(new Uint8Array([...archive, 0])) as never, manifest), /size does not match/)
-  const corrupted = archive.slice()
-  corrupted[100] ^= 1
-  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(corrupted) as never, manifest), /validation failed|archive hash/)
+  const oversized = { get: async () => ({ size: 33 * 1024 * 1024, body: new ReadableStream(), arrayBuffer: async () => { throw new Error("oversized archive must not be read") } }) }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, oversized as never, manifest), /exceeds its size budget/)
+  const hashCorruptManifest = { ...manifest, key: wordpressRuntimeArtifactKey("a".repeat(64)), archive: { ...manifest.archive, sha256: "a".repeat(64) } }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(archive) as never, hashCorruptManifest), /archive hash does not match/)
+  assert.equal(writes.size, 0, "hash-corrupt archives fail before extraction")
   const evidence = await materializeWordPressRuntimeArtifact(php, bucket(archive) as never, manifest)
+  assert.equal(arrayBufferReads, 2, "valid and hash-corrupt archives use R2 arrayBuffer()")
   assert.deepEqual(evidence, { materializedFiles: 1, materializedBytes: source.byteLength })
   assert.deepEqual(writes.get("/wordpress/wp-includes/version.php"), source)
 })
@@ -253,7 +265,7 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /encodeZip\(selected\)/)
   assert.match(generator, /lastModified: 0/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
-  assert.match(artifact, /decodeZip\(zipBody\)/)
+  assert.match(artifact, /decodeZip\(new Blob\(\[archiveBytes\]\)\.stream\(\)\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
   assert.ok(manifest.files.length > 0)
 })

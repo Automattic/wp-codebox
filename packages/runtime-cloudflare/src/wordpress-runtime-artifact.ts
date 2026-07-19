@@ -3,8 +3,8 @@ import { isWordPressRuntimeFile } from "./wordpress-runtime-corpus.js"
 
 export const WORDPRESS_RUNTIME_ARTIFACT_SCHEMA = "wp-codebox/wordpress-runtime-artifact/v1"
 export const WORDPRESS_RUNTIME_MAX_FILES = 2_000
-export const WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024
-export const WORDPRESS_RUNTIME_MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+export const WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES = 24 * 1024 * 1024
+export const WORDPRESS_RUNTIME_MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 export const WORDPRESS_RUNTIME_MAX_FILE_BYTES = 8 * 1024 * 1024
 
 export interface WordPressRuntimeArtifactManifest {
@@ -46,14 +46,16 @@ export async function materializeWordPressRuntimeArtifact(php: RuntimeMemfs, buc
   validateWordPressRuntimeArtifactManifest(manifest)
   const object = await bucket.get(manifest.key)
   if (!object) throw new Error(`WordPress runtime artifact is unavailable: ${manifest.key}`)
+  if (object.size > WORDPRESS_RUNTIME_MAX_ARCHIVE_BYTES) throw new Error("WordPress runtime artifact archive exceeds its size budget.")
   if (object.size !== manifest.archive.size) throw new Error("WordPress runtime artifact size does not match its manifest.")
 
-  const [hashBody, zipBody] = object.body.tee()
-  const archiveHash = sha256ReadableStream(hashBody)
+  // The archive and expanded corpus caps leave most of the 128 MiB isolate for PHP-WASM and runtime overhead.
+  const archiveBytes = new Uint8Array(await object.arrayBuffer())
+  if (await sha256Hex(archiveBytes) !== manifest.archive.sha256) throw new Error("WordPress runtime artifact archive hash does not match its manifest.")
   const expected = new Map(manifest.files.map((file) => [file.path, file]))
   let materializedFiles = 0
   let materializedBytes = 0
-  for await (const entry of decodeZip(zipBody)) {
+  for await (const entry of decodeZip(new Blob([archiveBytes]).stream())) {
     const file = expected.get(entry.name)
     if (!file) throw new Error(`WordPress runtime artifact contains an unexpected file: ${entry.name}`)
     const bytes = new Uint8Array(await entry.arrayBuffer())
@@ -66,30 +68,12 @@ export async function materializeWordPressRuntimeArtifact(php: RuntimeMemfs, buc
     php.writeFile(destination, bytes)
     expected.delete(entry.name)
   }
-  if (await archiveHash !== manifest.archive.sha256) throw new Error("WordPress runtime artifact archive hash does not match its manifest.")
   if (expected.size) throw new Error("WordPress runtime artifact is missing manifest files.")
   return { materializedFiles, materializedBytes }
 }
 
 function isSafeRuntimePath(path: string): boolean {
   return path.startsWith("wordpress/") && !path.includes("\\") && !path.split("/").some((segment) => !segment || segment === "." || segment === "..")
-}
-
-async function sha256ReadableStream(stream: ReadableStream): Promise<string> {
-  const chunks: Uint8Array[] = []
-  let size = 0
-  for await (const chunk of stream as AsyncIterable<Uint8Array>) {
-    size += chunk.byteLength
-    if (size > WORDPRESS_RUNTIME_MAX_ARCHIVE_BYTES) throw new Error("WordPress runtime artifact archive exceeds its size budget.")
-    chunks.push(chunk)
-  }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return sha256Hex(bytes)
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
