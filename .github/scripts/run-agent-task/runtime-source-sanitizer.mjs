@@ -46,6 +46,12 @@ export function sanitizeRuntimeSourceJson(text, root) {
   }
 }
 
+export function sanitizeArtifactUploadText(text, roots, secrets = []) {
+  const redacted = secrets.filter(Boolean).reduce((value, secret) => value.split(secret).join("[REDACTED]"), text)
+  return sanitizeRuntimeSourceJson(redacted, roots)
+    .replace(/\/(?:Users|home|private|var|tmp|opt|Volumes)\/[^\s"'\\]+/g, "[host-path]")
+}
+
 export function assertNoRuntimeSourcePaths(value, root, message = "Runtime source paths must never be persisted in workflow results or artifacts.") {
   const serialized = JSON.stringify(value)
   if (runtimeSourceRoots(root).some((sourceRoot) => serialized.includes(sourceRoot))) throw new Error(message)

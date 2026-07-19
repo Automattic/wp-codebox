@@ -1,5 +1,5 @@
-import { rmSync } from "node:fs"
-import { appendFile, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { constants, rmSync } from "node:fs"
+import { appendFile, lstat, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -7,10 +7,11 @@ import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { canonicalExternalNativeAgentIdentity, materializeExternalNativePackage, materializeRuntimeSources, normalizeExternalPackageSource, normalizeRuntimeSources, parseExternalPackageSourcePolicy, sha256BytesV1, validateRuntimeSourceModel } from "./materialize-external-native-package.mjs"
 import { readNativeResult } from "./native-result-file.mjs"
-import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
+import { assertNoRuntimeSourcePaths, sanitizeArtifactUploadText, sanitizeRuntimeSourceJson, sanitizeRuntimeSourceText, sanitizeRuntimeSourceValue } from "./runtime-source-sanitizer.mjs"
 import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
 import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
+import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -19,6 +20,7 @@ const codeboxCliPath = process.env.WP_CODEBOX_CLI_PATH || join(codeboxRoot, "pac
 const outputPath = process.env.GITHUB_OUTPUT
 const MAX_CAPTURE_BYTES = 32768
 const MAX_WORKFLOW_OUTPUT_BYTES = 8192
+const MAX_COMMAND_ARTIFACT_BYTES = 4 * 1024 * 1024
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
 let privateRuntimeSourceRoot = ""
 let privateRuntimeSourceRootForSanitization = ""
@@ -254,7 +256,16 @@ function commandEntries(value, name) {
     if (!command) throw new Error(`${name}[${index}].command must be a non-empty string.`)
     const description = check.description === undefined ? command : string(check.description)
     if (!description) throw new Error(`${name}[${index}].description must be a non-empty string when provided.`)
-    return { command, description }
+    let artifact
+    if (check.artifact !== undefined) {
+      const output = record(check.artifact)
+      artifact = Object.fromEntries(["name", "type", "path"].map((key) => {
+        const value = string(output[key])
+        if (!value) throw new Error(`${name}[${index}].artifact.${key} must be a non-empty string.`)
+        return [key, value]
+      }))
+    }
+    return { command, description, ...(artifact ? { artifact } : {}) }
   })
 }
 
@@ -337,6 +348,151 @@ function requiredArtifacts(declarations) {
     const name = string(artifact.name)
     return artifact.required === true && artifact.direction !== "input" && name ? [name] : []
   })))
+}
+
+function commandArtifactFailure(code, message, declaration) {
+  const error = new Error(message)
+  error.code = `wp-codebox.agent-task.command-artifact-${code}`
+  error.artifact = declaration
+  return error
+}
+
+function commandArtifactError(error, declaration) {
+  return {
+    code: typeof error?.code === "string" ? error.code : "wp-codebox.agent-task.command-artifact-validation",
+    message: bounded(error instanceof Error ? error.message : String(error), MAX_WORKFLOW_OUTPUT_BYTES),
+    ...declaration,
+  }
+}
+
+function safeCommandArtifactPath(value) {
+  const path = string(value).replaceAll("\\", "/").replace(/^\.\//, "")
+  if (!path || isAbsolute(path) || /^[A-Za-z]:\//.test(path) || path.split("/").some((part) => !part || part === "." || part === "..")) return ""
+  return path
+}
+
+function commandArtifactAuthorization(declaration, artifactDeclarations) {
+  const outputs = (Array.isArray(artifactDeclarations) ? artifactDeclarations : []).map(record).filter((entry) => entry.direction !== "input")
+  const match = outputs.find((entry) => string(entry.name) === declaration.name && string(entry.type) === declaration.type)
+  if (match) return match
+  const mismatch = outputs.some((entry) => string(entry.name) === declaration.name || string(entry.type) === declaration.type)
+  throw commandArtifactFailure(mismatch ? "mismatch" : "undeclared", mismatch
+    ? `Command artifact ${declaration.name} (${declaration.type}) does not match its request artifact declaration.`
+    : `Command artifact ${declaration.name} (${declaration.type}) is not declared by the request.`, declaration)
+}
+
+async function readBoundedFile(handle, limit) {
+  const bytes = Buffer.alloc(limit + 1)
+  let offset = 0
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
+  }
+  return bytes.subarray(0, offset)
+}
+
+async function commandArtifactReference(declaration, artifactDeclarations, artifactsPath, kind) {
+  const authorized = commandArtifactAuthorization(declaration, artifactDeclarations)
+  const path = safeCommandArtifactPath(declaration.path)
+  if (!path) throw commandArtifactFailure("path", "Command artifact path must be artifact-relative and must not contain traversal.", declaration)
+  if (artifactSourcePathCategory(path)) throw commandArtifactFailure("forbidden", `Command artifact ${path} is a source path that cannot be uploaded.`, declaration)
+
+  const rootMetadata = await lstat(artifactsPath)
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) throw commandArtifactFailure("symlink", "Command artifact root must be a regular directory and must not be a symlink.", declaration)
+  const canonicalRoot = await realpath(artifactsPath)
+  const source = resolve(artifactsPath, path)
+  if (!underRoot(artifactsPath, source)) throw commandArtifactFailure("path", "Command artifact path escapes the artifact root.", declaration)
+  let current = artifactsPath
+  let finalMetadata
+  for (const part of path.split("/")) {
+    current = join(current, part)
+    let metadata
+    try {
+      metadata = await lstat(current)
+    } catch (error) {
+      if (error?.code === "ENOENT") throw commandArtifactFailure("missing", `Command artifact ${path} was not created.`, declaration)
+      throw error
+    }
+    if (metadata.isSymbolicLink()) throw commandArtifactFailure("symlink", `Command artifact ${path} must not traverse symlinks.`, declaration)
+    finalMetadata = metadata
+  }
+  if (!finalMetadata?.isFile()) throw commandArtifactFailure("not-regular", `Command artifact ${path} must be a regular file.`, declaration)
+  if (finalMetadata.size > MAX_COMMAND_ARTIFACT_BYTES) throw commandArtifactFailure("too-large", `Command artifact ${path} exceeds the ${MAX_COMMAND_ARTIFACT_BYTES}-byte limit.`, declaration)
+  const canonicalSource = await realpath(source)
+  if (!underRoot(canonicalRoot, canonicalSource)) throw commandArtifactFailure("symlink", `Command artifact ${path} must not traverse symlinks.`, declaration)
+
+  const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error) => {
+    if (error?.code === "ELOOP") throw commandArtifactFailure("symlink", `Command artifact ${path} must not be a symlink.`, declaration)
+    if (error?.code === "ENOENT") throw commandArtifactFailure("missing", `Command artifact ${path} was not created.`, declaration)
+    throw error
+  })
+  let bytes
+  try {
+    const metadata = await handle.stat()
+    const pathMetadata = await lstat(source)
+    const canonicalOpenedSource = await realpath(source)
+    if (metadata.dev !== pathMetadata.dev || metadata.ino !== pathMetadata.ino || !underRoot(canonicalRoot, canonicalOpenedSource)) {
+      throw commandArtifactFailure("symlink", `Command artifact ${path} changed while it was being validated.`, declaration)
+    }
+    if (!metadata.isFile()) throw commandArtifactFailure("not-regular", `Command artifact ${path} must be a regular file.`, declaration)
+    if (metadata.size > MAX_COMMAND_ARTIFACT_BYTES) throw commandArtifactFailure("too-large", `Command artifact ${path} exceeds the ${MAX_COMMAND_ARTIFACT_BYTES}-byte limit.`, declaration)
+    bytes = await readBoundedFile(handle, MAX_COMMAND_ARTIFACT_BYTES)
+    if (bytes.length > MAX_COMMAND_ARTIFACT_BYTES) throw commandArtifactFailure("too-large", `Command artifact ${path} exceeds the ${MAX_COMMAND_ARTIFACT_BYTES}-byte limit.`, declaration)
+    if (bytes.includes(0) || !isUtf8(bytes)) throw commandArtifactFailure("malformed", `Command artifact ${path} must be a UTF-8 text file without NUL bytes.`, declaration)
+
+    const sanitizationRoots = [...(Array.isArray(privateRuntimeSourceRootForSanitization) ? privateRuntimeSourceRootForSanitization : [privateRuntimeSourceRootForSanitization]), workspace].filter(Boolean)
+    const sanitized = sanitizeSeedSnapshotJson(sanitizeArtifactUploadText(bytes.toString("utf8"), sanitizationRoots, secretValues))
+    assertNoRuntimeSourcePaths(sanitized, sanitizationRoots)
+    assertNoSeedSnapshotPaths(sanitized)
+    if (containsRuntimeSourceContent(sanitized)) throw commandArtifactFailure("forbidden", `Command artifact ${path} contains source content that cannot be uploaded.`, declaration)
+    const sanitizedBytes = Buffer.from(sanitized)
+    if (sanitizedBytes.length > MAX_COMMAND_ARTIFACT_BYTES) throw commandArtifactFailure("too-large", `Command artifact ${path} exceeds the ${MAX_COMMAND_ARTIFACT_BYTES}-byte limit after sanitization.`, declaration)
+    return {
+      schema: "wp-codebox/typed-artifact/v1",
+      name: declaration.name,
+      type: declaration.type,
+      metadata: {},
+      provenance: { direction: "output", source: `runner-${kind}-command` },
+      artifact: {
+        path,
+        kind: "typed-artifact",
+        contentType: string(authorized.contentType ?? authorized.content_type) || (path.endsWith(".json") ? "application/json" : "text/plain"),
+        sha256: createHash("sha256").update(sanitizedBytes).digest("hex"),
+      },
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function verificationRecord(kind, check, artifactsPath, artifactDeclarations) {
+  const checkResult = await command("bash", ["-lc", check.command], workspace)
+  const result = { kind, command: check.command, description: check.description, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated }
+  if (checkResult.code !== 0 || !check.artifact) return result
+  try {
+    return { ...result, artifact: await commandArtifactReference(check.artifact, artifactDeclarations, artifactsPath, kind) }
+  } catch (error) {
+    return { ...result, success: false, artifact_error: commandArtifactError(error, check.artifact) }
+  }
+}
+
+async function finalizeCommandArtifacts(verification, artifactsPath, artifactDeclarations) {
+  for (const check of verification.filter((entry) => entry.artifact)) {
+    const accepted = check.artifact
+    const declaration = { name: accepted.name, type: accepted.type, path: accepted.artifact.path }
+    try {
+      const current = await commandArtifactReference(declaration, artifactDeclarations, artifactsPath, check.kind)
+      if (current.artifact.sha256 !== accepted.artifact.sha256) {
+        throw commandArtifactFailure("changed", `Command artifact ${declaration.path} changed after it was validated.`, declaration)
+      }
+      check.artifact = current
+    } catch (error) {
+      delete check.artifact
+      check.success = false
+      check.artifact_error = commandArtifactError(error, declaration)
+    }
+  }
 }
 
 async function testRuntimeFixtures(externalPackageSource) {
@@ -668,18 +824,18 @@ if (execution.code === 0 && request.run_agent && !request.dry_run && !downstream
     verification.push({ kind: "validation_dependencies", command: validationDependencies, description: "Install validation dependencies", success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
   }
   for (const check of verificationCommands) {
-    const checkResult = await command("bash", ["-lc", check.command], workspace)
-    verification.push({ kind: "verification", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
+    verification.push(await verificationRecord("verification", check, artifactsPath, request.artifacts?.declarations))
   }
   for (const check of driftChecks) {
-    const checkResult = await command("bash", ["-lc", check.command], workspace)
-    verification.push({ kind: "drift", ...check, success: checkResult.code === 0, exit_code: checkResult.code, stdout: checkResult.stdout, stderr: checkResult.stderr, stdout_truncated: checkResult.stdout_truncated, stderr_truncated: checkResult.stderr_truncated })
+    verification.push(await verificationRecord("drift", check, artifactsPath, request.artifacts?.declarations))
   }
+  await finalizeCommandArtifacts(verification, artifactsPath, request.artifacts?.declarations)
 }
 
 const verificationPassed = verification.every((check) => check.success)
 if (!verificationPassed) {
-  downstreamFailure ??= { stage: "verification", message: "Runner workspace verification did not pass." }
+  const artifactError = verification.find((check) => check.artifact_error)?.artifact_error
+  downstreamFailure ??= { stage: "verification", message: artifactError?.message || "Runner workspace verification did not pass.", ...(artifactError ? { artifact_error: artifactError } : {}) }
 }
 const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)

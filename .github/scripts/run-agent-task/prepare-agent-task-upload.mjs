@@ -3,7 +3,8 @@ import { lstat, mkdir, open, readdir, readFile, realpath, rm, writeFile } from "
 import { isUtf8 } from "node:buffer"
 import { createHash } from "node:crypto"
 import { isAbsolute, join, relative, resolve } from "node:path"
-import { assertNoRuntimeSourcePaths, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
+import { assertNoRuntimeSourcePaths, sanitizeArtifactUploadText, sanitizeRuntimeSourceJson } from "./runtime-source-sanitizer.mjs"
+import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
 
 const MAX_UPLOAD_FILE_BYTES = 4 * 1024 * 1024
 const MAX_TRANSCRIPT_EXECUTIONS = 64
@@ -20,27 +21,12 @@ const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(p
 const runtimeSourcePrefix = process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_PREFIX) : ""
 const runtimeSourceRoots = [runtimeSourceRoot, runtimeSourcePrefix].filter(Boolean)
 const privateUploadRoots = [...runtimeSourceRoots, workspace]
-const SOURCE_TREE = /(^|\/)(prepared-plugins|prepared-source-packages|source-package[^/]*)(\/|$)/i
-const SOURCE_FILE = /\.(?:php|phtml|js|mjs|cjs|jsx|ts|tsx)$/i
-const PHP_OPENING_TAG = /<\?(?:php|=)(?:\s|$)/i
-const PHP_DECLARATION = /\b(?:namespace\s+\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*|(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+[A-Za-z_]\w*|function\s+&?\s*[A-Za-z_]\w*\s*\()/i
-const WORDPRESS_PLUGIN_HEADER = /\/\*[\s\S]{0,200}?\bPlugin Name\s*:/i
-
-// Diagnostics commonly name runtime classes. Reject only PHP-shaped source, even
-// when a source file has been disguised with a reviewer-safe extension.
-function containsRuntimeSourceContent(text) {
-  const hasPhpTag = PHP_OPENING_TAG.test(text)
-  const hasDeclaration = PHP_DECLARATION.test(text)
-  return (hasPhpTag && hasDeclaration) || (WORDPRESS_PLUGIN_HEADER.test(text) && (hasPhpTag || hasDeclaration))
-}
-
 function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
 }
 
 function sanitizeText(text) {
-  return sanitizeRuntimeSourceJson(text, privateUploadRoots)
-    .replace(/\/(?:Users|home|private|var|tmp|opt|Volumes)\/[^\s"'\\]+/g, "[host-path]")
+  return sanitizeArtifactUploadText(text, privateUploadRoots, secretValues)
 }
 
 function compactNativeInput(text) {
@@ -74,38 +60,6 @@ function compactNativeInput(text) {
   }
 }
 
-function assertNoSeedSnapshotPaths(text) {
-  if (/wp-codebox-runner-workspace-seed-/i.test(text)) throw new Error("Temporary runner workspace seed paths must never be persisted in artifact uploads.")
-  try {
-    const visit = (value) => {
-      if (Array.isArray(value)) return value.forEach(visit)
-      const entry = record(value)
-      if (!Object.keys(entry).length) return
-      if (record(entry.seed).source && isAbsolute(record(entry.seed).source)) throw new Error("Absolute runner workspace seed paths must never be persisted in artifact uploads.")
-      Object.values(entry).forEach(visit)
-    }
-    visit(JSON.parse(text))
-  } catch (error) {
-    if (error instanceof Error && /seed paths/.test(error.message)) throw error
-  }
-}
-
-function sanitizeSeedSnapshotJson(text) {
-  try {
-    const compact = (value, key = "") => {
-      if (typeof value === "string") return value.replace(/\/?[^\s"']*wp-codebox-runner-workspace-seed-[^\s"']*/gi, "[runner-workspace-seed]")
-      if (Array.isArray(value)) return value.map((entry) => compact(entry))
-      const entry = record(value)
-      if (!Object.keys(entry).length) return value
-      if (key === "seed" && typeof entry.source === "string") return { kind: "runner-workspace-seed" }
-      return Object.fromEntries(Object.entries(entry).map(([childKey, item]) => [childKey, compact(item, childKey)]))
-    }
-    return `${JSON.stringify(compact(JSON.parse(text)), null, 2)}\n`
-  } catch {
-    return text
-  }
-}
-
 function isPrivateRuntimePath(value) {
   if (!runtimeSourceRoots.length || typeof value !== "string") return false
   const path = resolve(value)
@@ -124,9 +78,18 @@ function safeRelativeArtifactPath(value) {
 
 function sourceCategory(path, absolutePath) {
   if (isPrivateRuntimePath(absolutePath)) return "private-runtime"
-  if (SOURCE_TREE.test(path)) return "source-tree"
-  if (SOURCE_FILE.test(path)) return "source-file"
-  return ""
+  return artifactSourcePathCategory(path)
+}
+
+async function readBoundedFile(handle, limit) {
+  const bytes = Buffer.alloc(limit + 1)
+  let offset = 0
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
+  }
+  return bytes.subarray(0, offset)
 }
 
 async function stageTextFile(source, destination, options = {}) {
@@ -135,9 +98,9 @@ async function stageTextFile(source, destination, options = {}) {
   const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null)
   if (!handle) return false
   const openedMetadata = await handle.stat()
-  const contents = openedMetadata.isFile() && openedMetadata.size <= MAX_UPLOAD_FILE_BYTES ? await handle.readFile() : null
+  const contents = openedMetadata.isFile() && openedMetadata.size <= MAX_UPLOAD_FILE_BYTES ? await readBoundedFile(handle, MAX_UPLOAD_FILE_BYTES) : null
   await handle.close()
-  if (!contents || contents.includes(0) || !isUtf8(contents)) return false
+  if (!contents || contents.length > MAX_UPLOAD_FILE_BYTES || contents.includes(0) || !isUtf8(contents)) return false
   const sourceText = contents.toString("utf8")
   const sanitized = options.projectWorkflowResult
     ? `${JSON.stringify(projectWorkflowResult(parseJsonOrEmpty(sourceText)), null, 2)}\n`
@@ -200,7 +163,7 @@ function projectWorkflowResult(value) {
   const reviewerEvidence = record(result.reviewer_evidence)
   const verification = Array.isArray(result.verification) ? result.verification.slice(0, MAX_REVIEW_COLLECTION_ENTRIES).map((value) => {
     const check = record(value)
-    return projectReviewValue(Object.fromEntries(["kind", "command", "description", "success", "exit_code", "stdout_truncated", "stderr_truncated"].flatMap((key) => check[key] === undefined ? [] : [[key, check[key]]])))
+    return projectReviewValue(Object.fromEntries(["kind", "command", "description", "success", "exit_code", "stdout_truncated", "stderr_truncated", "artifact", "artifact_error"].flatMap((key) => check[key] === undefined ? [] : [[key, check[key]]])))
   }) : undefined
   return projectReviewValue(Object.fromEntries(Object.entries({
     schema: result.schema,
@@ -419,6 +382,28 @@ function declaredArtifactPaths(result, allowed) {
   return [...paths].sort()
 }
 
+function commandArtifactDigests(result) {
+  const digests = new Map()
+  const visit = (value) => {
+    if (Array.isArray(value)) return value.forEach(visit)
+    const entry = record(value)
+    if (!Object.keys(entry).length) return
+    const provenance = record(entry.provenance)
+    const artifact = record(entry.artifact)
+    const path = safeRelativeArtifactPath(artifact.path)
+    if (entry.schema === "wp-codebox/typed-artifact/v1"
+      && typeof provenance.source === "string"
+      && /^runner-(?:verification|drift)-command$/.test(provenance.source)
+      && path
+      && /^[a-f0-9]{64}$/.test(artifact.sha256)) {
+      digests.set(path, artifact.sha256)
+    }
+    Object.values(entry).forEach(visit)
+  }
+  visit(result)
+  return digests
+}
+
 function workflowOutputArtifacts(result) {
   return Object.entries(record(result.workflow_output_artifacts)).flatMap(([name, value]) => {
     const reference = record(value)
@@ -497,6 +482,7 @@ const request = parseJsonOrEmpty(await readFile(requestPath, "utf8").catch(() =>
 const resultSource = join(workspace, ".codebox", "agent-task-workflow-result.json")
 const result = parseJsonOrEmpty(await readFile(resultSource, "utf8").catch(() => "{}"))
 const declaredPaths = new Set(declaredArtifactPaths(result, declarations(request)))
+const commandArtifactHashes = commandArtifactDigests(result)
 const workflowOutputArtifactsToStage = workflowOutputArtifacts(result)
 
 await rm(uploadPath, { recursive: true, force: true })
@@ -512,7 +498,10 @@ for (const path of declaredPaths) {
     // Keep staging independent of an untrusted alias, including transcripts.
     continue
   }
-  await stageTextFile(source, join(uploadPath, ".codebox", "agent-task-artifacts", path))
+  const expectedDigest = commandArtifactHashes.get(path)
+  const destination = join(uploadPath, ".codebox", "agent-task-artifacts", path)
+  const staged = await stageTextFile(source, destination)
+  if (expectedDigest && (!staged || digest(await readFile(destination)) !== expectedDigest)) throw new Error(`Command artifact ${path} could not be staged without modification.`)
 }
 for (const [path, reference] of workflowOutputArtifactsToStage) {
   const source = resolve(artifactsPath, path)

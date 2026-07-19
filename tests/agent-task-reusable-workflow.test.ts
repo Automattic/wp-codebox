@@ -165,7 +165,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     MODEL: "gpt-5.5",
     RUNNER_WORKSPACE_CONFIG: '{"enabled":true,"repo":"Automattic/example-target"}',
     VALIDATION_DEPENDENCIES: "",
-    VERIFICATION_COMMANDS: '[{"command":"npm test","description":"Run checks"}]',
+    VERIFICATION_COMMANDS: '[{"command":"npm test","description":"Run checks","artifact":{"name":"completion_report","type":"CompletionReport","path":"completion-report.json"}}]',
     DRIFT_CHECKS: "[]",
     SUCCESS_REQUIRES_PR: "false",
     ACCESS_TOKEN_REPOS: "Automattic/example-target",
@@ -176,7 +176,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     TRANSCRIPT_ARTIFACT_NAME: "agent-transcript",
     REPLAY_BUNDLE_ARTIFACT_NAME: "agent-replay",
     EXPECTED_ARTIFACTS: '["agent_transcript"]',
-    ARTIFACT_DECLARATIONS: '[{"schema":"wp-codebox/artifact-declaration/v1","name":"agent_transcript"}]',
+    ARTIFACT_DECLARATIONS: '[{"schema":"wp-codebox/artifact-declaration/v1","name":"agent_transcript"},{"name":"completion_report","type":"CompletionReport","direction":"output","contentType":"application/json"}]',
     CALLBACK_DATA: '{"workload":"example-maintenance"}',
     RUN_AGENT: "false",
     DRY_RUN: "true",
@@ -311,6 +311,21 @@ await assert.rejects(execFileAsync("node", [new URL("../.github/scripts/run-agen
     EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
   },
 }), /verification_commands\[0\]\.command/)
+
+const malformedArtifactRequest = { ...request, verification_commands: [{ command: "true", artifact: { name: "report", path: "report.json" } }] }
+await writeFile(requestPath, `${JSON.stringify(malformedArtifactRequest, null, 2)}\n`)
+await assert.rejects(execFileAsync("node", [executeNativeAgentTask], {
+  cwd: tmp,
+  env: {
+    ...process.env,
+    GITHUB_OUTPUT: outputPath,
+    AGENT_TASK_REQUEST_PATH: requestPath,
+    AGENT_TASK_WORKSPACE: tmp,
+    WP_CODEBOX_WORKFLOW_ROOT: new URL("..", import.meta.url).pathname,
+    GITHUB_TOKEN: "test-caller-token",
+    EXTERNAL_PACKAGE_SOURCE_POLICY: '{"version":1,"repositories":{"automattic/example-agent-packages":["packages/example-agent.agent.json"]}}',
+  },
+}), /verification_commands\[0\]\.artifact\.type/)
 
 await writeFile(requestPath, "{\n")
 await assert.rejects(execFileAsync("node", [executeNativeAgentTask], {

@@ -22,6 +22,28 @@ async function run(mode = "success") {
   await mkdir(join(workspace, ".codebox"), { recursive: true })
   await writeFile(join(workspace, "README.md"), "OPENAI_API_KEY\nbefore\n")
 
+  const artifactModes = new Set(["artifact-verification", "artifact-drift", "artifact-readonly", "artifact-missing", "artifact-traversal", "artifact-symlink", "artifact-oversized", "artifact-undeclared", "artifact-mismatch", "artifact-command-fail", "artifact-replaced"])
+  const commandArtifact = artifactModes.has(mode) ? {
+    name: "completion_report",
+    type: "CompletionReport",
+    path: mode === "artifact-traversal" ? "../completion-report.json" : "completion-report.json",
+  } : undefined
+  const artifactCommand = mode === "artifact-missing"
+    ? "echo verification >> .codebox/order"
+    : mode === "artifact-traversal"
+      ? `echo verification >> .codebox/order && printf '%s\\n' '{"ok":true}' > .codebox/completion-report.json`
+      : mode === "artifact-symlink"
+        ? `echo verification >> .codebox/order && printf '%s\\n' '{"ok":true}' > .codebox/completion-report-source.json && ln -s ../completion-report-source.json .codebox/agent-task-artifacts/completion-report.json`
+        : mode === "artifact-oversized"
+          ? `echo verification >> .codebox/order && node -e 'require("node:fs").writeFileSync(".codebox/agent-task-artifacts/completion-report.json", Buffer.alloc(4 * 1024 * 1024 + 1, 120))'`
+          : `echo verification >> .codebox/order && printf '%s\\n' '{"ok":true}' > .codebox/agent-task-artifacts/completion-report.json${mode === "artifact-command-fail" ? " && false" : mode === "artifact-readonly" ? " && chmod 444 .codebox/agent-task-artifacts/completion-report.json" : ""}`
+  const verificationCommand = artifactModes.has(mode) && mode !== "artifact-drift" ? artifactCommand : (mode === "verify-fail" ? "false" : "echo verification >> .codebox/order")
+  const driftCommand = mode === "artifact-drift"
+    ? artifactCommand
+    : mode === "artifact-replaced"
+      ? `echo drift >> .codebox/order && printf '%s\\n' '{"ok":false}' > .codebox/agent-task-artifacts/completion-report.json`
+      : "echo drift >> .codebox/order"
+
   const request = {
     schema: "wp-codebox/agent-task-workflow-request/v1",
     model: { provider: "openai", name: "gpt-5" },
@@ -44,9 +66,9 @@ async function run(mode = "success") {
     },
     validation_dependencies: "echo validation >> .codebox/order",
     verification_commands: [
-      { command: mode === "verify-fail" ? "false" : "echo verification >> .codebox/order" },
+      { command: verificationCommand, ...(mode !== "artifact-drift" && commandArtifact ? { artifact: commandArtifact } : {}) },
     ],
-    drift_checks: [{ command: "echo drift >> .codebox/order" }],
+    drift_checks: [{ command: driftCommand, ...(mode === "artifact-drift" && commandArtifact ? { artifact: commandArtifact } : {}) }],
     success: { requires_pr: mode !== "no-op-maintenance" },
     access: {
       caller_repo: targetRepo,
@@ -54,7 +76,12 @@ async function run(mode = "success") {
       access_token_repos: [targetRepo],
     },
     limits: { max_turns: 1, time_budget_ms: 1000 },
-    artifacts: { expected: [], declarations: [] },
+    artifacts: {
+      expected: [],
+      declarations: artifactModes.has(mode) && mode !== "artifact-undeclared"
+        ? [{ name: "completion_report", type: mode === "artifact-mismatch" ? "DifferentReport" : "CompletionReport", direction: "output", contentType: "application/json" }]
+        : [],
+    },
     outputs: {
       projections: {
         pr_url: mode === "no-op-maintenance"
@@ -195,6 +222,69 @@ assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_pa
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].mode, "readwrite")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.sandbox_workspace.mounts[0].target, "/workspace")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.local_executor_root, "/workspace")
+assert.equal(success.result.verification.some((check) => check.artifact || check.artifact_error), false, "legacy command entries retain their result shape")
+
+for (const mode of ["artifact-verification", "artifact-drift", "artifact-readonly"]) {
+  const artifactSuccess = await run(mode)
+  assert.equal(artifactSuccess.code, 0, `${artifactSuccess.stderr}\n${JSON.stringify(artifactSuccess.result)}`)
+  const artifactCheck = artifactSuccess.result.verification.find((check) => check.artifact)
+  assert.equal(artifactCheck.kind, mode === "artifact-drift" ? "drift" : "verification")
+  assert.deepEqual({ schema: artifactCheck.artifact.schema, name: artifactCheck.artifact.name, type: artifactCheck.artifact.type }, {
+    schema: "wp-codebox/typed-artifact/v1",
+    name: "completion_report",
+    type: "CompletionReport",
+  })
+  assert.equal(artifactCheck.artifact.artifact.path, "completion-report.json")
+  assert.match(artifactCheck.artifact.artifact.sha256, /^[a-f0-9]{64}$/)
+  await execFileAsync(process.execPath, [uploader], {
+    cwd: artifactSuccess.workspace,
+    env: {
+      ...process.env,
+      AGENT_TASK_WORKSPACE: artifactSuccess.workspace,
+      AGENT_TASK_REQUEST_PATH: join(artifactSuccess.workspace, ".codebox", "agent-task-request.json"),
+      AGENT_TASK_UPLOAD_PATH: join(artifactSuccess.workspace, ".codebox", "agent-task-upload"),
+    },
+  })
+  assert.deepEqual(JSON.parse(await readFile(join(artifactSuccess.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "completion-report.json"), "utf8")), { ok: true })
+  const uploadedResult = JSON.parse(await readFile(join(artifactSuccess.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+  assert.equal(uploadedResult.verification.find((check) => check.artifact).artifact.artifact.path, "completion-report.json")
+  if (mode === "artifact-verification") {
+    await writeFile(join(artifactSuccess.workspace, ".codebox", "agent-task-artifacts", "completion-report.json"), '{"tampered":true}\n')
+    await assert.rejects(execFileAsync(process.execPath, [uploader], {
+      cwd: artifactSuccess.workspace,
+      env: {
+        ...process.env,
+        AGENT_TASK_WORKSPACE: artifactSuccess.workspace,
+        AGENT_TASK_REQUEST_PATH: join(artifactSuccess.workspace, ".codebox", "agent-task-request.json"),
+        AGENT_TASK_UPLOAD_PATH: join(artifactSuccess.workspace, ".codebox", "agent-task-upload"),
+      },
+    }), /could not be staged without modification/)
+  }
+}
+
+for (const [mode, code] of [
+  ["artifact-missing", "wp-codebox.agent-task.command-artifact-missing"],
+  ["artifact-traversal", "wp-codebox.agent-task.command-artifact-path"],
+  ["artifact-symlink", "wp-codebox.agent-task.command-artifact-symlink"],
+  ["artifact-oversized", "wp-codebox.agent-task.command-artifact-too-large"],
+  ["artifact-undeclared", "wp-codebox.agent-task.command-artifact-undeclared"],
+  ["artifact-mismatch", "wp-codebox.agent-task.command-artifact-mismatch"],
+  ["artifact-replaced", "wp-codebox.agent-task.command-artifact-changed"],
+]) {
+  const artifactFailure = await run(mode)
+  assert.equal(artifactFailure.code, 1)
+  assert(!artifactFailure.order.includes("publish"), `${mode} must fail before publication`)
+  assert.equal(artifactFailure.result.failure.stage, "verification")
+  assert.equal(artifactFailure.result.failure.artifact_error.code, code)
+  assert.equal(artifactFailure.result.verification.find((check) => check.artifact_error).artifact_error.code, code)
+}
+
+const failedArtifactCommand = await run("artifact-command-fail")
+assert.equal(failedArtifactCommand.code, 1)
+const failedArtifactCheck = failedArtifactCommand.result.verification.find((check) => check.kind === "verification")
+assert.equal(failedArtifactCheck.exit_code, 1)
+assert.equal(failedArtifactCheck.artifact, undefined)
+assert.equal(failedArtifactCheck.artifact_error, undefined, "failed commands do not accept or validate artifacts")
 
 const canonicalCasing = await run("canonical-casing")
 assert.equal(canonicalCasing.code, 0, `${canonicalCasing.stderr}\n${JSON.stringify(canonicalCasing.result)}`)

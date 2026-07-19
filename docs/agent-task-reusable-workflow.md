@@ -14,8 +14,9 @@ jobs:
       writable_paths: README.md,docs/**
       runner_workspace: '{"enabled":true,"repo":"Automattic/example-target"}'
       validation_dependencies: npm ci
-      verification_commands: '[{"command":"npm test","description":"Run checks"}]'
+      verification_commands: '[{"command":"npm test","description":"Run checks","artifact":{"name":"test_report","type":"TestReport","path":"test-report.json"}}]'
       drift_checks: '["git diff --exit-code"]'
+      artifact_declarations: '[{"name":"test_report","type":"TestReport","direction":"output","contentType":"application/json"}]'
       success_requires_pr: true
       access_token_repos: Automattic/example-target
       allowed_repos: '["Automattic/example-target"]'
@@ -61,7 +62,7 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
 - `validation_dependencies`: optional shell command that installs validation dependencies in the target workspace.
-- `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass.
+- `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass. An object may declare one output as `artifact: {name, type, path}`. All three artifact fields are required, `path` is relative to `.codebox/agent-task-artifacts`, and the exact name/type pair must also be an output in `artifact_declarations`. After an exit-zero command, the workflow accepts only an existing regular UTF-8 file of at most 4 MiB without path traversal or symlinks. It adds a canonical `wp-codebox/typed-artifact/v1` reference to that verification record so declared-artifact upload staging collects the file. Artifact validation fails that verification before publication; failed commands never accept an artifact. Strings and command/description-only objects retain their existing behavior.
 - `success_requires_pr`: require a successful, published runner-workspace pull request for `target_repo`.
 - `access_token_repos`: comma-separated repositories available to the supplied access token.
 - `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
