@@ -392,23 +392,20 @@ async function readMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPointer):
   const manifestObject = await bucket.get(pointer.manifestKey)
   if (!manifestObject) throw new Error(`R2 Markdown manifest is missing: ${pointer.manifestKey}`)
   const manifest = await manifestObject.json<MarkdownManifest>()
-  const files: RuntimeFile[] = []
-  for (const file of manifest.files) {
+  return Promise.all(manifest.files.map(async (file): Promise<RuntimeFile> => {
     const object = await bucket.get(file.objectKey)
     if (!object) throw new Error(`R2 Markdown object is missing: ${file.objectKey}`)
-    files.push({ path: file.path, bytes: new Uint8Array(await object.arrayBuffer()) })
-  }
-  return files
+    return { path: file.path, bytes: new Uint8Array(await object.arrayBuffer()) }
+  }))
 }
 
 async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer): Promise<MarkdownPointer> {
-  const manifestFiles: MarkdownManifestFile[] = []
-  for (const file of files) {
+  const manifestFiles = await Promise.all(files.map(async (file): Promise<MarkdownManifestFile> => {
     const sha256 = await sha256Hex(file.bytes)
     const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
     if (!await bucket.head(objectKey)) await bucket.put(objectKey, file.bytes)
-    manifestFiles.push({ path: file.path, objectKey, sha256, size: file.bytes.byteLength })
-  }
+    return { path: file.path, objectKey, sha256, size: file.bytes.byteLength }
+  }))
   if (current) {
     const currentManifest = await readMarkdownManifest(bucket, current)
     if (currentManifest && JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles)) return current
