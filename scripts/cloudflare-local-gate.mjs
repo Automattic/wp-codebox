@@ -17,6 +17,7 @@ try {
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
   await assertCanonicalProbes()
+  await assertMdiDiagnostics()
   await assertConcurrentMutations()
   const adminHtml = await login()
   const editorHtml = await assertPostNewEditor()
@@ -179,6 +180,25 @@ async function assertCanonicalProbes() {
     throw new Error(`Canonical bootstrap setup probe did not produce ephemeral changes: ${JSON.stringify(setup)}`)
   }
   console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
+}
+
+async function assertMdiDiagnostics() {
+  const phases = ["mdi-init-exclude-widgets", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first"]
+  const diagnostics = await Promise.all(phases.map(async (phase) => {
+    const response = await request(`${origin}/?phase=${phase}`)
+    const body = await response.text()
+    assertNoPhpDiagnostics(body, phase)
+    if (!response.ok) throw new Error(`${phase} failed with ${response.status}: ${body}`)
+    const probe = JSON.parse(body)
+    if (probe.completed !== true || probe.evidence?.bootstrapPhase !== phase) throw new Error(`${phase} did not complete: ${body}`)
+    return probe.evidence
+  }))
+  const [initExclusion, factory, remainingHooks, directRegistration] = diagnostics
+  if (!Array.isArray(initExclusion.removedCallbacks) || !initExclusion.removedCallbacks.includes("wp_widgets_init")) throw new Error(`mdi-init-exclude-widgets did not remove wp_widgets_init: ${JSON.stringify(initExclusion)}`)
+  if (!Array.isArray(factory.removedInitCallbacks) || !Array.isArray(factory.removedWidgetsCallbacks) || !Number.isInteger(factory.widgetClassCount)) throw new Error(`mdi-widgets-factory did not return fixed removal evidence: ${JSON.stringify(factory)}`)
+  if (!Array.isArray(remainingHooks.removedWidgetsCallbacks) || !Number.isInteger(remainingHooks.widgetClassCount)) throw new Error(`mdi-widgets-remaining-hooks did not return fixed removal evidence: ${JSON.stringify(remainingHooks)}`)
+  if (!Array.isArray(directRegistration.classNamesAttempted) || directRegistration.classCount !== directRegistration.classNamesAttempted.length) throw new Error(`mdi-widgets-direct-basic-classic-first did not return its fixed class group: ${JSON.stringify(directRegistration)}`)
+  console.log(`MDI diagnostics: init exclusion removed ${initExclusion.removedCallbacks.length} callback(s); widget factory ${factory.widgetClassCount} classes; remaining hooks ${remainingHooks.widgetClassCount} classes; direct registration ${directRegistration.classCount} classes.`)
 }
 
 async function assertWordPressPage(target, label) {

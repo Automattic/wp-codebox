@@ -697,15 +697,15 @@ function wp_codebox_widgets_probe_remove_callbacks($hook_name, $identifiers, $re
     $removed = array();
     $hook = isset($GLOBALS['wp_filter'][$hook_name]) ? $GLOBALS['wp_filter'][$hook_name] : null;
     if (!$hook || !isset($hook->callbacks) || !is_array($hook->callbacks)) return $removed;
-    foreach ($hook->callbacks as $priority => $callbacks) {
-        foreach ($callbacks as $index => $registered) {
+    $callbacks_by_priority = $hook->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
+        foreach ($callbacks as $registered) {
+            if (!isset($registered['function'])) continue;
             $identifier = wp_codebox_widgets_probe_callback_identifier($registered['function']);
             if (in_array($identifier, $identifiers, true) !== $retain) {
-                unset($hook->callbacks[$priority][$index]);
-                $removed[] = $identifier;
+                if (remove_action($hook_name, $registered['function'], (int) $priority)) $removed[] = $identifier;
             }
         }
-        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
     }
     sort($removed, SORT_STRING);
     return $removed;
@@ -931,15 +931,15 @@ if ($phase === 'mdi-init-callbacks') {
 $removed = array();
 $hook = isset($GLOBALS['wp_filter']['init']) ? $GLOBALS['wp_filter']['init'] : null;
 if ($hook && isset($hook->callbacks) && is_array($hook->callbacks)) {
-    foreach ($hook->callbacks as $priority => $callbacks) {
-        foreach ($callbacks as $index => $registered) {
+    $callbacks_by_priority = $hook->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
+        foreach ($callbacks as $registered) {
+            if (!isset($registered['function'])) continue;
             $identifier = wp_codebox_init_probe_callback_identifier($registered['function']);
             if (wp_codebox_init_probe_matches($identifier, $excluded)) {
-                unset($hook->callbacks[$priority][$index]);
-                $removed[] = $identifier;
+                if (remove_action('init', $registered['function'], (int) $priority)) $removed[] = $identifier;
             }
         }
-        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
     }
 }
 sort($removed, SORT_STRING);

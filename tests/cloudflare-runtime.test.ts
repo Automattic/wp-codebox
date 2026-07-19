@@ -232,6 +232,59 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.doesNotMatch(worker, /searchParams\.get\([^)]*callback|searchParams\.get\([^)]*exclude|searchParams\.get\([^)]*widget/)
 })
 
+test("Cloudflare widget diagnostics preserve later hook priorities after callback removal", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const helper = worker.match(/function wp_codebox_widgets_probe_callback_identifier\(\$callback\) \{[\s\S]*?(?=function wp_codebox_widgets_probe_register_defaults)/)?.[0]
+  assert.ok(helper, "The widget probe callback helper is present in the worker PHP probe.")
+  assert.match(helper, /\$callbacks_by_priority = \$hook->callbacks/)
+  assert.match(helper, /remove_action\(\$hook_name, \$registered\['function'\], \(int\) \$priority\)/)
+  assert.doesNotMatch(helper, /unset\(\$hook->callbacks/)
+
+  const php = `<?php
+class WP_Hook {
+    public $callbacks = array();
+    private $priorities = array();
+    public function add_filter($callback, $priority, $accepted_args) {
+        $this->callbacks[$priority][] = array('function' => $callback, 'accepted_args' => $accepted_args);
+        $this->priorities = array_keys($this->callbacks);
+        sort($this->priorities, SORT_NUMERIC);
+    }
+    public function remove_filter($callback, $priority) {
+        if (!isset($this->callbacks[$priority])) return false;
+        foreach ($this->callbacks[$priority] as $index => $registered) {
+            if ($registered['function'] === $callback) {
+                unset($this->callbacks[$priority][$index]);
+                if (empty($this->callbacks[$priority])) unset($this->callbacks[$priority]);
+                $this->priorities = array_keys($this->callbacks);
+                sort($this->priorities, SORT_NUMERIC);
+                return true;
+            }
+        }
+        return false;
+    }
+    public function do_action() {
+        foreach ($this->priorities as $priority) {
+            foreach ($this->callbacks[$priority] as $registered) call_user_func($registered['function']);
+        }
+    }
+}
+$GLOBALS['wp_filter'] = array('widgets_init' => new WP_Hook());
+function add_action($hook_name, $callback, $priority = 10, $accepted_args = 1) { $GLOBALS['wp_filter'][$hook_name]->add_filter($callback, $priority, $accepted_args); }
+function remove_action($hook_name, $callback, $priority = 10) { return $GLOBALS['wp_filter'][$hook_name]->remove_filter($callback, $priority); }
+function do_action($hook_name) { $GLOBALS['wp_filter'][$hook_name]->do_action(); }
+${helper}
+function wp_codebox_probe_removed_callback() { $GLOBALS['wp_codebox_probe_calls'][] = 'removed'; }
+function wp_codebox_probe_later_priority_sentinel() { $GLOBALS['wp_codebox_probe_calls'][] = 'later-priority-sentinel'; }
+$GLOBALS['wp_codebox_probe_calls'] = array();
+add_action('widgets_init', 'wp_codebox_probe_removed_callback', 10);
+add_action('widgets_init', 'wp_codebox_probe_later_priority_sentinel', 20);
+$removed_callbacks = wp_codebox_widgets_probe_remove_callbacks('widgets_init', array('wp_codebox_probe_removed_callback'), false);
+do_action('widgets_init');
+echo json_encode(array('removed' => $removed_callbacks, 'calls' => $GLOBALS['wp_codebox_probe_calls']));`
+  const { stdout } = await execFileAsync("php", ["-r", php.slice("<?php\n".length)])
+  assert.deepEqual(JSON.parse(stdout), { removed: ["wp_codebox_probe_removed_callback"], calls: ["later-priority-sentinel"] })
+})
+
 test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed without canonical persistence", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
