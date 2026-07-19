@@ -220,7 +220,14 @@ test("WordPress runtime artifacts are content-addressed and reject unavailable o
     files: [{ path: "wordpress/wp-includes/version.php", size: source.byteLength, sha256: sha256(source) }],
   }
   const writes = new Map<string, Uint8Array>()
-  const php = { mkdir: () => {}, writeFile: (path: string, bytes: Uint8Array) => writes.set(path, bytes) }
+  const phpRuns: string[] = []
+  const php = {
+    writeFile: (path: string, bytes: Uint8Array) => writes.set(path, bytes),
+    run: async ({ code }: { code: string }) => {
+      phpRuns.push(code)
+      return { text: JSON.stringify({ materializedFiles: 1, materializedBytes: source.byteLength }) }
+    },
+  }
   let arrayBufferReads = 0
   const bucket = (bytes: Uint8Array | null) => ({ get: async () => bytes === null ? null : {
     size: bytes.byteLength,
@@ -239,10 +246,25 @@ test("WordPress runtime artifacts are content-addressed and reject unavailable o
   const hashCorruptManifest = { ...manifest, key: wordpressRuntimeArtifactKey("a".repeat(64)), archive: { ...manifest.archive, sha256: "a".repeat(64) } }
   await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(archive) as never, hashCorruptManifest), /archive hash does not match/)
   assert.equal(writes.size, 0, "hash-corrupt archives fail before extraction")
+  const malformed = new Uint8Array([0, 1, 2, 3])
+  const malformedManifest = { ...manifest, key: wordpressRuntimeArtifactKey(sha256(malformed)), archive: { sha256: sha256(malformed), size: malformed.byteLength } }
+  const malformedWrites: Uint8Array[] = []
+  await assert.rejects(materializeWordPressRuntimeArtifact({
+    writeFile: (_path, bytes) => malformedWrites.push(bytes),
+    run: async () => { throw new Error("WordPress runtime artifact ZIP could not be opened (ZipArchive status 19).") },
+  }, bucket(malformed) as never, malformedManifest), /ZIP could not be opened/)
+  assert.equal(malformedWrites.length, 1, "a hash-valid malformed archive is rejected by PHP after its single archive write")
   const evidence = await materializeWordPressRuntimeArtifact(php, bucket(archive) as never, manifest)
-  assert.equal(arrayBufferReads, 2, "valid and hash-corrupt archives use R2 arrayBuffer()")
+  assert.equal(arrayBufferReads, 3, "valid, hash-corrupt, and malformed archives use R2 arrayBuffer()")
   assert.deepEqual(evidence, { materializedFiles: 1, materializedBytes: source.byteLength })
-  assert.deepEqual(writes.get("/wordpress/wp-includes/version.php"), source)
+  assert.equal(writes.size, 1, "the verified archive crosses the JS/WASM boundary once")
+  assert.deepEqual(writes.get("/tmp/wp-codebox-wordpress-runtime.zip"), archive)
+  assert.equal(phpRuns.length, 1)
+  assert.match(phpRuns[0], /extension_loaded\('zip'\)/)
+  assert.match(phpRuns[0], /\$zip->numFiles !== count\(\$expected\)/)
+  assert.match(phpRuns[0], /\$zip->extractTo\('\/', array_keys\(\$expected\)\)/)
+  assert.match(phpRuns[0], /missing required file after extraction/)
+  assert.match(phpRuns[0], /finally \{\n    @unlink\(\$archive_path\)/)
 })
 
 test("WordPress runtime artifact validation rejects path traversal and invalid budgets", async () => {
@@ -253,8 +275,10 @@ test("WordPress runtime artifact validation rejects path traversal and invalid b
     source: { url: "https://downloads.wordpress.org/release/wordpress-6.8.1.zip" },
     files: [{ path: "wordpress/../wp-includes/version.php", size: 9 * 1024 * 1024, sha256: "b".repeat(64) }],
   }
-  const php = { mkdir: () => {}, writeFile: () => {} }
+  let writes = 0
+  const php = { writeFile: () => { writes++ }, run: async () => ({ text: "" }) }
   await assert.rejects(materializeWordPressRuntimeArtifact(php, { get: async () => null } as never, manifest), /invalid file path/)
+  assert.equal(writes, 0, "unsafe manifests are rejected before any archive write")
 })
 
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
@@ -265,7 +289,8 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /encodeZip\(selected\)/)
   assert.match(generator, /lastModified: 0/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
-  assert.match(artifact, /decodeZip\(new Blob\(\[archiveBytes\]\)\.stream\(\)\)/)
+  assert.doesNotMatch(artifact, /decodeZip/)
+  assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
   assert.ok(manifest.files.length > 0)
 })

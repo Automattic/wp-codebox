@@ -1,4 +1,3 @@
-import { decodeZip } from "@php-wasm/stream-compression"
 import { isWordPressRuntimeFile } from "./wordpress-runtime-corpus.js"
 
 export const WORDPRESS_RUNTIME_ARTIFACT_SCHEMA = "wp-codebox/wordpress-runtime-artifact/v1"
@@ -16,9 +15,17 @@ export interface WordPressRuntimeArtifactManifest {
 }
 
 export interface RuntimeMemfs {
-  mkdir(path: string): void
   writeFile(path: string, bytes: Uint8Array): void
+  run(request: { code: string }): Promise<{ text: string }>
 }
+
+const WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH = "/tmp/wp-codebox-wordpress-runtime.zip"
+const REQUIRED_WORDPRESS_RUNTIME_FILES = [
+  "wordpress/index.php",
+  "wordpress/wp-load.php",
+  "wordpress/wp-includes/version.php",
+  "wordpress/wp-settings.php",
+]
 
 export function wordpressRuntimeArtifactKey(sha256: string): string {
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("WordPress runtime artifact hash must be a SHA-256 digest.")
@@ -52,24 +59,71 @@ export async function materializeWordPressRuntimeArtifact(php: RuntimeMemfs, buc
   // The archive and expanded corpus caps leave most of the 128 MiB isolate for PHP-WASM and runtime overhead.
   const archiveBytes = new Uint8Array(await object.arrayBuffer())
   if (await sha256Hex(archiveBytes) !== manifest.archive.sha256) throw new Error("WordPress runtime artifact archive hash does not match its manifest.")
-  const expected = new Map(manifest.files.map((file) => [file.path, file]))
-  let materializedFiles = 0
-  let materializedBytes = 0
-  for await (const entry of decodeZip(new Blob([archiveBytes]).stream())) {
-    const file = expected.get(entry.name)
-    if (!file) throw new Error(`WordPress runtime artifact contains an unexpected file: ${entry.name}`)
-    const bytes = new Uint8Array(await entry.arrayBuffer())
-    if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`WordPress runtime artifact file validation failed: ${entry.name}`)
-    materializedBytes += bytes.byteLength
-    materializedFiles++
-    if (materializedFiles > WORDPRESS_RUNTIME_MAX_FILES || materializedBytes > WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES) throw new Error("WordPress runtime artifact exceeds its materialization budget.")
-    const destination = `/${entry.name}`
-    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
-    php.writeFile(destination, bytes)
-    expected.delete(entry.name)
+
+  // The archive digest binds these bytes to the already path- and budget-checked manifest.
+  // Crossing into PHP once avoids per-file JS/WASM calls during cold boot.
+  php.writeFile(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes)
+  const output = (await php.run({ code: zipMaterializationCode(manifest) })).text.trim()
+  let evidence: unknown
+  try {
+    evidence = JSON.parse(output)
+  } catch {
+    throw new Error(`WordPress runtime artifact extraction did not return valid evidence: ${output}`)
   }
-  if (expected.size) throw new Error("WordPress runtime artifact is missing manifest files.")
-  return { materializedFiles, materializedBytes }
+  if (!isMaterializationEvidence(evidence, manifest)) throw new Error("WordPress runtime artifact extraction returned invalid evidence.")
+  return evidence
+}
+
+function zipMaterializationCode(manifest: WordPressRuntimeArtifactManifest): string {
+  const expected = Object.fromEntries(manifest.files.map((file) => [file.path, file.size]))
+  const expectedJson = JSON.stringify(expected).replace(/</g, "\\u003c")
+  const requiredJson = JSON.stringify(REQUIRED_WORDPRESS_RUNTIME_FILES)
+  return `<?php
+$archive_path = ${JSON.stringify(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH)};
+$expected = json_decode(${JSON.stringify(expectedJson)}, true, 512, JSON_THROW_ON_ERROR);
+$required = json_decode(${JSON.stringify(requiredJson)}, true, 512, JSON_THROW_ON_ERROR);
+try {
+    if (!extension_loaded('zip') || !class_exists('ZipArchive')) {
+        throw new RuntimeException('WordPress runtime artifact extraction requires the PHP ZipArchive extension.');
+    }
+    $zip = new ZipArchive();
+    $opened = $zip->open($archive_path);
+    if (true !== $opened) {
+        throw new RuntimeException('WordPress runtime artifact ZIP could not be opened (ZipArchive status ' . $opened . ').');
+    }
+    try {
+        if ($zip->numFiles !== count($expected)) {
+            throw new RuntimeException('WordPress runtime artifact ZIP file count does not match its manifest.');
+        }
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $name = $zip->getNameIndex($index);
+            $stat = $zip->statIndex($index);
+            if (!is_string($name) || !array_key_exists($name, $expected) || !is_array($stat) || !isset($stat['size']) || (int) $stat['size'] !== $expected[$name]) {
+                throw new RuntimeException('WordPress runtime artifact ZIP entries do not match its manifest.');
+            }
+        }
+        if (!$zip->extractTo('/', array_keys($expected))) {
+            throw new RuntimeException('WordPress runtime artifact ZIP extraction failed.');
+        }
+        foreach ($required as $path) {
+            if (!is_file('/' . $path)) {
+                throw new RuntimeException('WordPress runtime artifact is missing required file after extraction: ' . $path);
+            }
+        }
+        echo json_encode(array('materializedFiles' => count($expected), 'materializedBytes' => array_sum($expected)), JSON_THROW_ON_ERROR);
+    } finally {
+        $zip->close();
+    }
+} finally {
+    @unlink($archive_path);
+}`
+}
+
+function isMaterializationEvidence(value: unknown, manifest: WordPressRuntimeArtifactManifest): value is { materializedFiles: number; materializedBytes: number } {
+  if (!value || typeof value !== "object") return false
+  const evidence = value as Record<string, unknown>
+  return evidence.materializedFiles === manifest.files.length
+    && evidence.materializedBytes === manifest.files.reduce((total, file) => total + file.size, 0)
 }
 
 function isSafeRuntimePath(path: string): boolean {
