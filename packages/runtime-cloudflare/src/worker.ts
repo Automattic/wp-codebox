@@ -566,7 +566,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"].includes(phase)) {
+  if (canonicalLifecyclePhaseAliases[phase] || ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
     try {
       const evidence = (await runtime.php.run({ code: canonicalLifecycleProbeCode(phase) })).text.trim()
@@ -1003,7 +1003,15 @@ file_put_contents($settings_path, str_replace($needle, $replacement, $settings))
 require '/wordpress/wp-load.php';`
 }
 
+const canonicalLifecyclePhaseAliases: Record<string, string> = {
+  "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
+  "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
+  "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
+  "canon-wpl-no-cron": "canonical-wp-loaded-exclude-wp-cron",
+}
+
 function canonicalLifecycleProbeCode(phase: string): string {
+  const canonicalPhase = canonicalLifecyclePhaseAliases[phase] ?? phase
   const wpLoadedExclusions: Record<string, { identifiers: string[]; retain: boolean }> = {
     "canonical-wp-loaded-exclude-rewrite-flush": { identifiers: ["WP_Rewrite::flush_rules", "playground_maybe_flush_rewrite_rules"], retain: false },
     "canonical-wp-loaded-exclude-core-template-header": { identifiers: ["_add_template_loader_filters", "_custom_header_background_just_in_time", "_custom_logo_header_styles"], retain: false },
@@ -1020,11 +1028,11 @@ function canonicalLifecycleProbeCode(phase: string): string {
     "canonical-wp-loaded-callbacks": { needle: wpLoadedNeedle },
     ...Object.fromEntries(Object.keys(wpLoadedExclusions).map((name) => [name, { needle: wpLoadedNeedle }])),
   }
-  const stop = stops[phase]
+  const stop = stops[canonicalPhase]
   if (!stop) throw new Error(`Unknown canonical lifecycle probe phase: ${phase}`)
 
-  const wpLoadedProbe = phase === "canonical-wp-loaded-callbacks" || wpLoadedExclusions[phase]
-  const exclusion = wpLoadedExclusions[phase]
+  const wpLoadedProbe = canonicalPhase === "canonical-wp-loaded-callbacks" || wpLoadedExclusions[canonicalPhase]
+  const exclusion = wpLoadedExclusions[canonicalPhase]
   const wpLoadedStop = !wpLoadedProbe ? "" : `function wp_codebox_canonical_wp_loaded_callback_identifier($callback) {
     if (is_string($callback)) return $callback;
     if ($callback instanceof Closure) return 'Closure';
@@ -1073,7 +1081,7 @@ function wp_codebox_canonical_wp_loaded_remove_snapshot($identifiers, $retain) {
     return $removed;
 }
 $inventory = wp_codebox_canonical_wp_loaded_inventory();
-${phase === "canonical-wp-loaded-callbacks" ? `echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => '${phase}', 'callbacks' => $inventory, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
+${canonicalPhase === "canonical-wp-loaded-callbacks" ? `echo json_encode(array('wordpressVersion' => $wp_version, 'bootstrapPhase' => '${phase}', 'callbacks' => $inventory, 'memoryBytes' => memory_get_usage(true), 'peakMemoryBytes' => memory_get_peak_usage(true)));
 return;` : `$removed = wp_codebox_canonical_wp_loaded_remove_snapshot(${JSON.stringify(exclusion?.identifiers ?? [])}, ${exclusion?.retain ? "true" : "false"});
 $memory_before = memory_get_usage(true);
 do_action('wp_loaded');

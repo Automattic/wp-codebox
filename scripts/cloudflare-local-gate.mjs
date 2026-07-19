@@ -171,12 +171,12 @@ async function assertHealthResponse() {
 async function assertCanonicalProbes() {
   const wordpress = await (await request(`${origin}/?phase=canonical-wordpress`)).json()
   const setup = await (await request(`${origin}/?phase=canonical-bootstrap-setup`)).json()
-  const lifecyclePhases = ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all"]
+  const lifecyclePhases = ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded-callbacks", "canon-wpl-no-rewrite", "canon-wpl-no-core", "canon-wpl-no-playground", "canon-wpl-no-cron", "canonical-wp-loaded-exclude-all"]
   const expectedRemovedCallbacks = {
-    "canonical-wp-loaded-exclude-rewrite-flush": ["WP_Rewrite::flush_rules"],
-    "canonical-wp-loaded-exclude-core-template-header": ["_add_template_loader_filters", "_custom_header_background_just_in_time"],
-    "canonical-wp-loaded-exclude-playground": ["playground_save_wp_env_info"],
-    "canonical-wp-loaded-exclude-wp-cron": [],
+    "canon-wpl-no-rewrite": ["WP_Rewrite::flush_rules"],
+    "canon-wpl-no-core": ["_add_template_loader_filters", "_custom_header_background_just_in_time"],
+    "canon-wpl-no-playground": ["playground_save_wp_env_info"],
+    "canon-wpl-no-cron": [],
     "canonical-wp-loaded-exclude-all": ["WP_Rewrite::flush_rules", "_add_template_loader_filters", "_custom_header_background_just_in_time", "playground_save_wp_env_info"],
   }
   const lifecycle = await Promise.all(lifecyclePhases.map(async (phase) => {
@@ -197,7 +197,7 @@ async function assertCanonicalProbes() {
   for (const probe of lifecycle) {
     const evidence = probe.evidence
     const schedulingAttached = probe.phase === "canonical-current-user"
-    const isWpLoadedProbe = probe.phase.startsWith("canonical-wp-loaded-")
+    const isWpLoadedProbe = probe.phase.startsWith("canonical-wp-loaded-") || probe.phase.startsWith("canon-wpl-no-")
     const lifecycleEvidenceIsValid = !isWpLoadedProbe && evidence?.wpCronInitAttached === schedulingAttached && evidence?.updateScheduleInitAttached === schedulingAttached && evidence?.privacyScheduleInitAttached === schedulingAttached
     const wpLoadedEvidenceIsValid = isWpLoadedProbe && typeof evidence?.callbacks === "object" && evidence.callbacks !== null && !Array.isArray(evidence.callbacks) && (probe.phase === "canonical-wp-loaded-callbacks" || (evidence?.completed === true && Array.isArray(evidence?.removedCallbacks) && Number.isInteger(evidence?.memoryBeforeBytes)))
     if (probe.completed !== true || !lifecyclePhases.includes(probe.phase) || evidence?.bootstrapPhase !== probe.phase || typeof evidence?.wordpressVersion !== "string" || !Number.isInteger(evidence?.memoryBytes) || !Number.isInteger(evidence?.peakMemoryBytes) || (!lifecycleEvidenceIsValid && !wpLoadedEvidenceIsValid)) {
