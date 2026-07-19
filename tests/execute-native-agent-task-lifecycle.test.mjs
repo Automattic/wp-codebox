@@ -17,7 +17,8 @@ async function run(mode = "success") {
   const targetRepo = mode === "canonical-casing" ? "automattic/build-with-wordpress" : "owner/repo"
   const publicationRepo = mode === "canonical-casing"
     ? "Automattic/build-with-wordpress"
-    : mode === "different-repo" ? "other/repo" : targetRepo
+    : targetRepo
+  const resolvedRepo = mode === "different-repo" ? "other/repo" : publicationRepo
   await mkdir(join(workspace, ".codebox"), { recursive: true })
   await writeFile(join(workspace, "README.md"), "OPENAI_API_KEY\nbefore\n")
 
@@ -139,8 +140,8 @@ export async function publishRunnerWorkspace({ testHook }) {
   const gh = join(temp, "gh")
   await writeFile(gh, `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({
-  html_url: ${JSON.stringify(`https://github.com/${publicationRepo}/pull/1`)},
-  base: { repo: { full_name: ${JSON.stringify(publicationRepo)} } },
+  html_url: ${JSON.stringify(`https://github.com/${resolvedRepo}/pull/1`)},
+  base: { repo: { full_name: ${JSON.stringify(resolvedRepo)} } },
 }))
 `)
   await chmod(gh, 0o755)
@@ -189,6 +190,7 @@ assert(!durablePatch.includes("OPENAI_API_KEY"), "durable patch artifacts redact
 assert.match(durablePatch, /\[REDACTED\]/)
 assert.match(success.order, /runtime\nvalidation\nverification\ndrift\npublish\n/)
 assert.equal(success.result.runtime_result.metadata.runner_workspace_publication.pull_request.url, "https://github.com/owner/repo/pull/1")
+assert.deepEqual(success.result.publication_verification, { valid: true })
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].target, "/workspace")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].mode, "readwrite")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.sandbox_workspace.mounts[0].target, "/workspace")
@@ -196,12 +198,15 @@ assert.equal(success.result.runtime_result.agent_runtime_diagnostics.local_execu
 
 const canonicalCasing = await run("canonical-casing")
 assert.equal(canonicalCasing.code, 0, `${canonicalCasing.stderr}\n${JSON.stringify(canonicalCasing.result)}`)
-assert.equal(canonicalCasing.result.publication_verification.valid, true)
+assert.deepEqual(canonicalCasing.result.publication_verification, { valid: true })
 
 const differentRepository = await run("different-repo")
 assert.equal(differentRepository.code, 1)
-assert.equal(differentRepository.result.publication_verification.valid, false)
-assert.match(differentRepository.result.failure.message, /valid canonical pull-request result/)
+assert.deepEqual(differentRepository.result.publication_verification, {
+  valid: false,
+  error: "Published pull request did not resolve to the target repository.",
+})
+assert.equal(differentRepository.result.failure.message, "Published pull request did not resolve to the target repository.")
 
 const failedVerification = await run("verify-fail")
 assert.equal(failedVerification.code, 1)

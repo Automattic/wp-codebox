@@ -295,11 +295,11 @@ async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
   if (response.code !== 0) return { valid: false, error: "Published pull request could not be resolved through GitHub.", stderr: response.stderr, stderr_truncated: response.stderr_truncated }
   try {
     const pullRequest = JSON.parse(response.stdout)
-    return {
-      valid: pullRequest?.html_url === record(publication).pull_request?.url
-        && string(pullRequest?.base?.repo?.full_name).toLowerCase() === targetRepo.toLowerCase(),
-      error: "Published pull request did not resolve to the target repository.",
-    }
+    const valid = pullRequest?.html_url === record(publication).pull_request?.url
+      && string(pullRequest?.base?.repo?.full_name).toLowerCase() === targetRepo.toLowerCase()
+    return valid
+      ? { valid: true }
+      : { valid: false, error: "Published pull request did not resolve to the target repository." }
   } catch {
     return { valid: false, error: "GitHub pull-request validation did not return JSON." }
   }
