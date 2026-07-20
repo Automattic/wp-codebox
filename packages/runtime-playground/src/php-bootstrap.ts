@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
-import { phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { phpCliStreamConstants, phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
@@ -29,6 +29,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 
   return `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
+${phpCliStreamConstants()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec)}

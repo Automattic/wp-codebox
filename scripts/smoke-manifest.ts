@@ -103,6 +103,7 @@ export const smokeGroups = {
       tsxSmoke("executable-browser-dto-smoke"),
       tsxSmoke("partial-artifact-discovery-smoke"),
       tsxSmoke("mounted-workspace-diff-smoke"),
+      npmScript("test:mount-artifact-capture-policy"),
       tsxSmoke("replay-export-blueprint-smoke"),
       tsxSmoke("replay-export-manifest-integrity-smoke"),
       tsxSmoke("materialize-replay-package-smoke"),

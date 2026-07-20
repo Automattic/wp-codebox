@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run" | "runtime-package-run"
@@ -11,6 +11,7 @@ interface WordPressPhpunitBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   phpVersion?: string
+  wordpressInstallMode?: RuntimeWordPressInstallMode
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
   mounts?: WorkspaceRecipeMount[]
@@ -80,6 +81,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: phpunitOptions.blueprint,
         wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
         phpVersion: stringOrUndefined(phpunitOptions.phpVersion),
+        wordpressInstallMode: phpunitOptions.wordpressInstallMode,
         extensions: Array.isArray(phpunitOptions.extensions) ? phpunitOptions.extensions : [],
         backendPackage: phpunitOptions.backendPackage,
         mounts: Array.isArray(phpunitOptions.mounts) ? phpunitOptions.mounts : [],

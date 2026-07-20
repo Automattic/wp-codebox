@@ -537,6 +537,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
+          captureArtifacts: { type: "boolean" },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
@@ -921,7 +922,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "object",
             additionalProperties: false,
             properties: {
+              engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
+              foreignKeyTargetPolicy: { enum: ["unique-only", "indexed"] },
             },
           },
           outputs: {

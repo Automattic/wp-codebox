@@ -202,6 +202,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       version: plan.runtime.wp,
       phpVersion: plan.runtime.phpVersion,
       wordpressInstallMode: plan.runtime.wordpressInstallMode,
+      databaseSetup: recipe.inputs?.services?.some(({ kind }) => kind === "mysql") ? "external" as const : undefined,
       blueprint: plan.runtime.blueprint,
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
       extensions: resolveRecipeRuntimeExtensionManifests(recipe, recipeDirectory),

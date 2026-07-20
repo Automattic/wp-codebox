@@ -410,6 +410,7 @@ const managedModeCode = phpunitRunCode({
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
+assert.ok(managedModeCode.includes("global $argv, $pg_stage_output_buffering, $wp_rewrite;"), "managed WordPress installation must expose the rewrite global required by multisite setup")
 assert.ok(managedModeCode.includes('$dep_mounts = "/wordpress/wp-content/plugins/demo-plugin\\n/wordpress/wp-content/plugins/dependency";'), "dependency mounts must be newline-delimited for the generated PHP runner")
 const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
 const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)
@@ -441,6 +442,18 @@ assert.deepEqual(dependencyRecipe.inputs.extra_plugins, [{
   activate: false,
 }])
 assert.ok(dependencyRecipe.workflow.steps[0].args.includes("dependency-mounts=/wordpress/wp-content/plugins/dependency"))
+
+const multisiteRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "network-plugin",
+  multisite: true,
+  blueprint: { steps: [{ step: "setSiteOptions", options: { blogname: "Network tests" } }] },
+})
+assert.deepEqual((multisiteRecipe.runtime.blueprint as { steps: unknown[] }).steps, [
+  { step: "enableMultisite" },
+  { step: "setSiteOptions", options: { blogname: "Network tests" } },
+], "multisite PHPUnit recipes must boot Playground as multisite before running tests")
+assert.equal(multisiteRecipe.runtime.preview?.siteUrl, "http://localhost", "multisite PHPUnit recipes need a canonical site URL without the dynamic Playground port")
+assert.ok(multisiteRecipe.workflow.steps[0].args.includes("multisite=1"))
 
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")

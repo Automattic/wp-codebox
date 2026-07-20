@@ -66,6 +66,10 @@ WordPress runtime name and currently resolves to the WordPress Playground backen
 Existing recipes that specify `wordpress-playground` continue to work as a
 compatibility spelling.
 
+Input mounts capture artifacts by default. A large readwrite mount whose
+mutations are runtime-only can set `"captureArtifacts": false` to skip its
+pre-run baseline and post-run file/diff capture without changing mount access.
+
 Raw Playground-oriented fields such as `runtime.blueprint`, `runtime.phpVersion`,
 `runtime.wordpressInstallMode`, and Playground backend packages are advanced
 compatibility fields. Prefer the neutral `wordpress` backend and recipe inputs

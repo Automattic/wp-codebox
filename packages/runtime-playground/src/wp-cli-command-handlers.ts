@@ -1,4 +1,5 @@
 import { argValue } from "./command-args.js"
+import { phpCliStreamConstants } from "./php-snippets.js"
 
 export function wpCliCommandFromArgs(args: string[]): string {
   const explicit = argValue(args, "command")
@@ -52,15 +53,7 @@ export function wpCliPhpScript(argv: string[]): string {
   return `<?php
 putenv('SHELL_PIPE=0');
 $GLOBALS['argv'] = array_merge(array('/tmp/wp-cli.phar', '--path=/wordpress', '--no-color'), json_decode(${JSON.stringify(JSON.stringify(argv))}, true));
-if (!defined('STDIN')) {
-    define('STDIN', fopen('php://stdin', 'rb'));
-}
-if (!defined('STDOUT')) {
-    define('STDOUT', fopen('php://stdout', 'wb'));
-}
-if (!defined('STDERR')) {
-    define('STDERR', fopen('php://stderr', 'wb'));
-}
+${phpCliStreamConstants()}
 require '/tmp/wp-cli.phar';
 `
 }

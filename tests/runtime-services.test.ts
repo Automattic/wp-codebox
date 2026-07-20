@@ -22,7 +22,14 @@ const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace
 assert.equal(unsafe.valid, false)
 const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [emptyRootService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+const indexedForeignKeyService = { ...service, configuration: { foreignKeyTargetPolicy: "indexed" as const } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [indexedForeignKeyService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+const mariaDbService = { ...service, configuration: { engine: "mariadb" as const, rootAuthentication: "empty-password" as const } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [mariaDbService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+assert.equal(runtimeServicePlan([mariaDbService])[0]?.version, "mariadb:11.4")
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, configuration: { foreignKeyTargetPolicy: "anything" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: [emptyRootService] }).inputs?.services, [emptyRootService])
+assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {
   const optionsPath = join(builderDirectory, "options.json")
@@ -124,6 +131,35 @@ assert.equal(emptyRootRun?.args.includes("MYSQL_ROOT_PASSWORD"), false)
 assert.equal(emptyRootRun?.env?.MYSQL_ALLOW_EMPTY_PASSWORD, "yes")
 assert.equal(emptyRootRun?.env?.MYSQL_ROOT_PASSWORD, undefined)
 await emptyRoot.release()
+
+const indexedForeignKeyCalls: Array<{ args: string[] }> = []
+const indexedForeignKeyDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    indexedForeignKeyCalls.push({ args })
+    return dependencies.execute(command, args, options)
+  },
+}
+const indexedForeignKey = await provisionRuntimeServices([indexedForeignKeyService], { dependencies: indexedForeignKeyDependencies })
+const indexedForeignKeyRun = indexedForeignKeyCalls.find((call) => call.args[0] === "run")
+assert.deepEqual(indexedForeignKeyRun?.args.slice(-2), ["mysql:8.4", "--restrict-fk-on-non-standard-key=OFF"], "indexed foreign-key targets opt into the MySQL compatibility mode")
+await indexedForeignKey.release()
+
+const mariaDbCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
+const mariaDbDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    mariaDbCalls.push({ args, env: options.env })
+    return dependencies.execute(command, args, options)
+  },
+}
+const mariaDb = await provisionRuntimeServices([mariaDbService], { dependencies: mariaDbDependencies })
+const mariaDbRun = mariaDbCalls.find((call) => call.args[0] === "run")
+assert.ok(mariaDbRun?.args.includes("mariadb:11.4"))
+assert.ok(mariaDbRun?.args.includes("MARIADB_ALLOW_EMPTY_ROOT_PASSWORD"))
+assert.equal(mariaDbRun?.env?.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD, "yes")
+assert.equal(mariaDbRun?.env?.MYSQL_ALLOW_EMPTY_PASSWORD, undefined)
+await mariaDb.release()
 
 const interruptedAfterProvision = new AbortController()
 const provisionedBeforeAbort = await provisionRuntimeServices([service], { dependencies, signal: interruptedAfterProvision.signal })

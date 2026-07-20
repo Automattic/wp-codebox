@@ -4,10 +4,26 @@ export { phpRuntimeComponentLifecycleReplayFunction, phpRuntimeRecipePluginPrelo
 
 export type PhpScalar = string | number | boolean | null
 
+export function phpCliStreamConstants(): string {
+  return `if (!defined('STDIN')) {
+    define('STDIN', fopen('php://stdin', 'rb'));
+}
+if (!defined('STDOUT')) {
+    define('STDOUT', fopen('php://stdout', 'wb'));
+}
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'wb'));
+}`
+}
+
 export function phpEnvAssignments(env: Record<string, unknown>): string {
   const lines = Object.entries(env)
     .filter(([name]) => isSafeEnvName(name))
-    .map(([name, value]) => `putenv(${JSON.stringify(`${name}=${String(value)}`)});`)
+    .flatMap(([name, value]) => [
+      `putenv(${JSON.stringify(`${name}=${String(value)}`)});`,
+      `$_ENV[${JSON.stringify(name)}] = ${JSON.stringify(String(value))};`,
+      `$_SERVER[${JSON.stringify(name)}] = ${JSON.stringify(String(value))};`,
+    ])
 
   return lines.length > 0 ? `${lines.join("\n")}\n` : ""
 }
@@ -56,6 +72,7 @@ export function phpEnvAssignmentFunction(functionName: string, jsonFunction = "j
             $string_value = is_scalar($value) ? (string) $value : ${jsonFunction}($value);
             putenv($name . '=' . $string_value);
             $_ENV[$name] = $string_value;
+            $_SERVER[$name] = $string_value;
         }${invalidKeyLogExpression ? ` else {
             ${invalidKeyLogExpression}
         }` : ""}

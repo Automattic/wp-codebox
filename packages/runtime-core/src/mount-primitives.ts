@@ -23,6 +23,9 @@ export function normalizeSharedMount(mount: WorkspaceRecipeMount, index = 0, opt
   if (mount.type !== undefined) {
     normalized.type = mount.type
   }
+  if (mount.captureArtifacts !== undefined) {
+    normalized.captureArtifacts = mount.captureArtifacts
+  }
   if (mount.metadata !== undefined) {
     normalized.metadata = mount.metadata
   }

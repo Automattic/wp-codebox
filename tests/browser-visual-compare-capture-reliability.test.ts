@@ -5,7 +5,9 @@ import { join } from "node:path"
 
 import { PNG } from "pngjs"
 
-import { comparePngFiles, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
+import { chromium } from "playwright"
+
+import { comparePngFiles, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, waitForVisualComparePaintReady, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
 
 // Build an opaque solid-color PNG. `fill` is [r,g,b].
 function solidPng(width: number, height: number, fill: [number, number, number]): PNG {
@@ -79,6 +81,34 @@ function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fil
   assert.equal(visualCompareOfflineRequestAllowed("https://fonts.example.invalid/font.woff2", "http://127.0.0.1:42573"), false)
 }
 
+// 4. A complete SVG image still needs decode readiness: externally served SVGs can be
+// complete before their embedded font glyphs have been painted.
+{
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent('<img id="svg" src="data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"%3E%3C/svg%3E">')
+    await page.waitForFunction(() => document.images[0]?.complete === true)
+    await page.evaluate(`
+      const image = document.querySelector("#svg");
+      const decode = image.decode.bind(image);
+      let calls = 0;
+      Object.defineProperty(image, "decode", {
+        configurable: true,
+        value() {
+          image.dataset.decodeCalls = String(++calls);
+          return decode();
+        },
+      });
+      image.dataset.decodeCalls = String(calls);
+    `)
+    await waitForVisualComparePaintReady(page, 1_000)
+    assert.equal(await page.locator("#svg").evaluate((image) => image.dataset.decodeCalls), "1")
+  } finally {
+    await browser.close()
+  }
+}
+
 // Count pixels in a diff PNG whose RGB is nonzero — the exact predicate the region
 // detector uses (`visualCompareDiffPixel`). pixelmatch renders even unchanged pixels as
 // a dimmed grayscale of the original, so for a real (or solid) page this is typically the
@@ -95,7 +125,7 @@ function countDiffPixels(png: PNG): number {
   return count
 }
 
-// 4. Mismatch-region attribution ranks DOM elements by how much of the hotspot they
+// 5. Mismatch-region attribution ranks DOM elements by how much of the hotspot they
 //    cover and carries the element path/styles needed for actionable visual repairs.
 {
   const overlaps = visualCompareRegionElementOverlaps({ x: 10, y: 20, width: 100, height: 50, pixels: 5000 }, [
@@ -127,8 +157,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal(overlaps[1]?.styles["background-color"], "rgb(200, 0, 0)")
 }
 
-// 5. The bounded flood-fill region detection runs the real comparePngFiles aggregation
-// 5. Requested single-match selectors produce paired deltas even when source and
+// 6. Requested single-match selectors produce paired deltas even when source and
 //    candidate DOM paths differ after a structural move.
 {
   const selectorDeltas = visualCompareSelectorDeltas(
@@ -151,7 +180,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal(selectorDeltas[0]?.styles.find((style) => style.property === "color")?.category, "paint")
 }
 
-// 6. Capture diagnostics are normalized into compact readiness/noise signals without
+// 7. Capture diagnostics are normalized into compact readiness/noise signals without
 //    changing diff policy. Asset problems and dynamic content lower confidence; clean
 //    settled pages stay high-confidence.
 {
@@ -208,7 +237,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal("title" in (compact.source?.environment ?? {}), false)
 }
 
-// 7. The bounded flood-fill region detection runs the real comparePngFiles aggregation
+// 8. The bounded flood-fill region detection runs the real comparePngFiles aggregation
 //    over a large, tall, high-mismatch canvas — the exact shape that previously OOM'd
 //    old-space by pushing ~4× the diff-pixel count as [x,y] tuple arrays and marking
 //    visited only at pop time. The rewrite (flat numeric index stack, mark-at-push) must

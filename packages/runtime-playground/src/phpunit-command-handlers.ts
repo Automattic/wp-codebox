@@ -896,7 +896,7 @@ function pg_ensure_phpunit_harness_loaded(): void {
 }
 
 function pg_run_install_stage(array $cfg) {
-    global $argv, $pg_stage_output_buffering;
+    global $argv, $pg_stage_output_buffering, $wp_rewrite;
     pg_stage_begin('install');
     try {
         $tests_dir = $cfg['tests_dir'];

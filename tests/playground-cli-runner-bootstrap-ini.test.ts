@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
+import { shouldUseProgrammaticPlaygroundRunner, startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 
 const wordpressDevelopDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-wordpress-develop-"))
@@ -32,6 +32,7 @@ try {
       version: "mounted-wordpress-source",
       phpVersion: "8.4",
       wordpressInstallMode: "do-not-attempt-installing",
+      databaseSetup: "external",
       assets: { wordpressDirectory: wordpressDevelopDirectory },
       extensions: [{ manifest: "/tmp/sodium/manifest.json" }],
       blueprint: {},
@@ -55,6 +56,7 @@ try {
         },
       },
     },
+    runtimeEnv: { TC_MYSQL_PORT: "33060" },
     artifactsDirectory,
   }
 
@@ -69,6 +71,8 @@ try {
   assert.deepEqual(calls[0].mount, [])
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
+  assert.equal(calls[0].skipSqliteSetup, true)
+  assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
   const sharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
@@ -78,13 +82,14 @@ try {
   // The runtime default memory ceiling stays high enough for collect_artifacts to
   // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
   assert.match(sharedPhpIni, /memory_limit=512M/)
-  assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /<\?php/)
+  assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /putenv\("TC_MYSQL_PORT=33060"\);/)
   assert.equal((await stat(join(sharedMount as string, "mu-plugins"))).isDirectory(), true)
   assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {
     ...spec,
+    environment: { ...spec.environment, databaseSetup: undefined },
     metadata: {},
   }
 
@@ -93,6 +98,8 @@ try {
 
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+  assert.equal(calls[0].skipSqliteSetup, false)
+  assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
 
   calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {
