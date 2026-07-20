@@ -11,7 +11,7 @@ import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { BrowserMultiActorScenarioError, runBrowserMultiActorScenario, type BrowserMultiActorClient, type BrowserMultiActorScenarioResult } from "./browser-multi-actor-scenario.js"
-import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
+import { wordpressFixtureUserPhpCode, wordpressUserSessionFromCommandArgs, type WordPressFixtureUserSpec } from "./wordpress-user-sessions.js"
 import type { BrowserArtifact, BrowserProbeErrorRecord, BrowserProbeNetworkRecord } from "./browser-artifacts.js"
 
 const DEFAULT_STEP_TIMEOUT_MS = 15_000
@@ -24,7 +24,8 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   server: PlaygroundCliServer
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const { artifactRoot, scenario, runtimeSpec, runPlaygroundCommand, server } = input
-  const captures = new Set(scenario.captures ?? ["steps", "console", "errors", "network", "screenshot", "trace"])
+  // Traces are always retained for replay, even when callers narrow display captures.
+  const captures = new Set([...(scenario.captures ?? ["steps", "console", "errors", "network", "screenshot"]), "trace"])
   const artifacts = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-scenario", operation: "browser-multi-actor-scenario" })
   const topology = browserPreviewTopology([], runtimeSpec, server.serverUrl)
   const browser = await launchChromiumBrowser()
@@ -33,10 +34,13 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   let failure: Error | undefined
 
   try {
-    const clients = Object.fromEntries(await Promise.all(scenario.actors.map(async (actor) => {
+    const clientEntries: Array<[string, BrowserMultiActorClient]> = []
+    // Playground PHP commands share one runtime endpoint, so provision identities
+    // and install cookies serially before actions begin concurrently.
+    for (const actor of scenario.actors) {
       const session = wordpressUserSessionFromCommandArgs([`session=${actor.userSession}`], runtimeSpec)
       if (!session) throw new Error(`Actor ${actor.name} requires user session ${actor.userSession}`)
-      const userId = await actorUserId(actor.name, session.user.userId, session.user.username ?? session.user.name, runtimeSpec, runPlaygroundCommand, server)
+      const userId = await actorUserId(actor.name, session.user.userId, session.user, runtimeSpec, runPlaygroundCommand, server)
       const context = await browser.newContext()
       await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.preview.effectiveOrigin)
       const page = await context.newPage()
@@ -45,8 +49,9 @@ export async function runBrowserMultiActorScenarioCommand(input: {
       const actorEvidence = evidence[actor.name] = { console: [], errors: [], network: [], steps: [], files: {} }
       const networkTasks: Array<Promise<void>> = []
       attachBrowserCaptureListeners({ captureConsole: captures.has("console"), captureErrors: captures.has("errors"), captureNetwork: true, consoleMessages: actorEvidence.console, errors: actorEvidence.errors, network: actorEvidence.network, networkTasks, page })
-      return [actor.name, actorClient({ actor: actor.name, artifacts, captures, context, evidence: actorEvidence, networkTasks, page, scenario, previewOrigin: topology.preview.effectiveOrigin })] as const
-    })))
+      clientEntries.push([actor.name, actorClient({ actor: actor.name, artifacts, captures, context, evidence: actorEvidence, networkTasks, page, scenario, previewOrigin: topology.preview.effectiveOrigin })])
+    }
+    const clients = Object.fromEntries(clientEntries)
     result = await runBrowserMultiActorScenario(scenario, clients)
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error))
@@ -118,10 +123,10 @@ function actorClient(input: { actor: string; artifacts: BrowserArtifactSession; 
   }
 }
 
-async function actorUserId(actor: string, knownUserId: number | undefined, username: string | undefined, runtimeSpec: RuntimeCreateSpec, runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined, server: PlaygroundCliServer): Promise<number> {
+async function actorUserId(actor: string, knownUserId: number | undefined, user: WordPressFixtureUserSpec, runtimeSpec: RuntimeCreateSpec, runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined, server: PlaygroundCliServer): Promise<number> {
   if (knownUserId) return knownUserId
-  if (!runPlaygroundCommand || !username) throw new Error(`Actor ${actor} requires a fixture user ID and Playground PHP command support`)
-  const response = await runPlaygroundCommand("wordpress.browser-scenario.actor-auth", server, { code: bootstrapPhpCode(runtimeSpec, `$user = get_user_by( 'login', ${JSON.stringify(username)} ); if ( ! $user ) { throw new RuntimeException( 'Actor fixture user was not provisioned.' ); } echo (string) $user->ID;`, []) })
+  if (!runPlaygroundCommand) throw new Error(`Actor ${actor} requires a fixture user ID and Playground PHP command support`)
+  const response = await runPlaygroundCommand("wordpress.browser-scenario.actor-auth", server, { code: bootstrapPhpCode(runtimeSpec, `${wordpressFixtureUserPhpCode(user)} echo (string) get_current_user_id();`, []) })
   assertPlaygroundResponseOk("wordpress.browser-scenario.actor-auth", response)
   const match = response.text.match(/(\d+)\s*$/)
   if (!match) throw new Error(`Actor ${actor} fixture user ID was not returned`)
