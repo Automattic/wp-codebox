@@ -230,6 +230,7 @@ export class PlaygroundRuntimeBackend implements RuntimeBackend {
 export interface PlaygroundRuntimeBackendOptions {
   hostTools?: HostToolRegistry
   cliModule?: PlaygroundCliModule
+  packageRoot?: string
 }
 
 class PlaygroundRuntime implements Runtime {
@@ -1806,6 +1807,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     return startPlaygroundCliServer(this.spec, this.mounts, {
       onProgress: (event) => this.recordBrowserStartupProgress(event),
       cliModule: this.backendOptions.cliModule,
+      packageRoot: this.backendOptions.packageRoot,
     })
   }
 
@@ -1904,7 +1906,10 @@ export const playgroundRuntimeBackendProvider: RuntimeBackendProvider = {
     runtimeOverlayStrategies: ["wordpress-scoped-bundle"],
   },
   createBackend(context = {}) {
-    return createPlaygroundRuntimeBackend({ cliModule: context.cliModule as PlaygroundCliModule | undefined })
+    return createPlaygroundRuntimeBackend({
+      cliModule: context.cliModule as PlaygroundCliModule | undefined,
+      packageRoot: context.packageRoot,
+    })
   },
 }
 

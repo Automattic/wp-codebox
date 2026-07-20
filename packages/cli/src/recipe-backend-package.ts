@@ -27,6 +27,7 @@ export interface PreparedRuntimeBackendPackage {
 
 interface LoadedRuntimeBackendPackage {
   backendPackage: WorkspaceRecipeRuntimeBackendPackage
+  packageRoot: string
   resolvedSource: string
   entrypoint: string
   entrypointContents: string
@@ -79,7 +80,7 @@ class RuntimeBackendPackageAdapterRegistry {
 const playgroundRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
   backendKind: "wordpress-playground",
   prepare(loadedPackage) {
-    const { backendPackage, entrypoint, module } = loadedPackage
+    const { backendPackage, entrypoint, module, packageRoot } = loadedPackage
     if (backendPackage.kind !== "playground") {
       throw backendPackageError(backendPackage, `Unsupported WordPress Playground runtime backend package kind: ${backendPackage.kind}`)
     }
@@ -88,7 +89,7 @@ const playgroundRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
     }
 
     return {
-      runtimeBackendContext: { cliModule: module as RuntimeCliEntrypointModule },
+      runtimeBackendContext: { cliModule: module as RuntimeCliEntrypointModule, packageRoot },
       diagnostics: [{ status: "passed", message: "Entrypoint exports runCLI" }],
     }
   },
@@ -125,7 +126,7 @@ export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe
   const entrypointContents = await readBackendEntrypoint(backendPackage, entrypoint)
   const module = await importBackendEntrypoint(backendPackage, entrypoint)
   const adapter = runtimeBackendPackageAdapterRegistry.resolve(normalizeRuntimeBackendKind(backendKind))
-  const adapterResult = adapter.prepare({ backendPackage, resolvedSource, entrypoint, entrypointContents, manifest, module })
+  const adapterResult = adapter.prepare({ backendPackage, resolvedSource, packageRoot, entrypoint, entrypointContents, manifest, module })
 
   return {
     runtimeBackendContext: adapterResult.runtimeBackendContext,

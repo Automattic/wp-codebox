@@ -10,6 +10,8 @@ import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/pr
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
+import { createRequire } from "node:module"
+import { pathToFileURL } from "node:url"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import * as PHPWasmNode from "@php-wasm/node"
@@ -45,6 +47,7 @@ const PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV = "WP_CODEBOX_PLAYGROUND_WORDPRES
 export interface PlaygroundCliStartupOptions {
   onProgress?: (event: BrowserStartupProgressEvent) => void | Promise<void>
   cliModule?: PlaygroundCliModule
+  packageRoot?: string
 }
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
@@ -158,7 +161,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const commandServer = withBarePhpRunner(server, spec, stagedMounts)
+    const commandServer = withBarePhpRunner(server, spec, stagedMounts, options.packageRoot)
     const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(commandServer, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
@@ -189,7 +192,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   }
 }
 
-function withBarePhpRunner(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[]): PlaygroundCliServer {
+function withBarePhpRunner(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[], packageRoot?: string): PlaygroundCliServer {
   const playground = server.playground
   return {
     ...server,
@@ -198,17 +201,18 @@ function withBarePhpRunner(server: PlaygroundCliServer, spec: RuntimeCreateSpec,
       ...(playground.onMessage ? { onMessage: (listener: (data: string) => Promise<string | void> | string | void) => playground.onMessage!(listener) } : {}),
       ...(playground.readFileAsText ? { readFileAsText: (path: string) => playground.readFileAsText!(path) } : {}),
       ...(playground.writeFile ? { writeFile: (path: string, contents: string) => playground.writeFile!(path, contents) } : {}),
-      runWithoutWordPress: (options) => runBarePlaygroundPhp(server, spec, mounts, options),
+      runWithoutWordPress: (options) => runBarePlaygroundPhp(server, spec, mounts, options, packageRoot),
     },
   }
 }
 
-async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[], options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse> {
-  const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
+async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[], options: { code: string } | { scriptPath: string }, packageRoot?: string): Promise<PlaygroundServerRunResponse> {
+  const modules = await barePhpModules(packageRoot)
+  const { createNodeFsMountHandler, loadNodeRuntime } = modules.node as unknown as {
     createNodeFsMountHandler(localPath: string): unknown
     loadNodeRuntime(phpVersion: string, options: ReturnType<typeof programmaticNodeRuntimeOptions>): Promise<number>
   }
-  const { PHP, setPhpIniEntries } = PHPWasmUniversal as unknown as {
+  const { PHP, setPhpIniEntries } = modules.universal as unknown as {
     PHP: new (runtimeId: number) => BarePlaygroundPhp
     setPhpIniEntries(php: BarePlaygroundPhp, entries: Record<string, unknown>): Promise<void>
   }
@@ -239,6 +243,18 @@ async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCr
   } finally {
     php[Symbol.dispose]()
   }
+}
+
+async function barePhpModules(packageRoot?: string): Promise<{ node: unknown; universal: unknown }> {
+  if (!packageRoot) {
+    return { node: PHPWasmNode, universal: PHPWasmUniversal }
+  }
+  const require = createRequire(join(packageRoot, "package.json"))
+  const [node, universal] = await Promise.all([
+    import(pathToFileURL(require.resolve("@php-wasm/node")).href),
+    import(pathToFileURL(require.resolve("@php-wasm/universal")).href),
+  ])
+  return { node, universal }
 }
 
 interface BarePlaygroundPhp {
