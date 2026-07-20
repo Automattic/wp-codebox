@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
+import { stageReadonlyPlaygroundMounts } from "../packages/runtime-playground/src/mount-materialization.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-"))
@@ -41,6 +42,19 @@ const cliModule: PlaygroundCliModule = {
 }
 
 try {
+  const danglingSource = join(root, "dangling")
+  const largeSource = join(root, "large")
+  await mkdir(danglingSource)
+  await mkdir(largeSource)
+  await symlink("missing.php", join(danglingSource, "build.sh"))
+  await Promise.all(Array.from({ length: 500 }, (_, index) => writeFile(join(largeSource, `File${index}.php`), `<?php return ${index};\n`)))
+  const stagingDirectoriesBefore = await readonlyStagingDirectories()
+  await assert.rejects(stageReadonlyPlaygroundMounts([
+    { source: danglingSource, target: "/dangling", mode: "readonly" },
+    { source: largeSource, target: "/large", mode: "readonly" },
+  ]), /ENOENT/, "the source failure must not be masked by cleanup racing another mount copy")
+  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "failed concurrent staging must remove its temporary root")
+
   const beforeReadonlyHash = sha256(await readFile(readonlySource))
   const server = await startPlaygroundCliServer(spec, [
     { type: "file", source: readonlySource, target: "/readonly", mode: "readonly" },
@@ -59,6 +73,10 @@ try {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+async function readonlyStagingDirectories(): Promise<string[]> {
+  return (await readdir(tmpdir())).filter((entry) => entry.startsWith("wp-codebox-readonly-mounts-")).sort()
 }
 
 console.log("playground readonly mount isolation ok")

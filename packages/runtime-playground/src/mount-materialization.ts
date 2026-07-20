@@ -78,7 +78,7 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
 
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-"))
   try {
-    const stagedMounts = await Promise.all(mounts.map(async (mount, index) => {
+    const stagedMountResults = await Promise.allSettled(mounts.map(async (mount, index) => {
       if (mount.mode !== "readonly") {
         return mount
       }
@@ -86,6 +86,16 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       await cp(mount.source, source, { recursive: mount.type !== "file", dereference: true })
       return { ...mount, source }
     }))
+    const failedMount = stagedMountResults.find((result) => result.status === "rejected")
+    if (failedMount?.status === "rejected") {
+      throw failedMount.reason
+    }
+    const stagedMounts = stagedMountResults.map((result) => {
+      if (result.status !== "fulfilled") {
+        throw result.reason
+      }
+      return result.value
+    })
     return {
       mounts: stagedMounts,
       async [Symbol.asyncDispose]() {
