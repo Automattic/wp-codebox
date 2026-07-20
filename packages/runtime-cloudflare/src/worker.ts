@@ -262,20 +262,13 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       response = await canonicalAuthProbe(runtime, request)
     } else {
       if (isMutation(request, route)) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
-      if (isMutation(request, route)) await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "php-started")
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-      if (isMutation(request, route)) {
-        await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "php-completed")
-        canonicalChanges = readCanonicalChanges(runtime.php)
-        await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "changes-collected", { changes: canonicalChanges })
-      }
+      if (isMutation(request, route)) canonicalChanges = readCanonicalChanges(runtime.php)
     }
     if (isMutation(request, route)) {
       if (!canonicalChanges) throw new Error("Canonical mutation completed without an MDI change set.")
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
-      await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "revision-persisted", { revision: next.revision })
       await commitLease(coordinator, request.url, lease, next)
-      await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "lease-committed", { revision: next.revision })
     } else {
       await releaseLease(coordinator, request.url, lease)
     }
@@ -286,10 +279,6 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     if (!finalized) await abortLease(coordinator, request.url, lease)
     throw error
   }
-}
-
-function recordMutationStage(bucket: R2Bucket, request: Request, stage: string, details: Record<string, unknown> = {}): Promise<R2Object | null> {
-  return bucket.put("diagnostics/mutation-stage.json", JSON.stringify({ schema: "wp-codebox/cloudflare-mutation-stage/v1", method: request.method, path: new URL(request.url).pathname, stage, recordedAt: new Date().toISOString(), ...details }))
 }
 
 function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate" | "canonical-auth"): boolean {
@@ -730,45 +719,12 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes", "mdi-insert-dirty-inventory"].includes(phase) || phase.startsWith("mdi-insert-flush-")) {
+  if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
-      const optionTarget = {
-        "mdi-insert-flush-option-rewrite-rules": "rewrite_rules",
-        "mdi-insert-flush-option-calendar": "wp_calendar_block_has_published_posts",
-        "mdi-insert-flush-option-fresh-site": "fresh_site",
-      }[phase]
-      const flushTarget = optionTarget ? "options" : {
-        "mdi-insert-flush-options": "options",
-        "mdi-insert-flush-options-no-index": "options",
-        "mdi-insert-flush-options-fetch-only": "options",
-        "mdi-insert-flush-options-no-tracking": "options",
-        "mdi-insert-flush-options-shared-temp-path": "options",
-        "mdi-insert-flush-taxonomy": "term_taxonomy",
-        "mdi-insert-flush-relationships": "term_relationships_non_markdown",
-        "mdi-insert-flush-postmeta": "postmeta_non_markdown",
-      }[phase]
-      if (flushTarget) {
-        patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
-        patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "foreach ( array_keys( $this->dirty ) as $table_suffix ) {", `foreach ( array_keys( $this->dirty ) as $table_suffix ) { if ( $table_suffix !== '${flushTarget}' ) continue;`)
-      }
-      if (phase === "mdi-insert-flush-options-no-index") {
-        patchMdiProbe(runtime.php, "inc/class-wp-markdown-driver.php", "public function upsert_options_index( array $rows ): void {", "public function upsert_options_index( array $rows ): void { return;")
-        patchMdiProbe(runtime.php, "inc/class-wp-markdown-driver.php", "public function remove_from_options_index( array $option_names ): void {", "public function remove_from_options_index( array $option_names ): void { return;")
-      }
-      if (phase === "mdi-insert-flush-options-fetch-only") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "$index_deletes = array();\n\n\t\tforeach ( $names as $name ) {", "$index_deletes = array();\n\n\t\tforeach ( array() as $name ) {")
-      if (phase === "mdi-insert-flush-options-no-tracking") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "public function track_canonical_mutation( string $absolute_path ): void {", "public function track_canonical_mutation( string $absolute_path ): void { return;")
-      if (phase === "mdi-insert-flush-options-shared-temp-path") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "$tmp = $abs . '.tmp.' . getmypid() . '.' . substr( md5( uniqid( '', true ) ), 0, 8 );", "$tmp = $this->json_tmp_path( $abs );")
-      if (optionTarget) patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", ": array_keys( $this->dirty_option_names );\n\n\t\tif ( empty( $names ) ) {", `: array_keys( $this->dirty_option_names );\n\n\t\t$names = array('${optionTarget}');\n\n\t\tif ( empty( $names ) ) {`)
-      if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
-      if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
-      if (phase === "mdi-insert-no-shutdown-flush" || phase === "mdi-insert-dirty-inventory") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
-      if (phase === "mdi-insert-no-writes") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "public function persist_write( string $query, string $table, string $op_type ): void {", "public function persist_write( string $query, string $table, string $op_type ): void { return;")
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
-        : phase === "mdi-insert-dirty-inventory"
-          ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } global $wpdb; $driver_ref = new ReflectionObject($wpdb->dbh); $engine_prop = $driver_ref->getProperty('write_engine'); $engine = $engine_prop->getValue($wpdb->dbh); $engine_ref = new ReflectionObject($engine); $dirty_prop = $engine_ref->getProperty('dirty'); $posts_prop = $engine_ref->getProperty('dirty_posts'); $options_prop = $engine_ref->getProperty('dirty_option_names'); $result = ['postId' => $post_id, 'dirty' => array_keys($dirty_prop->getValue($engine)), 'dirtyPosts' => array_keys($posts_prop->getValue($engine)), 'dirtyOptions' => array_keys($options_prop->getValue($engine))];"
-        : phase.startsWith("mdi-insert")
+        : phase === "mdi-insert"
           ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } $result = ['postId' => $post_id];"
           : "$result = [];"
       const evidence = (await runtime.php.run({
@@ -886,14 +842,6 @@ echo json_encode([
   }
 
   return new Response(`Unknown boot probe phase: ${phase}`, { status: 400 })
-}
-
-function patchMdiProbe(php: PHP, relativePath: string, needle: string, replacement: string): void {
-  const path = `/wordpress/wp-content/plugins/markdown-database-integration/${relativePath}`
-  const source = new TextDecoder().decode(php.readFileAsBuffer(path))
-  const index = source.indexOf(needle)
-  if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error(`MDI probe marker is not unique: ${relativePath}`)
-  php.writeFile(path, new TextEncoder().encode(`${source.slice(0, index)}${replacement}${source.slice(index + needle.length)}`))
 }
 
 function wordpressProbeCode(phase: string): string {
