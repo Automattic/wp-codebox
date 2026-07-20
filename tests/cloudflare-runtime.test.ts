@@ -7,6 +7,7 @@ import test from "node:test"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
+import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
@@ -104,6 +105,13 @@ test("Cloudflare translates Fetch requests and PHP responses without losing brow
 test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", async () => {
   const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { limits?: { cpu_ms?: number } }
   assert.equal(config.limits?.cpu_ms, 300_000)
+})
+
+test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
+  assert.equal(leaseRetryDelayMs(90, 100_000), 90_000)
+  assert.equal(leaseRetryDelayMs(90, 12_345), 12_345)
+  assert.equal(leaseRetryDelayMs(undefined, 100_000), 1_000)
+  assert.equal(leaseRetryDelayMs(Number.NaN, 500), 500)
 })
 
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {

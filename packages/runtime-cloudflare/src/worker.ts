@@ -6,6 +6,7 @@ import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-p
 import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web-8-5/asyncify/php_8_5.js"
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
+import { leaseRetryDelayMs } from "./lease-retry.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
@@ -228,13 +229,15 @@ async function coordinatorCall<T>(coordinator: DurableObjectStub, requestUrl: st
 async function acquireLease(coordinator: DurableObjectStub, requestUrl: string): Promise<Lease> {
   const deadline = Date.now() + LEASE_ACQUISITION_TIMEOUT_MS
   let lastError: CoordinatorRequestError | undefined
-  while (Date.now() < deadline) {
+  while (true) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
     try {
       return await coordinatorCall<Lease>(coordinator, requestUrl, "begin", {})
     } catch (error) {
       if (!(error instanceof CoordinatorRequestError) || error.status !== 409) throw error
       lastError = error
-      await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(25, (error.retryAfter ?? 1) * 100))))
+      await new Promise((resolve) => setTimeout(resolve, leaseRetryDelayMs(error.retryAfter, deadline - Date.now())))
     }
   }
   throw new Error(`Timed out waiting for the canonical WordPress lease${lastError ? `: ${lastError.message}` : "."}`)
