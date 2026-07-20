@@ -7,7 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
-import { routeWorkerRequest, type EditorMemoryProbePhase } from "./request-routing.js"
+import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
@@ -86,7 +86,6 @@ export default {
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
-    if (route.kind === "editor-memory-probe") return runEditorMemoryProbe(request, env, coordinator, route.phase)
     if (route.kind === "probe") {
       if (route.phase === "canonical-session") return canonicalSessionProbe(env.WORDPRESS_STATE_BUCKET, await coordinatorCall<{ pointer: MarkdownPointer | null }>(coordinator, request.url, "state"))
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -98,76 +97,6 @@ export default {
     if (route.kind === "canonical-auth") return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
     return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
   },
-}
-
-async function runEditorMemoryProbe(request: Request, env: Env, coordinator: DurableObjectStub, phase: EditorMemoryProbePhase): Promise<Response> {
-  const lease = await acquireLease(coordinator, request.url)
-  let finalized = false
-  try {
-    if (!lease.pointer) throw new Error("Canonical WordPress must be initialized before running an editor memory probe.")
-    const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
-    patchEditorMemoryStop(runtime.php, phase)
-    const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-    await releaseLease(coordinator, request.url, lease)
-    finalized = true
-    await discardCachedRuntime()
-    return response
-  } catch (error) {
-    if (!finalized) await abortLease(coordinator, request.url, lease)
-    await discardCachedRuntime()
-    throw error
-  }
-}
-
-function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
-  const stops: Record<EditorMemoryProbePhase, { path: string; marker: string; before: boolean }> = {
-    admin: { path: "/wordpress/wp-admin/post-new.php", marker: "require_once __DIR__ . '/admin.php';", before: false },
-    "before-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( $create_in_db ) {", before: false },
-    "after-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: `$post_id = wp_insert_post(
-			array(
-				'post_title'  => post_type_supports( $post_type, 'title' ) ? __( 'Auto Draft' ) : '',
-				'post_type'   => $post_type,
-				'post_status' => 'auto-draft',
-			),
-			true,
-			false
-		);`, before: false },
-    "after-get-post": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( current_theme_supports( 'post-formats' )", before: true },
-    "before-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "wp_after_insert_post( $post, false, null );", before: true },
-    "after-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "// Schedule auto-draft cleanup.", before: true },
-    "before-preload-paths": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$preload_paths = array(", before: true },
-    "before-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
-    "before-rest-preload-skip-global-styles": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
-    "after-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: false },
-    "after-block-definitions": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "// Preload server-registered block bindings sources.", before: true },
-    "before-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: true },
-    "settings-before-styles": { path: "/wordpress/wp-includes/block-editor.php", marker: "$global_styles = array();", before: true },
-    "settings-after-presets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$block_classes = array(", before: true },
-    "settings-after-block-classes": { path: "/wordpress/wp-includes/block-editor.php", marker: "// Get any additional css from the customizer", before: true },
-    "settings-before-global": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
-    "settings-before-global-skip-custom-css": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
-    "settings-before-global-skip-theme-styles": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
-    "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
-    "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
-    "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
-    "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
-  }
-  const stop = stops[phase]
-  let source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
-  if (phase === "before-rest-preload-skip-global-styles") {
-    const lookup = "WP_Theme_JSON_Resolver::get_user_global_styles_post_id()"
-    if (source.split(lookup).length - 1 !== 2) throw new Error("WordPress global styles lookup count changed.")
-    source = source.replaceAll(lookup, "0")
-  }
-  if (phase === "settings-before-global-skip-custom-css") {
-    source = source.replace("wp_get_custom_css()", "''").replace("wp_get_global_stylesheet( array( 'custom-css' ) )", "''")
-  }
-  if (phase === "settings-before-global-skip-theme-styles") source = source.replace("get_block_editor_theme_styles()", "array()")
-  const index = source.indexOf(stop.marker)
-  if (index === -1 || index !== source.lastIndexOf(stop.marker)) throw new Error(`WordPress editor memory marker is not unique: ${phase}`)
-  const insertion = stop.before ? index : index + stop.marker.length
-  const output = `\necho wp_json_encode( array( 'schema' => 'wp-codebox/cloudflare-editor-memory/v1', 'phase' => '${phase}', 'memoryBytes' => memory_get_usage( true ), 'peakMemoryBytes' => memory_get_peak_usage( true ) ) ); exit;\n`
-  php.writeFile(stop.path, new TextEncoder().encode(`${source.slice(0, insertion)}${output}${source.slice(insertion)}`))
 }
 
 interface MarkdownManifestFile {
