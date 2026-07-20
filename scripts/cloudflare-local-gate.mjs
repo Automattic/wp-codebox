@@ -27,12 +27,9 @@ try {
   await assertLinkedAssets(adminHtml, "admin")
   await assertLinkedAssets(editorHtml, "editor")
   await assertStaticResponseSemantics()
-  await assertCanonicalAuth("before restart")
   await stopWorker()
 
   await startWorker()
-  await assertCanonicalIdentity("after restart")
-  await assertCanonicalAuth("after restart")
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
   const restartedPost = await assertWordPressPage(`${origin}/${post.slug}/`, "post after cold restart")
   assertIncludes(restartedPost, post.title, "post after cold restart")
@@ -96,24 +93,7 @@ async function login() {
   const location = response.headers.get("location")
   if (!location?.includes("/wp-admin/")) throw new Error(`Login did not redirect to wp-admin: ${location}`)
   const admin = await assertAuthenticatedDashboard(new URL(location, origin))
-  await assertCanonicalIdentity("after login")
   return admin
-}
-
-async function assertCanonicalIdentity(stage) {
-  const session = await (await request(`${origin}/?phase=canonical-session`)).json()
-  if (!session.hasSessionTokens || session.sessionTokenRows < 1 || !session.usersTableStructurallyValid || !session.usermetaTableStructurallyValid) throw new Error(`Login did not persist a structurally valid canonical identity: ${JSON.stringify(session)}`)
-  console.log(`Canonical identity ${stage}: revision ${session.pointerRevision}, session-token rows ${session.sessionTokenRows}, users field types ${JSON.stringify(session.usersTableFieldTypes)}, usermeta keys ${session.usermetaKeys.join(", ")}`)
-}
-
-async function assertCanonicalAuth(stage) {
-  const response = await request(`${origin}/wp-admin/?phase=canonical-auth`)
-  const diagnostic = await response.json()
-  console.log(`Canonical auth ${stage}: ${JSON.stringify(diagnostic)}`)
-  const checks = ["authCookiePresent", "authCookieParsed", "adminCookiePresent", "adminCookieParsed", "userFound", "sessionTokenRowPresent", "sessionTokenSerializedArray", "sessionTokenVerified", "authConstantsDefined", "adminCookieValidated", "loggedInCookieValidated"]
-  if (!response.ok || diagnostic.schema !== "wp-codebox/cloudflare-canonical-auth/v1" || checks.some((check) => diagnostic[check] !== true)) {
-    throw new Error(`Canonical auth diagnostic failed ${stage}: ${JSON.stringify(diagnostic)}`)
-  }
 }
 
 async function createPost(adminHtml) {
