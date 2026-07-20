@@ -730,15 +730,17 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes"].includes(phase)) {
+  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes", "mdi-insert-dirty-inventory"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
       if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
-      if (phase === "mdi-insert-no-shutdown-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
+      if (phase === "mdi-insert-no-shutdown-flush" || phase === "mdi-insert-dirty-inventory") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
       if (phase === "mdi-insert-no-writes") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "public function persist_write( string $query, string $table, string $op_type ): void {", "public function persist_write( string $query, string $table, string $op_type ): void { return;")
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
+        : phase === "mdi-insert-dirty-inventory"
+          ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } global $wpdb; $driver_ref = new ReflectionObject($wpdb->dbh); $engine_prop = $driver_ref->getProperty('write_engine'); $engine = $engine_prop->getValue($wpdb->dbh); $engine_ref = new ReflectionObject($engine); $dirty_prop = $engine_ref->getProperty('dirty'); $posts_prop = $engine_ref->getProperty('dirty_posts'); $options_prop = $engine_ref->getProperty('dirty_option_names'); $result = ['postId' => $post_id, 'dirty' => array_keys($dirty_prop->getValue($engine)), 'dirtyPosts' => array_keys($posts_prop->getValue($engine)), 'dirtyOptions' => array_keys($options_prop->getValue($engine))];"
         : phase.startsWith("mdi-insert")
           ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } $result = ['postId' => $post_id];"
           : "$result = [];"
