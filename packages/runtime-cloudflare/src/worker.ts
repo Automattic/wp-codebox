@@ -150,13 +150,7 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
     "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
     "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
-    "after-init-script": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "if ( (int) get_option( 'page_for_posts' ) === $post->ID ) {", before: true },
-    "before-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: true },
-    "after-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
-    "footer-before-scripts": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( 'admin_footer', '' );", before: true },
-    "footer-after-admin-footer": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( \"admin_print_footer_scripts-{$hook_suffix}\" );", before: true },
-    "footer-after-print-scripts": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( \"admin_footer-{$hook_suffix}\" );", before: true },
   }
   const stop = stops[phase]
   let source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
@@ -379,27 +373,24 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "boot-started")
+  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-started" }))
   const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET, true)
-  await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "boot-completed")
+  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-completed" }))
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
     const passwordOutput = (await runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })).text.trim()
     if (passwordOutput !== "password-updated") throw new Error("Canonical bootstrap did not update the admin password.")
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "password-updated")
     const urlOutput = (await runtime.php.run({ code: canonicalBootstrapUrlCode(origin) })).text.trim()
     if (urlOutput !== "urls-updated") throw new Error("Canonical bootstrap did not update the site URLs.")
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "urls-updated")
     const flushOutput = (await runtime.php.run({ code: canonicalBootstrapFlushCode() })).text.trim()
     if (flushOutput !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "setup-completed")
     const files = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "files-collected", { files: files.length })
+    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "files-collected", files: files.length }))
     const pointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, files)
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "revision-persisted", { revision: pointer.revision })
+    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "revision-persisted", revision: pointer.revision }))
     await commitLease(coordinator, requestUrl, lease, pointer)
-    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "lease-committed", { revision: pointer.revision })
+    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "lease-committed", revision: pointer.revision }))
     return { ...runtime, pointer }
   } catch (error) {
     runtime.php.exit()
@@ -433,11 +424,6 @@ require '/wordpress/wp-load.php';
 $GLOBALS['wpdb']->flush_canonical_writes();
 echo 'flushed';`
 }
-
-function recordBootstrapStage(bucket: R2Bucket, stage: string, details: Record<string, unknown> = {}): Promise<R2Object | null> {
-  return bucket.put("diagnostics/bootstrap-stage.json", JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage, recordedAt: new Date().toISOString(), ...details }))
-}
-
 async function canonicalWordPressAuthConstants(env: Env): Promise<Record<WordPressAuthConstant, string>> {
   return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", "default")
 }

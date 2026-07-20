@@ -8,7 +8,7 @@ export type WorkerRequestRoute =
   | { kind: "editor-memory-probe"; phase: EditorMemoryProbePhase }
   | { kind: "probe"; phase: string }
 
-export type EditorMemoryProbePhase = "admin" | "before-insert" | "after-insert" | "after-get-post" | "before-hooks" | "after-hooks" | "before-preload-paths" | "before-rest-preload" | "before-rest-preload-skip-global-styles" | "after-rest-preload" | "after-block-definitions" | "before-editor-settings" | "settings-before-styles" | "settings-after-presets" | "settings-after-block-classes" | "settings-before-global" | "settings-before-global-skip-custom-css" | "settings-before-global-skip-theme-styles" | "settings-before-assets" | "settings-after-assets" | "after-editor-settings" | "after-init-script" | "before-admin-header" | "after-admin-header" | "block-editor" | "footer-before-scripts" | "footer-after-admin-footer" | "footer-after-print-scripts"
+export type EditorMemoryProbePhase = "admin" | "before-insert" | "after-insert" | "after-get-post" | "before-hooks" | "after-hooks" | "before-preload-paths" | "before-rest-preload" | "before-rest-preload-skip-global-styles" | "after-rest-preload" | "after-block-definitions" | "before-editor-settings" | "settings-before-styles" | "settings-after-presets" | "settings-after-block-classes" | "settings-before-global" | "settings-before-global-skip-custom-css" | "settings-before-global-skip-theme-styles" | "settings-before-assets" | "settings-after-assets" | "after-editor-settings" | "block-editor"
 
 export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   const phase = new URL(request.url).searchParams.get("phase")
@@ -20,7 +20,7 @@ export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   if (phase === "operator-reset") return { kind: "operator-reset" }
   if (phase?.startsWith("editor-memory-")) {
     const editorPhase = phase.slice("editor-memory-".length)
-    if (["admin", "before-insert", "after-insert", "after-get-post", "before-hooks", "after-hooks", "before-preload-paths", "before-rest-preload", "before-rest-preload-skip-global-styles", "after-rest-preload", "after-block-definitions", "before-editor-settings", "settings-before-styles", "settings-after-presets", "settings-after-block-classes", "settings-before-global", "settings-before-global-skip-custom-css", "settings-before-global-skip-theme-styles", "settings-before-assets", "settings-after-assets", "after-editor-settings", "after-init-script", "before-admin-header", "after-admin-header", "block-editor", "footer-before-scripts", "footer-after-admin-footer", "footer-after-print-scripts"].includes(editorPhase)) {
+    if (["admin", "before-insert", "after-insert", "after-get-post", "before-hooks", "after-hooks", "before-preload-paths", "before-rest-preload", "before-rest-preload-skip-global-styles", "after-rest-preload", "after-block-definitions", "before-editor-settings", "settings-before-styles", "settings-after-presets", "settings-after-block-classes", "settings-before-global", "settings-before-global-skip-custom-css", "settings-before-global-skip-theme-styles", "settings-before-assets", "settings-after-assets", "after-editor-settings", "block-editor"].includes(editorPhase)) {
       return { kind: "editor-memory-probe", phase: editorPhase as EditorMemoryProbePhase }
     }
   }
