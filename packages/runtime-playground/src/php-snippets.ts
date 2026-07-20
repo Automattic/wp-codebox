@@ -4,6 +4,18 @@ export { phpRuntimeComponentLifecycleReplayFunction, phpRuntimeRecipePluginPrelo
 
 export type PhpScalar = string | number | boolean | null
 
+export function phpCliStreamConstants(): string {
+  return `if (!defined('STDIN')) {
+    define('STDIN', fopen('php://stdin', 'rb'));
+}
+if (!defined('STDOUT')) {
+    define('STDOUT', fopen('php://stdout', 'wb'));
+}
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'wb'));
+}`
+}
+
 export function phpEnvAssignments(env: Record<string, unknown>): string {
   const lines = Object.entries(env)
     .filter(([name]) => isSafeEnvName(name))

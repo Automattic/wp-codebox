@@ -92,6 +92,8 @@ const bootstrappedRunPhp = bootstrapPhpCode({
 } as never, "<?php echo 'ok';", [])
 assert.match(bootstrappedRunPhp, /contained_runtime_run_php_component_lifecycle_replay_prepare/)
 assert.match(bootstrappedRunPhp, /CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON/)
+assert.match(bootstrappedRunPhp, /define\('STDOUT', fopen\('php:\/\/stdout', 'wb'\)\)/)
+assert.ok(bootstrappedRunPhp.indexOf("define('STDOUT'") < bootstrappedRunPhp.indexOf("require_once '/wordpress/wp-load.php';"), "CLI streams must exist before WordPress and test dependencies load")
 assert.doesNotMatch(bootstrappedRunPhp, /wp_codebox_run_php|wp_codebox_component_manifest|WP_CODEBOX_COMPONENT_MANIFEST_JSON/)
 
 const strictTypesCodeFileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-run-php-strict-types-"))
