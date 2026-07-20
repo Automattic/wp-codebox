@@ -632,6 +632,8 @@ test("serialized Cloudflare mutations use MDI flush paths and complete canonical
   assert.match(source, /packagedCanonicalMarkdownSeed/)
   assert.match(source, /update_option\('siteurl'/)
   assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
+  for (const stage of ["php-started", "php-completed", "changes-collected", "revision-persisted", "lease-committed"]) assert.match(source, new RegExp(`recordMutationStage\\([^,]+, request, "${stage}"`))
+  assert.match(source, /diagnostics\/mutation-stage\.json/)
 })
 
 test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {

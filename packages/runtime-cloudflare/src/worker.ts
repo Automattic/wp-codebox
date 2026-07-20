@@ -262,13 +262,20 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       response = await canonicalAuthProbe(runtime, request)
     } else {
       if (isMutation(request, route)) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+      if (isMutation(request, route)) await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "php-started")
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-      if (isMutation(request, route)) canonicalChanges = readCanonicalChanges(runtime.php)
+      if (isMutation(request, route)) {
+        await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "php-completed")
+        canonicalChanges = readCanonicalChanges(runtime.php)
+        await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "changes-collected", { changes: canonicalChanges })
+      }
     }
     if (isMutation(request, route)) {
       if (!canonicalChanges) throw new Error("Canonical mutation completed without an MDI change set.")
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
+      await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "revision-persisted", { revision: next.revision })
       await commitLease(coordinator, request.url, lease, next)
+      await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "lease-committed", { revision: next.revision })
       // The runtime now represents the promoted revision, including login session state.
       runtime.pointer = next
       cacheRuntime(next, runtime)
@@ -281,6 +288,10 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     if (!finalized) await abortLease(coordinator, request.url, lease)
     throw error
   }
+}
+
+function recordMutationStage(bucket: R2Bucket, request: Request, stage: string, details: Record<string, unknown> = {}): Promise<R2Object | null> {
+  return bucket.put("diagnostics/mutation-stage.json", JSON.stringify({ schema: "wp-codebox/cloudflare-mutation-stage/v1", method: request.method, path: new URL(request.url).pathname, stage, recordedAt: new Date().toISOString(), ...details }))
 }
 
 function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate" | "canonical-auth"): boolean {
