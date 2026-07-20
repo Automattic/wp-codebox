@@ -26,6 +26,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
   }
 
   const command = splitLeadingStrictTypesDeclare(code)
+  const projectBootstrap = argValue(args, "bootstrap-mode") === "project"
 
   return `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
@@ -35,8 +36,8 @@ ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
-require_once '/wordpress/wp-load.php';
-${recipeActivePluginBootstrapPhp(spec, args)}
+${projectBootstrap ? "" : `require_once '/wordpress/wp-load.php';
+${recipeActivePluginBootstrapPhp(spec, args)}`}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}

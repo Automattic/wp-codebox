@@ -122,6 +122,12 @@ assert.match(bootstrappedRunPhp, /define\('STDOUT', fopen\('php:\/\/stdout', 'wb
 assert.ok(bootstrappedRunPhp.indexOf("define('STDOUT'") < bootstrappedRunPhp.indexOf("require_once '/wordpress/wp-load.php';"), "CLI streams must exist before WordPress and test dependencies load")
 assert.doesNotMatch(bootstrappedRunPhp, /wp_codebox_run_php|wp_codebox_component_manifest|WP_CODEBOX_COMPONENT_MANIFEST_JSON/)
 
+const projectBootstrappedPhpunit = bootstrapPhpCode({
+  runtimeEnv: { TC_MYSQL_PORT: "33060" },
+} as never, "<?php echo 'phpunit';", ["bootstrap-mode=project"])
+assert.match(projectBootstrappedPhpunit, /putenv\("TC_MYSQL_PORT=33060"\)/)
+assert.doesNotMatch(projectBootstrappedPhpunit, /\/wordpress\/wp-load\.php/)
+
 const strictTypesCodeFileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-run-php-strict-types-"))
 const strictTypesCodeFile = join(strictTypesCodeFileRoot, "strict-types.php")
 writeFileSync(strictTypesCodeFile, "<?php declare(strict_types=1);\necho 'strict';")
