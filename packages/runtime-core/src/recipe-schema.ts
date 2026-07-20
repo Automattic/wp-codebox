@@ -123,6 +123,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             enum: enumValues(options.runtimeWordPressInstallModes, defaultRuntimeWordPressInstallModes),
             description: "Controls how Playground prepares a mounted WordPress directory. Use do-not-attempt-installing for custom distributions that own their own boot/readiness probes.",
           },
+          databaseSetup: {
+            enum: ["runtime-managed", "external"],
+            description: "Controls whether the runtime initializes its default database or uses database configuration owned by the mounted project.",
+          },
           blueprint: { type: "object" },
           preview: { $ref: "#/$defs/runtimePreview" },
           assets: { $ref: "#/$defs/runtimeAssets" },

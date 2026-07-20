@@ -41,7 +41,7 @@ if (!await dockerAvailable()) {
       summary: false,
       dryRun: false,
     })
-    assert.equal(result.success, true)
+    assert.equal(result.success, true, JSON.stringify(result, null, 2))
     assert.equal(result.executions.at(-1)?.stdout.trim(), "1")
 
     const mariaDbRecipePath = join(directory, "mariadb-recipe.json")
@@ -63,7 +63,7 @@ if (!await dockerAvailable()) {
       summary: false,
       dryRun: false,
     })
-    assert.equal(mariaDbResult.success, true)
+    assert.equal(mariaDbResult.success, true, JSON.stringify(mariaDbResult, null, 2))
     assert.equal(mariaDbResult.executions.at(-1)?.stdout.trim(), "1")
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {

@@ -584,6 +584,7 @@ export interface WorkspaceRecipe {
     wp?: string
     phpVersion?: string
     wordpressInstallMode?: RuntimeWordPressInstallMode
+    databaseSetup?: RuntimeWordPressDatabaseSetup
     blueprint?: unknown
     preview?: RuntimePreviewSpec
     assets?: RuntimeAssetSpec

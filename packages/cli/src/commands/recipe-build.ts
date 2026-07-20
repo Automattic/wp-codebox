@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressDatabaseSetup, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run" | "runtime-package-run"
@@ -12,6 +12,7 @@ interface WordPressPhpunitBuilderOptions {
   wordpressVersion?: string
   phpVersion?: string
   wordpressInstallMode?: RuntimeWordPressInstallMode
+  databaseSetup?: RuntimeWordPressDatabaseSetup
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
   mounts?: WorkspaceRecipeMount[]
@@ -82,6 +83,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
         phpVersion: stringOrUndefined(phpunitOptions.phpVersion),
         wordpressInstallMode: phpunitOptions.wordpressInstallMode,
+        databaseSetup: phpunitOptions.databaseSetup,
         extensions: Array.isArray(phpunitOptions.extensions) ? phpunitOptions.extensions : [],
         backendPackage: phpunitOptions.backendPackage,
         mounts: Array.isArray(phpunitOptions.mounts) ? phpunitOptions.mounts : [],
