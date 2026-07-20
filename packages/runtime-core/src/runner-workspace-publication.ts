@@ -86,12 +86,14 @@ export type RunnerWorkspacePublicationResult = {
   }
   branch?: {
     base?: string
+    base_sha?: string
     head?: string
     name?: string
     remote?: string
   }
   commit?: {
     sha?: string
+    parent_sha?: string
     message?: string
   }
   pull_request?: {
