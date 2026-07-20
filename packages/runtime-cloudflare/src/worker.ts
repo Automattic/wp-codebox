@@ -139,6 +139,9 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "before-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
     "before-rest-preload-skip-global-styles": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
     "after-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: false },
+    "after-block-definitions": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "// Preload server-registered block bindings sources.", before: true },
+    "before-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: true },
+    "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
   const stop = stops[phase]
