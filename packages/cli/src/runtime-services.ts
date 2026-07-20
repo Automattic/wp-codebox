@@ -5,7 +5,7 @@ import { promisify } from "node:util"
 import type { WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
 
 const execFileAsync = promisify(execFile)
-const MYSQL_IMAGE = "mysql:8.4"
+const MYSQL_IMAGES = { mysql: "mysql:8.4", mariadb: "mariadb:11.4" } as const
 
 export interface RuntimeServiceEvidence {
   id: string
@@ -51,7 +51,7 @@ export interface RuntimeServiceDependencies {
 export interface RuntimeServiceProvider {
   readonly name: string
   readonly kind: string
-  readonly version: string
+  version(service: WorkspaceRecipeRuntimeService): string
   provision(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidence: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService>
 }
 
@@ -64,7 +64,7 @@ const defaultDependencies: RuntimeServiceDependencies = {
 export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
   return services.map((service) => {
     const provider = runtimeServiceProvider(service.kind)
-    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version, bind: "loopback", port: "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
+    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: "loopback", port: "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
   })
 }
 
@@ -135,8 +135,12 @@ export async function provisionRuntimeServicesForRecipe(
 const mysqlDockerProvider: RuntimeServiceProvider = {
   name: "docker",
   kind: "mysql",
-  version: MYSQL_IMAGE,
+  version: mysqlDockerImage,
   provision: provisionMysqlDockerService,
+}
+
+function mysqlDockerImage(service: WorkspaceRecipeRuntimeService): string {
+  return MYSQL_IMAGES[service.configuration?.engine ?? "mysql"]
 }
 
 function runtimeServiceProvider(kind: string): RuntimeServiceProvider {
@@ -145,19 +149,24 @@ function runtimeServiceProvider(kind: string): RuntimeServiceProvider {
 }
 
 async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
-  const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: MYSQL_IMAGE, readiness: "pending", lifecycle: "provisioning" }
+  const engine = service.configuration?.engine ?? "mysql"
+  const image = mysqlDockerImage(service)
+  const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: image, readiness: "pending", lifecycle: "provisioning" }
   evidenceList.push(evidence)
   const container = `wp-codebox-${service.id}-${dependencies.randomBytes(6).toString("hex")}`
   const password = dependencies.randomBytes(24).toString("base64url")
   const emptyRootPassword = service.configuration?.rootAuthentication === "empty-password"
-  const rootEnvironment = emptyRootPassword ? { MYSQL_ALLOW_EMPTY_PASSWORD: "yes" } : { MYSQL_ROOT_PASSWORD: password }
-  const childEnvironment = { ...process.env, MYSQL_DATABASE: "runtime", MYSQL_USER: "runtime", MYSQL_PASSWORD: password, ...rootEnvironment }
-  const rootEnvironmentName = emptyRootPassword ? "MYSQL_ALLOW_EMPTY_PASSWORD" : "MYSQL_ROOT_PASSWORD"
-  const runArgs = ["run", "--detach", "--rm", "--name", container, "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", "MYSQL_DATABASE", "--env", "MYSQL_USER", "--env", "MYSQL_PASSWORD", "--env", rootEnvironmentName, MYSQL_IMAGE]
+  const environmentPrefix = engine === "mariadb" ? "MARIADB" : "MYSQL"
+  const rootEnvironmentName = emptyRootPassword ? engine === "mariadb" ? "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD" : "MYSQL_ALLOW_EMPTY_PASSWORD" : `${environmentPrefix}_ROOT_PASSWORD`
+  const rootEnvironment = { [rootEnvironmentName]: emptyRootPassword ? "yes" : password }
+  const childEnvironment = { ...process.env, [`${environmentPrefix}_DATABASE`]: "runtime", [`${environmentPrefix}_USER`]: "runtime", [`${environmentPrefix}_PASSWORD`]: password, ...rootEnvironment }
+  const foreignKeyTargetPolicy = service.configuration?.foreignKeyTargetPolicy
+  const mysqlArguments = engine === "mysql" && foreignKeyTargetPolicy ? [`--restrict-fk-on-non-standard-key=${foreignKeyTargetPolicy === "indexed" ? "OFF" : "ON"}`] : []
+  const runArgs = ["run", "--detach", "--rm", "--name", container, "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", `${environmentPrefix}_DATABASE`, "--env", `${environmentPrefix}_USER`, "--env", `${environmentPrefix}_PASSWORD`, "--env", rootEnvironmentName, image, ...mysqlArguments]
   let started = false
   try {
     throwIfAborted(signal)
-    await ensureDockerImage(dependencies, signal)
+    await ensureDockerImage(image, dependencies, signal)
     await dependencies.execute("docker", runArgs, { env: childEnvironment, signal, timeout: 30_000 })
     started = true
     const { stdout } = await dependencies.execute("docker", ["port", container, "3306/tcp"], { signal, timeout: 10_000 })
@@ -177,12 +186,12 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   }
 }
 
-async function ensureDockerImage(dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {
+async function ensureDockerImage(image: string, dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {
   try {
-    await dependencies.execute("docker", ["image", "inspect", MYSQL_IMAGE], { signal, timeout: 10_000 })
+    await dependencies.execute("docker", ["image", "inspect", image], { signal, timeout: 10_000 })
   } catch {
     throwIfAborted(signal)
-    await dependencies.execute("docker", ["pull", MYSQL_IMAGE], { signal, timeout: 5 * 60_000 })
+    await dependencies.execute("docker", ["pull", image], { signal, timeout: 5 * 60_000 })
   }
 }
 

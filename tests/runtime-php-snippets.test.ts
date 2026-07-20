@@ -7,6 +7,32 @@ import { mkdtempSync } from "node:fs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode, phpCodeFromArgs } from "../packages/runtime-playground/src/php-bootstrap.js"
+import { phpEnvAssignmentFunction, phpEnvAssignments } from "../packages/runtime-playground/src/php-snippets.js"
+
+const environmentSnippet = phpEnvAssignments({ EXAMPLE_RUNTIME_ENV: "available" })
+const environmentOutput = execFileSync(
+  "php",
+  [
+    "-r",
+    `${environmentSnippet}
+echo json_encode(array(getenv('EXAMPLE_RUNTIME_ENV'), $_ENV['EXAMPLE_RUNTIME_ENV'], $_SERVER['EXAMPLE_RUNTIME_ENV']));`,
+  ],
+  { encoding: "utf8" },
+)
+assert.deepEqual(JSON.parse(environmentOutput), ["available", "available", "available"])
+
+const environmentFunctionSnippet = phpEnvAssignmentFunction("apply_runtime_env")
+const environmentFunctionOutput = execFileSync(
+  "php",
+  [
+    "-r",
+    `${environmentFunctionSnippet}
+apply_runtime_env(array('EXAMPLE_RUNTIME_MAP_ENV' => 'available'));
+echo json_encode(array(getenv('EXAMPLE_RUNTIME_MAP_ENV'), $_ENV['EXAMPLE_RUNTIME_MAP_ENV'], $_SERVER['EXAMPLE_RUNTIME_MAP_ENV']));`,
+  ],
+  { encoding: "utf8" },
+)
+assert.deepEqual(JSON.parse(environmentFunctionOutput), ["available", "available", "available"])
 
 const lifecycleReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("contained_runtime_test")
 assert.match(lifecycleReplaySnippet, /function contained_runtime_test_component_lifecycle_replay_prepare\(\): array/)

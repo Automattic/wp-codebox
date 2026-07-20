@@ -46,6 +46,7 @@ export interface BackendNeutralEnvironmentSpec {
 }
 
 export type RuntimeWordPressInstallModeContract = "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
+export type RuntimeWordPressDatabaseSetupContract = "runtime-managed" | "external"
 
 export interface RuntimeWordPressAssetSpec extends BackendNeutralRuntimeAssetSpec {
   wordpressDirectory?: string
@@ -62,6 +63,7 @@ export interface RuntimeWordPressEnvironmentSpec extends BackendNeutralEnvironme
   phpVersion?: string
   assets?: RuntimeWordPressAssetSpec
   wordpressInstallMode?: RuntimeWordPressInstallModeContract
+  databaseSetup?: RuntimeWordPressDatabaseSetupContract
   extensions?: RuntimePHPWasmExtensionManifest[]
 }
 
@@ -115,6 +117,7 @@ export function normalizeRuntimeWordPressEnvironmentSpec(input: unknown): Runtim
     phpVersion: optionalString(value.phpVersion, "environment.phpVersion"),
     assets: normalizeRuntimeWordPressAssetSpec(value.assets),
     wordpressInstallMode: optionalString(value.wordpressInstallMode, "environment.wordpressInstallMode") as RuntimeWordPressInstallModeContract | undefined,
+    databaseSetup: optionalString(value.databaseSetup, "environment.databaseSetup") as RuntimeWordPressDatabaseSetupContract | undefined,
     extensions: normalizeRuntimePHPWasmExtensionManifests(value.extensions),
   })
 }

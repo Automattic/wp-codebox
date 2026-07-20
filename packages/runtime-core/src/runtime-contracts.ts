@@ -3,7 +3,7 @@ import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
-import type { BackendNeutralRuntimeProvenance, RuntimePHPWasmExtensionManifest, RuntimeWordPressAssetSpec, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
+import type { BackendNeutralRuntimeProvenance, RuntimePHPWasmExtensionManifest, RuntimeWordPressAssetSpec, RuntimeWordPressDatabaseSetupContract, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -19,6 +19,7 @@ export type SandboxWorkspaceMode = "repo-backed" | "site-backed"
 export interface EnvironmentSpec extends RuntimeWordPressEnvironmentSpec {}
 
 export type RuntimeWordPressInstallMode = RuntimeWordPressInstallModeContract
+export type RuntimeWordPressDatabaseSetup = RuntimeWordPressDatabaseSetupContract
 
 export interface RuntimeAssetSpec extends RuntimeWordPressAssetSpec {}
 
@@ -137,7 +138,9 @@ export interface WorkspaceRecipeRuntimeService {
   id: string
   kind: "mysql" | (string & {})
   configuration?: {
+    engine?: "mysql" | "mariadb"
     rootAuthentication?: "generated-password" | "empty-password"
+    foreignKeyTargetPolicy?: "unique-only" | "indexed"
   }
   /** Explicit map from a provider output (for example `port`) to a runtime env name. */
   outputs: Record<string, string>
