@@ -135,12 +135,19 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "after-get-post": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( current_theme_supports( 'post-formats' )", before: true },
     "before-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "wp_after_insert_post( $post, false, null );", before: true },
     "after-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "// Schedule auto-draft cleanup.", before: true },
+    "before-preload-paths": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$preload_paths = array(", before: true },
     "before-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
+    "before-rest-preload-skip-global-styles": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
     "after-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
   const stop = stops[phase]
-  const source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
+  let source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
+  if (phase === "before-rest-preload-skip-global-styles") {
+    const lookup = "WP_Theme_JSON_Resolver::get_user_global_styles_post_id()"
+    if (source.split(lookup).length - 1 !== 2) throw new Error("WordPress global styles lookup count changed.")
+    source = source.replaceAll(lookup, "0")
+  }
   const index = source.indexOf(stop.marker)
   if (index === -1 || index !== source.lastIndexOf(stop.marker)) throw new Error(`WordPress editor memory marker is not unique: ${phase}`)
   const insertion = stop.before ? index : index + stop.marker.length

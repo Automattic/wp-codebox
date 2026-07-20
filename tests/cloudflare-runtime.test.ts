@@ -118,7 +118,8 @@ test("Cloudflare lease contention honors Retry-After without exceeding the acqui
 test("Cloudflare editor memory probes stop at bounded lifecycle markers and discard their runtime", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const probe = worker.slice(worker.indexOf("async function runEditorMemoryProbe"), worker.indexOf("async function resetCanonicalWordPress"))
-  for (const phase of ["admin", "before-insert", "after-insert", "after-get-post", "before-hooks", "after-hooks", "before-rest-preload", "after-rest-preload", "block-editor"]) assert.match(probe, new RegExp(`"?${phase}"?`))
+  for (const phase of ["admin", "before-insert", "after-insert", "after-get-post", "before-hooks", "after-hooks", "before-preload-paths", "before-rest-preload", "before-rest-preload-skip-global-styles", "after-rest-preload", "block-editor"]) assert.match(probe, new RegExp(`"?${phase}"?`))
+  assert.match(probe, /source\.replaceAll\(lookup, "0"\)/)
   assert.equal((probe.match(/await discardCachedRuntime\(\)/g) ?? []).length, 2)
   assert.match(probe, /memory_get_peak_usage/)
 })
