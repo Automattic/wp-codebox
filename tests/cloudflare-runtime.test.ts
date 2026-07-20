@@ -45,6 +45,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-admin")), { kind: "editor-probe", phase: "admin" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-auto-draft")), { kind: "editor-probe", phase: "auto-draft" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-auto-draft-no-persist")), { kind: "editor-probe", phase: "auto-draft-no-persist" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-block-editor")), { kind: "editor-probe", phase: "block-editor" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
@@ -126,6 +127,7 @@ test("Cloudflare editor probes bound the authenticated editor lifecycle and disc
   assert.equal((probe.match(/await discardCachedRuntime\(\)/g) ?? []).length, 2)
   assert.match(probe, /\/wordpress\/wp-admin\/post-new\.php/)
   assert.match(probe, /memory_get_peak_usage/)
+  assert.match(probe, /'auto-draft' !== \( \$rows\[0\]->post_status/)
 })
 
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {

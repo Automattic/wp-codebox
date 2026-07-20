@@ -106,6 +106,7 @@ async function runCoordinatedEditorProbe(request: Request, env: Env, coordinator
   try {
     if (!lease.pointer) throw new Error("Canonical WordPress must be initialized before running an editor probe.")
     const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    if (phase === "auto-draft-no-persist") patchAutoDraftPersistenceProbe(runtime.php)
     patchEditorProbe(runtime.php, phase)
     const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
     await releaseLease(coordinator, request.url, lease)
@@ -125,6 +126,7 @@ function patchEditorProbe(php: PHP, phase: EditorProbePhase): void {
   const markers: Record<EditorProbePhase, string> = {
     admin: "require_once __DIR__ . '/admin.php';",
     "auto-draft": "$post_ID = $post->ID;",
+    "auto-draft-no-persist": "$post_ID = $post->ID;",
     "block-editor": "require_once ABSPATH . 'wp-admin/admin-footer.php';",
   }
   const marker = markers[phase]
@@ -133,6 +135,23 @@ function patchEditorProbe(php: PHP, phase: EditorProbePhase): void {
   const stop = `\necho wp_json_encode( array( 'schema' => 'wp-codebox/cloudflare-editor-probe/v1', 'phase' => '${phase}', 'memoryBytes' => memory_get_usage( true ), 'peakMemoryBytes' => memory_get_peak_usage( true ) ) );\nreturn;`
   const insertion = phase === "block-editor" ? index : index + marker.length
   php.writeFile(path, new TextEncoder().encode(`${source.slice(0, insertion)}${stop}${source.slice(insertion)}`))
+}
+
+function patchAutoDraftPersistenceProbe(php: PHP): void {
+  const path = "/wordpress/wp-content/plugins/markdown-database-integration/inc/class-wp-markdown-write-engine.php"
+  const source = new TextDecoder().decode(php.readFileAsBuffer(path))
+  const needle = `if ( $id ) {
+				$this->mark_post_dirty( (int) $id );
+			}`
+  const replacement = `if ( $id ) {
+				$rows = $this->driver->query( "SELECT post_status FROM \`{$this->prefix()}posts\` WHERE ID = " . (int) $id );
+				if ( ! is_array( $rows ) || empty( $rows ) || 'auto-draft' !== ( $rows[0]->post_status ?? '' ) ) {
+					$this->mark_post_dirty( (int) $id );
+				}
+			}`
+  const index = source.indexOf(needle)
+  if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error("MDI auto-draft persistence probe marker is not unique.")
+  php.writeFile(path, new TextEncoder().encode(`${source.slice(0, index)}${replacement}${source.slice(index + needle.length)}`))
 }
 
 interface MarkdownManifestFile {

@@ -8,7 +8,7 @@ export type WorkerRequestRoute =
   | { kind: "editor-probe"; phase: EditorProbePhase }
   | { kind: "probe"; phase: string }
 
-export type EditorProbePhase = "admin" | "auto-draft" | "block-editor"
+export type EditorProbePhase = "admin" | "auto-draft" | "auto-draft-no-persist" | "block-editor"
 
 export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   const phase = new URL(request.url).searchParams.get("phase")
@@ -20,6 +20,7 @@ export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   if (phase === "operator-reset") return { kind: "operator-reset" }
   if (phase === "editor-probe-admin") return { kind: "editor-probe", phase: "admin" }
   if (phase === "editor-probe-auto-draft") return { kind: "editor-probe", phase: "auto-draft" }
+  if (phase === "editor-probe-auto-draft-no-persist") return { kind: "editor-probe", phase: "auto-draft-no-persist" }
   if (phase === "editor-probe-block-editor") return { kind: "editor-probe", phase: "block-editor" }
   return { kind: "probe", phase }
 }
