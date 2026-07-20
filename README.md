@@ -1061,6 +1061,8 @@ Current bundles include:
 - `files/diffs/<mount>.patch`: unified text diff from the mount baseline (a seeded baseline directory, or the git `HEAD` of a git work-tree mount) to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
+Readwrite mounts capture files and diffs by default. Set `captureArtifacts` to `false` on a mount when its mutations are runtime-only and do not need review or apply-back evidence. WP Codebox then skips both the pre-run filesystem baseline and post-run traversal for that mount while preserving readwrite behavior.
+
 Recipes that import a generated site into a clean runtime can export replay evidence before final artifact collection with a workflow step:
 
 ```json

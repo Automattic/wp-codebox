@@ -109,6 +109,7 @@ export interface WorkspaceRecipeMount {
   source: string
   target: string
   mode?: "readonly" | "readwrite"
+  captureArtifacts?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -700,6 +701,7 @@ export interface MountSpec {
   source: string
   target: string
   mode: "readonly" | "readwrite"
+  captureArtifacts?: boolean
   metadata?: Record<string, unknown>
 }
 

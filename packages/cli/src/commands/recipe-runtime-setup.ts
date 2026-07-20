@@ -68,6 +68,7 @@ export async function applyRecipeRuntimeSetup(args: {
       source,
       target: mount.target,
       mode: mount.mode ?? "readonly",
+      ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
       metadata: {
         kind: "runtime-stack-mount",
         index,
@@ -84,6 +85,7 @@ export async function applyRecipeRuntimeSetup(args: {
       source,
       target: mount.target,
       mode: mount.mode ?? "readonly",
+      ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
       metadata: {
         kind: "distribution-source-mount",
         index,
@@ -168,6 +170,7 @@ export async function applyRecipeRuntimeSetup(args: {
       source,
       target,
       mode: mount.mode ?? "readwrite",
+      ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
       metadata,
     }
     inputMounts.push(inputMount)
@@ -437,6 +440,9 @@ async function inputMountMetadataWithBaseline(source: string, mount: WorkspaceRe
     canonicalizedTarget: canonicalTarget !== originalTarget,
   }
   if ((mount.mode ?? "readwrite") !== "readwrite") {
+    return Object.keys(metadata).length > 0 ? metadata : undefined
+  }
+  if (mount.captureArtifacts === false) {
     return Object.keys(metadata).length > 0 ? metadata : undefined
   }
   if (typeof metadata.baselineSource === "string" && metadata.baselineSource.length > 0) {
