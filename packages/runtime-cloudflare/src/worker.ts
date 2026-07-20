@@ -141,6 +141,10 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "after-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: false },
     "after-block-definitions": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "// Preload server-registered block bindings sources.", before: true },
     "before-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: true },
+    "settings-before-styles": { path: "/wordpress/wp-includes/block-editor.php", marker: "$global_styles = array();", before: true },
+    "settings-before-global": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
+    "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
+    "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
     "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
