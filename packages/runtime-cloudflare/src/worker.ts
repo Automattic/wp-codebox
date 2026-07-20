@@ -375,26 +375,30 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-started" }))
+  await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "boot-started")
   const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET, true)
-  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-completed" }))
+  await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "boot-completed")
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
     const output = (await runtime.php.run({ code: canonicalBootstrapSetupCode(passwordFile, origin) })).text.trim()
     if (output !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "setup-completed" }))
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "setup-completed")
     const files = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "files-collected", files: files.length }))
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "files-collected", { files: files.length })
     const pointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, files)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "revision-persisted", revision: pointer.revision }))
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "revision-persisted", { revision: pointer.revision })
     await commitLease(coordinator, requestUrl, lease, pointer)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "lease-committed", revision: pointer.revision }))
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "lease-committed", { revision: pointer.revision })
     return { ...runtime, pointer }
   } catch (error) {
     runtime.php.exit()
     throw error
   }
+}
+
+function recordBootstrapStage(bucket: R2Bucket, stage: string, details: Record<string, unknown> = {}): Promise<R2Object | null> {
+  return bucket.put("diagnostics/bootstrap-stage.json", JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage, recordedAt: new Date().toISOString(), ...details }))
 }
 
 async function canonicalWordPressAuthConstants(env: Env): Promise<Record<WordPressAuthConstant, string>> {
