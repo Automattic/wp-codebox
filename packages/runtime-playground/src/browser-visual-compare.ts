@@ -1853,6 +1853,11 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
   await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
   await page.evaluate(async (timeout) => {
     const until = Date.now() + timeout
+    const normalizedSvgBlobUrlsKey = "__wpCodeboxVisualCompareSvgBlobUrls"
+    const blobUrlTarget = window as unknown as Window & { [key: string]: string[] | undefined }
+    const normalizedSvgBlobUrls = blobUrlTarget[normalizedSvgBlobUrlsKey] ?? []
+    blobUrlTarget[normalizedSvgBlobUrlsKey] = normalizedSvgBlobUrls
+    const maxSvgBytes = 2 * 1024 * 1024
 
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
       .filter((link) => !link.disabled && Boolean(link.href))
@@ -1872,6 +1877,54 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
 
     const images = Array.from(document.images)
     await Promise.all(images.map(async (image) => {
+      // Keep responsive image selection and all non-SVG image paths unchanged.
+      if (!image.srcset && image.parentElement?.tagName !== "PICTURE") {
+        try {
+          const source = new URL(image.currentSrc || image.src, document.baseURI)
+          if (source.origin === location.origin && /\.svg$/i.test(source.pathname)) {
+            const controller = new AbortController()
+            const abortTimer = setTimeout(() => controller.abort(), Math.max(0, until - Date.now()))
+            try {
+              const response = await fetch(source.href, { signal: controller.signal })
+              const contentLength = Number(response.headers.get("content-length"))
+              if (response.ok && (!Number.isFinite(contentLength) || contentLength <= maxSvgBytes) && /\bsvg\b/i.test(response.headers.get("content-type") ?? "")) {
+                const reader = response.body?.getReader()
+                if (reader) {
+                  const chunks: ArrayBuffer[] = []
+                  let size = 0
+                  while (Date.now() < until) {
+                    const next = await reader.read()
+                    if (next.done) {
+                      break
+                    }
+                    size += next.value.byteLength
+                    if (size > maxSvgBytes) {
+                      await reader.cancel()
+                      break
+                    }
+                    chunks.push(Uint8Array.from(next.value).buffer)
+                  }
+                  if (size <= maxSvgBytes && Date.now() < until) {
+                    const blobUrl = URL.createObjectURL(new Blob(chunks, { type: "image/svg+xml" }))
+                    image.src = blobUrl
+                    try {
+                      await image.decode()
+                      normalizedSvgBlobUrls.push(blobUrl)
+                    } catch {
+                      image.src = source.href
+                      URL.revokeObjectURL(blobUrl)
+                    }
+                  }
+                }
+              }
+            } finally {
+              clearTimeout(abortTimer)
+            }
+          }
+        } catch {
+          // Keep the original image when a bounded same-origin normalization fails.
+        }
+      }
       if (typeof image.decode === "function") {
         await Promise.race([
           image.decode().catch(() => undefined),
@@ -1893,6 +1946,17 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
 
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
   }, readinessTimeoutMs).catch(() => undefined)
+}
+
+async function releaseVisualCompareSvgBlobUrls(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const normalizedSvgBlobUrlsKey = "__wpCodeboxVisualCompareSvgBlobUrls"
+    const target = window as unknown as Window & { [key: string]: string[] | undefined }
+    for (const blobUrl of target[normalizedSvgBlobUrlsKey] ?? []) {
+      URL.revokeObjectURL(blobUrl)
+    }
+    delete target[normalizedSvgBlobUrlsKey]
+  }).catch(() => undefined)
 }
 
 export interface VisualCompareNavigationPolicy {
@@ -2203,7 +2267,11 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
   // to their final state and freezes infinite ones to a deterministic frame, so the
   // capture does not depend on transition timing. Applied to both sides equally.
-  await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
+  try {
+    await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
+  } finally {
+    await releaseVisualCompareSvgBlobUrls(page)
+  }
   return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
 }
 

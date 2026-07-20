@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -81,13 +82,25 @@ function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fil
   assert.equal(visualCompareOfflineRequestAllowed("https://fonts.example.invalid/font.woff2", "http://127.0.0.1:42573"), false)
 }
 
-// 4. A complete SVG image still needs decode readiness: externally served SVGs can be
-// complete before their embedded font glyphs have been painted.
+// 4. A complete same-origin external SVG is rehydrated through a Blob before decode.
+// Embedded-font metrics are browser-specific, so this asserts the resource path itself.
 {
+  const server = createServer((request, response) => {
+    if (request.url === "/image.svg") {
+      response.writeHead(200, { "content-type": "image/svg+xml" })
+      response.end('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="24"><text x="0" y="18">settled SVG</text></svg>')
+      return
+    }
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end('<img id="svg" src="/image.svg">')
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
   const browser = await chromium.launch({ headless: true })
   try {
     const page = await browser.newPage()
-    await page.setContent('<img id="svg" src="data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"%3E%3C/svg%3E">')
+    await page.goto(`http://127.0.0.1:${address.port}`)
     await page.waitForFunction(() => document.images[0]?.complete === true)
     await page.evaluate(`
       const image = document.querySelector("#svg");
@@ -103,9 +116,11 @@ function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fil
       image.dataset.decodeCalls = String(calls);
     `)
     await waitForVisualComparePaintReady(page, 1_000)
-    assert.equal(await page.locator("#svg").evaluate((image) => image.dataset.decodeCalls), "1")
+    assert.equal(await page.locator("#svg").evaluate((image) => image.dataset.decodeCalls), "2")
+    assert.match(await page.locator("#svg").evaluate((image) => (image as HTMLImageElement).src), /^blob:/)
   } finally {
     await browser.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   }
 }
 
