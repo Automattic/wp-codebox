@@ -497,8 +497,7 @@ function pg_snapshot_wordpress_hook_callbacks(string $hook_name): array {
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $snapshot;
     }
-    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             $snapshot[$priority . ':' . $callback_id] = true;
         }
@@ -511,7 +510,8 @@ function pg_remove_new_wordpress_hook_callbacks(string $hook_name, array $before
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             if (!isset($before[$priority . ':' . $callback_id])) {
                 $callback = $callbacks[$callback_id];

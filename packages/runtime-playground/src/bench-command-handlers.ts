@@ -1181,8 +1181,7 @@ function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): 
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $snapshot;
     }
-    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             $snapshot[$priority . ':' . $callback_id] = true;
         }
@@ -1196,7 +1195,8 @@ function wp_codebox_bench_defer_new_wordpress_hook_callbacks(string $hook_name, 
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $deferred;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach ($callbacks as $callback_id => $callback) {
             if (isset($before[$priority . ':' . $callback_id])) {
                 continue;
