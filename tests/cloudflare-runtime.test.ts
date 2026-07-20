@@ -43,6 +43,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=canonical-auth")), { kind: "canonical-auth" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-memory-after-insert")), { kind: "editor-memory-probe", phase: "after-insert" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
 
@@ -112,6 +113,14 @@ test("Cloudflare lease contention honors Retry-After without exceeding the acqui
   assert.equal(leaseRetryDelayMs(90, 12_345), 12_345)
   assert.equal(leaseRetryDelayMs(undefined, 100_000), 1_000)
   assert.equal(leaseRetryDelayMs(Number.NaN, 500), 500)
+})
+
+test("Cloudflare editor memory probes stop at bounded lifecycle markers and discard their runtime", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const probe = worker.slice(worker.indexOf("async function runEditorMemoryProbe"), worker.indexOf("async function resetCanonicalWordPress"))
+  for (const phase of ["admin", "before-insert", "after-insert", "after-hooks", "block-editor"]) assert.match(probe, new RegExp(`"?${phase}"?`))
+  assert.equal((probe.match(/await discardCachedRuntime\(\)/g) ?? []).length, 2)
+  assert.match(probe, /memory_get_peak_usage/)
 })
 
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {

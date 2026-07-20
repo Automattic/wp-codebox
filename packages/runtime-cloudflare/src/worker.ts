@@ -7,7 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
-import { routeWorkerRequest } from "./request-routing.js"
+import { routeWorkerRequest, type EditorMemoryProbePhase } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
@@ -86,6 +86,7 @@ export default {
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
+    if (route.kind === "editor-memory-probe") return runEditorMemoryProbe(request, env, coordinator, route.phase)
     if (route.kind === "probe") {
       if (route.phase === "canonical-session") return canonicalSessionProbe(env.WORDPRESS_STATE_BUCKET, await coordinatorCall<{ pointer: MarkdownPointer | null }>(coordinator, request.url, "state"))
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -97,6 +98,42 @@ export default {
     if (route.kind === "canonical-auth") return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
     return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
   },
+}
+
+async function runEditorMemoryProbe(request: Request, env: Env, coordinator: DurableObjectStub, phase: EditorMemoryProbePhase): Promise<Response> {
+  const lease = await acquireLease(coordinator, request.url)
+  let finalized = false
+  try {
+    if (!lease.pointer) throw new Error("Canonical WordPress must be initialized before running an editor memory probe.")
+    const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    patchEditorMemoryStop(runtime.php, phase)
+    const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+    await releaseLease(coordinator, request.url, lease)
+    finalized = true
+    await discardCachedRuntime()
+    return response
+  } catch (error) {
+    if (!finalized) await abortLease(coordinator, request.url, lease)
+    await discardCachedRuntime()
+    throw error
+  }
+}
+
+function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
+  const stops: Record<EditorMemoryProbePhase, { path: string; marker: string; before: boolean }> = {
+    admin: { path: "/wordpress/wp-admin/post-new.php", marker: "require_once __DIR__ . '/admin.php';", before: false },
+    "before-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( $create_in_db ) {", before: false },
+    "after-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( is_wp_error( $post_id ) ) {", before: true },
+    "after-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "// Schedule auto-draft cleanup.", before: true },
+    "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
+  }
+  const stop = stops[phase]
+  const source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
+  const index = source.indexOf(stop.marker)
+  if (index === -1 || index !== source.lastIndexOf(stop.marker)) throw new Error(`WordPress editor memory marker is not unique: ${phase}`)
+  const insertion = stop.before ? index : index + stop.marker.length
+  const output = `\necho wp_json_encode( array( 'schema' => 'wp-codebox/cloudflare-editor-memory/v1', 'phase' => '${phase}', 'memoryBytes' => memory_get_usage( true ), 'peakMemoryBytes' => memory_get_peak_usage( true ) ) ); exit;\n`
+  php.writeFile(stop.path, new TextEncoder().encode(`${source.slice(0, insertion)}${output}${source.slice(insertion)}`))
 }
 
 interface MarkdownManifestFile {
