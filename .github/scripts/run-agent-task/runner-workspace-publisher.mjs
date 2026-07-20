@@ -41,25 +41,33 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
   let head = configuredHead
   let pull = null
   let parent = baseSha
+  let reusedPull = false
   if (existing) {
     const pulls = await openPulls(head)
     pull = pulls.find((candidate) => isExactPull(candidate, head)) || null
+    if (!pull) {
+      head = `${configuredHead}-${baseSha.slice(0, 12)}`
+      if (!/^[A-Za-z0-9._/-]+$/.test(head)) throw new Error("Runner workspace fresh publication branch configuration is invalid.")
+      try {
+        existing = await api("GET", refPath(head))
+      } catch (error) {
+        if (!String(error.message).includes(" 404.")) throw error
+        existing = null
+      }
+      if (existing) {
+        const freshPulls = await openPulls(head)
+        pull = freshPulls.find((candidate) => isExactPull(candidate, head)) || null
+        if (!pull) throw new Error(`Fresh publication branch ${head} already exists without an exact open pull request; choose a new run ID or resolve the branch before publishing.`)
+      }
+    }
     if (pull) {
-      const existingSha = string(existing.object?.sha)
+      const existingSha = string(existing?.object?.sha)
       const comparison = await api("GET", `/compare/${baseSha}...${existingSha}`)
       if (!existingSha || !["ahead", "identical"].includes(string(comparison.status)) || string(comparison.merge_base_commit?.sha) !== baseSha) {
         throw new Error(`Existing publication branch ${head} has an open pull request but does not descend from current base ${base}@${baseSha}; rebase the pull request before publishing again.`)
       }
       parent = existingSha
-    } else {
-      head = `${configuredHead}-${baseSha.slice(0, 12)}`
-      if (!/^[A-Za-z0-9._/-]+$/.test(head)) throw new Error("Runner workspace fresh publication branch configuration is invalid.")
-      try {
-        await api("GET", refPath(head))
-        throw new Error(`Fresh publication branch ${head} already exists; choose a new run ID or resolve its pull request before publishing.`)
-      } catch (error) {
-        if (!String(error.message).includes(" 404.")) throw error
-      }
+      reusedPull = true
     }
   }
   const parentCommit = await api("GET", `/git/commits/${parent}`)
@@ -80,5 +88,5 @@ export async function publishRunnerWorkspace({ request, changedFiles, publicatio
   else await api("POST", "/git/refs", { ref: `refs/heads/${head}`, sha: string(commit.sha) })
   pull ||= await api("POST", "/pulls", { title: string(config.title || request.workload?.label || "Apply agent task changes"), head, base, body: string(config.body || "") })
   if (!isExactPull(pull, head) || !/^https:\/\/github\.com\//.test(string(pull.html_url))) throw new Error("GitHub publication response did not match the requested repository and branches.")
-  return { schema: "wp-codebox/runner-workspace-publication-result/v1", success: true, status: "published", backend: "github-rest", branch: { base, base_sha: baseSha, head, name: head }, commit: { sha: string(commit.sha), parent_sha: parent }, pull_request: { number: pull.number, url: pull.html_url, reused: Boolean(pull && existing && parent !== baseSha), opened: !(existing && parent !== baseSha) } }
+  return { schema: "wp-codebox/runner-workspace-publication-result/v1", success: true, status: "published", backend: "github-rest", branch: { base, base_sha: baseSha, head, name: head }, commit: { sha: string(commit.sha), parent_sha: parent }, pull_request: { number: pull.number, url: pull.html_url, reused: reusedPull, opened: !reusedPull } }
 }
