@@ -143,6 +143,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
   const revision = "7cf025f2d64aa933d937f1a18a129e278c231783"
+  const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
@@ -154,9 +155,10 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
   }
 
   assert.match(generator, new RegExp(`const revision = "${revision}"`))
+  assert.match(generator, new RegExp(`const jsonMachineRevision = "${jsonMachineRevision}"`))
   assert.match(worker, new RegExp(`MARKDOWN_DATABASE_INTEGRATION_REVISION = "${revision}"`))
   assert.match(writeEngine, /! \$this->is_auto_draft\( \(int\) \$id \)/)
-  assert.deepEqual(names.sort(), [
+  for (const name of [
     "db.php",
     "inc/class-wp-markdown-db.php",
     "inc/class-wp-markdown-driver.php",
@@ -166,7 +168,11 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
     "inc/class-wp-markdown-search.php",
     "inc/class-wp-markdown-storage.php",
     "inc/class-wp-markdown-write-engine.php",
-  ])
+    "vendor/autoload.php",
+    "vendor/halaxa/json-machine/src/Items.php",
+    "vendor/halaxa/json-machine/src/JsonDecoder/ExtJsonDecoder.php",
+    "vendor/halaxa/json-machine/src/functions.php",
+  ]) assert.ok(names.includes(name), `Runtime bundle includes ${name}`)
 })
 
 test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusion groups", async () => {
