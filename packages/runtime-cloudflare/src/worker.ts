@@ -1295,7 +1295,10 @@ async function bootWordPressRuntime(
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
-        if (shouldPatchCanonicalRuntimePoliciesAtInit) patchCanonicalRuntimePoliciesAtInit(php)
+        if (shouldPatchCanonicalRuntimePoliciesAtInit) {
+          patchCanonicalRuntimePoliciesAtInit(php)
+          patchCanonicalThemeJsonCustomCss(php)
+        }
       } : undefined,
       beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
         php.mkdir("/wordpress/wp-content/database")
@@ -1342,6 +1345,20 @@ add_filter( 'pre_update_option_rewrite_rules', static function ( $value, $old_va
 }, PHP_INT_MAX, 2 );
 ${needle}`
   php.writeFile(settingsPath, new TextEncoder().encode(`${settings.slice(0, firstNeedle)}${replacement}${settings.slice(firstNeedle + needle.length)}`))
+}
+
+function patchCanonicalThemeJsonCustomCss(php: PHP): void {
+  const path = "/wordpress/wp-includes/class-wp-theme-json.php"
+  const needle = "\t\t$blocks_metadata = static::get_blocks_metadata();"
+  const source = new TextDecoder().decode(php.readFileAsBuffer(path))
+  const index = source.indexOf(needle)
+  if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error("WordPress theme JSON custom CSS patch needle was not uniquely found.")
+  const fastPath = `\t\tif ( array( 'custom-css' ) === $types ) {
+\t\t\treturn (string) _wp_array_get( $this->theme_json, array( 'styles', 'css' ), '' );
+\t\t}
+
+`
+  php.writeFile(path, new TextEncoder().encode(`${source.slice(0, index)}${fastPath}${source.slice(index)}`))
 }
 
 function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeFile[] {
