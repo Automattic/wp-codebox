@@ -7,6 +7,10 @@ name: Run Agent Task (reusable)
         description: Exact immutable WP Codebox release tag used for this workflow invocation, in vX.Y.Z form.
         type: string
         required: true
+      wp_codebox_workflow_ref:
+        description: Optional full commit SHA for workflow helpers; defaults to wp_codebox_release_ref.
+        type: string
+        default: ""
       external_package_source:
         description: "JSON descriptor for exactly one standalone .agent.json file: repository, immutable revision, file path, and sha256-bytes-v1 digest."
         type: string
@@ -155,6 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WP_CODEBOX_RELEASE_REF: ${{ inputs.wp_codebox_release_ref }}
+      WP_CODEBOX_WORKFLOW_REF: ${{ inputs.wp_codebox_workflow_ref || inputs.wp_codebox_release_ref }}
     permissions:
       contents: write
       pull-requests: write
@@ -173,24 +178,31 @@ jobs:
             echo "wp_codebox_release_ref must be an immutable vX.Y.Z release tag" >&2
             exit 1
           fi
+          if ! [[ "${WP_CODEBOX_WORKFLOW_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$|^[0-9a-f]{40}$ ]]; then
+            echo "wp_codebox_workflow_ref must be an immutable vX.Y.Z release tag or full commit SHA" >&2
+            exit 1
+          fi
 
       - name: Checkout WP Codebox workflow helpers
         uses: actions/checkout@v4
         with:
           repository: Automattic/wp-codebox
-          ref: ${{ inputs.wp_codebox_release_ref }}
+          ref: ${{ inputs.wp_codebox_workflow_ref || inputs.wp_codebox_release_ref }}
           path: .wp-codebox-workflow
 
-      - name: Verify WP Codebox workflow helper release
+      - name: Verify WP Codebox workflow helper revision
         working-directory: .wp-codebox-workflow
         run: |
-          git ls-remote --exit-code --refs origin "refs/tags/${WP_CODEBOX_RELEASE_REF}" >/dev/null
-          remote_tag_object="$(git ls-remote --refs origin "refs/tags/${WP_CODEBOX_RELEASE_REF}" | cut -f1)"
-          remote_tag_commit="$(git ls-remote origin "refs/tags/${WP_CODEBOX_RELEASE_REF}^{}" | cut -f1)"
-          remote_tag_commit="${remote_tag_commit:-${remote_tag_object}}"
           checked_out_commit="$(git rev-parse HEAD)"
-          if [[ "${checked_out_commit}" != "${remote_tag_commit}" ]]; then
-            echo "Checked-out WP Codebox helpers do not match the remote release tag commit" >&2
+          expected_helper_commit="${WP_CODEBOX_WORKFLOW_REF}"
+          if [[ "${WP_CODEBOX_WORKFLOW_REF}" == v* ]]; then
+            git ls-remote --exit-code --refs origin "refs/tags/${WP_CODEBOX_WORKFLOW_REF}" >/dev/null
+            remote_tag_object="$(git ls-remote --refs origin "refs/tags/${WP_CODEBOX_WORKFLOW_REF}" | cut -f1)"
+            remote_tag_commit="$(git ls-remote origin "refs/tags/${WP_CODEBOX_WORKFLOW_REF}^{}" | cut -f1)"
+            expected_helper_commit="${remote_tag_commit:-${remote_tag_object}}"
+          fi
+          if [[ "${checked_out_commit}" != "${expected_helper_commit}" ]]; then
+            echo "Checked-out WP Codebox helpers do not match wp_codebox_workflow_ref" >&2
             exit 1
           fi
           EXPECTED_VERSION="${WP_CODEBOX_RELEASE_REF#v}" node --input-type=module -e '

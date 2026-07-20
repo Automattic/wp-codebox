@@ -15,6 +15,7 @@ const publicWorkflowSurface = workflow.slice(0, workflow.indexOf("jobs:"))
 assert.match(workflow, /^name: Run Agent Task \(reusable\)$/m)
 assert.match(workflow, /workflow_call:/)
 assert.match(workflow, /wp_codebox_release_ref:/)
+assert.match(workflow, /wp_codebox_workflow_ref:/)
 assert.match(workflow, /external_package_source:/)
 assert.match(workflow, /runtime_sources:/)
 assert.match(workflow, /EXTERNAL_PACKAGE_SOURCE_POLICY:/)
@@ -43,25 +44,29 @@ assert.match(workflow, /prepare-agent-task-upload\.mjs/)
 assert.match(workflow, /agent-task-upload/)
 assert.match(workflow, /if: always\(\)/)
 assert.match(workflow, /WP_CODEBOX_RELEASE_REF: \$\{\{ inputs\.wp_codebox_release_ref \}\}/)
+assert.match(workflow, /WP_CODEBOX_WORKFLOW_REF: \$\{\{ inputs\.wp_codebox_workflow_ref \|\| inputs\.wp_codebox_release_ref \}\}/)
 assert.match(workflow, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/)
-assert.doesNotMatch(workflow, /github\.workflow_ref|WORKFLOW_REF|expected_workflow_ref/)
+assert.doesNotMatch(workflow, /github\.workflow_ref|expected_workflow_ref/)
 assert.match(workflow, /repository: Automattic\/wp-codebox/)
-assert.match(workflow, /ref: \$\{\{ inputs\.wp_codebox_release_ref \}\}/)
-assert.match(workflow, /Verify WP Codebox workflow helper release/)
-assert.match(workflow, /git ls-remote --exit-code --refs origin "refs\/tags\/\$\{WP_CODEBOX_RELEASE_REF\}"/)
-assert.match(workflow, /checked_out_commit.*remote_tag_commit/)
+assert.match(workflow, /ref: \$\{\{ inputs\.wp_codebox_workflow_ref \|\| inputs\.wp_codebox_release_ref \}\}/)
+assert.match(workflow, /Verify WP Codebox workflow helper revision/)
+assert.match(workflow, /git ls-remote --exit-code --refs origin "refs\/tags\/\$\{WP_CODEBOX_WORKFLOW_REF\}"/)
+assert.match(workflow, /checked_out_commit.*expected_helper_commit/)
 assert.match(workflow, /JSON\.parse\(readFileSync\("package\.json", "utf8"\)\)\.version/)
 assert.doesNotMatch(workflow, /steps\.[^.]+\.outputs\.ref/)
 assert.match(workflow, /Validate WP Codebox release tag/)
 
-const parseConsumerReleaseTags = (consumer: string) => ({
+const parseConsumerRefs = (consumer: string) => ({
   workflow: consumer.match(/uses: Automattic\/wp-codebox\/\.github\/workflows\/run-agent-task\.yml@([^\s]+)/)?.[1],
-  helpers: consumer.match(/wp_codebox_release_ref: ([^\s]+)/)?.[1],
+  release: consumer.match(/wp_codebox_release_ref: ([^\s]+)/)?.[1],
+  helpers: consumer.match(/wp_codebox_workflow_ref: ([^\s]+)/)?.[1],
 })
 const isExactReleaseTag = (value: string | undefined) => /^v\d+\.\d+\.\d+$/.test(value ?? "")
+const isFullCommit = (value: string | undefined) => /^[0-9a-f]{40}$/.test(value ?? "")
 const isCoherentConsumer = (consumer: string) => {
-  const { workflow: workflowTag, helpers: helperTag } = parseConsumerReleaseTags(consumer)
-  return isExactReleaseTag(workflowTag) && workflowTag === helperTag
+  const { workflow: workflowRef, release, helpers } = parseConsumerRefs(consumer)
+  if (!isExactReleaseTag(release)) return false
+  return helpers ? isFullCommit(workflowRef) && workflowRef === helpers : workflowRef === release
 }
 const coherentConsumer = await readFile(new URL("../fixtures/agent-task-reusable-workflow-consumer.yml", import.meta.url), "utf8")
 const mismatchedConsumer = await readFile(new URL("../fixtures/agent-task-reusable-workflow-consumer-mismatched.yml", import.meta.url), "utf8")
@@ -70,6 +75,8 @@ assert.equal(isCoherentConsumer(coherentConsumer), true, "An exact matching work
 assert.equal(isCoherentConsumer(mismatchedConsumer), false, "Mismatched workflow and helper release tags must fail")
 assert.match(buildRunConsumer, /github\.workflow_ref: Automattic\/build-with-wordpress\/\.github\/workflows\/build\.yml@trunk/)
 assert.equal(isCoherentConsumer(buildRunConsumer), true, "A foreign caller workflow_ref must not affect the paired release tags")
+const commit = "0123456789abcdef0123456789abcdef01234567"
+assert.equal(isCoherentConsumer(`uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@${commit}\nwith:\n  wp_codebox_release_ref: v0.12.29\n  wp_codebox_workflow_ref: ${commit}\n`), true, "An accepted workflow commit may provide helpers independently of packaged release assets")
 for (const invalidRef of ["main", "v0", "v0.12", "v0.12.3-rc.1", "0123456789abcdef0123456789abcdef01234567"]) {
   assert.equal(isExactReleaseTag(invalidRef), false, `Non-release ref must fail: ${invalidRef}`)
 }
