@@ -43,10 +43,6 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=canonical-auth")), { kind: "canonical-auth" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
-  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-admin")), { kind: "editor-probe", phase: "admin" })
-  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-auto-draft")), { kind: "editor-probe", phase: "auto-draft" })
-  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-auto-draft-no-persist")), { kind: "editor-probe", phase: "auto-draft-no-persist" })
-  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/wp-admin/post-new.php?phase=editor-probe-block-editor")), { kind: "editor-probe", phase: "block-editor" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
 
@@ -118,18 +114,6 @@ test("Cloudflare lease contention honors Retry-After without exceeding the acqui
   assert.equal(leaseRetryDelayMs(Number.NaN, 500), 500)
 })
 
-test("Cloudflare editor probes bound the authenticated editor lifecycle and discard their runtime", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const probe = worker.slice(worker.indexOf("async function runCoordinatedEditorProbe"), worker.indexOf("async function resetCanonicalWordPress"))
-
-  assert.match(probe, /await runtime\.requestHandler\.request/)
-  assert.match(probe, /await releaseLease/)
-  assert.equal((probe.match(/await discardCachedRuntime\(\)/g) ?? []).length, 2)
-  assert.match(probe, /\/wordpress\/wp-admin\/post-new\.php/)
-  assert.match(probe, /memory_get_peak_usage/)
-  assert.match(probe, /'auto-draft' !== \( \$rows\[0\]->post_status/)
-})
-
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {
   const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     rules?: Array<{ type?: string; globs?: string[] }>
@@ -146,7 +130,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
   assert.equal(canonicalSeed.subarray(0, 4).toString("hex"), "504b0304")
-  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "6244f244f47f99af3261ba0948262cebe79e5a73")
+  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "7cf025f2d64aa933d937f1a18a129e278c231783")
   assert.equal(canonicalManifest.wordpressInstallSeedSha256, createHash("sha256").update(sqliteInput).digest("hex"))
   assert.equal(canonicalManifest.archiveSha256, createHash("sha256").update(canonicalSeed).digest("hex"))
   assert.ok(canonicalManifest.files.some((file) => file.path.endsWith(".md")))
@@ -158,15 +142,20 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 })
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
-  const revision = "6244f244f47f99af3261ba0948262cebe79e5a73"
+  const revision = "7cf025f2d64aa933d937f1a18a129e278c231783"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
   const names: string[] = []
-  for await (const entry of decodeZip(new Blob([runtime]).stream())) names.push(entry.name)
+  let writeEngine = ""
+  for await (const entry of decodeZip(new Blob([runtime]).stream())) {
+    names.push(entry.name)
+    if (entry.name === "inc/class-wp-markdown-write-engine.php") writeEngine = await entry.text()
+  }
 
   assert.match(generator, new RegExp(`const revision = "${revision}"`))
   assert.match(worker, new RegExp(`MARKDOWN_DATABASE_INTEGRATION_REVISION = "${revision}"`))
+  assert.match(writeEngine, /! \$this->is_auto_draft\( \(int\) \$id \)/)
   assert.deepEqual(names.sort(), [
     "db.php",
     "inc/class-wp-markdown-db.php",

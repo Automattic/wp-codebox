@@ -1,7 +1,7 @@
 <?php
 declare( strict_types=1 );
 
-const MDI_REVISION = '6244f244f47f99af3261ba0948262cebe79e5a73';
+const MDI_REVISION = '7cf025f2d64aa933d937f1a18a129e278c231783';
 const REQUIRED_PATHS = array(
 	'_options/siteurl.json', '_options/home.json', '_tables/users.json', '_tables/usermeta.json',
 	'_tables/terms.json', '_tables/term_taxonomy.json', '_tables/termmeta.json', '_tables/postmeta.json',
