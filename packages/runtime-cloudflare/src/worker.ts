@@ -123,7 +123,15 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
   const stops: Record<EditorMemoryProbePhase, { path: string; marker: string; before: boolean }> = {
     admin: { path: "/wordpress/wp-admin/post-new.php", marker: "require_once __DIR__ . '/admin.php';", before: false },
     "before-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( $create_in_db ) {", before: false },
-    "after-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( is_wp_error( $post_id ) ) {", before: true },
+    "after-insert": { path: "/wordpress/wp-admin/includes/post.php", marker: `$post_id = wp_insert_post(
+			array(
+				'post_title'  => post_type_supports( $post_type, 'title' ) ? __( 'Auto Draft' ) : '',
+				'post_type'   => $post_type,
+				'post_status' => 'auto-draft',
+			),
+			true,
+			false
+		);`, before: false },
     "after-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "// Schedule auto-draft cleanup.", before: true },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
