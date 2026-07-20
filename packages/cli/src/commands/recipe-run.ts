@@ -1457,6 +1457,10 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
+        // Browser and command session resolution needs identities, never fixture passwords.
+        fixtureUsers: recipeRuntimeFixtureUsers(recipe),
+        userSessions: recipe.inputs?.userSessions ?? [],
+        browserActors: recipe.inputs?.browserActors ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
@@ -1488,6 +1492,9 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
+        fixtureUsers: recipeRuntimeFixtureUsers(recipe),
+        userSessions: recipe.inputs?.userSessions ?? [],
+        browserActors: recipe.inputs?.browserActors ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
@@ -1523,6 +1530,10 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     preparedComponentContracts: componentContracts,
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
   }
+}
+
+function recipeRuntimeFixtureUsers(recipe: WorkspaceRecipe): Array<Omit<NonNullable<NonNullable<WorkspaceRecipe["inputs"]>["fixtureUsers"]>[number], "password">> {
+  return (recipe.inputs?.fixtureUsers ?? []).map(({ password: _password, ...user }) => user)
 }
 
 function recipeComponentManifest(extraPlugins: PreparedExtraPlugin[], fallback: WorkspaceRecipeComponentManifest | undefined): Record<string, unknown> | undefined {

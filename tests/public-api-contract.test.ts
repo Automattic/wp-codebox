@@ -99,6 +99,7 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./core/php-snippets",
   "./recipe-builders",
   "./run-results",
+  "./runtime-command-result",
   "./agent-task-recipe",
   "./runtime-presets",
   "./playground",
@@ -113,6 +114,7 @@ assert.deepEqual(exportKeys(corePackage), [
   "./contracts",
   "./artifacts",
   "./run-results",
+  "./runtime-command-result",
   "./php-snippets",
   "./internals",
   "./recipe-builders",
@@ -156,6 +158,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./browser-artifact-lifecycle.js",
   "./browser-callback-contracts.js",
   "./browser-interaction.js",
+  "./browser-multi-actor-scenario-contracts.js",
   "./browser-probe-contract.js",
   "./browser-playground-session-run.js",
   "./browser-result-shapes.js",
@@ -198,6 +201,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./runtime-command-result.js",
   "./runtime-contracts.js",
   "./runtime-episode.js",
+  "./runtime-action-adapter.js",
   "./runtime-neutral-contracts.js",
   "./runtime-overlay-bundle.js",
   "./runtime-overlay-descriptors.js",
@@ -213,6 +217,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./tool-call-artifacts.js",
   "./transfer-proof.js",
   "./workspace-policy.js",
+  "./workspace-delta.js",
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
@@ -230,6 +235,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
 
 assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
+  "./browser-multi-actor-scenario-contracts.js",
   "./command-registry.js",
   "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",
@@ -322,7 +328,6 @@ for (const internalModule of [
   "./object-utils.js",
   "./prepared-source-staging.js",
   "./provider-runtime-contracts.js",
-  "./runtime-action-adapter.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)

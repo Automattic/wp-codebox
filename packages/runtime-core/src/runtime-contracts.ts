@@ -356,6 +356,12 @@ export interface WorkspaceRecipeUserSession {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeBrowserActor {
+  name: string
+  userSession: string
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeProbe {
   name: string
   step: WorkspaceRecipeStep
@@ -608,6 +614,7 @@ export interface WorkspaceRecipe {
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
     fixtureUsers?: WorkspaceRecipeFixtureUser[]
     userSessions?: WorkspaceRecipeUserSession[]
+    browserActors?: WorkspaceRecipeBrowserActor[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     sourcePackages?: WorkspaceRecipeSourcePackage[]
