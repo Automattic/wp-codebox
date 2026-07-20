@@ -916,7 +916,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "object",
             additionalProperties: false,
             properties: {
+              engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
+              foreignKeyTargetPolicy: { enum: ["unique-only", "indexed"] },
             },
           },
           outputs: {

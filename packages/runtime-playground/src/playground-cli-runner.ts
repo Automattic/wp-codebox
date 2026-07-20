@@ -31,6 +31,7 @@ export interface PlaygroundCliModule {
     php?: string
     workers?: number | "auto"
     wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
+    skipSqliteSetup?: boolean
     "site-url"?: string
     phpIniEntries?: Record<string, string>
     phpExtension?: string[]
@@ -138,6 +139,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
+          skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           "site-url": spec.preview?.siteUrl,
@@ -265,6 +267,7 @@ class PreviewLeaseProbeError extends Error {
 
 export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}): boolean {
   return !options.cliModule
+    && spec.environment.databaseSetup !== "external"
     && Boolean(spec.environment.assets?.wordpressDirectory)
     && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
@@ -287,7 +290,7 @@ async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promi
 
 function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
   const entries = pluginRuntimeBootstrapPhpIniEntries(spec) ?? {}
-  if (Object.keys(entries).length === 0 && !distributionBootstrapPhp(spec)) {
+  if (Object.keys(entries).length === 0 && !runtimeAutoPrependPhpBody(spec)) {
     return undefined
   }
 
@@ -365,7 +368,11 @@ function phpIniContent(entries: Record<string, string>): string {
 }
 
 function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
-  return `<?php\n${distributionBootstrapPhp(spec)}`
+  return `<?php\n${runtimeAutoPrependPhpBody(spec)}`
+}
+
+function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
+  return `${phpEnvAssignments(spec.runtimeEnv ?? {})}${distributionBootstrapPhp(spec)}`
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
