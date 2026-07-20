@@ -171,21 +171,6 @@ async function assertHealthResponse() {
 async function assertCanonicalProbes() {
   const wordpress = await (await request(`${origin}/?phase=canonical-wordpress`)).json()
   const setup = await (await request(`${origin}/?phase=canonical-bootstrap-setup`)).json()
-  const lifecyclePhases = ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded-callbacks", "canon-wpl-no-rewrite", "canon-wpl-no-core", "canon-wpl-no-playground", "canon-wpl-no-cron", "canonical-wp-loaded-exclude-all"]
-  const expectedRemovedCallbacks = {
-    "canon-wpl-no-rewrite": ["WP_Rewrite::flush_rules"],
-    "canon-wpl-no-core": ["_add_template_loader_filters", "_custom_header_background_just_in_time"],
-    "canon-wpl-no-playground": ["playground_save_wp_env_info"],
-    "canon-wpl-no-cron": [],
-    "canonical-wp-loaded-exclude-all": ["WP_Rewrite::flush_rules", "_add_template_loader_filters", "_custom_header_background_just_in_time", "playground_save_wp_env_info"],
-  }
-  const lifecycle = await Promise.all(lifecyclePhases.map(async (phase) => {
-    const response = await request(`${origin}/?phase=${phase}`)
-    const body = await response.text()
-    assertNoPhpDiagnostics(body, phase)
-    if (!response.ok) throw new Error(`${phase} failed with ${response.status}: ${body}`)
-    return JSON.parse(body)
-  }))
   const counts = ["canonicalSeedFiles", "postCount", "pageCount", "userCount", "optionCount", "widgetOptionCount", "widgetStateOptionCount", "memoryBytes", "peakMemoryBytes"]
   if (wordpress.completed !== true || typeof wordpress.evidence?.wordpressVersion !== "string" || counts.some((key) => !Number.isInteger(wordpress.evidence?.[key])) || wordpress.evidence.widgetStateOptionCount !== 19 || wordpress.evidence.wpCronInitAttached !== false || wordpress.evidence.updateScheduleInitAttached !== false || wordpress.evidence.privacyScheduleInitAttached !== false) {
     throw new Error(`Canonical WordPress probe did not boot the complete seed: ${JSON.stringify(wordpress)}`)
@@ -194,20 +179,7 @@ async function assertCanonicalProbes() {
   if (setup.completed !== true || typeof setup.evidence?.wordpressVersion !== "string" || changedCounts.some((key) => !Number.isInteger(setup.evidence?.[key])) || setup.evidence.changedPathCount < 1) {
     throw new Error(`Canonical bootstrap setup probe did not produce ephemeral changes: ${JSON.stringify(setup)}`)
   }
-  for (const probe of lifecycle) {
-    const evidence = probe.evidence
-    const schedulingAttached = probe.phase === "canonical-current-user"
-    const isWpLoadedProbe = probe.phase.startsWith("canonical-wp-loaded-") || probe.phase.startsWith("canon-wpl-no-")
-    const lifecycleEvidenceIsValid = !isWpLoadedProbe && evidence?.wpCronInitAttached === schedulingAttached && evidence?.updateScheduleInitAttached === schedulingAttached && evidence?.privacyScheduleInitAttached === schedulingAttached
-    const wpLoadedEvidenceIsValid = isWpLoadedProbe && typeof evidence?.callbacks === "object" && evidence.callbacks !== null && !Array.isArray(evidence.callbacks) && (probe.phase === "canonical-wp-loaded-callbacks" || (evidence?.completed === true && Array.isArray(evidence?.removedCallbacks) && Number.isInteger(evidence?.memoryBeforeBytes)))
-    if (probe.completed !== true || !lifecyclePhases.includes(probe.phase) || evidence?.bootstrapPhase !== probe.phase || typeof evidence?.wordpressVersion !== "string" || !Number.isInteger(evidence?.memoryBytes) || !Number.isInteger(evidence?.peakMemoryBytes) || (!lifecycleEvidenceIsValid && !wpLoadedEvidenceIsValid)) {
-      throw new Error(`Canonical lifecycle probe did not stop at its bounded phase: ${JSON.stringify(probe)}`)
-    }
-    if (Object.hasOwn(expectedRemovedCallbacks, probe.phase) && JSON.stringify(evidence.removedCallbacks) !== JSON.stringify(expectedRemovedCallbacks[probe.phase])) {
-      throw new Error(`Canonical wp_loaded exclusion removed an unexpected callback set: ${JSON.stringify(probe)}`)
-    }
-  }
-  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, disabled-cron scheduling callbacks absent at init, ${lifecyclePhases.join(", ")} completed, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
+  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, disabled-cron scheduling callbacks absent at init, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
 }
 
 async function assertMdiDiagnostics() {

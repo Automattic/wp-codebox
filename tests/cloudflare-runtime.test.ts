@@ -337,60 +337,6 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(worker, /function canonicalChangedPathCounts/)
 })
 
-test("Cloudflare canonical lifecycle diagnostics compose the disabled-cron patch with unique bounded stops", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
-  const lifecycle = worker.slice(worker.indexOf("function canonicalLifecycleProbeCode"), worker.indexOf("\nasync function bootWordPressRuntime"))
-  const aliases = {
-    cwr: "canonical-wp-loaded-exclude-rewrite-flush",
-    cwc: "canonical-wp-loaded-exclude-core-template-header",
-    cwp: "canonical-wp-loaded-exclude-playground",
-    cwcron: "canonical-wp-loaded-exclude-wp-cron",
-    cwu: "canonical-wp-loaded-suppress-rewrite-persist",
-    "canon-wpl-no-rewrite": "canonical-wp-loaded-exclude-rewrite-flush",
-    "canon-wpl-no-core": "canonical-wp-loaded-exclude-core-template-header",
-    "canon-wpl-no-playground": "canonical-wp-loaded-exclude-playground",
-    "canon-wpl-no-cron": "canonical-wp-loaded-exclude-wp-cron",
-  }
-
-  for (const phase of ["canonical-current-user", "canonical-init", "canonical-site-status", "canonical-wp-loaded", "canonical-wp-loaded-callbacks", "canonical-wp-loaded-exclude-rewrite-flush", "canonical-wp-loaded-exclude-core-template-header", "canonical-wp-loaded-exclude-playground", "canonical-wp-loaded-exclude-wp-cron", "canonical-wp-loaded-exclude-all", "canonical-wp-loaded-suppress-rewrite-persist"]) {
-    assert.match(probes, new RegExp(`"${phase}"`))
-    assert.match(lifecycle, new RegExp(`"${phase}"`))
-    assert.deepEqual(routeWorkerRequest(new Request(`https://worker.example/?phase=${phase}`)), { kind: "probe", phase })
-  }
-  assert.match(lifecycle, /pre_update_option_rewrite_rules/)
-  for (const [alias, phase] of Object.entries(aliases)) {
-    assert.ok(alias.length <= 24)
-    assert.match(worker, new RegExp(`"${alias}"`))
-    assert.match(worker, new RegExp(`(?:"${alias}"|${alias}): "${phase}"`))
-    assert.deepEqual(routeWorkerRequest(new Request(`https://worker.example/?phase=${alias}`)), { kind: "probe", phase: alias })
-  }
-  assert.match(lifecycle, /const canonicalPhase = canonicalLifecyclePhaseAliases\[phase\] \?\? phase/)
-  assert.match(probes, /packagedCanonicalMarkdownSeed\(\), new Uint8Array\(markdownPrimaryBootstrapIndex\), "https:\/\/canonical-probe\.invalid", \{\}, bucket, true\)/)
-  assert.match(lifecycle, /substr_count\(\$settings, \$needle\) !== 1/)
-  assert.match(lifecycle, /WordPress canonical lifecycle probe needle was not uniquely found\./)
-  assert.match(lifecycle, /'completed' => true/)
-  assert.match(lifecycle, /'wpCronInitAttached' => false !== has_action\('init', 'wp_cron'\)/)
-  assert.match(lifecycle, /'updateScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_update_checks'\)/)
-  assert.match(lifecycle, /'privacyScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_delete_old_privacy_export_files'\)/)
-  assert.match(lifecycle, /function wp_codebox_canonical_wp_loaded_callback_identifier/)
-  assert.match(lifecycle, /function wp_codebox_canonical_wp_loaded_inventory/)
-  assert.match(lifecycle, /\$remaining = 100/)
-  assert.match(lifecycle, /function wp_codebox_canonical_wp_loaded_remove_snapshot/)
-  assert.match(lifecycle, /remove_action\('wp_loaded', \$registered\['function'\], \(int\) \$priority\)/)
-  assert.match(lifecycle, /"WP_Rewrite::flush_rules", "playground_maybe_flush_rewrite_rules"/)
-  assert.match(lifecycle, /"_add_template_loader_filters", "_custom_header_background_just_in_time", "_custom_logo_header_styles"/)
-  assert.match(lifecycle, /"playground_maybe_flush_rewrite_rules", "playground_save_wp_env_info"/)
-  assert.match(lifecycle, /"_wp_cron"/)
-  assert.match(lifecycle, /canonical-wp-loaded-exclude-all": \{ identifiers: \[\], retain: true \}/)
-  assert.match(lifecycle, /do_action\('wp_loaded'\)/)
-  assert.doesNotMatch(lifecycle, /get_option|\$wpdb|\$_COOKIE|AUTH_KEY|password|token/i)
-  assert.equal((lifecycle.match(/do_action\( 'init' \);/g) ?? []).length, 1)
-  assert.equal((lifecycle.match(/do_action\( 'wp_loaded' \);/g) ?? []).length, 1)
-  assert.match(lifecycle, /stop\.after \? "\$needle/)
-  assert.match(lifecycle, /: "\$stop/)
-})
-
 test("Cloudflare canonical runtime patches the unique init call with runtime persistence policies", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const patcher = worker.slice(worker.indexOf("function patchCanonicalRuntimePoliciesAtInit"), worker.indexOf("\nfunction collectRuntimeFiles"))
