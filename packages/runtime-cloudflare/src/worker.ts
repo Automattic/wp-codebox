@@ -373,9 +373,7 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
   if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = new URL(requestUrl).origin
-  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-started" }))
   const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env), env.WORDPRESS_STATE_BUCKET, true)
-  console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "boot-completed" }))
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
@@ -385,12 +383,8 @@ async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStu
     if (urlOutput !== "urls-updated") throw new Error("Canonical bootstrap did not update the site URLs.")
     const flushOutput = (await runtime.php.run({ code: canonicalBootstrapFlushCode() })).text.trim()
     if (flushOutput !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
-    const files = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "files-collected", files: files.length }))
-    const pointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, files)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "revision-persisted", revision: pointer.revision }))
+    const pointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT))
     await commitLease(coordinator, requestUrl, lease, pointer)
-    console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-bootstrap-stage/v1", stage: "lease-committed", revision: pointer.revision }))
     return { ...runtime, pointer }
   } catch (error) {
     runtime.php.exit()
