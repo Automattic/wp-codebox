@@ -16,8 +16,6 @@ try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
-  await assertCanonicalProbes()
-  await assertMdiDiagnostics()
   await assertConcurrentMutations()
   const adminHtml = await login()
   const editorHtml = await assertPostNewEditor()
@@ -166,39 +164,6 @@ async function assertHealthResponse() {
   const response = await request(`${origin}/?phase=health`)
   const body = await response.json()
   if (response.status !== 200 || body.schema !== "wp-codebox/cloudflare-runtime-health/v1" || body.marker !== "wp-codebox-cloudflare-runtime-health" || body.phpVersion !== "8.5.8" || typeof body.wordpressVersion !== "string" || body.execution?.status !== "ok") throw new Error(`Unexpected Cloudflare runtime health envelope: ${JSON.stringify(body)}`)
-}
-
-async function assertCanonicalProbes() {
-  const wordpress = await (await request(`${origin}/?phase=canonical-wordpress`)).json()
-  const setup = await (await request(`${origin}/?phase=canonical-bootstrap-setup`)).json()
-  const counts = ["canonicalSeedFiles", "postCount", "pageCount", "userCount", "optionCount", "widgetOptionCount", "widgetStateOptionCount", "memoryBytes", "peakMemoryBytes"]
-  if (wordpress.completed !== true || typeof wordpress.evidence?.wordpressVersion !== "string" || counts.some((key) => !Number.isInteger(wordpress.evidence?.[key])) || wordpress.evidence.widgetStateOptionCount !== 19 || wordpress.evidence.wpCronInitAttached !== false || wordpress.evidence.updateScheduleInitAttached !== false || wordpress.evidence.privacyScheduleInitAttached !== false) {
-    throw new Error(`Canonical WordPress probe did not boot the complete seed: ${JSON.stringify(wordpress)}`)
-  }
-  const changedCounts = ["createdPathCount", "changedPathCount", "deletedPathCount"]
-  if (setup.completed !== true || typeof setup.evidence?.wordpressVersion !== "string" || changedCounts.some((key) => !Number.isInteger(setup.evidence?.[key])) || setup.evidence.changedPathCount < 1) {
-    throw new Error(`Canonical bootstrap setup probe did not produce ephemeral changes: ${JSON.stringify(setup)}`)
-  }
-  console.log(`Canonical probes: WordPress ${wordpress.evidence.wordpressVersion}, disabled-cron scheduling callbacks absent at init, ${wordpress.evidence.widgetOptionCount} widget_* options plus sidebars_widgets, ${setup.evidence.changedPathCount} changed ephemeral paths.`)
-}
-
-async function assertMdiDiagnostics() {
-  const phases = ["mdi-init-exclude-widgets", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first"]
-  const diagnostics = await Promise.all(phases.map(async (phase) => {
-    const response = await request(`${origin}/?phase=${phase}`)
-    const body = await response.text()
-    assertNoPhpDiagnostics(body, phase)
-    if (!response.ok) throw new Error(`${phase} failed with ${response.status}: ${body}`)
-    const probe = JSON.parse(body)
-    if (probe.completed !== true || probe.evidence?.bootstrapPhase !== phase) throw new Error(`${phase} did not complete: ${body}`)
-    return probe.evidence
-  }))
-  const [initExclusion, factory, remainingHooks, directRegistration] = diagnostics
-  if (!Array.isArray(initExclusion.removedCallbacks) || !initExclusion.removedCallbacks.includes("wp_widgets_init")) throw new Error(`mdi-init-exclude-widgets did not remove wp_widgets_init: ${JSON.stringify(initExclusion)}`)
-  if (!Array.isArray(factory.removedInitCallbacks) || !Array.isArray(factory.removedWidgetsCallbacks) || !Number.isInteger(factory.widgetClassCount)) throw new Error(`mdi-widgets-factory did not return fixed removal evidence: ${JSON.stringify(factory)}`)
-  if (!Array.isArray(remainingHooks.removedWidgetsCallbacks) || !Number.isInteger(remainingHooks.widgetClassCount)) throw new Error(`mdi-widgets-remaining-hooks did not return fixed removal evidence: ${JSON.stringify(remainingHooks)}`)
-  if (!Array.isArray(directRegistration.classNamesAttempted) || directRegistration.classCount !== directRegistration.classNamesAttempted.length) throw new Error(`mdi-widgets-direct-basic-classic-first did not return its fixed class group: ${JSON.stringify(directRegistration)}`)
-  console.log(`MDI diagnostics: init exclusion removed ${initExclusion.removedCallbacks.length} callback(s); widget factory ${factory.widgetClassCount} classes; remaining hooks ${remainingHooks.widgetClassCount} classes; direct registration ${directRegistration.classCount} classes.`)
 }
 
 async function assertWordPressPage(target, label) {

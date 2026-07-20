@@ -510,13 +510,14 @@ function pg_remove_new_wordpress_hook_callbacks(string $hook_name, array $before
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return;
     }
-    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             if (!isset($before[$priority . ':' . $callback_id])) {
-                $callback = $callbacks[$callback_id];
-                if (isset($callback['function'])) remove_action($hook_name, $callback['function'], (int) $priority);
+                unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
             }
+        }
+        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
+            unset($wp_filter[$hook_name]->callbacks[$priority]);
         }
     }
 }
@@ -527,15 +528,16 @@ function pg_defer_new_wordpress_hook_callbacks(string $hook_name, array $before)
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $deferred;
     }
-    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
         foreach ($callbacks as $callback_id => $callback) {
             if (isset($before[$priority . ':' . $callback_id])) {
                 continue;
             }
-            if (isset($callback['function']) && remove_action($hook_name, $callback['function'], (int) $priority)) {
-                $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
-            }
+            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
+            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
+        }
+        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
+            unset($wp_filter[$hook_name]->callbacks[$priority]);
         }
     }
     usort($deferred, static function (array $left, array $right): int { return $left['priority'] <=> $right['priority']; });

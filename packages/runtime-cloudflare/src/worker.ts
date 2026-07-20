@@ -606,7 +606,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     try {
       const wordpress = await materializeWordPressServerFiles(php, bucket)
       await materializeMarkdownDatabaseIntegration(php)
-      materializeRuntimeFiles(php, MARKDOWN_ROOT, await packagedCanonicalMarkdownSeed())
+      materializeRuntimeFiles(php, MARKDOWN_ROOT, initialMarkdownFiles())
       const evidence = (await php.run({
         code: "<?php echo json_encode(['dropin' => file_exists('/wordpress/wp-content/db.php'), 'storage' => file_exists('/wordpress/wp-content/plugins/markdown-database-integration/inc/class-wp-markdown-storage.php'), 'siteurl' => file_exists('/wordpress/wp-content/markdown/_options/siteurl.json')]);",
       })).text.trim()
@@ -617,7 +617,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (phase === "mdi-shortinit") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({
         code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'markdownDropin' => defined('MARKDOWN_DB_DROPIN'), 'markdownMode' => defined('MARKDOWN_DB_MODE') ? MARKDOWN_DB_MODE : '']);",
@@ -629,7 +629,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
@@ -645,45 +645,11 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-wp-cron", "mdi-init-exclude-privacy-schedule", "mdi-init-exclude-update-schedule", "mdi-init-exclude-wp-cron-privacy-schedule", "mdi-init-exclude-wp-cron-update-schedule", "mdi-init-exclude-privacy-update-schedule", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-globals", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded", "mdi-init-callbacks", "mdi-init-exclude-scheduling", "mdi-init-exclude-block-registration", "mdi-init-exclude-theme-patterns-styles", "mdi-init-exclude-widgets", "mdi-init-exclude-rest-connectors-sitemaps", "mdi-init-exclude-initial-content-types", "mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"].includes(phase)) {
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
       return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
-    } finally {
-      runtime.php.exit()
-    }
-  }
-
-  if (phase === "canonical-wordpress" || phase === "canonical-bootstrap-setup") {
-    const canonicalSeed = await packagedCanonicalMarkdownSeed()
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, canonicalSeed, new Uint8Array(markdownPrimaryBootstrapIndex), "https://canonical-probe.invalid", {}, bucket, true)
-    try {
-      if (phase === "canonical-bootstrap-setup") {
-        const passwordFile = "/tmp/wp-codebox-canonical-bootstrap-probe-password"
-        runtime.php.writeFile(passwordFile, new TextEncoder().encode("probe-only-password"))
-        const output = (await runtime.php.run({ code: canonicalBootstrapSetupCode(passwordFile, "https://canonical-probe.invalid") })).text.trim()
-        if (output !== "flushed") throw new Error("Canonical bootstrap setup probe did not confirm its ephemeral flush.")
-        const changes = canonicalChangedPathCounts(canonicalSeed, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT))
-        return probeResponse(phase, { wordpressVersion: runtime.wordpressVersion, canonicalSeedFiles: canonicalSeed.length, ...changes })
-      }
-      const evidence = (await runtime.php.run({ code: `<?php
-require '/wordpress/wp-load.php';
-echo json_encode([
-  'wordpressVersion' => get_bloginfo('version'),
-  'postCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->posts}"),
-  'pageCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->posts} WHERE post_type = 'page'"),
-  'userCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->users}"),
-  'optionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options}"),
-  'widgetOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%'"),
-  'widgetStateOptionCount' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {\$wpdb->options} WHERE option_name LIKE 'widget\\_%' OR option_name = 'sidebars_widgets'"),
-  'wpCronInitAttached' => false !== has_action('init', 'wp_cron'),
-  'updateScheduleInitAttached' => false !== has_action('init', 'wp_schedule_update_checks'),
-  'privacyScheduleInitAttached' => false !== has_action('init', 'wp_schedule_delete_old_privacy_export_files'),
-  'memoryBytes' => memory_get_usage(true),
-  'peakMemoryBytes' => memory_get_peak_usage(true),
-]);` })).text.trim()
-      return probeResponse(phase, { canonicalSeedFiles: canonicalSeed.length, ...JSON.parse(evidence) as Record<string, number | string> })
     } finally {
       runtime.php.exit()
     }
@@ -751,7 +717,7 @@ function wordpressProbeCode(phase: string): string {
     return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
   }
 
-  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-first-pages", "mdi-widgets-direct-basic-classic-first-calendar", "mdi-widgets-direct-basic-classic-first-archives", "mdi-widgets-direct-basic-classic-first-meta", "mdi-widgets-direct-basic-classic-first-search", "mdi-widgets-direct-basic-classic-first-text", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-direct-factory-all", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"]
+  const widgetPhases = ["mdi-widgets-callbacks", "mdi-widgets-constructors", "mdi-widgets-hooks", "mdi-widgets-factory", "mdi-widgets-remaining-hooks", "mdi-widgets-direct-basic-classic-first", "mdi-widgets-direct-basic-classic-second", "mdi-widgets-direct-media", "mdi-widgets-direct-custom-html-block", "mdi-widgets-direct-block", "mdi-widgets-direct-custom-html", "mdi-widgets-option-reads", "mdi-widgets-get-settings", "mdi-widgets-get-settings-first", "mdi-widgets-get-settings-second", "mdi-widgets-register-one"]
   if (widgetPhases.includes(phase)) {
     return `<?php
 $settings_path = '/wordpress/wp-settings.php';
@@ -789,15 +755,15 @@ function wp_codebox_widgets_probe_remove_callbacks($hook_name, $identifiers, $re
     $removed = array();
     $hook = isset($GLOBALS['wp_filter'][$hook_name]) ? $GLOBALS['wp_filter'][$hook_name] : null;
     if (!$hook || !isset($hook->callbacks) || !is_array($hook->callbacks)) return $removed;
-    $callbacks_by_priority = $hook->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
-        foreach ($callbacks as $registered) {
-            if (!isset($registered['function'])) continue;
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        foreach ($callbacks as $index => $registered) {
             $identifier = wp_codebox_widgets_probe_callback_identifier($registered['function']);
             if (in_array($identifier, $identifiers, true) !== $retain) {
-                if (remove_action($hook_name, $registered['function'], (int) $priority)) $removed[] = $identifier;
+                unset($hook->callbacks[$priority][$index]);
+                $removed[] = $identifier;
             }
         }
+        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
     }
     sort($removed, SORT_STRING);
     return $removed;
@@ -850,22 +816,15 @@ function wp_codebox_widgets_probe_get_settings($class_names) {
     return array('completedClassNames' => $completed, 'settingsShapes' => $settings_shapes);
 }
 $direct_groups = array(
-    'mdi-widgets-direct-basic-classic-first' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'),
-    'mdi-widgets-direct-basic-classic-first-pages' => array('WP_Widget_Pages'),
-    'mdi-widgets-direct-basic-classic-first-calendar' => array('WP_Widget_Calendar'),
-    'mdi-widgets-direct-basic-classic-first-archives' => array('WP_Widget_Archives'),
-    'mdi-widgets-direct-basic-classic-first-meta' => array('WP_Widget_Meta'),
-    'mdi-widgets-direct-basic-classic-first-search' => array('WP_Widget_Search'),
-    'mdi-widgets-direct-basic-classic-first-text' => array('WP_Widget_Text'),
+    'mdi-widgets-direct-basic-classic-first' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'),
     'mdi-widgets-direct-basic-classic-second' => array('WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget'),
     'mdi-widgets-direct-media' => array('WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video'),
     'mdi-widgets-direct-custom-html-block' => array('WP_Widget_Custom_HTML', 'WP_Widget_Block'),
     'mdi-widgets-direct-block' => array('WP_Widget_Block'),
     'mdi-widgets-direct-custom-html' => array('WP_Widget_Custom_HTML'),
-    'mdi-widgets-direct-factory-all' => array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block'),
 );
 $widget_option_id_bases = array('archives', 'block', 'calendar', 'categories', 'custom_html', 'links', 'media_audio', 'media_gallery', 'media_image', 'media_video', 'meta', 'nav_menu', 'pages', 'recent-comments', 'recent-posts', 'rss', 'search', 'tag_cloud', 'text');
-$widget_classes = array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block');
+$widget_classes = array('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Links', 'WP_Widget_Media_Audio', 'WP_Widget_Media_Image', 'WP_Widget_Media_Gallery', 'WP_Widget_Media_Video', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text', 'WP_Widget_Categories', 'WP_Widget_Recent_Posts', 'WP_Widget_Recent_Comments', 'WP_Widget_RSS', 'WP_Widget_Tag_Cloud', 'WP_Nav_Menu_Widget', 'WP_Widget_Custom_HTML', 'WP_Widget_Block');
 $get_settings_groups = array(
     'mdi-widgets-get-settings' => $widget_classes,
     'mdi-widgets-get-settings-first' => array_slice($widget_classes, 0, 10),
@@ -943,12 +902,6 @@ require '/wordpress/wp-load.php';`
       "wp_schedule_site_health_cron",
       "WP_Site_Health::maybe_create_scheduled_event",
     ],
-    "mdi-init-exclude-wp-cron": ["wp_cron"],
-    "mdi-init-exclude-privacy-schedule": ["wp_schedule_delete_old_privacy_export_files"],
-    "mdi-init-exclude-update-schedule": ["wp_schedule_update_checks"],
-    "mdi-init-exclude-wp-cron-privacy-schedule": ["wp_cron", "wp_schedule_delete_old_privacy_export_files"],
-    "mdi-init-exclude-wp-cron-update-schedule": ["wp_cron", "wp_schedule_update_checks"],
-    "mdi-init-exclude-privacy-update-schedule": ["wp_schedule_delete_old_privacy_export_files", "wp_schedule_update_checks"],
     "mdi-init-exclude-block-registration": [
       "register_block_core_*",
       "register_core_block_*",
@@ -1029,15 +982,15 @@ if ($phase === 'mdi-init-callbacks') {
 $removed = array();
 $hook = isset($GLOBALS['wp_filter']['init']) ? $GLOBALS['wp_filter']['init'] : null;
 if ($hook && isset($hook->callbacks) && is_array($hook->callbacks)) {
-    $callbacks_by_priority = $hook->callbacks;
-    foreach ($callbacks_by_priority as $priority => $callbacks) {
-        foreach ($callbacks as $registered) {
-            if (!isset($registered['function'])) continue;
+    foreach ($hook->callbacks as $priority => $callbacks) {
+        foreach ($callbacks as $index => $registered) {
             $identifier = wp_codebox_init_probe_callback_identifier($registered['function']);
             if (wp_codebox_init_probe_matches($identifier, $excluded)) {
-                if (remove_action('init', $registered['function'], (int) $priority)) $removed[] = $identifier;
+                unset($hook->callbacks[$priority][$index]);
+                $removed[] = $identifier;
             }
         }
+        if (empty($hook->callbacks[$priority])) unset($hook->callbacks[$priority]);
     }
 }
 sort($removed, SORT_STRING);
@@ -1148,6 +1101,18 @@ async function bootWordPressRuntime(
   return { php, requestHandler, wordpressVersion }
 }
 
+function initialMarkdownFiles(): RuntimeFile[] {
+  const options = [
+    { option_id: 1, option_name: "siteurl", option_value: SITE_URL, autoload: "on" },
+    { option_id: 2, option_name: "home", option_value: SITE_URL, autoload: "on" },
+    { option_id: 3, option_name: "blogname", option_value: "WP Codebox Cloudflare Runtime", autoload: "on" },
+  ]
+  return options.map((option) => ({
+    path: `_options/${option.option_name}.json`,
+    bytes: new TextEncoder().encode(JSON.stringify(option, null, 2)),
+  }))
+}
+
 function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): void {
   for (const file of files) {
     const destination = `${root}/${file.path}`
@@ -1214,21 +1179,6 @@ function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeF
   }
   visit(root)
   return files.sort((left, right) => left.path.localeCompare(right.path))
-}
-
-function canonicalChangedPathCounts(before: RuntimeFile[], after: RuntimeFile[]): { createdPathCount: number; changedPathCount: number; deletedPathCount: number } {
-  const beforeByPath = new Map(before.map((file) => [file.path, file.bytes]))
-  const afterByPath = new Map(after.map((file) => [file.path, file.bytes]))
-  let createdPathCount = 0
-  let changedPathCount = 0
-  let deletedPathCount = 0
-  for (const [path, bytes] of afterByPath) {
-    const previous = beforeByPath.get(path)
-    if (!previous) createdPathCount++
-    else if (previous.byteLength !== bytes.byteLength || previous.some((byte, index) => byte !== bytes[index])) changedPathCount++
-  }
-  for (const path of beforeByPath.keys()) if (!afterByPath.has(path)) deletedPathCount++
-  return { createdPathCount, changedPathCount, deletedPathCount }
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

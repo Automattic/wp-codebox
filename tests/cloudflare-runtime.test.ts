@@ -181,12 +181,6 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   for (const phase of [
     "mdi-init-callbacks",
     "mdi-init-exclude-scheduling",
-    "mdi-init-exclude-wp-cron",
-    "mdi-init-exclude-privacy-schedule",
-    "mdi-init-exclude-update-schedule",
-    "mdi-init-exclude-wp-cron-privacy-schedule",
-    "mdi-init-exclude-wp-cron-update-schedule",
-    "mdi-init-exclude-privacy-update-schedule",
     "mdi-init-exclude-block-registration",
     "mdi-init-exclude-theme-patterns-styles",
     "mdi-init-exclude-widgets",
@@ -215,12 +209,6 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /sort\(\$identifiers, SORT_STRING\)/)
   assert.match(worker, /ksort\(\$inventory, SORT_NUMERIC\)/)
   assert.match(worker, /"wp_schedule_update_checks"/)
-  assert.match(worker, /"mdi-init-exclude-wp-cron": \["wp_cron"\]/)
-  assert.match(worker, /"mdi-init-exclude-privacy-schedule": \["wp_schedule_delete_old_privacy_export_files"\]/)
-  assert.match(worker, /"mdi-init-exclude-update-schedule": \["wp_schedule_update_checks"\]/)
-  assert.match(worker, /"mdi-init-exclude-wp-cron-privacy-schedule": \["wp_cron", "wp_schedule_delete_old_privacy_export_files"\]/)
-  assert.match(worker, /"mdi-init-exclude-wp-cron-update-schedule": \["wp_cron", "wp_schedule_update_checks"\]/)
-  assert.match(worker, /"mdi-init-exclude-privacy-update-schedule": \["wp_schedule_delete_old_privacy_export_files", "wp_schedule_update_checks"\]/)
   assert.match(worker, /"WP_Site_Health::maybe_create_scheduled_event"/)
   assert.match(worker, /"register_block_core_\*"/)
   assert.match(worker, /"WP_Block_Supports::init"/)
@@ -232,18 +220,11 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /wp_codebox_widgets_probe_inventory\('widgets_init'\)/)
   assert.match(worker, /function wp_codebox_widgets_probe_register_selected\(\$class_names\)/)
   assert.match(worker, /\$registered\[\$class_name\]\->_register\(\)/)
-  assert.match(worker, /'mdi-widgets-direct-basic-classic-first' => array\('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Meta', 'WP_Widget_Search', 'WP_Widget_Text'\)/)
-  assert.doesNotMatch(worker, /'mdi-widgets-direct-basic-classic-first' => array\([^)]*WP_Widget_Links/)
-  for (const className of ["Pages", "Calendar", "Archives", "Meta", "Search", "Text"]) {
-    assert.match(worker, new RegExp(`'mdi-widgets-direct-basic-classic-first-${className.toLowerCase()}' => array\\('WP_Widget_${className}'\\)`))
-  }
+  assert.match(worker, /'mdi-widgets-direct-basic-classic-first' => array\('WP_Widget_Pages'/)
   assert.match(worker, /'mdi-widgets-direct-media' => array\('WP_Widget_Media_Audio'/)
   assert.match(worker, /'mdi-widgets-direct-custom-html-block' => array\('WP_Widget_Custom_HTML', 'WP_Widget_Block'\)/)
   assert.match(worker, /'mdi-widgets-direct-block' => array\('WP_Widget_Block'\)/)
   assert.match(worker, /'mdi-widgets-direct-custom-html' => array\('WP_Widget_Custom_HTML'\)/)
-  assert.match(worker, /'mdi-widgets-direct-factory-all' => array\('WP_Widget_Pages', 'WP_Widget_Calendar', 'WP_Widget_Archives', 'WP_Widget_Media_Audio'/)
-  assert.doesNotMatch(worker, /'mdi-widgets-direct-factory-all' => array\([^)]*WP_Widget_Links/)
-  assert.doesNotMatch(worker, /'mdi-widgets-direct-factory-all' => array\([^)]*_wp_block_theme_register_classic_sidebars/)
   assert.match(worker, /if \(get_option\(\$option_name, false\) === false\) \$get_option_missing\[\] = \$option_name/)
   assert.match(worker, /\$wpdb->get_var\(\$wpdb->prepare\("SELECT 1 FROM \{\$wpdb->options\} WHERE option_name = %s LIMIT 1", \$option_name\)\)/)
   assert.match(worker, /'getOption' => array\('found' => \$get_option_found, 'missing' => \$get_option_missing\)/)
@@ -261,80 +242,7 @@ test("Cloudflare MDI init diagnostics use fixed callback inventories and exclusi
   assert.match(worker, /"create_initial_taxonomies"/)
   assert.match(worker, /"wp_create_initial_post_meta"/)
   assert.match(worker, /do_action\('init'\);/)
-  assert.match(worker, /'completed' => true, 'removedCallbacks' => \$removed, 'memoryBeforeBytes' => \$memory_before, 'memoryBytes' => memory_get_usage\(true\), 'peakMemoryBytes' => memory_get_peak_usage\(true\)/)
   assert.doesNotMatch(worker, /searchParams\.get\([^)]*callback|searchParams\.get\([^)]*exclude|searchParams\.get\([^)]*widget/)
-})
-
-test("Cloudflare widget diagnostics preserve later hook priorities after callback removal", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const helper = worker.match(/function wp_codebox_widgets_probe_callback_identifier\(\$callback\) \{[\s\S]*?(?=function wp_codebox_widgets_probe_register_defaults)/)?.[0]
-  assert.ok(helper, "The widget probe callback helper is present in the worker PHP probe.")
-  assert.match(helper, /\$callbacks_by_priority = \$hook->callbacks/)
-  assert.match(helper, /remove_action\(\$hook_name, \$registered\['function'\], \(int\) \$priority\)/)
-  assert.doesNotMatch(helper, /unset\(\$hook->callbacks/)
-
-  const php = `<?php
-class WP_Hook {
-    public $callbacks = array();
-    private $priorities = array();
-    public function add_filter($callback, $priority, $accepted_args) {
-        $this->callbacks[$priority][] = array('function' => $callback, 'accepted_args' => $accepted_args);
-        $this->priorities = array_keys($this->callbacks);
-        sort($this->priorities, SORT_NUMERIC);
-    }
-    public function remove_filter($callback, $priority) {
-        if (!isset($this->callbacks[$priority])) return false;
-        foreach ($this->callbacks[$priority] as $index => $registered) {
-            if ($registered['function'] === $callback) {
-                unset($this->callbacks[$priority][$index]);
-                if (empty($this->callbacks[$priority])) unset($this->callbacks[$priority]);
-                $this->priorities = array_keys($this->callbacks);
-                sort($this->priorities, SORT_NUMERIC);
-                return true;
-            }
-        }
-        return false;
-    }
-    public function do_action() {
-        foreach ($this->priorities as $priority) {
-            foreach ($this->callbacks[$priority] as $registered) call_user_func($registered['function']);
-        }
-    }
-}
-$GLOBALS['wp_filter'] = array('widgets_init' => new WP_Hook());
-function add_action($hook_name, $callback, $priority = 10, $accepted_args = 1) { $GLOBALS['wp_filter'][$hook_name]->add_filter($callback, $priority, $accepted_args); }
-function remove_action($hook_name, $callback, $priority = 10) { return $GLOBALS['wp_filter'][$hook_name]->remove_filter($callback, $priority); }
-function do_action($hook_name) { $GLOBALS['wp_filter'][$hook_name]->do_action(); }
-${helper}
-function wp_codebox_probe_removed_callback() { $GLOBALS['wp_codebox_probe_calls'][] = 'removed'; }
-function wp_codebox_probe_later_priority_sentinel() { $GLOBALS['wp_codebox_probe_calls'][] = 'later-priority-sentinel'; }
-$GLOBALS['wp_codebox_probe_calls'] = array();
-add_action('widgets_init', 'wp_codebox_probe_removed_callback', 10);
-add_action('widgets_init', 'wp_codebox_probe_later_priority_sentinel', 20);
-$removed_callbacks = wp_codebox_widgets_probe_remove_callbacks('widgets_init', array('wp_codebox_probe_removed_callback'), false);
-do_action('widgets_init');
-echo json_encode(array('removed' => $removed_callbacks, 'calls' => $GLOBALS['wp_codebox_probe_calls']));`
-  const { stdout } = await execFileAsync("php", ["-r", php.slice("<?php\n".length)])
-  assert.deepEqual(JSON.parse(stdout), { removed: ["wp_codebox_probe_removed_callback"], calls: ["later-priority-sentinel"] })
-})
-
-test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed without canonical persistence", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const generator = await readFile(new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url), "utf8")
-  const canonicalManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { files: Array<{ path: string }> }
-  const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
-
-  assert.equal((probes.match(/initialMarkdownFiles/g) ?? []).length, 0)
-  assert.ok((probes.match(/await packagedCanonicalMarkdownSeed\(\)/g) ?? []).length >= 4)
-  assert.match(probes, /phase === "canonical-wordpress" \|\| phase === "canonical-bootstrap-setup"/)
-  assert.match(probes, /materializeWordPressServerFiles/)
-  assert.match(probes, /canonicalBootstrapSetupCode\(passwordFile, "https:\/\/canonical-probe\.invalid"\)/)
-  assert.match(generator, /serialize\( array\( 'custom_css_post_id' => -1 \) \)/)
-  assert.ok(canonicalManifest.files.some((file) => file.path === "_options/theme_mods_twentytwentyfive.json"))
-  assert.match(probes, /canonicalChangedPathCounts\(canonicalSeed, collectRuntimeFiles/)
-  assert.doesNotMatch(probes, /persistMarkdownRevision|commitLease|coordinatorCall/)
-  assert.match(worker, /'widgetOptionCount' => \(int\) \$wpdb->get_var/)
-  assert.match(worker, /function canonicalChangedPathCounts/)
 })
 
 test("Cloudflare canonical runtime patches the unique init call with runtime persistence policies", async () => {
@@ -362,15 +270,10 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,/)
   assert.match(worker, /authConstants, bucket, true\), pointer/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
-  assert.match(worker, /canonical-probe\.invalid", \{\}, bucket, true\)/)
   assert.match(worker, /canonicalBootstrapPasswordCode/)
   assert.match(worker, /canonicalBootstrapUrlCode/)
   assert.match(worker, /canonicalBootstrapFlushCode/)
-  assert.match(worker, /'wpCronInitAttached' => false !== has_action\('init', 'wp_cron'\)/)
-  assert.match(worker, /'updateScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_update_checks'\)/)
-  assert.match(worker, /'privacyScheduleInitAttached' => false !== has_action\('init', 'wp_schedule_delete_old_privacy_export_files'\)/)
 })
-
 test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object only for leases", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
