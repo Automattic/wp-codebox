@@ -80,6 +80,14 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     throw new Error(`Recipe must include at least one workflow step: ${recipePath}`)
   }
 
+  const sessions = new Set((recipe.inputs?.userSessions ?? []).map((session) => session.name))
+  const actors = new Set<string>()
+  for (const [index, actor] of (recipe.inputs?.browserActors ?? []).entries()) {
+    if (actors.has(actor.name)) throw new Error(`Recipe browser actor names must be unique: ${actor.name}`)
+    if (!sessions.has(actor.userSession)) throw new Error(`Recipe browser actor ${actor.name} references unknown user session ${actor.userSession} at inputs.browserActors[${index}]`)
+    actors.add(actor.name)
+  }
+
   for (const phase of ["before", "after"] as const) {
     if (recipe.workflow[phase] !== undefined && !Array.isArray(recipe.workflow[phase])) {
       throw new Error(`Recipe workflow ${phase} must be an array: ${recipePath}`)

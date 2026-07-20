@@ -202,6 +202,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Named command execution sessions that reference fixture users. Cookie/token/storage-state artifacts remain redaction-required metadata.",
             items: { $ref: "#/$defs/userSession" },
           },
+          browserActors: {
+            type: "array",
+            description: "Named browser actors explicitly bound to declared userSessions for coordinated browser scenarios.",
+            items: { $ref: "#/$defs/browserActor" },
+          },
           siteSeeds: {
             type: "array",
             description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
@@ -960,6 +965,16 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string", minLength: 1, pattern: "^[A-Za-z0-9._-]+$" },
           user: { type: "string", minLength: 1 },
           artifacts: { type: "array", items: { $ref: "#/$defs/userSessionArtifact" } },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      browserActor: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "userSession"],
+        properties: {
+          name: { type: "string", minLength: 1, pattern: "^[A-Za-z0-9._-]+$" },
+          userSession: { type: "string", minLength: 1 },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

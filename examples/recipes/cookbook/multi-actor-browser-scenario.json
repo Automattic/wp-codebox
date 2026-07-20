@@ -1,0 +1,22 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "author", "username": "fixture-author", "role": "editor" },
+      { "name": "reviewer", "username": "fixture-reviewer", "role": "editor" }
+    ],
+    "userSessions": [
+      { "name": "author-session", "user": "author" },
+      { "name": "reviewer-session", "user": "reviewer" }
+    ],
+    "browserActors": [
+      { "name": "author", "userSession": "author-session" },
+      { "name": "reviewer", "userSession": "reviewer-session" }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      { "command": "wordpress.browser-actions", "args": ["url=/"] }
+    ]
+  }
+}

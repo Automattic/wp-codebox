@@ -96,11 +96,13 @@ top-level fields:
 - `dependency_overlays`
 - `runtimeEnv`
 - `secretEnv`
+- `services`
 - `externalServices`
 - `pluginRuntime`
 - `fixtureDatabases`
 - `fixtureUsers`
 - `userSessions`
+- `browserActors`
 - `siteSeeds`
 - `stagedFiles`
 - `sourcePackages`
@@ -556,6 +558,38 @@ caller-owned external checks:
   "input": { "url": "https://example.test/status", "expected": "ready" }
 }
 ```
+
+### Coordinated Browser Actors
+
+`inputs.browserActors` names the authenticated actors available to coordinated
+browser scenarios. Every actor must explicitly reference an existing
+`inputs.userSessions` entry. This keeps browser identity declarative and avoids
+ambient session selection.
+
+```json
+{
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "author", "username": "fixture-author", "role": "editor" },
+      { "name": "reviewer", "username": "fixture-reviewer", "role": "editor" }
+    ],
+    "userSessions": [
+      { "name": "author-session", "user": "author" },
+      { "name": "reviewer-session", "user": "reviewer" }
+    ],
+    "browserActors": [
+      { "name": "author", "userSession": "author-session" },
+      { "name": "reviewer", "userSession": "reviewer-session" }
+    ]
+  }
+}
+```
+
+The public `wp-codebox/browser-multi-actor-scenario/v1` contract uses those
+actor names, a seed, action ids, optional named barriers, and bounded request
+gates. Its replay artifact records the complete input and deterministic schedule.
+Each actor receives an isolated browser context and page; scenario evidence
+records actions, barriers, gate timing, failure diagnostics, and actor teardown.
 
 `tool` is the exact caller-provided host tool command name and must be allowed by
 runtime policy using that same command name. `input` must be JSON-serializable.

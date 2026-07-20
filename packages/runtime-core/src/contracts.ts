@@ -1,5 +1,6 @@
 /** Inspectable Codebox contract metadata for CLI and orchestrator consumers. */
 export * from "./browser-probe-contract.js"
+export * from "./browser-multi-actor-scenario-contracts.js"
 export * from "./command-registry.js"
 export * from "./fuzz-fixture-plan-contracts.js"
 export * from "./fuzz-coverage-plan-contracts.js"
