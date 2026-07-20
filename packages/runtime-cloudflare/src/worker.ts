@@ -7,7 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
-import { routeWorkerRequest } from "./request-routing.js"
+import { routeWorkerRequest, type EditorProbePhase } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
@@ -86,6 +86,7 @@ export default {
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
+    if (route.kind === "editor-probe") return runCoordinatedEditorProbe(request, env, coordinator, route.phase)
     if (route.kind === "probe") {
       if (route.phase === "canonical-session") return canonicalSessionProbe(env.WORDPRESS_STATE_BUCKET, await coordinatorCall<{ pointer: MarkdownPointer | null }>(coordinator, request.url, "state"))
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -97,6 +98,41 @@ export default {
     if (route.kind === "canonical-auth") return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
     return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
   },
+}
+
+async function runCoordinatedEditorProbe(request: Request, env: Env, coordinator: DurableObjectStub, phase: EditorProbePhase): Promise<Response> {
+  const lease = await acquireLease(coordinator, request.url)
+  let finalized = false
+  try {
+    if (!lease.pointer) throw new Error("Canonical WordPress must be initialized before running an editor probe.")
+    const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    patchEditorProbe(runtime.php, phase)
+    const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+    await releaseLease(coordinator, request.url, lease)
+    finalized = true
+    await discardCachedRuntime()
+    return response
+  } catch (error) {
+    if (!finalized) await abortLease(coordinator, request.url, lease)
+    await discardCachedRuntime()
+    throw error
+  }
+}
+
+function patchEditorProbe(php: PHP, phase: EditorProbePhase): void {
+  const path = "/wordpress/wp-admin/post-new.php"
+  const source = new TextDecoder().decode(php.readFileAsBuffer(path))
+  const markers: Record<EditorProbePhase, string> = {
+    admin: "require_once __DIR__ . '/admin.php';",
+    "auto-draft": "$post_ID = $post->ID;",
+    "block-editor": "require_once ABSPATH . 'wp-admin/admin-footer.php';",
+  }
+  const marker = markers[phase]
+  const index = source.indexOf(marker)
+  if (index === -1 || index !== source.lastIndexOf(marker)) throw new Error(`WordPress editor probe marker is not unique: ${phase}`)
+  const stop = `\necho wp_json_encode( array( 'schema' => 'wp-codebox/cloudflare-editor-probe/v1', 'phase' => '${phase}', 'memoryBytes' => memory_get_usage( true ), 'peakMemoryBytes' => memory_get_peak_usage( true ) ) );\nreturn;`
+  const insertion = phase === "block-editor" ? index : index + marker.length
+  php.writeFile(path, new TextEncoder().encode(`${source.slice(0, insertion)}${stop}${source.slice(insertion)}`))
 }
 
 interface MarkdownManifestFile {
