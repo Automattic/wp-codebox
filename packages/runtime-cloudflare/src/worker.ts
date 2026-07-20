@@ -730,9 +730,19 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes", "mdi-insert-dirty-inventory"].includes(phase)) {
+  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes", "mdi-insert-dirty-inventory"].includes(phase) || phase.startsWith("mdi-insert-flush-")) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
+      const flushTarget = {
+        "mdi-insert-flush-options": "options",
+        "mdi-insert-flush-taxonomy": "term_taxonomy",
+        "mdi-insert-flush-relationships": "term_relationships_non_markdown",
+        "mdi-insert-flush-postmeta": "postmeta_non_markdown",
+      }[phase]
+      if (flushTarget) {
+        patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
+        patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "foreach ( array_keys( $this->dirty ) as $table_suffix ) {", `foreach ( array_keys( $this->dirty ) as $table_suffix ) { if ( $table_suffix !== '${flushTarget}' ) continue;`)
+      }
       if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
       if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
       if (phase === "mdi-insert-no-shutdown-flush" || phase === "mdi-insert-dirty-inventory") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
