@@ -142,6 +142,8 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "after-block-definitions": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "// Preload server-registered block bindings sources.", before: true },
     "before-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: true },
     "settings-before-styles": { path: "/wordpress/wp-includes/block-editor.php", marker: "$global_styles = array();", before: true },
+    "settings-after-presets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$block_classes = array(", before: true },
+    "settings-after-block-classes": { path: "/wordpress/wp-includes/block-editor.php", marker: "// Get any additional css from the customizer", before: true },
     "settings-before-global": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
     "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
     "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
