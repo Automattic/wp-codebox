@@ -574,6 +574,7 @@ wp_set_password($password, $admin->ID);
 $password = null;
 update_option('siteurl', ${JSON.stringify(origin)});
 update_option('home', ${JSON.stringify(origin)});
+if (false === get_theme_mod('custom_css_post_id', false)) set_theme_mod('custom_css_post_id', -1);
 $GLOBALS['wpdb']->flush_canonical_writes();
 echo 'flushed';`
 }

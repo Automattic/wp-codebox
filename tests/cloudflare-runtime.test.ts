@@ -337,6 +337,7 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(probes, /phase === "canonical-wordpress" \|\| phase === "canonical-bootstrap-setup"/)
   assert.match(probes, /materializeWordPressServerFiles/)
   assert.match(probes, /canonicalBootstrapSetupCode\(passwordFile, "https:\/\/canonical-probe\.invalid"\)/)
+  assert.match(worker, /set_theme_mod\('custom_css_post_id', -1\)/)
   assert.match(probes, /canonicalChangedPathCounts\(canonicalSeed, collectRuntimeFiles/)
   assert.doesNotMatch(probes, /persistMarkdownRevision|commitLease|coordinatorCall/)
   assert.match(worker, /'widgetOptionCount' => \(int\) \$wpdb->get_var/)
