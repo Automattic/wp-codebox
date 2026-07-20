@@ -730,12 +730,14 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
+  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
+      if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
+      if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
-        : phase === "mdi-insert"
+        : phase.startsWith("mdi-insert")
           ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } $result = ['postId' => $post_id];"
           : "$result = [];"
       const evidence = (await runtime.php.run({
@@ -853,6 +855,14 @@ echo json_encode([
   }
 
   return new Response(`Unknown boot probe phase: ${phase}`, { status: 400 })
+}
+
+function patchMdiProbe(php: PHP, relativePath: string, needle: string, replacement: string): void {
+  const path = `/wordpress/wp-content/plugins/markdown-database-integration/${relativePath}`
+  const source = new TextDecoder().decode(php.readFileAsBuffer(path))
+  const index = source.indexOf(needle)
+  if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error(`MDI probe marker is not unique: ${relativePath}`)
+  php.writeFile(path, new TextEncoder().encode(`${source.slice(0, index)}${replacement}${source.slice(index + needle.length)}`))
 }
 
 function wordpressProbeCode(phase: string): string {
