@@ -13,7 +13,7 @@ export interface BrowserMultiActorEvent {
 export interface BrowserMultiActorClient {
   close(): Promise<void>
   execute(action: BrowserMultiActorScenario["actions"][number]): Promise<void>
-  onRequest?(listener: (url: string, release: () => Promise<void>, fail: (reason: string) => Promise<void>) => void): Promise<void>
+  onRequest?(listener: (url: string, release: () => Promise<void>, fail: (reason: string) => Promise<void>) => Promise<void>): Promise<void>
 }
 
 export interface BrowserMultiActorScenarioResult {
@@ -40,26 +40,45 @@ export async function runBrowserMultiActorScenario(scenario: BrowserMultiActorSc
   const schedule = seededSchedule(scenario.actions.map((action) => action.id), scenario.seed)
   const actions = new Map(scenario.actions.map((action) => [action.id, action]))
   const gateReleases = new Map<string, () => void>()
+  const gateFails = new Map<string, (reason: string) => void>()
   const gates = new Map(scenario.requestGates?.map((gate) => [gate.name, gate]) ?? [])
   const barriers = new Map(scenario.barriers?.map((barrier) => [barrier.name, barrier]) ?? [])
   const arrived = new Map<string, Set<string>>()
   const waiters = new Map<string, Array<() => void>>()
+  const waiterFails = new Map<string, Array<(reason: Error) => void>>()
+  const gateOccurrences = new Map<string, number>()
+  let cancel: (reason: Error) => void = () => undefined
+  const cancelled = new Promise<never>((_resolve, reject) => { cancel = reject })
   let failure: Error | undefined
 
   for (const gate of gates.values()) {
     await clients[gate.actor]!.onRequest?.(async (url, release, fail) => {
       if (url !== gate.url || gateReleases.has(gate.name)) return release()
-      events.push(event("request-gate", gate.name, gate.actor, "waiting", { url }))
+      const occurrence = (gateOccurrences.get(gate.name) ?? 0) + 1
+      gateOccurrences.set(gate.name, occurrence)
+      if (occurrence !== (gate.occurrence ?? 1)) return release()
+      events.push(event("request-gate", gate.name, gate.actor, "waiting", { url, occurrence }))
       const timer = setTimeout(() => {
         gateReleases.delete(gate.name)
-        events.push(event("request-gate", gate.name, gate.actor, "failed", { reason: "timeout", url }))
-        void fail(`Request gate ${gate.name} timed out after ${gate.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`)
+        gateFails.delete(gate.name)
+        const reason = `Request gate ${gate.name} timed out after ${gate.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`
+        events.push(event("request-gate", gate.name, gate.actor, "failed", { reason: "timeout", url, occurrence }))
+        void fail(reason)
+        cancel(new Error(reason))
       }, gate.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       gateReleases.set(gate.name, () => {
         clearTimeout(timer)
         gateReleases.delete(gate.name)
-        events.push(event("request-gate", gate.name, gate.actor, "released", { url }))
+        gateFails.delete(gate.name)
+        events.push(event("request-gate", gate.name, gate.actor, "released", { url, occurrence }))
         void release()
+      })
+      gateFails.set(gate.name, (reason) => {
+        clearTimeout(timer)
+        gateReleases.delete(gate.name)
+        gateFails.delete(gate.name)
+        events.push(event("request-gate", gate.name, gate.actor, "failed", { reason, url, occurrence }))
+        void fail(reason)
       })
     })
   }
@@ -70,7 +89,11 @@ export async function runBrowserMultiActorScenario(scenario: BrowserMultiActorSc
       const action = actions.get(id)!
       tasks.push((async () => {
         events.push(event("action", action.id, action.actor, "started"))
-        await clients[action.actor]!.execute(action)
+        try {
+          await clients[action.actor]!.execute(action)
+        } catch (error) {
+          throw new Error(`Actor ${action.actor} action ${action.id} failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
         events.push(event("action", action.id, action.actor, "completed"))
         for (const gate of action.releaseGates ?? []) {
           const release = gateReleases.get(gate)
@@ -88,18 +111,23 @@ export async function runBrowserMultiActorScenario(scenario: BrowserMultiActorSc
             for (const resolve of waiters.get(barrier.name) ?? []) resolve()
             waiters.delete(barrier.name)
           } else {
-            await withTimeout(new Promise<void>((resolve) => waiters.set(barrier.name, [...(waiters.get(barrier.name) ?? []), resolve])), barrier.timeoutMs ?? scenario.timeoutMs ?? DEFAULT_TIMEOUT_MS, `Barrier ${barrier.name} timed out; waiting actors: ${barrier.actors.filter((actor) => !participants.has(actor)).join(", ")}`)
+              await withTimeout(new Promise<void>((resolve, reject) => {
+                waiters.set(barrier.name, [...(waiters.get(barrier.name) ?? []), resolve])
+                waiterFails.set(barrier.name, [...(waiterFails.get(barrier.name) ?? []), reject])
+              }), barrier.timeoutMs ?? scenario.timeoutMs ?? DEFAULT_TIMEOUT_MS, `Barrier ${barrier.name} timed out; waiting actors: ${barrier.actors.filter((actor) => !participants.has(actor)).join(", ")}`)
           }
         }
       })())
     }
-    await Promise.all(tasks)
+    await Promise.race([Promise.all(tasks), cancelled])
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error))
     events.push(event("failure", "scenario", undefined, "failed", { message: failure.message }))
   } finally {
-    for (const release of gateReleases.values()) release()
-    await Promise.all(Object.entries(clients).map(async ([actor, client]) => {
+    const reason = failure?.message ?? "Scenario cancelled"
+    for (const rejects of waiterFails.values()) for (const reject of rejects) reject(new Error(reason))
+    for (const fail of gateFails.values()) fail(reason)
+    await Promise.allSettled(Object.entries(clients).map(async ([actor, client]) => {
       await client.close()
       events.push(event("teardown", actor, actor, "closed"))
     }))
@@ -121,7 +149,12 @@ function validateScenario(scenario: BrowserMultiActorScenario, clients: Record<s
     if (!clients[actor.name]) throw new Error(`Missing browser client for actor ${actor.name}`)
   }
   for (const action of scenario.actions) if (!actorNames.has(action.actor)) throw new Error(`Action ${action.id} references unknown actor ${action.actor}`)
+  if (new Set(scenario.actions.map((action) => action.id)).size !== scenario.actions.length) throw new Error("Multi-actor scenario action IDs must be unique")
   for (const barrier of scenario.barriers ?? []) for (const actor of barrier.actors) if (!actorNames.has(actor)) throw new Error(`Barrier ${barrier.name} references unknown actor ${actor}`)
+  for (const gate of scenario.requestGates ?? []) {
+    if (!actorNames.has(gate.actor)) throw new Error(`Request gate ${gate.name} references unknown actor ${gate.actor}`)
+    if (!gate.url || (gate.occurrence !== undefined && (!Number.isInteger(gate.occurrence) || gate.occurrence < 1))) throw new Error(`Request gate ${gate.name} requires a URL and positive occurrence`)
+  }
 }
 
 function seededSchedule(ids: string[], seed: string): string[] {

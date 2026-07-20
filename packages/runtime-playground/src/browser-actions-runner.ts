@@ -886,6 +886,11 @@ function browserMultiActorScenario(scenario: BrowserScenarioInput, args: string[
   const url = scenario.url?.trim() || argValue(args, "url")?.trim()
   if (!url) throw new Error("Multi-actor wordpress.browser-scenario requires scenario-json.url or url=<path-or-url>")
   if (scenario.schema !== BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA || !scenario.seed || !scenario.actions) throw new Error(`Multi-actor wordpress.browser-scenario requires schema=${BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA}, seed, actors, and actions`)
+  if (!Array.isArray(scenario.actors) || !Array.isArray(scenario.actions) || !scenario.actors.every((actor) => actor && typeof actor.name === "string" && typeof actor.userSession === "string") || !scenario.actions.every((action) => action && typeof action.id === "string" && typeof action.actor === "string" && validateBrowserInteractionScript([action.step]).valid)) {
+    throw new Error("Multi-actor wordpress.browser-scenario requires named actors and valid browser interaction steps")
+  }
+  if (scenario.barriers && (!Array.isArray(scenario.barriers) || !scenario.barriers.every((barrier) => barrier && typeof barrier.name === "string" && Array.isArray(barrier.actors)))) throw new Error("Multi-actor browser scenario barriers must have a name and actor list")
+  if (scenario.requestGates && (!Array.isArray(scenario.requestGates) || !scenario.requestGates.every((gate) => gate && typeof gate.name === "string" && typeof gate.actor === "string" && typeof gate.url === "string" && (gate.occurrence === undefined || (Number.isInteger(gate.occurrence) && gate.occurrence > 0))))) throw new Error("Multi-actor browser scenario request gates must have a name, actor, URL, and positive occurrence")
   return { schema: scenario.schema, seed: scenario.seed, actors: scenario.actors, actions: scenario.actions, ...(scenario.barriers ? { barriers: scenario.barriers } : {}), ...(scenario.requestGates ? { requestGates: scenario.requestGates } : {}), ...(typeof scenario.timeout === "string" ? { timeoutMs: durationStringMs(scenario.timeout) } : {}), url, captures: browserScenarioCaptures(scenario, args), stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS }
 }
 

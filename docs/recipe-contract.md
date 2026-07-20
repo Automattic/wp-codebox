@@ -597,6 +597,13 @@ the complete input and deterministic schedule; actor-scoped screenshots, traces,
 console, network, step, and error files are written before deterministic teardown,
 including when a barrier or gate times out.
 
+Actions are launched in the seed-derived schedule order. A barrier holds its
+declared actors until every participant arrives. A request gate only holds the
+declared actor's matching URL; `occurrence` selects which matching request to
+hold (default `1`), and an action releases named gates in its declared order.
+Timeouts abort held requests, release all waits, and retain partial replay and
+actor evidence. Scenarios without `actors` keep the normal single-browser path.
+
 `tool` is the exact caller-provided host tool command name and must be allowed by
 runtime policy using that same command name. `input` must be JSON-serializable.
 WP Codebox treats this as transport and evidence only; callers own the tool and

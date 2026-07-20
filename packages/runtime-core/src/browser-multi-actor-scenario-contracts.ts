@@ -21,6 +21,7 @@ export interface BrowserMultiActorRequestGate {
   name: string
   actor: string
   url: string
+  occurrence?: number
   timeoutMs?: number
 }
 

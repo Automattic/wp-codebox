@@ -67,4 +67,9 @@ assert.equal(timeoutError.result.finalState, "failed")
 assert.ok(timeoutError.result.events.some((event) => event.type === "failure" && event.status === "failed"))
 assert.deepEqual(timeoutError.result.replay.scenario.actions, [scenario.actions[0]!])
 assert.ok(closed.includes("timeout-author") && closed.includes("timeout-reviewer"))
+
+await assert.rejects(
+  runBrowserMultiActorScenario({ ...scenario, requestGates: [{ ...scenario.requestGates![0]!, occurrence: 0 }] }, clients),
+  /positive occurrence/,
+)
 console.log("multi-actor browser scenarios ok")

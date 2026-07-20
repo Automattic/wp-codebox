@@ -60,11 +60,20 @@ export async function runBrowserMultiActorScenarioCommand(input: {
     await browser.close()
   }
 
-  const summary = { schema: "wp-codebox/browser-multi-actor-scenario-result/v1", capturedAt: now(), scenario: result, actors: evidence, ...(failure ? { error: failure.message } : {}) }
+  const replay = result?.replay ?? { schema: "wp-codebox/browser-multi-actor-replay/v1", seed: scenario.seed, scenario, schedule: [] }
+  const eventRecords = result?.events ?? []
+  const network = Object.entries(evidence).flatMap(([actor, actorEvidence]) => actorEvidence.network.map((record) => ({ actor, ...record })))
+  const requestCoverage = network.map((record) => ({ actor: record.actor, url: record.url, method: record.method, status: record.status }))
+  const summary = { schema: "wp-codebox/browser-multi-actor-scenario-result/v1", capturedAt: now(), normalizedReplayInput: replay, scenario: result, actors: evidence, ...(failure ? { error: failure.message } : {}) }
   await artifacts.writeJson("summary", "multi-actor-scenario-summary.json", summary)
+  await artifacts.writeJson("steps", "multi-actor-events.json", eventRecords)
+  await artifacts.writeJson("steps", "multi-actor-replay.json", replay)
+  await artifacts.writeJson("network", "multi-actor-network.json", network)
+  await artifacts.writeJson("requestCoverage", "multi-actor-request-coverage.json", requestCoverage)
+  await artifacts.writeJson("waterfall", "multi-actor-waterfall.json", network)
   const target = topology.resolveUrl(scenario.url)
   const traces = Object.values(evidence).map((actor) => actor.files.trace).filter((path): path is string => Boolean(path))
-  const artifact = { artifactType: "scenario" as const, requestedUrl: target, url: target, preview: topology.preview, ...topology.origins, files: { summary: "files/browser/multi-actor-scenario-summary.json", ...(traces.length > 0 ? { traces } : {}) }, summary: { actions: scenario.actions.length, steps: scenario.actions.length, consoleMessages: Object.values(evidence).reduce((total, actor) => total + actor.console.length, 0), errors: Object.values(evidence).reduce((total, actor) => total + actor.errors.length, 0), finalUrl: target, htmlSnapshot: false, networkEvents: Object.values(evidence).reduce((total, actor) => total + actor.network.length, 0), replayability: browserProbeReplayability(captures), screenshot: captures.has("screenshot"), viewport: null, multiActor: { seed: scenario.seed, finalState: result?.finalState ?? "failed", actors: Object.keys(evidence), replay: "files/browser/multi-actor-scenario-summary.json" } } } satisfies BrowserArtifact
+  const artifact = { artifactType: "scenario" as const, requestedUrl: target, url: target, preview: topology.preview, ...topology.origins, files: { summary: "files/browser/multi-actor-scenario-summary.json", steps: "files/browser/multi-actor-events.json", network: "files/browser/multi-actor-network.json", requestCoverage: "files/browser/multi-actor-request-coverage.json", waterfall: "files/browser/multi-actor-waterfall.json", ...(traces.length > 0 ? { traces } : {}) }, summary: { actions: scenario.actions.length, steps: scenario.actions.length, consoleMessages: Object.values(evidence).reduce((total, actor) => total + actor.console.length, 0), errors: Object.values(evidence).reduce((total, actor) => total + actor.errors.length, 0), finalUrl: target, htmlSnapshot: false, networkEvents: network.length, replayability: browserProbeReplayability(captures), screenshot: captures.has("screenshot"), viewport: null, multiActor: { seed: scenario.seed, finalState: result?.finalState ?? "failed", actors: Object.keys(evidence), replay: "files/browser/multi-actor-replay.json" } } } satisfies BrowserArtifact
   if (failure) throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${failure.message}`, artifact)
   return { artifact, output: `${JSON.stringify({ command: "wordpress.browser-scenario", files: artifact.files, summary: artifact.summary, scenario: summary }, null, 2)}\n` }
 }
@@ -100,25 +109,28 @@ function actorClient(input: { actor: string; artifacts: BrowserArtifactSession; 
       }
     },
     async close() {
-      await settleBrowserNetworkTasks(networkTasks)
-      if (captures.has("screenshot")) {
-        const name = `${actor}-screenshot.png`
-        await artifacts.writeGenerated("screenshot", name, (path) => page.screenshot({ path, fullPage: true }).then(() => undefined)).catch(() => undefined)
-        evidence.files.screenshot = artifacts.path(name)
-      }
-      if (captures.has("trace")) {
-        const name = `${actor}-trace.zip`
-        await artifacts.writeGenerated("traces", name, (path) => context.tracing.stop({ path }))
-        evidence.files.trace = artifacts.path(name)
-      }
-      for (const [key, records] of Object.entries({ console: evidence.console, errors: evidence.errors, network: evidence.network, steps: evidence.steps })) {
-        if (key === "steps" || captures.has(key)) {
-          const name = `${actor}-${key}.jsonl`
-          await artifacts.writeJsonLines(key as "console" | "errors" | "network" | "steps", name, records)
-          evidence.files[key] = artifacts.path(name)
+      try {
+        await settleBrowserNetworkTasks(networkTasks)
+        if (captures.has("screenshot")) {
+          const name = `${actor}-screenshot.png`
+          await artifacts.writeGenerated("screenshot", name, (path) => page.screenshot({ path, fullPage: true }).then(() => undefined)).catch(() => undefined)
+          evidence.files.screenshot = artifacts.path(name)
         }
+        if (captures.has("trace")) {
+          const name = `${actor}-trace.zip`
+          await artifacts.writeGenerated("traces", name, (path) => context.tracing.stop({ path })).catch(() => undefined)
+          evidence.files.trace = artifacts.path(name)
+        }
+        for (const [key, records] of Object.entries({ console: evidence.console, errors: evidence.errors, network: evidence.network, steps: evidence.steps })) {
+          if (key === "steps" || captures.has(key)) {
+            const name = `${actor}-${key}.jsonl`
+            await artifacts.writeJsonLines(key as "console" | "errors" | "network" | "steps", name, records)
+            evidence.files[key] = artifacts.path(name)
+          }
+        }
+      } finally {
+        await context.close()
       }
-      await context.close()
     },
   }
 }
