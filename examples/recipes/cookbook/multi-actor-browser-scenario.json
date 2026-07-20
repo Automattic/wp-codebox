@@ -16,7 +16,12 @@
   },
   "workflow": {
     "steps": [
-      { "command": "wordpress.browser-actions", "args": ["url=/"] }
+      {
+        "command": "wordpress.browser-scenario",
+        "args": [
+          "scenario-json={\"schema\":\"wp-codebox/browser-multi-actor-scenario/v1\",\"url\":\"/\",\"seed\":\"two-editors\",\"actors\":[{\"name\":\"author\",\"userSession\":\"author-session\"},{\"name\":\"reviewer\",\"userSession\":\"reviewer-session\"}],\"actions\":[{\"id\":\"author-ready\",\"actor\":\"author\",\"step\":{\"kind\":\"waitFor\",\"waitFor\":\"duration\",\"duration\":\"1ms\"},\"barrier\":\"both-ready\"},{\"id\":\"reviewer-ready\",\"actor\":\"reviewer\",\"step\":{\"kind\":\"waitFor\",\"waitFor\":\"duration\",\"duration\":\"1ms\"},\"barrier\":\"both-ready\"}],\"barriers\":[{\"name\":\"both-ready\",\"actors\":[\"author\",\"reviewer\"],\"timeoutMs\":5000}]}"
+        ]
+      }
     ]
   }
 }

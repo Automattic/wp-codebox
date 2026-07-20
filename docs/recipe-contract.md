@@ -585,11 +585,13 @@ ambient session selection.
 }
 ```
 
-The public `wp-codebox/browser-multi-actor-scenario/v1` contract uses those
-actor names, a seed, action ids, optional named barriers, and bounded request
-gates. Its replay artifact records the complete input and deterministic schedule.
-Each actor receives an isolated browser context and page; scenario evidence
-records actions, barriers, gate timing, failure diagnostics, and actor teardown.
+Pass the public `wp-codebox/browser-multi-actor-scenario/v1` object as
+`wordpress.browser-scenario` `scenario-json`. It uses actor names, a seed, action
+ids, optional named barriers, and bounded request gates. Each actor receives an
+isolated authenticated Playwright context and page. The scenario summary records
+the complete input and deterministic schedule; actor-scoped screenshots, traces,
+console, network, step, and error files are written before deterministic teardown,
+including when a barrier or gate times out.
 
 `tool` is the exact caller-provided host tool command name and must be allowed by
 runtime policy using that same command name. `input` must be JSON-serializable.

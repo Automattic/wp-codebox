@@ -25,6 +25,13 @@ export interface BrowserMultiActorScenarioResult {
   finalState: "completed" | "failed"
 }
 
+/** Carries replayable partial evidence when coordinated execution cannot finish. */
+export class BrowserMultiActorScenarioError extends Error {
+  constructor(message: string, readonly result: BrowserMultiActorScenarioResult) {
+    super(message)
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export async function runBrowserMultiActorScenario(scenario: BrowserMultiActorScenario, clients: Record<string, BrowserMultiActorClient>): Promise<BrowserMultiActorScenarioResult> {
@@ -97,7 +104,7 @@ export async function runBrowserMultiActorScenario(scenario: BrowserMultiActorSc
       events.push(event("teardown", actor, actor, "closed"))
     }))
   }
-  if (failure) throw failure
+  if (failure) throw new BrowserMultiActorScenarioError(failure.message, result("failed", scenario, schedule, events))
   return result("completed", scenario, schedule, events)
 }
 

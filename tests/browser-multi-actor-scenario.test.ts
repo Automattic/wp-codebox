@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, type BrowserMultiActorScenario } from "../packages/runtime-core/src/browser-multi-actor-scenario-contracts.js"
-import { runBrowserMultiActorScenario, type BrowserMultiActorClient } from "../packages/runtime-playground/src/browser-multi-actor-scenario.js"
+import { BrowserMultiActorScenarioError, runBrowserMultiActorScenario, type BrowserMultiActorClient } from "../packages/runtime-playground/src/browser-multi-actor-scenario.js"
 
 const closed: string[] = []
 const actions: string[] = []
@@ -55,6 +55,16 @@ const timeoutClients: Record<string, BrowserMultiActorClient> = {
   author: { async execute() {}, async close() { closed.push("timeout-author") } },
   reviewer: { async execute() {}, async close() { closed.push("timeout-reviewer") } },
 }
-await assert.rejects(() => runBrowserMultiActorScenario({ ...scenario, actions: [scenario.actions[0]!], requestGates: [] }, timeoutClients), /Barrier both-ready timed out; waiting actors: reviewer/)
+let timeoutError: unknown
+try {
+  await runBrowserMultiActorScenario({ ...scenario, actions: [scenario.actions[0]!], requestGates: [] }, timeoutClients)
+} catch (error) {
+  timeoutError = error
+}
+assert.ok(timeoutError instanceof BrowserMultiActorScenarioError)
+assert.match(timeoutError.message, /Barrier both-ready timed out; waiting actors: reviewer/)
+assert.equal(timeoutError.result.finalState, "failed")
+assert.ok(timeoutError.result.events.some((event) => event.type === "failure" && event.status === "failed"))
+assert.deepEqual(timeoutError.result.replay.scenario.actions, [scenario.actions[0]!])
 assert.ok(closed.includes("timeout-author") && closed.includes("timeout-reviewer"))
 console.log("multi-actor browser scenarios ok")

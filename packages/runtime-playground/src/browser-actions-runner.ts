@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises"
-import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserActionCorpusDescriptor, type BrowserInteractionStep, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserActionCorpusDescriptor, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError, isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
+import { runBrowserMultiActorScenarioCommand } from "./browser-multi-actor-scenario-runner.js"
 import type { BrowserArtifact, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkRecord, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { captureBrowserDomSnapshot, type BrowserDomSnapshotArtifact } from "./browser-dom-snapshot.js"
@@ -735,6 +736,12 @@ interface BrowserScenarioInput {
   duration?: string
   stepTimeout?: string
   timeout?: string
+  schema?: string
+  seed?: string
+  actors?: BrowserMultiActorScenario["actors"]
+  actions?: BrowserMultiActorScenario["actions"]
+  barriers?: BrowserMultiActorScenario["barriers"]
+  requestGates?: BrowserMultiActorScenario["requestGates"]
 }
 
 export async function runBrowserScenarioCommand({
@@ -752,6 +759,10 @@ export async function runBrowserScenarioCommand({
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const scenario = await browserScenarioFromArgs(args)
+  const multiActorScenario = browserMultiActorScenario(scenario, args)
+  if (multiActorScenario) {
+    return runBrowserMultiActorScenarioCommand({ artifactRoot, scenario: multiActorScenario, runtimeSpec, runPlaygroundCommand, server })
+  }
   const url = scenario.url?.trim() || argValue(args, "url")?.trim()
   if (!url) {
     throw new Error("wordpress.browser-scenario requires url=<path-or-url> or scenario-json.url")
@@ -868,6 +879,14 @@ async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioI
     throw new Error("wordpress.browser-scenario scenario-json must be a JSON object")
   }
   return parsed as BrowserScenarioInput
+}
+
+function browserMultiActorScenario(scenario: BrowserScenarioInput, args: string[]): (BrowserMultiActorScenario & { url: string; captures?: string[]; stepTimeoutMs?: number }) | undefined {
+  if (!scenario.actors) return undefined
+  const url = scenario.url?.trim() || argValue(args, "url")?.trim()
+  if (!url) throw new Error("Multi-actor wordpress.browser-scenario requires scenario-json.url or url=<path-or-url>")
+  if (scenario.schema !== BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA || !scenario.seed || !scenario.actions) throw new Error(`Multi-actor wordpress.browser-scenario requires schema=${BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA}, seed, actors, and actions`)
+  return { schema: scenario.schema, seed: scenario.seed, actors: scenario.actors, actions: scenario.actions, ...(scenario.barriers ? { barriers: scenario.barriers } : {}), ...(scenario.requestGates ? { requestGates: scenario.requestGates } : {}), ...(typeof scenario.timeout === "string" ? { timeoutMs: durationStringMs(scenario.timeout) } : {}), url, captures: browserScenarioCaptures(scenario, args), stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS }
 }
 
 function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[]): string[] {
