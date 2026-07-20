@@ -15,7 +15,8 @@ function ${snapshot}(string $hook_name): array {
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $snapshot;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             $snapshot[$priority . ':' . $callback_id] = true;
         }
@@ -33,11 +34,9 @@ function ${defer}(string $hook_name, array $before): array {
             if (isset($before[$priority . ':' . $callback_id])) {
                 continue;
             }
-            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
-            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
-        }
-        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
-            unset($wp_filter[$hook_name]->callbacks[$priority]);
+            if (isset($callback['function']) && remove_action($hook_name, $callback['function'], (int) $priority)) {
+                $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
+            }
         }
     }
     usort($deferred, static function (array $left, array $right): int { return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10); });
