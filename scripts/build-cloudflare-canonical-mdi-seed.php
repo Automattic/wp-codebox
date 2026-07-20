@@ -6,6 +6,7 @@ const REQUIRED_PATHS = array(
 	'_options/siteurl.json', '_options/home.json', '_tables/users.json', '_tables/usermeta.json',
 	'_tables/terms.json', '_tables/term_taxonomy.json', '_tables/termmeta.json', '_tables/postmeta.json',
 	'_tables/term_relationships.json', '_tables/comments.json', '_tables/commentmeta.json', '_tables/links.json',
+	'_options/theme_mods_twentytwentyfive.json',
 );
 
 define( 'ABSPATH', __DIR__ . '/' );
@@ -72,6 +73,8 @@ try {
 	$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
 	$runtime = WP_Markdown_Primary_Storage_Runtime::bootstrap_existing_cache( array( 'content_root' => $markdown_root, 'state_root' => $markdown_root ), new WP_SQLite_Connection( $pdo ), 'wordpress' );
 	$driver = $runtime->get_driver();
+	$theme_mods = $pdo->prepare( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('theme_mods_twentytwentyfive', ?, 'auto') ON CONFLICT(option_name) DO UPDATE SET option_value = excluded.option_value" );
+	$theme_mods->execute( array( serialize( array( 'custom_css_post_id' => -1 ) ) ) );
 	foreach ( $pdo->query( 'SELECT ID FROM wp_posts ORDER BY ID' )->fetchAll( PDO::FETCH_COLUMN ) as $post_id ) {
 		$driver->query( 'UPDATE wp_posts SET post_modified = post_modified WHERE ID = ' . (int) $post_id );
 	}

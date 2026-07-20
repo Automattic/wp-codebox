@@ -330,6 +330,8 @@ echo json_encode(array('removed' => $removed_callbacks, 'calls' => $GLOBALS['wp_
 
 test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed without canonical persistence", async () => {
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const generator = await readFile(new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url), "utf8")
+  const canonicalManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { files: Array<{ path: string }> }
   const probes = worker.slice(worker.indexOf("async function runBootProbe"), worker.indexOf("if (phase?.startsWith(\"seeded-\"))"))
 
   assert.equal((probes.match(/initialMarkdownFiles/g) ?? []).length, 0)
@@ -337,7 +339,8 @@ test("Cloudflare MDI lifecycle diagnostics use the complete packaged seed withou
   assert.match(probes, /phase === "canonical-wordpress" \|\| phase === "canonical-bootstrap-setup"/)
   assert.match(probes, /materializeWordPressServerFiles/)
   assert.match(probes, /canonicalBootstrapSetupCode\(passwordFile, "https:\/\/canonical-probe\.invalid"\)/)
-  assert.match(worker, /set_theme_mod\('custom_css_post_id', -1\)/)
+  assert.match(generator, /serialize\( array\( 'custom_css_post_id' => -1 \) \)/)
+  assert.ok(canonicalManifest.files.some((file) => file.path === "_options/theme_mods_twentytwentyfive.json"))
   assert.match(probes, /canonicalChangedPathCounts\(canonicalSeed, collectRuntimeFiles/)
   assert.doesNotMatch(probes, /persistMarkdownRevision|commitLease|coordinatorCall/)
   assert.match(worker, /'widgetOptionCount' => \(int\) \$wpdb->get_var/)

@@ -2,7 +2,7 @@
     "schema": "wp-codebox/cloudflare-canonical-mdi-seed/v1",
     "markdownDatabaseIntegrationRevision": "7cf025f2d64aa933d937f1a18a129e278c231783",
     "wordpressInstallSeedSha256": "7212b89f1c01f98a23b89e9a2dd2b214306a85c10adb0355b9c7a6005b4fe822",
-    "archiveSha256": "d69b700c671ebee7f9eb01fa80d58c66072cf3966560d01cc188bd26b4818895",
+    "archiveSha256": "717b53395be2eb29ba7419f5a0b7eee4fe5a6527ec09246b24133aea82b3686c",
     "files": [
         {
             "path": "_options/active_plugins.json",
@@ -408,6 +408,11 @@
             "path": "_options/template.json",
             "sha256": "4bb5f2dcc89d2ca9281434c74b47e9049f65dadc53d94754487be6ea32430e1d",
             "size": 116
+        },
+        {
+            "path": "_options/theme_mods_twentytwentyfive.json",
+            "sha256": "1d251370cb28c8d1aa06c7d78a0cb604e954caff117eb306321c7111d60035c6",
+            "size": 161
         },
         {
             "path": "_options/thread_comments.json",
