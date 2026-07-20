@@ -21,12 +21,27 @@ export interface BrowserDomSelectorSnapshot {
   error?: string
 }
 
+export interface BrowserDomSvgImagePayloadSnapshot {
+  imagePath: string
+  sha256: string
+  byteCount: number
+  textNodeCount: number
+  fontFamilyAttributes: string[]
+  fontSizeAttributes: string[]
+  fontStyleAttributes: string[]
+  fontWeightAttributes: string[]
+  letterSpacingAttributes: string[]
+  fontFaceRuleCount: number
+  styleText: { sha256: string; byteCount: number }
+}
+
 export interface BrowserDomSnapshot {
   url: string
   title: string
   elementCount: number
   capturedElements: BrowserDomElementSnapshot[]
   selectors?: BrowserDomSelectorSnapshot[]
+  svgImagePayloads?: BrowserDomSvgImagePayloadSnapshot[]
   truncated: boolean
 }
 
@@ -44,7 +59,7 @@ export interface BrowserDomSnapshotArtifact {
 }
 
 export async function captureBrowserDomSnapshot(page: Page, maxElements: number, selectors: string[] = []): Promise<BrowserDomSnapshot> {
-  return page.evaluate(({ maxElements: maxElementsInput, styleProperties, attributeNames, selectors: selectorInputs }) => {
+  return page.evaluate(async ({ maxElements: maxElementsInput, styleProperties, attributeNames, selectors: selectorInputs }) => {
     const maxElements = Math.max(1, Number(maxElementsInput) || 1)
     const elements = Array.from(document.body?.querySelectorAll("*") ?? [])
     const visibleElements = elements
@@ -52,6 +67,7 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
       .filter((element): element is BrowserDomElementSnapshot => Boolean(element))
     const capturedByPath = new Map(visibleElements.slice(0, maxElements).map((element) => [element.path, element]))
     const selectorSnapshots = selectorInputs.map((selector) => selectorSnapshot(selector, capturedByPath, styleProperties, attributeNames))
+    const svgImagePayloads = await Promise.all(Array.from(document.images).map((image) => svgImagePayloadSnapshot(image)))
 
     return {
       url: window.location.href,
@@ -59,6 +75,7 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
       elementCount: visibleElements.length,
       capturedElements: [...capturedByPath.values()],
       ...(selectorSnapshots.length > 0 ? { selectors: selectorSnapshots } : {}),
+      ...(svgImagePayloads.some((payload): payload is BrowserDomSvgImagePayloadSnapshot => Boolean(payload)) ? { svgImagePayloads: svgImagePayloads.filter((payload): payload is BrowserDomSvgImagePayloadSnapshot => Boolean(payload)) } : {}),
       truncated: visibleElements.length > maxElements,
     }
 
@@ -87,7 +104,7 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
         text: compactText(element.textContent || "", 180),
         attributes: Object.fromEntries(attributes.flatMap((name) => {
           const value = element.getAttribute(name)
-          return value === null ? [] : [[name, compactText(value, 180)]]
+          return value === null ? [] : [[name, compactText(redactPayloadUrl(value), 180)]]
         })),
         boundingBox: {
           x: roundNumber(rect.x),
@@ -130,6 +147,102 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
     function compactText(value: string, maxLength: number): string {
       const compact = value.replace(/\s+/g, " ").trim()
       return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact
+    }
+
+    function redactPayloadUrl(value: string): string {
+      return /^\s*(?:blob:|data:)/i.test(value) ? "[payload URL redacted]" : value
+    }
+
+    async function svgImagePayloadSnapshot(image: HTMLImageElement): Promise<BrowserDomSvgImagePayloadSnapshot | undefined> {
+      // Match the readiness normalizer: responsive sources are left untouched, while
+      // same-document blobs and same-origin standalone SVGs are safe to inspect.
+      if (!crypto.subtle || image.srcset || image.parentElement?.tagName === "PICTURE") {
+        return undefined
+      }
+      const source = image.currentSrc || image.src
+      let parsed: URL
+      try {
+        parsed = new URL(source, document.baseURI)
+      } catch {
+        return undefined
+      }
+      if (parsed.protocol !== "blob:" && (parsed.origin !== location.origin || !/\.svg$/i.test(parsed.pathname))) {
+        return undefined
+      }
+      const maxBytes = 2 * 1024 * 1024
+      try {
+        const response = await fetch(parsed.href)
+        const contentLength = Number(response.headers.get("content-length"))
+        if (!response.ok || (Number.isFinite(contentLength) && contentLength > maxBytes)) {
+          return undefined
+        }
+        const reader = response.body?.getReader()
+        if (!reader) {
+          return undefined
+        }
+        const chunks: Uint8Array[] = []
+        let byteCount = 0
+        while (true) {
+          const next = await reader.read()
+          if (next.done) {
+            break
+          }
+          byteCount += next.value.byteLength
+          if (byteCount > maxBytes) {
+            await reader.cancel()
+            return undefined
+          }
+          chunks.push(next.value)
+        }
+        const bytes = new Uint8Array(byteCount)
+        let offset = 0
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset)
+          offset += chunk.byteLength
+        }
+        const sourceText = new TextDecoder().decode(bytes)
+        if (!/\bimage\/svg\+xml\b/i.test(response.headers.get("content-type") ?? "") && !/^\s*(?:<\?xml[^>]*>\s*)?<svg\b/i.test(sourceText)) {
+          return undefined
+        }
+        const svg = new DOMParser().parseFromString(sourceText, "image/svg+xml")
+        if (svg.querySelector("parsererror")) {
+          return undefined
+        }
+        const styleText = Array.from(svg.querySelectorAll("style")).map((style) => style.textContent ?? "").join("\n")
+        const styleBytes = new TextEncoder().encode(styleText)
+        function attributeValues(name: string): string[] {
+          return [...new Set(Array.from(svg.querySelectorAll("*")).flatMap((element) => {
+            const value = element.getAttribute(name)?.trim()
+            return value ? [value] : []
+          }))].sort()
+        }
+        async function digest(value: Uint8Array): Promise<string> {
+          const result = await crypto.subtle.digest("SHA-256", value as Uint8Array<ArrayBuffer>)
+          return Array.from(new Uint8Array(result)).map((byte) => byte.toString(16).padStart(2, "0")).join("")
+        }
+        const walker = svg.createTreeWalker(svg, NodeFilter.SHOW_TEXT)
+        let textNodeCount = 0
+        while (walker.nextNode()) {
+          textNodeCount += 1
+        }
+        const [sha256, styleSha256] = await Promise.all([digest(bytes), digest(styleBytes)])
+        return {
+          imagePath: elementPath(image),
+          sha256,
+          byteCount,
+          textNodeCount,
+          fontFamilyAttributes: attributeValues("font-family"),
+          fontSizeAttributes: attributeValues("font-size"),
+          fontStyleAttributes: attributeValues("font-style"),
+          fontWeightAttributes: attributeValues("font-weight"),
+          letterSpacingAttributes: attributeValues("letter-spacing"),
+          fontFaceRuleCount: (styleText.match(/@font-face\b/gi) ?? []).length,
+          styleText: { sha256: styleSha256, byteCount: styleBytes.byteLength },
+        }
+      } catch {
+        // Snapshot evidence is diagnostic only; inaccessible payloads must not block capture.
+        return undefined
+      }
     }
 
     function roundNumber(value: number): number {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
@@ -9,6 +10,7 @@ import { PNG } from "pngjs"
 import { chromium } from "playwright"
 
 import { comparePngFiles, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, waitForVisualComparePaintReady, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
+import { captureBrowserDomSnapshot } from "../packages/runtime-playground/src/browser-dom-snapshot.js"
 
 // Build an opaque solid-color PNG. `fill` is [r,g,b].
 function solidPng(width: number, height: number, fill: [number, number, number]): PNG {
@@ -124,6 +126,79 @@ function paintRect(png: PNG, x0: number, y0: number, x1: number, y1: number, fil
   }
 }
 
+// 5. SVG image payload evidence is bounded and metadata-only. Identical payloads have
+// identical digests, style changes are isolated through styleText, and untrusted bodies
+// never enter a DOM snapshot.
+{
+  const styleA = "@font-face { font-family: Embedded; src: url(data:font/woff2;base64,secret); }"
+  const styleB = "@font-face { font-family: Embedded; font-style: italic; src: url(data:font/woff2;base64,secret); }"
+  const svgA = `<svg xmlns="http://www.w3.org/2000/svg"><style>${styleA}</style><text font-family="Embedded" font-size="16" font-style="normal" font-weight="700" letter-spacing=".1em">Evidence</text></svg>`
+  const svgB = `<svg xmlns="http://www.w3.org/2000/svg"><style>${styleB}</style><text font-family="Embedded" font-size="16" font-style="normal" font-weight="700" letter-spacing=".1em">Evidence</text></svg>`
+  const server = createServer((request, response) => {
+    if (request.url === "/same.svg") {
+      response.writeHead(200, { "content-type": "image/svg+xml" })
+      response.end(svgA)
+      return
+    }
+    if (request.url === "/style-change.svg") {
+      response.writeHead(200, { "content-type": "image/svg+xml" })
+      response.end(svgB)
+      return
+    }
+    if (request.url === "/too-large.svg") {
+      response.writeHead(200, { "content-type": "image/svg+xml" })
+      response.end(" ".repeat(2 * 1024 * 1024 + 1))
+      return
+    }
+    if (request.url === "/not-svg.svg") {
+      response.writeHead(200, { "content-type": "text/plain" })
+      response.end("not SVG")
+      return
+    }
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end(`<img src="/same.svg"><img src="/same.svg"><img src="/style-change.svg"><img src="/too-large.svg"><img src="/not-svg.svg"><img id="blob">\n<script>document.querySelector("#blob").src = URL.createObjectURL(new Blob([${JSON.stringify(svgA)}], { type: "image/svg+xml" }))</script>`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.goto(`http://127.0.0.1:${address.port}`)
+    // tsx injects this helper into nested async functions serialized by page.evaluate.
+    await page.evaluate("globalThis.__name = (value) => value")
+    const snapshot = await captureBrowserDomSnapshot(page, 100)
+    assert.equal(snapshot.svgImagePayloads?.length, 4, "two matching URLs, one style variant, and one blob payload are retained")
+    const [first, second, changed, blob] = snapshot.svgImagePayloads ?? []
+    const sha256 = (value: string) => createHash("sha256").update(value).digest("hex")
+    assert.equal(first?.sha256, sha256(svgA))
+    assert.equal(second?.sha256, first?.sha256, "matching payloads have matching hashes")
+    assert.equal(first?.byteCount, Buffer.byteLength(svgA))
+    assert.equal(first?.textNodeCount, 2)
+    assert.deepEqual(first?.fontFamilyAttributes, ["Embedded"])
+    assert.deepEqual(first?.fontSizeAttributes, ["16"])
+    assert.deepEqual(first?.fontStyleAttributes, ["normal"])
+    assert.deepEqual(first?.fontWeightAttributes, ["700"])
+    assert.deepEqual(first?.letterSpacingAttributes, [".1em"])
+    assert.equal(first?.fontFaceRuleCount, 1)
+    assert.equal(first?.styleText.sha256, sha256(styleA))
+    assert.equal(first?.styleText.byteCount, Buffer.byteLength(styleA))
+    assert.notEqual(changed?.styleText.sha256, first?.styleText.sha256, "style changes have different style hashes")
+    assert.equal(blob?.sha256, first?.sha256, "blob SVG payloads use the same metadata-only path")
+    const serialized = JSON.stringify(snapshot)
+    assert.equal(serialized.includes(svgA), false, "raw SVG is not retained")
+    assert.equal(serialized.includes(styleA), false, "raw SVG CSS is not retained")
+    assert.equal(serialized.includes("data:font/woff2;base64,secret"), false, "embedded font data is not retained")
+    assert.equal(serialized.includes("blob:"), false, "full blob URLs are not retained")
+    await page.evaluate("Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: undefined })")
+    const withoutWebCrypto = await captureBrowserDomSnapshot(page, 100)
+    assert.equal(withoutWebCrypto.svgImagePayloads, undefined, "WebCrypto absence omits optional payload evidence without failing the snapshot")
+  } finally {
+    await browser.close()
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  }
+}
+
 // Count pixels in a diff PNG whose RGB is nonzero — the exact predicate the region
 // detector uses (`visualCompareDiffPixel`). pixelmatch renders even unchanged pixels as
 // a dimmed grayscale of the original, so for a real (or solid) page this is typically the
@@ -140,7 +215,7 @@ function countDiffPixels(png: PNG): number {
   return count
 }
 
-// 5. Mismatch-region attribution ranks DOM elements by how much of the hotspot they
+// 6. Mismatch-region attribution ranks DOM elements by how much of the hotspot they
 //    cover and carries the element path/styles needed for actionable visual repairs.
 {
   const overlaps = visualCompareRegionElementOverlaps({ x: 10, y: 20, width: 100, height: 50, pixels: 5000 }, [
@@ -172,7 +247,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal(overlaps[1]?.styles["background-color"], "rgb(200, 0, 0)")
 }
 
-// 6. Requested single-match selectors produce paired deltas even when source and
+// 7. Requested single-match selectors produce paired deltas even when source and
 //    candidate DOM paths differ after a structural move.
 {
   const selectorDeltas = visualCompareSelectorDeltas(
@@ -195,7 +270,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal(selectorDeltas[0]?.styles.find((style) => style.property === "color")?.category, "paint")
 }
 
-// 7. Capture diagnostics are normalized into compact readiness/noise signals without
+// 8. Capture diagnostics are normalized into compact readiness/noise signals without
 //    changing diff policy. Asset problems and dynamic content lower confidence; clean
 //    settled pages stay high-confidence.
 {
@@ -252,7 +327,7 @@ function countDiffPixels(png: PNG): number {
   assert.equal("title" in (compact.source?.environment ?? {}), false)
 }
 
-// 8. The bounded flood-fill region detection runs the real comparePngFiles aggregation
+// 9. The bounded flood-fill region detection runs the real comparePngFiles aggregation
 //    over a large, tall, high-mismatch canvas — the exact shape that previously OOM'd
 //    old-space by pushing ~4× the diff-pixel count as [x,y] tuple arrays and marking
 //    visited only at pop time. The rewrite (flat numeric index stack, mark-at-push) must
