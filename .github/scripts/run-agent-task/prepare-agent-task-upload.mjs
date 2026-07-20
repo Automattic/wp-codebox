@@ -163,7 +163,14 @@ function projectWorkflowResult(value) {
   const reviewerEvidence = record(result.reviewer_evidence)
   const verification = Array.isArray(result.verification) ? result.verification.slice(0, MAX_REVIEW_COLLECTION_ENTRIES).map((value) => {
     const check = record(value)
-    return projectReviewValue(Object.fromEntries(["kind", "command", "description", "success", "exit_code", "stdout_truncated", "stderr_truncated", "artifact", "artifact_error"].flatMap((key) => check[key] === undefined ? [] : [[key, check[key]]])))
+    const diagnostic = check.success === false ? {
+      stdout_tail: check.stdout,
+      stderr_tail: check.stderr,
+    } : {}
+    return projectReviewValue(Object.fromEntries(Object.entries({
+      ...Object.fromEntries(["kind", "command", "description", "success", "exit_code", "stdout_truncated", "stderr_truncated", "artifact", "artifact_error"].flatMap((key) => check[key] === undefined ? [] : [[key, check[key]]])),
+      ...diagnostic,
+    }).filter(([, entry]) => entry !== undefined)))
   }) : undefined
   return projectReviewValue(Object.fromEntries(Object.entries({
     schema: result.schema,
