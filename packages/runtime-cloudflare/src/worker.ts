@@ -733,7 +733,12 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes", "mdi-insert-dirty-inventory"].includes(phase) || phase.startsWith("mdi-insert-flush-")) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
-      const flushTarget = {
+      const optionTarget = {
+        "mdi-insert-flush-option-rewrite-rules": "rewrite_rules",
+        "mdi-insert-flush-option-calendar": "wp_calendar_block_has_published_posts",
+        "mdi-insert-flush-option-fresh-site": "fresh_site",
+      }[phase]
+      const flushTarget = optionTarget ? "options" : {
         "mdi-insert-flush-options": "options",
         "mdi-insert-flush-options-no-index": "options",
         "mdi-insert-flush-options-fetch-only": "options",
@@ -750,6 +755,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
         patchMdiProbe(runtime.php, "inc/class-wp-markdown-driver.php", "public function remove_from_options_index( array $option_names ): void {", "public function remove_from_options_index( array $option_names ): void { return;")
       }
       if (phase === "mdi-insert-flush-options-fetch-only") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "$index_deletes = array();\n\n\t\tforeach ( $names as $name ) {", "$index_deletes = array();\n\n\t\tforeach ( array() as $name ) {")
+      if (optionTarget) patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", ": array_keys( $this->dirty_option_names );\n\n\t\tif ( empty( $names ) ) {", `: array_keys( $this->dirty_option_names );\n\n\t\t$names = array('${optionTarget}');\n\n\t\tif ( empty( $names ) ) {`)
       if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
       if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
       if (phase === "mdi-insert-no-shutdown-flush" || phase === "mdi-insert-dirty-inventory") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
