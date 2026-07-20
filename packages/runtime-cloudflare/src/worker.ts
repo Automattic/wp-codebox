@@ -135,6 +135,8 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "after-get-post": { path: "/wordpress/wp-admin/includes/post.php", marker: "if ( current_theme_supports( 'post-formats' )", before: true },
     "before-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "wp_after_insert_post( $post, false, null );", before: true },
     "after-hooks": { path: "/wordpress/wp-admin/includes/post.php", marker: "// Schedule auto-draft cleanup.", before: true },
+    "before-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: true },
+    "after-rest-preload": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "block_editor_rest_api_preload( $preload_paths, $block_editor_context );", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
   const stop = stops[phase]
