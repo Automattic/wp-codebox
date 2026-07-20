@@ -37,7 +37,7 @@ async function run(mode = "success") {
         : mode === "artifact-oversized"
           ? `echo verification >> .codebox/order && node -e 'require("node:fs").writeFileSync(".codebox/agent-task-artifacts/completion-report.json", Buffer.alloc(4 * 1024 * 1024 + 1, 120))'`
           : `echo verification >> .codebox/order && printf '%s\\n' '{"ok":true}' > .codebox/agent-task-artifacts/completion-report.json${mode === "artifact-command-fail" ? " && false" : mode === "artifact-readonly" ? " && chmod 444 .codebox/agent-task-artifacts/completion-report.json" : ""}`
-  const verificationCommand = artifactModes.has(mode) && mode !== "artifact-drift" ? artifactCommand : (mode === "verify-fail" ? "false" : "echo verification >> .codebox/order")
+  const verificationCommand = artifactModes.has(mode) && mode !== "artifact-drift" ? artifactCommand : (mode === "verify-fail" ? "printf 'verification stdout\\n'; printf 'verification stderr\\n' >&2; false" : "echo verification >> .codebox/order")
   const driftCommand = mode === "artifact-drift"
     ? artifactCommand
     : mode === "artifact-replaced"
@@ -303,6 +303,25 @@ assert.equal(failedVerification.code, 1)
 assert(!failedVerification.order.includes("publish"))
 assert.equal(failedVerification.result.failure.stage, "verification")
 assert.equal(failedVerification.result.runtime_result.success, true, "verification failures retain the normalized runtime result")
+assert.equal(failedVerification.result.failure.diagnostic.stdout_tail, "verification stdout\n")
+assert.equal(failedVerification.result.failure.diagnostic.stderr_tail, "verification stderr\n")
+assert.equal(failedVerification.result.failure.evidence.patch.artifact_path, "files/patch.diff")
+assert.equal(failedVerification.result.failure.evidence.changed_files.artifact_path, "files/changed-files.json")
+await execFileAsync(process.execPath, [uploader], {
+  cwd: failedVerification.workspace,
+  env: {
+    ...process.env,
+    AGENT_TASK_WORKSPACE: failedVerification.workspace,
+    AGENT_TASK_REQUEST_PATH: join(failedVerification.workspace, ".codebox", "agent-task-request.json"),
+    AGENT_TASK_UPLOAD_PATH: join(failedVerification.workspace, ".codebox", "agent-task-upload"),
+  },
+})
+const uploadedFailedVerification = JSON.parse(await readFile(join(failedVerification.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-workflow-result.json"), "utf8"))
+assert.equal(uploadedFailedVerification.verification.find((check) => !check.success).stdout_tail, "verification stdout\n")
+assert.equal(uploadedFailedVerification.verification.find((check) => !check.success).stderr_tail, "verification stderr\n")
+assert.equal(uploadedFailedVerification.failure.diagnostic.stderr_tail, "verification stderr\n")
+assert.match(await readFile(join(failedVerification.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "rejected.patch"), "utf8"), /-before/)
+assert.match(await readFile(join(failedVerification.workspace, ".codebox", "agent-task-upload", ".codebox", "agent-task-artifacts", "apply-failure", "changed-files.json"), "utf8"), /README\.md/)
 
 const denied = await run("deny")
 assert.equal(denied.code, 1)

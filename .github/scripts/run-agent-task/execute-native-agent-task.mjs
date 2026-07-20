@@ -589,6 +589,19 @@ function underRoot(root, path) {
   return contained !== ".." && !contained.startsWith(`..${String.fromCharCode(47)}`) && !isAbsolute(contained)
 }
 
+async function appliedWorkspaceEvidence(refs, artifactsPath) {
+  const root = await realpath(resolve(artifactsPath))
+  const evidence = {}
+  for (const [kind, key] of [["codebox-patch", "patch"], ["codebox-changed-files", "changed_files"]]) {
+    const ref = refs.find((entry) => entry.kind === kind && typeof entry.path === "string" && entry.path)
+    if (!ref) continue
+    const path = await realpath(resolve(root, ref.path)).catch((error) => error?.code === "ENOENT" ? "" : Promise.reject(error))
+    if (!path || !underRoot(root, path)) continue
+    evidence[key] = { artifact_path: relative(root, path).replaceAll("\\", "/") }
+  }
+  return Object.keys(evidence).length === 2 ? evidence : undefined
+}
+
 async function canonicalReviewerTranscript(nativeRuntimeResult, artifactsPath) {
   const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
   const refs = publicCore.normalizePublicArtifactRefDTOs(nativeRuntimeResult)
@@ -792,6 +805,7 @@ if (toolObservability) {
 }
 assertNoRuntimeSourcePaths(runtimeResult, privateRuntimeSourceRootForSanitization)
 let workspaceApply = { status: "no-op", changedFiles: [] }
+let workspaceEvidence
 let runnerWorkspaceCore = null
 let downstreamFailure = null
 if (execution.code === 0 && runtimeResult.success === true && request.runner_workspace?.enabled) {
@@ -800,6 +814,7 @@ if (execution.code === 0 && runtimeResult.success === true && request.runner_wor
     const publicCore = await import(pathToFileURL(join(codeboxRoot, "packages/runtime-core/dist/public.js")).href)
     const refs = publicCore.normalizePublicArtifactRefDTOs(runtimeResult)
       .filter((ref) => ref.kind === "codebox-patch" || ref.kind === "codebox-changed-files")
+    workspaceEvidence = await appliedWorkspaceEvidence(refs, artifactsPath)
     const trustedArtifacts = await trustedArtifactApplyRefs(trustedApplyArtifactRoot, refs)
     workspaceApply = await runnerWorkspaceCore.applyRunnerWorkspacePatch({ artifactRoot: trustedArtifacts.root, artifactRefs: trustedArtifacts.refs, workspaceRoot: workspace, writablePaths, seedIdentity: runnerWorkspaceSeedSnapshot?.provenance.identity })
   } catch (error) {
@@ -835,7 +850,21 @@ if (execution.code === 0 && request.run_agent && !request.dry_run && !downstream
 const verificationPassed = verification.every((check) => check.success)
 if (!verificationPassed) {
   const artifactError = verification.find((check) => check.artifact_error)?.artifact_error
-  downstreamFailure ??= { stage: "verification", message: artifactError?.message || "Runner workspace verification did not pass.", ...(artifactError ? { artifact_error: artifactError } : {}) }
+  const failedCheck = verification.find((check) => !check.success)
+  const diagnostic = failedCheck ? {
+    kind: failedCheck.kind,
+    command: failedCheck.command,
+    exit_code: failedCheck.exit_code,
+    stdout_tail: bounded(failedCheck.stdout, MAX_WORKFLOW_OUTPUT_BYTES),
+    stderr_tail: bounded(failedCheck.stderr, MAX_WORKFLOW_OUTPUT_BYTES),
+  } : undefined
+  downstreamFailure ??= {
+    stage: "verification",
+    message: artifactError?.message || "Runner workspace verification did not pass.",
+    ...(artifactError ? { artifact_error: artifactError } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
+    ...(workspaceApply.status === "applied" && workspaceEvidence ? { evidence: workspaceEvidence } : {}),
+  }
 }
 const runtimeRecord = record(runtimeResult)
 const agentResult = record(runtimeRecord.agent_task_run_result)
