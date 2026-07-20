@@ -100,6 +100,7 @@ try {
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.equal(calls[0].skipSqliteSetup, false)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
+  assert.equal(calls[0]["mount-before-install"]?.length, 1)
 
   calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {

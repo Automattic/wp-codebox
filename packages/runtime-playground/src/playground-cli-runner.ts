@@ -372,7 +372,10 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
-  return `${phpEnvAssignments(spec.runtimeEnv ?? {})}${distributionBootstrapPhp(spec)}`
+  const runtimeEnv = spec.environment.databaseSetup === "external"
+    ? phpEnvAssignments(spec.runtimeEnv ?? {})
+    : ""
+  return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

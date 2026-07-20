@@ -6,7 +6,6 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { dirname } from "node:path"
 import { playgroundBlueprint } from "./blueprint.js"
 import { assertPhpWasmExternalExtensionsSupported } from "./php-wasm-preflight.js"
-import { phpEnvAssignments } from "./php-snippets.js"
 import type { PlaygroundCliServer, PlaygroundServerRunResponse } from "./preview-server.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
@@ -111,15 +110,14 @@ export function programmaticNodeRuntimeOptions(spec: RuntimeCreateSpec, processI
 }
 
 function autoPrependPhp(spec: RuntimeCreateSpec): string {
-  const runtimeEnv = phpEnvAssignments(spec.runtimeEnv ?? {})
   const recipe = spec.metadata?.recipe
   if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)) {
-    return `<?php\n${runtimeEnv}`
+    return "<?php\n"
   }
 
   const distribution = (recipe as { distribution?: unknown }).distribution
   if (!distribution || typeof distribution !== "object" || Array.isArray(distribution)) {
-    return `<?php\n${runtimeEnv}`
+    return "<?php\n"
   }
 
   const env = (distribution as { env?: unknown }).env
@@ -140,7 +138,7 @@ function autoPrependPhp(spec: RuntimeCreateSpec): string {
     }
   }
 
-  return `<?php\n${runtimeEnv}${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`
+  return `<?php\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`
 }
 
 function phpLiteral(value: string | number | boolean | null): string {
