@@ -212,9 +212,10 @@ async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCr
     createNodeFsMountHandler(localPath: string): unknown
     loadNodeRuntime(phpVersion: string, options: ReturnType<typeof programmaticNodeRuntimeOptions>): Promise<number>
   }
-  const { PHP, setPhpIniEntries } = modules.universal as unknown as {
+  const { PHP, setPhpIniEntries, sandboxedSpawnHandlerFactory } = modules.universal as unknown as {
     PHP: new (runtimeId: number) => BarePlaygroundPhp
     setPhpIniEntries(php: BarePlaygroundPhp, entries: Record<string, unknown>): Promise<void>
+    sandboxedSpawnHandlerFactory(): unknown
   }
   const runtimeId = await loadNodeRuntime(spec.environment.phpVersion ?? "8.4", programmaticNodeRuntimeOptions(spec, randomInt(1, 2_147_483_647)))
   const php = new PHP(runtimeId)
@@ -223,6 +224,7 @@ async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCr
       ...(runtimeBootstrapPhpIniEntries(spec) ?? {}),
       ...(pluginRuntimePhpIniEntries(spec) ?? {}),
     })
+    await php.setSpawnHandler(sandboxedSpawnHandlerFactory())
     for (const mount of mounts) {
       const sourceStat = await stat(mount.source)
       php.mkdirTree(dirname(mount.target))
@@ -264,6 +266,7 @@ interface BarePlaygroundPhp {
   mount(path: string, handler: unknown): Promise<unknown>
   readFileAsText(path: string): string
   run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
+  setSpawnHandler(handler: unknown): Promise<void>
   writeFile(path: string, contents: string | Uint8Array): void
 }
 
