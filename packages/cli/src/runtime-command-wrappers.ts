@@ -8,7 +8,7 @@ import { defaultPolicy, runPolicy } from "./recipe-validation.js"
 export const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 
 export interface RunOptions {
-  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
+  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; captureArtifacts?: boolean; metadata?: Record<string, unknown> }>
   command: string
   args: string[]
   wpVersion?: string
@@ -197,7 +197,7 @@ export async function run(options: RunOptions): Promise<RunOutput> {
     )
 
     for (const mount of options.mounts) {
-      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
+      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, captureArtifacts: mount.captureArtifacts, metadata: mount.metadata })
     }
 
     execution = await runtime.execute({ command: options.command, args: options.args })
@@ -261,7 +261,7 @@ export async function boot(options: BootOptions): Promise<BootOutput> {
     )
 
     for (const mount of options.mounts) {
-      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
+      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, captureArtifacts: mount.captureArtifacts, metadata: mount.metadata })
     }
 
     await runtime.observe({ type: "runtime-info" })

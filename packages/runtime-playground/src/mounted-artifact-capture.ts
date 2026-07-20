@@ -30,7 +30,7 @@ export async function captureMountedFiles(filesDirectory: string, mounts: MountS
   }
 
   for (const [mountIndex, mount] of mounts.entries()) {
-    if (mount.mode !== "readwrite") {
+    if (mount.mode !== "readwrite" || mount.captureArtifacts === false) {
       continue
     }
     const artifactExcludePaths = mountArtifactExcludePaths(mount)
@@ -58,10 +58,10 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
   const diagnostics: ArtifactDiagnostic[] = []
 
   for (const [mountIndex, mount] of mounts.entries()) {
-    const baselineSource = typeof mount.metadata?.baselineSource === "string" ? mount.metadata.baselineSource : ""
-    if (mount.mode !== "readwrite") {
+    if (mount.mode !== "readwrite" || mount.captureArtifacts === false) {
       continue
     }
+    const baselineSource = typeof mount.metadata?.baselineSource === "string" ? mount.metadata.baselineSource : ""
     const artifactExcludePaths = mountArtifactExcludePaths(mount)
 
     const artifactPath = `files/diffs/mount-${mountIndex}.patch`

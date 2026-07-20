@@ -532,6 +532,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
+          captureArtifacts: { type: "boolean" },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
