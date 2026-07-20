@@ -1349,7 +1349,7 @@ ${needle}`
 
 function patchCanonicalThemeJsonCustomCss(php: PHP): void {
   const path = "/wordpress/wp-includes/class-wp-theme-json.php"
-  const needle = "\t\t$blocks_metadata = static::get_blocks_metadata();"
+  const needle = "\t\t$blocks_metadata = static::get_blocks_metadata();\n\t\t$style_nodes     = static::get_style_nodes( $this->theme_json, $blocks_metadata, $options );\n\t\t$setting_nodes   = static::get_setting_nodes( $this->theme_json, $blocks_metadata );"
   const source = new TextDecoder().decode(php.readFileAsBuffer(path))
   const index = source.indexOf(needle)
   if (index === -1 || index !== source.lastIndexOf(needle)) throw new Error("WordPress theme JSON custom CSS patch needle was not uniquely found.")
