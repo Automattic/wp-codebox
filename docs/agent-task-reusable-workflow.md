@@ -131,6 +131,9 @@ When `success_requires_pr` is true, success requires the canonical
 `status: published`, and a GitHub pull-request URL for `target_repo`.
 WP Codebox then resolves that pull request through the GitHub API with the
 runner token, so a fabricated publication result cannot satisfy the gate.
+Publication results record the effective head branch and resolved base SHA. An
+existing branch is extended only for an exact open pull request that descends
+from that base; otherwise publication starts a base-SHA-suffixed fresh branch.
 
 ## Outputs
 
