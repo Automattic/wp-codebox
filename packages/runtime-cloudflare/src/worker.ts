@@ -276,13 +276,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "revision-persisted", { revision: next.revision })
       await commitLease(coordinator, request.url, lease, next)
       await recordMutationStage(env.WORDPRESS_STATE_BUCKET, request, "lease-committed", { revision: next.revision })
-      // The runtime now represents the promoted revision, including login session state.
-      runtime.pointer = next
-      cacheRuntime(next, runtime)
     } else {
       await releaseLease(coordinator, request.url, lease)
     }
     finalized = true
+    await discardRuntime(runtime)
     return response
   } catch (error) {
     if (!finalized) await abortLease(coordinator, request.url, lease)
