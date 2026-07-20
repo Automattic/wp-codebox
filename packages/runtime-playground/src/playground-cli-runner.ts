@@ -1,7 +1,7 @@
 import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
-import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
-import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
+import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer, type PlaygroundServerRunResponse } from "./preview-server.js"
+import { programmaticNodeRuntimeOptions, startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
 import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
@@ -12,6 +12,8 @@ import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
+import * as PHPWasmNode from "@php-wasm/node"
+import * as PHPWasmUniversal from "@php-wasm/universal"
 import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 
@@ -156,7 +158,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const commandServer = withBarePhpRunner(server, spec, stagedMounts)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(commandServer, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
@@ -183,6 +186,79 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
 
     throw error
+  }
+}
+
+function withBarePhpRunner(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[]): PlaygroundCliServer {
+  const playground = server.playground
+  return {
+    ...server,
+    playground: {
+      run: (options) => playground.run(options),
+      ...(playground.onMessage ? { onMessage: (listener: (data: string) => Promise<string | void> | string | void) => playground.onMessage!(listener) } : {}),
+      ...(playground.readFileAsText ? { readFileAsText: (path: string) => playground.readFileAsText!(path) } : {}),
+      ...(playground.writeFile ? { writeFile: (path: string, contents: string) => playground.writeFile!(path, contents) } : {}),
+      runWithoutWordPress: (options) => runBarePlaygroundPhp(server, spec, mounts, options),
+    },
+  }
+}
+
+async function runBarePlaygroundPhp(server: PlaygroundCliServer, spec: RuntimeCreateSpec, mounts: MountSpec[], options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse> {
+  const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
+    createNodeFsMountHandler(localPath: string): unknown
+    loadNodeRuntime(phpVersion: string, options: ReturnType<typeof programmaticNodeRuntimeOptions>): Promise<number>
+  }
+  const { PHP, setPhpIniEntries } = PHPWasmUniversal as unknown as {
+    PHP: new (runtimeId: number) => BarePlaygroundPhp
+    setPhpIniEntries(php: BarePlaygroundPhp, entries: Record<string, unknown>): Promise<void>
+  }
+  const runtimeId = await loadNodeRuntime(spec.environment.phpVersion ?? "8.4", programmaticNodeRuntimeOptions(spec, randomInt(1, 2_147_483_647)))
+  const php = new PHP(runtimeId)
+  try {
+    await setPhpIniEntries(php, {
+      ...(runtimeBootstrapPhpIniEntries(spec) ?? {}),
+      ...(pluginRuntimePhpIniEntries(spec) ?? {}),
+    })
+    for (const mount of mounts) {
+      const sourceStat = await stat(mount.source)
+      php.mkdirTree(dirname(mount.target))
+      if (sourceStat.isDirectory()) {
+        php.mkdirTree(mount.target)
+        await php.mount(mount.target, createNodeFsMountHandler(mount.source) as never)
+      } else {
+        php.writeFile(mount.target, await readFile(mount.source))
+      }
+    }
+
+    const response = await php.run(options)
+    await syncBarePhpunitDiagnostics(server, php)
+    return response
+  } catch (error) {
+    await syncBarePhpunitDiagnostics(server, php)
+    throw error
+  } finally {
+    php[Symbol.dispose]()
+  }
+}
+
+interface BarePlaygroundPhp {
+  [Symbol.dispose](): void
+  fileExists(path: string): boolean
+  mkdirTree(path: string): void
+  mount(path: string, handler: unknown): Promise<unknown>
+  readFileAsText(path: string): string
+  run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
+  writeFile(path: string, contents: string | Uint8Array): void
+}
+
+async function syncBarePhpunitDiagnostics(server: PlaygroundCliServer, php: BarePlaygroundPhp): Promise<void> {
+  if (!server.playground.writeFile) {
+    return
+  }
+  for (const path of ["/tmp/wp-codebox-phpunit-result.txt", "/tmp/wp-codebox-core-phpunit-result.txt"]) {
+    if (php.fileExists(path)) {
+      await server.playground.writeFile(path, php.readFileAsText(path))
+    }
   }
 }
 

@@ -328,15 +328,18 @@ echo json_encode(array($legacy_project_autoload_file, $harness_autoload_file));
 assert.deepEqual(JSON.parse(execFileSync("php", [canonicalHarnessProbe], { encoding: "utf8" })), ["", "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php"], "a canonical staged harness path remains the harness in project mode")
 
 let capturedCanonicalHarnessCode = ""
+let usedBareProjectBootstrap = false
+const runWithoutWordPress = async () => ({ text: "ok", exitCode: 0 })
 await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
     capturedCanonicalHarnessCode = input.code
+    usedBareProjectBootstrap = _server.playground.run === runWithoutWordPress
     return { text: "ok", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
-  server: { playground: {} } as never,
+  server: { playground: { run: async () => ({ text: "ok" }), runWithoutWordPress } } as never,
   spec: {
     command: "wordpress.phpunit",
     args: [
@@ -353,6 +356,7 @@ assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codeb
 assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 assert.ok(capturedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
 assert.ok(!capturedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), "project mode leaves WordPress loading to the project bootstrap")
+assert.equal(usedBareProjectBootstrap, true, "project mode executes in bare PHP rather than a WordPress-booted worker")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({

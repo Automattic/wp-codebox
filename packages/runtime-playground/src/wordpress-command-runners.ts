@@ -940,7 +940,10 @@ export async function runPhpunitCommand({
   }
   let response: PlaygroundRunResponse
   try {
-    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args) })
+    const commandServer = bootstrapMode === "project" && server.playground.runWithoutWordPress
+      ? { ...server, playground: { ...server.playground, run: server.playground.runWithoutWordPress } }
+      : server
+    response = await runPlaygroundCommand("wordpress.phpunit", commandServer, { code: bootstrapPhpCode(runtimeSpec, code, args) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot)
     await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)

@@ -11,6 +11,7 @@ export interface PlaygroundServerRunResponse {
 export interface PlaygroundCliServer {
   playground: {
     run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
+    runWithoutWordPress?(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
     onMessage?(listener: (data: string) => Promise<string | void> | string | void): Promise<(() => Promise<void> | void) | void> | (() => Promise<void> | void) | void
     readFileAsText?(path: string): string | Promise<string>
     writeFile?(path: string, contents: string): Promise<void>
