@@ -730,11 +730,13 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild"].includes(phase)) {
+  if (["mdi-wordpress", "mdi-option", "mdi-insert", "mdi-insert-no-post-flush", "mdi-insert-no-index-rebuild", "mdi-insert-no-shutdown-flush", "mdi-insert-no-writes"].includes(phase)) {
     const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), SITE_URL, {}, bucket)
     try {
       if (phase === "mdi-insert-no-post-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function persist_single_post( int $post_id ): bool {", "private function persist_single_post( int $post_id ): bool { return false;")
       if (phase === "mdi-insert-no-index-rebuild") patchMdiProbe(runtime.php, "inc/class-wp-markdown-storage.php", "if ( null === $previous_path ) {", "if ( false && null === $previous_path ) {")
+      if (phase === "mdi-insert-no-shutdown-flush") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "private function ensure_shutdown_registered(): void {", "private function ensure_shutdown_registered(): void { return;")
+      if (phase === "mdi-insert-no-writes") patchMdiProbe(runtime.php, "inc/class-wp-markdown-write-engine.php", "public function persist_write( string $query, string $table, string $op_type ): void {", "public function persist_write( string $query, string $table, string $op_type ): void { return;")
       const operation = phase === "mdi-option"
         ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
         : phase.startsWith("mdi-insert")
