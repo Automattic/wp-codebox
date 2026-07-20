@@ -381,8 +381,14 @@ async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStu
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(env.WORDPRESS_ADMIN_PASSWORD))
-    const output = (await runtime.php.run({ code: canonicalBootstrapSetupCode(passwordFile, origin) })).text.trim()
-    if (output !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
+    const passwordOutput = (await runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })).text.trim()
+    if (passwordOutput !== "password-updated") throw new Error("Canonical bootstrap did not update the admin password.")
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "password-updated")
+    const urlOutput = (await runtime.php.run({ code: canonicalBootstrapUrlCode(origin) })).text.trim()
+    if (urlOutput !== "urls-updated") throw new Error("Canonical bootstrap did not update the site URLs.")
+    await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "urls-updated")
+    const flushOutput = (await runtime.php.run({ code: canonicalBootstrapFlushCode() })).text.trim()
+    if (flushOutput !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
     await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "setup-completed")
     const files = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
     await recordBootstrapStage(env.WORDPRESS_STATE_BUCKET, "files-collected", { files: files.length })
@@ -395,6 +401,33 @@ async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStu
     runtime.php.exit()
     throw error
   }
+}
+
+function canonicalBootstrapPasswordCode(passwordFile: string): string {
+  return `<?php
+require '/wordpress/wp-load.php';
+$password = file_get_contents(${JSON.stringify(passwordFile)});
+@unlink(${JSON.stringify(passwordFile)});
+if (!is_string($password) || $password === '') throw new Exception('WORDPRESS_ADMIN_PASSWORD was unavailable during canonical bootstrap.');
+$admin = get_user_by('login', 'admin');
+if (!$admin) throw new Exception('The WordPress seed does not contain the admin user.');
+wp_set_password($password, $admin->ID);
+echo 'password-updated';`
+}
+
+function canonicalBootstrapUrlCode(origin: string): string {
+  return `<?php
+require '/wordpress/wp-load.php';
+update_option('siteurl', ${JSON.stringify(origin)});
+update_option('home', ${JSON.stringify(origin)});
+echo 'urls-updated';`
+}
+
+function canonicalBootstrapFlushCode(): string {
+  return `<?php
+require '/wordpress/wp-load.php';
+$GLOBALS['wpdb']->flush_canonical_writes();
+echo 'flushed';`
 }
 
 function recordBootstrapStage(bucket: R2Bucket, stage: string, details: Record<string, unknown> = {}): Promise<R2Object | null> {
