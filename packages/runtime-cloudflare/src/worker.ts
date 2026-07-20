@@ -154,6 +154,9 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "before-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: true },
     "after-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
+    "footer-before-scripts": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( 'admin_footer', '' );", before: true },
+    "footer-after-admin-footer": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( \"admin_print_footer_scripts-{$hook_suffix}\" );", before: true },
+    "footer-after-print-scripts": { path: "/wordpress/wp-admin/admin-footer.php", marker: "do_action( \"admin_footer-{$hook_suffix}\" );", before: true },
   }
   const stop = stops[phase]
   let source = new TextDecoder().decode(php.readFileAsBuffer(stop.path))
