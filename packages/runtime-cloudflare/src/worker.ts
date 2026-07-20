@@ -150,6 +150,9 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
     "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
     "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
+    "after-init-script": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "if ( (int) get_option( 'page_for_posts' ) === $post->ID ) {", before: true },
+    "before-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: true },
+    "after-admin-header": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "require_once ABSPATH . 'wp-admin/admin-header.php';", before: false },
     "block-editor": { path: "/wordpress/wp-admin/post-new.php", marker: "require_once ABSPATH . 'wp-admin/admin-footer.php';", before: true },
   }
   const stop = stops[phase]
