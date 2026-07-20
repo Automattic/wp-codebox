@@ -145,6 +145,8 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     "settings-after-presets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$block_classes = array(", before: true },
     "settings-after-block-classes": { path: "/wordpress/wp-includes/block-editor.php", marker: "// Get any additional css from the customizer", before: true },
     "settings-before-global": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
+    "settings-before-global-skip-custom-css": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
+    "settings-before-global-skip-theme-styles": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__experimentalFeatures'] = wp_get_global_settings();", before: true },
     "settings-before-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableResolvedAssets']", before: true },
     "settings-after-assets": { path: "/wordpress/wp-includes/block-editor.php", marker: "$editor_settings['__unstableIsBlockBasedTheme']", before: true },
     "after-editor-settings": { path: "/wordpress/wp-admin/edit-form-blocks.php", marker: "$editor_settings = get_block_editor_settings( $editor_settings, $block_editor_context );", before: false },
@@ -157,6 +159,10 @@ function patchEditorMemoryStop(php: PHP, phase: EditorMemoryProbePhase): void {
     if (source.split(lookup).length - 1 !== 2) throw new Error("WordPress global styles lookup count changed.")
     source = source.replaceAll(lookup, "0")
   }
+  if (phase === "settings-before-global-skip-custom-css") {
+    source = source.replace("wp_get_custom_css()", "''").replace("wp_get_global_stylesheet( array( 'custom-css' ) )", "''")
+  }
+  if (phase === "settings-before-global-skip-theme-styles") source = source.replace("get_block_editor_theme_styles()", "array()")
   const index = source.indexOf(stop.marker)
   if (index === -1 || index !== source.lastIndexOf(stop.marker)) throw new Error(`WordPress editor memory marker is not unique: ${phase}`)
   const insertion = stop.before ? index : index + stop.marker.length
