@@ -540,12 +540,17 @@ echo json_encode(array($legacy_project_autoload_file, $harness_autoload_file));
 `)
 assert.deepEqual(JSON.parse(execFileSync("php", [canonicalHarnessProbe], { encoding: "utf8" })), ["", "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php"], "a canonical staged harness path remains the harness in project mode")
 
+function decodeSubmittedBootstrap(code: string): string {
+  const encodedBootstrap = code.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
+  return encodedBootstrap ? Buffer.from(encodedBootstrap, "base64").toString("utf8") : code
+}
+
 let capturedCanonicalHarnessCode = ""
 await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
-    capturedCanonicalHarnessCode = input.code
+    capturedCanonicalHarnessCode = decodeSubmittedBootstrap(input.code)
     return { text: "ok", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
@@ -573,7 +578,7 @@ await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
-    capturedExplicitCode = input.code
+    capturedExplicitCode = decodeSubmittedBootstrap(input.code)
     return { text: "ok", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
