@@ -58,7 +58,7 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     phpIniEntries,
     createFiles: {
       "/internal/shared/php.ini": options.sharedPhpIniContent,
-      "/internal/shared/auto_prepend_file.php": autoPrependPhp(spec),
+      "/internal/wp-codebox/auto_prepend_file.php": autoPrependPhp(spec),
       "/internal/shared/mu-plugins/.keep": "",
       "/internal/shared/preload/.keep": "",
     },
@@ -114,12 +114,12 @@ function autoPrependPhp(spec: RuntimeCreateSpec): string {
   const runtimeEnv = phpEnvAssignments(spec.runtimeEnv ?? {})
   const recipe = spec.metadata?.recipe
   if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)) {
-    return `<?php\n${runtimeEnv}`
+    return `<?php\n${runtimeEnv}${playgroundAutoPrependPhp()}`
   }
 
   const distribution = (recipe as { distribution?: unknown }).distribution
   if (!distribution || typeof distribution !== "object" || Array.isArray(distribution)) {
-    return `<?php\n${runtimeEnv}`
+    return `<?php\n${runtimeEnv}${playgroundAutoPrependPhp()}`
   }
 
   const env = (distribution as { env?: unknown }).env
@@ -140,7 +140,11 @@ function autoPrependPhp(spec: RuntimeCreateSpec): string {
     }
   }
 
-  return `<?php\n${runtimeEnv}${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`
+  return `<?php\n${runtimeEnv}${lines.join("\n")}${lines.length > 0 ? "\n" : ""}${playgroundAutoPrependPhp()}`
+}
+
+function playgroundAutoPrependPhp(): string {
+  return "require_once '/internal/shared/auto_prepend_file.php';\n"
 }
 
 function phpLiteral(value: string | number | boolean | null): string {

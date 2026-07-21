@@ -61,11 +61,10 @@ try {
   }
 
   const server = await startPlaygroundCliServer(spec, [], { cliModule })
-  await server[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
   assert.equal(calls[0]["mount-before-install"]?.length, 2)
-  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared")
+  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/wp-codebox")
   // A wordpress-develop checkout is the runtime root, not an ordinary post-startup mount.
   assert.deepEqual(calls[0]["mount-before-install"]?.[1], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
@@ -73,18 +72,19 @@ try {
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
-  assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+  assert.deepEqual(calls[0].phpIniEntries, {
+    memory_limit: "512M",
+    "opcache.file_cache": "/tmp/opcache",
+    auto_prepend_file: "/internal/wp-codebox/auto_prepend_file.php",
+  })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
-  const sharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
-  assert.equal(typeof sharedMount, "string")
-  const sharedPhpIni = await readFile(join(sharedMount as string, "php.ini"), "utf8")
-  assert.match(sharedPhpIni, /opcache\.file_cache = \/tmp\/opcache/)
-  // The runtime default memory ceiling stays high enough for collect_artifacts to
-  // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
-  assert.match(sharedPhpIni, /memory_limit=512M/)
-  assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.equal((await stat(join(sharedMount as string, "mu-plugins"))).isDirectory(), true)
-  assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
+  const bootstrapMount = calls[0]["mount-before-install"]?.[0]?.hostPath
+  assert.equal(typeof bootstrapMount, "string")
+  const autoPrepend = await readFile(join(bootstrapMount as string, "auto_prepend_file.php"), "utf8")
+  assert.match(autoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
+  assert.match(autoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php';/)
+  await server[Symbol.asyncDispose]()
+  await assert.rejects(stat(bootstrapMount as string), /ENOENT/)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {
@@ -94,12 +94,15 @@ try {
   }
 
   const defaultRuntimeIniServer = await startPlaygroundCliServer(defaultRuntimeIniSpec, [], { cliModule })
-  await defaultRuntimeIniServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+  assert.deepEqual(calls[0].phpIniEntries, {
+    memory_limit: "512M",
+    auto_prepend_file: "/internal/wp-codebox/auto_prepend_file.php",
+  })
   assert.equal(calls[0].skipSqliteSetup, false)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
+  await defaultRuntimeIniServer[Symbol.asyncDispose]()
 
   calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {
@@ -117,17 +120,18 @@ try {
   }
 
   const distributionOnlyServer = await startPlaygroundCliServer(distributionOnlySpec, [], { cliModule })
-  await distributionOnlyServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  const distributionSharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
-  assert.equal(typeof distributionSharedMount, "string")
-  const distributionAutoPrepend = await readFile(join(distributionSharedMount as string, "auto_prepend_file.php"), "utf8")
+  const distributionBootstrapMount = calls[0]["mount-before-install"]?.[0]?.hostPath
+  assert.equal(typeof distributionBootstrapMount, "string")
+  const distributionAutoPrepend = await readFile(join(distributionBootstrapMount as string, "auto_prepend_file.php"), "utf8")
   assert.match(distributionAutoPrepend, /putenv\("WPCOM_BRANCH=feature\/example"\);/)
   assert.match(distributionAutoPrepend, /putenv\("FEATURE_ENABLED=true"\);/)
   assert.match(distributionAutoPrepend, /putenv\("EMPTY_VALUE="\);/)
   assert.match(distributionAutoPrepend, /define\("WPCOM_IS_BRANCH_PREVIEW", true\)/)
   assert.match(distributionAutoPrepend, /define\("WPCOM_BRANCH_ID", 123\)/)
+  assert.match(distributionAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php';/)
+  await distributionOnlyServer[Symbol.asyncDispose]()
 } finally {
   await rm(wordpressDevelopDirectory, { recursive: true, force: true })
   await rm(artifactsDirectory, { recursive: true, force: true })

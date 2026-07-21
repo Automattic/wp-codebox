@@ -6,8 +6,8 @@ import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEv
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
+import { homedir, tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
@@ -110,14 +110,14 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
         phpIniEntries: pluginRuntimePhpIniEntries(spec),
         wordpressDirectory: wordpressDirectory!,
         wordpressInstallMode,
-        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!),
+        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!, "/internal/wp-codebox/auto_prepend_file.php"),
       })
     }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
       const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
-      const bootstrapSharedMount = await pluginRuntimeBootstrapSharedMount(spec)
+      const bootstrapMount = await pluginRuntimeBootstrapMount(spec)
       try {
-        return await runCLI({
+        const server = await runCLI({
           command: "server",
           port,
           quiet: true,
@@ -130,21 +130,40 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
               vfsPath: mount.target,
             })),
           ],
-          ...(wordpressDirectory || bootstrapSharedMount ? {
+          ...(wordpressDirectory || bootstrapMount ? {
             "mount-before-install": [
-              ...(bootstrapSharedMount ? [bootstrapSharedMount] : []),
+              ...(bootstrapMount ? [bootstrapMount] : []),
               ...(wordpressDirectory ? [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }] : []),
             ],
-            wordpressInstallMode,
           } : {}),
+          ...(wordpressDirectory ? { wordpressInstallMode } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
           skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
-          phpIniEntries: pluginRuntimePhpIniEntries(spec),
+          phpIniEntries: {
+            ...pluginRuntimePhpIniEntries(spec),
+            ...(bootstrapMount ? {
+              ...bootstrapIniEntries,
+              auto_prepend_file: "/internal/wp-codebox/auto_prepend_file.php",
+            } : {}),
+          },
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
+        return bootstrapMount ? {
+          ...server,
+          async [Symbol.asyncDispose]() {
+            try {
+              await server[Symbol.asyncDispose]()
+            } finally {
+              await bootstrapMount[Symbol.asyncDispose]()
+            }
+          },
+        } : server
+      } catch (error) {
+        await bootstrapMount?.[Symbol.asyncDispose]()
+        throw error
       } finally {
         await localAssetServer?.close()
       }
@@ -272,20 +291,22 @@ export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, o
     && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
 
-async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string } | undefined> {
+async function pluginRuntimeBootstrapMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string; [Symbol.asyncDispose](): Promise<void> } | undefined> {
   const iniEntries = runtimeBootstrapPhpIniEntries(spec)
   if (!iniEntries) {
     return undefined
   }
 
-  const directory = join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared")
-  await mkdir(directory, { recursive: true })
-  await mkdir(join(directory, "mu-plugins"), { recursive: true })
-  await mkdir(join(directory, "preload"), { recursive: true })
-  await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
+  const directory = await mkdtemp(join(tmpdir(), "wp-codebox-playground-internal-shared-"))
   await writeFile(join(directory, "auto_prepend_file.php"), runtimeAutoPrependPhp(spec), "utf8")
 
-  return { hostPath: directory, vfsPath: "/internal/shared" }
+  return {
+    hostPath: directory,
+    vfsPath: "/internal/wp-codebox",
+    async [Symbol.asyncDispose]() {
+      await rm(directory, { recursive: true, force: true })
+    },
+  }
 }
 
 function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
@@ -330,9 +351,9 @@ function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "b
   return Object.keys(entries).length > 0 ? entries : undefined
 }
 
-function phpIniContent(entries: Record<string, string>): string {
+function phpIniContent(entries: Record<string, string>, autoPrependFile: string): string {
   const lines = [
-    "auto_prepend_file=/internal/shared/auto_prepend_file.php",
+    `auto_prepend_file=${autoPrependFile}`,
     // Runtime memory ceiling for all in-sandbox PHP, including artifact
     // collection. The collect_artifacts phase reads declared/typed artifacts and
     // runtime snapshot files into memory and base64-encodes them
@@ -368,7 +389,7 @@ function phpIniContent(entries: Record<string, string>): string {
 }
 
 function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
-  return `<?php\n${runtimeAutoPrependPhpBody(spec)}`
+  return `<?php\n${runtimeAutoPrependPhpBody(spec)}require_once '/internal/shared/auto_prepend_file.php';\n`
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
