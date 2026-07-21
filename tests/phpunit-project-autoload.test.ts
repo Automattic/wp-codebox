@@ -540,17 +540,12 @@ echo json_encode(array($legacy_project_autoload_file, $harness_autoload_file));
 `)
 assert.deepEqual(JSON.parse(execFileSync("php", [canonicalHarnessProbe], { encoding: "utf8" })), ["", "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php"], "a canonical staged harness path remains the harness in project mode")
 
-function decodeSubmittedBootstrap(code: string): string {
-  const encodedBootstrap = code.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
-  return encodedBootstrap ? Buffer.from(encodedBootstrap, "base64").toString("utf8") : code
-}
-
 let capturedCanonicalHarnessCode = ""
 await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
-    capturedCanonicalHarnessCode = decodeSubmittedBootstrap(input.code)
+    capturedCanonicalHarnessCode = input.code
     return { text: "ok", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
@@ -571,14 +566,14 @@ const decodedCanonicalHarnessCode = decodedBootstrapWrapper(capturedCanonicalHar
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 assert.ok(decodedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
-assert.ok(decodedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
+assert.ok(!decodedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), "project bootstrap mode does not load the managed WordPress runtime first")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-artifacts-")),
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
-    capturedExplicitCode = decodeSubmittedBootstrap(input.code)
+    capturedExplicitCode = input.code
     return { text: "ok", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,

@@ -837,6 +837,9 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
             $from_config = $bootstrap !== '';
         }
         if ($bootstrap === '') {
+            if (!$phpunit_xml_is_default && !is_readable($phpunit_xml)) {
+                throw new RuntimeException('explicit PHPUnit config is not readable: ' . $phpunit_xml);
+            }
             pg_log('NOTICE:project bootstrap not declared; continuing without one');
             pg_stage_ok('project_bootstrap');
             return;
