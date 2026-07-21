@@ -1270,7 +1270,14 @@ try {
 }
 
 pg_stage_begin('load_tests');
-$suite = new PHPUnit\\Framework\\TestSuite('WP Codebox PHPUnit Tests');
+try {
+    $suite = method_exists('PHPUnit\\Framework\\TestSuite', 'empty')
+        ? PHPUnit\\Framework\\TestSuite::empty('WP Codebox PHPUnit Tests')
+        : new PHPUnit\\Framework\\TestSuite('WP Codebox PHPUnit Tests');
+} catch (Throwable $e) {
+    pg_stage_fail('load_tests', $e);
+    exit(1);
+}
 $before_classes = get_declared_classes();
 try {
     foreach ($test_files as $test_file) {
@@ -1285,7 +1292,7 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
         if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
-            $suite->addTestSuite($class_name);
+            $suite->addTestSuite($ref);
         }
     } catch (Throwable $e) {
         pg_log('NOTICE:reflection failed for ' . $class_name . ': ' . $e->getMessage());
@@ -1589,7 +1596,14 @@ try {
 }
 
 core_pg_stage_begin('load_tests');
-$suite = new PHPUnit\\Framework\\TestSuite('WP Codebox WordPress Core Tests');
+try {
+    $suite = method_exists('PHPUnit\\Framework\\TestSuite', 'empty')
+        ? PHPUnit\\Framework\\TestSuite::empty('WP Codebox WordPress Core Tests')
+        : new PHPUnit\\Framework\\TestSuite('WP Codebox WordPress Core Tests');
+} catch (Throwable $e) {
+    core_pg_stage_fail('load_tests', $e);
+    exit(1);
+}
 $before_classes = get_declared_classes();
 try {
     foreach ($test_files as $test_file) {
@@ -1604,7 +1618,7 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
         if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
-            $suite->addTestSuite($class_name);
+            $suite->addTestSuite($ref);
         }
     } catch (Throwable $e) {
         core_pg_log('NOTICE:reflection failed for ' . $class_name . ': ' . $e->getMessage());
