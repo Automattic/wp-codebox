@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   COMMAND_ARTIFACT_STRING_MAX_BYTES,
+  COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
   COMMAND_ARTIFACT_MAX_NODES,
   COMMAND_ARTIFACT_MAX_RECORDS,
   COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
@@ -41,16 +42,25 @@ assert.equal(record.id, command.id)
 assert.equal(record.command, command.command)
 assert.equal(record.startedAt, command.startedAt)
 assert.equal(Buffer.byteLength(record.stdout), COMMAND_ARTIFACT_STRING_MAX_BYTES)
-assert.equal(Buffer.byteLength(record.result?.stdout ?? ""), COMMAND_ARTIFACT_STRING_MAX_BYTES)
+assert.equal(Buffer.byteLength(record.result?.stdout ?? ""), 0)
 assert(record.artifactCapture?.truncated)
 assert.deepEqual(record.artifactCapture?.fields.map(({ path }) => path), [
   "stdout",
   "result.json.artifact",
+  "result.schema",
+  "result.status",
   "result.stdout",
   "diagnostics.retained",
 ])
-assert(record.artifactCapture?.fields.every((field) => field.reason === "string-byte-limit"))
-assert(record.artifactCapture?.fields.every((field) => field.observedBytes === Buffer.byteLength(oversized)))
+assert.deepEqual(record.artifactCapture?.fields.map(({ reason }) => reason), [
+  "string-byte-limit",
+  "command-string-byte-limit",
+  "command-string-byte-limit",
+  "command-string-byte-limit",
+  "command-string-byte-limit",
+  "command-string-byte-limit",
+])
+assert.equal(record.artifactCapture?.fields.find((field) => field.path === "stdout")?.observedBytes, Buffer.byteLength(oversized))
 assert(Buffer.byteLength(JSON.stringify(projected)) < COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES)
 
 const commandsLog = formatCommandsLog(projected)
@@ -64,14 +74,24 @@ assert(unicodeRecord)
 assert(Buffer.byteLength(unicodeRecord.stdout) <= COMMAND_ARTIFACT_STRING_MAX_BYTES)
 assert(!/[\uD800-\uDBFF]$/.test(unicodeRecord.stdout), "UTF-8 truncation does not split a surrogate pair")
 
-const totalBudgetRecord = boundedExecutionResultsForArtifacts([{
+const commandBudgetRecord = boundedExecutionResultsForArtifacts([{
   ...command,
   stdout: "",
   result: undefined,
   diagnostics: Array.from({ length: 20 }, () => oversized),
 }])[0]
-assert(totalBudgetRecord?.artifactCapture?.fields.some((field) => field.reason === "total-string-byte-limit"))
-assert(Buffer.byteLength(JSON.stringify(totalBudgetRecord)) < COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES + 64 * 1024)
+assert(commandBudgetRecord?.artifactCapture?.fields.some((field) => field.reason === "command-string-byte-limit"))
+assert.equal(commandBudgetRecord?.artifactCapture?.limits.capturedStringBytesPerCommand, COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES)
+assert(Buffer.byteLength(JSON.stringify(commandBudgetRecord)) < COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES + 64 * 1024)
+
+const totalBudgetRecords = boundedExecutionResultsForArtifacts(Array.from({ length: 10 }, (_, index) => ({
+  ...command,
+  id: `total-budget-${index}`,
+  stdout: "",
+  result: undefined,
+  diagnostics: [oversized, oversized],
+})))
+assert(totalBudgetRecords.some((record) => record.artifactCapture?.fields.some((field) => field.reason === "total-string-byte-limit")))
 
 const nodeBudgetRecord = boundedExecutionResultsForArtifacts([{
   ...command,
@@ -103,6 +123,16 @@ assert.equal(boundedRecipeOutput.executions[0]?.recipeStepIndex, 4)
 assert.equal(boundedRecipeOutput.executions[0]?.recipeCommand, "wordpress.apply-site-plan")
 assert(boundedRecipeOutput.executions[0]?.artifactCapture)
 assert(Buffer.byteLength(JSON.stringify(boundedRecipeOutput)) < COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES)
+
+const boundedRecipeSequence = boundedRecipeJsonOutput({
+  executions: [
+    { ...command, result: undefined, diagnostics: [oversized, oversized, oversized], recipePhase: "steps", recipeStepIndex: 1, recipeCommand: "wordpress.import" },
+    { ...command, id: "later-command", stdout: "later evidence", result: undefined, diagnostics: undefined, recipePhase: "steps", recipeStepIndex: 2, recipeCommand: "wordpress.visual-compare" },
+  ],
+}) as { executions: Array<ExecutionResult & { recipePhase?: string; recipeStepIndex?: number; recipeCommand?: string }> }
+assert.equal(boundedRecipeSequence.executions[1]?.stdout, "later evidence")
+assert.equal(boundedRecipeSequence.executions[1]?.recipePhase, "steps")
+assert.equal(boundedRecipeSequence.executions[1]?.recipeCommand, "wordpress.visual-compare")
 
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-command-artifact-bounds-"))
 try {

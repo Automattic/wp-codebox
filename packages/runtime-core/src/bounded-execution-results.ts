@@ -2,6 +2,7 @@ import type { ExecutionResult } from "./runtime-contracts.js"
 import { normalizeJsonValue } from "./object-utils.js"
 
 export const COMMAND_ARTIFACT_STRING_MAX_BYTES = 1024 * 1024
+export const COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES = 2 * 1024 * 1024
 export const COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES = 16 * 1024 * 1024
 export const COMMAND_ARTIFACT_MAX_NODES = 25_000
 export const COMMAND_ARTIFACT_MAX_RECORDS = 1_000
@@ -10,10 +11,11 @@ const COMMAND_ARTIFACT_KEY_MAX_BYTES = 256
 const COMMAND_ARTIFACT_IDENTITY_MAX_BYTES = 1024
 const COMMAND_ARTIFACT_PATH_MAX_BYTES = 4096
 const EXECUTION_RESULT_KEYS = new Set(["id", "command", "args", "exitCode", "stdout", "stderr", "result", "diagnostics", "artifactRefs", "startedAt", "finishedAt", "artifactCapture"])
+const EXECUTION_IDENTITY_EXTENSION_KEYS = new Set(["recipePhase", "recipeCommand", "fuzzCaseId", "fuzzPhase"])
 
 export interface CommandArtifactTruncation {
   path: string
-  reason: "string-byte-limit" | "total-string-byte-limit" | "node-limit"
+  reason: "string-byte-limit" | "command-string-byte-limit" | "total-string-byte-limit" | "node-limit"
   observedBytes?: number
   capturedBytes?: number
   configuredLimitBytes?: number
@@ -24,6 +26,7 @@ export interface CommandArtifactCapture {
   truncated: true
   limits: {
     capturedStringBytesPerValue: number
+    capturedStringBytesPerCommand: number
     capturedStringBytesTotal: number
     nodes: number
     records: number
@@ -38,6 +41,7 @@ export type BoundedExecutionResult<T extends ExecutionResult = ExecutionResult> 
 export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(commands: T[]): Array<BoundedExecutionResult<T>> {
   const budget = {
     remainingBytes: COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
+    remainingCommandBytes: COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
     remainingNodes: COMMAND_ARTIFACT_MAX_NODES,
     remainingTruncations: COMMAND_ARTIFACT_MAX_TRUNCATIONS,
   }
@@ -46,6 +50,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
     : [...commands.slice(0, COMMAND_ARTIFACT_MAX_RECORDS - 1), commands.at(-1)!]
 
   return selectedCommands.map((command, selectedIndex) => {
+    budget.remainingCommandBytes = COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES
     const fields: CommandArtifactTruncation[] = []
     let omittedFieldCount = 0
     const capture = (value: unknown, path: string): unknown => boundedArtifactValue(value, path, budget, (field) => {
@@ -59,7 +64,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
     const extensions = Object.fromEntries(
       Object.entries(command)
         .filter(([key]) => !EXECUTION_RESULT_KEYS.has(key))
-        .map(([key, value]) => [key, capture(normalizeJsonValue(value), key)]),
+        .map(([key, value]) => [key, typeof value === "string" && EXECUTION_IDENTITY_EXTENSION_KEYS.has(key) ? boundedIdentityString(value) : capture(normalizeJsonValue(value), key)]),
     )
     const projected = {
       ...extensions,
@@ -82,6 +87,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
         truncated: true,
         limits: {
           capturedStringBytesPerValue: COMMAND_ARTIFACT_STRING_MAX_BYTES,
+          capturedStringBytesPerCommand: COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
           capturedStringBytesTotal: COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
           nodes: COMMAND_ARTIFACT_MAX_NODES,
           records: COMMAND_ARTIFACT_MAX_RECORDS,
@@ -98,7 +104,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
 function boundedArtifactValue(
   value: unknown,
   path: string,
-  budget: { remainingBytes: number; remainingNodes: number; remainingTruncations: number },
+  budget: { remainingBytes: number; remainingCommandBytes: number; remainingNodes: number; remainingTruncations: number },
   recordTruncation: (field: CommandArtifactTruncation) => void,
 ): unknown {
   if (value === null || value === undefined || (typeof value !== "string" && typeof value !== "object")) {
@@ -113,14 +119,16 @@ function boundedArtifactValue(
   if (typeof value === "string") {
     const observedBytes = Buffer.byteLength(value, "utf8")
     const totalBudgetLimited = budget.remainingBytes < Math.min(observedBytes, COMMAND_ARTIFACT_STRING_MAX_BYTES)
-    const configuredLimitBytes = Math.min(COMMAND_ARTIFACT_STRING_MAX_BYTES, budget.remainingBytes)
+    const commandBudgetLimited = budget.remainingCommandBytes < Math.min(observedBytes, COMMAND_ARTIFACT_STRING_MAX_BYTES)
+    const configuredLimitBytes = Math.min(COMMAND_ARTIFACT_STRING_MAX_BYTES, budget.remainingCommandBytes, budget.remainingBytes)
     const captured = truncateUtf8(value, configuredLimitBytes)
     const capturedBytes = Buffer.byteLength(captured, "utf8")
     budget.remainingBytes -= capturedBytes
+    budget.remainingCommandBytes -= capturedBytes
     if (capturedBytes < observedBytes) {
       recordTruncation({
         path: truncateUtf8(path, COMMAND_ARTIFACT_PATH_MAX_BYTES),
-        reason: totalBudgetLimited ? "total-string-byte-limit" : "string-byte-limit",
+        reason: totalBudgetLimited ? "total-string-byte-limit" : commandBudgetLimited ? "command-string-byte-limit" : "string-byte-limit",
         observedBytes,
         capturedBytes,
         configuredLimitBytes,

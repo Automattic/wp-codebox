@@ -42,7 +42,7 @@ import {
   previewLeaseSummary,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
-import { COMMAND_ARTIFACT_MAX_NODES, COMMAND_ARTIFACT_MAX_RECORDS, COMMAND_ARTIFACT_STRING_MAX_BYTES, COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES, boundedExecutionResultsForArtifacts, normalizeJsonValue, stripUndefined, truncateUtf8, type BoundedExecutionResult } from "@automattic/wp-codebox-core/internals"
+import { COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES, COMMAND_ARTIFACT_MAX_NODES, COMMAND_ARTIFACT_MAX_RECORDS, COMMAND_ARTIFACT_STRING_MAX_BYTES, COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES, boundedExecutionResultsForArtifacts, normalizeJsonValue, stripUndefined, truncateUtf8, type BoundedExecutionResult } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
 import { writeTrustedApplyArtifacts } from "./trusted-apply-artifact-channel.js"
@@ -787,6 +787,7 @@ function commandArtifactCollectionError(commands: ExecutionResult[], artifactPat
     },
     limits: {
       capturedStringBytesPerValue: COMMAND_ARTIFACT_STRING_MAX_BYTES,
+      capturedStringBytesPerCommand: COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
       capturedStringBytesTotal: COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
       nodes: COMMAND_ARTIFACT_MAX_NODES,
       records: COMMAND_ARTIFACT_MAX_RECORDS,
