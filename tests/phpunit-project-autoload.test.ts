@@ -27,6 +27,7 @@ assert.ok(!projectRecipeWithoutAutoload.some((arg) => arg === "autoload-file-rol
 const managedRecipe = phpunitRecipeArgs({})
 assert.ok(managedRecipe.includes("autoload-file=/wp-codebox-vendor/autoload.php"))
 assert.ok(managedRecipe.includes("autoload-file-role=harness"))
+assert.ok(managedRecipe.includes("phpunit-xml-default=1"), "default recipe XML retains implicit fallback semantics")
 
 const explicitAutoloadRecipe = phpunitRecipeArgs({
   bootstrapMode: "project",
@@ -36,6 +37,7 @@ const explicitAutoloadRecipe = phpunitRecipeArgs({
 assert.ok(explicitAutoloadRecipe.includes("autoload-file=/wp-codebox-vendor/autoload.php"))
 assert.ok(explicitAutoloadRecipe.includes("autoload-file-role=harness"))
 assert.ok(explicitAutoloadRecipe.includes("project-autoload-file=/workspace/project/vendor/autoload.php"))
+assert.ok(explicitAutoloadRecipe.includes("phpunit-xml-default=1"))
 
 function extractPhpFunction(source: string, functionName: string): string {
   const start = source.indexOf(`function ${functionName}(`)
@@ -63,30 +65,112 @@ function phpString(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
 }
 
-function assertPhpunitParseConfigFallbacksReturnFiveTuple(source: string, functionName: string, logFunctionName: string): void {
+function assertPhpunitConfigurationAndDiscoveryFailures(source: string, functionName: string, discoveryFunctionName: string, logFunctionName: string, supportsImplicitFallback: boolean): void {
   const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-config-"))
   const malformedXml = join(tempDir, "phpunit.xml.dist")
+  const malformedAdjacentXml = join(tempDir, "phpunit.xml")
+  const explicitMissingXml = join(tempDir, "missing.xml.dist")
+  const explicitAdjacentXml = join(tempDir, "missing.xml")
+  const defaultXml = join(tempDir, "default", "phpunit.xml.dist")
+  const adjacentXml = join(tempDir, "default", "phpunit.xml")
   const scriptPath = join(tempDir, "assert-phpunit-config.php")
   writeFileSync(malformedXml, "<phpunit><testsuites>")
+  writeFileSync(malformedAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-mask-malformed</directory></testsuite></testsuites></phpunit>")
+  writeFileSync(explicitAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-fallback</directory></testsuite></testsuites></phpunit>")
+  mkdirSync(join(tempDir, "default"), { recursive: true })
+  writeFileSync(adjacentXml, "<phpunit><testsuites><testsuite><directory>fallback-tests</directory></testsuite></testsuites></phpunit>")
 
   const parseConfigFunction = extractPhpFunction(source, functionName)
+  const discoveryFunction = extractPhpFunction(source, discoveryFunctionName)
   writeFileSync(scriptPath, `<?php
 function ${logFunctionName}($message) {}
 ${parseConfigFunction}
-function assert_phpunit_config_tuple($tuple, $label) {
-    if (!is_array($tuple) || count($tuple) !== 5) {
-        throw new RuntimeException($label . ' returned ' . gettype($tuple) . ' with ' . (is_array($tuple) ? count($tuple) : 'n/a') . ' values');
+${discoveryFunction}
+function assert_phpunit_error($callback, $expected, $label) {
+    try {
+        $callback();
+    } catch (RuntimeException $error) {
+        if (strpos($error->getMessage(), $expected) !== false) {
+            return;
+        }
+        throw new RuntimeException($label . ' returned the wrong error: ' . $error->getMessage());
     }
-    if (!is_array($tuple[4])) {
-        throw new RuntimeException($label . ' returned non-array configured files');
-    }
+    throw new RuntimeException($label . ' unexpectedly succeeded');
 }
-assert_phpunit_config_tuple(${functionName}(${phpString(join(tempDir, "missing.xml.dist"))}, ${phpString(join(tempDir, "tests"))}), 'missing config');
-assert_phpunit_config_tuple(${functionName}(${phpString(malformedXml)}, ${phpString(join(tempDir, "tests"))}), 'parse failure');
+${!supportsImplicitFallback ? `assert_phpunit_error(function() { ${functionName}(${phpString(explicitMissingXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config is not readable', 'explicit missing config');` : ""}
+assert_phpunit_error(function() { ${functionName}(${phpString(malformedXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config could not be parsed', 'malformed config');
+assert_phpunit_error(function() { ${discoveryFunctionName}(array(${phpString(join(tempDir, "missing-tests"))}), array('Test.php'), array('test-'), array()); }, 'configured PHPUnit test directory is not a readable directory', 'missing configured directory');
+assert_phpunit_error(function() { ${discoveryFunctionName}(array(), array('Test.php'), array('test-'), array(), array(${phpString(join(tempDir, "MissingTest.php"))})); }, 'configured PHPUnit test file is not a readable PHP file', 'missing configured file');
+${supportsImplicitFallback ? `
+$fallback = ${functionName}(${phpString(defaultXml)}, ${phpString(join(tempDir, "tests"))});
+if ($fallback[0] !== array(${phpString(join(tempDir, "default", "fallback-tests"))})) {
+    throw new RuntimeException('implicit phpunit.xml fallback did not load the adjacent config');
+}
+unlink(${phpString(adjacentXml)});
+assert_phpunit_error(function() { ${functionName}(${phpString(defaultXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config is not readable', 'both default configs missing');` : ""}
 echo "ok\n";
 `)
 
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
+function assertChangedScopeNoOp(source: string, filterFunctionName: string, relativeFunctionName: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-changed-scope-"))
+  const scriptPath = join(tempDir, "assert-changed-scope.php")
+  const filterFunction = extractPhpFunction(source, filterFunctionName)
+  const relativeFunction = extractPhpFunction(source, relativeFunctionName)
+  writeFileSync(scriptPath, `<?php
+function pg_log($message) {}
+function core_pg_log($message) {}
+${filterFunction}
+${relativeFunction}
+$selected = ${filterFunctionName}(array(${phpString(join(tempDir, "ExampleTest.php"))}), json_encode(array('ChangedButNotDiscoveredTest.php')), ${phpString(tempDir)});
+if ($selected !== array()) {
+    throw new RuntimeException('changed scope must permit a valid zero-match selection');
+}
+echo "ok\n";
+`)
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+  assert.match(source, /if \(empty\(\$test_files\) && !\$changed_test_scope\) \{/, "only changed-scope empty discovery may succeed")
+}
+
+function assertProjectBootstrapConfigResolution(explicitSource: string, implicitSource: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-project-bootstrap-config-"))
+  const marker = join(tempDir, "adjacent-bootstrap-ran.txt")
+  const config = join(tempDir, "phpunit.xml")
+  const missingDefault = join(tempDir, "phpunit.xml.dist")
+  const bootstrap = join(tempDir, "adjacent-bootstrap.php")
+  const explicitScript = join(tempDir, "explicit-missing.php")
+  const implicitScript = join(tempDir, "implicit-default.php")
+  const functionNames = ["pg_project_bootstrap_from_config", "pg_project_bootstrap_real_path", "pg_run_project_bootstrap_stage"]
+  const stageStubs = `function pg_stage_begin($stage) {}
+function pg_stage_ok($stage) {}
+function pg_stage_fail($stage, Throwable $error) {}
+function pg_log($message) {}`
+  writeFileSync(bootstrap, `<?php file_put_contents(${phpString(marker)}, 'ran');\n`)
+  writeFileSync(config, `<phpunit bootstrap="adjacent-bootstrap.php"/>`)
+
+  writeFileSync(explicitScript, `<?php
+${stageStubs}
+${functionNames.map((name) => extractPhpFunction(explicitSource, name)).join("\n")}
+pg_run_project_bootstrap_stage(array('project_bootstrap' => '', 'phpunit_xml' => ${phpString(missingDefault)}, 'phpunit_xml_is_default' => false));
+`)
+  assert.throws(() => execFileSync("php", [explicitScript], { encoding: "utf8" }), /Command failed/, "an explicit missing config must fail before an adjacent bootstrap can execute")
+  assert.equal(existsSync(marker), false, "explicit missing config must not execute the adjacent phpunit.xml bootstrap")
+
+  writeFileSync(implicitScript, `<?php
+${stageStubs}
+${functionNames.map((name) => extractPhpFunction(implicitSource, name)).join("\n")}
+pg_run_project_bootstrap_stage(array('project_bootstrap' => '', 'phpunit_xml' => ${phpString(missingDefault)}, 'phpunit_xml_is_default' => true));
+`)
+  execFileSync("php", [implicitScript], { encoding: "utf8" })
+  assert.equal(readFileSync(marker, "utf8"), "ran", "an implicit default config must execute the adjacent phpunit.xml bootstrap")
+}
+
+function decodedBootstrapWrapper(source: string): string {
+  const encoded = source.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
+  assert.ok(encoded, "PHPUnit payload must execute inside the bootstrap diagnostic wrapper")
+  return Buffer.from(encoded, "base64").toString("utf8")
 }
 
 function assertSelectedTestFileResolution(source: string): void {
@@ -312,6 +396,7 @@ assert.ok(!rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputM
 assert.ok(recipe.workflow.steps[0].args.includes("cwd=/home/example/public_html"))
 assert.ok(recipe.workflow.steps[0].args.includes("test-root=/home/example/public_html/bin/tests/phpunit"))
 assert.ok(recipe.workflow.steps[0].args.includes("phpunit-xml=/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist"))
+assert.ok(recipe.workflow.steps[0].args.includes("phpunit-xml-default="), "explicit phpunit-xml paths must not opt into adjacent-file fallback")
 
 const projectModeCode = phpunitRunCode({
   pluginSlug: "woocommerce",
@@ -320,6 +405,7 @@ const projectModeCode = phpunitRunCode({
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   testRoot: "/home/example/public_html/bin/tests/phpunit",
   phpunitXml: "/wordpress/wp-content/plugins/woocommerce/phpunit.xml.dist",
+  phpunitXmlIsDefault: false,
   selectedTestFile: "",
   changedTestFiles: [],
   phpunitArgs: ["--list-tests"],
@@ -329,6 +415,26 @@ const projectModeCode = phpunitRunCode({
   bootstrapFiles: [],
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
+  multisite: false,
+})
+
+const implicitProjectConfigCode = phpunitRunCode({
+  pluginSlug: "woocommerce",
+  cwd: "/wordpress/wp-content/plugins/woocommerce",
+  autoloadFile: woocommerceAutoload,
+  testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+  testRoot: "/home/example/public_html/bin/tests/phpunit",
+  phpunitXml: "/wordpress/wp-content/plugins/woocommerce/phpunit.xml.dist",
+  phpunitXmlIsDefault: true,
+  selectedTestFile: "",
+  changedTestFiles: [],
+  phpunitArgs: [],
+  env: {},
+  wpConfigDefines: {},
+  dependencyMounts: [],
+  bootstrapFiles: [],
+  bootstrapMode: "project",
+  projectBootstrap: "",
   multisite: false,
 })
 
@@ -352,14 +458,17 @@ assert.ok(projectModeCode.includes("pg_resolve_selected_test_file"))
 assert.ok(projectModeCode.includes("function pg_project_bootstrap_real_path"))
 assert.ok(projectModeCode.includes("$base_dir = dirname($xml_real);"))
 assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);"))
+assert.ok(projectModeCode.includes("function pg_project_bootstrap_from_config(string &$xml_path, bool $xml_is_default): string"))
+assertProjectBootstrapConfigResolution(projectModeCode, implicitProjectConfigCode)
 assert.ok(projectModeCode.includes("foreach ($xml->xpath('//testsuite/file') ?: array() as $file)"))
 assert.ok(projectModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config"))
 assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
 assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
-assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 3)
-assert.match(projectModeCode, /if \(empty\(\$test_files\)\) \{\s+pg_log\('NO_TEST_FILES'\);\s+pg_stage_ok\('discover_tests'\);\s+exit\(0\);/)
-assertPhpunitParseConfigFallbacksReturnFiveTuple(projectModeCode, "wp_codebox_phpunit_parse_config", "pg_log")
+assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 1)
+assert.match(projectModeCode, /configured PHPUnit test root is not a readable directory/)
+assertPhpunitConfigurationAndDiscoveryFailures(projectModeCode, "wp_codebox_phpunit_parse_config", "wp_codebox_phpunit_discover", "pg_log", false)
+assertChangedScopeNoOp(projectModeCode, "pg_filter_changed_test_files", "pg_component_relative_path")
 assertSelectedTestFileResolution(projectModeCode)
 
 assert.ok(projectModeCode.includes("function pg_ensure_phpunit_harness_loaded(): void"))
@@ -380,6 +489,7 @@ const canonicalHarnessProjectModeCode = phpunitRunCode({
   testsDir: "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/wp-phpunit/wp-phpunit",
   testRoot: "/home/example/public_html/bin/tests/phpunit",
   phpunitXml: "/wordpress/wp-content/plugins/woocommerce/phpunit.xml.dist",
+  phpunitXmlIsDefault: false,
   selectedTestFile: "",
   changedTestFiles: [],
   phpunitArgs: [],
@@ -428,10 +538,11 @@ await runPhpunitCommand({
     ],
   },
 })
-assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
-assert.ok(capturedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
-assert.ok(capturedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
-assert.ok(capturedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
+const decodedCanonicalHarnessCode = decodedBootstrapWrapper(capturedCanonicalHarnessCode)
+assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
+assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
+assert.ok(decodedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
+assert.ok(decodedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({
@@ -448,14 +559,16 @@ await runPhpunitCommand({
     args: ["code=<?php declare(strict_types=1); echo getenv('TC_MYSQL_PORT');", "env-json={\"TC_MYSQL_PORT\":\"3307\"}"],
   },
 })
-assert.equal((capturedExplicitCode.match(/declare\(strict_types=1\);/g) ?? []).length, 1, "explicit PHP is normalized once at the runtime bootstrap boundary")
-assert.ok(capturedExplicitCode.includes("echo getenv('TC_MYSQL_PORT');"), "explicit PHPUnit code receives the same runtime bootstrap")
-assert.ok(capturedExplicitCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < capturedExplicitCode.lastIndexOf("TC_MYSQL_PORT"), "explicit env-json handling remains after runtime environment bootstrap")
+const decodedExplicitCode = decodedBootstrapWrapper(capturedExplicitCode)
+assert.equal((decodedExplicitCode.match(/declare\(strict_types=1\);/g) ?? []).length, 1, "explicit PHP is normalized once at the runtime bootstrap boundary")
+assert.ok(decodedExplicitCode.includes("echo getenv('TC_MYSQL_PORT');"), "explicit PHPUnit code receives the same runtime bootstrap")
+assert.ok(decodedExplicitCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedExplicitCode.lastIndexOf("TC_MYSQL_PORT"), "explicit env-json handling remains after runtime environment bootstrap")
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
   testsDir: "/wordpress/tests/phpunit",
   phpunitXml: "/wordpress/phpunit.xml.dist",
+  phpunitXmlIsDefault: true,
   selectedTestFile: "",
   changedTestFiles: [],
   autoloadFile: "/wp-codebox-vendor/autoload.php",
@@ -466,9 +579,10 @@ const coreModeCode = corePhpunitRunCode({
 assert.ok(coreModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = core_pg_parse_phpunit_config"))
 assert.ok(coreModeCode.includes("$test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.equal(coreModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
-assert.equal(coreModeCode.match(/return \$return_values\(\);/g)?.length, 3)
-assert.match(coreModeCode, /if \(empty\(\$test_files\)\) \{\s+core_pg_log\('NO_TEST_FILES'\);\s+core_pg_stage_ok\('discover_tests'\);\s+exit\(0\);/)
-assertPhpunitParseConfigFallbacksReturnFiveTuple(coreModeCode, "core_pg_parse_phpunit_config", "core_pg_log")
+assert.equal(coreModeCode.match(/return \$return_values\(\);/g)?.length, 1)
+assert.match(coreModeCode, /core tests directory is not a directory/)
+assertPhpunitConfigurationAndDiscoveryFailures(coreModeCode, "core_pg_parse_phpunit_config", "core_pg_discover_tests", "core_pg_log", true)
+assertChangedScopeNoOp(coreModeCode, "core_pg_filter_changed_test_files", "core_pg_relative_path")
 for (const privateConstructor of [true, false]) {
   assertDiscoveredTestExecutes(projectModeCode, "pg", privateConstructor)
   assertDiscoveredTestExecutes(coreModeCode, "core_pg", privateConstructor)
@@ -480,6 +594,7 @@ const managedModeCode = phpunitRunCode({
   autoloadFile: "/wp-codebox-vendor/autoload.php",
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   phpunitXml: "/wordpress/wp-content/plugins/demo-plugin/phpunit.xml.dist",
+  phpunitXmlIsDefault: false,
   selectedTestFile: "",
   changedTestFiles: [],
   phpunitArgs: [],
