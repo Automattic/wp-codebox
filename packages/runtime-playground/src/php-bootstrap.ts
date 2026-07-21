@@ -37,6 +37,7 @@ ${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
+${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
 ${recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
@@ -45,13 +46,44 @@ ${command.body}`
 }
 
 function phpFailureDiagnosticFilePhp(path: string): string {
-  return `register_shutdown_function(static function (): void {
-    $wp_codebox_failure = error_get_last();
-    if (!is_array($wp_codebox_failure) || !in_array($wp_codebox_failure['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+  return `$wp_codebox_bootstrap_complete = false;
+$wp_codebox_bootstrap_buffer_level = ob_get_level();
+ob_start();
+register_shutdown_function(static function () use (&$wp_codebox_bootstrap_complete, $wp_codebox_bootstrap_buffer_level): void {
+    if ($wp_codebox_bootstrap_complete) {
         return;
     }
-    @file_put_contents(${JSON.stringify(path)}, 'STAGE_FATAL:bootstrap:' . (string) ($wp_codebox_failure['message'] ?? '') . ' at ' . (string) ($wp_codebox_failure['file'] ?? '') . ':' . (int) ($wp_codebox_failure['line'] ?? 0) . "\\n", FILE_APPEND);
+    $wp_codebox_bootstrap_output = '';
+    while (ob_get_level() > $wp_codebox_bootstrap_buffer_level) {
+        $wp_codebox_bootstrap_chunk = ob_get_clean();
+        if ($wp_codebox_bootstrap_chunk !== false) {
+            $wp_codebox_bootstrap_output = $wp_codebox_bootstrap_chunk . $wp_codebox_bootstrap_output;
+        }
+    }
+    $wp_codebox_failure = error_get_last();
+    if (is_array($wp_codebox_failure) && in_array($wp_codebox_failure['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR), true)) {
+        $wp_codebox_bootstrap_diagnostic = 'STAGE_FATAL:bootstrap:' . (string) ($wp_codebox_failure['message'] ?? '') . ' at ' . (string) ($wp_codebox_failure['file'] ?? '') . ':' . (int) ($wp_codebox_failure['line'] ?? 0);
+    } else {
+        $wp_codebox_bootstrap_detail = trim((string) preg_replace('/\\s+/', ' ', strip_tags($wp_codebox_bootstrap_output)));
+        if ($wp_codebox_bootstrap_detail === '') {
+            $wp_codebox_bootstrap_detail = 'WordPress bootstrap terminated before completion without emitting output';
+        }
+        $wp_codebox_bootstrap_diagnostic = 'STAGE_DIE:bootstrap:' . substr($wp_codebox_bootstrap_detail, 0, 16384);
+    }
+    @file_put_contents(${JSON.stringify(path)}, $wp_codebox_bootstrap_diagnostic . "\\n", FILE_APPEND);
 });`
+}
+
+function phpFailureDiagnosticCompletionPhp(): string {
+  return `$wp_codebox_bootstrap_complete = true;
+$wp_codebox_bootstrap_output = '';
+while (ob_get_level() > $wp_codebox_bootstrap_buffer_level) {
+    $wp_codebox_bootstrap_chunk = ob_get_clean();
+    if ($wp_codebox_bootstrap_chunk !== false) {
+        $wp_codebox_bootstrap_output = $wp_codebox_bootstrap_chunk . $wp_codebox_bootstrap_output;
+    }
+}
+echo $wp_codebox_bootstrap_output;`
 }
 
 export function splitLeadingStrictTypesDeclare(code: string): { strictTypesDeclare: string; body: string } {
