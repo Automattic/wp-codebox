@@ -102,6 +102,25 @@ try {
   assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
 
   calls.length = 0
+  const downloadedWordPressSpec: RuntimeCreateSpec = {
+    ...defaultRuntimeIniSpec,
+    environment: {
+      ...defaultRuntimeIniSpec.environment,
+      version: "latest",
+      wordpressInstallMode: undefined,
+      assets: undefined,
+    },
+  }
+
+  const downloadedWordPressServer = await startPlaygroundCliServer(downloadedWordPressSpec, [], { cliModule })
+  await downloadedWordPressServer[Symbol.asyncDispose]()
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]["mount-before-install"], undefined)
+  assert.equal(calls[0].wordpressInstallMode, undefined)
+  assert.equal(shouldUseProgrammaticPlaygroundRunner(downloadedWordPressSpec), false)
+
+  calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {
     ...spec,
     metadata: {

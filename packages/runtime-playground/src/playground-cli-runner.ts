@@ -135,8 +135,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
               ...(bootstrapSharedMount ? [bootstrapSharedMount] : []),
               ...(wordpressDirectory ? [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }] : []),
             ],
-            wordpressInstallMode,
           } : {}),
+          ...(wordpressDirectory ? { wordpressInstallMode } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
           skipSqliteSetup: spec.environment.databaseSetup === "external",
@@ -372,7 +372,8 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
-  return `${phpEnvAssignments(spec.runtimeEnv ?? {})}${distributionBootstrapPhp(spec)}`
+  const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(spec.runtimeEnv ?? {}) : ""
+  return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
