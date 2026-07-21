@@ -83,13 +83,13 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
     const stagedMounts = readonlyMountStaging.mounts
-    const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
-    archiveReference = wordpressStartupAsset?.archiveReference
     if (usesArchiveCache) {
       const maintenance = await automaticPlaygroundCustomArchiveCacheMaintenance()
       cacheMaintenance = maintenance.result
       cacheMaintenanceDiagnostics = maintenance.diagnostics
     }
+    const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
+    archiveReference = wordpressStartupAsset?.archiveReference
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
       sourceUrl: wordpressDirectory ?? "",
