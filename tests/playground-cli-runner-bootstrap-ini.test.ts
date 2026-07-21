@@ -56,7 +56,7 @@ try {
         },
       },
     },
-    runtimeEnv: { TC_MYSQL_PORT: "33060" },
+    runtimeEnv: { TC_MYSQL_PORT: "33060", DB_HOST: "127.0.0.1", DB_PORT: "33061", DB_USER: "runtime", DB_PASSWORD: "secret", DB_NAME: "runtime" },
     artifactsDirectory,
   }
 
@@ -72,6 +72,11 @@ try {
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
+  assert.equal(calls[0]["db-engine"], "mysql")
+  assert.equal(calls[0]["db-host"], "127.0.0.1:33061")
+  assert.equal(calls[0]["db-user"], "runtime")
+  assert.equal(calls[0]["db-pass"], "secret")
+  assert.equal(calls[0]["db-name"], "runtime")
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])

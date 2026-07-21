@@ -140,6 +140,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
           skipSqliteSetup: spec.environment.databaseSetup === "external",
+          ...externalDatabaseCliOptions(spec),
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           "site-url": spec.preview?.siteUrl,
@@ -374,6 +375,20 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
   const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(spec.runtimeEnv ?? {}) : ""
   return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
+}
+
+function externalDatabaseCliOptions(spec: RuntimeCreateSpec): Record<string, string> {
+  if (spec.environment.databaseSetup !== "external") return {}
+  const host = spec.runtimeEnv?.DB_HOST
+  if (!host) return {}
+  const port = spec.runtimeEnv?.DB_PORT
+  return {
+    "db-engine": "mysql",
+    "db-host": port ? `${host}:${port}` : host,
+    "db-user": spec.runtimeEnv?.DB_USER ?? "root",
+    "db-pass": spec.runtimeEnv?.DB_PASSWORD ?? "",
+    "db-name": spec.runtimeEnv?.DB_NAME ?? "runtime",
+  }
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
