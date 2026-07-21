@@ -34,6 +34,8 @@ const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
+const R2_WORDPRESS_PAGE_PREFIX = "sites/default/pages"
+const WORDPRESS_PAGE_CACHE_SCHEMA = "v2"
 const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
 define('SHORTINIT', true);
 require '/wordpress/wp-load.php';
@@ -112,6 +114,18 @@ interface MarkdownManifest extends MarkdownPointer {
 interface RuntimeFile {
   path: string
   bytes: Uint8Array
+}
+
+interface CoordinatorState {
+  pointer: MarkdownPointer | null
+}
+
+interface WordPressPageSnapshot {
+  schema: "wp-codebox/wordpress-page/v1"
+  status: number
+  statusText: string
+  headers: Array<[string, string]>
+  body: string
 }
 
 interface CanonicalSeedManifest {
@@ -201,6 +215,13 @@ async function secretsMatch(left: string, right: string): Promise<boolean> {
 
 async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate"): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
+  if (route === "wordpress" && isCacheableWordPressPageRequest(request)) {
+    const state = await coordinatorCall<CoordinatorState>(coordinator, request.url, "state")
+    if (state.pointer) {
+      const cachedPage = await matchWordPressPageCache(request, state.pointer, env.WORDPRESS_STATE_BUCKET)
+      if (cachedPage) return cachedPage
+    }
+  }
   let lease = await acquireLease(coordinator, request.url)
   let runtime: Runtime | undefined
   let finalized = false
@@ -212,7 +233,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       if (!lease.pointer || lease.pointer.revision !== bootstrapped.pointer.revision) throw new Error("Canonical bootstrap promotion was not observed by its next lease.")
       cacheRuntime(lease.pointer, bootstrapped)
     }
-    const cachedPage = route === "wordpress" ? await matchWordPressPageCache(request, lease.pointer) : null
+    const cachedPage = route === "wordpress" ? await matchWordPressPageCache(request, lease.pointer, env.WORDPRESS_STATE_BUCKET) : null
     if (cachedPage) {
       await releaseLease(coordinator, request.url, lease)
       finalized = true
@@ -242,7 +263,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     }
     finalized = true
     if (mutatesCanonicalState) await discardRuntime(runtime)
-    else if (route === "wordpress") response = await cacheWordPressPage(request, lease.pointer, response)
+    else if (route === "wordpress") response = await cacheWordPressPage(request, lease.pointer, response, env.WORDPRESS_STATE_BUCKET)
     return response
   } catch (error) {
     if (!finalized) await abortLease(coordinator, request.url, lease)
@@ -259,29 +280,43 @@ function isCacheableWordPressPageRequest(request: Request): boolean {
   return !url.searchParams.has("preview") && !url.searchParams.has("rest_route")
 }
 
-async function matchWordPressPageCache(request: Request, pointer: MarkdownPointer): Promise<Response | null> {
+async function matchWordPressPageCache(request: Request, pointer: MarkdownPointer, bucket: R2Bucket): Promise<Response | null> {
   if (!isCacheableWordPressPageRequest(request)) return null
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
-  if (!cache) return null
   try {
-    const cached = await cache.match(wordPressPageCacheKey(request, pointer))
-    return cached ? pageCacheResponse(cached, request.method === "HEAD", "hit") : null
+    const cached = cache ? await cache.match(wordPressPageCacheKey(request, pointer)) : null
+    if (cached) return pageCacheResponse(cached, request.method === "HEAD", "hit", "edge")
+    const object = await bucket.get(await wordPressPageSnapshotKey(request, pointer))
+    if (!object) return null
+    const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
+    if (snapshot.schema !== "wp-codebox/wordpress-page/v1" || snapshot.status !== 200 || !Array.isArray(snapshot.headers) || typeof snapshot.body !== "string") return null
+    const response = new Response(snapshot.body, { status: snapshot.status, statusText: snapshot.statusText, headers: snapshot.headers })
+    if (cache) await cache.put(wordPressPageCacheKey(request, pointer), response.clone())
+    return pageCacheResponse(response, request.method === "HEAD", "hit", "r2")
   } catch {
     return null
   }
 }
 
-async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, response: Response): Promise<Response> {
+async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, response: Response, bucket: R2Bucket): Promise<Response> {
   if (!isCacheableWordPressPageRequest(request) || response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || response.headers.has("set-cookie")) return response
-  if (request.method === "HEAD") return pageCacheResponse(response, true, "miss")
+  if (request.method === "HEAD") return pageCacheResponse(response, true, "miss", "render")
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
-  const cacheable = pageCacheResponse(response, false, "miss")
-  if (cache) {
-    try {
-      await cache.put(wordPressPageCacheKey(request, pointer), cacheable.clone())
-    } catch {
-      // Page caching is an optimization; canonical rendering remains authoritative.
+  const cacheable = pageCacheResponse(response, false, "miss", "render")
+  try {
+    const snapshot: WordPressPageSnapshot = {
+      schema: "wp-codebox/wordpress-page/v1",
+      status: cacheable.status,
+      statusText: cacheable.statusText,
+      headers: Array.from(cacheable.headers.entries()),
+      body: await cacheable.clone().text(),
     }
+    await Promise.all([
+      cache ? cache.put(wordPressPageCacheKey(request, pointer), cacheable.clone()) : Promise.resolve(),
+      bucket.put(await wordPressPageSnapshotKey(request, pointer), JSON.stringify(snapshot), { httpMetadata: { contentType: "application/json" } }),
+    ])
+  } catch {
+    // Page caching is an optimization; canonical rendering remains authoritative.
   }
   return cacheable
 }
@@ -289,13 +324,21 @@ async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, re
 function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer): Request {
   const url = new URL(request.url)
   url.searchParams.set("__wp_codebox_revision", pointer.revision)
+  url.searchParams.set("__wp_codebox_page_cache", WORDPRESS_PAGE_CACHE_SCHEMA)
   return new Request(url, { method: "GET" })
 }
 
-function pageCacheResponse(response: Response, head: boolean, status: "hit" | "miss"): Response {
+async function wordPressPageSnapshotKey(request: Request, pointer: MarkdownPointer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(new URL(request.url).toString()))
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return `${R2_WORDPRESS_PAGE_PREFIX}/${pointer.revision}/${hash}.json`
+}
+
+function pageCacheResponse(response: Response, head: boolean, status: "hit" | "miss", source: "edge" | "r2" | "render"): Response {
   const headers = new Headers(response.headers)
   headers.set("cache-control", "public, max-age=60, s-maxage=31536000")
   headers.set("x-wp-codebox-page-cache", status)
+  headers.set("x-wp-codebox-page-cache-source", source)
   return new Response(head ? null : response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
