@@ -631,7 +631,13 @@ function errorDetail(error: unknown): Record<string, unknown> {
 
 async function automaticPlaygroundCustomArchiveCacheMaintenance(warnOnFailure = false): Promise<{ result?: PlaygroundCustomArchiveCacheMaintenance; diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] }> {
   try {
-    return { result: await maintainPlaygroundCustomArchiveCache(), diagnostics: [] }
+    const result = await maintainPlaygroundCustomArchiveCache()
+    if (warnOnFailure) {
+      for (const diagnostic of result.diagnostics) {
+        console.warn(`[wp-codebox] ${diagnostic.code}: ${diagnostic.message}`)
+      }
+    }
+    return { result, diagnostics: result.diagnostics }
   } catch (error) {
     const diagnostic = {
       code: "playground-custom-archive-cache-maintenance-failed",

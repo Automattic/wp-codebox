@@ -52,7 +52,7 @@ try {
   assert.equal(applied.removedCount, 2)
   assert.equal(applied.removedBytes, 24)
   assert.equal(applied.estimatedAllocatedBytesRemoved, staleAllocated)
-  assert.ok(applied.verifiedReclaimedBytes >= 0)
+  assert.ok(Number.isFinite(applied.observedFilesystemFreeBytesDelta))
   assert.deepEqual(await customArchiveNames(), ["custom-locked.zip", "custom-referenced.zip"])
   assert.ok((await readdir(root)).includes("6.9.1.zip"), "stable release archive must remain intact")
 
@@ -104,6 +104,18 @@ try {
   assert.equal(await readFile(attackMarker, "utf8"), "outside cache")
   await rm(attackTarget, { recursive: true, force: true })
 
+  const childAttackTarget = await mkdtemp(join(tmpdir(), "wp-codebox-playground-ref-child-attack-"))
+  const externalLease = join(childAttackTarget, "external-lease.json")
+  await writeLease(externalLease, { token: "external-symlink-lease", expiresAt: now + 60_000, ownerHostname: "outside-cache" })
+  const childAttackArchive = await archive("custom-ref-child-attack.zip", 42, now - 100_000)
+  await mkdir(`${childAttackArchive}.refs`)
+  await symlink(externalLease, join(`${childAttackArchive}.refs`, "malicious.json"))
+  const childAttackCleanup = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now, maxAgeMs: 1 })
+  assert.ok(childAttackCleanup.diagnostics.some((item) => item.code === "custom-archive-ref-entry-unsafe"))
+  assert.ok(!await exists(childAttackArchive), "unsafe child lease entries must not protect stale archives")
+  assert.ok(await exists(externalLease), "lease child inspection must never follow or remove an external symlink target")
+  await rm(childAttackTarget, { recursive: true, force: true })
+
   const generationArchive = await archive("custom-generation-race.zip", 43, now - 100_000)
   const oldGeneration = await acquirePlaygroundArchiveReference(generationArchive, { leaseMs: 100, heartbeat: false })
   await new Promise((resolve) => setTimeout(resolve, 125))
@@ -117,6 +129,22 @@ try {
   assert.ok(await exists(replacementGeneration.path), "old generation release must not remove replacement ownership")
   await replacementGeneration.release()
 
+  const replacedCandidate = await archive("custom-replaced-candidate.zip", 47, now - 100_000)
+  let replaced = false
+  const replacementResult = await maintainPlaygroundCustomArchiveCache(root, {
+    mode: "apply",
+    now,
+    maxAgeMs: 1,
+    async candidateInterlock(path) {
+      if (path !== replacedCandidate || replaced) return
+      replaced = true
+      await rm(path)
+      await writeFile(path, "fresh replacement generation")
+    },
+  })
+  assert.equal(await readFile(replacedCandidate, "utf8"), "fresh replacement generation")
+  assert.ok(replacementResult.diagnostics.some((item) => item.code === "custom-archive-generation-changed"), "replacement generation must be revalidated after lock acquisition")
+
   const allocationRoot = await mkdtemp(join(tmpdir(), "wp-codebox-playground-allocation-"))
   const openArchive = join(allocationRoot, "custom-open-file.zip")
   await writeFile(openArchive, Buffer.alloc(1024 * 1024, "a"))
@@ -125,7 +153,7 @@ try {
   const openRemoval = await maintainPlaygroundCustomArchiveCache(allocationRoot, { mode: "apply", maxAgeMs: 1 })
   assert.equal(openRemoval.removedBytes, 1024 * 1024)
   assert.ok(openRemoval.estimatedAllocatedBytesRemoved >= 1024 * 1024)
-  assert.equal(openRemoval.verifiedReclaimedBytes, 0, "open unlinked allocation is not verified as reclaimed until the final handle closes")
+  assert.equal(openRemoval.observedFilesystemFreeBytesDelta, 0, "open unlinked allocation should not increase observed free space until the final handle closes")
   await openHandle.close()
   await rm(allocationRoot, { recursive: true, force: true })
 

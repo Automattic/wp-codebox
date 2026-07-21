@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { createServer } from "node:http"
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -61,11 +61,13 @@ try {
   assert.equal((cacheValidation?.retention as Record<string, unknown> | undefined)?.schema, "wp-codebox/playground-custom-archive-cache-maintenance/v1")
   assert.equal((cacheValidation?.retention as Record<string, unknown>).removedCount, 1)
   assert.equal(((cacheValidation?.retention as Record<string, unknown>).activeProtection as Record<string, unknown>).referenceCount, 0)
+  console.warn = (message?: unknown) => { warnings.push(String(message)) }
+  await symlink(root, join(root, "custom-teardown-warning.zip.refs"))
   await server[Symbol.asyncDispose]()
+  assert.ok(warnings.some((warning) => warning.includes("custom-archive-refs-not-directory")), "successful teardown maintenance diagnostics must emit bounded warning evidence")
   assert.deepEqual((await readdir(root)).filter((name) => /^custom-.*\.zip(?:\.(?:refs|lock))?$/.test(name)), [], "teardown must release and retain no zero-bound custom cache entries or sidecars")
 
   process.env.WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_COUNT = "invalid"
-  console.warn = (message?: unknown) => { warnings.push(String(message)) }
   const invalidProgress: Array<Record<string, unknown>> = []
   const invalidServer = await startPlaygroundCliServer(spec, [], { cliModule, onProgress(event) { invalidProgress.push(event as unknown as Record<string, unknown>) } })
   await new Promise((resolve) => setTimeout(resolve, 0))

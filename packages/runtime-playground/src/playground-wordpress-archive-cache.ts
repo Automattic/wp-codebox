@@ -70,6 +70,7 @@ export interface PlaygroundCustomArchiveCachePolicy {
 export interface PlaygroundCustomArchiveCacheMaintenanceOptions extends Partial<PlaygroundCustomArchiveCachePolicy> {
   mode?: "diagnose" | "dry-run" | "apply"
   now?: number
+  candidateInterlock?: (archivePath: string) => void | Promise<void>
 }
 
 export interface PlaygroundCustomArchiveCacheDiagnostic {
@@ -105,7 +106,7 @@ export interface PlaygroundCustomArchiveCacheMaintenance {
   removedCount: number
   removedBytes: number
   estimatedAllocatedBytesRemoved: number
-  verifiedReclaimedBytes: number
+  observedFilesystemFreeBytesDelta: number
   retainedCount: number
   retainedBytes: number
   diagnostics: PlaygroundCustomArchiveCacheDiagnostic[]
@@ -115,6 +116,8 @@ interface CustomArchiveEntry {
   path: string
   size: number
   mtimeMs: number
+  dev: number
+  ino: number
   lockPath: string
   activeLock: boolean
   activeReferences: number
@@ -211,6 +214,8 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
         path: archivePath,
         size: regular ? archiveStat.size : 0,
         mtimeMs: archiveStat.mtimeMs,
+        dev: archiveStat.dev,
+        ino: archiveStat.ino,
         lockPath,
         activeLock,
         activeReferences,
@@ -246,6 +251,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
   const filesystemBefore = mode === "apply" ? await filesystemAvailableBytes(cacheDirectory) : undefined
   if (mode === "apply") {
     for (const candidate of candidates.sort(oldestFirst)) {
+      await options.candidateInterlock?.(candidate.path)
       const lease = await tryAcquireCacheLock(candidate.lockPath, policy.leaseMs)
       if (!lease) {
         continue
@@ -265,6 +271,10 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
         }
         if (!current.isFile() || current.nlink !== 1) {
           diagnostics.push({ code: "custom-archive-changed-before-removal", message: "Custom archive changed to an unsafe filesystem entry before removal and was protected.", severity: "warning", path: candidate.path })
+          continue
+        }
+        if (current.dev !== candidate.dev || current.ino !== candidate.ino || current.mtimeMs !== candidate.mtimeMs || current.size !== candidate.size) {
+          diagnostics.push({ code: "custom-archive-generation-changed", message: "Custom archive was replaced or modified after candidate selection and was protected from removal.", severity: "warning", path: candidate.path })
           continue
         }
         const currentAllocatedBytes = allocatedBytes(current.blocks)
@@ -289,7 +299,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
 
   const sidecars = await maintainOrphanSidecars(cacheDirectory, directoryEntries.map((entry) => entry.name), now, policy, mode, diagnostics)
   const filesystemAfter = mode === "apply" ? await filesystemAvailableBytes(cacheDirectory) : undefined
-  const verifiedReclaimedBytes = filesystemBefore === undefined || filesystemAfter === undefined ? 0 : Math.max(0, filesystemAfter - filesystemBefore)
+  const observedFilesystemFreeBytesDelta = filesystemBefore === undefined || filesystemAfter === undefined ? 0 : filesystemAfter - filesystemBefore
   const totalBytes = entries.reduce((total, entry) => total + entry.size, 0)
   return {
     schema: "wp-codebox/playground-custom-archive-cache-maintenance/v1",
@@ -312,7 +322,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
     removedCount,
     removedBytes,
     estimatedAllocatedBytesRemoved,
-    verifiedReclaimedBytes,
+    observedFilesystemFreeBytesDelta,
     retainedCount: entries.length - removedCount,
     retainedBytes: totalBytes - removedBytes,
     diagnostics,
@@ -440,7 +450,7 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
         }
         continue
       }
-      const state = await leaseState(path, path, now, policy.staleLockMs)
+      const state = await inspectLeaseFile(path, now, policy.staleLockMs, removeStale)
       if (state.active) {
         active = true
       } else if (removeStale) {
@@ -482,13 +492,9 @@ async function activeArchiveReferenceCount(archivePath: string, now: number, pol
   try {
     for (const name of names.sort()) {
       const path = join(anchoredDirectory, name)
-      const state = await leaseState(path, path, now, policy.staleLockMs)
+      const state = await inspectLeaseFile(path, now, policy.staleLockMs, removeStale, diagnostics)
       if (state.active) {
         active += 1
-      } else if (removeStale) {
-        await unlink(path).catch((error) => {
-          if (!errorHasCode(error, "ENOENT")) throw error
-        })
       }
     }
   } finally {
@@ -497,20 +503,47 @@ async function activeArchiveReferenceCount(archivePath: string, now: number, pol
   return active
 }
 
-async function leaseState(ownerPath: string, sidecarPath: string, now: number, legacyStaleMs: number): Promise<LeaseState> {
-  const owner = await readOwnerRecord(ownerPath)
-  if (owner) {
-    const expiresAt = Date.parse(owner.expiresAt)
-    return { active: Number.isFinite(expiresAt) && expiresAt > now, token: owner.token }
-  }
+async function inspectLeaseFile(path: string, now: number, legacyStaleMs: number, removeUnsafe: boolean, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []): Promise<LeaseState> {
+  let pathStat
   try {
-    const sidecarStat = await lstat(sidecarPath)
-    return { active: now - sidecarStat.mtimeMs <= legacyStaleMs }
+    pathStat = await lstat(path)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) {
-      return { active: false }
+    if (errorHasCode(error, "ENOENT")) return { active: false }
+    throw error
+  }
+  if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
+    diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry is not a singly-linked regular file and was not followed.", severity: "warning", path })
+    if (removeUnsafe && !pathStat.isDirectory()) await unlink(path)
+    return { active: !removeUnsafe || pathStat.isDirectory() }
+  }
+
+  let handle: FileHandle | undefined
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const openedStat = await handle.stat()
+    if (openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+      diagnostics.push({ code: "custom-archive-ref-entry-changed", message: "Archive lease entry changed while opening and was conservatively protected.", severity: "warning", path })
+      return { active: true }
+    }
+    const owner = await readOwnerFromHandle(handle)
+    if (owner) {
+      const expiresAt = Date.parse(owner.expiresAt)
+      if (Number.isFinite(expiresAt) && expiresAt > now) return { active: true, token: owner.token }
+      if (removeUnsafe) await unlink(path)
+      return { active: false, token: owner.token }
+    }
+    const active = now - pathStat.mtimeMs <= legacyStaleMs
+    if (!active && removeUnsafe) await unlink(path)
+    return { active }
+  } catch (error) {
+    if (errorHasCode(error, "ENOENT")) return { active: false }
+    if (errorHasCode(error, "ELOOP")) {
+      diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry became a symlink and was conservatively protected.", severity: "warning", path })
+      return { active: true }
     }
     throw error
+  } finally {
+    await handle?.close()
   }
 }
 
@@ -534,7 +567,7 @@ async function maintainOrphanSidecars(cacheDirectory: string, names: string[], n
       }
       continue
     }
-    const active = await activeReferenceCountInDirectory(path, now, policy, mode === "apply")
+    const active = await activeReferenceCountInDirectory(path, now, policy, mode === "apply", diagnostics)
     if (active > 0) {
       activeCount += 1
     } else if (mode === "apply" && !await pathExists(path)) {
@@ -546,8 +579,8 @@ async function maintainOrphanSidecars(cacheDirectory: string, names: string[], n
   return { orphanCount: paths.length, activeCount, removedCount, paths }
 }
 
-async function activeReferenceCountInDirectory(path: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, removeStale: boolean): Promise<number> {
-  return activeArchiveReferenceCount(path.slice(0, -".refs".length), now, policy, removeStale)
+async function activeReferenceCountInDirectory(path: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, removeStale: boolean, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []): Promise<number> {
+  return activeArchiveReferenceCount(path.slice(0, -".refs".length), now, policy, removeStale, diagnostics)
 }
 
 async function removeOrphanReferencesDirectory(path: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[]): Promise<boolean> {
@@ -563,7 +596,7 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
     await unlink(path)
     return true
   }
-  if (await activeReferenceCountInDirectory(path, now, policy, true) > 0) {
+  if (await activeReferenceCountInDirectory(path, now, policy, true, diagnostics) > 0) {
     return false
   }
   try {
@@ -575,28 +608,6 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
     }
     diagnostics.push({ code: "orphan-reference-cleanup-failed", message: errorMessage(error), severity: "warning", path })
     return false
-  }
-}
-
-async function readOwnerRecord(path: string): Promise<CacheOwnerRecord | undefined> {
-  try {
-    const value = JSON.parse(await readFile(path, "utf8")) as Partial<CacheOwnerRecord>
-    return value.schema === "wp-codebox/playground-cache-lease/v1"
-      && typeof value.token === "string"
-      && typeof value.hostname === "string"
-      && typeof value.bootId === "string"
-      && Number.isInteger(value.pid)
-      && typeof value.processStart === "string"
-      && typeof value.createdAt === "string"
-      && typeof value.heartbeatAt === "string"
-      && typeof value.expiresAt === "string"
-      ? value as CacheOwnerRecord
-      : undefined
-  } catch (error) {
-    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "EISDIR") || error instanceof SyntaxError) {
-      return undefined
-    }
-    throw error
   }
 }
 
