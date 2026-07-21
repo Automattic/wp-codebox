@@ -106,6 +106,7 @@
     "test:runtime-sources-playground-integration": "tsx tests/runtime-sources-playground-integration.test.ts",
     "test:playground-readonly-mounts": "tsx tests/playground-readonly-mounts.test.ts",
     "test:playground-readonly-mounts-integration": "tsx tests/playground-readonly-mounts-integration.test.ts",
+    "test:playground-staged-upload-preview": "tsx tests/playground-staged-upload-preview.integration.test.ts",
     "test:playground-phpunit-readonly-cache-integration": "tsx tests/playground-phpunit-readonly-cache.integration.test.ts",
     "test:playground-phpunit-bootstrap-failure-integration": "tsx tests/playground-phpunit-bootstrap-failure.integration.test.ts",
     "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts && tsx tests/playground-custom-archive-cache-process.test.ts && tsx tests/playground-custom-archive-cache.integration.test.ts",
