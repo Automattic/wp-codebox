@@ -11,6 +11,7 @@ const root = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-bootstrap-failure-
 const fatalMuPlugin = join(root, "fatal-bootstrap.php")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
+const exitArtifactsPath = join(root, "exit-artifacts")
 
 try {
   await writeFile(fatalMuPlugin, `<?php\ntrigger_error('PHPUnit bootstrap fixture token: ${secret}', E_USER_ERROR);\n`)
@@ -49,13 +50,28 @@ try {
   assert.match(commandLog, /wordpress\.phpunit structured diagnostics/)
   assert.match(commandLog, /PHPUnit bootstrap fixture token: \[redacted\]/)
   assert.doesNotMatch(commandLog, new RegExp(secret))
+
+  await writeFile(fatalMuPlugin, `<?php\necho 'PHPUnit bootstrap exit fixture token: ${secret}';\nexit(1);\n`)
+  const exitOutput = await runFailedRecipe(exitArtifactsPath)
+  assert.equal(exitOutput.success, false, JSON.stringify(exitOutput))
+  const exitMessage = exitOutput.error?.message ?? ""
+  assert.match(exitMessage, /wordpress\.phpunit structured diagnostics/)
+  assert.match(exitMessage, /PHPUnit bootstrap exit fixture token: \[redacted\]/)
+  assert.doesNotMatch(exitMessage, new RegExp(secret))
+
+  const exitLatest = JSON.parse(await readFile(join(exitArtifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+  const exitRuntimeDirectory = exitLatest.paths?.runtimeDirectory
+  assert.ok(exitRuntimeDirectory, "terminated recipe must retain a runtime artifact directory")
+  const exitDiagnostic = await readFile(join(exitArtifactsPath, exitRuntimeDirectory, "files", "phpunit", ".pg-test-result.txt"), "utf8")
+  assert.match(exitDiagnostic, /STAGE_DIE:bootstrap:PHPUnit bootstrap exit fixture token: \[redacted\]/)
+  assert.doesNotMatch(exitDiagnostic, new RegExp(secret))
 } finally {
   await rm(root, { recursive: true, force: true })
 }
 
-async function runFailedRecipe(): Promise<RecipeRunOutput> {
+async function runFailedRecipe(outputPath = artifactsPath): Promise<RecipeRunOutput> {
   try {
-    const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", artifactsPath, "--json"], {
+    const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", outputPath, "--json"], {
       cwd: process.cwd(),
       timeout: 300_000,
       maxBuffer: 2 * 1024 * 1024,
