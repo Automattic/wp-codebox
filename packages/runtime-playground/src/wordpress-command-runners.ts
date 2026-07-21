@@ -907,6 +907,7 @@ export async function runPhpunitCommand({
   spec: ExecutionSpec
 }): Promise<string> {
   const args = spec.args ?? []
+  const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
@@ -923,9 +924,10 @@ export async function runPhpunitCommand({
     projectAutoloadFile: argValue(args, "project-autoload-file")?.trim() || "",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
     testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,
-    phpunitXml: argValue(args, "phpunit-xml")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
+    phpunitXml: phpunitXmlArg?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
+    phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
-    changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
+    changedTestFiles: changedTestFilesArg(args),
     phpunitArgs: jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string"),
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
@@ -974,6 +976,15 @@ function boundedProcessIdentity(value: string | undefined): string {
   return value
 }
 
+function changedTestFilesArg(args: string[]): string[] {
+  return jsonArrayArg(args, "changed-tests-json").map((value) => {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error("changed-tests-json must be a JSON array of non-empty test file paths")
+    }
+    return value.trim()
+  })
+}
+
 export async function runCorePhpunitCommand({
   artifactRoot,
   runPlaygroundCommand,
@@ -986,6 +997,7 @@ export async function runCorePhpunitCommand({
   spec: ExecutionSpec
 }): Promise<string> {
   const args = spec.args ?? []
+  const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   // Write structured diagnostics to a sandbox-internal /tmp path rather than inside
   // the (often read-only) core mount, so the result survives read-only mounts and a
@@ -994,9 +1006,10 @@ export async function runCorePhpunitCommand({
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.core-phpunit") : normalizePhpCode(corePhpunitRunCode({
     coreRoot: argValue(args, "core-root")?.trim() || "/wordpress",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wordpress/tests/phpunit",
-    phpunitXml: argValue(args, "phpunit-xml")?.trim() || "/wordpress/tests/phpunit/phpunit.xml.dist",
+    phpunitXml: phpunitXmlArg?.trim() || "/wordpress/tests/phpunit/phpunit.xml.dist",
+    phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
-    changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
+    changedTestFiles: changedTestFilesArg(args),
     autoloadFile: argValue(args, "autoload-file")?.trim() || "/wordpress/vendor/autoload.php",
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     multisite: booleanArg(args, "multisite"),
