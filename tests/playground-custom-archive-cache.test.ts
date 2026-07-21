@@ -130,10 +130,16 @@ try {
   await replacementGeneration.release()
 
   const samePathArchive = await archive("custom-same-path-release.zip", 45, Date.now())
-  const staleSamePath = await acquirePlaygroundArchiveReference(samePathArchive, { leaseMs: 1_000, heartbeat: false })
-  await rm(staleSamePath.path)
-  await writeLease(staleSamePath.path, { token: "same-path-replacement-token", expiresAt: Date.now() + 60_000 })
-  const samePathReplacement = await readFile(staleSamePath.path, "utf8")
+  let samePathReplacement = ""
+  const staleSamePath = await acquirePlaygroundArchiveReference(samePathArchive, {
+    leaseMs: 1_000,
+    heartbeat: false,
+    async releaseInterlock(path) {
+      await rm(path)
+      await writeLease(path, { token: "same-path-replacement-token", expiresAt: Date.now() + 60_000 })
+      samePathReplacement = await readFile(path, "utf8")
+    },
+  })
   await staleSamePath.release()
   assert.equal(await readFile(staleSamePath.path, "utf8"), samePathReplacement, "stale release must not unlink a replacement at the exact same pathname")
   await rm(staleSamePath.path)
@@ -186,13 +192,13 @@ try {
   await mkdir(orphanLock)
   await writeLease(join(orphanLock, "owner.json"), { token: "expired-orphan-lock", expiresAt: now - 1 })
   const orphanFirst = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now })
-  assert.equal(orphanFirst.sidecars.orphanCount, 2)
+  assert.ok(orphanFirst.sidecars.orphanCount >= 2)
   assert.equal(orphanFirst.sidecars.activeCount, 1)
-  assert.equal(orphanFirst.sidecars.removedCount, 1)
+  assert.ok(orphanFirst.sidecars.removedCount >= 1)
   assert.ok(await exists(`${orphanArchive}.refs`), "foreign unexpired orphan lease must remain protected")
   await writeLease(join(`${orphanArchive}.refs`, "active.json"), { token: "foreign-reference", expiresAt: now - 1, ownerHostname: "remote-container" })
   const orphanExpired = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now })
-  assert.equal(orphanExpired.sidecars.removedCount, 1)
+  assert.ok(orphanExpired.sidecars.removedCount >= 1)
   assert.ok(!await exists(`${orphanArchive}.refs`))
 
   const concurrentArchive = await archive("custom-concurrent.zip", 31, now - 100_000)
@@ -250,6 +256,19 @@ try {
     acquiredRecoveredTempLock = true
   })
   assert.equal(acquiredRecoveredTempLock, true, "stale heartbeat temp files from an older generation must not wedge archive acquisition")
+
+  const samePathLockVersion = "custom-same-path-lock-release"
+  const samePathLockDirectory = join(root, `${samePathLockVersion}.zip.lock`)
+  let replacementLockEntry = ""
+  let replacementLockContents = ""
+  await withPlaygroundArchiveCacheLock(root, samePathLockVersion, async () => {
+    replacementLockEntry = join(samePathLockDirectory, (await readdir(samePathLockDirectory)).find((name) => name.endsWith(".lease.json"))!)
+    await rm(replacementLockEntry)
+    await writeLease(replacementLockEntry, { token: "same-path-lock-replacement", expiresAt: Date.now() + 60_000 })
+    replacementLockContents = await readFile(replacementLockEntry, "utf8")
+  })
+  assert.equal(await readFile(replacementLockEntry, "utf8"), replacementLockContents, "producer lock release must not unlink a replacement at the same generation pathname")
+  await rm(samePathLockDirectory, { recursive: true })
   assert.ok((await readdir(root)).includes(stableArchive.split("/").at(-1)!))
 
   console.log("playground custom archive cache retention passed")

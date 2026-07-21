@@ -57,6 +57,7 @@ export interface PlaygroundArchiveReference {
 export interface PlaygroundArchiveReferenceOptions {
   leaseMs?: number
   heartbeat?: boolean
+  releaseInterlock?: (leasePath: string) => void | Promise<void>
 }
 
 export interface PlaygroundCustomArchiveCachePolicy {
@@ -164,7 +165,7 @@ export async function acquirePlaygroundArchiveReference(archivePath: string, opt
   const referencePath = join(referencesDirectory, fileName)
   let lease: LeaseHandle
   try {
-    lease = await createFileLease(directoryHandle, fileName, referencePath, token, leaseMs, referencesDirectory, options.heartbeat !== false)
+    lease = await createFileLease(directoryHandle, fileName, referencePath, token, leaseMs, options.heartbeat !== false, options.releaseInterlock)
   } catch (error) {
     await directoryHandle.close()
     throw error
@@ -297,7 +298,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
     }
   }
 
-  const sidecars = await maintainOrphanSidecars(cacheDirectory, directoryEntries.map((entry) => entry.name), now, policy, mode, diagnostics)
+  const sidecars = await maintainOrphanSidecars(cacheDirectory, await readdir(cacheDirectory), now, policy, mode, diagnostics)
   const filesystemAfter = mode === "apply" ? await filesystemAvailableBytes(cacheDirectory) : undefined
   const observedFilesystemFreeBytesDelta = filesystemBefore === undefined || filesystemAfter === undefined ? 0 : filesystemAfter - filesystemBefore
   const totalBytes = entries.reduce((total, entry) => total + entry.size, 0)
@@ -369,45 +370,18 @@ async function tryAcquireCacheLock(lockPath: string, leaseMs: number): Promise<L
 
 async function createDirectoryLease(directoryHandle: FileHandle, lockPath: string, token: string, leaseMs: number): Promise<LeaseHandle> {
   const fileName = `${token}.lease.json`
-  return createFileLease(directoryHandle, fileName, join(lockPath, fileName), token, leaseMs, lockPath, true)
+  return createFileLease(directoryHandle, fileName, join(lockPath, fileName), token, leaseMs, true)
 }
 
-async function createFileLease(directoryHandle: FileHandle, fileName: string, displayPath: string, token: string, leaseMs: number, directoryPath: string, automaticHeartbeat: boolean): Promise<LeaseHandle> {
+async function createFileLease(directoryHandle: FileHandle, fileName: string, displayPath: string, token: string, leaseMs: number, automaticHeartbeat: boolean, releaseInterlock?: (leasePath: string) => void | Promise<void>): Promise<LeaseHandle> {
   const anchoredPath = join(fileDescriptorPath(directoryHandle), fileName)
   const fileHandle = await open(anchoredPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600)
   await writeOwnerToHandle(fileHandle, await ownerRecord(token, leaseMs))
   return heartbeatLease(fileHandle, token, leaseMs, async () => {
-    await unlinkOwnedLeasePath(anchoredPath, fileHandle, token)
+    await releaseInterlock?.(displayPath)
     await fileHandle.close()
     await directoryHandle.close()
-    await rmdir(directoryPath).catch((error) => {
-      if (!errorHasCode(error, "ENOENT") && !errorHasCode(error, "ENOTEMPTY")) throw error
-    })
   }, displayPath, automaticHeartbeat)
-}
-
-async function unlinkOwnedLeasePath(path: string, ownedHandle: FileHandle, token: string): Promise<boolean> {
-  let currentHandle: FileHandle | undefined
-  try {
-    const ownedStat = await ownedHandle.stat()
-    currentHandle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    const currentStat = await currentHandle.stat()
-    const currentOwner = await readOwnerFromHandle(currentHandle)
-    if (currentStat.dev !== ownedStat.dev || currentStat.ino !== ownedStat.ino || currentOwner?.token !== token) {
-      return false
-    }
-    const pathStat = await lstat(path)
-    if (pathStat.dev !== ownedStat.dev || pathStat.ino !== ownedStat.ino || !pathStat.isFile() || pathStat.isSymbolicLink()) {
-      return false
-    }
-    await unlink(path)
-    return true
-  } catch (error) {
-    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "ELOOP")) return false
-    throw error
-  } finally {
-    await currentHandle?.close()
-  }
 }
 
 function heartbeatLease(fileHandle: FileHandle, token: string, leaseMs: number, removeOwned: () => Promise<void>, displayPath: string, automaticHeartbeat: boolean): LeaseHandle {
@@ -433,9 +407,17 @@ function heartbeatLease(fileHandle: FileHandle, token: string, leaseMs: number, 
       stopped = true
       if (interval) clearInterval(interval)
       await heartbeat?.catch(() => undefined)
+      await expireLease(fileHandle, token)
       await removeOwned()
     },
   }
+}
+
+async function expireLease(fileHandle: FileHandle, token: string): Promise<void> {
+  const owner = await readOwnerFromHandle(fileHandle)
+  if (owner?.token !== token) return
+  const now = new Date().toISOString()
+  await writeOwnerToHandle(fileHandle, { ...owner, heartbeatAt: now, expiresAt: new Date(0).toISOString() })
 }
 
 async function refreshLease(fileHandle: FileHandle, token: string, leaseMs: number): Promise<void> {
