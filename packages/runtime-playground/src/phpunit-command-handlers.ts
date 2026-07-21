@@ -59,6 +59,7 @@ interface PhpunitConfigDiscoveryPhpOptions {
   basePathExpression: string
   uniqueReturnValues: boolean
   replaceDefaultMatchers: boolean
+  allowMissingImplicitConfig: boolean
 }
 
 interface PhpunitChangedTestFilterPhpOptions {
@@ -76,6 +77,11 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
         if (is_readable($alternate)) {
             $xml_path = $alternate;
         }
+    }` : ""
+  const missingImplicitConfig = options.allowMissingImplicitConfig ? `
+    if (!is_readable($xml_path)) {
+        ${options.logFunction}('NOTICE:using managed PHPUnit discovery defaults; no implicit config found at ' . $xml_path);
+        return $return_values();
     }` : ""
   const directoryRestriction = options.restrictDirectoriesToTests ? `
         $normalized = trim(str_replace('\\\\', '/', $raw), '/');
@@ -99,7 +105,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     $files = array();
     $return_values = static function() use (&$directories, &$suffixes, &$prefixes, &$excludes, &$files) {
         return ${returnValues};
-    };${fallbackXmlDist}
+    };${fallbackXmlDist}${missingImplicitConfig}
     if (!is_readable($xml_path)) {
         throw new RuntimeException('PHPUnit config is not readable: ' . $xml_path);
     }
@@ -1208,6 +1214,7 @@ ${phpunitConfigDiscoveryPhp({
     basePathExpression: "dirname($xml_path)",
     uniqueReturnValues: false,
     replaceDefaultMatchers: true,
+    allowMissingImplicitConfig: options.phpunitXmlIsDefault,
   })}
 
 ${phpunitDiscoveryPhp("wp_codebox_phpunit_discover", "pg_log")}
@@ -1468,6 +1475,7 @@ ${phpunitConfigDiscoveryPhp({
     basePathExpression: "dirname($xml_path)",
     uniqueReturnValues: true,
     replaceDefaultMatchers: false,
+    allowMissingImplicitConfig: false,
   })}
 
 ${phpunitDiscoveryPhp("core_pg_discover_tests", "core_pg_log")}

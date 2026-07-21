@@ -97,6 +97,7 @@ function assert_phpunit_error($callback, $expected, $label) {
     }
     throw new RuntimeException($label . ' unexpectedly succeeded');
 }
+
 ${!supportsImplicitFallback ? `assert_phpunit_error(function() { ${functionName}(${phpString(explicitMissingXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config is not readable', 'explicit missing config');` : ""}
 assert_phpunit_error(function() { ${functionName}(${phpString(malformedXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config could not be parsed', 'malformed config');
 assert_phpunit_error(function() { ${discoveryFunctionName}(array(${phpString(join(tempDir, "missing-tests"))}), array('Test.php'), array('test-'), array()); }, 'configured PHPUnit test directory is not a readable directory', 'missing configured directory');
@@ -111,6 +112,27 @@ assert_phpunit_error(function() { ${functionName}(${phpString(defaultXml)}, ${ph
 echo "ok\n";
 `)
 
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
+function assertConfiglessPluginUsesManagedDiscovery(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-configless-plugin-"))
+  const testsDir = join(tempDir, "tests")
+  const testFile = join(testsDir, "ExampleTest.php")
+  const scriptPath = join(tempDir, "assert-configless-discovery.php")
+  mkdirSync(testsDir)
+  writeFileSync(testFile, "<?php final class ExampleTest extends WP_UnitTestCase {}\n")
+  writeFileSync(scriptPath, `<?php
+function pg_log($message) {}
+${extractPhpFunction(source, "wp_codebox_phpunit_parse_config")}
+${extractPhpFunction(source, "wp_codebox_phpunit_discover")}
+list($directories, $suffixes, $prefixes, $excludes, $files) = wp_codebox_phpunit_parse_config(${phpString(join(tempDir, "phpunit.xml.dist"))}, ${phpString(testsDir)});
+$discovered = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $files);
+if ($discovered !== array(${phpString(testFile)})) {
+    throw new RuntimeException('managed discovery did not find the configless plugin test: ' . json_encode($discovered));
+}
+echo "ok\n";
+`)
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
 }
 
@@ -437,6 +459,7 @@ const implicitProjectConfigCode = phpunitRunCode({
   projectBootstrap: "",
   multisite: false,
 })
+assertConfiglessPluginUsesManagedDiscovery(implicitProjectConfigCode)
 
 const bootIndex = projectModeCode.indexOf("$config_path = pg_run_boot_stage")
 const projectBootstrapIndex = projectModeCode.indexOf("pg_run_project_bootstrap_stage", bootIndex)
