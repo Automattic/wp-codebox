@@ -12,6 +12,7 @@ const fatalMuPlugin = join(root, "fatal-bootstrap.php")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
 const exitArtifactsPath = join(root, "exit-artifacts")
+const parseArtifactsPath = join(root, "parse-artifacts")
 
 try {
   await writeFile(fatalMuPlugin, `<?php\ntrigger_error('PHPUnit bootstrap fixture token: ${secret}', E_USER_ERROR);\n`)
@@ -65,6 +66,26 @@ try {
   const exitDiagnostic = await readFile(join(exitArtifactsPath, exitRuntimeDirectory, "files", "phpunit", ".pg-test-result.txt"), "utf8")
   assert.match(exitDiagnostic, /STAGE_DIE:bootstrap:PHPUnit bootstrap exit fixture token: \[redacted\]/)
   assert.doesNotMatch(exitDiagnostic, new RegExp(secret))
+
+  await writeFile(recipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    runtime: { backend: "wordpress-playground", wp: "6.5", blueprint: { steps: [] } },
+    inputs: { mounts: [] },
+    workflow: {
+      steps: [{ command: "wordpress.phpunit", args: ["plugin-slug=bootstrap-failure-fixture", "code=<?php function malformed("] }],
+    },
+  })}\n`)
+  const parseOutput = await runFailedRecipe(parseArtifactsPath)
+  assert.equal(parseOutput.success, false, JSON.stringify(parseOutput))
+  const parseMessage = parseOutput.error?.message ?? ""
+  assert.match(parseMessage, /wordpress\.phpunit structured diagnostics/)
+  assert.match(parseMessage, /ParseError/)
+
+  const parseLatest = JSON.parse(await readFile(join(parseArtifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+  const parseRuntimeDirectory = parseLatest.paths?.runtimeDirectory
+  assert.ok(parseRuntimeDirectory, "malformed recipe must retain a runtime artifact directory")
+  const parseDiagnostic = await readFile(join(parseArtifactsPath, parseRuntimeDirectory, "files", "phpunit", ".pg-test-result.txt"), "utf8")
+  assert.match(parseDiagnostic, /STAGE_FAIL:bootstrap:ParseError/)
 } finally {
   await rm(root, { recursive: true, force: true })
 }

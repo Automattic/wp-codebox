@@ -27,7 +27,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 
   const command = splitLeadingStrictTypesDeclare(code)
 
-  return `<?php
+  const bootstrapped = `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
 ${failureDiagnosticFile ? phpFailureDiagnosticFilePhp(failureDiagnosticFile) : ""}
 ${phpCliStreamConstants()}
@@ -43,6 +43,18 @@ ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCli
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${command.body}`
+
+  return failureDiagnosticFile ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
+}
+
+function phpFailureDiagnosticWrapperPhp(code: string, path: string): string {
+  return `<?php
+try {
+    eval('?>' . base64_decode(${JSON.stringify(Buffer.from(code, "utf8").toString("base64"))}));
+} catch (Throwable $wp_codebox_bootstrap_throwable) {
+    @file_put_contents(${JSON.stringify(path)}, 'STAGE_FAIL:bootstrap:' . get_class($wp_codebox_bootstrap_throwable) . ': ' . $wp_codebox_bootstrap_throwable->getMessage() . ' at ' . $wp_codebox_bootstrap_throwable->getFile() . ':' . $wp_codebox_bootstrap_throwable->getLine() . "\\n", FILE_APPEND);
+    throw $wp_codebox_bootstrap_throwable;
+}`
 }
 
 function phpFailureDiagnosticFilePhp(path: string): string {

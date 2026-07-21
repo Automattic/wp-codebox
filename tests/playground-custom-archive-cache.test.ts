@@ -145,6 +145,19 @@ try {
   await rm(staleSamePath.path)
   await rm(`${samePathArchive}.refs`, { recursive: true })
 
+  if (process.platform === "darwin" || process.platform === "freebsd") {
+    const replacedDirectoryArchive = await archive("custom-replaced-refs-directory.zip", 46, Date.now())
+    const replacedDirectoryReference = await acquirePlaygroundArchiveReference(replacedDirectoryArchive, {
+      heartbeat: false,
+      async releaseInterlock() {
+        await rm(`${replacedDirectoryArchive}.refs`, { recursive: true })
+        await mkdir(`${replacedDirectoryArchive}.refs`)
+      },
+    })
+    await assert.rejects(() => replacedDirectoryReference.release(), /sidecar changed while accessing/, "Darwin/FreeBSD pathname fallback must reject a replaced parent directory generation")
+    await rm(`${replacedDirectoryArchive}.refs`, { recursive: true })
+  }
+
   const replacedCandidate = await archive("custom-replaced-candidate.zip", 47, now - 100_000)
   let replaced = false
   const replacementResult = await maintainPlaygroundCustomArchiveCache(root, {
