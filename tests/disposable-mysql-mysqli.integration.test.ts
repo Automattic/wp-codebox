@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { runRecipe } from "../packages/cli/src/commands/recipe-run.ts"
+import { provisionRuntimeServices } from "../packages/cli/src/runtime-services.ts"
+import { executeBoundedRuntimePlan } from "../packages/runtime-core/src/index.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -65,6 +67,42 @@ if (!await dockerAvailable()) {
     })
     assert.equal(mariaDbResult.success, true)
     assert.equal(mariaDbResult.executions.at(-1)?.stdout.trim(), "1")
+
+    // The aggregate adapter models two PHPUnit invocations. They share the one
+    // MariaDB allocation but each receives its own database identity.
+    const allocation = await provisionRuntimeServices([{
+      id: "phpunit-mariadb",
+      kind: "mysql",
+      configuration: { engine: "mariadb", rootAuthentication: "empty-password" },
+      outputs: { host: "DB_HOST", port: "DB_PORT" },
+    }])
+    try {
+      const container = (await execFileAsync("docker", ["ps", "--filter", "name=wp-codebox-phpunit-mariadb", "--format", "{{.Names}}"], { timeout: 10_000 })).stdout.trim()
+      assert.equal(container.split("\n").filter(Boolean).length, 1, "two entries use one disposable MariaDB allocation")
+      const aggregate = await executeBoundedRuntimePlan({
+        schema: "wp-codebox/bounded-runtime-plan/v1",
+        concurrency: 2,
+        entries: [
+          { id: "phpunit-one", argv: ["phpunit", "--testsuite=one"], environment: { DB_NAME: "phpunit_one" }, processIdentity: "phpunit-one", artifactNamespace: "phpunit/one", inputIndex: 0 },
+          { id: "phpunit-two", argv: ["phpunit", "--testsuite=two"], environment: { DB_NAME: "phpunit_two" }, processIdentity: "phpunit-two", artifactNamespace: "phpunit/two", inputIndex: 1 },
+        ],
+      }, {
+        async materialize() { return { workspace: undefined, runtime: undefined } },
+        async startServices() { return allocation },
+        async execute({ entry }) {
+          const database = entry.environment?.DB_NAME
+          await execFileAsync("docker", ["exec", container, "mariadb", "-uroot", "-e", `CREATE DATABASE \`${database}\`; CREATE TABLE \`${database}\`.entry_identity (id INT);`], { timeout: 30_000 })
+          return { success: true, exitCode: 0 }
+        },
+        async stopServices() {},
+        async dispose() {},
+      })
+      assert.equal(aggregate.success, true)
+      assert.deepEqual(aggregate.entries.map((entry) => entry.artifactNamespace), ["phpunit/one", "phpunit/two"])
+      assert.deepEqual(aggregate.entries.map((entry) => entry.inputIndex), [0, 1])
+    } finally {
+      await allocation.release()
+    }
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })

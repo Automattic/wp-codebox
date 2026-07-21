@@ -35,6 +35,22 @@ Use these package entrypoints from external integrations:
   runtime backend packages that need to compose Codebox lifecycle/preload PHP.
 - `@automattic/wp-codebox-core/recipe-builders`: typed recipe construction
   helpers.
+- `executeBoundedRuntimePlan()` from `@automattic/wp-codebox-core/public`:
+  generic aggregate execution for hosts that materialize one workspace/runtime,
+  start disposable services once, and run multiple commands at bounded
+  concurrency. It accepts `wp-codebox/bounded-runtime-plan/v1`; every entry has
+  `argv`, string-only environment overrides, a per-entry timeout, process
+  identity, safe artifact namespace, and input index. Results use
+  `wp-codebox/bounded-runtime-plan-result/v1` in input order. The adapter owns
+  runtime-specific execution, while Codebox guarantees one materialize/start and
+  one stop/dispose lifecycle. Set `failFast: true` to cancel not-yet-started
+  entries, and use `retryBoundedRuntimePlan(plan, priorResult)` to select only
+  failed, timed-out, or cancelled entries. Environment values are passed only to
+  the adapter and never copied into result or artifact DTOs; hosts must retain
+  their existing secret-redaction and reviewer-safe artifact policies. On
+  timeout, the adapter receives an aborted signal and must settle its execution
+  promise after the underlying process terminates; the scheduler retains that
+  entry's concurrency slot until settlement before admitting another entry.
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
   helpers.
 - `@automattic/wp-codebox-core/runtime-presets`: runtime preset registry helpers.
