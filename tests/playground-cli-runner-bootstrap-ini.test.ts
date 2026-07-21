@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -64,32 +64,45 @@ try {
   await server[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]["mount-before-install"]?.length, 2)
-  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared")
+  assert.equal(calls[0]["mount-before-install"]?.length, 6)
+  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared/php.ini")
+  assert.equal(calls[0]["mount-before-install"]?.[1]?.vfsPath, "/internal/shared/wp-codebox-auto-prepend.php")
+  assert.equal(calls[0]["mount-before-install"]?.[2]?.vfsPath, "/internal/wp-codebox")
+  assert.match(calls[0]["mount-before-install"]?.[3]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
   // A wordpress-develop checkout is the runtime root, not an ordinary post-startup mount.
-  assert.deepEqual(calls[0]["mount-before-install"]?.[1], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
+  assert.equal(calls[0]["mount-before-install"]?.[4]?.vfsPath, "/wordpress/wp-config.php")
+  assert.deepEqual(calls[0]["mount-before-install"]?.[5], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
-  assert.equal(calls[0]["db-engine"], "mysql")
-  assert.equal(calls[0]["db-host"], "127.0.0.1:33061")
-  assert.equal(calls[0]["db-user"], "runtime")
-  assert.equal(calls[0]["db-pass"], "secret")
-  assert.equal(calls[0]["db-name"], "runtime")
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
-  const sharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
-  assert.equal(typeof sharedMount, "string")
-  const sharedPhpIni = await readFile(join(sharedMount as string, "php.ini"), "utf8")
+  const sharedPhpIniPath = calls[0]["mount-before-install"]?.[0]?.hostPath
+  const sharedAutoPrependPath = calls[0]["mount-before-install"]?.[1]?.hostPath
+  assert.equal(typeof sharedPhpIniPath, "string")
+  assert.equal(typeof sharedAutoPrependPath, "string")
+  const sharedPhpIni = await readFile(sharedPhpIniPath as string, "utf8")
   assert.match(sharedPhpIni, /opcache\.file_cache = \/tmp\/opcache/)
   // The runtime default memory ceiling stays high enough for collect_artifacts to
   // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
   assert.match(sharedPhpIni, /memory_limit=512M/)
-  assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.equal((await stat(join(sharedMount as string, "mu-plugins"))).isDirectory(), true)
-  assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
+  assert.match(sharedPhpIni, /auto_prepend_file=\/internal\/shared\/wp-codebox-auto-prepend\.php/)
+  const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
+  assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
+  assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
+  const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
+  assert.equal(typeof requestWorkerPath, "string")
+  const requestWorker = await readFile(requestWorkerPath as string, "utf8")
+  assert.match(requestWorker, /HTTP_X_WP_CODEBOX_EXECUTION_TOKEN/)
+  assert.match(requestWorker, /hash_equals/)
+  assert.match(requestWorker, /\$_ENV\[\$wp_codebox_name\] = \$wp_codebox_value/)
+  const externalWpConfigPath = calls[0]["mount-before-install"]?.[4]?.hostPath
+  assert.equal(typeof externalWpConfigPath, "string")
+  const externalWpConfig = await readFile(externalWpConfigPath as string, "utf8")
+  assert.match(externalWpConfig, /define\('DB_HOST', "127\.0\.0\.1:33061"\)/)
+  assert.match(externalWpConfig, /define\('DB_PASSWORD', "secret"\)/)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {
@@ -121,7 +134,9 @@ try {
   await downloadedWordPressServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]["mount-before-install"], undefined)
+  assert.equal(calls[0]["mount-before-install"]?.length, 2)
+  assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/wp-codebox")
+  assert.match(calls[0]["mount-before-install"]?.[1]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
   assert.equal(calls[0].wordpressInstallMode, undefined)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(downloadedWordPressSpec), false)
 
@@ -144,9 +159,9 @@ try {
   await distributionOnlyServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  const distributionSharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
-  assert.equal(typeof distributionSharedMount, "string")
-  const distributionAutoPrepend = await readFile(join(distributionSharedMount as string, "auto_prepend_file.php"), "utf8")
+  const distributionAutoPrependPath = calls[0]["mount-before-install"]?.[1]?.hostPath
+  assert.equal(typeof distributionAutoPrependPath, "string")
+  const distributionAutoPrepend = await readFile(distributionAutoPrependPath as string, "utf8")
   assert.match(distributionAutoPrepend, /putenv\("WPCOM_BRANCH=feature\/example"\);/)
   assert.match(distributionAutoPrepend, /putenv\("FEATURE_ENABLED=true"\);/)
   assert.match(distributionAutoPrepend, /putenv\("EMPTY_VALUE="\);/)

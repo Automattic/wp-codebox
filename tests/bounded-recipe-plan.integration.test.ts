@@ -13,8 +13,8 @@ const plan = {
   schema: "wp-codebox/bounded-runtime-plan/v1",
   concurrency: 2,
   entries: [
-    { id: "one", argv: ["wordpress.run-php", "code=usleep(20000); echo getenv('DB_INDEX');"], environment: { DB_INDEX: "db-one" }, timeoutMs: 30_000, processIdentity: "one", artifactNamespace: "entries/one", inputIndex: 0 },
-    { id: "two", argv: ["wordpress.run-php", "code=echo getenv('DB_INDEX');"], environment: { DB_INDEX: "db-two" }, timeoutMs: 30_000, processIdentity: "two", artifactNamespace: "entries/two", inputIndex: 1 },
+    { id: "one", argv: ["wordpress.run-php", "bootstrap=none", "code=usleep(20000); echo getenv('DB_INDEX');"], environment: { DB_INDEX: "db-one" }, timeoutMs: 30_000, processIdentity: "one", artifactNamespace: "entries/one", inputIndex: 0 },
+    { id: "two", argv: ["wordpress.run-php", "bootstrap=none", "code=echo getenv('DB_INDEX');"], environment: { DB_INDEX: "db-two" }, timeoutMs: 30_000, processIdentity: "two", artifactNamespace: "entries/two", inputIndex: 1 },
   ],
 }
 

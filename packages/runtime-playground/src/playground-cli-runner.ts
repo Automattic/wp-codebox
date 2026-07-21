@@ -3,7 +3,7 @@ import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./play
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
 import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
-import { randomInt } from "node:crypto"
+import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
@@ -12,7 +12,7 @@ import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
-import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
@@ -78,8 +78,15 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
+    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
+      route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
+      token: randomBytes(32).toString("base64url"),
+      payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
+    }
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
     const stagedMounts = readonlyMountStaging.mounts
+    const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
+    const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
@@ -115,7 +122,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
       const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
-      const bootstrapSharedMount = await pluginRuntimeBootstrapSharedMount(spec)
+      const bootstrapSharedMounts = await pluginRuntimeBootstrapSharedMounts(spec, requestWorkerEndpoint)
       try {
         return await runCLI({
           command: "server",
@@ -125,14 +132,15 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           skipBrowser: true,
           workers: 6,
           mount: [
-            ...stagedMounts.map((mount) => ({
+            ...postinstallMounts.map((mount) => ({
               hostPath: mount.source,
               vfsPath: mount.target,
             })),
           ],
-          ...(wordpressDirectory || bootstrapSharedMount ? {
+          ...(wordpressDirectory || bootstrapSharedMounts.length > 0 || preinstallMounts.length > 0 ? {
             "mount-before-install": [
-              ...(bootstrapSharedMount ? [bootstrapSharedMount] : []),
+              ...bootstrapSharedMounts,
+              ...preinstallMounts.map((mount) => ({ hostPath: mount.source, vfsPath: mount.target })),
               ...(wordpressDirectory ? [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }] : []),
             ],
           } : {}),
@@ -140,7 +148,6 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
           skipSqliteSetup: spec.environment.databaseSetup === "external",
-          ...externalDatabaseCliOptions(spec),
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           "site-url": spec.preview?.siteUrl,
@@ -157,7 +164,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
@@ -273,20 +280,65 @@ export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, o
     && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
 
-async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string } | undefined> {
+async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, requestWorkerEndpoint?: { route: string; token: string; payloadDirectory: string }): Promise<Array<{ hostPath: string; vfsPath: string }>> {
   const iniEntries = runtimeBootstrapPhpIniEntries(spec)
-  if (!iniEntries) {
-    return undefined
+  if (!iniEntries && !requestWorkerEndpoint) {
+    return []
   }
 
   const directory = join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared")
   await mkdir(directory, { recursive: true })
-  await mkdir(join(directory, "mu-plugins"), { recursive: true })
-  await mkdir(join(directory, "preload"), { recursive: true })
-  await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
-  await writeFile(join(directory, "auto_prepend_file.php"), runtimeAutoPrependPhp(spec), "utf8")
+  if (iniEntries) {
+    await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
+    await writeFile(join(directory, "wp-codebox-auto-prepend.php"), runtimeAutoPrependPhp(spec), "utf8")
+  }
+  if (requestWorkerEndpoint) await writeFile(join(directory, "request-worker.php"), requestWorkerPhp(requestWorkerEndpoint.token), "utf8")
+  const externalWpConfig = externalDatabaseWpConfig(spec)
+  if (externalWpConfig) await writeFile(join(directory, "wp-config.php"), externalWpConfig, "utf8")
 
-  return { hostPath: directory, vfsPath: "/internal/shared" }
+  return [
+    ...(iniEntries ? [
+      { hostPath: join(directory, "php.ini"), vfsPath: "/internal/shared/php.ini" },
+      { hostPath: join(directory, "wp-codebox-auto-prepend.php"), vfsPath: "/internal/shared/wp-codebox-auto-prepend.php" },
+    ] : []),
+    ...(requestWorkerEndpoint ? [
+      { hostPath: directory, vfsPath: "/internal/wp-codebox" },
+      { hostPath: join(directory, "request-worker.php"), vfsPath: `/wordpress${requestWorkerEndpoint.route}` },
+    ] : []),
+    ...(externalWpConfig ? [{ hostPath: join(directory, "wp-config.php"), vfsPath: "/wordpress/wp-config.php" }] : []),
+  ]
+}
+
+function requestWorkerPhp(token: string): string {
+  return `<?php
+if (!hash_equals(${phpLiteral(token)}, (string) ($_SERVER['HTTP_X_WP_CODEBOX_EXECUTION_TOKEN'] ?? ''))) {
+    http_response_code(404);
+    exit;
+}
+$wp_codebox_payload_id = (string) ($_SERVER['HTTP_X_WP_CODEBOX_EXECUTION_PAYLOAD'] ?? '');
+if (!preg_match('/^[a-f0-9]{32}$/', $wp_codebox_payload_id)) {
+    http_response_code(400);
+    exit;
+}
+$wp_codebox_payload = json_decode((string) file_get_contents('/internal/wp-codebox/execution-' . $wp_codebox_payload_id . '.json'), true);
+$wp_codebox_code = $wp_codebox_payload['code'] ?? null;
+$wp_codebox_environment = $wp_codebox_payload['environment'] ?? null;
+if (!is_string($wp_codebox_code) || !is_array($wp_codebox_environment)) {
+    http_response_code(400);
+    echo 'invalid execution payload';
+    exit;
+}
+foreach ($wp_codebox_environment as $wp_codebox_name => $wp_codebox_value) {
+    if (!is_string($wp_codebox_name) || !is_string($wp_codebox_value)) {
+        http_response_code(400);
+        exit;
+    }
+    putenv($wp_codebox_name . '=' . $wp_codebox_value);
+    $_ENV[$wp_codebox_name] = $wp_codebox_value;
+    $_SERVER[$wp_codebox_name] = $wp_codebox_value;
+}
+eval('?>' . $wp_codebox_code);
+`
 }
 
 function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
@@ -333,7 +385,7 @@ function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "b
 
 function phpIniContent(entries: Record<string, string>): string {
   const lines = [
-    "auto_prepend_file=/internal/shared/auto_prepend_file.php",
+    "auto_prepend_file=/internal/shared/wp-codebox-auto-prepend.php",
     // Runtime memory ceiling for all in-sandbox PHP, including artifact
     // collection. The collect_artifacts phase reads declared/typed artifacts and
     // runtime snapshot files into memory and base64-encodes them
@@ -369,7 +421,7 @@ function phpIniContent(entries: Record<string, string>): string {
 }
 
 function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
-  return `<?php\n${runtimeAutoPrependPhpBody(spec)}`
+  return `<?php\nrequire_once '/internal/shared/auto_prepend_file.php';\n${runtimeAutoPrependPhpBody(spec)}`
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
@@ -377,18 +429,28 @@ function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
   return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
 }
 
-function externalDatabaseCliOptions(spec: RuntimeCreateSpec): Record<string, string> {
-  if (spec.environment.databaseSetup !== "external") return {}
+function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
+  if (spec.environment.databaseSetup !== "external") return undefined
   const host = spec.runtimeEnv?.DB_HOST
-  if (!host) return {}
+  if (!host) return undefined
   const port = spec.runtimeEnv?.DB_PORT
-  return {
-    "db-engine": "mysql",
-    "db-host": port ? `${host}:${port}` : host,
-    "db-user": spec.runtimeEnv?.DB_USER ?? "root",
-    "db-pass": spec.runtimeEnv?.DB_PASSWORD ?? "",
-    "db-name": spec.runtimeEnv?.DB_NAME ?? "runtime",
+  const values = {
+    DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
+    DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
+    DB_PASSWORD: spec.runtimeEnv?.DB_PASSWORD ?? "",
+    DB_HOST: port ? `${host}:${port}` : host,
   }
+  return `<?php
+define('DB_NAME', ${phpLiteral(values.DB_NAME)});
+define('DB_USER', ${phpLiteral(values.DB_USER)});
+define('DB_PASSWORD', ${phpLiteral(values.DB_PASSWORD)});
+define('DB_HOST', ${phpLiteral(values.DB_HOST)});
+define('DB_CHARSET', 'utf8mb4');
+define('DB_COLLATE', '');
+$table_prefix = 'wp_';
+if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
+require_once ABSPATH . 'wp-settings.php';
+`
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

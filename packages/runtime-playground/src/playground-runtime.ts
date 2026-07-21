@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
@@ -251,6 +251,8 @@ class PlaygroundRuntime implements Runtime {
   private cliServerPromise?: Promise<PlaygroundCliServer>
   private readonly activeExecutionAbortControllers = new Set<AbortController>()
   private readonly executionSignals = new AsyncLocalStorage<AbortSignal>()
+  private readonly requestWorkerExecutions = new AsyncLocalStorage<Record<string, string>>()
+  private requestWorkerReady?: Promise<void>
   private reviewerAuthBootstrapRouteRegistered = false
   private readonly reviewerAuthBootstraps = new Map<string, ReviewerAuthBootstrapRecord>()
 
@@ -363,7 +365,9 @@ class PlaygroundRuntime implements Runtime {
     this.activeExecutionAbortControllers.add(abortController)
     try {
       const executionSpec = executionSpecWithEnvironment(spec)
-      const output = await this.executionSignals.run(abortController.signal, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
+      const output = await this.executionSignals.run(abortController.signal, async () => spec.processIdentity
+        ? await this.requestWorkerExecutions.run(spec.environment ?? {}, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
+        : await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
       const finishedAt = now()
       const envelope = typeof output === "string"
         ? runtimeCommandResultEnvelopeFromOutput({
@@ -1765,6 +1769,12 @@ class PlaygroundRuntime implements Runtime {
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
     try {
+      const requestWorkerEnvironment = this.requestWorkerExecutions.getStore()
+      if (requestWorkerEnvironment && "code" in options && server.requestWorkerEndpoint) {
+        await this.prepareRequestWorker(server)
+        const response = await this.executeRequestWorker(server, options.code, requestWorkerEnvironment, this.executionSignals.getStore())
+        return { text: response.text, exitCode: response.ok ? 0 : 1, ...(!response.ok ? { errors: response.text } : {}) }
+      }
       return await abortable(server.playground.run(options), this.executionSignals.getStore())
     } catch (error) {
       const payload = "code" in options ? options.code : options.scriptPath
@@ -1773,6 +1783,36 @@ class PlaygroundRuntime implements Runtime {
         payloadBytes: Buffer.byteLength(payload, "utf8"),
         runtimeUrl: server.serverUrl,
       })
+    }
+  }
+
+  private async prepareRequestWorker(server: PlaygroundCliServer): Promise<void> {
+    if (!server.requestWorkerEndpoint) return
+    this.requestWorkerReady ??= (async () => {
+      const response = await this.executeRequestWorker(server, "<?php echo 'ready';", {})
+      if (!response.ok || response.text !== "ready") throw new Error(`Playground request worker warmup failed with HTTP ${response.status}: ${response.text}`)
+    })()
+    await this.requestWorkerReady
+  }
+
+  private async executeRequestWorker(server: PlaygroundCliServer, code: string, environment: Record<string, string>, signal?: AbortSignal): Promise<{ ok: boolean; status: number; text: string }> {
+    const endpoint = server.requestWorkerEndpoint
+    if (!endpoint) throw new Error("Playground request worker endpoint is unavailable.")
+    const payloadId = randomBytes(16).toString("hex")
+    const payloadPath = join(endpoint.payloadDirectory, `execution-${payloadId}.json`)
+    await writeFile(payloadPath, JSON.stringify({ code, environment }), "utf8")
+    try {
+      const response = await fetch(new URL(endpoint.route, server.serverUrl), {
+        method: "POST",
+        headers: {
+          "X-WP-Codebox-Execution-Token": endpoint.token,
+          "X-WP-Codebox-Execution-Payload": payloadId,
+        },
+        signal,
+      })
+      return { ok: response.ok, status: response.status, text: await response.text() }
+    } finally {
+      await unlink(payloadPath).catch(() => undefined)
     }
   }
 

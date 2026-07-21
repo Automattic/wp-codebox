@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -76,7 +76,8 @@ if (!await dockerAvailable()) {
     await execFileAsync("composer", ["install", "--no-interaction", "--prefer-dist"], { cwd: harness, timeout: 300_000, maxBuffer: 2 * 1024 * 1024 })
     await mkdir(join(plugin, "tests"), { recursive: true })
     await writeFile(join(plugin, "bounded-phpunit-fixture.php"), "<?php\n/** Plugin Name: Bounded PHPUnit Fixture */\n")
-    await writeFile(join(plugin, "phpunit.xml"), "<?xml version=\"1.0\"?><phpunit><testsuites><testsuite name=\"bounded\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
+    await writeFile(join(plugin, "phpunit.xml"), "<?xml version=\"1.0\"?><phpunit bootstrap=\"tests/bootstrap.php\"><testsuites><testsuite name=\"bounded\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
+    await writeFile(join(plugin, "tests", "bootstrap.php"), "<?php\n")
     await writeFile(join(plugin, "tests", "BoundedMariaDbTest.php"), `<?php
 final class BoundedMariaDbTest extends PHPUnit\\Framework\\TestCase {
     public function test_database_identity(): void {
@@ -135,7 +136,11 @@ require_once ABSPATH . 'wp-settings.php';
     }]
     await writeFile(boundedRecipePath, `${JSON.stringify(boundedRecipe)}\n`)
     const boundedResult = await runRecipe({ recipePath: boundedRecipePath, artifactsDirectory: boundedArtifacts, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
-    assert.equal(boundedResult.success, true, JSON.stringify(boundedResult))
+    const boundedDiagnostics = await Promise.all(["one", "two"].flatMap((identity) => ["stdout.txt", "stderr.txt", "result.json"].map(async (file) => {
+      const path = join(boundedArtifacts, "phpunit", identity, file)
+      try { return `${path}:\n${await readFile(path, "utf8")}` } catch { return `${path}: unavailable` }
+    })))
+    assert.equal(boundedResult.success, true, `${JSON.stringify(boundedResult)}\n${boundedDiagnostics.join("\n")}`)
     const boundedExecution = boundedResult.executions.find((execution) => execution.command === "wp-codebox.bounded-runtime-plan")
     const aggregate = JSON.parse(boundedExecution?.stdout ?? "{}")
     assert.deepEqual(aggregate.counts, { total: 2, succeeded: 2, failed: 0, timedOut: 0, cancelled: 0 })

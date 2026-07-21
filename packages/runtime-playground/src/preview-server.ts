@@ -16,6 +16,7 @@ export interface PlaygroundCliServer {
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
+  requestWorkerEndpoint?: { route: string; token: string; payloadDirectory: string }
   previewLease?: PreviewLease
   previewRoutes?: PlaygroundPreviewRouteRegistry
   previewProxyDiagnostics?: PlaygroundPreviewProxyDiagnostics
