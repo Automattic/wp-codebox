@@ -396,14 +396,14 @@ function playgroundOutputDiagnostic(raw: string): string {
   if (fatal) {
     const rawBytes = Buffer.byteLength(text, "utf8")
     const decodedSuffix = decoded ? ` Decoded from serialized response bytes (${rawBytes} bytes).` : ""
-    return `${fatal}\n[Raw Playground output omitted from normal error output.${decodedSuffix} Inspect the thrown PlaygroundCommandError response for full diagnostics.]`
+    return redactDiagnosticText(`${fatal}\n[Raw Playground output omitted from normal error output.${decodedSuffix} Inspect the thrown PlaygroundCommandError response for full diagnostics.]`)
   }
 
   if (decoded) {
-    return `${truncateDiagnostic(decoded) ?? ""}\n[Raw serialized response bytes omitted from normal error output. Inspect the thrown PlaygroundCommandError response for full diagnostics.]`
+    return redactDiagnosticText(`${truncateDiagnostic(decoded) ?? ""}\n[Raw serialized response bytes omitted from normal error output. Inspect the thrown PlaygroundCommandError response for full diagnostics.]`)
   }
 
-  return truncateDiagnostic(text) ?? ""
+  return redactDiagnosticText(truncateDiagnostic(text) ?? "")
 }
 
 function phpFatalSummary(text: string): string | undefined {
