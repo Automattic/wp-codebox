@@ -42,7 +42,7 @@ if (!await dockerAvailable()) {
       summary: false,
       dryRun: false,
     })
-    assert.equal(result.success, true)
+    assert.equal(result.success, true, JSON.stringify(result))
     assert.equal(result.executions.at(-1)?.stdout.trim(), "1")
 
     const mariaDbRecipePath = join(directory, "mariadb-recipe.json")
@@ -64,7 +64,7 @@ if (!await dockerAvailable()) {
       summary: false,
       dryRun: false,
     })
-    assert.equal(mariaDbResult.success, true)
+    assert.equal(mariaDbResult.success, true, JSON.stringify(mariaDbResult))
     assert.equal(mariaDbResult.executions.at(-1)?.stdout.trim(), "1")
 
     const harness = join(directory, "phpunit-harness")
