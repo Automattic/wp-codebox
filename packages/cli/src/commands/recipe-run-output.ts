@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises"
-import type { RecipeRunSummary, RuntimeRunRecord } from "@automattic/wp-codebox-core"
+import type { ExecutionResult, RecipeRunSummary, RuntimeRunRecord } from "@automattic/wp-codebox-core"
+import { boundedExecutionResultsForArtifacts } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "../output.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
@@ -95,7 +96,14 @@ function hasTerminalRecipePhaseFailure(output: RecipeRunOutput): boolean {
 }
 
 export async function writeRecipeJsonOutput(output: unknown): Promise<void> {
-  await writeStdout(`${JSON.stringify(output, null, 2)}\n`)
+  await writeStdout(`${JSON.stringify(boundedRecipeJsonOutput(output), null, 2)}\n`)
+}
+
+export function boundedRecipeJsonOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return output
+  const record = output as Record<string, unknown>
+  if (!Array.isArray(record.executions)) return output
+  return { ...record, executions: boundedExecutionResultsForArtifacts(record.executions as ExecutionResult[]) }
 }
 
 export async function writeRecipeSummaryHumanOutput(summary: RecipeRunSummary): Promise<void> {

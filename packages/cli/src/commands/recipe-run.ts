@@ -327,7 +327,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
-      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -350,7 +350,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     const recipeFailure = strictFailure ?? agentFailure ?? verifyFailure
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
-      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
