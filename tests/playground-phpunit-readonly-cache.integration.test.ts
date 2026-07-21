@@ -62,13 +62,14 @@ async function writeFixture(): Promise<void> {
   await mkdir(join(plugin, "tests"), { recursive: true })
   await mkdir(dependency, { recursive: true })
   await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\n")
+  await writeFile(join(plugin, "phpunit.xml.dist"), "<?xml version=\"1.0\"?><phpunit><testsuites><testsuite name=\"readonly\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
   await writeFile(join(plugin, "source-sentinel.bin"), sentinel)
   await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_multisite_runtime_is_active(): void { $this->assertTrue(is_multisite()); } public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } public function test_dependency_activation_runs_after_install(): void { $this->assertGreaterThanOrEqual(1, get_option(\'wp_codebox_dependency_activation_users\')); } public function test_dependency_plugins_loaded_runs_once(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_dependency_plugins_loaded_count\')); } public function test_wp_cli_namespaced_stdout_is_available(): void { $this->assertTrue(eval(\'namespace cli; return is_resource(STDOUT);\')); } }\n")
   await writeFile(join(dependency, "activation-dependency.php"), "<?php\n/**\n * Plugin Name: Activation Dependency\n */\nadd_action('plugins_loaded', static function (): void { update_option('wp_codebox_dependency_plugins_loaded_count', (int) get_option('wp_codebox_dependency_plugins_loaded_count', 0) + 1); });\nregister_activation_hook(__FILE__, static function (): void { update_option('wp_codebox_dependency_activation_users', count(get_users(array('number' => 1)))); });\n")
 }
 
 async function digestTree(directory: string): Promise<string> {
-  const files = ["readonly-phpunit-fixture.php", "source-sentinel.bin", "tests/ReadonlyCacheTest.php"]
+  const files = ["readonly-phpunit-fixture.php", "phpunit.xml.dist", "source-sentinel.bin", "tests/ReadonlyCacheTest.php"]
   const hash = createHash("sha256")
   for (const file of files) {
     hash.update(file)
