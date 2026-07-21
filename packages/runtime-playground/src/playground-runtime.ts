@@ -1765,7 +1765,12 @@ class PlaygroundRuntime implements Runtime {
     try {
       return await abortable(server.playground.run(options), this.activeExecutionSignal)
     } catch (error) {
-      throw new PlaygroundCommandCrashError(command, error)
+      const payload = "code" in options ? options.code : options.scriptPath
+      throw new PlaygroundCommandCrashError(command, error, {
+        operation: "code" in options ? "code" : "script",
+        payloadBytes: Buffer.byteLength(payload, "utf8"),
+        runtimeUrl: server.serverUrl,
+      })
     }
   }
 

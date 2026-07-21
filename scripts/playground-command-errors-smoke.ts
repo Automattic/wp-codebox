@@ -188,6 +188,76 @@ await assert.rejects(
 assert.match(receivedRunPhpCode, /RuntimeException/)
 await runtime.destroy()
 
+const phpunitFailureCliModule: PlaygroundCliModule = {
+  runCLI: async () => ({
+    serverUrl: "http://127.0.0.1:9401",
+    playground: {
+      run: async () => ({
+        exitCode: 1,
+        errors: "PHP Fatal error: PHPUnit bootstrap fixture failed in /wordpress/wp-content/plugins/demo/tests/bootstrap.php on line 12",
+        text: "PHPUnit bootstrap fixture output",
+      }),
+    },
+    [Symbol.asyncDispose]: async () => undefined,
+  }),
+}
+
+const phpunitFailureRuntime = await createRuntime({
+  backend: "wordpress-playground",
+  environment: { kind: "wordpress", name: "phpunit-bootstrap-failure", version: "7.0", blueprint: { steps: [] } },
+  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.phpunit"], secrets: "none", approvals: "never" },
+}, createPlaygroundRuntimeBackend({ cliModule: phpunitFailureCliModule }))
+
+await assert.rejects(
+  () => phpunitFailureRuntime.execute({ command: "wordpress.phpunit", args: ["plugin-slug=demo"] }),
+  (error) => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /failureClassification=runtime-command-failure/)
+    assert.match(error.message, /PHP fatal: PHPUnit bootstrap fixture failed/)
+    assert.match(error.message, /PHPUnit bootstrap fixture output/)
+    return true
+  },
+)
+await phpunitFailureRuntime.destroy()
+
+const comlinkFailure = new Error("Comlink method call failed")
+comlinkFailure.name = "ComlinkMethodError"
+comlinkFailure.stack = "ComlinkMethodError: Comlink method call failed\n    at worker.run (worker.js:42:7) token=worker-secret"
+const workerFailureCliModule: PlaygroundCliModule = {
+  runCLI: async () => ({
+    serverUrl: "http://127.0.0.1:9402",
+    playground: {
+      run: async () => { throw comlinkFailure },
+      readFileAsText: async () => "STAGE_FATAL:project_bootstrap:PHPUnit bootstrap fixture failed at /wordpress/wp-content/plugins/demo/tests/bootstrap.php:12\n",
+    },
+    [Symbol.asyncDispose]: async () => undefined,
+  }),
+}
+
+const workerFailureRuntime = await createRuntime({
+  backend: "wordpress-playground",
+  environment: { kind: "wordpress", name: "phpunit-worker-failure", version: "7.0", blueprint: { steps: [] } },
+  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.phpunit"], secrets: "none", approvals: "never" },
+}, createPlaygroundRuntimeBackend({ cliModule: workerFailureCliModule }))
+
+await assert.rejects(
+  () => workerFailureRuntime.execute({ command: "wordpress.phpunit", args: ["plugin-slug=demo"] }),
+  (error) => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /failureClassification=runtime-worker-failure/)
+    assert.match(error.message, /name=ComlinkMethodError/)
+    assert.match(error.message, /message=Comlink method call failed/)
+    assert.match(error.message, /worker\.run/)
+    assert.match(error.message, /operation=code/)
+    assert.match(error.message, /runtimeUrl=http:\/\/127\.0\.0\.1:\d+/)
+    assert.match(error.message, /wordpress\.phpunit structured diagnostics/)
+    assert.match(error.message, /PHPUnit bootstrap fixture failed/)
+    assert.doesNotMatch(error.message, /worker-secret/)
+    return true
+  },
+)
+await workerFailureRuntime.destroy()
+
 const bootstrappedRunPhp = bootstrapPhpCode({ kind: "wordpress", name: "fatal-diagnostic", version: "7.0", blueprint: { steps: [] } }, "throw new RuntimeException('boom');", [])
 assert.match(bootstrappedRunPhp, /register_shutdown_function/)
 assert.match(bootstrappedRunPhp, /WP_CODEBOX_PHP_FATAL_DIAGNOSTIC/)
