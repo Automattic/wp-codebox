@@ -1,4 +1,4 @@
-import { isSensitiveKey } from "@automattic/wp-codebox-core"
+import { isSensitiveKey, redactString } from "@automattic/wp-codebox-core"
 import { errorMessage, parseJsonObject } from "@automattic/wp-codebox-core/internals"
 
 export { errorMessage }
@@ -19,8 +19,17 @@ export interface PlaygroundCliBufferedOutput {
   truncated?: boolean
 }
 
+export interface PlaygroundCommandRequestMetadata {
+  operation: "code" | "script"
+  payloadBytes: number
+  runtimeUrl?: string
+}
+
+export type PlaygroundFailureClassification = "runtime-command-failure" | "runtime-worker-failure"
+
 export class PlaygroundCommandError extends Error {
   readonly code = "wp-codebox-playground-command-failed"
+  readonly failureClassification: PlaygroundFailureClassification = "runtime-command-failure"
 
   constructor(readonly command: string, readonly response: PlaygroundRunResponse) {
     super(playgroundFailureMessage(command, response))
@@ -30,9 +39,10 @@ export class PlaygroundCommandError extends Error {
 
 export class PlaygroundCommandCrashError extends Error {
   readonly code = "wp-codebox-playground-command-crashed"
+  readonly failureClassification: PlaygroundFailureClassification = "runtime-worker-failure"
 
-  constructor(readonly command: string, readonly cause: unknown) {
-    super(playgroundCrashMessage(command, cause))
+  constructor(readonly command: string, readonly cause: unknown, readonly request?: PlaygroundCommandRequestMetadata) {
+    super(playgroundCrashMessage(command, cause, request))
     this.name = "PlaygroundCommandCrashError"
   }
 }
@@ -90,8 +100,24 @@ export function extractPhpunitFailureMessage(log: string): string | undefined {
   return messages.join(" | ")
 }
 
+/**
+ * Keep a PHP-side diagnostics file alongside, rather than in place of, the
+ * original command or worker failure. Consumers commonly serialize only the
+ * Error message, so this makes both boundaries available to them.
+ */
+export function attachPlaygroundDiagnostics(error: unknown, label: string, diagnostics: string): Error {
+  const source = error instanceof Error ? error : new Error(errorMessage(error))
+  const detail = truncateDiagnostic(redactDiagnosticText(diagnostics.trim()))
+  if (!detail || source.message.includes(`--- ${label} ---`)) {
+    return source
+  }
+
+  source.message = `${source.message}\n\n--- ${label} ---\n${detail}`
+  return source
+}
+
 function playgroundFailureMessage(command: string, response: PlaygroundRunResponse): string {
-  const lines = [`${command} failed with exit code ${response.exitCode ?? "unknown"}`]
+  const lines = [`${command} failed with exit code ${response.exitCode ?? "unknown"}`, "failureClassification=runtime-command-failure"]
   const diagnostics = playgroundResponseDiagnostics(response)
 
   if (diagnostics.length > 0) {
@@ -136,8 +162,15 @@ function playgroundResponseDiagnostics(response: PlaygroundRunResponse): string[
   return [...metadata, ...sections]
 }
 
-function playgroundCrashMessage(command: string, cause: unknown): string {
-  const lines = [`${command} crashed before producing a structured response`, "", errorMessage(cause)]
+function playgroundCrashMessage(command: string, cause: unknown, request?: PlaygroundCommandRequestMetadata): string {
+  const lines = [`${command} crashed before producing a structured response`, "failureClassification=runtime-worker-failure", "", redactDiagnosticText(errorMessage(cause))]
+  const worker = workerErrorDiagnostics(cause)
+  if (worker.length > 0) {
+    lines.push("", "--- Playground worker error ---", ...worker)
+  }
+  if (request) {
+    lines.push("", "--- Playground request metadata ---", `operation=${request.operation}`, `payloadBytes=${request.payloadBytes}`, ...(request.runtimeUrl ? [`runtimeUrl=${redactDiagnosticText(request.runtimeUrl)}`] : []))
+  }
   const diagnostics = playgroundCrashDiagnostics(cause)
 
   if (diagnostics.length > 0) {
@@ -145,6 +178,29 @@ function playgroundCrashMessage(command: string, cause: unknown): string {
   }
 
   return lines.join("\n")
+}
+
+function workerErrorDiagnostics(cause: unknown): string[] {
+  if (!(cause instanceof Error)) {
+    return []
+  }
+
+  const lines = [`name=${cause.name || "Error"}`, `message=${redactDiagnosticText(cause.message)}`]
+  const stack = typeof cause.stack === "string" ? truncateDiagnostic(redactDiagnosticText(cause.stack.trim())) : undefined
+  if (stack) {
+    lines.push("stack:", stack)
+  }
+  return lines
+}
+
+function redactDiagnosticText(value: string): string {
+  const exitStatuses: string[] = []
+  const protectedValue = value.replace(/\bexit code (\d+)\b/gi, (_match, exitCode: string) => {
+    const index = exitStatuses.push(exitCode) - 1
+    return `exit status WP_CODEBOX_EXIT_STATUS_${index}`
+  })
+  const redacted = redactString(protectedValue, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+  return redacted.replace(/exit status WP_CODEBOX_EXIT_STATUS_(\d+)/g, (_match, index: string) => `exit code ${exitStatuses[Number(index)] ?? "unknown"}`)
 }
 
 function playgroundCrashDiagnostics(cause: unknown): string[] {

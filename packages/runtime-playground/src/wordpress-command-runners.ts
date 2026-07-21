@@ -50,7 +50,7 @@ import {
   themeSetupInputFromArgs,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
-import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -946,7 +946,7 @@ export async function runPhpunitCommand({
     await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
     const structured = await readPluginPhpunitDiagnostic(server, resultFile)
     if (structured) {
-      throw new Error(`wordpress.phpunit could not run: ${structured}`)
+      throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
     }
     throw error
   }
@@ -1002,7 +1002,7 @@ export async function runCorePhpunitCommand({
     await persistCorePhpunitResult(server, resultFile, artifactRoot)
     const structured = await readCorePhpunitDiagnostic(server, resultFile)
     if (structured) {
-      throw new Error(`wordpress.core-phpunit could not run: ${structured}`)
+      throw attachPlaygroundDiagnostics(error, "wordpress.core-phpunit structured diagnostics", structured)
     }
     throw error
   }
