@@ -2,9 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { decodeZip } from "@php-wasm/stream-compression"
 import { isWordPressRuntimeFile, summarizeWordPressRuntimeCorpus, type WordPressArchiveEntry } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
+import { WORDPRESS_RUNTIME_MAX_FILES, WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
-const MAX_RUNTIME_CORPUS_BYTES = 32 * 1024 * 1024
 
 test("WordPress production runtime corpus stays within the Worker materialization budget", async () => {
   const entries: WordPressArchiveEntry[] = []
@@ -38,5 +38,6 @@ test("WordPress production runtime corpus stays within the Worker materializatio
   }))
   assert.ok(entries.some((entry) => entry.path === "wordpress/wp-includes/version.php"), "Archive is missing wp-includes/version.php.")
   assert.ok(corpus.selectedFiles > 0, "WordPress archive did not yield a runtime corpus.")
-  assert.ok(corpus.selectedBytes <= MAX_RUNTIME_CORPUS_BYTES, `Selected ${corpus.selectedBytes} bytes exceeds the ${MAX_RUNTIME_CORPUS_BYTES}-byte runtime corpus budget.`)
+  assert.ok(corpus.selectedFiles <= WORDPRESS_RUNTIME_MAX_FILES, `Selected ${corpus.selectedFiles} files exceeds the ${WORDPRESS_RUNTIME_MAX_FILES}-file runtime corpus budget.`)
+  assert.ok(corpus.selectedBytes <= WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES, `Selected ${corpus.selectedBytes} bytes exceeds the ${WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES}-byte runtime corpus budget.`)
 })

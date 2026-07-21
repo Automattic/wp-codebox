@@ -161,6 +161,7 @@ async function secretsMatch(left: string, right: string): Promise<boolean> {
 async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate"): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
   let lease = await acquireLease(coordinator, request.url)
+  let runtime: Runtime | undefined
   let finalized = false
   try {
     if (!lease.pointer) {
@@ -170,7 +171,8 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       if (!lease.pointer || lease.pointer.revision !== bootstrapped.pointer.revision) throw new Error("Canonical bootstrap promotion was not observed by its next lease.")
       cacheRuntime(lease.pointer, bootstrapped)
     }
-    const runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    const mutatesCanonicalState = isMutation(request, route)
     let response: Response
     let canonicalChanges: MarkdownChanges | undefined
     if (route === "r2-mutate") {
@@ -180,11 +182,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     } else if (route === "health") {
       response = await health(runtime)
     } else {
-      if (isMutation(request, route)) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+      if (mutatesCanonicalState) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-      if (isMutation(request, route)) canonicalChanges = readCanonicalChanges(runtime.php)
+      if (mutatesCanonicalState) canonicalChanges = readCanonicalChanges(runtime.php)
     }
-    if (isMutation(request, route)) {
+    if (mutatesCanonicalState) {
       if (!canonicalChanges) throw new Error("Canonical mutation completed without an MDI change set.")
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
       await commitLease(coordinator, request.url, lease, next)
@@ -192,10 +194,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       await releaseLease(coordinator, request.url, lease)
     }
     finalized = true
-    await discardRuntime(runtime)
+    if (mutatesCanonicalState) await discardRuntime(runtime)
     return response
   } catch (error) {
     if (!finalized) await abortLease(coordinator, request.url, lease)
+    if (runtime) await discardRuntime(runtime)
     throw error
   }
 }

@@ -1,9 +1,9 @@
 {
   "schema": "wp-codebox/wordpress-runtime-artifact/v1",
-  "key": "runtime/wordpress/6fb95a94d5c06de7ddf35aba94cfc663d281ea500488e5c1206ec374f67a2173.zip",
+  "key": "runtime/wordpress/279477d490700affba70acc43055045878083358096249314fae4e163dc37502.zip",
   "archive": {
-    "sha256": "6fb95a94d5c06de7ddf35aba94cfc663d281ea500488e5c1206ec374f67a2173",
-    "size": 5658241
+    "sha256": "279477d490700affba70acc43055045878083358096249314fae4e163dc37502",
+    "size": 5798703
   },
   "source": {
     "url": "https://downloads.wordpress.org/release/wordpress-7.0.2.zip",
@@ -3077,9 +3077,19 @@
       "sha256": "c1e16410d9dc79b5d10e03e08d30d514bf287fd351b0a55e154f17d94388fcae"
     },
     {
+      "path": "wordpress/wp-includes/blocks/accordion-heading/style-rtl.min.css",
+      "size": 753,
+      "sha256": "8dc20377e42412d142cc15aba7910c060ee2cd952ff7a08a7ed5fd31ec2290cc"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/accordion-heading/style.css",
       "size": 883,
       "sha256": "a7a23769f84f139b5f2b84ee716ff217760a1d816915ec94ae30c6a2813a70dc"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/accordion-heading/style.min.css",
+      "size": 753,
+      "sha256": "8dc20377e42412d142cc15aba7910c060ee2cd952ff7a08a7ed5fd31ec2290cc"
     },
     {
       "path": "wordpress/wp-includes/blocks/accordion-item.php",
@@ -3092,9 +3102,19 @@
       "sha256": "4343382a05fa00cad01d94bf94af936062edbf126634eba3c6a6e1ff36aa0847"
     },
     {
+      "path": "wordpress/wp-includes/blocks/accordion-item/style-rtl.min.css",
+      "size": 373,
+      "sha256": "bf1b9d24402a73b2f5f7cedf075d6483c0eb954d301866fe8269de0699fa560b"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/accordion-item/style.css",
       "size": 518,
       "sha256": "9ef016b8b75a286b71f67c00fc5d643442b92b1bc31d86f57ca9cec710030c80"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/accordion-item/style.min.css",
+      "size": 372,
+      "sha256": "7cd741776a642088c53b29ac0fe810b2a2c31316fe6ada5a35a8e9c8b50f6ce9"
     },
     {
       "path": "wordpress/wp-includes/blocks/accordion-panel/block.json",
@@ -3102,9 +3122,19 @@
       "sha256": "360df412acb5b595f359c29455b485c82ae3f29fb55ed4276189f5b487da0d24"
     },
     {
+      "path": "wordpress/wp-includes/blocks/accordion-panel/style-rtl.min.css",
+      "size": 111,
+      "sha256": "4f932c154716a0972ac0d90e720c028b7a6a315df8e441bf25bb959d07f0ef07"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/accordion-panel/style.css",
       "size": 123,
       "sha256": "f037519fb0b84e529070cec8678c6be0b058ed429d2a746d0c3e2cec4be01501"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/accordion-panel/style.min.css",
+      "size": 111,
+      "sha256": "4f932c154716a0972ac0d90e720c028b7a6a315df8e441bf25bb959d07f0ef07"
     },
     {
       "path": "wordpress/wp-includes/blocks/accordion.php",
@@ -3117,9 +3147,19 @@
       "sha256": "dc6a77ce09c82d9a17cdbd739397484a98da57ef3ed4df3467486e42ea1fd9c7"
     },
     {
+      "path": "wordpress/wp-includes/blocks/accordion/style-rtl.min.css",
+      "size": 42,
+      "sha256": "40f0c19e711a931e789c74a99a2dba22b6f38a9aff8391501496b892f198b529"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/accordion/style.css",
       "size": 49,
       "sha256": "7282db043a7881206ee3ff55e440181b39548156287f7bd17d686fce4296b92f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/accordion/style.min.css",
+      "size": 42,
+      "sha256": "40f0c19e711a931e789c74a99a2dba22b6f38a9aff8391501496b892f198b529"
     },
     {
       "path": "wordpress/wp-includes/blocks/archives.php",
@@ -3132,9 +3172,19 @@
       "sha256": "2ef40a464f58a1b8c2db3bd26d2103dfc8aec9bec4d0a66b1e79f105fda1e957"
     },
     {
+      "path": "wordpress/wp-includes/blocks/archives/style-rtl.min.css",
+      "size": 89,
+      "sha256": "0ea955dcec5c9881fd17e07af6e525cf1eb1c5ec47569fa3f1b76d805e4503ba"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/archives/style.css",
       "size": 105,
       "sha256": "1e10558c6ca95a24bf9f3ee9c544d45a4953ddb4b121d1a10d5a863b0d3062e3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/archives/style.min.css",
+      "size": 89,
+      "sha256": "0ea955dcec5c9881fd17e07af6e525cf1eb1c5ec47569fa3f1b76d805e4503ba"
     },
     {
       "path": "wordpress/wp-includes/blocks/audio/block.json",
@@ -3142,9 +3192,39 @@
       "sha256": "c7dea3ffa058e20e43c5480fb98823c94f12b527689b89db4eadec73a596d60c"
     },
     {
+      "path": "wordpress/wp-includes/blocks/audio/editor-rtl.min.css",
+      "size": 215,
+      "sha256": "538cbfca5be48be6d1b8b816cb8e2933dd6c4e71a457b7452e2f88a7c7249d69"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/audio/editor.min.css",
+      "size": 213,
+      "sha256": "b985885fc95df16224a71e6e843a808c4576061d173aa9a1d2c3b60f42a0b88b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/audio/style-rtl.min.css",
+      "size": 156,
+      "sha256": "0cc2c5ae130d3214b5501fa21931378f73d42376a7afc9d6418335c2e1cca464"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/audio/style.css",
       "size": 1927,
       "sha256": "7da2a5ab63b861de257b720f77b4609ddbacfd39a03f4fb6e6544867b1fe1f01"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/audio/style.min.css",
+      "size": 156,
+      "sha256": "0cc2c5ae130d3214b5501fa21931378f73d42376a7afc9d6418335c2e1cca464"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/audio/theme-rtl.min.css",
+      "size": 176,
+      "sha256": "bdd319b8cf3b5c738590a593e97eae647011b9eb6e82d46ba7138dd3e1d8d218"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/audio/theme.min.css",
+      "size": 176,
+      "sha256": "bdd319b8cf3b5c738590a593e97eae647011b9eb6e82d46ba7138dd3e1d8d218"
     },
     {
       "path": "wordpress/wp-includes/blocks/avatar.php",
@@ -3157,9 +3237,29 @@
       "sha256": "a33fa4d59ed36493ef740032868db73f4d5de50733f49a84c1bfae41f18ad86a"
     },
     {
+      "path": "wordpress/wp-includes/blocks/avatar/editor-rtl.min.css",
+      "size": 119,
+      "sha256": "aa68aa13f74991eccd28d1684fc6201b26d44afb7551ecd3640a14de1596d5bb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/avatar/editor.min.css",
+      "size": 119,
+      "sha256": "aa68aa13f74991eccd28d1684fc6201b26d44afb7551ecd3640a14de1596d5bb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/avatar/style-rtl.min.css",
+      "size": 138,
+      "sha256": "3b4015272fe6385c2de8decabf50fcabdbde41a7dc471827b09e01c0df954270"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/avatar/style.css",
       "size": 170,
       "sha256": "55788a5518dee794a80ca8f0af7ad7de0e45973312536823905b6425a1e2f64f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/avatar/style.min.css",
+      "size": 138,
+      "sha256": "3b4015272fe6385c2de8decabf50fcabdbde41a7dc471827b09e01c0df954270"
     },
     {
       "path": "wordpress/wp-includes/blocks/block.php",
@@ -3187,9 +3287,19 @@
       "sha256": "376fd7ec4814fa13c6dc63f8befeab3b66e5a766577d825daa97b682feddc9b1"
     },
     {
+      "path": "wordpress/wp-includes/blocks/breadcrumbs/style-rtl.min.css",
+      "size": 344,
+      "sha256": "5b9cd66b0266d65e954ed26edea4c787b2450b7183673fd68d7fdc2d262ff4d3"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/breadcrumbs/style.css",
       "size": 453,
       "sha256": "641a6aab4c35378f103949a709e62295adca302aa911f953ff84525a2f071345"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/breadcrumbs/style.min.css",
+      "size": 344,
+      "sha256": "5b9cd66b0266d65e954ed26edea4c787b2450b7183673fd68d7fdc2d262ff4d3"
     },
     {
       "path": "wordpress/wp-includes/blocks/button.php",
@@ -3202,9 +3312,29 @@
       "sha256": "e865e767ce9f22c92648cb42e8c4de518cd30c8afa0a05e1ac3be5a8bb31577d"
     },
     {
+      "path": "wordpress/wp-includes/blocks/button/editor-rtl.min.css",
+      "size": 444,
+      "sha256": "16052e63bd543d16865efd3d68e904f943bbad650ebdb1b41ed4084fe827edef"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/button/editor.min.css",
+      "size": 444,
+      "sha256": "16052e63bd543d16865efd3d68e904f943bbad650ebdb1b41ed4084fe827edef"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/button/style-rtl.min.css",
+      "size": 2242,
+      "sha256": "851177307d166983e920351863ef364b2a016becb0dc103dac18da1da5d31565"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/button/style.css",
       "size": 2536,
       "sha256": "c7e252900f3f4fbeb86fe61a3dbc353a4ab822d8d12f778e8abbaa9e4b77f4b7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/button/style.min.css",
+      "size": 2242,
+      "sha256": "851177307d166983e920351863ef364b2a016becb0dc103dac18da1da5d31565"
     },
     {
       "path": "wordpress/wp-includes/blocks/buttons/block.json",
@@ -3212,9 +3342,29 @@
       "sha256": "c8d119c01a6e222271686923813ac537e6a57e8f25c4d884e39b70e0d8bf0c2a"
     },
     {
+      "path": "wordpress/wp-includes/blocks/buttons/editor-rtl.min.css",
+      "size": 1006,
+      "sha256": "9d81e12f90e13ab3b0b21e4525c2f2c826ac62b4ec38f2612309a4336ec66aaf"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/buttons/editor.min.css",
+      "size": 1006,
+      "sha256": "9d81e12f90e13ab3b0b21e4525c2f2c826ac62b4ec38f2612309a4336ec66aaf"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/buttons/style-rtl.min.css",
+      "size": 1395,
+      "sha256": "4bd8c4991f6811a65be67cffb8b0eb0240bc95c19d8ac0fdd11b9c5f02ade768"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/buttons/style.css",
       "size": 1734,
       "sha256": "4125178351ab6d5d5fa8c8c2aefb8852542cf9b37684aa8c0a11d039d58ab7d2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/buttons/style.min.css",
+      "size": 1395,
+      "sha256": "4bd8c4991f6811a65be67cffb8b0eb0240bc95c19d8ac0fdd11b9c5f02ade768"
     },
     {
       "path": "wordpress/wp-includes/blocks/calendar.php",
@@ -3227,9 +3377,19 @@
       "sha256": "714a902598f6e55269e6aef94f572a1f9d445c2e172a398b259415ae4526aea6"
     },
     {
+      "path": "wordpress/wp-includes/blocks/calendar/style-rtl.min.css",
+      "size": 661,
+      "sha256": "54bd056335a05d96008f31c456a3d97bac8d1fa66fc94045c5f965e606ce2460"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/calendar/style.css",
       "size": 770,
       "sha256": "b6b70363351519ccf5b7a50f0f2114d23118930a1d0e7d75bc58327cb0bfa33a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/calendar/style.min.css",
+      "size": 661,
+      "sha256": "54bd056335a05d96008f31c456a3d97bac8d1fa66fc94045c5f965e606ce2460"
     },
     {
       "path": "wordpress/wp-includes/blocks/categories.php",
@@ -3242,9 +3402,29 @@
       "sha256": "57cb1effb888c776747488f25061097fefe4081677fc79b9dcc077ea5e2cac92"
     },
     {
+      "path": "wordpress/wp-includes/blocks/categories/editor-rtl.min.css",
+      "size": 198,
+      "sha256": "1caef102647e07a852918ae297e5d13f8ffe8655d77fb719b8e7b7cbe5c745c7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/categories/editor.min.css",
+      "size": 196,
+      "sha256": "f7bc4be9d5e967607fccc8d7cf7156235ebb1a0ae7eb1bb71eb7ac68c9282602"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/categories/style-rtl.min.css",
+      "size": 318,
+      "sha256": "e2411202ed63373e74598d29441eafefdc96956814ac8bf926983a0959a05920"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/categories/style.css",
       "size": 479,
       "sha256": "89c1882329fdd85ed5bc4b7d918fa71603e0c68b9790ab6904310405cb5fda34"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/categories/style.min.css",
+      "size": 318,
+      "sha256": "e2411202ed63373e74598d29441eafefdc96956814ac8bf926983a0959a05920"
     },
     {
       "path": "wordpress/wp-includes/blocks/code/block.json",
@@ -3252,9 +3432,39 @@
       "sha256": "b09486298523a4d2299c92b266cf4b5592e54b9de1024c60477e47ebb5fa011d"
     },
     {
+      "path": "wordpress/wp-includes/blocks/code/editor-rtl.min.css",
+      "size": 36,
+      "sha256": "c6d993d8b4c142cd67b56e173650e6f856f8c578aa0c3e175715bc20a8b60418"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/code/editor.min.css",
+      "size": 36,
+      "sha256": "c6d993d8b4c142cd67b56e173650e6f856f8c578aa0c3e175715bc20a8b60418"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/code/style-rtl.min.css",
+      "size": 170,
+      "sha256": "48b8ce46aee1f7c02cf9e8382207efc1bd425a5f39ff0624d8cb7cac54152bc9"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/code/style.css",
       "size": 251,
       "sha256": "956a519062fac48120fbbc2aa64481f28ea9129d32fc094761ebcf182cf20a10"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/code/style.min.css",
+      "size": 170,
+      "sha256": "48b8ce46aee1f7c02cf9e8382207efc1bd425a5f39ff0624d8cb7cac54152bc9"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/code/theme-rtl.min.css",
+      "size": 116,
+      "sha256": "d4b2806986884389f20aa1fb54ab75d306051c9d0ad4b15ff4ab080972062765"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/code/theme.min.css",
+      "size": 116,
+      "sha256": "d4b2806986884389f20aa1fb54ab75d306051c9d0ad4b15ff4ab080972062765"
     },
     {
       "path": "wordpress/wp-includes/blocks/column/block.json",
@@ -3267,9 +3477,29 @@
       "sha256": "7d93c8f8643ce66aac6a4a4f883e98bbf48a205a06e6d39aa3ccd7704e9ce608"
     },
     {
+      "path": "wordpress/wp-includes/blocks/columns/editor-rtl.min.css",
+      "size": 139,
+      "sha256": "d234973f2af012144ddd1374a534e71d8789c130b6c4db26ed24b4fdfe0697b3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/columns/editor.min.css",
+      "size": 139,
+      "sha256": "d234973f2af012144ddd1374a534e71d8789c130b6c4db26ed24b4fdfe0697b3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/columns/style-rtl.min.css",
+      "size": 1584,
+      "sha256": "a86fcda3eac552f9b75e4fdf66424076b51dc4822ae9a7c124cbb515f7c30d96"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/columns/style.css",
       "size": 3649,
       "sha256": "a8aa7eeeea6aa93b4e93dc27dbd834692851fa5487d6e48d60ca567bf316f4e4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/columns/style.min.css",
+      "size": 1584,
+      "sha256": "a86fcda3eac552f9b75e4fdf66424076b51dc4822ae9a7c124cbb515f7c30d96"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-author-name.php",
@@ -3282,9 +3512,19 @@
       "sha256": "dd64754200ff448a1438a444e96204349321627dd9ce48288b7d01c63ad99b2b"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-author-name/style-rtl.min.css",
+      "size": 52,
+      "sha256": "b2e8ec3d074effca499a39b187003a0efa23c8d4f624791594ff6e7114febc98"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-author-name/style.css",
       "size": 59,
       "sha256": "3f21ab638df66e871cd971f3c79519bb44a106d14d12d74cbb7a9bb3099e0aeb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-author-name/style.min.css",
+      "size": 52,
+      "sha256": "b2e8ec3d074effca499a39b187003a0efa23c8d4f624791594ff6e7114febc98"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-content.php",
@@ -3297,9 +3537,19 @@
       "sha256": "76a358bf31e1ece76adc9a3495acbcc653340f53206310c5e499026c11fb979e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-content/style-rtl.min.css",
+      "size": 124,
+      "sha256": "c655d691efff7740069f2c6d31c5b48f432cc92217b9e0018f46ae16b4596a6b"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-content/style.css",
       "size": 149,
       "sha256": "59c3178a1a5263525975714af4886e8318d955bf4612a611ea75a35d11dde473"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-content/style.min.css",
+      "size": 124,
+      "sha256": "c655d691efff7740069f2c6d31c5b48f432cc92217b9e0018f46ae16b4596a6b"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-date.php",
@@ -3312,9 +3562,19 @@
       "sha256": "421cab4d6d6bf7c0925a2b192afd25b8b4aaab472e59354c78910eac98f78ef9"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-date/style-rtl.min.css",
+      "size": 45,
+      "sha256": "2324457499a12755a7413350e8b87373b9f12a33dd5c8ac612d13f560d9b8dfe"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-date/style.css",
       "size": 52,
       "sha256": "bb31f3c69fa418fe892f0039d90fae36e6046d0346cca3908ac0c13ae6882b2d"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-date/style.min.css",
+      "size": 45,
+      "sha256": "2324457499a12755a7413350e8b87373b9f12a33dd5c8ac612d13f560d9b8dfe"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-edit-link.php",
@@ -3327,9 +3587,19 @@
       "sha256": "6149b9801b1ee80e8e6043457fa0bb2e95cdf6ba35e3342a7e089115b68c1e58"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-edit-link/style-rtl.min.css",
+      "size": 50,
+      "sha256": "e41b4d737ec37677937903e9047d4adcac0bde3908369f51ad2414dbba906fa3"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-edit-link/style.css",
       "size": 57,
       "sha256": "fa5b8b36e43feb48da7e58ed1d9ccb447bc6d0934c5f95ec6e6b90b4e61cbe98"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-edit-link/style.min.css",
+      "size": 50,
+      "sha256": "e41b4d737ec37677937903e9047d4adcac0bde3908369f51ad2414dbba906fa3"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-reply-link.php",
@@ -3342,9 +3612,19 @@
       "sha256": "50ae3ce36e011f4f775c36ea570ecdf2088bf80dce0d7c9c172deb775693286f"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-reply-link/style-rtl.min.css",
+      "size": 51,
+      "sha256": "df5545d0b2d61333a2a3fc8c546092320d817d75762e758d8f85782b24272949"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-reply-link/style.css",
       "size": 58,
       "sha256": "a4b0205f164113f04bcbbd283f738b2f3a7613dd8543b6fed9c2c51b359ae4b4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-reply-link/style.min.css",
+      "size": 51,
+      "sha256": "df5545d0b2d61333a2a3fc8c546092320d817d75762e758d8f85782b24272949"
     },
     {
       "path": "wordpress/wp-includes/blocks/comment-template.php",
@@ -3357,9 +3637,19 @@
       "sha256": "860be0857f206676cf4a261b53b4aa8c81bacb1846bb32034748573aa7f781a1"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comment-template/style-rtl.min.css",
+      "size": 433,
+      "sha256": "9bff8f9155297e0c4ad4733d0b126b0bbf035a48b7023e7d5f323a5e53dd768d"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comment-template/style.css",
       "size": 515,
       "sha256": "94087a95e0e1d116a9927da11fef35c99fa0a07292071d8c35a73db8228e7377"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comment-template/style.min.css",
+      "size": 432,
+      "sha256": "b984e8d29d91f445f104545fbc69e3a16a7c5730582c0d898140f5558bf8781e"
     },
     {
       "path": "wordpress/wp-includes/blocks/comments-pagination-next.php",
@@ -3382,6 +3672,16 @@
       "sha256": "2f8fb03b8eabcc1627e1199c597cc98e3a29a7d940e227af75658bfcc55851b4"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comments-pagination-numbers/editor-rtl.min.css",
+      "size": 212,
+      "sha256": "ed869b3a186fc914b0154b297f42bee71ea1ca090aef06c9989713f9d4d6e5f6"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments-pagination-numbers/editor.min.css",
+      "size": 213,
+      "sha256": "203b9f9cf3d3c73aee8dab335fff52f23be669397a097fafe6ca3daacbf4e3f6"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comments-pagination-previous.php",
       "size": 1790,
       "sha256": "72f420661d76d9b3c31173f5b92931c5981edc1074ea41be42c10e4af7bfc7c0"
@@ -3402,9 +3702,29 @@
       "sha256": "bab20f184d9770cd46cb6827ccb409f17d8acaabef2bbdc88a7d74b3680f206e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comments-pagination/editor-rtl.min.css",
+      "size": 378,
+      "sha256": "5a1bd458cdff1e8badf095262c5b0d2ed1330b4d7fc4437c72c41832a85f36e4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments-pagination/editor.min.css",
+      "size": 378,
+      "sha256": "5a1bd458cdff1e8badf095262c5b0d2ed1330b4d7fc4437c72c41832a85f36e4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments-pagination/style-rtl.min.css",
+      "size": 740,
+      "sha256": "a65667e2b164bf124e74981eacb1bcda18f9ce7200d01e0805499239c7ccd83f"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comments-pagination/style.css",
       "size": 841,
       "sha256": "99240f8ea0cdf3ab264dbf0c23970a40cb1b4c96ad46ec3febe15a2e0b9e39a8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments-pagination/style.min.css",
+      "size": 738,
+      "sha256": "4f7b0e412d37040de997fff280435436600131585db5231841d66ef4c56f83f7"
     },
     {
       "path": "wordpress/wp-includes/blocks/comments-title.php",
@@ -3417,6 +3737,16 @@
       "sha256": "e847288c0ffd7294e5e59f93ebe014a703b6edc08337f0b3b60e84564f31e6e0"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comments-title/editor-rtl.min.css",
+      "size": 56,
+      "sha256": "f89e6620299843dabe1c8a4b47c01aee439e03b0c7f4c5a5204c99b90770e4b5"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments-title/editor.min.css",
+      "size": 56,
+      "sha256": "f89e6620299843dabe1c8a4b47c01aee439e03b0c7f4c5a5204c99b90770e4b5"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comments.php",
       "size": 6784,
       "sha256": "6df96404f63d9fee3523f586a3d629542c67d223c967e22272b6afb3b299ad2b"
@@ -3427,9 +3757,29 @@
       "sha256": "f169878850b95af5834d2522620f21beeb13c06124d45517e8cef5251a0aea36"
     },
     {
+      "path": "wordpress/wp-includes/blocks/comments/editor-rtl.min.css",
+      "size": 4460,
+      "sha256": "eda911c8c9703820a47a9fcc19a1ff82bbc71008df5be9a9260c2cefdf59a4aa"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments/editor.min.css",
+      "size": 4458,
+      "sha256": "5eafd2c141a9d40f9e44feca7ef2861befa1332be01abeaae9008c48d3738f71"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments/style-rtl.min.css",
+      "size": 2369,
+      "sha256": "72b4aa452eed908d0c42249ea52dcda2800aac8eecd3488a311b017b68c4e992"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/comments/style.css",
       "size": 2882,
       "sha256": "1dae5a6ac721ee55340aa269746185ca245984395026ec47c5956ef428474656"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/comments/style.min.css",
+      "size": 2367,
+      "sha256": "aeeb7827bb05ec150dc08b2350914dc1428805a70f9e1d46fafb5115bccfe235"
     },
     {
       "path": "wordpress/wp-includes/blocks/cover.php",
@@ -3442,9 +3792,29 @@
       "sha256": "b72e63a53251f35cc9d6bb048d2824109cd4e4a1f6212ba03b81291b1f3c6e2c"
     },
     {
+      "path": "wordpress/wp-includes/blocks/cover/editor-rtl.min.css",
+      "size": 1728,
+      "sha256": "212b5744001035d1b9eb3ea70cf26b94711c5289a36bcbbbc13eae1fba44ab54"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/cover/editor.min.css",
+      "size": 1726,
+      "sha256": "6a6088f3608085a59599b9adc173bf1b7f20ccb72eba1e3337cac7a4b8ecae35"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/cover/style-rtl.min.css",
+      "size": 20290,
+      "sha256": "f4b3506d47167e8b6adb9166df612ee070218be75f81ca983695c1c821ae9005"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/cover/style.css",
       "size": 22791,
       "sha256": "83076b1c83d5a153b7e78f0b09de8a0814870c0422fee85ee50b118637bde467"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/cover/style.min.css",
+      "size": 20262,
+      "sha256": "bd56a479237f7212eae3a46a3f0e9aeba7dff44dab300249a18fa24587fb63d0"
     },
     {
       "path": "wordpress/wp-includes/blocks/details.php",
@@ -3457,9 +3827,29 @@
       "sha256": "24232f6ff091aec0243e2da999ed1ee1ad8ad8d3fbb3d091cb0141e5cb80816f"
     },
     {
+      "path": "wordpress/wp-includes/blocks/details/editor-rtl.min.css",
+      "size": 45,
+      "sha256": "115c18071c4c04d3b8189118324df7f23fe7ca72411706aa39a3943495348f34"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/details/editor.min.css",
+      "size": 45,
+      "sha256": "115c18071c4c04d3b8189118324df7f23fe7ca72411706aa39a3943495348f34"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/details/style-rtl.min.css",
+      "size": 81,
+      "sha256": "b725e3774697bba8856599dd041eac8332c1caf46b5496cb403bd99acc875685"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/details/style.css",
       "size": 97,
       "sha256": "b6de946e5946f6c0b65a3fd2fbf0253cd8b58b713cbf3000cd630b48c39e9ff1"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/details/style.min.css",
+      "size": 81,
+      "sha256": "b725e3774697bba8856599dd041eac8332c1caf46b5496cb403bd99acc875685"
     },
     {
       "path": "wordpress/wp-includes/blocks/embed/block.json",
@@ -3467,9 +3857,39 @@
       "sha256": "adbe144e10b11413126fd6bd59337c124a081ef4da379715a1532c1ea4505b13"
     },
     {
+      "path": "wordpress/wp-includes/blocks/embed/editor-rtl.min.css",
+      "size": 707,
+      "sha256": "62ed1030f361f99cbe7a54551439e0b809519f52af4839cd415b18727d5335fa"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/embed/editor.min.css",
+      "size": 707,
+      "sha256": "62ed1030f361f99cbe7a54551439e0b809519f52af4839cd415b18727d5335fa"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/embed/style-rtl.min.css",
+      "size": 1667,
+      "sha256": "2329e4c9102a51ac33e48ee6ce4087c4f8367de2d3f8400d9825d5296b6aaa8a"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/embed/style.css",
       "size": 3618,
       "sha256": "10aac666cfe9be0692e7cb14e1178b86902d93350c66dce6092eb24755a6c8f6"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/embed/style.min.css",
+      "size": 1667,
+      "sha256": "2329e4c9102a51ac33e48ee6ce4087c4f8367de2d3f8400d9825d5296b6aaa8a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/embed/theme-rtl.min.css",
+      "size": 176,
+      "sha256": "61feb06a0b8e5b72d231389dbe8f99e05f19998d85541ff126e71ae0c0b9ef14"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/embed/theme.min.css",
+      "size": 176,
+      "sha256": "61feb06a0b8e5b72d231389dbe8f99e05f19998d85541ff126e71ae0c0b9ef14"
     },
     {
       "path": "wordpress/wp-includes/blocks/file.php",
@@ -3482,9 +3902,29 @@
       "sha256": "556a6d9380fa2de72ef6a8f4451b85aef249676fc8bb9d1c30db5e5addb98c53"
     },
     {
+      "path": "wordpress/wp-includes/blocks/file/editor-rtl.min.css",
+      "size": 763,
+      "sha256": "01cbb9b3830822a2828c733667a04644dc64b15fa1b5cac319ed143b7d51b60b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/file/editor.min.css",
+      "size": 762,
+      "sha256": "652620fa19f7942df4d74bca87d51e6fd7fc75f124d434c4d19946dfdedb728d"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/file/style-rtl.min.css",
+      "size": 655,
+      "sha256": "2e4bb54290332bcd9af8aa33c00a0b3b8994ecdebcc6aa00bc09bfdc3270e0a1"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/file/style.css",
       "size": 792,
       "sha256": "c73d18ee55e8bcbb3984fe4df039f2bf1dd4fdadaaa4bab36bb71cc19506648b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/file/style.min.css",
+      "size": 654,
+      "sha256": "06138a428bab20e366c5257157fde8555463a00744a451c67650efc663fb51dd"
     },
     {
       "path": "wordpress/wp-includes/blocks/footnotes.php",
@@ -3497,14 +3937,34 @@
       "sha256": "2604dfb4b47045dd94edf3396b47401c6e6f0e7feba9067a220610975230a4e4"
     },
     {
+      "path": "wordpress/wp-includes/blocks/footnotes/style-rtl.min.css",
+      "size": 288,
+      "sha256": "d0d52c680f80debec7cf118999e1d57f3a0cccae97828b17cf887ff0d35320a1"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/footnotes/style.css",
       "size": 342,
       "sha256": "352c94210682bf52d3630c4165fec4c589e9a5425374139eb7a8a6519e327f5f"
     },
     {
+      "path": "wordpress/wp-includes/blocks/footnotes/style.min.css",
+      "size": 287,
+      "sha256": "543eade00916013b2bbc1728e8a3899a4e50d5265f283a571475e2b8c6552065"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/freeform/block.json",
       "size": 519,
       "sha256": "f3b4aa36e4b63f9c435eff38b041edfd046faf8f12570ffd190f2ca6867d1372"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/freeform/editor-rtl.min.css",
+      "size": 909,
+      "sha256": "2fefe051bc4f775b64cfe82b7f3a1dd3cf76b10d56839478430a30a678bca6a7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/freeform/editor.min.css",
+      "size": 909,
+      "sha256": "2fefe051bc4f775b64cfe82b7f3a1dd3cf76b10d56839478430a30a678bca6a7"
     },
     {
       "path": "wordpress/wp-includes/blocks/gallery.php",
@@ -3517,9 +3977,39 @@
       "sha256": "a5c552d96d35e7e67f45bf076566bd38f4b9ab294f3e08cec0b7c4bd7491bb8c"
     },
     {
+      "path": "wordpress/wp-includes/blocks/gallery/editor-rtl.min.css",
+      "size": 2057,
+      "sha256": "09954d1796bd0fbe0e9dce3ad7b3da8fb14e42c20d48d2e70182e0dd662623b5"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/gallery/editor.min.css",
+      "size": 2057,
+      "sha256": "add74c8cd51fb141e9ddf0707160d8b4ae5636ea302354edbfc8fce8ee9823c8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/gallery/style-rtl.min.css",
+      "size": 16110,
+      "sha256": "2db7d891a18aef42f5678ef80ad161f358231f8b0e590afae3cd2b6bd3b88bae"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/gallery/style.css",
       "size": 19507,
       "sha256": "41b3026ece5754f41a87ce6e70f5548cf818453ac9159ab81c28a2eb05ba6b51"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/gallery/style.min.css",
+      "size": 16120,
+      "sha256": "58f503a45492e0720e4e4ca1f579603e29181989da3f72e256017f93a1217eb6"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/gallery/theme-rtl.min.css",
+      "size": 123,
+      "sha256": "0d92ddb05513c897042d202033d79d33463ed3201a4f15a494979bd8517a3ec9"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/gallery/theme.min.css",
+      "size": 123,
+      "sha256": "0d92ddb05513c897042d202033d79d33463ed3201a4f15a494979bd8517a3ec9"
     },
     {
       "path": "wordpress/wp-includes/blocks/group/block.json",
@@ -3527,9 +4017,39 @@
       "sha256": "b98ed4476f2f53248d3df4f718a006ddd011dbb62d2a996f87b19f148eaa9f00"
     },
     {
+      "path": "wordpress/wp-includes/blocks/group/editor-rtl.min.css",
+      "size": 1355,
+      "sha256": "c1602b8a3954159609bbbb5a3a0a6a590085d5ba74b6e6fe0f5a6463d3ac671a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/group/editor.min.css",
+      "size": 1355,
+      "sha256": "c1602b8a3954159609bbbb5a3a0a6a590085d5ba74b6e6fe0f5a6463d3ac671a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/group/style-rtl.min.css",
+      "size": 117,
+      "sha256": "628253f7b803c3e507e1189320a8c925ac718d5237c1f2c346a183ae02bbd6bb"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/group/style.css",
       "size": 133,
       "sha256": "16464a7cf2a3e7dbc446e5b48f4a555c66f3b27022fcaf6f5f147efe383236d0"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/group/style.min.css",
+      "size": 117,
+      "sha256": "628253f7b803c3e507e1189320a8c925ac718d5237c1f2c346a183ae02bbd6bb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/group/theme-rtl.min.css",
+      "size": 62,
+      "sha256": "7cdc95241dae1a12350e177473d07acbcce3f01149572f4698cf2e84ac80da1b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/group/theme.min.css",
+      "size": 62,
+      "sha256": "7cdc95241dae1a12350e177473d07acbcce3f01149572f4698cf2e84ac80da1b"
     },
     {
       "path": "wordpress/wp-includes/blocks/heading.php",
@@ -3542,9 +4062,19 @@
       "sha256": "de2b28fb6a00552e9c57cc03b0249cdaaf73d4da57bcc570c6a42f87fa59f06a"
     },
     {
+      "path": "wordpress/wp-includes/blocks/heading/style-rtl.min.css",
+      "size": 1165,
+      "sha256": "187c2a0a016f532b73a680d2ec1095537ee7c6a545833c6c244571fdf3c9f7c9"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/heading/style.css",
       "size": 1976,
       "sha256": "2a1ad02383103c53d74e2cadd9d1f273b87eef0424ae9b8398481254a6400501"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/heading/style.min.css",
+      "size": 1165,
+      "sha256": "187c2a0a016f532b73a680d2ec1095537ee7c6a545833c6c244571fdf3c9f7c9"
     },
     {
       "path": "wordpress/wp-includes/blocks/home-link.php",
@@ -3562,6 +4092,16 @@
       "sha256": "08d6b98694e200e999b60558156038cb96ac56b4ddd431ce5bfdbe5686c9c43e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/html/editor-rtl.min.css",
+      "size": 1043,
+      "sha256": "2ee7c42eca6728e1c399ac476ca230e171a5526dc4c503982f3a8895b4c6df14"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/html/editor.min.css",
+      "size": 1042,
+      "sha256": "5936f51d0cbd9eda090ee73a8b36f7ad7b3f7aaa0ebea61198200c9d6ee591d4"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/icon.php",
       "size": 4139,
       "sha256": "adcda24333ddcf14c6ed3a2ec2893bfcc193448ed05e63d5d7f25e74007a2f68"
@@ -3572,9 +4112,29 @@
       "sha256": "cbf6fa910e1e5690a188e6781d6c83b3f433c4ec74f7725064aaa672269deb64"
     },
     {
+      "path": "wordpress/wp-includes/blocks/icon/editor-rtl.min.css",
+      "size": 849,
+      "sha256": "5556d04213fce175d4fdee24e11003ff72482db3fc8860b4f87c26bc53e28729"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/icon/editor.min.css",
+      "size": 849,
+      "sha256": "5556d04213fce175d4fdee24e11003ff72482db3fc8860b4f87c26bc53e28729"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/icon/style-rtl.min.css",
+      "size": 201,
+      "sha256": "1e4c6ad9e021546aa1a75c8325532d1238cc2d3183aad5da3781b57362880dcc"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/icon/style.css",
       "size": 328,
       "sha256": "b49f67ec6e13ade10bb859a1a954723ce0455d58d69d4188e1bf4de982ba0999"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/icon/style.min.css",
+      "size": 201,
+      "sha256": "1e4c6ad9e021546aa1a75c8325532d1238cc2d3183aad5da3781b57362880dcc"
     },
     {
       "path": "wordpress/wp-includes/blocks/image.php",
@@ -3587,9 +4147,39 @@
       "sha256": "b93fbf057972409133d39259123a6a2694c65c2071bdc10a59a4be7847ef737e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/image/editor-rtl.min.css",
+      "size": 2313,
+      "sha256": "e0a0ad2e06d48a567fd07e7951c00955de4bcc527c0bb7f71500596158af7037"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/image/editor.min.css",
+      "size": 2313,
+      "sha256": "65b3475ab09bddf99629b48fa085eb3d19c736a818e148bbba47a5a638b64fc4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/image/style-rtl.min.css",
+      "size": 8794,
+      "sha256": "638bde21b34c96c32feee2168ff3abc5c48fbf0adbec7ecacc39a34911b2441e"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/image/style.css",
       "size": 12485,
       "sha256": "6d3a9dcc001736ed2e447e981ad97f1951e5083a5abb04e11a44f8cff847e109"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/image/style.min.css",
+      "size": 8784,
+      "sha256": "2417f96c8d21991a91de4cffd2c10836c5ff65e2ab367c2243cd02a258cb469b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/image/theme-rtl.min.css",
+      "size": 188,
+      "sha256": "1bded44fd9ce83d8626fa1e638456791df38df28767be04332a6ae82ef543e94"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/image/theme.min.css",
+      "size": 188,
+      "sha256": "1bded44fd9ce83d8626fa1e638456791df38df28767be04332a6ae82ef543e94"
     },
     {
       "path": "wordpress/wp-includes/blocks/index.php",
@@ -3607,9 +4197,19 @@
       "sha256": "b97f5ea91e130e88fb3d6affc14d3c2c2990d41fd2336f096c55bd5d6e9f7745"
     },
     {
+      "path": "wordpress/wp-includes/blocks/latest-comments/style-rtl.min.css",
+      "size": 1305,
+      "sha256": "3c9c8327f73d802b78f7d8f134b0a84bd308fdfc70aab99e8a9750ecbce88276"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/latest-comments/style.css",
       "size": 1454,
       "sha256": "ccacc36732e7a5b896f5e8408a857fb4171dfba86271cf3ecc8d8fe087fd4dc2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/latest-comments/style.min.css",
+      "size": 1302,
+      "sha256": "3a5a541b5946a8d213d206e3d7920ce6e293ebb336b8adaf563b35b82ebe234d"
     },
     {
       "path": "wordpress/wp-includes/blocks/latest-posts.php",
@@ -3622,9 +4222,29 @@
       "sha256": "d4829e6b82f35377378ee9448d504d46187b077d9ce15598d19d9f513132ff66"
     },
     {
+      "path": "wordpress/wp-includes/blocks/latest-posts/editor-rtl.min.css",
+      "size": 250,
+      "sha256": "0f80eaf97b93314675765e37c69efe1c06f4e7477173aea3b49cc53d954931cb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/latest-posts/editor.min.css",
+      "size": 248,
+      "sha256": "e029e81cbc9f19294cd208e11f9a57785318882bb2e6598d607cfbefc434e985"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/latest-posts/style-rtl.min.css",
+      "size": 1833,
+      "sha256": "0197009f6a71dc3e40a66309dff56de867c4f711d2b2057980bffaeaa7b418f5"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/latest-posts/style.css",
       "size": 4072,
       "sha256": "44b5cd8579c4c24ddbcb1a6830a9c3d4366f4099b4574235304c9bc1850dd1bc"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/latest-posts/style.min.css",
+      "size": 1837,
+      "sha256": "6b43473e0898e1d0809ead87010e7f8b5d032f8d3257b8205c61e342b7f63fa0"
     },
     {
       "path": "wordpress/wp-includes/blocks/legacy-widget.php",
@@ -3652,9 +4272,19 @@
       "sha256": "25ed613d2f8fa322a2d93e631641cc6f4cc9bb1837a74adbf6ecc450e8e659f6"
     },
     {
+      "path": "wordpress/wp-includes/blocks/list/style-rtl.min.css",
+      "size": 95,
+      "sha256": "942b2302016e4ef821e6ce7f339addb7a7b021f151c2132d1d6de54c849b3a34"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/list/style.css",
       "size": 892,
       "sha256": "d989fe25818d80ba8ade0c57d1fde3598db66204f62785cbcf2ba45c0862700f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/list/style.min.css",
+      "size": 95,
+      "sha256": "942b2302016e4ef821e6ce7f339addb7a7b021f151c2132d1d6de54c849b3a34"
     },
     {
       "path": "wordpress/wp-includes/blocks/loginout.php",
@@ -3667,9 +4297,19 @@
       "sha256": "6a7432bf153a2718d6fba527658857170ff15d6e6756e1516b027dc5fbeb21fc"
     },
     {
+      "path": "wordpress/wp-includes/blocks/loginout/style-rtl.min.css",
+      "size": 41,
+      "sha256": "79fc5403cb35199ba3f96d205abed9049556d12321c93ada5ae6e704a6d91e1b"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/loginout/style.css",
       "size": 48,
       "sha256": "40e1b3c2a16921b461cc51fa77c58a00e824903744073ce9a1077420b6ae9633"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/loginout/style.min.css",
+      "size": 41,
+      "sha256": "79fc5403cb35199ba3f96d205abed9049556d12321c93ada5ae6e704a6d91e1b"
     },
     {
       "path": "wordpress/wp-includes/blocks/math/block.json",
@@ -3677,9 +4317,29 @@
       "sha256": "a6014ac32c09c1d68f70be29adf67e3b7b689b308df8a17c54cebffa29546ccd"
     },
     {
+      "path": "wordpress/wp-includes/blocks/math/editor-rtl.min.css",
+      "size": 100,
+      "sha256": "7e21acb80fafa314f4efcd6be57fc54eafd3de1fcb642c03b4035ce73fb70387"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/math/editor.min.css",
+      "size": 100,
+      "sha256": "7e21acb80fafa314f4efcd6be57fc54eafd3de1fcb642c03b4035ce73fb70387"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/math/style-rtl.min.css",
+      "size": 49,
+      "sha256": "5aca1354d093f7bd74a9c251e9ba34933ee5ec3ce86d9b0469a4f1cce4f11c3c"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/math/style.css",
       "size": 60,
       "sha256": "15bcbf060ae81ad9c9a9d6a0acb997fa914c515c98ad885d00101143290f664b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/math/style.min.css",
+      "size": 49,
+      "sha256": "5aca1354d093f7bd74a9c251e9ba34933ee5ec3ce86d9b0469a4f1cce4f11c3c"
     },
     {
       "path": "wordpress/wp-includes/blocks/media-text.php",
@@ -3692,9 +4352,29 @@
       "sha256": "8bbf956f4de9717599dd21305cb4f0b717961cec075ba47c27b2f889d593dde8"
     },
     {
+      "path": "wordpress/wp-includes/blocks/media-text/editor-rtl.min.css",
+      "size": 853,
+      "sha256": "525ca0cdc862c1fdae74f6560b5d92ef2f31b4c15796db03697abcc262d6e12e"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/media-text/editor.min.css",
+      "size": 851,
+      "sha256": "b009b5ae7ee4ece83eebe703831745f197f08f7480bb221dd441f3fc30c1d17b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/media-text/style-rtl.min.css",
+      "size": 2415,
+      "sha256": "f2ebde07d5038707919bdb195e8bb6b80566f8d9e35f2d2e65e1743d84f858c7"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/media-text/style.css",
       "size": 3529,
       "sha256": "41f2006567e3d1194a50da59a37fd4dabfce2052c1bd26002bf53639ebafa9e3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/media-text/style.min.css",
+      "size": 2415,
+      "sha256": "246a123620ac962df698ae2b266e98edd0828ac1b86c8c2d6b7d72a61794dbfd"
     },
     {
       "path": "wordpress/wp-includes/blocks/missing/block.json",
@@ -3707,6 +4387,16 @@
       "sha256": "99f9231441fafa79bbb8b1e482cf47f17c18033e3cac013a07503d8009988121"
     },
     {
+      "path": "wordpress/wp-includes/blocks/more/editor-rtl.min.css",
+      "size": 611,
+      "sha256": "f27312a487a236efd5a324886005d309944e70c03dcb3edfac38f2c2ab1e102c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/more/editor.min.css",
+      "size": 611,
+      "sha256": "f27312a487a236efd5a324886005d309944e70c03dcb3edfac38f2c2ab1e102c"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/navigation-link.php",
       "size": 16405,
       "sha256": "92d2ee3755ecc4bc395e669d61a7320ac540c070f2a7374552ae0d02901e4ecb"
@@ -3715,6 +4405,16 @@
       "path": "wordpress/wp-includes/blocks/navigation-link/block.json",
       "size": 1812,
       "sha256": "a8914cbdd227ee91d158657ecc291c43a411fcfdeb34d4817afe84a262d829e1"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation-link/editor-rtl.min.css",
+      "size": 2314,
+      "sha256": "a9a2f332da0c1219fb372456b26c98da4385e73a6e8c09fd0d4a1663a0a32ead"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation-link/editor.min.css",
+      "size": 2313,
+      "sha256": "6515baef6839ca81c53cd48d8ce16c9ce4cc32e453d9d99583639512af031a53"
     },
     {
       "path": "wordpress/wp-includes/blocks/navigation-link/shared/item-should-render.php",
@@ -3727,9 +4427,19 @@
       "sha256": "f82783dc60953740dd1c36aec572f537e4a85742f3312a4c8d972d18d3826d79"
     },
     {
+      "path": "wordpress/wp-includes/blocks/navigation-link/style-rtl.min.css",
+      "size": 317,
+      "sha256": "8790836470e0b7b8f66e6f2e45ff81867b285684a63852e6b007659e1e190ee0"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/navigation-link/style.css",
       "size": 1146,
       "sha256": "2f6d2eb23297e0dba1dddd95c96dd64c1887747e76f2a6665a9579910a0b5431"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation-link/style.min.css",
+      "size": 316,
+      "sha256": "7dd7835ab92b90455b2e9aabb2fb0e2b55d2713198707588016bb8cecf9d8e17"
     },
     {
       "path": "wordpress/wp-includes/blocks/navigation-overlay-close.php",
@@ -3742,9 +4452,19 @@
       "sha256": "fc91fbbe5a06dfdb1d1ad3cabf060d59ee5a603b68ad917d8937959d2b39a7c5"
     },
     {
+      "path": "wordpress/wp-includes/blocks/navigation-overlay-close/style-rtl.min.css",
+      "size": 464,
+      "sha256": "7428052d984d06efb69e2c42b97fbd4616084df7fdda451d5165bc20d4104967"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/navigation-overlay-close/style.css",
       "size": 554,
       "sha256": "7acd0294355c4196bf0d5f1634044e06400ad112fba41879768cd60d911c6a34"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation-overlay-close/style.min.css",
+      "size": 464,
+      "sha256": "7428052d984d06efb69e2c42b97fbd4616084df7fdda451d5165bc20d4104967"
     },
     {
       "path": "wordpress/wp-includes/blocks/navigation-submenu.php",
@@ -3757,6 +4477,16 @@
       "sha256": "10788e7533cc449af6e817eb01cfbdac57bb0b5e959658f48bb042564552289a"
     },
     {
+      "path": "wordpress/wp-includes/blocks/navigation-submenu/editor-rtl.min.css",
+      "size": 1099,
+      "sha256": "e366d6d35919aebbb7add82c0d0e5a64b5124a0fd513fc5096cd108c4ac14c68"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation-submenu/editor.min.css",
+      "size": 1098,
+      "sha256": "9c8646e5f5b48b470cee0d2cfdea8cfa5120760a98d6d30049a51a5b6429aaad"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/navigation.php",
       "size": 64446,
       "sha256": "3401aa1bf4b2c21ca65ecbfab4a573f4e7b858c7a13cd1ee86ce14a21047ee11"
@@ -3767,14 +4497,44 @@
       "sha256": "df7eeaa48bddd4986a4b76cc8e3e85ad24b29d06dbaec9122d69cad6db2a57ad"
     },
     {
+      "path": "wordpress/wp-includes/blocks/navigation/editor-rtl.min.css",
+      "size": 11673,
+      "sha256": "224c906ad0f8e9cee80bf61b209353f288f208e5f5c175e72307ab225719e462"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation/editor.min.css",
+      "size": 11670,
+      "sha256": "e6cab1f73a57267d692636e158d4d32c0dee092c4e4985fcffe089198785c877"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/navigation/style-rtl.min.css",
+      "size": 20716,
+      "sha256": "43a7c90c5aba15bf4a9795a6c1cc278e99f24d71535b1a145d46ee3024c3218a"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/navigation/style.css",
       "size": 24623,
       "sha256": "1fbab5e859243cd1aa473124e829d79b5bfc14e0fead7c67626db9941e94be63"
     },
     {
+      "path": "wordpress/wp-includes/blocks/navigation/style.min.css",
+      "size": 20709,
+      "sha256": "8970a41c9eb07af6f38cde8079663efdec36fe89b9d71033b5e8686567107dea"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/nextpage/block.json",
       "size": 554,
       "sha256": "dffa28ec92eadcba753882479125249f163f95af1f541da72790e8c8017df1a2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/nextpage/editor-rtl.min.css",
+      "size": 592,
+      "sha256": "8352c7781e57d92b03339a36983dcd17fec06516c3922dc620f34ba68a4d1fdf"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/nextpage/editor.min.css",
+      "size": 592,
+      "sha256": "8352c7781e57d92b03339a36983dcd17fec06516c3922dc620f34ba68a4d1fdf"
     },
     {
       "path": "wordpress/wp-includes/blocks/page-list-item.php",
@@ -3797,9 +4557,29 @@
       "sha256": "267146092d9c9df8d89e4957e37a13bb00f74b0a949ba73097a6ca2145138319"
     },
     {
+      "path": "wordpress/wp-includes/blocks/page-list/editor-rtl.min.css",
+      "size": 1056,
+      "sha256": "1784e6cde1b5750b042ef0ae39511eec4f0eae4e1e8f18163d6dccf2393da258"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/page-list/editor.min.css",
+      "size": 1056,
+      "sha256": "1784e6cde1b5750b042ef0ae39511eec4f0eae4e1e8f18163d6dccf2393da258"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/page-list/style-rtl.min.css",
+      "size": 404,
+      "sha256": "6f1226725cfa6ddc35ef66475019751df23f156f1672e59b2a39eee4a7c300d8"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/page-list/style.css",
       "size": 452,
       "sha256": "983455af96b98b594c470eb940247da2a5f6fad60d284ab994590cc762f6562f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/page-list/style.min.css",
+      "size": 404,
+      "sha256": "6f1226725cfa6ddc35ef66475019751df23f156f1672e59b2a39eee4a7c300d8"
     },
     {
       "path": "wordpress/wp-includes/blocks/paragraph.php",
@@ -3812,9 +4592,29 @@
       "sha256": "70a5e1bc941b4adb1591dccbe8e1095ecbfd1f7baf6c2a7004d9f9c047d31c80"
     },
     {
+      "path": "wordpress/wp-includes/blocks/paragraph/editor-rtl.min.css",
+      "size": 798,
+      "sha256": "29500bcd5922c0718c22156c78540f680815521f3ac8c63740b656959f76de32"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/paragraph/editor.min.css",
+      "size": 797,
+      "sha256": "aa9c6ca6a67fdbe4f25b49e7972f76f88375c04f9532b16bdfd9631520293b6e"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/paragraph/style-rtl.min.css",
+      "size": 657,
+      "sha256": "10a3b473645eec27e17c37ff79e41fb055cfe42008719d687af53bf67e4b7d2d"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/paragraph/style.css",
       "size": 1562,
       "sha256": "f37a4910749fd26b4bdeae81449d6b5074078ac339fb18f7ced5a952d9b00cea"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/paragraph/style.min.css",
+      "size": 655,
+      "sha256": "622f970d122913e7a6707d8be35940b9417f061eb64b21c3bf1b01b76bfccd62"
     },
     {
       "path": "wordpress/wp-includes/blocks/pattern.php",
@@ -3837,9 +4637,19 @@
       "sha256": "3c4c84cdc86e978a90e2a019071fc770b77c9dc048fda11ee86f0e75d10e0658"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-author-biography/style-rtl.min.css",
+      "size": 54,
+      "sha256": "c3a97e8df90c0af1ad6d8678089bfb7944b3dcc977aab2d863ee160543eca527"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-author-biography/style.css",
       "size": 61,
       "sha256": "ab347926fa395caeaefd27a172edae49cdc647c0509fa423bc060476fd055a1f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-author-biography/style.min.css",
+      "size": 54,
+      "sha256": "c3a97e8df90c0af1ad6d8678089bfb7944b3dcc977aab2d863ee160543eca527"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-author-name.php",
@@ -3852,9 +4662,19 @@
       "sha256": "9d9606a5c3688d90c1113d0484f42bc939fd6ae4c7b15cc5645642a602ab6645"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-author-name/style-rtl.min.css",
+      "size": 49,
+      "sha256": "99d6d57e920928f90fdafecf5a90d93c3dca24dea4d323ae12b61bd2ddb977e9"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-author-name/style.css",
       "size": 56,
       "sha256": "bd38a1cb30550b25db4bc5cecdc715836bc3a80651966e3e0268e90e91d26dc6"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-author-name/style.min.css",
+      "size": 49,
+      "sha256": "99d6d57e920928f90fdafecf5a90d93c3dca24dea4d323ae12b61bd2ddb977e9"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-author.php",
@@ -3867,9 +4687,29 @@
       "sha256": "54e5e45b68a627fb2fd1eeea0225cb98084b66df122e025b8ee33271da905ba3"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-author/editor-rtl.min.css",
+      "size": 95,
+      "sha256": "31e8f5519b06c8e27633cae49d392be2618e9d1e8fc30c8a9901d770f42499ef"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-author/editor.min.css",
+      "size": 95,
+      "sha256": "31e8f5519b06c8e27633cae49d392be2618e9d1e8fc30c8a9901d770f42499ef"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-author/style-rtl.min.css",
+      "size": 357,
+      "sha256": "e36ab3540cb80f33c4f50fb6dd0534541f532c2fe3f2dc83c2ac5e310c3df652"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-author/style.css",
       "size": 436,
       "sha256": "29c743c6d57a11ba64d6b347bd8b4d696c29f38eaa1548d5410663a99716aac9"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-author/style.min.css",
+      "size": 358,
+      "sha256": "4b47d7b7f17933fcb057d0f09a00c98a836f1a7727c091d0f30d8626f58eb4ac"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-comments-count.php",
@@ -3882,9 +4722,19 @@
       "sha256": "1d189828d9c04786d60885e321939c19e6606356df7132eacd4c38317db8160e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-comments-count/style-rtl.min.css",
+      "size": 52,
+      "sha256": "473d5542e8302768c7affb3e4fa767fb2666a5ad64d8a2a19aceae033ea42dac"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-comments-count/style.css",
       "size": 59,
       "sha256": "ee2dc72a10a48bc6ccc1d7d4bb2e2d449c01cd082ffee6ab95eb9e6ef6011678"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-comments-count/style.min.css",
+      "size": 52,
+      "sha256": "473d5542e8302768c7affb3e4fa767fb2666a5ad64d8a2a19aceae033ea42dac"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-comments-form.php",
@@ -3897,9 +4747,29 @@
       "sha256": "c7b457d0ed2f01f98632dddf66936ac38826201396636c13feca75a7cb14c2f6"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-comments-form/editor-rtl.min.css",
+      "size": 124,
+      "sha256": "5c020575e1009b3bafe477f47c60d0bc523569ccf73a8fe114e9ef2730063859"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-comments-form/editor.min.css",
+      "size": 124,
+      "sha256": "5c020575e1009b3bafe477f47c60d0bc523569ccf73a8fe114e9ef2730063859"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-comments-form/style-rtl.min.css",
+      "size": 1992,
+      "sha256": "d2d6339687455805e3d5b66b9f5e5fa98c0637fcc1dfc6fb650e5e099a0a9142"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-comments-form/style.css",
       "size": 2234,
       "sha256": "127b185692bb444a67029469ea8d517b9b8c7f81d2d54d634a4e1788d39352ac"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-comments-form/style.min.css",
+      "size": 1991,
+      "sha256": "c83105fde6fa20f285ec2acdb14bf21062e78ac6b8b520864c79ca65909ab410"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-comments-link.php",
@@ -3912,9 +4782,19 @@
       "sha256": "57aa85ac73a92a5458c4d75e1cd504aeecce8f42227a010328cc1a204f308d97"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-comments-link/style-rtl.min.css",
+      "size": 51,
+      "sha256": "dd15d4270f4ec63259ce1ca86cfd79fd37811078e1b448e7d9d110ec92797cfc"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-comments-link/style.css",
       "size": 58,
       "sha256": "e74d4a8ed66f08eefa6f205ea57bd4042a148da12ad6819614d6152e73bbc1a7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-comments-link/style.min.css",
+      "size": 51,
+      "sha256": "dd15d4270f4ec63259ce1ca86cfd79fd37811078e1b448e7d9d110ec92797cfc"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-content.php",
@@ -3927,9 +4807,19 @@
       "sha256": "f2cde6429ca1c317319193594320b587b46b771507fd3cf4e5218ae9a3311645"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-content/style-rtl.min.css",
+      "size": 41,
+      "sha256": "5632fcbd1fa2fa2c20a2c160d11acdaf4d26a45c1478144671d75be2c69fe20c"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-content/style.css",
       "size": 48,
       "sha256": "4a95959fb196e41d1fbdcc7e21bace395eda401e928c2064e3751408fe324ba2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-content/style.min.css",
+      "size": 41,
+      "sha256": "5632fcbd1fa2fa2c20a2c160d11acdaf4d26a45c1478144671d75be2c69fe20c"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-date.php",
@@ -3942,9 +4832,19 @@
       "sha256": "03480b28239717509d7645055d0321e166330300ea70fa3e143bc25140b95585"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-date/style-rtl.min.css",
+      "size": 42,
+      "sha256": "d2fcacb015df3f08b4d661b068968206bb991fc6966f0176f1acd6d70c356e68"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-date/style.css",
       "size": 49,
       "sha256": "b242f6f5e2d87611434f2e96edc80421d57d7288b9a591df2380349caf80560a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-date/style.min.css",
+      "size": 42,
+      "sha256": "d2fcacb015df3f08b4d661b068968206bb991fc6966f0176f1acd6d70c356e68"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-excerpt.php",
@@ -3957,9 +4857,29 @@
       "sha256": "673589fb0c180a6307c17945ac01b656a019c7bdceba2becf20f468ac448d0de"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-excerpt/editor-rtl.min.css",
+      "size": 80,
+      "sha256": "f41e820e6860ec82ade4742af5842d07a6d959e362042deac9407ab35bc025a4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-excerpt/editor.min.css",
+      "size": 80,
+      "sha256": "f41e820e6860ec82ade4742af5842d07a6d959e362042deac9407ab35bc025a4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-excerpt/style-rtl.min.css",
+      "size": 339,
+      "sha256": "cd02424f179ba3c421371d8002dadc5290837f3f30b8b47904c48fe4c404d035"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-excerpt/style.css",
       "size": 389,
       "sha256": "1abd3ef89a38a5048b2ee79ee26a17c538b8906e81efaac73a9d1c10a251fdaa"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-excerpt/style.min.css",
+      "size": 339,
+      "sha256": "cd02424f179ba3c421371d8002dadc5290837f3f30b8b47904c48fe4c404d035"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-featured-image.php",
@@ -3972,9 +4892,29 @@
       "sha256": "fac721751b76cb27ca90823cf051a866c27c8ed63f0ec74fcba528dd4d32f197"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-featured-image/editor-rtl.min.css",
+      "size": 4936,
+      "sha256": "9e0147b8abb48183eaa66a34326c9313c83b2c8ea8e7a8f8673ef44ce1403d96"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-featured-image/editor.min.css",
+      "size": 4936,
+      "sha256": "e1c37d810d0f1112b2909517f01a05ef4f48a2617ce40480d27fb64f772824eb"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-featured-image/style-rtl.min.css",
+      "size": 1833,
+      "sha256": "24441594aa1e6b2016a479490c781edb54bd2a631d912b833837b650d2318a20"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-featured-image/style.css",
       "size": 2050,
       "sha256": "f0d6ba32be7201238ebea9fb76c061886db7b78354144dd65fef2361f1f6178b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-featured-image/style.min.css",
+      "size": 1833,
+      "sha256": "24441594aa1e6b2016a479490c781edb54bd2a631d912b833837b650d2318a20"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-navigation-link.php",
@@ -3987,9 +4927,19 @@
       "sha256": "c93ed40906e3d6d58c2cf003e42c27ace62e3571f4da5d91f1e3b2ac143cdd4e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-navigation-link/style-rtl.min.css",
+      "size": 656,
+      "sha256": "4deaffe864b7373606fd3267183806f764e69a69d19e3fd5a7e10392ff822ec2"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-navigation-link/style.css",
       "size": 742,
       "sha256": "7bf8823266d0c3e5c940c8bf4f8eabdfaf54e0e42e5a2b8a8fa537441d319760"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-navigation-link/style.min.css",
+      "size": 654,
+      "sha256": "82172503bc289d3b32b80066cf6980d5132fbe48f08212751871994a58244875"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-template.php",
@@ -4002,9 +4952,19 @@
       "sha256": "5fed346b6318eb89cc80375b42e252ce7c02e946db39b83708d7d87a05d78ced"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-template/style-rtl.min.css",
+      "size": 1521,
+      "sha256": "693c5178584f5add24406f9c2d8e18d91e55a3714b2710b430c86e214446ad54"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-template/style.css",
       "size": 3572,
       "sha256": "c5d42ac6d78909c5bb4ba4c9b49bb07e9242aee38871e16e42b0c85fc7f5a472"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-template/style.min.css",
+      "size": 1521,
+      "sha256": "e3671ed8ee305a452c2929df91397956b3308f8e12ac35772a29fdbc655bd1bd"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-terms.php",
@@ -4017,9 +4977,19 @@
       "sha256": "41372d6e5b1390bf1c9f920306162f2d23dd421819407725bcada76a1b34b228"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-terms/style-rtl.min.css",
+      "size": 117,
+      "sha256": "0a63691280a665a3e6186b64fcdc7388f7650710168b7cb28428c8e51f97de30"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-terms/style.css",
       "size": 132,
       "sha256": "735f2d2e6b6c081b4fa4d01b10a119bbf5a4b828910cd287c6de9fdded8c6fae"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-terms/style.min.css",
+      "size": 117,
+      "sha256": "0a63691280a665a3e6186b64fcdc7388f7650710168b7cb28428c8e51f97de30"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-time-to-read.php",
@@ -4032,9 +5002,19 @@
       "sha256": "01fcbd102049849a3f6d49fc6db38169e09cd40d91d57039400c28346d16aa99"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-time-to-read/style-rtl.min.css",
+      "size": 50,
+      "sha256": "20151eee8731829b21007824c6078261d3914ea9fe04a2a4834a47dd9675d3c3"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-time-to-read/style.css",
       "size": 57,
       "sha256": "3ac4f47140117207ea9324d425d4576644e7aa8a7932539e1bb2509023c256cf"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-time-to-read/style.min.css",
+      "size": 50,
+      "sha256": "20151eee8731829b21007824c6078261d3914ea9fe04a2a4834a47dd9675d3c3"
     },
     {
       "path": "wordpress/wp-includes/blocks/post-title.php",
@@ -4047,9 +5027,19 @@
       "sha256": "7a8fdec350a478c6d3710f9e9c939298957e82c943e9c1734b549ff206afe300"
     },
     {
+      "path": "wordpress/wp-includes/blocks/post-title/style-rtl.min.css",
+      "size": 261,
+      "sha256": "ceb4bb251d54c06a97753b6118da782a43e24dc0f28d6cb0252d42a3aaabde43"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/post-title/style.css",
       "size": 308,
       "sha256": "1ab285b72f9f05f4bd6b0fc77ae17359df17b7f75c351d337d052853da737bab"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/post-title/style.min.css",
+      "size": 261,
+      "sha256": "ceb4bb251d54c06a97753b6118da782a43e24dc0f28d6cb0252d42a3aaabde43"
     },
     {
       "path": "wordpress/wp-includes/blocks/preformatted/block.json",
@@ -4057,9 +5047,19 @@
       "sha256": "d5a9fef98fd49f0820ef74928e1f4e0a775103ad1778f3078fb70edfe17bbae2"
     },
     {
+      "path": "wordpress/wp-includes/blocks/preformatted/style-rtl.min.css",
+      "size": 135,
+      "sha256": "ac3ebd1b8d17d5e2a4c67cfc4bc1d92857e1c556043f2d09caa295fa989d1023"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/preformatted/style.css",
       "size": 935,
       "sha256": "ba55d9b5b02e949b2d815b39323b8759bd3406e3ecdf6658ada0d775125edb79"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/preformatted/style.min.css",
+      "size": 135,
+      "sha256": "ac3ebd1b8d17d5e2a4c67cfc4bc1d92857e1c556043f2d09caa295fa989d1023"
     },
     {
       "path": "wordpress/wp-includes/blocks/pullquote/block.json",
@@ -4067,9 +5067,39 @@
       "sha256": "70b1e1612a9e3cd61fba13852fbcb213c3b31b87aaf2f75f3e6bb52d583748ba"
     },
     {
+      "path": "wordpress/wp-includes/blocks/pullquote/editor-rtl.min.css",
+      "size": 222,
+      "sha256": "8146af05ca9bc940471eeff9401c5836cab1eeb122e20ec764dd0c99c55c582c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/pullquote/editor.min.css",
+      "size": 222,
+      "sha256": "8146af05ca9bc940471eeff9401c5836cab1eeb122e20ec764dd0c99c55c582c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/pullquote/style-rtl.min.css",
+      "size": 1118,
+      "sha256": "e17f9e872d9482e4a3134da00959f8995ad88e407fada6c17e8252962be9b11d"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/pullquote/style.css",
       "size": 2075,
       "sha256": "2f224de46c66cf5999467afff581a1d7af111467c50120453a3dcaaccae4f9dd"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/pullquote/style.min.css",
+      "size": 1118,
+      "sha256": "719147e897375906b9dfeee27ee1251f8640e3992666bef5cc7f2034514ba605"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/pullquote/theme-rtl.min.css",
+      "size": 283,
+      "sha256": "1df1aeaafec585b9386f763a6872d4b448480bd714197c278deb729df69c2b7e"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/pullquote/theme.min.css",
+      "size": 283,
+      "sha256": "1df1aeaafec585b9386f763a6872d4b448480bd714197c278deb729df69c2b7e"
     },
     {
       "path": "wordpress/wp-includes/blocks/query-no-results.php",
@@ -4102,6 +5132,16 @@
       "sha256": "33b446f19ff6ad294d7408991b2a80075e7fe390e44291bfe8906536f32fc04e"
     },
     {
+      "path": "wordpress/wp-includes/blocks/query-pagination-numbers/editor-rtl.min.css",
+      "size": 203,
+      "sha256": "27b061f6c2dafa64f3abb05e27453ea040c23db704fdad64d59ff29681a1610c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-pagination-numbers/editor.min.css",
+      "size": 204,
+      "sha256": "d3652b4f9ce9249f7c205a0180005264a8a6c35ef341e1706323af7b71fa4f12"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/query-pagination-previous.php",
       "size": 3473,
       "sha256": "c933b8563ffab5b4156723c6cc758857129ef9912508c78b9050795191e9c8fc"
@@ -4122,9 +5162,29 @@
       "sha256": "069e71a12010875bf01e9c20a8edac228f7f22e30d631dc8688fc0ba759f3684"
     },
     {
+      "path": "wordpress/wp-includes/blocks/query-pagination/editor-rtl.min.css",
+      "size": 251,
+      "sha256": "b528925306c9ee82d22315d5c6f8fdb1b2bbd350dcc129c9a0f237a984587764"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-pagination/editor.min.css",
+      "size": 251,
+      "sha256": "b528925306c9ee82d22315d5c6f8fdb1b2bbd350dcc129c9a0f237a984587764"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-pagination/style-rtl.min.css",
+      "size": 766,
+      "sha256": "962cc6d7e65fb2689088b17057674e6d819c9a5d0d658ca1de12da19974014af"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/query-pagination/style.css",
       "size": 871,
       "sha256": "88258068d6814f43bfe37268aebaad94ec5f113c9c093c38216e00c8546bfc11"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-pagination/style.min.css",
+      "size": 764,
+      "sha256": "7278837aa0d5787fa817bcfac8e84ea0cce6a603f32025de917b57279990e966"
     },
     {
       "path": "wordpress/wp-includes/blocks/query-title.php",
@@ -4137,9 +5197,19 @@
       "sha256": "09edff84de4545607bb3f8d1092188f2942ca7fbbcb4968c271abaceeae49013"
     },
     {
+      "path": "wordpress/wp-includes/blocks/query-title/style-rtl.min.css",
+      "size": 44,
+      "sha256": "64225111e4d9a55bc90152663fd0b02d5b319d93f5b1952378be722c6d640d5f"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/query-title/style.css",
       "size": 51,
       "sha256": "f0e4ae006b910c0adb01575011233dc99897f441834c01825f38fbe8d5d4b3c2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-title/style.min.css",
+      "size": 44,
+      "sha256": "64225111e4d9a55bc90152663fd0b02d5b319d93f5b1952378be722c6d640d5f"
     },
     {
       "path": "wordpress/wp-includes/blocks/query-total.php",
@@ -4152,9 +5222,19 @@
       "sha256": "e8c7b369d9626fae70b7259927ed45a5edba6cff1c4bb606f0bfabef2af6696d"
     },
     {
+      "path": "wordpress/wp-includes/blocks/query-total/style-rtl.min.css",
+      "size": 44,
+      "sha256": "673579e48dc2a0e1f25952657cbad59e1f4927856e245244207bc3a9b2230f15"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/query-total/style.css",
       "size": 51,
       "sha256": "22ac232d4b704be23ca34a46b4b3f8425c9959981e5125b7d8cd7b4733b540d2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query-total/style.min.css",
+      "size": 44,
+      "sha256": "673579e48dc2a0e1f25952657cbad59e1f4927856e245244207bc3a9b2230f15"
     },
     {
       "path": "wordpress/wp-includes/blocks/query.php",
@@ -4167,14 +5247,44 @@
       "sha256": "f37a436a5c1d84be14dcd8a8f114a817a00b743d73a69253352384997a9fbecc"
     },
     {
+      "path": "wordpress/wp-includes/blocks/query/editor-rtl.min.css",
+      "size": 1499,
+      "sha256": "bd56c733e1f12d607b7573b605bc3562542c301ba5f96a0db1d7c772590424d5"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/query/editor.min.css",
+      "size": 1499,
+      "sha256": "bd56c733e1f12d607b7573b605bc3562542c301ba5f96a0db1d7c772590424d5"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/quote/block.json",
       "size": 2223,
       "sha256": "ec56d2ece476b32f38f924f5cc2d9b0f8542951222318efb92f284a5b4b366f9"
     },
     {
+      "path": "wordpress/wp-includes/blocks/quote/style-rtl.min.css",
+      "size": 698,
+      "sha256": "a6730c0693cef057f7f1491875c2b467b5742fa3a383cbd68e738d24410bfb57"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/quote/style.css",
       "size": 765,
       "sha256": "1ef9387c601a42e7670e2d5b8f633d7fd988fa478f984fdf6dc58f3ef1924414"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/quote/style.min.css",
+      "size": 699,
+      "sha256": "64b45ce7e07ddda5425b8e14c38b5cde9ded12764b1b13a3aa60fffdc34addbd"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/quote/theme-rtl.min.css",
+      "size": 495,
+      "sha256": "31278ff95033fca46d9cfb4c660ae6bdacf5a473bfee4969e64e0163af46a354"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/quote/theme.min.css",
+      "size": 492,
+      "sha256": "a8297149e2638718ce90a6625f35608c38efba0873709f803e044c93caa68d62"
     },
     {
       "path": "wordpress/wp-includes/blocks/read-more.php",
@@ -4187,9 +5297,19 @@
       "sha256": "d3463857ed8cf4f81b10131b77a65816759b6e998828131881570f26c36f79ca"
     },
     {
+      "path": "wordpress/wp-includes/blocks/read-more/style-rtl.min.css",
+      "size": 281,
+      "sha256": "0c33217859ff3f32b53de5ec5e26c9ab04463c4ecbc5cf6f05334c8f8e8684d9"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/read-more/style.css",
       "size": 309,
       "sha256": "ab266f741297164cdd48c300dabb8b28ac90ad0aea107d8fd69a80941af6f0f3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/read-more/style.min.css",
+      "size": 281,
+      "sha256": "0c33217859ff3f32b53de5ec5e26c9ab04463c4ecbc5cf6f05334c8f8e8684d9"
     },
     {
       "path": "wordpress/wp-includes/blocks/require-dynamic-blocks.php",
@@ -4212,9 +5332,29 @@
       "sha256": "62cebfa01ba00823a04fe97c6816c9a4eb06099e1bbb93da5fca2a9bf0302aa4"
     },
     {
+      "path": "wordpress/wp-includes/blocks/rss/editor-rtl.min.css",
+      "size": 176,
+      "sha256": "b73516d2d13afb3e6d1211d1ed60bdea5935440a3f8ade6084f99506bfef253b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/rss/editor.min.css",
+      "size": 176,
+      "sha256": "b73516d2d13afb3e6d1211d1ed60bdea5935440a3f8ade6084f99506bfef253b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/rss/style-rtl.min.css",
+      "size": 652,
+      "sha256": "bab0c671cbb9cf43964d243414cd01efa78acdfd9b963d4529deb218798d266d"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/rss/style.css",
       "size": 2587,
       "sha256": "f7212946b6975af4537d873e0a4254cf68d4a9724edc45c359fd3161514f6917"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/rss/style.min.css",
+      "size": 652,
+      "sha256": "81a8ec4131de719fe46f74b0c619c1bfad324baef9eb043b1882e4716ee68684"
     },
     {
       "path": "wordpress/wp-includes/blocks/search.php",
@@ -4227,9 +5367,39 @@
       "sha256": "0e44d6c23d8d2919a23b368b1ec9c752a1b55617e1d96a5c8a9bf9d621327f05"
     },
     {
+      "path": "wordpress/wp-includes/blocks/search/editor-rtl.min.css",
+      "size": 326,
+      "sha256": "9e0c4870b5b588b6771fca210f183ae477e4e704b22014875f667d527ba5e2e8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/search/editor.min.css",
+      "size": 326,
+      "sha256": "9e0c4870b5b588b6771fca210f183ae477e4e704b22014875f667d527ba5e2e8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/search/style-rtl.min.css",
+      "size": 2390,
+      "sha256": "168a8df99aacc03b58a07c457e33ab403380d034d31425aa10952ab44956646a"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/search/style.css",
       "size": 3573,
       "sha256": "cddd940a20ec40a6bc1f1639a1fb987d5d29e32964fa068108560f93a2948531"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/search/style.min.css",
+      "size": 2389,
+      "sha256": "df6e38a94626af42752ed12f25de7c55f17ae729893490902c55817c5d550efe"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/search/theme-rtl.min.css",
+      "size": 126,
+      "sha256": "65d0b0f4c02d95b7b7a3eea7473b9ce5fa03140fa611e68ed27275c7011b584b"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/search/theme.min.css",
+      "size": 126,
+      "sha256": "65d0b0f4c02d95b7b7a3eea7473b9ce5fa03140fa611e68ed27275c7011b584b"
     },
     {
       "path": "wordpress/wp-includes/blocks/separator/block.json",
@@ -4237,9 +5407,39 @@
       "sha256": "4ce92b86014172f7a64b34413a2ab2edf4b70dcc506234c8080aa4cdecb6127b"
     },
     {
+      "path": "wordpress/wp-includes/blocks/separator/editor-rtl.min.css",
+      "size": 97,
+      "sha256": "6a3757a9af00c0d33685240ede15011065e7c1df7e5249f5d1e57084257a1d50"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/separator/editor.min.css",
+      "size": 97,
+      "sha256": "6a3757a9af00c0d33685240ede15011065e7c1df7e5249f5d1e57084257a1d50"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/separator/style-rtl.min.css",
+      "size": 405,
+      "sha256": "341ddd8c8560a0e964be5dfbec80f7fce2bf5f360bb5dad886620a901fd480f7"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/separator/style.css",
       "size": 558,
       "sha256": "f6df036d7b1ecd466096904f74e77c3a4c2ddb3a13db1525e8790036629dde44"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/separator/style.min.css",
+      "size": 405,
+      "sha256": "341ddd8c8560a0e964be5dfbec80f7fce2bf5f360bb5dad886620a901fd480f7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/separator/theme-rtl.min.css",
+      "size": 437,
+      "sha256": "0c6438dfff9c2ee9b863aaf7ccc21c4f40cebf35c23f6f43bef165f85f62e62a"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/separator/theme.min.css",
+      "size": 437,
+      "sha256": "0c6438dfff9c2ee9b863aaf7ccc21c4f40cebf35c23f6f43bef165f85f62e62a"
     },
     {
       "path": "wordpress/wp-includes/blocks/shortcode.php",
@@ -4252,6 +5452,16 @@
       "sha256": "df8a0168d38b39c78830e78f8a7b19458eee7a92569796a6a4dfbd6b78b17ccf"
     },
     {
+      "path": "wordpress/wp-includes/blocks/shortcode/editor-rtl.min.css",
+      "size": 577,
+      "sha256": "e32da515edffcf9738a17a658ced98d64f38413cddff71db3bfb923a194560a3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/shortcode/editor.min.css",
+      "size": 577,
+      "sha256": "e32da515edffcf9738a17a658ced98d64f38413cddff71db3bfb923a194560a3"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/site-logo.php",
       "size": 6334,
       "sha256": "b767019ec49dcc0cad687d7054edca04a93332f6982fb3a58c9ecfca8a2da9c4"
@@ -4262,9 +5472,29 @@
       "sha256": "256b7bde9287e86c1a796d55734ccd65452542b47d15f211bc5c587f0be5dccd"
     },
     {
+      "path": "wordpress/wp-includes/blocks/site-logo/editor-rtl.min.css",
+      "size": 2286,
+      "sha256": "22bffe8f32d74b334b0a1b7d4ba26bd03bf8ed00683c16f829bd1be0750c2782"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-logo/editor.min.css",
+      "size": 2286,
+      "sha256": "cf27be4ad6a6377192a2113ca535528abe3dcf94589d0b192fcef020f9cddd21"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-logo/style-rtl.min.css",
+      "size": 453,
+      "sha256": "88bfd9470ef9542b8418b116f1f99c732224deeee305a4e7b44ed59bd623ce02"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/site-logo/style.css",
       "size": 534,
       "sha256": "3bad81efcf5dba56449a58602c31624570143bf96e9e126fd60aa60cb73bc2f5"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-logo/style.min.css",
+      "size": 453,
+      "sha256": "88bfd9470ef9542b8418b116f1f99c732224deeee305a4e7b44ed59bd623ce02"
     },
     {
       "path": "wordpress/wp-includes/blocks/site-tagline.php",
@@ -4277,9 +5507,29 @@
       "sha256": "280bd79b2b67c4c80d6ca61a7a98e6c33d7b11725ee73e33796b2b62975530bf"
     },
     {
+      "path": "wordpress/wp-includes/blocks/site-tagline/editor-rtl.min.css",
+      "size": 68,
+      "sha256": "7e64dc70968924991c1404a753fe55ec082f8e46b119592c1a03b876d8f3b81c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-tagline/editor.min.css",
+      "size": 68,
+      "sha256": "7e64dc70968924991c1404a753fe55ec082f8e46b119592c1a03b876d8f3b81c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-tagline/style-rtl.min.css",
+      "size": 45,
+      "sha256": "84f0671a6687c88461d6c4c293fbb50978b91ff054e6b104f14410263fd73cfa"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/site-tagline/style.css",
       "size": 52,
       "sha256": "0231f5f37c6f7d0c8cfc3e41352a0e37ce568082529aa9952a938f628da8f8dd"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-tagline/style.min.css",
+      "size": 45,
+      "sha256": "84f0671a6687c88461d6c4c293fbb50978b91ff054e6b104f14410263fd73cfa"
     },
     {
       "path": "wordpress/wp-includes/blocks/site-title.php",
@@ -4292,9 +5542,29 @@
       "sha256": "d55c4519c96203156623fbca64fbba8744254e2ed2ee9772f19e84f39b75f2d1"
     },
     {
+      "path": "wordpress/wp-includes/blocks/site-title/editor-rtl.min.css",
+      "size": 66,
+      "sha256": "8c94f3a5649721272d9437f79a2415e1e0c879e02100c4e90d9ff12cc59c53ae"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-title/editor.min.css",
+      "size": 66,
+      "sha256": "8c94f3a5649721272d9437f79a2415e1e0c879e02100c4e90d9ff12cc59c53ae"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-title/style-rtl.min.css",
+      "size": 232,
+      "sha256": "eebbf4533110d92d4d5dbb60284b6476db0ac9689191885cad2c90ce2eba01e2"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/site-title/style.css",
       "size": 275,
       "sha256": "9d899520dea0df0c3f1dfd86a13ddda45f010c7a00a82f5596effd35983e4083"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/site-title/style.min.css",
+      "size": 232,
+      "sha256": "eebbf4533110d92d4d5dbb60284b6476db0ac9689191885cad2c90ce2eba01e2"
     },
     {
       "path": "wordpress/wp-includes/blocks/social-link.php",
@@ -4307,9 +5577,34 @@
       "sha256": "ada66d26623f10e9fcd4a5ae99305931e51e6d65e8e58494e9c7d8a42ea6c8ac"
     },
     {
+      "path": "wordpress/wp-includes/blocks/social-link/editor-rtl.min.css",
+      "size": 636,
+      "sha256": "cbfddb6f1e32670c0b88ede84761ab41182f7f8be8a3993ad754829c8cbfa0e2"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/social-link/editor.min.css",
+      "size": 636,
+      "sha256": "cbfddb6f1e32670c0b88ede84761ab41182f7f8be8a3993ad754829c8cbfa0e2"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/social-links/block.json",
       "size": 2403,
       "sha256": "46fb82a9096a1b61530a490df7402b65b043f3e6eda9adff156060b8dcc515c9"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/social-links/editor-rtl.min.css",
+      "size": 882,
+      "sha256": "31ff5706ecddd7dbc40adb19e791d8675283873c871a97b805838c271480427f"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/social-links/editor.min.css",
+      "size": 881,
+      "sha256": "16c0b0b7b2de843afa915229547868e33ea9d63d143d35111ac631a8ff58c08e"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/social-links/style-rtl.min.css",
+      "size": 11763,
+      "sha256": "23f2631f3c37db5bda4844da898a31caf818b418fca050ddd76316b98dbaffdb"
     },
     {
       "path": "wordpress/wp-includes/blocks/social-links/style.css",
@@ -4317,9 +5612,29 @@
       "sha256": "f0a9b59e1800da133b39ba933df08417364762cc29f5bb916453b2573584b1fb"
     },
     {
+      "path": "wordpress/wp-includes/blocks/social-links/style.min.css",
+      "size": 11762,
+      "sha256": "553d6c5803709a741e04e02dba67a54a614ebc63539c488823baf92cd7b4fefd"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/spacer/block.json",
       "size": 677,
       "sha256": "47b184ba081ebe8bf94626dd8cf53a83de3dcb0d2367c4ca1dd98e4860c45631"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/spacer/editor-rtl.min.css",
+      "size": 948,
+      "sha256": "86f2883d0e756b68373bfd6f9df4e48e71c0f09de7c1923f61b50313833817b7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/spacer/editor.min.css",
+      "size": 948,
+      "sha256": "86f2883d0e756b68373bfd6f9df4e48e71c0f09de7c1923f61b50313833817b7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/spacer/style-rtl.min.css",
+      "size": 28,
+      "sha256": "7532ff54d8da7a22bb84edffcf2d67be89b6265dcc56db136ab295244f3e1f8b"
     },
     {
       "path": "wordpress/wp-includes/blocks/spacer/style.css",
@@ -4327,14 +5642,49 @@
       "sha256": "d622c5eb5ee6345a9c554a9cc91fa56bc543839f2a48e40f6f0b814bea428f8b"
     },
     {
+      "path": "wordpress/wp-includes/blocks/spacer/style.min.css",
+      "size": 28,
+      "sha256": "7532ff54d8da7a22bb84edffcf2d67be89b6265dcc56db136ab295244f3e1f8b"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/table/block.json",
       "size": 4508,
       "sha256": "40a9197d177d02d46143b84453e057afbaf7d9d4898fe4592329b64d6babd06f"
     },
     {
+      "path": "wordpress/wp-includes/blocks/table/editor-rtl.min.css",
+      "size": 1495,
+      "sha256": "945b73bfafa8389394025893ac8c1162a9e8fb5fcb2c0d14a70dad15b982c3ff"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/table/editor.min.css",
+      "size": 1495,
+      "sha256": "945b73bfafa8389394025893ac8c1162a9e8fb5fcb2c0d14a70dad15b982c3ff"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/table/style-rtl.min.css",
+      "size": 3888,
+      "sha256": "51674c258f5b613b6d7d80ee2966ec330557ab33467327738668dffa645bcdbe"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/table/style.css",
       "size": 5080,
       "sha256": "a386d9d775c2c00b8ea7208ec2df1d4de91aa5a658be975da0770af7bce006b4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/table/style.min.css",
+      "size": 3888,
+      "sha256": "bb5bd8340a93b27f6075624a94b977ef43cc360859c8b8d30d26a6a73ca37613"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/table/theme-rtl.min.css",
+      "size": 232,
+      "sha256": "0a161230525a2d7528eac14c1e5253b8d631d7e787a183733f01fa6670945e57"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/table/theme.min.css",
+      "size": 232,
+      "sha256": "0a161230525a2d7528eac14c1e5253b8d631d7e787a183733f01fa6670945e57"
     },
     {
       "path": "wordpress/wp-includes/blocks/tag-cloud.php",
@@ -4347,9 +5697,19 @@
       "sha256": "a5fe7791e8f1cc1f23c499c9fedd0f613914de71ba3568ffabfeea780b1d672f"
     },
     {
+      "path": "wordpress/wp-includes/blocks/tag-cloud/style-rtl.min.css",
+      "size": 502,
+      "sha256": "828211200038113cf4f587100c24628656ad3eabfc35f9fa9c0c0421610c7f60"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/tag-cloud/style.css",
       "size": 607,
       "sha256": "b67fce56649938d490d5f8df5884e4a4d6114d954469b74d08cc5f105a30f3a7"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/tag-cloud/style.min.css",
+      "size": 503,
+      "sha256": "14593e359e5efdf71c634319f30796b5a69ff4c4922dd19c1a9453ea12052087"
     },
     {
       "path": "wordpress/wp-includes/blocks/template-part.php",
@@ -4362,6 +5722,26 @@
       "sha256": "4f0be35529b24372d70c636cb7a251bdd6dac654020bd9d9a25cab34a66946b1"
     },
     {
+      "path": "wordpress/wp-includes/blocks/template-part/editor-rtl.min.css",
+      "size": 1360,
+      "sha256": "afb251f1761ff388c937ce4b1c2ed969d527ddac7867cab98dce051e3e7f0ac8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/template-part/editor.min.css",
+      "size": 1360,
+      "sha256": "afb251f1761ff388c937ce4b1c2ed969d527ddac7867cab98dce051e3e7f0ac8"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/template-part/theme-rtl.min.css",
+      "size": 105,
+      "sha256": "85b366f1200d3a58cf06d32173c73c7704da73562134c789656c58f0a7e81a17"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/template-part/theme.min.css",
+      "size": 105,
+      "sha256": "85b366f1200d3a58cf06d32173c73c7704da73562134c789656c58f0a7e81a17"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/term-count.php",
       "size": 1843,
       "sha256": "937040d80bfb8f4ba9a702984b763b89d648cabdc63153e4cfa7bb6a72bf7124"
@@ -4372,9 +5752,19 @@
       "sha256": "0e2b3d58fcf3f49558875c34cfe999ebdd5c00bc2fd365d9bb9208376815433b"
     },
     {
+      "path": "wordpress/wp-includes/blocks/term-count/style-rtl.min.css",
+      "size": 43,
+      "sha256": "db8513c7798a8fbfc6119fb5be7a90c418ddab94b51a188859bc4d1743134ad4"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/term-count/style.css",
       "size": 50,
       "sha256": "cd61e48f387bdf1c4e76beb5017b6386c9d3389c9c9059c344a86285f56fd590"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-count/style.min.css",
+      "size": 43,
+      "sha256": "db8513c7798a8fbfc6119fb5be7a90c418ddab94b51a188859bc4d1743134ad4"
     },
     {
       "path": "wordpress/wp-includes/blocks/term-description.php",
@@ -4387,9 +5777,19 @@
       "sha256": "59d0ac9a7b4ead4f12f2c3dc45a9d414813d2f786ce092005e2f6891eb4d7602"
     },
     {
+      "path": "wordpress/wp-includes/blocks/term-description/style-rtl.min.css",
+      "size": 196,
+      "sha256": "e31d1c947396c1c9ab41cbc079af8664e673c83970bdfeb50cb4223e09620128"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/term-description/style.css",
       "size": 224,
       "sha256": "f23691c6b81750187694528332d2fa626d3e98a8126eae658f81ca715d12a966"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-description/style.min.css",
+      "size": 196,
+      "sha256": "e31d1c947396c1c9ab41cbc079af8664e673c83970bdfeb50cb4223e09620128"
     },
     {
       "path": "wordpress/wp-includes/blocks/term-name.php",
@@ -4402,9 +5802,19 @@
       "sha256": "0c277931f34fbb3ec24a36e83512b78eb70031cf04b3547b5bdb1eee49cb42ed"
     },
     {
+      "path": "wordpress/wp-includes/blocks/term-name/style-rtl.min.css",
+      "size": 42,
+      "sha256": "2ae714bef79076276fc834ed507b2b6034424cbb9255d3bb9abe3b5bf653b99d"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/term-name/style.css",
       "size": 49,
       "sha256": "87a73237e41b708e51c70f7f6149331f184a055677f53d1d45c369d0dd17a226"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-name/style.min.css",
+      "size": 42,
+      "sha256": "2ae714bef79076276fc834ed507b2b6034424cbb9255d3bb9abe3b5bf653b99d"
     },
     {
       "path": "wordpress/wp-includes/blocks/term-template.php",
@@ -4417,9 +5827,29 @@
       "sha256": "aeeab09a60449dedd1d7f79ddb9cb49de5048213e1bef505821226fc5ea1ae34"
     },
     {
+      "path": "wordpress/wp-includes/blocks/term-template/editor-rtl.min.css",
+      "size": 367,
+      "sha256": "0b774f57c5f4064056e360c21ad1f2c936c77c51ae8cfed16f6ed241f5fbac99"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-template/editor.min.css",
+      "size": 367,
+      "sha256": "0b774f57c5f4064056e360c21ad1f2c936c77c51ae8cfed16f6ed241f5fbac99"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-template/style-rtl.min.css",
+      "size": 116,
+      "sha256": "6a2e3afdc9e2cac94f9128283ecf4981972dc703dd40a0c747cbd374a8a40184"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/term-template/style.css",
       "size": 143,
       "sha256": "416f2fcdbcd6f85aae3dae35aa56d52526e0109bf6d42047ab21c98d45ab4b34"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/term-template/style.min.css",
+      "size": 116,
+      "sha256": "6a2e3afdc9e2cac94f9128283ecf4981972dc703dd40a0c747cbd374a8a40184"
     },
     {
       "path": "wordpress/wp-includes/blocks/terms-query/block.json",
@@ -4432,9 +5862,29 @@
       "sha256": "436202addcbe99d429d86755a5f379b0fe1db2c450945902f522243baa44852b"
     },
     {
+      "path": "wordpress/wp-includes/blocks/text-columns/editor-rtl.min.css",
+      "size": 86,
+      "sha256": "9bbe4433e6b7a99b205e25e6b463337fbdaf22470e64716f501a535b201a29e4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/text-columns/editor.min.css",
+      "size": 86,
+      "sha256": "9bbe4433e6b7a99b205e25e6b463337fbdaf22470e64716f501a535b201a29e4"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/text-columns/style-rtl.min.css",
+      "size": 457,
+      "sha256": "d675326833c1abcda9ea106e1760d84ba2fafe0a2878beddbfc3c482129cc484"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/text-columns/style.css",
       "size": 537,
       "sha256": "8502e85cf12eae0cdb5b9521f342eff9d254b61890f4ea063230ef27ff74431c"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/text-columns/style.min.css",
+      "size": 457,
+      "sha256": "cc892c13b7f850fb6e7a14eaa727e96172c4d65924b13aadb240f63bfb09abb4"
     },
     {
       "path": "wordpress/wp-includes/blocks/verse/block.json",
@@ -4442,9 +5892,19 @@
       "sha256": "674e5ebbd6328629c006c2e2fa18399b7c92a5917349f4844d7370e418dcb5ac"
     },
     {
+      "path": "wordpress/wp-includes/blocks/verse/style-rtl.min.css",
+      "size": 159,
+      "sha256": "ecc3099a1ebafbe1e6456998e8be7cb95d1cf576bc20ebab0c08f66e3d1cddf9"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/verse/style.css",
       "size": 191,
       "sha256": "716c59cff6b649296364afef015f917aa99832aa0b1d3d4d6f58540174af0155"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/verse/style.min.css",
+      "size": 159,
+      "sha256": "ecc3099a1ebafbe1e6456998e8be7cb95d1cf576bc20ebab0c08f66e3d1cddf9"
     },
     {
       "path": "wordpress/wp-includes/blocks/video.php",
@@ -4457,9 +5917,39 @@
       "sha256": "932b32d9ec75bbfd5afd1aeb8c8d55987ae3b9e2900a1ad4545c6747b660b355"
     },
     {
+      "path": "wordpress/wp-includes/blocks/video/editor-rtl.min.css",
+      "size": 1112,
+      "sha256": "ae3521e00582c0853feecebabba3b9872a5844fe8ccd23be4a1f24b5bd2411a6"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/video/editor.min.css",
+      "size": 1109,
+      "sha256": "c4e0f6c5ccdc991a2a8a826596932c451e09eef3b184f6d5913d76dc347f98a3"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/video/style-rtl.min.css",
+      "size": 291,
+      "sha256": "5d02b68b7c929c457ff633daa86ab577581bf35504adab59fa31c58aabdfd719"
+    },
+    {
       "path": "wordpress/wp-includes/blocks/video/style.css",
       "size": 2092,
       "sha256": "b673f8c6c9b931f78e5221bc297309f2be1c5745f82ee4c9acd4600cac326b93"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/video/style.min.css",
+      "size": 291,
+      "sha256": "5d02b68b7c929c457ff633daa86ab577581bf35504adab59fa31c58aabdfd719"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/video/theme-rtl.min.css",
+      "size": 176,
+      "sha256": "8effbc651a2a28bb0ac10daffae3347ff2eac1d352d4c0a85aed235e9a5037a5"
+    },
+    {
+      "path": "wordpress/wp-includes/blocks/video/theme.min.css",
+      "size": 176,
+      "sha256": "8effbc651a2a28bb0ac10daffae3347ff2eac1d352d4c0a85aed235e9a5037a5"
     },
     {
       "path": "wordpress/wp-includes/blocks/widget-group.php",

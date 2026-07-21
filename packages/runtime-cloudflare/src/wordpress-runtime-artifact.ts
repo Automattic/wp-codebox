@@ -1,7 +1,7 @@
 import { isWordPressRuntimeFile } from "./wordpress-runtime-corpus.js"
 
 export const WORDPRESS_RUNTIME_ARTIFACT_SCHEMA = "wp-codebox/wordpress-runtime-artifact/v1"
-export const WORDPRESS_RUNTIME_MAX_FILES = 2_000
+export const WORDPRESS_RUNTIME_MAX_FILES = 2_200
 export const WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES = 24 * 1024 * 1024
 export const WORDPRESS_RUNTIME_MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 export const WORDPRESS_RUNTIME_MAX_FILE_BYTES = 8 * 1024 * 1024

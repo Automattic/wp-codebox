@@ -6,6 +6,7 @@ export interface WordPressArchiveEntry {
 
 const SERVER_READ_EXTENSION = /\.(?:php|json|crt|html)$/
 const STATIC_ASSET_EXTENSION = /\.(?:css|js|mjs|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/
+const CORE_BLOCK_REGISTRATION_ASSET = /^wordpress\/wp-includes\/blocks\/.*\.min\.(?:css|js)$/
 const STATIC_ARCHIVE_ROOTS = ["wp-admin/", "wp-includes/", "wp-content/themes/"]
 const SERVER_READ_ASSET_PATHS = new Set([
   // wp-includes/view-transitions.php in current WordPress reads this at bootstrap.
@@ -18,9 +19,9 @@ const SERVER_READ_ASSET_PATHS = new Set([
 
 export function isWordPressRuntimeFile(path: string, _archivePaths: ReadonlySet<string>): boolean {
   if (!path.startsWith("wordpress/") || path.endsWith("/") || path.endsWith(".map")) return false
-  // PHP discovers all executable code and structured metadata server-side. Browser
-  // assets stay in the archive and are fetched directly by the entry Worker.
-  return SERVER_READ_EXTENSION.test(path) || path.endsWith("/style.css") || SERVER_READ_ASSET_PATHS.has(path)
+  // PHP discovers executable code, structured metadata, and minified core block
+  // assets server-side. Browser requests still fetch those assets from the archive.
+  return SERVER_READ_EXTENSION.test(path) || path.endsWith("/style.css") || CORE_BLOCK_REGISTRATION_ASSET.test(path) || SERVER_READ_ASSET_PATHS.has(path)
 }
 
 export function wordpressStaticArchivePath(pathname: string): string | null {

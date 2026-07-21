@@ -60,10 +60,12 @@ test("Cloudflare serves only safe browser assets from the WordPress archive", ()
   assert.equal(wordpressStaticContentType("wordpress/wp-admin/images/logo.png"), "image/png")
 })
 
-test("WordPress boot corpus excludes browser assets while retaining server metadata", () => {
+test("WordPress boot corpus retains server metadata and core block registration assets", () => {
   const paths = new Set<string>()
   assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/version.php", paths))
   assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/paragraph/block.json", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/list/style.min.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/navigation/view.min.js", paths))
   assert.ok(isWordPressRuntimeFile("wordpress/wp-content/themes/twentytwentyfive/style.css", paths))
   assert.ok(isWordPressRuntimeFile("wordpress/wp-admin/css/view-transitions.min.css", paths))
   assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/js/wp-emoji-loader.min.js", paths))
@@ -213,7 +215,8 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /let cachedRuntime/)
   assert.match(worker, /cachedRuntime\.baseRevision !== pointer\.revision/)
   assert.match(worker, /promise\.catch\(\(\) =>/)
-  assert.match(worker, /finalized = true\n    await discardRuntime\(runtime\)/)
+  assert.match(worker, /finalized = true\n    if \(mutatesCanonicalState\) await discardRuntime\(runtime\)/)
+  assert.match(worker, /if \(runtime\) await discardRuntime\(runtime\)/)
   assert.doesNotMatch(worker, /runtime\.pointer = next/)
   assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)
   assert.match(worker, /const LEASE_ACQUISITION_TIMEOUT_MS = 100_000/)
@@ -248,6 +251,7 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(corpus, /path\.endsWith\("\.map"\)/)
   assert.match(corpus, /SERVER_READ_EXTENSION/)
   assert.match(corpus, /path\.endsWith\("\/style\.css"\)/)
+  assert.match(corpus, /CORE_BLOCK_REGISTRATION_ASSET/)
   assert.match(corpus, /STATIC_ARCHIVE_ROOTS/)
 })
 
@@ -424,19 +428,21 @@ test("canonical MDI seed owns the Cloudflare front page and its architecture exp
   assert.match(files.get("_options/page_on_front.json") ?? "", /"2"/)
   assert.match(frontPage, /title: Cloudflare WordPress Runtime/)
   for (const claim of [
-    "WordPress/PHP WebAssembly",
-    "SQLite is reconstructed as query state",
+    "real WordPress site running PHP as WebAssembly",
+    "Follow a request",
+    "content-addressed WordPress server corpus",
+    "reconstructs disposable SQLite query state",
+    "Warm reads reuse that pointer-scoped runtime",
+    "The durability boundary",
     "canonical Markdown and JSON",
-    "content-addressed R2 objects and revision manifests",
-    "Durable Object serializes writes and atomically advances the current revision",
-    "cold runtime hydrates that manifest and reconstructs SQLite",
+    "Immutable objects and revision manifests live in R2",
     "Log in to WordPress",
     "block editor",
     "Render the published page publicly",
     "One site namespace",
-    "Requests for a site are serialized",
-    "PHP boot cost",
-    "full revision manifest",
+    "Dynamic requests are serialized",
+    "Cold isolates pay reconstruction cost",
+    "Static browser assets are cached independently",
   ]) assert.match(frontPage, new RegExp(claim))
   assert.match(frontPage, /<!-- wp:columns -->/)
   assert.match(frontPage, /<!-- wp:list -->/)

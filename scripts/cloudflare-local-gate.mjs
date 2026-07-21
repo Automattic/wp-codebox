@@ -18,6 +18,13 @@ try {
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
   await assertConcurrentMutations()
+  const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
+  const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
+  await assertExplanatoryHomepage(warmHome.body)
+  if (warmHome.elapsedMs >= coldHome.elapsedMs || warmHome.elapsedMs > 2_000) {
+    throw new Error(`Warm explanatory homepage did not reuse the canonical runtime: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
+  }
+  console.log(`Explanatory homepage timing: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
   const adminHtml = await login()
   const editorHtml = await assertPostNewEditor()
   const post = await createPost(adminHtml)
@@ -37,7 +44,7 @@ try {
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
+  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, warm runtime reuse, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -153,6 +160,39 @@ async function assertWordPressPage(target, label) {
   assertNoPhpDiagnostics(body, label)
   if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) throw new Error(`Expected an HTML ${label}, received ${response.status}: ${body}`)
   return body
+}
+
+async function timedWordPressPage(target, label) {
+  const startedAt = performance.now()
+  const body = await assertWordPressPage(target, label)
+  return { body, elapsedMs: Math.round(performance.now() - startedAt) }
+}
+
+async function assertExplanatoryHomepage(html) {
+  for (const text of [
+    "Cloudflare WordPress Runtime",
+    "WordPress at the edge, with durable Markdown state",
+    "Follow a request",
+    "The durability boundary",
+    "What this deployment proves",
+    "Current operating envelope",
+  ]) assertIncludes(html, text, "explanatory homepage")
+  const inlineCss = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((match) => match[1]).join("\n")
+  const stylesheetUrls = [...html.matchAll(/<link\b[^>]*?\brel=["'][^"']*stylesheet[^"']*["'][^>]*?\bhref=["']([^"']+)["']|<link\b[^>]*?\bhref=["']([^"']+)["'][^>]*?\brel=["'][^"']*stylesheet/gi)].map((match) => match[1] || match[2])
+  const linkedCss = []
+  for (const stylesheet of stylesheetUrls) {
+    const response = await request(new URL(stylesheet, origin))
+    const body = await response.text()
+    if (!response.ok || !response.headers.get("content-type")?.includes("text/css")) throw new Error(`Explanatory homepage stylesheet failed: ${stylesheet} (${response.status}).`)
+    linkedCss.push(body)
+  }
+  const css = `${inlineCss}\n${linkedCss.join("\n")}`
+  for (const [block, signature] of [
+    ["list", /ol,ul\{box-sizing:border-box\}/],
+    ["columns", /\.wp-block-columns\{align-items:normal/],
+    ["buttons", /\.wp-block-buttons\{box-sizing:border-box/],
+    ["navigation", /\.wp-block-navigation\{position:relative/],
+  ]) if (!signature.test(css)) throw new Error(`Explanatory homepage omitted the core ${block} block stylesheet.`)
 }
 
 async function assertAuthenticatedDashboard(target) {

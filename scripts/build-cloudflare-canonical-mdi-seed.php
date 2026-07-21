@@ -59,68 +59,96 @@ $root = sys_get_temp_dir() . '/wp-codebox-canonical-mdi-' . getmypid() . '-' . b
 $front_page_content = <<<'HTML'
 <!-- wp:group {"tagName":"main","layout":{"type":"constrained"}} -->
 <main class="wp-block-group">
-<!-- wp:heading {"level":1} -->
-<h1 class="wp-block-heading">WordPress at the edge, with durable Markdown state</h1>
+<!-- wp:group {"style":{"border":{"radius":"18px"},"spacing":{"padding":{"top":"var:preset|spacing|60","right":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"var:preset|spacing|60"}}},"backgroundColor":"contrast","textColor":"base","layout":{"type":"constrained"}} -->
+<div class="wp-block-group has-base-color has-contrast-background-color has-text-color has-background" style="border-radius:18px;padding-top:var(--wp--preset--spacing--60);padding-right:var(--wp--preset--spacing--60);padding-bottom:var(--wp--preset--spacing--60);padding-left:var(--wp--preset--spacing--60)"><!-- wp:paragraph {"style":{"typography":{"textTransform":"uppercase","letterSpacing":"0.12em"}},"fontSize":"small"} -->
+<p class="has-small-font-size" style="letter-spacing:0.12em;text-transform:uppercase">A live systems experiment</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading {"level":1,"fontSize":"xx-large"} -->
+<h1 class="wp-block-heading has-xx-large-font-size">WordPress at the edge, with durable Markdown state</h1>
 <!-- /wp:heading -->
 
 <!-- wp:paragraph {"fontSize":"large"} -->
-<p class="has-large-font-size">This bounded Cloudflare runtime runs WordPress and PHP as WebAssembly at the edge while keeping durable site state outside the disposable query database.</p>
+<p class="has-large-font-size">You are looking at a real WordPress site running PHP as WebAssembly inside a Cloudflare Worker. This page is both the demonstration and the guide to how it works.</p>
 <!-- /wp:paragraph -->
 
+<!-- wp:buttons -->
+<div class="wp-block-buttons"><!-- wp:button {"backgroundColor":"base","textColor":"contrast"} -->
+<div class="wp-block-button"><a class="wp-block-button__link has-contrast-color has-base-background-color has-text-color has-background wp-element-button" href="/wp-admin/">Open WordPress</a></div>
+<!-- /wp:button --><!-- wp:button {"className":"is-style-outline"} -->
+<div class="wp-block-button is-style-outline"><a class="wp-block-button__link wp-element-button" href="https://github.com/Automattic/wp-codebox/pull/1886">Read the implementation</a></div>
+<!-- /wp:button --></div>
+<!-- /wp:buttons --></div>
+<!-- /wp:group -->
+
+<!-- wp:columns {"style":{"spacing":{"margin":{"top":"var:preset|spacing|50","bottom":"var:preset|spacing|60"}}}} -->
+<div class="wp-block-columns" style="margin-top:var(--wp--preset--spacing--50);margin-bottom:var(--wp--preset--spacing--60)"><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"fontSize":"small"} -->
+<p class="has-small-font-size"><strong>Runtime</strong><br>PHP 8.5 WebAssembly</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column --><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"fontSize":"small"} -->
+<p class="has-small-font-size"><strong>Application</strong><br>WordPress 7.0</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column --><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"fontSize":"small"} -->
+<p class="has-small-font-size"><strong>Durable state</strong><br>Markdown and JSON in R2</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column --><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"fontSize":"small"} -->
+<p class="has-small-font-size"><strong>Coordination</strong><br>Cloudflare Durable Object</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column --></div>
+<!-- /wp:columns -->
+
 <!-- wp:heading {"level":2} -->
-<h2 class="wp-block-heading">Architecture flow</h2>
+<h2 class="wp-block-heading">Follow a request</h2>
+<!-- /wp:heading -->
+
+<!-- wp:list {"ordered":true} -->
+<ol class="wp-block-list"><!-- wp:list-item -->
+<li>The Worker acquires a short lease from a Durable Object, which serializes requests against the current site revision.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>A cold isolate downloads the content-addressed WordPress server corpus and the current canonical revision from R2.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>PHP-WASM reconstructs disposable SQLite query state, then WordPress handles the request normally. Warm reads reuse that pointer-scoped runtime.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Browser CSS, JavaScript, fonts, and images bypass PHP and stream from bounded archive reads at the edge.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>After a write, Markdown Database Integration flushes canonical changes to immutable R2 objects and the Durable Object atomically advances the revision pointer.</li>
+<!-- /wp:list-item --></ol>
+<!-- /wp:list -->
+
+<!-- wp:separator -->
+<hr class="wp-block-separator has-alpha-channel-opacity"/>
+<!-- /wp:separator -->
+
+<!-- wp:heading {"level":2} -->
+<h2 class="wp-block-heading">The durability boundary</h2>
 <!-- /wp:heading -->
 
 <!-- wp:columns -->
 <div class="wp-block-columns"><!-- wp:column -->
-<div class="wp-block-column"><!-- wp:group {"layout":{"type":"constrained"}} -->
-<div class="wp-block-group"><!-- wp:heading {"level":3} -->
-<h3 class="wp-block-heading">Edge request</h3>
+<div class="wp-block-column"><!-- wp:group {"style":{"border":{"color":"#d5d7da","width":"1px","radius":"12px"},"spacing":{"padding":{"top":"var:preset|spacing|40","right":"var:preset|spacing|40","bottom":"var:preset|spacing|40","left":"var:preset|spacing|40"}}},"layout":{"type":"constrained"}} -->
+<div class="wp-block-group has-border-color" style="border-color:#d5d7da;border-width:1px;border-radius:12px;padding-top:var(--wp--preset--spacing--40);padding-right:var(--wp--preset--spacing--40);padding-bottom:var(--wp--preset--spacing--40);padding-left:var(--wp--preset--spacing--40)"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Durable</h3>
 <!-- /wp:heading --><!-- wp:paragraph -->
-<p>WordPress/PHP WebAssembly boots for the request.</p>
+<p>Posts, pages, options, users, and metadata are exported as canonical Markdown and JSON. Immutable objects and revision manifests live in R2.</p>
 <!-- /wp:paragraph --></div>
 <!-- /wp:group --></div>
-<!-- /wp:column -->
-
-<!-- wp:column -->
-<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
-<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
-<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
-<div class="wp-block-group"><!-- wp:heading {"level":3} -->
-<h3 class="wp-block-heading">Disposable SQLite</h3>
+<!-- /wp:column --><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:group {"style":{"border":{"color":"#d5d7da","width":"1px","radius":"12px"},"spacing":{"padding":{"top":"var:preset|spacing|40","right":"var:preset|spacing|40","bottom":"var:preset|spacing|40","left":"var:preset|spacing|40"}}},"layout":{"type":"constrained"}} -->
+<div class="wp-block-group has-border-color" style="border-color:#d5d7da;border-width:1px;border-radius:12px;padding-top:var(--wp--preset--spacing--40);padding-right:var(--wp--preset--spacing--40);padding-bottom:var(--wp--preset--spacing--40);padding-left:var(--wp--preset--spacing--40)"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Disposable</h3>
 <!-- /wp:heading --><!-- wp:paragraph -->
-<p>SQLite is reconstructed as query state, not the durable source of truth.</p>
-<!-- /wp:paragraph --></div>
-<!-- /wp:group --></div>
-<!-- /wp:column -->
-
-<!-- wp:column -->
-<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
-<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
-<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
-<div class="wp-block-group"><!-- wp:heading {"level":3} -->
-<h3 class="wp-block-heading">Canonical state</h3>
-<!-- /wp:heading --><!-- wp:paragraph -->
-<p>Markdown Database Integration exports canonical Markdown and JSON into immutable, content-addressed R2 objects and revision manifests.</p>
-<!-- /wp:paragraph --></div>
-<!-- /wp:group --></div>
-<!-- /wp:column -->
-
-<!-- wp:column -->
-<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
-<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
-<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
-<div class="wp-block-group"><!-- wp:heading {"level":3} -->
-<h3 class="wp-block-heading">Serialized writes</h3>
-<!-- /wp:heading --><!-- wp:paragraph -->
-<p>A Durable Object serializes writes and atomically advances the current revision. A cold runtime hydrates that manifest and reconstructs SQLite.</p>
+<p>SQLite and the PHP filesystem are reconstructed runtime state. A Worker isolate can disappear without becoming the source of truth.</p>
 <!-- /wp:paragraph --></div>
 <!-- /wp:group --></div>
 <!-- /wp:column --></div>
 <!-- /wp:columns -->
 
 <!-- wp:heading {"level":2} -->
-<h2 class="wp-block-heading">Verified capabilities</h2>
+<h2 class="wp-block-heading">What this deployment proves</h2>
 <!-- /wp:heading -->
 
 <!-- wp:list -->
@@ -131,25 +159,29 @@ $front_page_content = <<<'HTML'
 <!-- /wp:list-item --><!-- wp:list-item -->
 <li>Render the published page publicly.</li>
 <!-- /wp:list-item --><!-- wp:list-item -->
-<li>Recover the site after a cold start from the current revision manifest.</li>
+<li>Recover the same published state after replacing the Worker runtime.</li>
 <!-- /wp:list-item --></ul>
 <!-- /wp:list -->
 
 <!-- wp:heading {"level":2} -->
-<h2 class="wp-block-heading">Bounded by design</h2>
+<h2 class="wp-block-heading">Current operating envelope</h2>
 <!-- /wp:heading -->
 
 <!-- wp:list -->
 <ul class="wp-block-list"><!-- wp:list-item -->
 <li>One site namespace is currently configured.</li>
 <!-- /wp:list-item --><!-- wp:list-item -->
-<li>Requests for a site are serialized while a write lease is held.</li>
+<li>Dynamic requests are serialized against one canonical revision.</li>
 <!-- /wp:list-item --><!-- wp:list-item -->
-<li>Each dynamic request currently pays PHP boot cost.</li>
+<li>Cold isolates pay reconstruction cost; warm read requests reuse the current PHP runtime.</li>
 <!-- /wp:list-item --><!-- wp:list-item -->
-<li>Cold recovery hydrates the full revision manifest.</li>
+<li>Static browser assets are cached independently and never enter PHP request handling.</li>
 <!-- /wp:list-item --></ul>
 <!-- /wp:list -->
+
+<!-- wp:paragraph {"fontSize":"small"} -->
+<p class="has-small-font-size">This is an experimental deployment from <a href="https://github.com/Automattic/wp-codebox/pull/1886">Automattic/wp-codebox#1886</a>. Its public behavior is exercised through deployment, authentication, publishing, asset, restart, and canonical-state recovery gates.</p>
+<!-- /wp:paragraph -->
 </main>
 <!-- /wp:group -->
 HTML;
