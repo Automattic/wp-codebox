@@ -940,7 +940,7 @@ export async function runPhpunitCommand({
   }
   let response: PlaygroundRunResponse
   try {
-    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args) })
+    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args, undefined, resultFile) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot)
     await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
@@ -953,10 +953,14 @@ export async function runPhpunitCommand({
 
   await persistPluginPhpunitResult(server, resultFile, artifactRoot)
   await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
-  assertPlaygroundResponseOk("wordpress.phpunit", response)
   const structured = await readPluginPhpunitDiagnostic(server, resultFile)
-  if (structured) {
-    throw new Error(`wordpress.phpunit could not run: ${structured}`)
+  try {
+    assertPlaygroundResponseOk("wordpress.phpunit", response)
+  } catch (error) {
+    if (structured) {
+      throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
+    }
+    throw error
   }
 
   return response.text
