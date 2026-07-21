@@ -110,6 +110,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("tests-dir", options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"),
           commandArg("test-root", options.testRoot ?? `${pluginTarget}/tests`),
           commandArg("phpunit-xml", options.phpunitXml ?? `${pluginTarget}/phpunit.xml.dist`),
+          commandArg("phpunit-xml-default", options.phpunitXml === undefined ? "1" : ""),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),
           commandJsonArg("preload-files-json", options.preloadFiles ?? []),

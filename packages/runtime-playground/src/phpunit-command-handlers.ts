@@ -9,8 +9,9 @@ export interface PhpunitRunCodeOptions {
   testsDir: string
   testRoot?: string
   phpunitXml: string
+  phpunitXmlIsDefault: boolean
   selectedTestFile: string
-  changedTestFiles: unknown[]
+  changedTestFiles: string[]
   phpunitArgs: string[]
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
@@ -32,8 +33,9 @@ export interface CorePhpunitRunCodeOptions {
   coreRoot: string
   testsDir: string
   phpunitXml: string
+  phpunitXmlIsDefault: boolean
   selectedTestFile: string
-  changedTestFiles: unknown[]
+  changedTestFiles: string[]
   autoloadFile: string
   wpConfigDefines: Record<string, unknown>
   multisite: boolean
@@ -51,9 +53,6 @@ export const PLUGIN_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-phpunit-result.txt"
 interface PhpunitConfigDiscoveryPhpOptions {
   functionName: string
   logFunction: string
-  missingConfigMessage: string
-  parseFailureMessage: string
-  includeParseFailureDetail: boolean
   loadedConfigMessage: string
   fallbackXmlDist: boolean
   restrictDirectoriesToTests: boolean
@@ -68,7 +67,6 @@ interface PhpunitChangedTestFilterPhpOptions {
   logFunction: string
   rootParameterName: string
   testsPathFallback: boolean
-  emptyWantedNotice: boolean
 }
 
 function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): string {
@@ -90,9 +88,6 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
   const returnValues = options.uniqueReturnValues
     ? "array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes, array_values(array_unique($files)))"
     : "array($directories, $suffixes, $prefixes, $excludes, $files)"
-  const parseFailureLog = options.includeParseFailureDetail
-    ? `${options.logFunction}('${options.parseFailureMessage}' . $first . '); using defaults');`
-    : `${options.logFunction}('${options.parseFailureMessage}');`
   const suffixAssignment = options.replaceDefaultMatchers ? "$suffixes = $config_suffixes;" : "$suffixes = array_merge($suffixes, $config_suffixes);"
   const prefixAssignment = options.replaceDefaultMatchers ? "$prefixes = $config_prefixes;" : "$prefixes = array_merge($prefixes, $config_prefixes);"
 
@@ -106,8 +101,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
         return ${returnValues};
     };${fallbackXmlDist}
     if (!is_readable($xml_path)) {
-        ${options.logFunction}('${options.missingConfigMessage}' . $xml_path . '; using defaults');
-        return $return_values();
+        throw new RuntimeException('PHPUnit config is not readable: ' . $xml_path);
     }
     $prev = libxml_use_internal_errors(true);
     $xml = @simplexml_load_file($xml_path);
@@ -116,8 +110,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     libxml_use_internal_errors($prev);
     if ($xml === false) {
         $first = $errors ? trim($errors[0]->message) : 'unknown';
-        ${parseFailureLog}
-        return $return_values();
+        throw new RuntimeException('PHPUnit config could not be parsed at ' . $xml_path . ': ' . $first);
     }
     $base = ${options.basePathExpression};
     $config_dirs = array();
@@ -170,11 +163,10 @@ function phpunitDiscoveryPhp(functionName: string, logFunction: string): string 
     $found = array();
     foreach ($files as $file) {
         if (!is_string($file) || $file === '') {
-            continue;
+            throw new RuntimeException('configured PHPUnit test file is invalid');
         }
-        if (!is_file($file) || pathinfo($file, PATHINFO_EXTENSION) !== 'php') {
-            ${logFunction}('NOTICE:test file does not exist: ' . $file);
-            continue;
+        if (!is_file($file) || !is_readable($file) || pathinfo($file, PATHINFO_EXTENSION) !== 'php') {
+            throw new RuntimeException('configured PHPUnit test file is not a readable PHP file: ' . $file);
         }
         foreach ($excludes as $exclude) {
             if (strpos($file, $exclude) === 0) {
@@ -184,9 +176,8 @@ function phpunitDiscoveryPhp(functionName: string, logFunction: string): string 
         $found[] = $file;
     }
     foreach ($directories as $dir) {
-        if (!is_dir($dir)) {
-            ${logFunction}('NOTICE:test directory does not exist: ' . $dir);
-            continue;
+        if (!is_dir($dir) || !is_readable($dir)) {
+            throw new RuntimeException('configured PHPUnit test directory is not a readable directory: ' . $dir);
         }
         $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
         foreach ($iterator as $file) {
@@ -229,12 +220,6 @@ function phpunitChangedTestFilterPhp(options: PhpunitChangedTestFilterPhpOptions
   const testsPathFallback = options.testsPathFallback ? ` elseif (strpos($path, '/tests/') !== false) {
         $path = substr($path, strpos($path, '/tests/') + 1);
     }` : ""
-  const emptyWantedNotice = options.emptyWantedNotice ? `
-    if (empty($wanted)) {
-        ${options.logFunction}('NOTICE:changed tests did not contain usable test paths');
-        return array();
-    }` : ""
-
   return `function ${options.filterFunctionName}(array $test_files, string $changed_files_json, string $${options.rootParameterName}): array {
     $decoded = json_decode($changed_files_json, true);
     if (!is_array($decoded) || empty($decoded)) {
@@ -249,7 +234,7 @@ function phpunitChangedTestFilterPhp(options: PhpunitChangedTestFilterPhpOptions
         if ($normalized !== '') {
             $wanted[$normalized] = true;
         }
-    }${emptyWantedNotice}
+    }
     $filtered = array();
     foreach ($test_files as $file) {
         if (isset($wanted[${options.relativeFunctionName}((string) $file, $${options.rootParameterName})])) {
@@ -360,6 +345,7 @@ $tests_dir = ${JSON.stringify(options.testsDir)};
 $test_root = ${JSON.stringify(options.testRoot || `/wordpress/wp-content/plugins/${options.pluginSlug}/tests`)};
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
+$changed_test_scope = ${JSON.stringify(options.changedTestFiles.length > 0)};
 $phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitArgs))}, true);
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
@@ -763,8 +749,8 @@ function pg_plugin_real_path(string $relative_path, string $kind): ?string {
     return $real;
 }
 
-function pg_project_bootstrap_from_config(string $xml_path): string {
-    if (!is_readable($xml_path) && basename($xml_path) === 'phpunit.xml.dist') {
+function pg_project_bootstrap_from_config(string &$xml_path, bool $xml_is_default): string {
+    if ($xml_is_default && !is_readable($xml_path) && basename($xml_path) === 'phpunit.xml.dist') {
         $alternate = dirname($xml_path) . '/phpunit.xml';
         if (is_readable($alternate)) {
             $xml_path = $alternate;
@@ -836,9 +822,10 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
     try {
         $bootstrap = trim((string) ($cfg['project_bootstrap'] ?? ''));
         $phpunit_xml = (string) ($cfg['phpunit_xml'] ?? '');
+        $phpunit_xml_is_default = !empty($cfg['phpunit_xml_is_default']);
         $from_config = false;
         if ($bootstrap === '') {
-            $bootstrap = pg_project_bootstrap_from_config($phpunit_xml);
+            $bootstrap = pg_project_bootstrap_from_config($phpunit_xml, $phpunit_xml_is_default);
             $from_config = $bootstrap !== '';
         }
         $bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);
@@ -1036,7 +1023,6 @@ ${phpunitChangedTestFilterPhp({
     logFunction: "pg_log",
     rootParameterName: "plugin_path",
     testsPathFallback: true,
-    emptyWantedNotice: true,
   })}
 
 pg_install_diagnostics_handlers();
@@ -1087,7 +1073,7 @@ $config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 't
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
     pg_skip_project_bootstrap_shell_install();
-    pg_run_project_bootstrap_stage(array('project_bootstrap' => $project_bootstrap, 'phpunit_xml' => ${JSON.stringify(options.phpunitXml)}));
+    pg_run_project_bootstrap_stage(array('project_bootstrap' => $project_bootstrap, 'phpunit_xml' => ${JSON.stringify(options.phpunitXml)}, 'phpunit_xml_is_default' => ${JSON.stringify(options.phpunitXmlIsDefault)}));
     pg_run_project_autoload_stage($project_autoload_file !== '' ? $project_autoload_file : $legacy_project_autoload_file);
 } else {
     if ($bootstrap_mode !== 'managed') {
@@ -1214,11 +1200,8 @@ try {
 ${phpunitConfigDiscoveryPhp({
     functionName: "wp_codebox_phpunit_parse_config",
     logFunction: "pg_log",
-    missingConfigMessage: "NOTICE:phpunit.xml.dist not readable at ",
-    parseFailureMessage: "NOTICE:phpunit.xml.dist parse failed (",
-    includeParseFailureDetail: true,
     loadedConfigMessage: "NOTICE:phpunit.xml.dist loaded from ",
-    fallbackXmlDist: true,
+    fallbackXmlDist: options.phpunitXmlIsDefault,
     restrictDirectoriesToTests: !options.testRoot,
     basePathExpression: "dirname($xml_path)",
     uniqueReturnValues: false,
@@ -1231,10 +1214,7 @@ pg_stage_begin('discover_tests');
 try {
     $test_dir = $test_root;
     if (!is_dir($test_dir)) {
-        pg_log('NO_TEST_FILES');
-        pg_log('NOTICE:tests directory not found at ' . $test_dir);
-        pg_stage_ok('discover_tests');
-        exit(0);
+        throw new RuntimeException('configured PHPUnit test root is not a readable directory: ' . $test_dir);
     }
     list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
@@ -1256,10 +1236,9 @@ try {
         $test_files = array($selected_abs);
     }
     pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' files=' . count($configured_files) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
-    if (empty($test_files)) {
+    if (empty($test_files) && !$changed_test_scope) {
         pg_log('NO_TEST_FILES');
-        pg_stage_ok('discover_tests');
-        exit(0);
+        throw new RuntimeException('PHPUnit discovery found no test files');
     }
     pg_stage_ok('discover_tests');
 } catch (Throwable $e) {
@@ -1345,6 +1324,7 @@ $tests_dir = rtrim(${JSON.stringify(options.testsDir)}, '/');
 $phpunit_xml = ${JSON.stringify(options.phpunitXml)};
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
+$changed_test_scope = ${JSON.stringify(options.changedTestFiles.length > 0)};
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $multisite = ${JSON.stringify(options.multisite)};
@@ -1480,11 +1460,8 @@ function core_pg_write_tests_config(string $core_root, array $extra_defines): st
 ${phpunitConfigDiscoveryPhp({
     functionName: "core_pg_parse_phpunit_config",
     logFunction: "core_pg_log",
-    missingConfigMessage: "NOTICE:phpunit config not readable at ",
-    parseFailureMessage: "NOTICE:phpunit config parse failed; using defaults",
-    includeParseFailureDetail: false,
     loadedConfigMessage: "NOTICE:phpunit config loaded from ",
-    fallbackXmlDist: false,
+    fallbackXmlDist: options.phpunitXmlIsDefault,
     restrictDirectoriesToTests: false,
     basePathExpression: "dirname($xml_path)",
     uniqueReturnValues: true,
@@ -1499,7 +1476,6 @@ ${phpunitChangedTestFilterPhp({
     logFunction: "core_pg_log",
     rootParameterName: "core_root",
     testsPathFallback: false,
-    emptyWantedNotice: false,
   })}
 
 ${phpunitArgsPhp("core_pg_phpunit_args", "core_pg_log")}
@@ -1582,10 +1558,9 @@ try {
         $test_files = array($selected_abs);
     }
     core_pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' files=' . count($configured_files) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
-    if (empty($test_files)) {
+    if (empty($test_files) && !$changed_test_scope) {
         core_pg_log('NO_TEST_FILES');
-        core_pg_stage_ok('discover_tests');
-        exit(0);
+        throw new RuntimeException('PHPUnit discovery found no test files');
     }
     core_pg_stage_ok('discover_tests');
 } catch (Throwable $e) {
