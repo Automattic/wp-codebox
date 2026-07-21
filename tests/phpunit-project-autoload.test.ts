@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -183,6 +183,84 @@ echo "BOUNDARY_OK\n";
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "BOUNDARY_OK\n")
 }
 
+function assertDiscoveredTestExecutes(source: string, stagePrefix: "pg" | "core_pg", privateConstructor: boolean): void {
+  const tempDir = mkdtempSync(join(tmpdir(), `wp-codebox-${stagePrefix}-testsuite-`))
+  const testFile = join(tempDir, "DiscoveredTest.php")
+  const scriptPath = join(tempDir, "run-generated-harness.php")
+  const executionMarker = join(tempDir, "executed.txt")
+  const stageLog = join(tempDir, "stages.txt")
+  const loadTestsStart = source.indexOf(`${stagePrefix}_stage_begin('load_tests');`)
+  assert.notEqual(loadTestsStart, -1)
+  const generatedHarnessTail = source.slice(loadTestsStart)
+  const testSuiteFactory = privateConstructor
+    ? `private function __construct($name) { $this->name = $name; }
+    public static function empty($name) { return new self($name); }`
+    : `public function __construct($name) { $this->name = $name; }`
+
+  writeFileSync(testFile, `<?php
+class DiscoveredTest extends PHPUnit\\Framework\\TestCase {
+    public function run(): void {
+        file_put_contents(getenv('EXECUTION_MARKER'), 'executed');
+    }
+}
+`)
+
+  writeFileSync(scriptPath, `<?php
+namespace PHPUnit\\Framework {
+abstract class TestCase {}
+final class TestSuite {
+    private $name;
+    private $tests = array();
+    ${testSuiteFactory}
+    public function addTestSuite(\\ReflectionClass $class): void { $this->tests[] = $class->newInstance(); }
+    public function tests(): array { return $this->tests; }
+    public function count(): int { return count($this->tests); }
+}
+}
+namespace PHPUnit\\TextUI {
+final class TestResult {
+    private $count;
+    public function __construct($count) { $this->count = $count; }
+    public function wasSuccessful(): bool { return true; }
+    public function count(): int { return $this->count; }
+    public function failures(): array { return array(); }
+    public function errors(): array { return array(); }
+}
+final class TestRunner {
+    public function run($suite, $args): TestResult {
+        foreach ($suite->tests() as $test) { $test->run(); }
+        return new TestResult($suite->count());
+    }
+}
+}
+namespace {
+$test_files = array(${phpString(testFile)});
+$phpunit_argv = array('phpunit');
+$argv = array('phpunit');
+function ${stagePrefix}_stage_begin($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_BEGIN:' . $stage . "\\n", FILE_APPEND); }
+function ${stagePrefix}_stage_ok($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_OK:' . $stage . "\\n", FILE_APPEND); }
+function ${stagePrefix}_stage_fail($stage, \\Throwable $e) {
+    file_put_contents(getenv('STAGE_LOG'), 'STAGE_FAIL:' . $stage . ':' . $e->getMessage() . "\\n", FILE_APPEND);
+    throw $e;
+}
+function ${stagePrefix}_log($message) {}
+${stagePrefix === "core_pg" ? "function core_pg_phpunit_args($args) { return array(); }" : ""}
+${generatedHarnessTail}
+}
+`)
+
+  execFileSync("php", [scriptPath], {
+    encoding: "utf8",
+    env: { ...process.env, EXECUTION_MARKER: executionMarker, STAGE_LOG: stageLog },
+  })
+  assert.equal(existsSync(executionMarker), true, `${stagePrefix} discovered test must reach execution`)
+  const stages = readFileSync(stageLog, "utf8")
+  assert.match(stages, /STAGE_OK:load_tests/)
+  assert.match(stages, /STAGE_BEGIN:run_tests/)
+  assert.match(stages, /STAGE_OK:run_tests/)
+  assert.doesNotMatch(stages, /STAGE_FAIL:/)
+}
+
 const recipe = buildWordPressPhpunitRecipe({
   pluginSlug: "woocommerce",
   extra_plugins: [{
@@ -287,7 +365,7 @@ assert.ok(projectModeCode.includes("function pg_ensure_phpunit_harness_loaded():
 assert.ok(projectModeCode.includes("PHPUnit harness is not initialized"))
 assert.ok(projectModeCode.includes("pg_stage_begin('verify_harness')"))
 const verifyHarnessIndex = projectModeCode.indexOf("pg_stage_begin('verify_harness')")
-const projectModeTestsuiteIndex = projectModeCode.indexOf("$suite = new PHPUnit\\Framework\\TestSuite(")
+const projectModeTestsuiteIndex = projectModeCode.indexOf("$suite = method_exists('PHPUnit\\Framework\\TestSuite', 'empty')")
 assert.ok(verifyHarnessIndex > 0, "verify_harness stage must be present")
 assert.ok(projectModeTestsuiteIndex > verifyHarnessIndex, "harness verification must precede TestSuite construction")
 assertProjectBootstrapHarnessGuard(projectModeCode)
@@ -389,6 +467,10 @@ assert.ok(coreModeCode.includes("$test_files = core_pg_discover_tests($directori
 assert.equal(coreModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
 assert.equal(coreModeCode.match(/return \$return_values\(\);/g)?.length, 3)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(coreModeCode, "core_pg_parse_phpunit_config", "core_pg_log")
+for (const privateConstructor of [true, false]) {
+  assertDiscoveredTestExecutes(projectModeCode, "pg", privateConstructor)
+  assertDiscoveredTestExecutes(coreModeCode, "core_pg", privateConstructor)
+}
 
 const managedModeCode = phpunitRunCode({
   pluginSlug: "demo-plugin",
