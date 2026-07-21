@@ -114,7 +114,7 @@
     "test:playground-readonly-mounts-integration": "tsx tests/playground-readonly-mounts-integration.test.ts",
     "test:playground-phpunit-readonly-cache-integration": "tsx tests/playground-phpunit-readonly-cache.integration.test.ts",
     "test:playground-phpunit-bootstrap-failure-integration": "tsx tests/playground-phpunit-bootstrap-failure.integration.test.ts",
-    "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts",
+    "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts && tsx tests/playground-custom-archive-cache-process.test.ts && tsx tests/playground-custom-archive-cache.integration.test.ts",
     "test:phpunit-runtime-failure-diagnostics": "tsx tests/phpunit-runtime-failure-diagnostics.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",

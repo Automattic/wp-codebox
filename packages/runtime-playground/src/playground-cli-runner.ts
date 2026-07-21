@@ -13,7 +13,7 @@ import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
-import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
+import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheDiagnostic, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -66,6 +66,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   let readonlyMountStaging: ReadonlyMountStaging | undefined
   let archiveReference: PlaygroundArchiveReference | undefined
   let cacheMaintenance: PlaygroundCustomArchiveCacheMaintenance | undefined
+  let cacheMaintenanceDiagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []
   let usesArchiveCache = false
   try {
     if (spec.preview?.port) {
@@ -89,11 +90,13 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const stagedMounts = readonlyMountStaging.mounts
     const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
     const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
+    if (usesArchiveCache) {
+      const maintenance = await automaticPlaygroundCustomArchiveCacheMaintenance()
+      cacheMaintenance = maintenance.result
+      cacheMaintenanceDiagnostics = maintenance.diagnostics
+    }
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     archiveReference = wordpressStartupAsset?.archiveReference
-    if (usesArchiveCache) {
-      cacheMaintenance = await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
-    }
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
       sourceUrl: wordpressDirectory ?? "",
@@ -102,6 +105,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
     if (cacheMaintenance) {
       cacheValidation.retention = cacheMaintenance
+    }
+    if (cacheMaintenanceDiagnostics.length > 0) {
+      cacheValidation.retentionDiagnostics = cacheMaintenanceDiagnostics
     }
     const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
     if (blueprintSummary.steps > 0) {
@@ -187,7 +193,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
         } finally {
           await archiveReference?.release().catch(() => undefined)
           if (usesArchiveCache) {
-            await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
+            await automaticPlaygroundCustomArchiveCacheMaintenance(true)
           }
           await readonlyMountStaging?.[Symbol.asyncDispose]()
         }
@@ -200,7 +206,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     await archiveReference?.release().catch(() => undefined)
     if (usesArchiveCache) {
-      await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
+      await automaticPlaygroundCustomArchiveCacheMaintenance(true)
     }
     await readonlyMountStaging?.[Symbol.asyncDispose]()
     if (spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
@@ -623,6 +629,29 @@ function errorDetail(error: unknown): Record<string, unknown> {
   return { message: String(error) }
 }
 
+async function automaticPlaygroundCustomArchiveCacheMaintenance(warnOnFailure = false): Promise<{ result?: PlaygroundCustomArchiveCacheMaintenance; diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] }> {
+  try {
+    const result = await maintainPlaygroundCustomArchiveCache()
+    if (warnOnFailure) {
+      for (const diagnostic of result.diagnostics) {
+        console.warn(`[wp-codebox] ${diagnostic.code}: ${diagnostic.message}`)
+      }
+    }
+    return { result, diagnostics: result.diagnostics }
+  } catch (error) {
+    const diagnostic = {
+      code: "playground-custom-archive-cache-maintenance-failed",
+      message: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+      severity: "warning" as const,
+      path: playgroundWordPressArchiveCacheDirectory(),
+    }
+    if (warnOnFailure) {
+      console.warn(`[wp-codebox] ${diagnostic.code}: ${diagnostic.message}`)
+    }
+    return { diagnostics: [diagnostic] }
+  }
+}
+
 export interface PlaygroundWordPressArchiveCacheValidation {
   version: string
   sourceUrl: string
@@ -640,6 +669,7 @@ export interface PlaygroundWordPressArchiveCacheValidation {
     deleted: boolean
   }>
   retention?: PlaygroundCustomArchiveCacheMaintenance
+  retentionDiagnostics?: PlaygroundCustomArchiveCacheDiagnostic[]
 }
 
 export interface PlaygroundWordPressArchiveCacheValidationOptions {
