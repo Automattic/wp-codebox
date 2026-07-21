@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto"
+import { constants } from "node:fs"
 import { hostname, homedir } from "node:os"
-import { lstat, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises"
-import { basename, dirname, join } from "node:path"
+import { lstat, mkdir, open, readFile, readdir, rmdir, statfs, unlink, type FileHandle } from "node:fs/promises"
+import { basename, join } from "node:path"
 
 const CUSTOM_ARCHIVE_PATTERN = /^custom-[A-Za-z0-9._-]+\.zip$/
 const CUSTOM_SIDECAR_PATTERN = /^(custom-[A-Za-z0-9._-]+\.zip)\.(lock|refs)$/
@@ -32,6 +33,7 @@ interface CacheOwnerRecord {
 
 interface LeaseHandle {
   token: string
+  renew(): Promise<void>
   release(): Promise<void>
 }
 
@@ -48,7 +50,13 @@ export interface PlaygroundArchiveCacheLock {
 export interface PlaygroundArchiveReference {
   archivePath: string
   path: string
+  renew(): Promise<void>
   release(): Promise<void>
+}
+
+export interface PlaygroundArchiveReferenceOptions {
+  leaseMs?: number
+  heartbeat?: boolean
 }
 
 export interface PlaygroundCustomArchiveCachePolicy {
@@ -96,6 +104,7 @@ export interface PlaygroundCustomArchiveCacheMaintenance {
   }
   removedCount: number
   removedBytes: number
+  estimatedAllocatedBytesRemoved: number
   verifiedReclaimedBytes: number
   retainedCount: number
   retainedBytes: number
@@ -142,17 +151,26 @@ export async function withPlaygroundArchiveCacheLock<T>(cacheDirectory: string, 
   }
 }
 
-export async function acquirePlaygroundArchiveReference(archivePath: string): Promise<PlaygroundArchiveReference> {
+export async function acquirePlaygroundArchiveReference(archivePath: string, options: PlaygroundArchiveReferenceOptions = {}): Promise<PlaygroundArchiveReference> {
   const policy = cacheLeasePolicy()
+  const leaseMs = options.leaseMs ?? policy.leaseMs
   const referencesDirectory = `${archivePath}.refs`
-  await mkdir(referencesDirectory, { recursive: true })
+  const directoryHandle = await openSafeLeaseDirectory(referencesDirectory, true)
   const token = randomUUID()
-  const referencePath = join(referencesDirectory, `${token}.json`)
-  const lease = await createFileLease(referencePath, token, policy.leaseMs)
+  const fileName = `${token}.json`
+  const referencePath = join(referencesDirectory, fileName)
+  let lease: LeaseHandle
+  try {
+    lease = await createFileLease(directoryHandle, fileName, referencePath, token, leaseMs, referencesDirectory, options.heartbeat !== false)
+  } catch (error) {
+    await directoryHandle.close()
+    throw error
+  }
 
   return {
     archivePath,
     path: referencePath,
+    renew: lease.renew,
     release: lease.release,
   }
 }
@@ -188,7 +206,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
       }
       const lockPath = `${archivePath}.lock`
       const activeLock = await cacheLockIsActive(lockPath, now, policy, mode === "apply")
-      const activeReferences = await activeArchiveReferenceCount(archivePath, now, policy, mode === "apply")
+      const activeReferences = await activeArchiveReferenceCount(archivePath, now, policy, mode === "apply", diagnostics)
       entries.push({
         path: archivePath,
         size: regular ? archiveStat.size : 0,
@@ -224,7 +242,8 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
 
   let removedCount = 0
   let removedBytes = 0
-  let verifiedReclaimedBytes = 0
+  let estimatedAllocatedBytesRemoved = 0
+  const filesystemBefore = mode === "apply" ? await filesystemAvailableBytes(cacheDirectory) : undefined
   if (mode === "apply") {
     for (const candidate of candidates.sort(oldestFirst)) {
       const lease = await tryAcquireCacheLock(candidate.lockPath, policy.leaseMs)
@@ -232,7 +251,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
         continue
       }
       try {
-        if (await activeArchiveReferenceCount(candidate.path, Date.now(), policy, true) > 0) {
+        if (await activeArchiveReferenceCount(candidate.path, Date.now(), policy, true, diagnostics) > 0) {
           continue
         }
         let current
@@ -259,7 +278,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
           }
           removedCount += 1
           removedBytes += current.size
-          verifiedReclaimedBytes += currentAllocatedBytes
+          estimatedAllocatedBytesRemoved += currentAllocatedBytes
           await removeOrphanReferencesDirectory(`${candidate.path}.refs`, Date.now(), policy, diagnostics)
         }
       } finally {
@@ -269,6 +288,8 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
   }
 
   const sidecars = await maintainOrphanSidecars(cacheDirectory, directoryEntries.map((entry) => entry.name), now, policy, mode, diagnostics)
+  const filesystemAfter = mode === "apply" ? await filesystemAvailableBytes(cacheDirectory) : undefined
+  const verifiedReclaimedBytes = filesystemBefore === undefined || filesystemAfter === undefined ? 0 : Math.max(0, filesystemAfter - filesystemBefore)
   const totalBytes = entries.reduce((total, entry) => total + entry.size, 0)
   return {
     schema: "wp-codebox/playground-custom-archive-cache-maintenance/v1",
@@ -290,6 +311,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
     sidecars,
     removedCount,
     removedBytes,
+    estimatedAllocatedBytesRemoved,
     verifiedReclaimedBytes,
     retainedCount: entries.length - removedCount,
     retainedBytes: totalBytes - removedBytes,
@@ -324,106 +346,153 @@ async function tryAcquireCacheLock(lockPath: string, leaseMs: number): Promise<L
     }
     throw error
   }
+  let directoryHandle: FileHandle | undefined
   try {
-    return await createDirectoryLease(lockPath, token, leaseMs)
+    directoryHandle = await openSafeLeaseDirectory(lockPath, false)
+    return await createDirectoryLease(directoryHandle, lockPath, token, leaseMs)
   } catch (error) {
-    await quarantineDirectory(lockPath)
+    await directoryHandle?.close().catch(() => undefined)
+    await rmdir(lockPath).catch(() => undefined)
     throw error
   }
 }
 
-async function createDirectoryLease(lockPath: string, token: string, leaseMs: number): Promise<LeaseHandle> {
-  const ownerPath = join(lockPath, "owner.json")
-  await writeLease(ownerPath, await ownerRecord(token, leaseMs))
-  return heartbeatLease(ownerPath, token, leaseMs, async () => {
-    await quarantineDirectoryIfOwned(lockPath, token)
-  })
+async function createDirectoryLease(directoryHandle: FileHandle, lockPath: string, token: string, leaseMs: number): Promise<LeaseHandle> {
+  const fileName = `${token}.lease.json`
+  return createFileLease(directoryHandle, fileName, join(lockPath, fileName), token, leaseMs, lockPath, true)
 }
 
-async function createFileLease(path: string, token: string, leaseMs: number): Promise<LeaseHandle> {
-  await writeLease(path, await ownerRecord(token, leaseMs), true)
-  return heartbeatLease(path, token, leaseMs, async () => {
-    const owner = await readOwnerRecord(path)
-    if (owner?.token === token) {
-      await rm(path, { force: true })
-    }
-  })
+async function createFileLease(directoryHandle: FileHandle, fileName: string, displayPath: string, token: string, leaseMs: number, directoryPath: string, automaticHeartbeat: boolean): Promise<LeaseHandle> {
+  const anchoredPath = join(fileDescriptorPath(directoryHandle), fileName)
+  const fileHandle = await open(anchoredPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600)
+  await writeOwnerToHandle(fileHandle, await ownerRecord(token, leaseMs))
+  return heartbeatLease(fileHandle, token, leaseMs, async () => {
+    await unlink(anchoredPath).catch((error) => {
+      if (!errorHasCode(error, "ENOENT")) throw error
+    })
+    await fileHandle.close()
+    await directoryHandle.close()
+    await rmdir(directoryPath).catch((error) => {
+      if (!errorHasCode(error, "ENOENT") && !errorHasCode(error, "ENOTEMPTY")) throw error
+    })
+  }, displayPath, automaticHeartbeat)
 }
 
-function heartbeatLease(path: string, token: string, leaseMs: number, removeOwned: () => Promise<void>): LeaseHandle {
+function heartbeatLease(fileHandle: FileHandle, token: string, leaseMs: number, removeOwned: () => Promise<void>, displayPath: string, automaticHeartbeat: boolean): LeaseHandle {
   let stopped = false
   let heartbeat: Promise<void> | undefined
-  const interval = setInterval(() => {
+  const renew = async () => refreshLease(fileHandle, token, leaseMs)
+  const interval = automaticHeartbeat ? setInterval(() => {
     if (stopped || heartbeat) {
       return
     }
-    heartbeat = refreshLease(path, token, leaseMs).catch(() => undefined).finally(() => {
+    heartbeat = refreshLease(fileHandle, token, leaseMs).catch((error) => {
+      console.warn(`[wp-codebox] playground-cache-lease-refresh-failed: ${displayPath}: ${errorMessage(error)}`)
+    }).finally(() => {
       heartbeat = undefined
     })
-  }, Math.max(50, Math.floor(leaseMs / 3)))
-  interval.unref()
+  }, Math.max(50, Math.floor(leaseMs / 3))) : undefined
+  interval?.unref()
 
   return {
     token,
+    renew,
     async release() {
       stopped = true
-      clearInterval(interval)
+      if (interval) clearInterval(interval)
       await heartbeat?.catch(() => undefined)
       await removeOwned()
     },
   }
 }
 
-async function refreshLease(path: string, token: string, leaseMs: number): Promise<void> {
-  const owner = await readOwnerRecord(path)
+async function refreshLease(fileHandle: FileHandle, token: string, leaseMs: number): Promise<void> {
+  const owner = await readOwnerFromHandle(fileHandle)
   if (owner?.token !== token) {
     return
   }
   const now = new Date()
-  await writeLease(path, { ...owner, heartbeatAt: now.toISOString(), expiresAt: new Date(now.getTime() + leaseMs).toISOString() })
+  await writeOwnerToHandle(fileHandle, { ...owner, heartbeatAt: now.toISOString(), expiresAt: new Date(now.getTime() + leaseMs).toISOString() })
 }
 
 async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, removeStale: boolean): Promise<boolean> {
-  const state = await leaseState(join(lockPath, "owner.json"), lockPath, now, policy.staleLockMs)
-  if (!state.active && removeStale) {
-    if (state.token) {
-      await quarantineDirectoryIfOwned(lockPath, state.token)
-    } else {
-      await quarantineLegacyDirectoryIfStale(lockPath, now, policy.staleLockMs)
-    }
-  }
-  return state.active
-}
-
-async function activeArchiveReferenceCount(archivePath: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, removeStale: boolean): Promise<number> {
-  const referencesDirectory = `${archivePath}.refs`
-  let names: string[]
+  let lockStat
   try {
-    names = await readdir(referencesDirectory)
+    lockStat = await lstat(lockPath)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "ENOTDIR")) {
-      return 0
-    }
+    if (errorHasCode(error, "ENOENT")) return false
     throw error
   }
+  if (!lockStat.isDirectory() || lockStat.isSymbolicLink()) return true
+  const directoryHandle = await openSafeLeaseDirectory(lockPath, false)
+  let active = false
+  try {
+    const anchoredDirectory = fileDescriptorPath(directoryHandle)
+    const names = await readdir(anchoredDirectory)
+    for (const name of names.sort()) {
+      const path = join(anchoredDirectory, name)
+      if (name !== "owner.json" && !name.endsWith(".lease.json")) {
+        const unknownStat = await lstat(path)
+        if (unknownStat.isDirectory() || now - lockStat.mtimeMs <= policy.staleLockMs || !removeStale) {
+          active = true
+        } else {
+          await unlink(path)
+        }
+        continue
+      }
+      const state = await leaseState(path, path, now, policy.staleLockMs)
+      if (state.active) {
+        active = true
+      } else if (removeStale) {
+        await unlink(path).catch((error) => {
+          if (!errorHasCode(error, "ENOENT")) throw error
+        })
+      }
+    }
+    if (names.length === 0 && now - lockStat.mtimeMs <= policy.staleLockMs) active = true
+  } finally {
+    await directoryHandle.close()
+    if (removeStale && !active) {
+      await rmdir(lockPath).catch((error) => {
+        if (!errorHasCode(error, "ENOENT") && !errorHasCode(error, "ENOTEMPTY")) throw error
+      })
+    }
+  }
+  return active
+}
+
+async function activeArchiveReferenceCount(archivePath: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, removeStale: boolean, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []): Promise<number> {
+  const referencesDirectory = `${archivePath}.refs`
+  let referencesStat
+  try {
+    referencesStat = await lstat(referencesDirectory)
+  } catch (error) {
+    if (errorHasCode(error, "ENOENT")) return 0
+    throw error
+  }
+  if (!referencesStat.isDirectory() || referencesStat.isSymbolicLink()) {
+    diagnostics.push({ code: "custom-archive-refs-not-directory", message: "Archive reference sidecar is not a real directory and was not followed.", severity: "warning", path: referencesDirectory })
+    if (removeStale) await unlink(referencesDirectory)
+    return removeStale ? 0 : 1
+  }
+  const directoryHandle = await openSafeLeaseDirectory(referencesDirectory, false)
+  const anchoredDirectory = fileDescriptorPath(directoryHandle)
+  const names = await readdir(anchoredDirectory)
   let active = 0
-  for (const name of names.sort()) {
-    const path = join(referencesDirectory, name)
-    if (name.startsWith(".") && name.endsWith(".tmp")) {
-      if (removeStale) {
-        await rm(path, { force: true })
-      }
-      continue
-    }
-    const state = await leaseState(path, path, now, policy.staleLockMs)
-    if (state.active) {
-      active += 1
-    } else if (removeStale) {
-      const current = await readOwnerRecord(path)
-      if (!state.token || current?.token === state.token) {
-        await rm(path, { recursive: true, force: true })
+  try {
+    for (const name of names.sort()) {
+      const path = join(anchoredDirectory, name)
+      const state = await leaseState(path, path, now, policy.staleLockMs)
+      if (state.active) {
+        active += 1
+      } else if (removeStale) {
+        await unlink(path).catch((error) => {
+          if (!errorHasCode(error, "ENOENT")) throw error
+        })
       }
     }
+  } finally {
+    await directoryHandle.close()
   }
   return active
 }
@@ -468,6 +537,8 @@ async function maintainOrphanSidecars(cacheDirectory: string, names: string[], n
     const active = await activeReferenceCountInDirectory(path, now, policy, mode === "apply")
     if (active > 0) {
       activeCount += 1
+    } else if (mode === "apply" && !await pathExists(path)) {
+      removedCount += 1
     } else if (mode === "apply" && await removeOrphanReferencesDirectory(path, now, policy, diagnostics)) {
       removedCount += 1
     }
@@ -480,69 +551,30 @@ async function activeReferenceCountInDirectory(path: string, now: number, policy
 }
 
 async function removeOrphanReferencesDirectory(path: string, now: number, policy: Pick<PlaygroundCustomArchiveCachePolicy, "staleLockMs">, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[]): Promise<boolean> {
+  let sidecarStat
+  try {
+    sidecarStat = await lstat(path)
+  } catch (error) {
+    if (errorHasCode(error, "ENOENT")) return false
+    throw error
+  }
+  if (!sidecarStat.isDirectory() || sidecarStat.isSymbolicLink()) {
+    diagnostics.push({ code: "custom-archive-refs-not-directory", message: "Archive reference sidecar is not a real directory and was unlinked without following it.", severity: "warning", path })
+    await unlink(path)
+    return true
+  }
   if (await activeReferenceCountInDirectory(path, now, policy, true) > 0) {
     return false
   }
   try {
-    const quarantined = `${path}.cleanup-${randomUUID()}`
-    await rename(path, quarantined)
-    await rm(quarantined, { recursive: true, force: true })
+    await rmdir(path)
     return true
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) {
+    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "ENOTEMPTY")) {
       return false
     }
     diagnostics.push({ code: "orphan-reference-cleanup-failed", message: errorMessage(error), severity: "warning", path })
     return false
-  }
-}
-
-async function quarantineDirectoryIfOwned(path: string, token: string): Promise<boolean> {
-  if ((await readOwnerRecord(join(path, "owner.json")))?.token !== token) {
-    return false
-  }
-  return quarantineDirectory(path)
-}
-
-async function quarantineLegacyDirectoryIfStale(path: string, now: number, staleMs: number): Promise<boolean> {
-  try {
-    if (now - (await lstat(path)).mtimeMs <= staleMs || await readOwnerRecord(join(path, "owner.json"))) {
-      return false
-    }
-    return quarantineDirectory(path)
-  } catch (error) {
-    if (errorHasCode(error, "ENOENT")) {
-      return false
-    }
-    throw error
-  }
-}
-
-async function quarantineDirectory(path: string): Promise<boolean> {
-  const quarantined = `${path}.cleanup-${randomUUID()}`
-  try {
-    await rename(path, quarantined)
-  } catch (error) {
-    if (errorHasCode(error, "ENOENT")) {
-      return false
-    }
-    throw error
-  }
-  await rm(quarantined, { recursive: true, force: true })
-  return true
-}
-
-async function writeLease(path: string, owner: CacheOwnerRecord, exclusive = false): Promise<void> {
-  if (exclusive) {
-    await writeFile(path, `${JSON.stringify(owner)}\n`, { flag: "wx" })
-    return
-  }
-  const temporaryPath = join(dirname(path), `.${basename(path)}.${owner.token}.tmp`)
-  await writeFile(temporaryPath, `${JSON.stringify(owner)}\n`)
-  try {
-    await rename(temporaryPath, path)
-  } finally {
-    await rm(temporaryPath, { force: true })
   }
 }
 
@@ -566,6 +598,64 @@ async function readOwnerRecord(path: string): Promise<CacheOwnerRecord | undefin
     }
     throw error
   }
+}
+
+async function openSafeLeaseDirectory(path: string, create: boolean): Promise<FileHandle> {
+  if (create) {
+    await mkdir(path).catch((error) => {
+      if (!errorHasCode(error, "EEXIST")) throw error
+    })
+  }
+  const pathStat = await lstat(path)
+  if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) {
+    throw new Error(`Playground cache lease sidecar must be a real directory: ${path}`)
+  }
+  const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  const handleStat = await handle.stat()
+  if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
+    await handle.close()
+    throw new Error(`Playground cache lease sidecar changed while opening: ${path}`)
+  }
+  return handle
+}
+
+function fileDescriptorPath(handle: FileHandle): string {
+  if (process.platform === "linux") return `/proc/self/fd/${handle.fd}`
+  if (process.platform === "darwin" || process.platform === "freebsd") return `/dev/fd/${handle.fd}`
+  throw new Error("Playground cache leases require a platform with file-descriptor paths")
+}
+
+async function readOwnerFromHandle(handle: FileHandle): Promise<CacheOwnerRecord | undefined> {
+  try {
+    const fileStat = await handle.stat()
+    const contents = Buffer.alloc(fileStat.size)
+    await handle.read(contents, 0, contents.length, 0)
+    return normalizeOwnerRecord(JSON.parse(contents.toString("utf8")))
+  } catch (error) {
+    if (error instanceof SyntaxError || errorHasCode(error, "ENOENT")) return undefined
+    throw error
+  }
+}
+
+async function writeOwnerToHandle(handle: FileHandle, owner: CacheOwnerRecord): Promise<void> {
+  const contents = Buffer.from(`${JSON.stringify(owner)}\n`)
+  await handle.write(contents, 0, contents.length, 0)
+  await handle.truncate(contents.length)
+  await handle.sync()
+}
+
+function normalizeOwnerRecord(value: Partial<CacheOwnerRecord>): CacheOwnerRecord | undefined {
+  return value.schema === "wp-codebox/playground-cache-lease/v1"
+    && typeof value.token === "string"
+    && typeof value.hostname === "string"
+    && typeof value.bootId === "string"
+    && Number.isInteger(value.pid)
+    && typeof value.processStart === "string"
+    && typeof value.createdAt === "string"
+    && typeof value.heartbeatAt === "string"
+    && typeof value.expiresAt === "string"
+    ? value as CacheOwnerRecord
+    : undefined
 }
 
 async function ownerRecord(token: string, leaseMs: number): Promise<CacheOwnerRecord> {
@@ -597,6 +687,15 @@ function boundedNumber(explicit: number | undefined, environmentName: string, fa
 
 function allocatedBytes(blocks: number): number {
   return Math.max(0, blocks) * 512
+}
+
+async function filesystemAvailableBytes(path: string): Promise<number | undefined> {
+  try {
+    const filesystem = await statfs(path)
+    return filesystem.bavail * filesystem.bsize
+  } catch {
+    return undefined
+  }
 }
 
 function newestFirst(left: CustomArchiveEntry, right: CustomArchiveEntry): number {

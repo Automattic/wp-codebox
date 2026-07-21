@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { link, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -51,7 +51,8 @@ try {
   const applied = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now, maxAgeMs: 1_000, maxBytes: 1_000, maxCount: 20 })
   assert.equal(applied.removedCount, 2)
   assert.equal(applied.removedBytes, 24)
-  assert.equal(applied.verifiedReclaimedBytes, staleAllocated)
+  assert.equal(applied.estimatedAllocatedBytesRemoved, staleAllocated)
+  assert.ok(applied.verifiedReclaimedBytes >= 0)
   assert.deepEqual(await customArchiveNames(), ["custom-locked.zip", "custom-referenced.zip"])
   assert.ok((await readdir(root)).includes("6.9.1.zip"), "stable release archive must remain intact")
 
@@ -85,6 +86,48 @@ try {
   assert.equal((await lstat(linkedTarget)).size, 8_192)
   assert.ok((await readdir(root)).includes("custom-hard-link.zip"))
   assert.ok((await readdir(root)).includes("custom-symbolic-link.zip"))
+
+  const attackTarget = await mkdtemp(join(tmpdir(), "wp-codebox-playground-refs-attack-"))
+  const attackMarker = join(attackTarget, "do-not-delete.txt")
+  await writeFile(attackMarker, "outside cache")
+  const attackedArchive = await archive("custom-refs-attack.zip", 41, now - 100_000)
+  await symlink(attackTarget, `${attackedArchive}.refs`)
+  await assert.rejects(() => acquirePlaygroundArchiveReference(attackedArchive), /must be a real directory/)
+  const attackCleanup = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now, maxAgeMs: 1 })
+  assert.ok(attackCleanup.diagnostics.some((item) => item.code === "custom-archive-refs-not-directory"))
+  assert.equal(await readFile(attackMarker, "utf8"), "outside cache", "reference cleanup must never follow a sidecar symlink")
+  assert.ok(!await exists(`${attackedArchive}.refs`))
+  const orphanAttack = join(root, "custom-orphan-attack.zip.refs")
+  await symlink(attackTarget, orphanAttack)
+  const orphanAttackCleanup = await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", now })
+  assert.ok(!await exists(orphanAttack))
+  assert.equal(await readFile(attackMarker, "utf8"), "outside cache")
+  await rm(attackTarget, { recursive: true, force: true })
+
+  const generationArchive = await archive("custom-generation-race.zip", 43, now - 100_000)
+  const oldGeneration = await acquirePlaygroundArchiveReference(generationArchive, { leaseMs: 100, heartbeat: false })
+  await new Promise((resolve) => setTimeout(resolve, 125))
+  await maintainPlaygroundCustomArchiveCache(root, { mode: "apply", maxAgeMs: 1 })
+  await archive("custom-generation-race.zip", 43, Date.now())
+  const replacementGeneration = await acquirePlaygroundArchiveReference(generationArchive, { leaseMs: 1_000, heartbeat: false })
+  const replacementBefore = await readFile(replacementGeneration.path, "utf8")
+  await oldGeneration.renew()
+  assert.equal(await readFile(replacementGeneration.path, "utf8"), replacementBefore, "an old generation heartbeat must not overwrite its replacement")
+  await oldGeneration.release()
+  assert.ok(await exists(replacementGeneration.path), "old generation release must not remove replacement ownership")
+  await replacementGeneration.release()
+
+  const allocationRoot = await mkdtemp(join(tmpdir(), "wp-codebox-playground-allocation-"))
+  const openArchive = join(allocationRoot, "custom-open-file.zip")
+  await writeFile(openArchive, Buffer.alloc(1024 * 1024, "a"))
+  await utimes(openArchive, 1, 1)
+  const openHandle = await open(openArchive, "r")
+  const openRemoval = await maintainPlaygroundCustomArchiveCache(allocationRoot, { mode: "apply", maxAgeMs: 1 })
+  assert.equal(openRemoval.removedBytes, 1024 * 1024)
+  assert.ok(openRemoval.estimatedAllocatedBytesRemoved >= 1024 * 1024)
+  assert.equal(openRemoval.verifiedReclaimedBytes, 0, "open unlinked allocation is not verified as reclaimed until the final handle closes")
+  await openHandle.close()
+  await rm(allocationRoot, { recursive: true, force: true })
 
   const pidReuseArchive = await archive("custom-pid-reuse.zip", 23, now - 100_000)
   await mkdir(`${pidReuseArchive}.refs`)
@@ -158,6 +201,17 @@ try {
     acquiredRecoveredLock = true
   })
   assert.equal(acquiredRecoveredLock, true, "an expired producer lease must not block future cache users")
+
+  const recoveredTempVersion = "custom-recovered-temp"
+  const recoveredTempLock = join(root, `${recoveredTempVersion}.zip.lock`)
+  await mkdir(recoveredTempLock)
+  await writeFile(join(recoveredTempLock, ".owner.json.crashed.tmp"), "partial")
+  await utimes(recoveredTempLock, 1, 1)
+  let acquiredRecoveredTempLock = false
+  await withPlaygroundArchiveCacheLock(root, recoveredTempVersion, async () => {
+    acquiredRecoveredTempLock = true
+  })
+  assert.equal(acquiredRecoveredTempLock, true, "stale heartbeat temp files from an older generation must not wedge archive acquisition")
   assert.ok((await readdir(root)).includes(stableArchive.split("/").at(-1)!))
 
   console.log("playground custom archive cache retention passed")

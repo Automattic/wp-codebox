@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 import { createServer } from "node:http"
-import { mkdtemp, readdir, rm } from "node:fs/promises"
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -12,7 +13,10 @@ const environmentNames = ["WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR", "WP_CODEB
 const originalEnvironment = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]))
 const zip = Buffer.alloc(22)
 zip.set([0x50, 0x4b, 0x05, 0x06])
+const staleBeforeDownload = join(root, "custom-stale-before-download.zip")
+let requestObservedAfterCleanup = false
 const source = createServer((_request, response) => {
+  requestObservedAfterCleanup = !existsSync(staleBeforeDownload)
   response.writeHead(200, { "content-type": "application/zip", "content-length": String(zip.length) })
   response.end(zip)
 })
@@ -46,13 +50,17 @@ try {
   process.env.WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_AGE_MS = "0"
   process.env.WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_COUNT = "0"
   process.env.WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_LEASE_MS = "300"
+  await writeFile(staleBeforeDownload, Buffer.alloc(8_192, "s"))
+  await utimes(staleBeforeDownload, 1, 1)
 
   const server = await startPlaygroundCliServer(spec, [], { cliModule, onProgress(event) { progress.push(event as unknown as Record<string, unknown>) } })
+  assert.equal(requestObservedAfterCleanup, true, "bounded maintenance must run before resolving or downloading the next archive")
   await new Promise((resolve) => setTimeout(resolve, 0))
   const connecting = progress.find((event) => event.phase === "preview:connecting-client")
   const cacheValidation = (connecting?.detail as Record<string, unknown> | undefined)?.cacheValidation as Record<string, unknown> | undefined
   assert.equal((cacheValidation?.retention as Record<string, unknown> | undefined)?.schema, "wp-codebox/playground-custom-archive-cache-maintenance/v1")
-  assert.equal(((cacheValidation?.retention as Record<string, unknown>).activeProtection as Record<string, unknown>).referenceCount, 1)
+  assert.equal((cacheValidation?.retention as Record<string, unknown>).removedCount, 1)
+  assert.equal(((cacheValidation?.retention as Record<string, unknown>).activeProtection as Record<string, unknown>).referenceCount, 0)
   await server[Symbol.asyncDispose]()
   assert.deepEqual((await readdir(root)).filter((name) => /^custom-.*\.zip(?:\.(?:refs|lock))?$/.test(name)), [], "teardown must release and retain no zero-bound custom cache entries or sidecars")
 
