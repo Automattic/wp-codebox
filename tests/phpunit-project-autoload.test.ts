@@ -358,6 +358,7 @@ assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($d
 assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
 assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
 assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 3)
+assert.match(projectModeCode, /if \(empty\(\$test_files\)\) \{\s+pg_log\('NO_TEST_FILES'\);\s+pg_stage_ok\('discover_tests'\);\s+exit\(0\);/)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(projectModeCode, "wp_codebox_phpunit_parse_config", "pg_log")
 assertSelectedTestFileResolution(projectModeCode)
 
@@ -466,6 +467,7 @@ assert.ok(coreModeCode.includes("list($directories, $suffixes, $prefixes, $exclu
 assert.ok(coreModeCode.includes("$test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.equal(coreModeCode.match(/return array\(\$directories, \$suffixes, \$prefixes, \$excludes\);/g)?.length ?? 0, 0)
 assert.equal(coreModeCode.match(/return \$return_values\(\);/g)?.length, 3)
+assert.match(coreModeCode, /if \(empty\(\$test_files\)\) \{\s+core_pg_log\('NO_TEST_FILES'\);\s+core_pg_stage_ok\('discover_tests'\);\s+exit\(0\);/)
 assertPhpunitParseConfigFallbacksReturnFiveTuple(coreModeCode, "core_pg_parse_phpunit_config", "core_pg_log")
 for (const privateConstructor of [true, false]) {
   assertDiscoveredTestExecutes(projectModeCode, "pg", privateConstructor)
