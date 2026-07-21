@@ -14,6 +14,7 @@ import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/st
 import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "../packages/runtime-cloudflare/src/upload-persistence.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
+import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -256,15 +257,17 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /sites\/default\/markdown\/revisions\/\$\{candidate\.revision\}\.json/)
   assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
   assert.match(worker, /authConstants/)
-  assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request\)/)
-  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request)") < worker.indexOf("const coordinator = env.WORDPRESS_STATE.getByName"))
+  assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request, env\.WORDPRESS_STATE_BUCKET\)/)
+  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf("const coordinator = env.WORDPRESS_STATE.getByName"))
   assert.match(worker, /CONCATENATE_SCRIPTS: false/)
   assert.match(worker, /SCRIPT_DEBUG: false/)
-  assert.match(worker, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL, \(entry: \{ path: Uint8Array \}\) => decoder\.decode\(entry\.path\) === archivePath\)/)
+  assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
+  assert.match(worker, /bucket\.get\(wordpressStaticArtifact\.key, \{ range: \{ offset: file\.offset, length: file\.size \} \}\)/)
+  assert.match(worker, /await sha256Hex\(bytes\) !== file\.sha256/)
   assert.match(worker, /request\.method === "HEAD" \? null : bytes/)
-  assert.match(worker, /"x-wp-codebox-static": "wordpress-archive"/)
-  assert.match(worker, /cache\.match\(request\)/)
-  assert.match(worker, /cache\.put\(request, response\.clone\(\)\)/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-range"/)
+  assert.match(worker, /cache\.match\(cacheRequest\)/)
+  assert.match(worker, /cache\.put\(cacheRequest, response\.clone\(\)\)/)
   assert.match(worker, /coordinatorCall<CoordinatorState>\(coordinator, request\.url, "state"\)/)
   assert.ok(worker.indexOf('coordinatorCall<CoordinatorState>(coordinator, request.url, "state")') < worker.indexOf("let lease = await acquireLease"))
   assert.match(worker, /matchWordPressPageCache\(request, lease\.pointer, env\.WORDPRESS_STATE_BUCKET\)/)
@@ -364,20 +367,39 @@ test("WordPress runtime artifact validation rejects path traversal and invalid b
   assert.equal(writes, 0, "unsafe manifests are rejected before any archive write")
 })
 
+test("WordPress static artifacts require complete, ordered, content-addressed ranges", () => {
+  const sha256 = "a".repeat(64)
+  const manifest: WordPressStaticArtifactManifest = {
+    schema: WORDPRESS_STATIC_ARTIFACT_SCHEMA,
+    key: wordpressStaticArtifactKey(sha256),
+    blob: { sha256, size: 3 },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-7.0.2.zip", version: "7.0.2" },
+    files: [{ path: "wordpress/wp-includes/js/a.js", offset: 0, size: 3, sha256: "b".repeat(64) }],
+  }
+  assert.doesNotThrow(() => validateWordPressStaticArtifactManifest(manifest))
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, files: [{ ...manifest.files[0], path: "wordpress/../secret.js" }] }), /invalid file/)
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, files: [{ ...manifest.files[0], offset: 1 }] }), /invalid file/)
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, blob: { ...manifest.blob, size: 4 } }), /do not cover/)
+})
+
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
   const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
   const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
+  const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
   assert.match(generator, /const response = await fetch\(sourceUrl\)/)
   assert.match(generator, /decodeZip\(response\.body\)/)
   assert.doesNotMatch(generator, /decodeRemoteZip/)
   assert.match(generator, /encodeZip\(selected\)/)
   assert.match(generator, /lastModified: 0/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
+  assert.match(generator, /artifacts\/cloudflare-wordpress-static-corpus\.bin/)
   assert.doesNotMatch(artifact, /decodeZip/)
   assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
   assert.ok(manifest.files.length > 0)
+  assert.doesNotThrow(() => validateWordPressStaticArtifactManifest(staticManifest))
+  assert.ok(staticManifest.files.length > 0)
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {

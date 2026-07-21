@@ -13,12 +13,21 @@ const manifest = JSON.parse(await readFile("packages/runtime-cloudflare/assets/w
 const archive = await readFile("artifacts/cloudflare-wordpress-runtime-corpus.zip")
 const actual = createHash("sha256").update(archive).digest("hex")
 if (actual !== manifest.archive.sha256 || archive.byteLength !== manifest.archive.size || manifest.key !== `runtime/wordpress/${actual}.zip`) throw new Error("Local WordPress runtime artifact does not match its content-addressed manifest.")
+const staticManifest = JSON.parse(await readFile("packages/runtime-cloudflare/assets/wordpress-static-artifact.json", "utf8"))
+const staticBlob = await readFile("artifacts/cloudflare-wordpress-static-corpus.bin")
+const staticActual = createHash("sha256").update(staticBlob).digest("hex")
+if (staticActual !== staticManifest.blob.sha256 || staticBlob.byteLength !== staticManifest.blob.size || staticManifest.key !== `runtime/wordpress-static/${staticActual}.bin`) throw new Error("Local WordPress static artifact does not match its content-addressed manifest.")
 
-const command = ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${manifest.key}`, "--file", "artifacts/cloudflare-wordpress-runtime-corpus.zip", local ? "--local" : "--remote"]
-if (persistTo) command.push("--persist-to", persistTo)
-await new Promise((resolve, reject) => {
-  const child = spawn("npm", command, { cwd: process.cwd(), stdio: "inherit" })
-  child.on("error", reject)
-  child.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`Wrangler R2 provisioning failed with status ${code}.`)))
-})
-console.log(`Provisioned ${manifest.key} (${manifest.archive.size} bytes).`)
+for (const artifact of [
+  { key: manifest.key, size: manifest.archive.size, file: "artifacts/cloudflare-wordpress-runtime-corpus.zip" },
+  { key: staticManifest.key, size: staticManifest.blob.size, file: "artifacts/cloudflare-wordpress-static-corpus.bin" },
+]) {
+  const command = ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
+  if (persistTo) command.push("--persist-to", persistTo)
+  await new Promise((resolve, reject) => {
+    const child = spawn("npm", command, { cwd: process.cwd(), stdio: "inherit" })
+    child.on("error", reject)
+    child.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`Wrangler R2 provisioning failed with status ${code}.`)))
+  })
+  console.log(`Provisioned ${artifact.key} (${artifact.size} bytes).`)
+}

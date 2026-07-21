@@ -1,5 +1,5 @@
 import { loadPHPRuntime, PHP, type PHPRequestHandler } from "@php-wasm/universal"
-import { decodeRemoteZip, decodeZip } from "@php-wasm/stream-compression"
+import { decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
 // @ts-expect-error The adjacent Wasm declaration covers the compiled binary import.
@@ -13,6 +13,7 @@ import { R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMet
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
+import { validateWordPressStaticArtifactManifest, type WordPressStaticArtifactManifest } from "./wordpress-static-artifact.js"
 import type { MarkdownPointer } from "./state-coordinator.js"
 export { WordPressStateCoordinator } from "./state-coordinator.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
@@ -21,10 +22,12 @@ import canonicalMarkdownSeedManifest from "../assets/markdown-database-integrati
 import markdownPrimaryBootstrapIndex from "../assets/markdown-primary-bootstrap-index.sqlite"
 import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifact.json" with { type: "json" }
+import wordpressStaticArtifactManifest from "../assets/wordpress-static-artifact.json" with { type: "json" }
 
 const PHP_VERSION = "8.5.8"
-// Browser assets must come from the same immutable WordPress release as the server corpus.
-const WORDPRESS_ARCHIVE_URL = (wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest).source.url
+const wordpressStaticArtifact = wordpressStaticArtifactManifest as WordPressStaticArtifactManifest
+validateWordPressStaticArtifactManifest(wordpressStaticArtifact)
+const wordpressStaticFiles = new Map(wordpressStaticArtifact.files.map((file) => [file.path, file]))
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const MARKDOWN_DATABASE_INTEGRATION_REVISION = "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
@@ -85,7 +88,7 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const staticResponse = await serveWordPressStaticAsset(request)
+    const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)
     if (staticResponse) return staticResponse
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
@@ -679,16 +682,16 @@ async function packagedCanonicalMarkdownSeed(): Promise<RuntimeFile[]> {
 
 async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> {
   if (phase === "wordpress-archive" || phase === "sqlite-archive") {
-    const archive = phase === "wordpress-archive"
-      ? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
-      : await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
-    return probeResponse(phase, { archiveBytes: archive.size })
+    const archiveBytes = phase === "wordpress-archive"
+      ? (await readWordPressRuntimeArtifact(bucket)).byteLength
+      : (await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")).size
+    return probeResponse(phase, { archiveBytes })
   }
 
   if (phase === "archives") {
-    const wordpressZip = await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+    const wordpressBytes = await readWordPressRuntimeArtifact(bucket)
     const sqliteZip = await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
-    return probeResponse(phase, { wordpressArchiveBytes: wordpressZip.size, sqliteArchiveBytes: sqliteZip.size })
+    return probeResponse(phase, { wordpressArchiveBytes: wordpressBytes.byteLength, sqliteArchiveBytes: sqliteZip.size })
   }
 
   if (phase === "php") {
@@ -702,14 +705,12 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   }
 
   if (phase === "php-wordpress-archive" || phase === "wordpress-archive-php") {
-    const archive = phase === "wordpress-archive-php"
-      ? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
-      : undefined
+    const archive = phase === "wordpress-archive-php" ? await readWordPressRuntimeArtifact(bucket) : undefined
     const php = new PHP(await createPhpRuntime())
     try {
-      const wordpressZip = archive ?? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+      const wordpressZip = archive ?? await readWordPressRuntimeArtifact(bucket)
       const phpVersion = (await php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
-      return probeResponse(phase, { phpVersion, archiveBytes: wordpressZip.size })
+      return probeResponse(phase, { phpVersion, archiveBytes: wordpressZip.byteLength })
     } finally {
       php.exit()
     }
@@ -815,7 +816,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     const runtime = await bootWordPressRuntime(
       phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
       phase !== "wordpress-files",
-      phase === "streamed-sqlite" || phase === "streamed-wordpress",
+      true,
       undefined,
       undefined,
       undefined,
@@ -877,7 +878,7 @@ require '/wordpress/wp-load.php';`
 async function bootWordPressRuntime(
   wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
   includeSqlite = true,
-  streamWordPressFiles = false,
+  streamWordPressFiles = true,
   databaseSeed?: Uint8Array,
   markdownFiles?: RuntimeFile[],
   markdownIndexSeed?: Uint8Array,
@@ -932,7 +933,7 @@ async function bootWordPressRuntime(
     maxPhpInstances: 1,
     phpVersion: "8.5",
     siteUrl,
-    wordPressZip: streamWordPressFiles ? undefined : fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip"),
+    wordPressZip: undefined,
     sqliteIntegrationPluginZip: includeSqlite ? fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip") : undefined,
     wordpressInstallMode,
   })
@@ -1078,6 +1079,15 @@ async function materializeWordPressServerFiles(php: PHP, bucket: R2Bucket | unde
   return materializeWordPressRuntimeArtifact(php, bucket, wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest)
 }
 
+async function readWordPressRuntimeArtifact(bucket: R2Bucket): Promise<Uint8Array> {
+  const manifest = wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest
+  const object = await bucket.get(manifest.key)
+  if (!object) throw new Error("WordPress runtime corpus artifact is unavailable.")
+  const bytes = new Uint8Array(await object.arrayBuffer())
+  if (bytes.byteLength !== manifest.archive.size || await sha256Hex(bytes) !== manifest.archive.sha256) throw new Error("WordPress runtime corpus artifact integrity check failed.")
+  return bytes
+}
+
 async function serveWordPressUpload(request: Request, bucket: R2Bucket, coordinator: DurableObjectStub): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null
   const url = new URL(request.url)
@@ -1159,41 +1169,44 @@ function wordPressUploadContentType(path: string): string {
   } as Record<string, string>)[extension] ?? "application/octet-stream"
 }
 
-async function serveWordPressStaticAsset(request: Request): Promise<Response | null> {
+async function serveWordPressStaticAsset(request: Request, bucket: R2Bucket): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null
   const archivePath = wordpressStaticArchivePath(new URL(request.url).pathname)
   if (!archivePath) return null
+  const file = wordpressStaticFiles.get(archivePath)
+  if (!file) return new Response("Not found", { status: 404 })
 
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  const cacheUrl = new URL(request.url)
+  cacheUrl.searchParams.set("__wp_codebox_static_artifact", wordpressStaticArtifact.blob.sha256)
+  const cacheRequest = new Request(cacheUrl, request)
   if (request.method === "GET" && cache) {
     try {
-      const cached = await cache.match(request)
+      const cached = await cache.match(cacheRequest)
       if (cached) return cached
     } catch {
       // Cache availability is an optimization, never a dependency.
     }
   }
 
-  const decoder = new TextDecoder()
-  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => decoder.decode(entry.path) === archivePath)
-  const reader = stream.getReader()
-  const { done, value: entry } = await reader.read()
-  if (done || !entry) return new Response("Not found", { status: 404 })
-  const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
-  if (path !== archivePath) return new Response("Not found", { status: 404 })
-  const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
+  const object = file.size ? await bucket.get(wordpressStaticArtifact.key, { range: { offset: file.offset, length: file.size } }) : undefined
+  if (file.size && !object) return new Response("WordPress static artifact is unavailable.", { status: 503 })
+  const bytes = object ? new Uint8Array(await object.arrayBuffer()) : new Uint8Array()
+  if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) return new Response("WordPress static artifact integrity check failed.", { status: 502 })
   const response = new Response(request.method === "HEAD" ? null : bytes, {
     headers: {
-      "cache-control": "public, max-age=3600",
+      "cache-control": "public, max-age=31536000, immutable",
+      "content-length": String(file.size),
       "content-type": wordpressStaticContentType(archivePath),
-      "x-wp-codebox-static": "wordpress-archive",
+      "etag": `"${file.sha256}"`,
+      "x-wp-codebox-static": "r2-range",
     },
   })
   if (request.method === "GET" && cache) {
     try {
-      await cache.put(request, response.clone())
+      await cache.put(cacheRequest, response.clone())
     } catch {
-      // A full or unavailable Worker cache must not affect the archive response.
+      // A full or unavailable Worker cache must not affect the R2 response.
     }
   }
   return response

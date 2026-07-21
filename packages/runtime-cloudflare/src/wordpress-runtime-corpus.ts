@@ -33,8 +33,14 @@ export function wordpressStaticArchivePath(pathname: string): string | null {
   }
   if (!decoded.startsWith("/") || decoded.includes("\\") || decoded.split("/").some((segment) => segment === "." || segment === "..")) return null
   const relative = decoded.slice(1)
-  if (!STATIC_ARCHIVE_ROOTS.some((root) => relative.startsWith(root)) || !STATIC_ASSET_EXTENSION.test(relative)) return null
-  return `wordpress/${relative}`
+  const archivePath = `wordpress/${relative}`
+  return isWordPressStaticAsset(archivePath) ? archivePath : null
+}
+
+export function isWordPressStaticAsset(path: string): boolean {
+  if (!path.startsWith("wordpress/") || path.endsWith("/") || path.endsWith(".map")) return false
+  const relative = path.slice("wordpress/".length)
+  return STATIC_ARCHIVE_ROOTS.some((root) => relative.startsWith(root)) && STATIC_ASSET_EXTENSION.test(relative)
 }
 
 export function wordpressStaticContentType(archivePath: string): string {

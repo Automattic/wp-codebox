@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -269,20 +270,25 @@ async function assertLinkedAssets(html, label) {
     const body = await response.text()
     assertNoPhpDiagnostics(body, `${label} asset ${match[1]}`)
     if (!response.ok || !body.length) throw new Error(`Missing ${label} asset ${match[1]}: ${response.status}`)
-    if (response.headers.get("x-wp-codebox-static") !== "wordpress-archive") throw new Error(`${label} asset ${match[1]} did not bypass PHP through the WordPress archive static path.`)
+    if (response.headers.get("x-wp-codebox-static") !== "r2-range") throw new Error(`${label} asset ${match[1]} did not bypass PHP through the WordPress R2 range path.`)
   }
 }
 
 async function assertStaticResponseSemantics() {
   const asset = `${origin}/wp-includes/js/jquery/jquery.min.js?ver=3.7.1`
   const get = await request(asset)
-  if (!get.ok || !get.headers.get("content-type")?.includes("javascript") || get.headers.get("x-wp-codebox-static") !== "wordpress-archive" || !get.headers.get("cache-control")?.includes("max-age")) throw new Error(`Unexpected static asset response: ${get.status}`)
+  if (!get.ok || !get.headers.get("content-type")?.includes("javascript") || get.headers.get("x-wp-codebox-static") !== "r2-range" || !get.headers.get("cache-control")?.includes("immutable") || !get.headers.get("etag")) throw new Error(`Unexpected static asset response: ${get.status}`)
+  const getBody = Buffer.from(await get.arrayBuffer())
+  if (get.headers.get("etag") !== `"${createHash("sha256").update(getBody).digest("hex")}"`) throw new Error("Static GET ETag did not match the served bytes.")
   const head = await request(asset, { method: "HEAD" })
-  if (!head.ok || head.headers.get("x-wp-codebox-static") !== "wordpress-archive" || (await head.text()) !== "") throw new Error("Static HEAD did not preserve headers with an empty body.")
+  const headBody = await head.text()
+  if (!head.ok || head.headers.get("x-wp-codebox-static") !== "r2-range" || head.headers.get("content-length") !== String(getBody.byteLength) || head.headers.get("etag") !== get.headers.get("etag") || headBody !== "") {
+    throw new Error(`Static HEAD did not preserve headers with an empty body: status=${head.status} source=${head.headers.get("x-wp-codebox-static")} get-bytes=${getBody.byteLength} head-length=${head.headers.get("content-length")} body=${headBody.length}.`)
+  }
   const missing = await request(`${origin}/wp-includes/js/does-not-exist.min.js`)
   if (missing.status !== 404) throw new Error(`Missing static archive asset returned ${missing.status}, not 404.`)
   const source = await request(`${origin}/wp-includes/version.php`)
-  if (source.headers.get("x-wp-codebox-static") === "wordpress-archive") throw new Error("Static handler exposed a PHP source file.")
+  if (source.headers.get("x-wp-codebox-static") === "r2-range") throw new Error("Static handler exposed a PHP source file.")
 }
 
 async function request(target, options = {}) {
