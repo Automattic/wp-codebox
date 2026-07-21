@@ -405,3 +405,37 @@ test("canonical MDI seed generator is reproducible and validates its pinned inpu
   assert.match(source, /SELECT ID FROM wp_posts ORDER BY ID/)
   assert.match(source, /MDI_REVISION/)
 })
+
+test("canonical MDI seed owns the Cloudflare front page and its architecture explanation", async () => {
+  const generator = await readFile(new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url), "utf8")
+  const archive = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const files = new Map<string, string>()
+  for await (const entry of decodeZip(new Blob([archive]).stream())) files.set(entry.name, await entry.text())
+  const frontPage = files.get("page/cloudflare-wordpress-runtime.md") ?? ""
+
+  assert.match(generator, /UPDATE wp_posts SET post_title = \?, post_name = \?, post_excerpt = \?, post_content = \?, post_status = \? WHERE ID = 2 AND post_type = \?/)
+  assert.match(generator, /'show_on_front' => 'page', 'page_on_front' => '2'/)
+  assert.match(generator, /'blogname' => 'Cloudflare WordPress Runtime'/)
+  assert.ok(files.has("_options/show_on_front.json"))
+  assert.ok(files.has("_options/page_on_front.json"))
+  assert.match(files.get("_options/show_on_front.json") ?? "", /"page"/)
+  assert.match(files.get("_options/page_on_front.json") ?? "", /"2"/)
+  assert.match(frontPage, /title: Cloudflare WordPress Runtime/)
+  for (const claim of [
+    "WordPress/PHP WebAssembly",
+    "SQLite is reconstructed as query state",
+    "canonical Markdown and JSON",
+    "content-addressed R2 objects and revision manifests",
+    "Durable Object serializes writes and atomically advances the current revision",
+    "cold runtime hydrates that manifest and reconstructs SQLite",
+    "Log in to WordPress",
+    "block editor",
+    "Render the published page publicly",
+    "One site namespace",
+    "Requests for a site are serialized",
+    "PHP boot cost",
+    "full revision manifest",
+  ]) assert.match(frontPage, new RegExp(claim))
+  assert.match(frontPage, /<!-- wp:columns -->/)
+  assert.match(frontPage, /<!-- wp:list -->/)
+})

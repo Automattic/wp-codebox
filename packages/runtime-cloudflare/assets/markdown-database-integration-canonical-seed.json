@@ -2,7 +2,7 @@
     "schema": "wp-codebox/cloudflare-canonical-mdi-seed/v1",
     "markdownDatabaseIntegrationRevision": "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c",
     "wordpressInstallSeedSha256": "7212b89f1c01f98a23b89e9a2dd2b214306a85c10adb0355b9c7a6005b4fe822",
-    "archiveSha256": "717b53395be2eb29ba7419f5a0b7eee4fe5a6527ec09246b24133aea82b3686c",
+    "archiveSha256": "ee84fad280beb3ee2965a6f430b849ea31ce2899d2533b2906da7dcf3f306a43",
     "files": [
         {
             "path": "_options/active_plugins.json",
@@ -61,13 +61,13 @@
         },
         {
             "path": "_options/blogdescription.json",
-            "sha256": "759154f66c8b9bed0810ce36349fc7a2ed8a0da3acf6c59a2e6e01f863d89c5b",
-            "size": 106
+            "sha256": "c2c48dc802585847cd2301fcb89c10b624104a2860afb29b4b27569cfe390136",
+            "size": 157
         },
         {
             "path": "_options/blogname.json",
-            "sha256": "2d121fcce756b914f84be99b8a0a75a1003e6a21f46e4c9d1dcf10502aa18de2",
-            "size": 119
+            "sha256": "bb010b37edc23e3855e5afb90109904858c0e7c1e1df070fc3af50c8cd0a06cb",
+            "size": 127
         },
         {
             "path": "_options/category_base.json",
@@ -311,7 +311,7 @@
         },
         {
             "path": "_options/page_on_front.json",
-            "sha256": "aff01d58fb09d4c284db6550484612b378ef54a95b2843faba230e57f3ab6da3",
+            "sha256": "94b00bb0fc5ef8ef6af537bfdae32d3d568f64261627e15a4bbe113c79e90bc7",
             "size": 106
         },
         {
@@ -366,8 +366,8 @@
         },
         {
             "path": "_options/show_on_front.json",
-            "sha256": "34d9c066eb8dd1f36c14e67e5b34ba4cfb041ebdc9d9ba1be2b78869879bb002",
-            "size": 110
+            "sha256": "fdac10eccf664e5d32e0467b7827b6fb589b7be04eafb1ff5188964521203b56",
+            "size": 109
         },
         {
             "path": "_options/sidebars_widgets.json",
@@ -411,7 +411,7 @@
         },
         {
             "path": "_options/theme_mods_twentytwentyfive.json",
-            "sha256": "1d251370cb28c8d1aa06c7d78a0cb604e954caff117eb306321c7111d60035c6",
+            "sha256": "b9d65f5c32b7e37a1274a40166a4ef884540cc5aff658e40ced68cf58c4ae4a0",
             "size": 161
         },
         {
@@ -660,14 +660,14 @@
             "size": 431
         },
         {
+            "path": "page/cloudflare-wordpress-runtime.md",
+            "sha256": "f3d3e42ada4bdde99f505a83d6b69c5b027289f4dd147b5d0e026e441c9914b9",
+            "size": 4820
+        },
+        {
             "path": "page/privacy-policy.md",
             "sha256": "a2a87d2d22e084f5c8feb45329881f24f22dc83e0882b1b2cfe8eb5b05decc01",
             "size": 6118
-        },
-        {
-            "path": "page/sample-page.md",
-            "sha256": "066c9dcb78ab3c93c719161e4d819bd136c12dda7b3dacf3497839a3ab927609",
-            "size": 1923
         },
         {
             "path": "post/hello-world.md",

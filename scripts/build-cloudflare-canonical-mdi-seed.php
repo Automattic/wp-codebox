@@ -56,6 +56,103 @@ $sqlite_seed = $assets . '/wordpress-install-seed.sqlite';
 $output_zip = $assets . '/markdown-database-integration-canonical-seed.zip';
 $output_manifest = $assets . '/markdown-database-integration-canonical-seed.json';
 $root = sys_get_temp_dir() . '/wp-codebox-canonical-mdi-' . getmypid() . '-' . bin2hex( random_bytes( 4 ) );
+$front_page_content = <<<'HTML'
+<!-- wp:group {"tagName":"main","layout":{"type":"constrained"}} -->
+<main class="wp-block-group">
+<!-- wp:heading {"level":1} -->
+<h1 class="wp-block-heading">WordPress at the edge, with durable Markdown state</h1>
+<!-- /wp:heading -->
+
+<!-- wp:paragraph {"fontSize":"large"} -->
+<p class="has-large-font-size">This bounded Cloudflare runtime runs WordPress and PHP as WebAssembly at the edge while keeping durable site state outside the disposable query database.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading {"level":2} -->
+<h2 class="wp-block-heading">Architecture flow</h2>
+<!-- /wp:heading -->
+
+<!-- wp:columns -->
+<div class="wp-block-columns"><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Edge request</h3>
+<!-- /wp:heading --><!-- wp:paragraph -->
+<p>WordPress/PHP WebAssembly boots for the request.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:group --></div>
+<!-- /wp:column -->
+
+<!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
+<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
+<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Disposable SQLite</h3>
+<!-- /wp:heading --><!-- wp:paragraph -->
+<p>SQLite is reconstructed as query state, not the durable source of truth.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:group --></div>
+<!-- /wp:column -->
+
+<!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
+<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
+<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Canonical state</h3>
+<!-- /wp:heading --><!-- wp:paragraph -->
+<p>Markdown Database Integration exports canonical Markdown and JSON into immutable, content-addressed R2 objects and revision manifests.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:group --></div>
+<!-- /wp:column -->
+
+<!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph {"align":"center","fontSize":"x-large"} -->
+<p class="has-text-align-center has-x-large-font-size">&rarr;</p>
+<!-- /wp:paragraph --><!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Serialized writes</h3>
+<!-- /wp:heading --><!-- wp:paragraph -->
+<p>A Durable Object serializes writes and atomically advances the current revision. A cold runtime hydrates that manifest and reconstructs SQLite.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:group --></div>
+<!-- /wp:column --></div>
+<!-- /wp:columns -->
+
+<!-- wp:heading {"level":2} -->
+<h2 class="wp-block-heading">Verified capabilities</h2>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul class="wp-block-list"><!-- wp:list-item -->
+<li>Log in to WordPress.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Edit content with the block editor and publish it.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Render the published page publicly.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Recover the site after a cold start from the current revision manifest.</li>
+<!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+
+<!-- wp:heading {"level":2} -->
+<h2 class="wp-block-heading">Bounded by design</h2>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul class="wp-block-list"><!-- wp:list-item -->
+<li>One site namespace is currently configured.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Requests for a site are serialized while a write lease is held.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Each dynamic request currently pays PHP boot cost.</li>
+<!-- /wp:list-item --><!-- wp:list-item -->
+<li>Cold recovery hydrates the full revision manifest.</li>
+<!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+</main>
+<!-- /wp:group -->
+HTML;
 
 try {
 	mkdir( $root, 0755, true );
@@ -71,6 +168,13 @@ try {
 	}
 	$pdo = new PDO( 'sqlite:' . $database );
 	$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+	$front_page = $pdo->prepare( 'UPDATE wp_posts SET post_title = ?, post_name = ?, post_excerpt = ?, post_content = ?, post_status = ? WHERE ID = 2 AND post_type = ?' );
+	$front_page->execute( array( 'Cloudflare WordPress Runtime', 'cloudflare-wordpress-runtime', 'A bounded WordPress WebAssembly runtime with canonical Markdown state in R2.', $front_page_content, 'publish', 'page' ) );
+	if ( 1 !== $front_page->rowCount() ) { throw new RuntimeException( 'Unable to configure canonical front page ID 2.' ); }
+	$options = $pdo->prepare( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'on') ON CONFLICT(option_name) DO UPDATE SET option_value = excluded.option_value" );
+	foreach ( array( 'blogname' => 'Cloudflare WordPress Runtime', 'blogdescription' => 'WordPress WebAssembly with canonical Markdown state', 'show_on_front' => 'page', 'page_on_front' => '2' ) as $name => $value ) {
+		$options->execute( array( $name, $value ) );
+	}
 	$runtime = WP_Markdown_Primary_Storage_Runtime::bootstrap_existing_cache( array( 'content_root' => $markdown_root, 'state_root' => $markdown_root ), new WP_SQLite_Connection( $pdo ), 'wordpress' );
 	$driver = $runtime->get_driver();
 	$theme_mods = $pdo->prepare( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('theme_mods_twentytwentyfive', ?, 'auto') ON CONFLICT(option_name) DO UPDATE SET option_value = excluded.option_value" );
