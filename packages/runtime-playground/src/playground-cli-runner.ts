@@ -6,14 +6,14 @@ import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEv
 import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { mkdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
+import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -37,8 +37,6 @@ export interface PlaygroundCliModule {
     phpExtension?: string[]
   }): Promise<PlaygroundCliServer>
 }
-
-const PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV = "WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR"
 
 export interface PlaygroundCliStartupOptions {
   onProgress?: (event: BrowserStartupProgressEvent) => void | Promise<void>
@@ -66,6 +64,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   })
   emitProgress("preview:loading-client", "running", "Loading preview")
   let readonlyMountStaging: ReadonlyMountStaging | undefined
+  let archiveReference: PlaygroundArchiveReference | undefined
+  let cacheMaintenance: PlaygroundCustomArchiveCacheMaintenance | undefined
+  let usesArchiveCache = false
   try {
     if (spec.preview?.port) {
       await assertPreviewPortAvailable(spec.preview.port)
@@ -83,16 +84,24 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       token: randomBytes(32).toString("base64url"),
       payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
     }
+    usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
     const stagedMounts = readonlyMountStaging.mounts
     const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
     const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
+    archiveReference = wordpressStartupAsset?.archiveReference
+    if (usesArchiveCache) {
+      cacheMaintenance = await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
+    }
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
       sourceUrl: wordpressDirectory ?? "",
       source: "pre-resolved" as const,
       invalidArchives: [],
+    }
+    if (cacheMaintenance) {
+      cacheValidation.retention = cacheMaintenance
     }
     const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
     if (blueprintSummary.steps > 0) {
@@ -176,6 +185,10 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
         try {
           await proxiedServer[Symbol.asyncDispose]()
         } finally {
+          await archiveReference?.release().catch(() => undefined)
+          if (usesArchiveCache) {
+            await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
+          }
           await readonlyMountStaging?.[Symbol.asyncDispose]()
         }
       },
@@ -185,6 +198,10 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       error: errorDetail(error),
     })
 
+    await archiveReference?.release().catch(() => undefined)
+    if (usesArchiveCache) {
+      await maintainPlaygroundCustomArchiveCache().catch(() => undefined)
+    }
     await readonlyMountStaging?.[Symbol.asyncDispose]()
     if (spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
       throw new PlaygroundPreviewPortUnavailableError(spec.preview.port, error)
@@ -622,13 +639,14 @@ export interface PlaygroundWordPressArchiveCacheValidation {
     reason: string
     deleted: boolean
   }>
+  retention?: PlaygroundCustomArchiveCacheMaintenance
 }
 
 export interface PlaygroundWordPressArchiveCacheValidationOptions {
   deleteInvalid?: boolean
 }
 
-export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory(), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
+export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = playgroundWordPressArchiveCacheDirectory(), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
   const release = await resolveWordPressReleaseForStartup(versionQuery)
   const version = release.version
   const sourceUrl = release.releaseUrl
@@ -670,6 +688,7 @@ interface PlaygroundWordPressStartupAsset {
   wp: string | undefined
   localPath?: string
   cacheValidation: PlaygroundWordPressArchiveCacheValidation
+  archiveReference?: PlaygroundArchiveReference
 }
 
 interface ResolvedWordPressReleaseForStartup {
@@ -680,7 +699,7 @@ interface ResolvedWordPressReleaseForStartup {
 
 type WordPressReleaseResolver = typeof resolveWordPressRelease
 
-export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory()): Promise<PlaygroundWordPressStartupAsset> {
+export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = playgroundWordPressArchiveCacheDirectory()): Promise<PlaygroundWordPressStartupAsset> {
   if (wordpressZip) {
     const version = startupAssetVersion(versionQuery, wordpressZip)
     const cacheValidation = await validateWordPressArchivePaths(version, wordpressZip, isHttpUrl(wordpressZip) ? [] : [wordpressZip], { deleteInvalid: false })
@@ -693,6 +712,11 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
     const archivePaths = [cachedArchivePath, join(cacheDirectory, `prebuilt-wp-content-for-wp-${release.version}.zip`)]
     const cacheValidation = await validateWordPressArchivePaths(release.version, release.releaseUrl, archivePaths, { deleteInvalid: true })
     if (existsSync(cachedArchivePath)) {
+      if (isCustomPlaygroundWordPressArchive(cachedArchivePath)) {
+        const accessedAt = new Date()
+        await utimes(cachedArchivePath, accessedAt, accessedAt)
+      }
+      const archiveReference = isCustomPlaygroundWordPressArchive(cachedArchivePath) ? await acquirePlaygroundArchiveReference(cachedArchivePath) : undefined
       return {
         wp: undefined,
         localPath: cachedArchivePath,
@@ -701,6 +725,7 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
           source: "cache",
           cache: { status: "hit", archivePath: cachedArchivePath, lockPath: lock.path, waitedMs: lock.waitedMs },
         },
+        archiveReference,
       }
     }
 
@@ -711,6 +736,7 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
       throw new PlaygroundStartupAssetError("wordpress-archive-cache", release.releaseUrl, versionQuery ?? "latest", new Error(`Downloaded WordPress archive is invalid: ${invalidDownloadedArchive.reason}`))
     }
 
+    const archiveReference = isCustomPlaygroundWordPressArchive(cachedArchivePath) ? await acquirePlaygroundArchiveReference(cachedArchivePath) : undefined
     return {
       wp: undefined,
       localPath: cachedArchivePath,
@@ -720,48 +746,9 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
         source: release.source,
         cache: { status: "downloaded", archivePath: cachedArchivePath, lockPath: lock.path, waitedMs: lock.waitedMs },
       },
+      archiveReference,
     }
-  })
-}
-
-function defaultPlaygroundWordPressArchiveCacheDirectory(): string {
-  return process.env[PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV] || join(homedir(), ".wordpress-playground")
-}
-
-interface PlaygroundArchiveCacheLock {
-  path: string
-  waitedMs: number
-}
-
-async function withPlaygroundArchiveCacheLock<T>(cacheDirectory: string, version: string, callback: (lock: PlaygroundArchiveCacheLock) => Promise<T>): Promise<T> {
-  await mkdir(cacheDirectory, { recursive: true })
-  const lockPath = join(cacheDirectory, `${version}.zip.lock`)
-  const startedAt = Date.now()
-
-  for (;;) {
-    try {
-      await mkdir(lockPath)
-      break
-    } catch (error) {
-      if (!errorHasCode(error, "EEXIST")) {
-        throw error
-      }
-      if (Date.now() - startedAt > 120_000) {
-        throw new PlaygroundStartupAssetError("wordpress-archive-cache-lock", lockPath, version, new Error("Timed out waiting for WordPress archive cache lock"))
-      }
-      await delay(100)
-    }
-  }
-
-  try {
-    return await callback({ path: lockPath, waitedMs: Date.now() - startedAt })
-  } finally {
-    await rm(lockPath, { recursive: true, force: true })
-  }
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+  }, (lockPath) => new PlaygroundStartupAssetError("wordpress-archive-cache-lock", lockPath, release.version, new Error("Timed out waiting for WordPress archive cache lock")))
 }
 
 async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: string): Promise<void> {
@@ -784,7 +771,7 @@ async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: s
   }
 }
 
-export async function resolveWordPressReleaseForStartup(versionQuery: string | undefined, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory(), resolver: WordPressReleaseResolver = resolveWordPressRelease): Promise<ResolvedWordPressReleaseForStartup> {
+export async function resolveWordPressReleaseForStartup(versionQuery: string | undefined, cacheDirectory = playgroundWordPressArchiveCacheDirectory(), resolver: WordPressReleaseResolver = resolveWordPressRelease): Promise<ResolvedWordPressReleaseForStartup> {
   const exactVersion = exactWordPressVersion(versionQuery)
   if (exactVersion) {
     return {
