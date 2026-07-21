@@ -265,6 +265,8 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
   assert.doesNotMatch(worker, /SQLITE_INTEGRATION_ARCHIVE_URL|fetchArchive\(/)
   assert.match(worker, /readRuntimeArchiveArtifact\(bucket, manifest\)/)
+  assert.match(worker, /phase === "full"[\s\S]*await packagedCanonicalMarkdownSeed\(\)[\s\S]*bootMode: "canonical-mdi"/)
+  assert.doesNotMatch(worker, /phase === "full" \|\| phase === "streamed-wordpress"/)
   assert.match(worker, /bucket\.get\(wordpressStaticArtifact\.key, \{ range: \{ offset: file\.offset, length: file\.size \} \}\)/)
   assert.match(worker, /await sha256Hex\(bytes\) !== file\.sha256/)
   assert.match(worker, /request\.method === "HEAD" \? null : bytes/)

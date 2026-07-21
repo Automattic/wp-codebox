@@ -812,9 +812,30 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
     }
   }
 
-  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full" || phase === "streamed-sqlite" || phase === "streamed-wordpress") {
+  if (phase === "full") {
     const runtime = await bootWordPressRuntime(
-      phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
+      "do-not-attempt-installing",
+      true,
+      true,
+      undefined,
+      await packagedCanonicalMarkdownSeed(),
+      new Uint8Array(markdownPrimaryBootstrapIndex),
+      SITE_URL,
+      {},
+      bucket,
+      true,
+    )
+    try {
+      const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
+      return probeResponse(phase, { phpVersion, wordpressVersion: runtime.wordpressVersion, bootMode: "canonical-mdi" })
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  if (phase === "wordpress-files" || phase === "sqlite" || phase === "streamed-sqlite" || phase === "streamed-wordpress") {
+    const runtime = await bootWordPressRuntime(
+      phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
       phase !== "wordpress-files",
       true,
       undefined,
@@ -828,7 +849,7 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
       const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
       return probeResponse(phase, { phpVersion, wordpressVersion: runtime.wordpressVersion })
     } finally {
-      if (phase !== "full") runtime.php.exit()
+      runtime.php.exit()
     }
   }
 

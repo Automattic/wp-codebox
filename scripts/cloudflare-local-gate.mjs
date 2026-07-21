@@ -18,6 +18,7 @@ try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
+  await assertFullBootProbe()
   await assertConcurrentMutations()
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
@@ -49,7 +50,7 @@ try {
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, and session persistence.")
+  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, and session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -205,6 +206,17 @@ async function assertHealthResponse() {
   const response = await request(`${origin}/?phase=health`)
   const body = await response.json()
   if (response.status !== 200 || body.schema !== "wp-codebox/cloudflare-runtime-health/v1" || body.marker !== "wp-codebox-cloudflare-runtime-health" || body.phpVersion !== "8.5.8" || typeof body.wordpressVersion !== "string" || body.execution?.status !== "ok") throw new Error(`Unexpected Cloudflare runtime health envelope: ${JSON.stringify(body)}`)
+}
+
+async function assertFullBootProbe() {
+  const startedAt = performance.now()
+  const response = await request(`${origin}/?phase=full`)
+  const payload = await response.json()
+  if (!response.ok || payload.schema !== "wp-codebox/cloudflare-boot-probe/v1" || payload.phase !== "full" || payload.completed !== true
+    || payload.evidence?.bootMode !== "canonical-mdi" || !payload.evidence?.wordpressVersion || !payload.evidence?.phpVersion) {
+    throw new Error(`Canonical full-boot probe failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
+  }
+  console.log(`Canonical full-boot probe timing: ${Math.round(performance.now() - startedAt)}ms.`)
 }
 
 async function assertWordPressPage(target, label) {
