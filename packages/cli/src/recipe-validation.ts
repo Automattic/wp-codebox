@@ -960,6 +960,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   })
   const commands = [
     ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(boundedRuntimePlanCommands(recipe), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
@@ -993,6 +994,20 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     ...defaultPolicy,
     commands: [...new Set(commands)],
   }
+}
+
+function boundedRuntimePlanCommands(recipe: WorkspaceRecipe): string[] {
+  return recipeWorkflowSteps(recipe).flatMap(({ step }) => {
+    if (step.command !== "wp-codebox.bounded-runtime-plan") return []
+    const raw = step.args?.find((argument) => argument.startsWith("plan-json="))?.slice("plan-json=".length)
+    if (!raw) return []
+    try {
+      const plan = JSON.parse(raw) as { entries?: Array<{ argv?: unknown[] }> }
+      return (plan.entries ?? []).flatMap((entry) => typeof entry.argv?.[0] === "string" ? [entry.argv[0]] : [])
+    } catch {
+      return []
+    }
+  })
 }
 
 function validateFixtureDatabases(fixtureDatabases: WorkspaceRecipeFixtureDatabase[] | undefined, recipePath: string): void {

@@ -40,6 +40,8 @@ assert.equal(result.success, false)
 assert.equal(maximumActive, 2, "execution never exceeds the declared concurrency")
 assert.deepEqual(result.entries.map((entry) => entry.id), ["first", "failed", "slow", "last"], "aggregate order is input order rather than completion order")
 assert.deepEqual(result.entries.map((entry) => entry.status), ["succeeded", "failed", "timed_out", "succeeded"])
+assert.deepEqual(result.counts, { total: 4, succeeded: 2, failed: 1, timedOut: 1, cancelled: 0 })
+assert.equal(result.entries.every((entry) => Number.isInteger(entry.durationMs) && entry.durationMs >= 0), true)
 assert.deepEqual(lifecycle, ["materialize", "start-services", "stop-services", "dispose"], "workspace, service, and runtime lifecycles are each owned once")
 assert.deepEqual(executed.sort(), ["failed", "first", "last", "slow"], "one failed entry does not isolate unrelated entries")
 

@@ -3,8 +3,8 @@ import { captureArtifactFile, type MountSpec } from "@automattic/wp-codebox-core
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
 
-export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string): Promise<void> {
-  await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ".pg-test-result.txt"))
+export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<void> {
+  await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
 }
 
 export async function persistCorePhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string): Promise<void> {

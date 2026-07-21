@@ -912,7 +912,9 @@ export async function runPhpunitCommand({
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
-  const resultFile = PLUGIN_PHPUNIT_RESULT_FILE
+  const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
+  const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
     pluginSlug,
     cwd: argValue(args, "cwd")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}`,
@@ -942,8 +944,8 @@ export async function runPhpunitCommand({
   try {
     response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args, undefined, resultFile) })
   } catch (error) {
-    await persistPluginPhpunitResult(server, resultFile, artifactRoot)
-    await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
+    await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
+    await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
     const structured = await readPluginPhpunitDiagnostic(server, resultFile)
     if (structured) {
       throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
@@ -951,8 +953,8 @@ export async function runPhpunitCommand({
     throw error
   }
 
-  await persistPluginPhpunitResult(server, resultFile, artifactRoot)
-  await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
+  await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
+  await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
   const structured = await readPluginPhpunitDiagnostic(server, resultFile)
   try {
     assertPlaygroundResponseOk("wordpress.phpunit", response)
@@ -964,6 +966,12 @@ export async function runPhpunitCommand({
   }
 
   return response.text
+}
+
+function boundedProcessIdentity(value: string | undefined): string {
+  if (!value) return ""
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) throw new Error(`Invalid PHPUnit process identity: ${value}`)
+  return value
 }
 
 export async function runCorePhpunitCommand({

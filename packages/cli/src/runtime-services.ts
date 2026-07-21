@@ -172,6 +172,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     const { stdout } = await dependencies.execute("docker", ["port", container, "3306/tcp"], { signal, timeout: 10_000 })
     const port = parseLoopbackPort(stdout)
     await dependencies.waitForReady("127.0.0.1", port, 30_000, signal)
+    await waitForMysqlDatabase(container, engine, password, dependencies, 30_000, signal)
     throwIfAborted(signal)
     evidence.readiness = "ready"
     evidence.lifecycle = "provisioned"
@@ -184,6 +185,23 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     if (started) await releaseService(container, evidence, dependencies, undefined).catch(() => undefined)
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
   }
+}
+
+async function waitForMysqlDatabase(container: string, engine: keyof typeof MYSQL_IMAGES, password: string, dependencies: RuntimeServiceDependencies, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  const client = engine === "mariadb" ? "mariadb" : "mysql"
+  const args = ["exec", "--env", "MYSQL_PWD", container, client, "--protocol=TCP", "--host=127.0.0.1", "--user=runtime", "--database=runtime", "--execute=SELECT 1"]
+  while (Date.now() < deadline) {
+    throwIfAborted(signal)
+    try {
+      await dependencies.execute("docker", args, { env: { ...process.env, MYSQL_PWD: password }, signal, timeout: 5_000 })
+      return
+    } catch (error) {
+      if (signal?.aborted) throw error
+      await abortableDelay(100, signal)
+    }
+  }
+  throw new Error(`MySQL database readiness timed out after ${timeoutMs}ms`)
 }
 
 async function ensureDockerImage(image: string, dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {

@@ -41,7 +41,9 @@ Use these package entrypoints from external integrations:
   concurrency. It accepts `wp-codebox/bounded-runtime-plan/v1`; every entry has
   `argv`, string-only environment overrides, a per-entry timeout, process
   identity, safe artifact namespace, and input index. Results use
-  `wp-codebox/bounded-runtime-plan-result/v1` in input order. The adapter owns
+  `wp-codebox/bounded-runtime-plan-result/v1` in input order with aggregate
+  counts, per-entry duration, and optional stdout, stderr, result, and artifact
+  refs. The adapter owns
   runtime-specific execution, while Codebox guarantees one materialize/start and
   one stop/dispose lifecycle. Set `failFast: true` to cancel not-yet-started
   entries, and use `retryBoundedRuntimePlan(plan, priorResult)` to select only
@@ -66,6 +68,15 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
   resolution helpers for CLI consumers that need dry-run summaries or runtime
   environment injection outside the command entrypoint.
+- `@automattic/wp-codebox-cli/bounded-recipe-plan` and the matching workspace
+  `./cli/bounded-recipe-plan` entrypoint execute a bounded plan inside an already
+  prepared recipe runtime. Recipes use the generic
+  `wp-codebox.bounded-runtime-plan` helper with `plan-json` or `plan-file`; nested
+  commands remain subject to the recipe runtime policy, entry environment values
+  are applied as per-execution runtime environment overrides without appearing in
+  command result arguments, and outputs are persisted under
+  each safe artifact namespace. Running that recipe through `wp-codebox
+  recipe-run` preserves one outer runtime and disposable-service lifecycle.
 
 Browser sessions that load the WordPress plugin browser runtime also publish
 `window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
