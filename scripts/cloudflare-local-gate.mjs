@@ -21,8 +21,8 @@ try {
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
   await assertExplanatoryHomepage(warmHome.body)
-  if (warmHome.elapsedMs >= coldHome.elapsedMs || warmHome.elapsedMs > 2_000) {
-    throw new Error(`Warm explanatory homepage did not reuse the canonical runtime: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
+  if (coldHome.cacheStatus !== "miss" || warmHome.cacheStatus !== "hit" || warmHome.elapsedMs >= coldHome.elapsedMs || warmHome.elapsedMs > 500) {
+    throw new Error(`Warm explanatory homepage did not use its revision cache: cold=${coldHome.elapsedMs}ms/${coldHome.cacheStatus} warm=${warmHome.elapsedMs}ms/${warmHome.cacheStatus}.`)
   }
   console.log(`Explanatory homepage timing: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
   const adminHtml = await login()
@@ -44,7 +44,7 @@ try {
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, warm runtime reuse, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
+  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -164,8 +164,11 @@ async function assertWordPressPage(target, label) {
 
 async function timedWordPressPage(target, label) {
   const startedAt = performance.now()
-  const body = await assertWordPressPage(target, label)
-  return { body, elapsedMs: Math.round(performance.now() - startedAt) }
+  const response = await request(target)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, label)
+  if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) throw new Error(`Expected an HTML ${label}, received ${response.status}: ${body}`)
+  return { body, elapsedMs: Math.round(performance.now() - startedAt), cacheStatus: response.headers.get("x-wp-codebox-page-cache") }
 }
 
 async function assertExplanatoryHomepage(html) {

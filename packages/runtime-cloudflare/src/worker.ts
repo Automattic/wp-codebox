@@ -212,6 +212,12 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
       if (!lease.pointer || lease.pointer.revision !== bootstrapped.pointer.revision) throw new Error("Canonical bootstrap promotion was not observed by its next lease.")
       cacheRuntime(lease.pointer, bootstrapped)
     }
+    const cachedPage = route === "wordpress" ? await matchWordPressPageCache(request, lease.pointer) : null
+    if (cachedPage) {
+      await releaseLease(coordinator, request.url, lease)
+      finalized = true
+      return cachedPage
+    }
     runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
     const mutatesCanonicalState = isMutation(request, route)
     let response: Response
@@ -236,12 +242,61 @@ async function runCoordinatedWordPressRequest(request: Request, env: Env, coordi
     }
     finalized = true
     if (mutatesCanonicalState) await discardRuntime(runtime)
+    else if (route === "wordpress") response = await cacheWordPressPage(request, lease.pointer, response)
     return response
   } catch (error) {
     if (!finalized) await abortLease(coordinator, request.url, lease)
     if (runtime) await discardRuntime(runtime)
     throw error
   }
+}
+
+function isCacheableWordPressPageRequest(request: Request): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false
+  if (request.headers.has("authorization") || request.headers.has("cookie")) return false
+  const url = new URL(request.url)
+  if (["/wp-admin", "/wp-login.php", "/wp-json"].some((path) => url.pathname === path || url.pathname.startsWith(`${path}/`))) return false
+  return !url.searchParams.has("preview") && !url.searchParams.has("rest_route")
+}
+
+async function matchWordPressPageCache(request: Request, pointer: MarkdownPointer): Promise<Response | null> {
+  if (!isCacheableWordPressPageRequest(request)) return null
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  if (!cache) return null
+  try {
+    const cached = await cache.match(wordPressPageCacheKey(request, pointer))
+    return cached ? pageCacheResponse(cached, request.method === "HEAD", "hit") : null
+  } catch {
+    return null
+  }
+}
+
+async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, response: Response): Promise<Response> {
+  if (!isCacheableWordPressPageRequest(request) || response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || response.headers.has("set-cookie")) return response
+  if (request.method === "HEAD") return pageCacheResponse(response, true, "miss")
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  const cacheable = pageCacheResponse(response, false, "miss")
+  if (cache) {
+    try {
+      await cache.put(wordPressPageCacheKey(request, pointer), cacheable.clone())
+    } catch {
+      // Page caching is an optimization; canonical rendering remains authoritative.
+    }
+  }
+  return cacheable
+}
+
+function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer): Request {
+  const url = new URL(request.url)
+  url.searchParams.set("__wp_codebox_revision", pointer.revision)
+  return new Request(url, { method: "GET" })
+}
+
+function pageCacheResponse(response: Response, head: boolean, status: "hit" | "miss"): Response {
+  const headers = new Headers(response.headers)
+  headers.set("cache-control", "public, max-age=60, s-maxage=31536000")
+  headers.set("x-wp-codebox-page-cache", status)
+  return new Response(head ? null : response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
 function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate"): boolean {
