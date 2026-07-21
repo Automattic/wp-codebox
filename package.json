@@ -63,6 +63,10 @@
     "./cli/recipe-secret-env": {
       "types": "./packages/cli/dist/recipe-secret-env.d.ts",
       "import": "./packages/cli/dist/recipe-secret-env.js"
+    },
+    "./cli/bounded-recipe-plan": {
+      "types": "./packages/cli/dist/bounded-recipe-plan.d.ts",
+      "import": "./packages/cli/dist/bounded-recipe-plan.js"
     }
   },
   "bin": {
@@ -104,6 +108,7 @@
     "test:playground-readonly-mounts-integration": "tsx tests/playground-readonly-mounts-integration.test.ts",
     "test:playground-phpunit-readonly-cache-integration": "tsx tests/playground-phpunit-readonly-cache.integration.test.ts",
     "test:playground-phpunit-bootstrap-failure-integration": "tsx tests/playground-phpunit-bootstrap-failure.integration.test.ts",
+    "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts",
     "test:phpunit-runtime-failure-diagnostics": "tsx tests/phpunit-runtime-failure-diagnostics.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
@@ -125,6 +130,9 @@
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",
     "test:run-plan-executor": "tsx tests/run-plan-executor.test.ts",
+    "test:bounded-runtime-plan": "tsx tests/bounded-runtime-plan.test.ts",
+    "test:bounded-recipe-plan": "tsx tests/bounded-recipe-plan.test.ts",
+    "test:bounded-recipe-plan-integration": "tsx tests/bounded-recipe-plan.integration.test.ts",
     "test:fanout-execution": "tsx tests/fanout-execution.test.ts",
     "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:fanout-aggregation-contract-parity": "tsx tests/fanout-aggregation-contract-parity.test.ts",

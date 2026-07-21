@@ -7,6 +7,7 @@ import { createWordPressFuzzSuiteResetExecutor } from "@automattic/wp-codebox-pl
 import { correlateObservedHostsToExternalServiceBoundaries, recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
+import { executeBoundedRecipePlanFromArgs } from "../bounded-recipe-plan.js"
 import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { artifactManifestFilesByPath } from "./recipe-run-benchmark-artifacts.js"
 import { assertResolvedInputMountPathArgs, rewriteInputMountPathArgs, rewriteInputMountPathJsonArgs, type InputMountPathMapping } from "../input-mount-paths.js"
@@ -243,6 +244,25 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
         ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),
         ...(workflowStep.fuzzStepIndex !== undefined ? { fuzzStepIndex: workflowStep.fuzzStepIndex } : {}),
       }
+    }
+    if (step.command === "wp-codebox.bounded-runtime-plan") {
+      const startedAt = new Date().toISOString()
+      const result = await executeBoundedRecipePlanFromArgs(runtime, step.args ?? [], {
+        artifactRoot: artifactRoot || recipeDirectory,
+        recipeDirectory,
+      })
+      const safeArgs = (step.args ?? []).map((argument) => argument.startsWith("plan-json=") || argument.startsWith("request-json=") ? `${argument.slice(0, argument.indexOf("=") + 1)}[redacted-plan]` : argument)
+      return phase({
+        id: `bounded-runtime-plan-${workflowStep.index}`,
+        command: step.command,
+        args: safeArgs,
+        exitCode: result.success ? 0 : 1,
+        stdout: `${JSON.stringify(result, null, 2)}\n`,
+        stderr: "",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        artifactRefs: [{ kind: "bounded-runtime-plan-result", id: "bounded-runtime-plan-result", path: "bounded-plan/result.json" }],
+      }, step.command, recipeWorkflowArgsEvidence(safeArgs, safeArgs))
     }
     if (isRuntimeCheckpointRecipeCommand(step.command)) {
       return phase(await executeRuntimeCheckpointRecipeCommand(runtime, step.command, step.args ?? []))

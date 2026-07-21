@@ -16,6 +16,10 @@
     "./recipe-secret-env": {
       "types": "./dist/recipe-secret-env.d.ts",
       "import": "./dist/recipe-secret-env.js"
+    },
+    "./bounded-recipe-plan": {
+      "types": "./dist/bounded-recipe-plan.d.ts",
+      "import": "./dist/bounded-recipe-plan.js"
     }
   },
   "files": [

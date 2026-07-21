@@ -13,12 +13,14 @@ const projectConfigSource = join(projectSource, "config.php")
 const overlaySource = join(root, "config-overlay.php")
 const readonlySource = join(root, "readonly.bin")
 const readwriteSource = join(root, "readwrite.bin")
+const stagedBinarySource = join(root, "staged-binary.bin")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
 const originalConfig = "<?php return 'parent';\n"
 const overlayConfig = "<?php return 'overlay';\n"
 const readonlyBytes = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 const overwrittenBytes = Buffer.from([128, 127, 3, 2, 1, 255, 0])
+const stagedBinaryBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x80, 0xfe])
 const stagingDirectoriesBefore = await readonlyStagingDirectories()
 
 try {
@@ -27,6 +29,7 @@ try {
   await writeFile(overlaySource, overlayConfig)
   await writeFile(readonlySource, readonlyBytes)
   await writeFile(readwriteSource, readonlyBytes)
+  await writeFile(stagedBinarySource, stagedBinaryBytes)
   await writeFile(recipePath, `${JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { backend: "wordpress-playground", wp: "6.5", blueprint: { steps: [] } },
@@ -37,11 +40,14 @@ try {
         { source: readonlySource, target: "/wordpress/readonly.bin", mode: "readonly" },
         { source: readwriteSource, target: "/wordpress/readwrite.bin", mode: "readwrite" },
       ],
+      stagedFiles: [
+        { source: stagedBinarySource, target: "/wordpress/staged-binary.bin" },
+      ],
     },
     workflow: {
       steps: [{
         command: "wordpress.run-php",
-        args: [`code=$config = file_get_contents('/home/project/config.php'); if ($config !== "<?php return 'overlay';\\n") { fwrite(STDERR, $config); exit(1); } $contents = base64_decode('${overwrittenBytes.toString("base64")}'); file_put_contents('/home/project/config.php', "overwritten"); file_put_contents('/home/project/mutated.txt', 'parent mutation'); file_put_contents('/wordpress/readonly.bin', $contents); file_put_contents('/wordpress/readwrite.bin', $contents);`],
+        args: [`code=$config = file_get_contents('/home/project/config.php'); if ($config !== "<?php return 'overlay';\\n") { fwrite(STDERR, $config); exit(1); } $staged = file_get_contents('/wordpress/staged-binary.bin'); if ($staged !== base64_decode('${stagedBinaryBytes.toString("base64")}')) { fwrite(STDERR, 'staged binary bytes changed'); exit(1); } $contents = base64_decode('${overwrittenBytes.toString("base64")}'); file_put_contents('/home/project/config.php', "overwritten"); file_put_contents('/home/project/mutated.txt', 'parent mutation'); file_put_contents('/wordpress/readonly.bin', $contents); file_put_contents('/wordpress/readwrite.bin', $contents);`],
       }],
     },
   })}\n`)

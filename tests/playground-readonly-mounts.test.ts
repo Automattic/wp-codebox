@@ -11,10 +11,12 @@ import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-"))
 const readonlySource = join(root, "readonly.bin")
 const readwriteSource = join(root, "readwrite.bin")
+const wpConfigSource = join(root, "wp-config.php")
 const readonlyBytes = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 const readwriteBytes = Buffer.from([10, 20, 30])
 await writeFile(readonlySource, readonlyBytes)
 await writeFile(readwriteSource, readwriteBytes)
+await writeFile(wpConfigSource, "<?php // external database config\n")
 
 const spec: RuntimeCreateSpec = {
   backend: "wordpress-playground",
@@ -27,8 +29,10 @@ const cliModule: PlaygroundCliModule = {
   async runCLI(options) {
     const readonlyMount = options.mount.find((mount) => mount.vfsPath === "/readonly")
     const readwriteMount = options.mount.find((mount) => mount.vfsPath === "/readwrite")
+    const wpConfigMount = options["mount-before-install"]?.find((mount) => mount.vfsPath === "/wordpress/wp-config.php")
     assert.ok(readonlyMount)
     assert.ok(readwriteMount)
+    assert.ok(wpConfigMount)
     mountedReadonlyPath = readonlyMount.hostPath
     // This is the host path Playground's writable Node mount handler receives.
     await writeFile(readonlyMount.hostPath, Buffer.from("sandbox overwrite"))
@@ -59,6 +63,7 @@ try {
   const server = await startPlaygroundCliServer(spec, [
     { type: "file", source: readonlySource, target: "/readonly", mode: "readonly" },
     { type: "file", source: readwriteSource, target: "/readwrite", mode: "readwrite" },
+    { type: "file", source: wpConfigSource, target: "/wordpress/wp-config.php", mode: "readonly" },
   ], { cliModule })
 
   assert.equal(sha256(await readFile(readonlySource)), beforeReadonlyHash, "readonly source bytes must survive a sandbox overwrite")

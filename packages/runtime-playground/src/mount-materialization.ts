@@ -237,8 +237,17 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
       skipped++
       return
     }
+    const contents = Buffer.from(payload.contentsBase64, "base64")
+    const text = contents.toString("utf8")
+    if (!Buffer.from(text, "utf8").equals(contents)) {
+      fileBatch.push(payload)
+      if (fileBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushFileBatch()
+      }
+      return
+    }
     try {
-      await server.playground.writeFile(target, Buffer.from(payload.contentsBase64, "base64").toString("utf8"))
+      await server.playground.writeFile(target, text)
       materialized++
     } catch {
       const fallback = await materializeHostMountFilesWithPhp(server, [payload], [])

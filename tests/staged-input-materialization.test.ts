@@ -80,4 +80,39 @@ await withTempDir("wp-codebox-staged-input-materialization-fallback-", async (ro
   assert.equal(written.get("/workspace/wp-site-generator/bundles/store-idea-agent/manifest.json"), `${JSON.stringify({ schema: "test/runtime-bundle/v1" })}\n`)
 })
 
+await withTempDir("wp-codebox-staged-input-materialization-binary-", async (root) => {
+  const source = join(root, "image.bin")
+  const contents = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x80, 0xfe])
+  await writeFile(source, contents)
+
+  let directWrites = 0
+  let binaryWriteCode = ""
+  const server = {
+    playground: {
+      async run({ code }: { code: string }) {
+        if (code.includes("wp-codebox/host-mount-materialization/v1")) {
+          binaryWriteCode = code
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: 1, created: 0, skipped: 0 }) }
+        }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) }
+      },
+      async writeFile() {
+        directWrites++
+      },
+    },
+  }
+
+  const result = await materializePlaygroundStagedInputs(server as never, [{
+    type: "file",
+    source,
+    target: "/wordpress/wp-content/uploads/image.bin",
+    mode: "readwrite",
+  }])
+
+  assert.equal(result.materialized, 1)
+  assert.equal(result.skipped, 0)
+  assert.equal(directWrites, 0, "arbitrary bytes bypass the UTF-8-only direct writer")
+  assert.ok(binaryWriteCode.includes(contents.toString("base64")), "the PHP materializer receives the exact base64 payload")
+})
+
 console.log("staged input materialization ok")
