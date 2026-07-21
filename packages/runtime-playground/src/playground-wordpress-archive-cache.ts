@@ -377,15 +377,37 @@ async function createFileLease(directoryHandle: FileHandle, fileName: string, di
   const fileHandle = await open(anchoredPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600)
   await writeOwnerToHandle(fileHandle, await ownerRecord(token, leaseMs))
   return heartbeatLease(fileHandle, token, leaseMs, async () => {
-    await unlink(anchoredPath).catch((error) => {
-      if (!errorHasCode(error, "ENOENT")) throw error
-    })
+    await unlinkOwnedLeasePath(anchoredPath, fileHandle, token)
     await fileHandle.close()
     await directoryHandle.close()
     await rmdir(directoryPath).catch((error) => {
       if (!errorHasCode(error, "ENOENT") && !errorHasCode(error, "ENOTEMPTY")) throw error
     })
   }, displayPath, automaticHeartbeat)
+}
+
+async function unlinkOwnedLeasePath(path: string, ownedHandle: FileHandle, token: string): Promise<boolean> {
+  let currentHandle: FileHandle | undefined
+  try {
+    const ownedStat = await ownedHandle.stat()
+    currentHandle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const currentStat = await currentHandle.stat()
+    const currentOwner = await readOwnerFromHandle(currentHandle)
+    if (currentStat.dev !== ownedStat.dev || currentStat.ino !== ownedStat.ino || currentOwner?.token !== token) {
+      return false
+    }
+    const pathStat = await lstat(path)
+    if (pathStat.dev !== ownedStat.dev || pathStat.ino !== ownedStat.ino || !pathStat.isFile() || pathStat.isSymbolicLink()) {
+      return false
+    }
+    await unlink(path)
+    return true
+  } catch (error) {
+    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "ELOOP")) return false
+    throw error
+  } finally {
+    await currentHandle?.close()
+  }
 }
 
 function heartbeatLease(fileHandle: FileHandle, token: string, leaseMs: number, removeOwned: () => Promise<void>, displayPath: string, automaticHeartbeat: boolean): LeaseHandle {
