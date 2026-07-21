@@ -27,6 +27,8 @@ try {
   console.log(`Explanatory homepage timing: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
   const adminHtml = await login()
   const editorHtml = await assertPostNewEditor()
+  const media = await createMedia(adminHtml)
+  await assertMediaFile(media, "uploaded media")
   const post = await createPost(adminHtml)
   const frontPage = await assertWordPressPage(`${origin}/${post.slug}/`, "published post")
   assertIncludes(frontPage, post.title, "published post")
@@ -41,10 +43,12 @@ try {
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
   const restartedPost = await assertWordPressPage(`${origin}/${post.slug}/`, "post after cold restart")
   assertIncludes(restartedPost, post.title, "post after cold restart")
+  await assertMediaFile(media, "media after cold restart")
+  await assertMediaMetadata(media, "media metadata after cold restart")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post creation, frontend/admin/editor assets, and cold-restart session persistence.")
+  console.log("Cloudflare local runtime gate passed: explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, and session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -105,8 +109,7 @@ async function login() {
 }
 
 async function createPost(adminHtml) {
-  const nonce = adminHtml.match(/"nonce":"([^"]+)"/)?.[1]
-  if (!nonce) throw new Error("wp-admin did not expose a REST nonce.")
+  const nonce = restNonce(adminHtml)
   const title = `Cloudflare durable post ${Date.now()}`
   const response = await request(`${origin}/wp-json/wp/v2/posts`, {
     method: "POST",
@@ -119,6 +122,55 @@ async function createPost(adminHtml) {
   const post = JSON.parse(body)
   if (typeof post.slug !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
   return { slug: post.slug, title }
+}
+
+async function createMedia(adminHtml) {
+  const nonce = restNonce(adminHtml)
+  const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")
+  const filename = `cloudflare-durable-media-${Date.now()}.png`
+  const response = await request(`${origin}/wp-json/wp/v2/media`, {
+    method: "POST",
+    headers: {
+      "content-disposition": `attachment; filename="${filename}"`,
+      "content-type": "image/png",
+      "x-wp-nonce": nonce,
+    },
+    body: bytes,
+  })
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "REST media creation")
+  if (response.status !== 201) throw new Error(`Expected REST media creation, received ${response.status}: ${body}`)
+  const media = JSON.parse(body)
+  if (!Number.isInteger(media.id) || typeof media.source_url !== "string" || !media.source_url.includes(`/wp-content/uploads/`) || !media.source_url.endsWith(`/${filename}`)) {
+    throw new Error(`Unexpected REST media response: ${body}`)
+  }
+  return { id: media.id, sourceUrl: media.source_url, filename, bytes }
+}
+
+async function assertMediaFile(media, label) {
+  const response = await request(new URL(media.sourceUrl, origin))
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (response.status !== 200 || response.headers.get("content-type") !== "image/png" || response.headers.get("x-wp-codebox-static") !== "r2-upload" || !bytes.equals(media.bytes)) {
+    throw new Error(`${label} was not served intact from R2: status=${response.status} content-type=${response.headers.get("content-type")} source=${response.headers.get("x-wp-codebox-static")} bytes=${bytes.length}.`)
+  }
+  const head = await request(new URL(media.sourceUrl, origin), { method: "HEAD" })
+  if (head.status !== 200 || head.headers.get("content-length") !== String(media.bytes.length) || head.headers.get("x-wp-codebox-static") !== "r2-upload" || (await head.arrayBuffer()).byteLength !== 0) {
+    throw new Error(`${label} HEAD semantics were invalid.`)
+  }
+}
+
+async function assertMediaMetadata(media, label) {
+  const response = await request(`${origin}/wp-json/wp/v2/media/${media.id}`)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, label)
+  const attachment = JSON.parse(body)
+  if (response.status !== 200 || attachment.id !== media.id || !attachment.source_url?.endsWith(`/${media.filename}`)) throw new Error(`${label} was not restored: ${body}`)
+}
+
+function restNonce(adminHtml) {
+  const nonce = adminHtml.match(/"nonce":"([^"]+)"/)?.[1]
+  if (!nonce) throw new Error("wp-admin did not expose a REST nonce.")
+  return nonce
 }
 
 async function assertPostNewEditor() {

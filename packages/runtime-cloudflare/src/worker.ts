@@ -9,6 +9,7 @@ import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, clo
 import { leaseRetryDelayMs } from "./lease-retry.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
+import { R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
@@ -29,6 +30,7 @@ const MARKDOWN_DATABASE_INTEGRATION_REVISION = "2a8ee7f6a46e1d64b4606f1ee3c97e14
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
+const UPLOADS_ROOT = "/wordpress/wp-content/uploads"
 const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
@@ -87,6 +89,8 @@ export default {
     if (staticResponse) return staticResponse
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
+    const uploadResponse = await serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator)
+    if (uploadResponse) return uploadResponse
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
     if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
     if (route.kind === "probe") {
@@ -109,6 +113,7 @@ interface MarkdownManifestFile {
 
 interface MarkdownManifest extends MarkdownPointer {
   files: MarkdownManifestFile[]
+  uploads?: MarkdownManifestFile[]
 }
 
 interface RuntimeFile {
@@ -434,7 +439,8 @@ async function discardRuntime(runtime: Runtime): Promise<void> {
 }
 
 async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision(bucket, pointer), new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true), pointer }
+  const revision = await readCanonicalRevision(bucket, pointer)
+  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads), pointer }
 }
 
 async function bootstrapCanonicalRuntime(env: Env, coordinator: DurableObjectStub, requestUrl: string, lease: Lease): Promise<Runtime> {
@@ -492,7 +498,7 @@ async function canonicalWordPressAuthConstants(env: Env): Promise<Record<WordPre
 async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges): Promise<MarkdownPointer> {
   validateMarkdownChanges(changes)
   const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
-  return persistMarkdownRevision(bucket, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT, changedPaths), runtime.pointer, changes)
+  return persistMarkdownRevision(bucket, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT, changedPaths), runtime.pointer, changes, await collectUploadFiles(runtime.php))
 }
 
 function readCanonicalChanges(php: PHP): MarkdownChanges {
@@ -538,26 +544,38 @@ function validateMarkdownChanges(changes: MarkdownChanges): void {
 }
 
 function isCanonicalRelativePath(path: string): boolean {
-  return path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..")
+  return path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..")
 }
 
-async function readMarkdownRevision(bucket: R2Bucket, pointer: MarkdownPointer): Promise<RuntimeFile[]> {
+async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer): Promise<{ markdown: RuntimeFile[]; uploads: RuntimeFile[] }> {
   const manifestObject = await bucket.get(pointer.manifestKey)
   if (!manifestObject) throw new Error(`R2 Markdown manifest is missing: ${pointer.manifestKey}`)
   const manifest = await manifestObject.json<MarkdownManifest>()
-  return Promise.all(manifest.files.map(async (file): Promise<RuntimeFile> => {
+  validateUploadManifestFiles(manifest.uploads ?? [])
+  return {
+    markdown: await readManifestFiles(bucket, manifest.files, "Markdown"),
+    uploads: await readManifestFiles(bucket, manifest.uploads ?? [], "upload"),
+  }
+}
+
+async function readManifestFiles(bucket: R2Bucket, files: MarkdownManifestFile[], label: string): Promise<RuntimeFile[]> {
+  return Promise.all(files.map(async (file): Promise<RuntimeFile> => {
     const object = await bucket.get(file.objectKey)
-    if (!object) throw new Error(`R2 Markdown object is missing: ${file.objectKey}`)
-    return { path: file.path, bytes: new Uint8Array(await object.arrayBuffer()) }
+    if (!object) throw new Error(`R2 ${label} object is missing: ${file.objectKey}`)
+    const bytes = new Uint8Array(await object.arrayBuffer())
+    if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`R2 ${label} object failed integrity validation: ${file.objectKey}`)
+    return { path: file.path, bytes }
   }))
 }
 
-async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer, changes?: MarkdownChanges): Promise<MarkdownPointer> {
+async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], current?: MarkdownPointer, changes?: MarkdownChanges, uploads: RuntimeFile[] = []): Promise<MarkdownPointer> {
   const currentManifest = current ? await readMarkdownManifest(bucket, current) : null
   if (current && !currentManifest) throw new Error(`R2 Markdown manifest is missing: ${current.manifestKey}`)
+  const uploadManifestFiles = await persistUploadObjects(bucket, uploads, currentManifest?.uploads ?? [])
+  const uploadsUnchanged = JSON.stringify(currentManifest?.uploads ?? []) === JSON.stringify(uploadManifestFiles)
   if (current && currentManifest && changes) {
     validateMarkdownChanges(changes)
-    if (!changes.created.length && !changes.changed.length && !changes.deleted.length) return current
+    if (!changes.created.length && !changes.changed.length && !changes.deleted.length && uploadsUnchanged) return current
     const manifestFiles = new Map(currentManifest.files.map((file) => [file.path, file]))
     for (const path of changes.deleted) manifestFiles.delete(path)
     const filesByPath = new Map(files.map((file) => [file.path, file]))
@@ -569,7 +587,7 @@ async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], c
       await bucket.put(objectKey, file.bytes)
       manifestFiles.set(path, { path, objectKey, sha256, size: file.bytes.byteLength })
     }
-    return persistMarkdownManifest(bucket, [...manifestFiles.values()].sort((left, right) => left.path.localeCompare(right.path)))
+    return persistMarkdownManifest(bucket, [...manifestFiles.values()].sort((left, right) => left.path.localeCompare(right.path)), uploadManifestFiles)
   }
   const currentFiles = new Map(currentManifest?.files.map((file) => [file.path, file]) ?? [])
   const manifestFiles = await Promise.all(files.map(async (file): Promise<MarkdownManifestFile> => {
@@ -581,18 +599,40 @@ async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], c
     return { path: file.path, objectKey, sha256, size: file.bytes.byteLength }
   }))
   if (current && currentManifest) {
-    if (JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles)) return current
+    if (JSON.stringify(currentManifest.files) === JSON.stringify(manifestFiles) && uploadsUnchanged) return current
   }
 
-  return persistMarkdownManifest(bucket, manifestFiles)
+  return persistMarkdownManifest(bucket, manifestFiles, uploadManifestFiles)
 }
 
-async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifestFile[]): Promise<MarkdownPointer> {
+async function persistUploadObjects(bucket: R2Bucket, files: RuntimeFile[], current: MarkdownManifestFile[]): Promise<MarkdownManifestFile[]> {
+  validateUploadFiles(files)
+  const currentFiles = new Map(current.map((file) => [file.path, file]))
+  const persisted: MarkdownManifestFile[] = []
+  for (const file of files) {
+    const sha256 = await sha256Hex(file.bytes)
+    const existing = currentFiles.get(file.path)
+    if (existing?.sha256 === sha256 && existing.size === file.bytes.byteLength) {
+      persisted.push(existing)
+      continue
+    }
+    const objectKey = `${R2_UPLOAD_OBJECT_PREFIX}/${sha256}`
+    if (!await bucket.head(objectKey)) await bucket.put(objectKey, file.bytes)
+    persisted.push({ path: file.path, objectKey, sha256, size: file.bytes.byteLength })
+  }
+  return persisted
+}
+
+function validateUploadFiles(files: RuntimeFile[]): void {
+  validateUploadMetadata(files.map((file) => ({ path: file.path, size: file.bytes.byteLength })))
+}
+
+async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifestFile[], uploads: MarkdownManifestFile[] = []): Promise<MarkdownPointer> {
   const revision = crypto.randomUUID()
   const manifestKey = `${R2_MARKDOWN_REVISION_PREFIX}/${revision}.json`
   const persistedAt = new Date().toISOString()
   const pointer: MarkdownPointer = { revision, manifestKey, persistedAt }
-  const manifest: MarkdownManifest = { ...pointer, files }
+  const manifest: MarkdownManifest = { ...pointer, files, uploads }
   await bucket.put(manifestKey, JSON.stringify(manifest), {
     httpMetadata: { contentType: "application/json" },
   })
@@ -845,6 +885,7 @@ async function bootWordPressRuntime(
   authConstants: Partial<Record<WordPressAuthConstant, string>> = {},
   runtimeBucket?: R2Bucket,
   shouldPatchCanonicalRuntimePoliciesAtInit = false,
+  uploadFiles?: RuntimeFile[],
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
@@ -868,8 +909,8 @@ async function bootWordPressRuntime(
     // Browser cookies are carried by the Worker Fetch request; Playground's
     // internal store would overwrite that header after an isolate restart.
     cookieStore: false,
-    hooks: streamWordPressFiles || databaseSeed || markdownFiles ? {
-      beforeWordPressFiles: streamWordPressFiles || markdownFiles ? async (php: PHP) => {
+    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length ? {
+      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length ? async (php: PHP) => {
         if (streamWordPressFiles) await materializeWordPressServerFiles(php, runtimeBucket)
         if (markdownFiles) {
           await materializeMarkdownDatabaseIntegration(php)
@@ -877,6 +918,7 @@ async function bootWordPressRuntime(
           materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
+        if (uploadFiles?.length) materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles)
         if (shouldPatchCanonicalRuntimePoliciesAtInit) {
           patchCanonicalRuntimePoliciesAtInit(php)
           patchCanonicalThemeJsonCustomCss(php)
@@ -980,6 +1022,24 @@ function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeF
   return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
+async function collectUploadFiles(php: PHP): Promise<RuntimeFile[]> {
+  if (!php.isDir(UPLOADS_ROOT)) return []
+  const output = (await php.run({ code: `<?php
+$root = '${UPLOADS_ROOT}';
+$files = array();
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
+foreach ($iterator as $file) {
+    if (!$file->isFile()) continue;
+    $path = str_replace('\\\\', '/', $file->getPathname());
+    $files[] = array('path' => substr($path, strlen($root) + 1), 'size' => $file->getSize());
+}
+usort($files, static fn($left, $right) => strcmp($left['path'], $right['path']));
+echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).text.trim()
+  const metadata: unknown = JSON.parse(output)
+  validateUploadMetadata(metadata)
+  return metadata.map((file) => ({ path: file.path, bytes: php.readFileAsBuffer(`${UPLOADS_ROOT}/${file.path}`) }))
+}
+
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
@@ -1016,6 +1076,87 @@ add_action( 'markdown_database_integration_flushed', static function ( $changes 
 async function materializeWordPressServerFiles(php: PHP, bucket: R2Bucket | undefined): Promise<{ materializedFiles: number; materializedBytes: number }> {
   if (!bucket) throw new Error("WordPress runtime corpus artifact requires WORDPRESS_STATE_BUCKET.")
   return materializeWordPressRuntimeArtifact(php, bucket, wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest)
+}
+
+async function serveWordPressUpload(request: Request, bucket: R2Bucket, coordinator: DurableObjectStub): Promise<Response | null> {
+  if (request.method !== "GET" && request.method !== "HEAD") return null
+  const url = new URL(request.url)
+  if (!url.pathname.startsWith("/wp-content/uploads/")) return null
+  let path: string
+  try {
+    path = decodeURIComponent(url.pathname.slice("/wp-content/uploads/".length))
+  } catch {
+    return new Response("Invalid WordPress upload path.", { status: 400 })
+  }
+  if (!isCanonicalRelativePath(path)) return new Response("Invalid WordPress upload path.", { status: 400 })
+  const state = await coordinatorCall<CoordinatorState>(coordinator, request.url, "state")
+  if (!state.pointer) return null
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  const cacheKey = wordPressUploadCacheKey(request, state.pointer)
+  if (request.method === "GET" && cache) {
+    try {
+      const cached = await cache.match(cacheKey)
+      if (cached) return cached
+    } catch {
+      // R2 remains authoritative when the edge cache is unavailable.
+    }
+  }
+  const manifest = await readMarkdownManifest(bucket, state.pointer)
+  validateUploadManifestFiles(manifest?.uploads ?? [])
+  const file = manifest?.uploads?.find((candidate) => candidate.path === path)
+  if (!file) return new Response("WordPress upload not found.", { status: 404 })
+  const object = await bucket.get(file.objectKey)
+  if (!object) throw new Error(`R2 upload object is missing: ${file.objectKey}`)
+  if (object.size !== file.size) throw new Error(`R2 upload object size is inconsistent: ${file.objectKey}`)
+  let body: Uint8Array | null = null
+  if (request.method === "GET") {
+    body = new Uint8Array(await object.arrayBuffer())
+    if (await sha256Hex(body) !== file.sha256) throw new Error(`R2 upload object failed integrity validation: ${file.objectKey}`)
+  }
+  const headers = new Headers({
+    "cache-control": "public, max-age=60",
+    "content-length": String(file.size),
+    "content-type": wordPressUploadContentType(path),
+    etag: `"${file.sha256}"`,
+    "x-wp-codebox-static": "r2-upload",
+  })
+  const response = new Response(body ? Uint8Array.from(body).buffer : null, { status: 200, headers })
+  if (request.method === "GET" && cache) {
+    try {
+      await cache.put(cacheKey, response.clone())
+    } catch {
+      // R2 remains authoritative when the edge cache is unavailable.
+    }
+  }
+  return response
+}
+
+function wordPressUploadCacheKey(request: Request, pointer: MarkdownPointer): Request {
+  const url = new URL(request.url)
+  url.searchParams.set("__wp_codebox_revision", pointer.revision)
+  return new Request(url, { method: "GET" })
+}
+
+function wordPressUploadContentType(path: string): string {
+  const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase()
+  return ({
+    avif: "image/avif",
+    gif: "image/gif",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    json: "application/json",
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+    ogg: "audio/ogg",
+    pdf: "application/pdf",
+    png: "image/png",
+    svg: "image/svg+xml",
+    txt: "text/plain; charset=utf-8",
+    wav: "audio/wav",
+    webm: "video/webm",
+    webp: "image/webp",
+    xml: "application/xml",
+  } as Record<string, string>)[extension] ?? "application/octet-stream"
 }
 
 async function serveWordPressStaticAsset(request: Request): Promise<Response | null> {

@@ -11,10 +11,24 @@ import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retr
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
+import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "../packages/runtime-cloudflare/src/upload-persistence.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 
 const execFileAsync = promisify(execFile)
+
+test("Cloudflare upload manifests reject unbounded or non-canonical R2 files", () => {
+  const sha256 = "a".repeat(64)
+  const valid = [{ path: "2026/07/photo.png", size: 128, sha256, objectKey: `${R2_UPLOAD_OBJECT_PREFIX}/${sha256}` }]
+  assert.doesNotThrow(() => validateUploadManifestFiles(valid))
+  assert.doesNotThrow(() => validateUploadManifestFiles([]))
+  assert.throws(() => validateUploadMetadata([{ path: "../secret", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "2026\\secret", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "same.png", size: 1 }, { path: "same.png", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "large.png", size: MAX_UPLOAD_FILE_BYTES + 1 }]), /invalid file/)
+  assert.throws(() => validateUploadManifestFiles([{ ...valid[0], objectKey: "runtime/wordpress/archive.zip" }]), /invalid file/)
+  assert.throws(() => validateUploadManifestFiles([{ ...valid[0], sha256: "not-a-digest" }]), /invalid file/)
+})
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {
   const health = {
@@ -199,8 +213,8 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.match(patcher, /return \(string\) _wp_array_get\( \$this->theme_json, array\( 'styles', 'css' \), '' \)/)
   assert.doesNotMatch(patcher, /mu-plugins|add_action\(|WP_Site_Health|wp_schedule_site_health_cron|\$GLOBALS\['wp_filter'\]/)
   assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
-  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,/)
-  assert.match(worker, /authConstants, bucket, true\), pointer/)
+  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],/)
+  assert.match(worker, /authConstants, bucket, true, revision\.uploads\), pointer/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
   assert.match(worker, /canonicalBootstrapPasswordCode/)
   assert.match(worker, /canonicalBootstrapUrlCode/)
@@ -221,7 +235,8 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.doesNotMatch(worker, /runtime\.pointer = next/)
   assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)
   assert.match(worker, /const LEASE_ACQUISITION_TIMEOUT_MS = 100_000/)
-  assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, await readMarkdownRevision/)
+  assert.match(worker, /const revision = await readCanonicalRevision\(bucket, pointer\)/)
+  assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, revision\.markdown/)
   const noPointerBoot = worker.slice(worker.indexOf("async function bootstrapCanonicalRuntime"), worker.indexOf("async function persistRuntime"))
   assert.match(noPointerBoot, /packagedCanonicalMarkdownSeed\(\)/)
   assert.match(noPointerBoot, /canonicalBootstrapPasswordCode\(passwordFile\)/)
@@ -260,6 +275,13 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /"x-wp-codebox-page-cache"/)
   assert.match(worker, /"x-wp-codebox-page-cache-source"/)
   assert.match(worker, /"public, max-age=60, s-maxage=31536000"/)
+  assert.match(worker, /serveWordPressUpload\(request, env\.WORDPRESS_STATE_BUCKET, coordinator\)/)
+  assert.ok(worker.indexOf("serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator)") < worker.indexOf("runCoordinatedWordPressRequest(request, env, coordinator, route.kind)"))
+  assert.match(worker, /R2_UPLOAD_OBJECT_PREFIX/)
+  assert.match(worker, /collectUploadFiles\(runtime\.php\)/)
+  assert.match(worker, /materializeRuntimeFiles\(php, UPLOADS_ROOT, uploadFiles\)/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-upload"/)
+  assert.equal((worker.match(/validateUploadManifestFiles\(manifest\??\.uploads \?\? \[\]\)/g) ?? []).length, 2)
   assert.match(materializer, /materializeWordPressRuntimeArtifact\(php, bucket, wordpressRuntimeArtifactManifest/)
   assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL/)
   assert.match(corpus, /path\.endsWith\("\.map"\)/)
