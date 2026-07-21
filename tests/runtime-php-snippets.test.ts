@@ -56,6 +56,16 @@ $GLOBALS['calls'] = array();
 
 function did_action($hook_name) { return (int) ($GLOBALS['wp_actions'][$hook_name] ?? 0); }
 function wp_get_abilities() { return array('before' => true, 'after' => true); }
+function remove_action($hook_name, $callback, $priority = 10) {
+    foreach ($GLOBALS['wp_filter'][$hook_name]->callbacks[$priority] ?? array() as $callback_id => $registered) {
+        if (($registered['function'] ?? null) === $callback) {
+            unset($GLOBALS['wp_filter'][$hook_name]->callbacks[$priority][$callback_id]);
+            if (empty($GLOBALS['wp_filter'][$hook_name]->callbacks[$priority])) unset($GLOBALS['wp_filter'][$hook_name]->callbacks[$priority]);
+            return true;
+        }
+    }
+    return false;
+}
 
 $GLOBALS['wp_filter']['init']->callbacks[10]['existing'] = array('function' => static function () { $GLOBALS['calls'][] = 'existing'; }, 'accepted_args' => 0);
 $state = contained_runtime_test_component_lifecycle_replay_prepare();

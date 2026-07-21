@@ -5,9 +5,9 @@
   "type": "module",
   "dependencies": {
     "@automattic/wp-codebox-core": "file:../runtime-core",
-    "@php-wasm/stream-compression": "^3.1.45",
-    "@php-wasm/universal": "3.1.45",
-    "@php-wasm/web-8-5": "3.1.45",
-    "@wp-playground/wordpress": "3.1.45"
+    "@php-wasm/stream-compression": "3.1.45",
+    "@php-wasm/universal": "3.1.46",
+    "@php-wasm/web-8-5": "3.1.46",
+    "@wp-playground/wordpress": "3.1.46"
   }
 }

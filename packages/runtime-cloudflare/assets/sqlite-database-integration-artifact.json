@@ -1,0 +1,14 @@
+{
+  "schema": "wp-codebox/runtime-archive-artifact/v1",
+  "name": "sqlite-database-integration",
+  "key": "runtime/archives/sqlite-database-integration/f3bf0ac0bd80d374456c3742c3e2f987d060e8e35f4fe99925de2404ce05cbfb.zip",
+  "archive": {
+    "sha256": "f3bf0ac0bd80d374456c3742c3e2f987d060e8e35f4fe99925de2404ce05cbfb",
+    "size": 267173
+  },
+  "source": {
+    "url": "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip",
+    "version": "2.2.23",
+    "identity": "\"0x8DE9712B1086587\""
+  }
+}

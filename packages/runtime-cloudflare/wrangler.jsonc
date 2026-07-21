@@ -1,3 +1,4 @@
+// Configure WORDPRESS_AUTH_SECRET with `wrangler secret put`; it is intentionally absent from this file.
 {
   "name": "wp-codebox-cloudflare-runtime",
   "main": "src/worker.ts",
@@ -17,6 +18,6 @@
 	],
 	"rules": [
 		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
-		{ "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip"], "fallthrough": false }
+		{ "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip", "**/*-canonical-seed.zip"], "fallthrough": false }
 	]
 }
