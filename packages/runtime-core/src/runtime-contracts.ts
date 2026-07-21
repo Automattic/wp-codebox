@@ -718,9 +718,13 @@ export interface MountSpec {
 export interface ExecutionSpec {
   command: string
   args?: string[]
+  environment?: Record<string, string>
+  processIdentity?: string
+  artifactNamespace?: string
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   cwd?: string
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 export type RuntimeEpisodeActionKind = "command" | "filesystem" | "http" | "browser"

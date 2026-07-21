@@ -33,7 +33,7 @@ ${failureDiagnosticFile ? phpFailureDiagnosticFilePhp(failureDiagnosticFile) : "
 ${phpCliStreamConstants()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${saveQueriesBootstrapPhp(args)}
-${runtimeEnvPhp(spec)}
+${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
@@ -231,6 +231,13 @@ function secretEnvPhp(spec: RuntimeCreateSpec): string {
   return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.secretEnv ?? {}, { field: "secretEnv" }))
 }
 
-function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.runtimeEnv ?? {}, { field: "runtimeEnv" }))
+function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
+  const override = argValue(args, "runtime-env-json")
+  let executionEnvironment: Record<string, unknown> = {}
+  if (override) {
+    const parsed = JSON.parse(override) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("runtime-env-json must be a JSON object")
+    executionEnvironment = parsed as Record<string, unknown>
+  }
+  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
 }

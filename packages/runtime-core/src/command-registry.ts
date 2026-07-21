@@ -1396,6 +1396,24 @@ export const commandRegistry = [
     recipe: true,
     handler: { kind: "recipe-alias", command: "wp-codebox.agent-fanout" },
   },
+  {
+    id: "wp-codebox.bounded-runtime-plan",
+    description: "Recipe-only helper that executes a generic bounded command plan inside the current prepared runtime and service lifecycle.",
+    acceptedArgs: [
+      { name: "plan-json", description: "Inline wp-codebox/bounded-runtime-plan/v1 envelope.", format: "JSON object" },
+      { name: "plan-file", description: "Recipe-relative path to a wp-codebox/bounded-runtime-plan/v1 envelope.", format: "path" },
+    ],
+    outputShape: "JSON wp-codebox/bounded-runtime-plan-result/v1 envelope plus stable per-entry stdout, stderr, and result refs.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/bounded-runtime-plan-result/v1", {
+      success: { type: "boolean" },
+      concurrency: { type: "number" },
+      counts: { type: "object" },
+      entries: { type: "array" },
+    }),
+    policyRequirement: "Host-side recipe helper; every nested command remains subject to the prepared runtime policy.",
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox.bounded-runtime-plan" },
+  },
 ] as const satisfies readonly CommandDefinition[]
 
 export type CommandId = typeof commandRegistry[number]["id"]

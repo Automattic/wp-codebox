@@ -30,7 +30,12 @@ export interface BoundedRuntimePlanEntryResult {
   artifactNamespace: string
   status: BoundedRuntimePlanEntryStatus
   success: boolean
+  durationMs: number
   exitCode?: number
+  stdoutRef?: string
+  stderrRef?: string
+  resultRef?: string
+  artifactRefs?: string[]
   error?: { code: "execution-failed" | "execution-threw" | "timed-out" | "fail-fast"; message: string }
 }
 
@@ -38,6 +43,7 @@ export interface BoundedRuntimePlanResult {
   schema: typeof BOUNDED_RUNTIME_PLAN_RESULT_SCHEMA
   success: boolean
   concurrency: number
+  counts: { total: number; succeeded: number; failed: number; timedOut: number; cancelled: number }
   entries: BoundedRuntimePlanEntryResult[]
 }
 
@@ -57,7 +63,7 @@ export interface BoundedRuntimePlanExecution<TWorkspace = unknown, TRuntime = un
 export interface BoundedRuntimePlanAdapter<TWorkspace = unknown, TRuntime = unknown, TServices = unknown> {
   materialize(): Promise<{ workspace: TWorkspace; runtime: TRuntime }>
   startServices(context: { workspace: TWorkspace; runtime: TRuntime }): Promise<TServices>
-  execute(context: BoundedRuntimePlanExecution<TWorkspace, TRuntime, TServices>): Promise<{ success: boolean; exitCode?: number; message?: string }>
+  execute(context: BoundedRuntimePlanExecution<TWorkspace, TRuntime, TServices>): Promise<{ success: boolean; exitCode?: number; message?: string; stdoutRef?: string; stderrRef?: string; resultRef?: string; artifactRefs?: string[] }>
   stopServices(context: { workspace: TWorkspace; runtime: TRuntime; services: TServices }): Promise<void>
   dispose(context: { workspace: TWorkspace; runtime: TRuntime }): Promise<void>
 }
@@ -96,6 +102,7 @@ export async function executeBoundedRuntimePlan<TWorkspace, TRuntime, TServices>
       schema: BOUNDED_RUNTIME_PLAN_RESULT_SCHEMA,
       success: entries.every((entry) => entry.success),
       concurrency,
+      counts: boundedRuntimePlanCounts(entries),
       entries,
     }
   } finally {
@@ -140,25 +147,27 @@ async function executeEntries<TWorkspace, TRuntime, TServices>(plan: BoundedRunt
 
 async function executeEntry<TWorkspace, TRuntime, TServices>(entry: BoundedRuntimePlanEntry, materialized: { workspace: TWorkspace; runtime: TRuntime }, services: TServices, adapter: BoundedRuntimePlanAdapter<TWorkspace, TRuntime, TServices>): Promise<BoundedRuntimePlanEntryResult> {
   const controller = new AbortController()
+  const startedAt = Date.now()
   let timer: ReturnType<typeof setTimeout> | undefined
-  let operation: Promise<{ success: boolean; exitCode?: number; message?: string }> | undefined
+  let operation: Promise<{ success: boolean; exitCode?: number; message?: string; stdoutRef?: string; stderrRef?: string; resultRef?: string; artifactRefs?: string[] }> | undefined
   try {
     operation = adapter.execute({ entry, ...materialized, services, signal: controller.signal })
     const completed = entry.timeoutMs === undefined ? await operation : await Promise.race([
       operation,
       new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new BoundedRuntimePlanTimeoutError(entry.id)) }, entry.timeoutMs) }),
     ])
+    const references = executionReferences(completed)
     return completed.success
-      ? baseResult(entry, "succeeded", true, completed.exitCode)
-      : { ...baseResult(entry, "failed", false, completed.exitCode), error: { code: "execution-failed", message: redactEntryMessage(completed.message || `Execution failed: ${entry.id}`, entry) } }
+      ? { ...baseResult(entry, "succeeded", true, Date.now() - startedAt, completed.exitCode), ...references }
+      : { ...baseResult(entry, "failed", false, Date.now() - startedAt, completed.exitCode), ...references, error: { code: "execution-failed", message: redactEntryMessage(completed.message || `Execution failed: ${entry.id}`, entry) } }
   } catch (error) {
     if (error instanceof BoundedRuntimePlanTimeoutError) {
       // Keep the worker slot and shared services alive until the adapter confirms
       // that the aborted process has actually terminated.
       await operation?.catch(() => undefined)
-      return { ...baseResult(entry, "timed_out", false), error: { code: "timed-out", message: `Execution timed out: ${entry.id}` } }
+      return { ...baseResult(entry, "timed_out", false, Date.now() - startedAt), error: { code: "timed-out", message: `Execution timed out: ${entry.id}` } }
     }
-    return { ...baseResult(entry, "failed", false), error: { code: "execution-threw", message: redactEntryMessage(error instanceof Error ? error.message : `Execution threw: ${entry.id}`, entry) } }
+    return { ...baseResult(entry, "failed", false, Date.now() - startedAt), error: { code: "execution-threw", message: redactEntryMessage(error instanceof Error ? error.message : `Execution threw: ${entry.id}`, entry) } }
   } finally {
     if (timer) clearTimeout(timer)
   }
@@ -166,12 +175,31 @@ async function executeEntry<TWorkspace, TRuntime, TServices>(entry: BoundedRunti
 
 class BoundedRuntimePlanTimeoutError extends Error {}
 
-function baseResult(entry: BoundedRuntimePlanEntry, status: BoundedRuntimePlanEntryStatus, success: boolean, exitCode?: number): BoundedRuntimePlanEntryResult {
-  return { id: entry.id, inputIndex: entry.inputIndex, processIdentity: entry.processIdentity, artifactNamespace: entry.artifactNamespace, status, success, ...(exitCode === undefined ? {} : { exitCode }) }
+function baseResult(entry: BoundedRuntimePlanEntry, status: BoundedRuntimePlanEntryStatus, success: boolean, durationMs: number, exitCode?: number): BoundedRuntimePlanEntryResult {
+  return { id: entry.id, inputIndex: entry.inputIndex, processIdentity: entry.processIdentity, artifactNamespace: entry.artifactNamespace, status, success, durationMs, ...(exitCode === undefined ? {} : { exitCode }) }
 }
 
 function cancelledResult(entry: BoundedRuntimePlanEntry): BoundedRuntimePlanEntryResult {
-  return { ...baseResult(entry, "cancelled", false), error: { code: "fail-fast", message: `Execution was not started after an earlier failure: ${entry.id}` } }
+  return { ...baseResult(entry, "cancelled", false, 0), error: { code: "fail-fast", message: `Execution was not started after an earlier failure: ${entry.id}` } }
+}
+
+function executionReferences(completed: { stdoutRef?: string; stderrRef?: string; resultRef?: string; artifactRefs?: string[] }): Pick<BoundedRuntimePlanEntryResult, "stdoutRef" | "stderrRef" | "resultRef" | "artifactRefs"> {
+  return {
+    ...(completed.stdoutRef ? { stdoutRef: completed.stdoutRef } : {}),
+    ...(completed.stderrRef ? { stderrRef: completed.stderrRef } : {}),
+    ...(completed.resultRef ? { resultRef: completed.resultRef } : {}),
+    ...(completed.artifactRefs?.length ? { artifactRefs: completed.artifactRefs } : {}),
+  }
+}
+
+function boundedRuntimePlanCounts(entries: BoundedRuntimePlanEntryResult[]): BoundedRuntimePlanResult["counts"] {
+  return {
+    total: entries.length,
+    succeeded: entries.filter((entry) => entry.status === "succeeded").length,
+    failed: entries.filter((entry) => entry.status === "failed").length,
+    timedOut: entries.filter((entry) => entry.status === "timed_out").length,
+    cancelled: entries.filter((entry) => entry.status === "cancelled").length,
+  }
 }
 
 function safeIdentifier(value: unknown): value is string {

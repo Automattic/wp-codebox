@@ -106,6 +106,7 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./playground/public",
   "./cli",
   "./cli/recipe-secret-env",
+  "./cli/bounded-recipe-plan",
 ])
 
 assert.deepEqual(exportKeys(corePackage), [
@@ -193,6 +194,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./recipe-schema.js",
   "./recipe-source-packages.js",
   "./run-plan.js",
+  "./bounded-runtime-plan.js",
   "./run-registry.js",
   "./runner-workspace-publication.js",
   "./runtime-boundary-contracts.js",
@@ -273,6 +275,8 @@ for (const publicEntry of [
   "@automattic/wp-codebox-cli",
   "./cli/recipe-secret-env",
   "@automattic/wp-codebox-cli/recipe-secret-env",
+  "./cli/bounded-recipe-plan",
+  "@automattic/wp-codebox-cli/bounded-recipe-plan",
 ]) {
   assert.match(docs, new RegExp(escapeRegExp(publicEntry)), `docs must mention ${publicEntry}`)
 }

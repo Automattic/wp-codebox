@@ -26,6 +26,10 @@ on:
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
       - "tests/playground-phpunit-readonly-cache.integration.test.ts"
       - "tests/fixtures/phpunit-playground-harness/**"
+      - "packages/cli/src/bounded-recipe-plan.ts"
+      - "packages/runtime-core/src/bounded-runtime-plan.ts"
+      - "tests/bounded-*.test.ts"
+      - "tests/disposable-mysql-mysqli.integration.test.ts"
   push:
     paths:
       - ".github/scripts/run-agent-task/**"
@@ -51,6 +55,10 @@ on:
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
       - "tests/playground-phpunit-readonly-cache.integration.test.ts"
       - "tests/fixtures/phpunit-playground-harness/**"
+      - "packages/cli/src/bounded-recipe-plan.ts"
+      - "packages/runtime-core/src/bounded-runtime-plan.ts"
+      - "tests/bounded-*.test.ts"
+      - "tests/disposable-mysql-mysqli.integration.test.ts"
 
 jobs:
   contracts:
@@ -70,6 +78,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:agent-task-contracts
+      - run: npm run test:bounded-runtime-plan
+      - run: npm run test:bounded-recipe-plan
+      - run: npm run test:bounded-recipe-plan-integration
+      - run: npm run test:disposable-mysql-mysqli-e2e
       - run: npm run test:runtime-sources-playground-integration
       - run: npm run test:playground-phpunit-readonly-cache-integration
       - run: npm run test:native-agent-task-playground-e2e
