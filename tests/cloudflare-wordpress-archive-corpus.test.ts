@@ -1,21 +1,18 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { decodeRemoteZip, type CentralDirectoryEntry } from "@php-wasm/stream-compression"
+import { decodeZip } from "@php-wasm/stream-compression"
 import { isWordPressRuntimeFile, summarizeWordPressRuntimeCorpus, type WordPressArchiveEntry } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const MAX_RUNTIME_CORPUS_BYTES = 32 * 1024 * 1024
 
 test("WordPress production runtime corpus stays within the Worker materialization budget", async () => {
-  const decoder = new TextDecoder()
   const entries: WordPressArchiveEntry[] = []
-  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry) => {
-    const directoryEntry = entry as CentralDirectoryEntry
-    entries.push({ path: decoder.decode(directoryEntry.path), uncompressedSize: directoryEntry.uncompressedSize, isDirectory: directoryEntry.isDirectory })
-    return false
-  })
-  for await (const _ of stream) {
-    // The predicate records central-directory metadata and selects no file ranges.
+  const response = await fetch(WORDPRESS_ARCHIVE_URL)
+  assert.equal(response.ok, true, `WordPress archive returned HTTP ${response.status}.`)
+  assert.ok(response.body, "WordPress archive response has no body.")
+  for await (const file of decodeZip(response.body)) {
+    entries.push({ path: file.name, uncompressedSize: file.size, isDirectory: file.name.endsWith("/") })
   }
 
   const corpus = summarizeWordPressRuntimeCorpus(entries)
@@ -39,5 +36,7 @@ test("WordPress production runtime corpus stays within the Worker materializatio
     legacyBytes: legacy.reduce((total, entry) => total + entry.uncompressedSize, 0),
     largestExcludedGroups: byGroup(excluded),
   }))
+  assert.ok(entries.some((entry) => entry.path === "wordpress/wp-includes/version.php"), "Archive is missing wp-includes/version.php.")
+  assert.ok(corpus.selectedFiles > 0, "WordPress archive did not yield a runtime corpus.")
   assert.ok(corpus.selectedBytes <= MAX_RUNTIME_CORPUS_BYTES, `Selected ${corpus.selectedBytes} bytes exceeds the ${MAX_RUNTIME_CORPUS_BYTES}-byte runtime corpus budget.`)
 })

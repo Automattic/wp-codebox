@@ -1,0 +1,740 @@
+diff --git a/node_modules/@php-wasm/stream-compression/index.cjs b/node_modules/@php-wasm/stream-compression/index.cjs
+index f5fe882..487b0bb 100644
+--- a/node_modules/@php-wasm/stream-compression/index.cjs
++++ b/node_modules/@php-wasm/stream-compression/index.cjs
+@@ -1,2 +1,2 @@
+-"use strict";Object.defineProperty(exports,Symbol.toStringTag,{value:"Module"});const F=require("@php-wasm/util");function U(...e){const r=new Uint8Array(e.reduce((n,a)=>n+a.length,0));let t=0;for(const n of e)r.set(n,t),t+=n.length;return r}function A(e){if(e===void 0){let r=new Uint8Array;return new TransformStream({transform(t){r=U(r,t)},flush(t){t.enqueue(r)}})}else{const r=new ArrayBuffer(e||0);let t=0;return new TransformStream({transform(n){new Uint8Array(r).set(n,t),t+=n.byteLength},flush(n){n.enqueue(new Uint8Array(r))}})}}function E(e,r){if(r===0)return new ReadableStream({start(a){a.close()}});const t=e.getReader({mode:"byob"});let n=0;return new ReadableStream({async pull(a){const{value:i,done:s}=await t.read(new Uint8Array(r-n));if(s){t.releaseLock(),a.close();return}n+=i.length,a.enqueue(i),n>=r&&(t.releaseLock(),a.close())},cancel(){t.cancel()}})}async function c(e,r){return r!==void 0&&(e=E(e,r)),await e.pipeThrough(A(r)).getReader().read().then(({value:t})=>t)}async function _(e,r){return new File([await c(r)],e)}function T(e){if(e instanceof ReadableStream)return e;let r;return Symbol.asyncIterator in e?r=e[Symbol.asyncIterator]():Symbol.iterator in e?r=e[Symbol.iterator]():r=e,new ReadableStream({async pull(t){const{done:n,value:a}=await r.next();if(n){t.close();return}t.enqueue(a)}})}class D extends File{static fromArrayBuffer(r,t,n){return new D(new ReadableStream({start(a){a.enqueue(new Uint8Array(r)),a.close()}}),t,n)}constructor(r,t,n){super([],t,{type:n==null?void 0:n.type}),this.readableStream=r,this.filesize=n==null?void 0:n.filesize}slice(){throw new Error("slice() is not possible on a StreamedFile")}stream(){return this.readableStream}async text(){return new TextDecoder().decode(await this.arrayBuffer())}async arrayBuffer(){return await c(this.stream())}}ReadableStream.prototype[Symbol.asyncIterator]||(ReadableStream.prototype[Symbol.asyncIterator]=async function*(){const e=this.getReader();try{for(;;){const{done:r,value:t}=await e.read();if(r)return;yield t}}finally{e.releaseLock()}},ReadableStream.prototype.iterate=ReadableStream.prototype[Symbol.asyncIterator]);const N=32,h=67324752,y=33639248,g=101010256,M=0,R=8;function b(e){return new TransformStream({transform(r,t){e(r)&&t.enqueue(r)}})}function k(e){let r=!1;return new TransformStream({async transform(t,n){r||(r=!0,n.enqueue(e)),n.enqueue(t)}})}function x(e){return new TransformStream({async transform(r,t){t.enqueue(r)},async flush(r){r.enqueue(e)}})}function w(e,r){return O(e,r).pipeThrough(new TransformStream({async transform(t,n){const a=new File([t.bytes],new TextDecoder().decode(t.path),{type:t.isDirectory?"directory":void 0});n.enqueue(a)}}))}const v=()=>!0;function O(e,r=v){return new ReadableStream({async pull(n){const a=await P(e);if(!a){n.close();return}n.enqueue(a)}}).pipeThrough(b(({signature:n})=>n===h)).pipeThrough(b(r))}async function P(e){const t=new DataView((await c(e,4)).buffer).getUint32(0,!0);return t===h?await L(e,!0):t===y?await C(e,!0):t===g?await I(e,!0):null}async function L(e,r=!1){if(!r&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==h)return null;const t=new DataView((await c(e,26)).buffer),n=t.getUint16(22,!0),a=t.getUint16(24,!0),i={signature:h,version:t.getUint32(0,!0),generalPurpose:t.getUint16(2,!0),compressionMethod:t.getUint16(4,!0),lastModifiedTime:t.getUint16(6,!0),lastModifiedDate:t.getUint16(8,!0),crc:t.getUint32(10,!0),compressedSize:t.getUint32(14,!0),uncompressedSize:t.getUint32(18,!0)};i.path=await c(e,n),i.isDirectory=B(i.path),i.extra=await c(e,a);let s=E(e,i.compressedSize);if(i.compressionMethod===R){const o=new Uint8Array(10);o.set([31,139,8]);const f=new Uint8Array(8),u=new DataView(f.buffer);u.setUint32(0,i.crc,!0),u.setUint32(4,i.uncompressedSize%2**32,!0),s=s.pipeThrough(k(o)).pipeThrough(x(f)).pipeThrough(new DecompressionStream("gzip"))}return i.bytes=await s.pipeThrough(A(i.uncompressedSize)).getReader().read().then(({value:o})=>o),i}async function C(e,r=!1){if(!r&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==y)return null;const t=new DataView((await c(e,42)).buffer),n=t.getUint16(24,!0),a=t.getUint16(26,!0),i=t.getUint16(28,!0),s={signature:y,versionCreated:t.getUint16(0,!0),versionNeeded:t.getUint16(2,!0),generalPurpose:t.getUint16(4,!0),compressionMethod:t.getUint16(6,!0),lastModifiedTime:t.getUint16(8,!0),lastModifiedDate:t.getUint16(10,!0),crc:t.getUint32(12,!0),compressedSize:t.getUint32(16,!0),uncompressedSize:t.getUint32(20,!0),diskNumber:t.getUint16(30,!0),internalAttributes:t.getUint16(32,!0),externalAttributes:t.getUint32(34,!0),firstByteAt:t.getUint32(38,!0)};return s.lastByteAt=s.firstByteAt+N+n+i+a+s.compressedSize-1,s.path=await c(e,n),s.isDirectory=B(s.path),s.extra=await c(e,a),s.fileComment=await c(e,i),s}function B(e){return e[e.byteLength-1]==47}async function I(e,r=!1){if(!r&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==g)return null;const t=new DataView((await c(e,18)).buffer),n={signature:g,numberOfDisks:t.getUint16(0,!0),centralDirectoryStartDisk:t.getUint16(2,!0),numberCentralDirectoryRecordsOnThisDisk:t.getUint16(4,!0),numberCentralDirectoryRecords:t.getUint16(6,!0),centralDirectorySize:t.getUint32(8,!0),centralDirectoryOffset:t.getUint32(12,!0)},a=t.getUint16(16,!0);return n.comment=await c(e,a),n}const z=110*1024,V=10*1024,H=1024*1024*1,Z=new F.Semaphore({concurrency:10}),S=()=>!0;async function G(e,r=S){if(r===S){const d=await fetch(e);return w(d.body)}const t=await q(e);if(t<=H){const d=await fetch(e);return w(d.body)}const n=await fetch(e,{headers:{Range:"bytes=0-0","Accept-Encoding":"none"}}),[a,i]=n.body.tee(),s=a.getReader(),{value:o}=await s.read(),{done:f}=await s.read();if(s.releaseLock(),a.cancel(),!((o==null?void 0:o.length)===1&&f))return w(i);i.cancel();const l=await J(e,t);return W(l).pipeThrough(b(r)).pipeThrough($()).pipeThrough(j(l))}function W(e){let r;return new ReadableStream({async start(){r=await Y(e)},async pull(t){const n=await C(r);if(!n){t.close();return}t.enqueue(n)}})}async function Y(e){const r=z;let t=new Uint8Array,n=e.length;do{n=Math.max(0,n-r);const a=Math.min(n+r-1,e.length-1),i=await c(await e.streamBytes(n,a));t=U(i,t);const s=new DataView(i.buffer);for(let o=s.byteLength-4;o>=0;o--){if(s.getUint32(o,!0)!==g)continue;const u=o+12+4;if(t.byteLength<u+4)throw new Error("Central directory not found");const l=s.getUint32(u,!0);if(l<n){const d=await c(await e.streamBytes(l,n-1));t=U(d,t)}else l>n&&(t=t.slice(l-n));return new Blob([t]).stream()}}while(n>=0);throw new Error("Central directory not found")}function $(){let e=0,r=[];return new TransformStream({transform(t,n){t.firstByteAt>e+V&&(n.enqueue(r),r=[]),e=t.lastByteAt,r.push(t)},flush(t){t.enqueue(r)}})}function j(e){let r=!1,t=0,n;const a=[],i=new WritableStream({write(o,f){o.length&&(++t,K(e,o).then(u=>{a.push([o,u])}).catch(u=>{f.error(u)}).finally(()=>{--t}))},abort(){r=!0,n.close()},async close(){r=!0}});return{readable:new ReadableStream({start(o){n=o},async pull(o){for(;;){if(r&&!a.length&&t===0){o.close();return}if(!a.length){await new Promise(p=>setTimeout(p,50));continue}const[l,d]=a[0],m=await L(d);if(!m){a.shift();continue}if(l.find(p=>p.path===m.path)){o.enqueue(m);break}}}}),writable:i}}async function K(e,r){const t=await Z.acquire();try{const n=r[r.length-1];return await e.streamBytes(r[0].firstByteAt,n.lastByteAt)}finally{t()}}async function q(e){return await fetch(e,{method:"HEAD"}).then(r=>r.headers.get("Content-Length")).then(r=>{if(!r)throw new Error("Content-Length header is missing");const t=parseInt(r,10);if(isNaN(t)||t<0)throw new Error("Content-Length header is invalid");return t})}async function J(e,r){return r===void 0&&(r=await q(e)),{length:r,streamBytes:async(t,n)=>await fetch(e,{headers:{Range:`bytes=${t}-${n-1}`,"Accept-Encoding":"none"}}).then(a=>a.body)}}function Q(e){return T(e).pipeThrough(X())}function X(){const e=new Map;let r=0;return new TransformStream({async transform(t,n){const a=new Uint8Array(await t.arrayBuffer());let i=await c(new Blob([a]).stream().pipeThrough(new CompressionStream("gzip")));const s=new DataView(i.buffer).getUint32(i.byteLength-8,!0);i=i.slice(10,i.byteLength-8);const o=new TextEncoder().encode(t.name),f={signature:h,version:2,generalPurpose:0,compressionMethod:t.type==="directory"||i.byteLength===0?M:R,lastModifiedTime:0,lastModifiedDate:0,crc:s,compressedSize:i.byteLength,uncompressedSize:a.byteLength,path:o,extra:new Uint8Array(0)};e.set(r,f);const u=ee(f);n.enqueue(u),r+=u.byteLength,n.enqueue(i),r+=i.byteLength},flush(t){const n=r;let a=0;for(const[o,f]of e.entries()){const u={...f,signature:y,fileComment:new Uint8Array(0),diskNumber:0,internalAttributes:0,externalAttributes:0},l=te(u,o);t.enqueue(l),a+=l.byteLength}const i={signature:g,numberOfDisks:0,centralDirectoryOffset:n,centralDirectorySize:a,centralDirectoryStartDisk:0,numberCentralDirectoryRecordsOnThisDisk:e.size,numberCentralDirectoryRecords:e.size,comment:new Uint8Array(0)},s=ne(i);t.enqueue(s),e.clear()}})}function ee(e){const r=new ArrayBuffer(30+e.path.byteLength+e.extra.byteLength),t=new DataView(r);t.setUint32(0,e.signature,!0),t.setUint16(4,e.version,!0),t.setUint16(6,e.generalPurpose,!0),t.setUint16(8,e.compressionMethod,!0),t.setUint16(10,e.lastModifiedDate,!0),t.setUint16(12,e.lastModifiedTime,!0),t.setUint32(14,e.crc,!0),t.setUint32(18,e.compressedSize,!0),t.setUint32(22,e.uncompressedSize,!0),t.setUint16(26,e.path.byteLength,!0),t.setUint16(28,e.extra.byteLength,!0);const n=new Uint8Array(r);return n.set(e.path,30),n.set(e.extra,30+e.path.byteLength),n}function te(e,r){const t=new ArrayBuffer(46+e.path.byteLength+e.extra.byteLength),n=new DataView(t);n.setUint32(0,e.signature,!0),n.setUint16(4,e.versionCreated,!0),n.setUint16(6,e.versionNeeded,!0),n.setUint16(8,e.generalPurpose,!0),n.setUint16(10,e.compressionMethod,!0),n.setUint16(12,e.lastModifiedDate,!0),n.setUint16(14,e.lastModifiedTime,!0),n.setUint32(16,e.crc,!0),n.setUint32(20,e.compressedSize,!0),n.setUint32(24,e.uncompressedSize,!0),n.setUint16(28,e.path.byteLength,!0),n.setUint16(30,e.extra.byteLength,!0),n.setUint16(32,e.fileComment.byteLength,!0),n.setUint16(34,e.diskNumber,!0),n.setUint16(36,e.internalAttributes,!0),n.setUint32(38,e.externalAttributes,!0),n.setUint32(42,r,!0);const a=new Uint8Array(t);return a.set(e.path,46),a.set(e.extra,46+e.path.byteLength),a}function ne(e){const r=new ArrayBuffer(22+e.comment.byteLength),t=new DataView(r);t.setUint32(0,e.signature,!0),t.setUint16(4,e.numberOfDisks,!0),t.setUint16(6,e.centralDirectoryStartDisk,!0),t.setUint16(8,e.numberCentralDirectoryRecordsOnThisDisk,!0),t.setUint16(10,e.numberCentralDirectoryRecords,!0),t.setUint32(12,e.centralDirectorySize,!0),t.setUint32(16,e.centralDirectoryOffset,!0),t.setUint16(20,e.comment.byteLength,!0);const n=new Uint8Array(r);return n.set(e.comment,22),n}exports.StreamedFile=D;exports.collectBytes=c;exports.collectFile=_;exports.decodeRemoteZip=G;exports.decodeZip=w;exports.encodeZip=Q;exports.iteratorToStream=T;
++"use strict";Object.defineProperty(exports,Symbol.toStringTag,{value:"Module"});function m(...e){const n=new Uint8Array(e.reduce((r,a)=>r+a.length,0));let t=0;for(const r of e)n.set(r,t),t+=r.length;return n}function b(e){if(e===void 0){let n=new Uint8Array;return new TransformStream({transform(t){n=m(n,t)},flush(t){t.enqueue(n)}})}else{const n=new ArrayBuffer(e||0);let t=0;return new TransformStream({transform(r){new Uint8Array(n).set(r,t),t+=r.byteLength},flush(r){r.enqueue(new Uint8Array(n))}})}}function S(e,n){if(n===0)return new ReadableStream({start(a){a.close()}});const t=e.getReader({mode:"byob"});let r=0;return new ReadableStream({async pull(a){const{value:i,done:s}=await t.read(new Uint8Array(n-r));if(s){t.releaseLock(),a.close();return}r+=i.length,a.enqueue(i),r>=n&&(t.releaseLock(),a.close())},cancel(){t.cancel()}})}async function c(e,n){return n!==void 0&&(e=S(e,n)),await e.pipeThrough(b(n)).getReader().read().then(({value:t})=>t)}async function B(e,n){return new File([await c(n)],e)}function A(e){if(e instanceof ReadableStream)return e;let n;return Symbol.asyncIterator in e?n=e[Symbol.asyncIterator]():Symbol.iterator in e?n=e[Symbol.iterator]():n=e,new ReadableStream({async pull(t){const{done:r,value:a}=await n.next();if(r){t.close();return}t.enqueue(a)}})}class U extends File{static fromArrayBuffer(n,t,r){return new U(new ReadableStream({start(a){a.enqueue(new Uint8Array(n)),a.close()}}),t,r)}constructor(n,t,r){super([],t,{type:r==null?void 0:r.type}),this.readableStream=n,this.filesize=r==null?void 0:r.filesize}slice(){throw new Error("slice() is not possible on a StreamedFile")}stream(){return this.readableStream}async text(){return new TextDecoder().decode(await this.arrayBuffer())}async arrayBuffer(){return await c(this.stream())}}ReadableStream.prototype[Symbol.asyncIterator]||(ReadableStream.prototype[Symbol.asyncIterator]=async function*(){const e=this.getReader();try{for(;;){const{done:n,value:t}=await e.read();if(n)return;yield t}}finally{e.releaseLock()}},ReadableStream.prototype.iterate=ReadableStream.prototype[Symbol.asyncIterator]);const _=30,h=67324752,y=33639248,g=101010256,N=0,E=8;function p(e){return new TransformStream({transform(n,t){e(n)&&t.enqueue(n)}})}function M(e){let n=!1;return new TransformStream({async transform(t,r){n||(n=!0,r.enqueue(e)),r.enqueue(t)}})}function v(e){return new TransformStream({async transform(n,t){t.enqueue(n)},async flush(n){n.enqueue(e)}})}function w(e,n){return F(e,n).pipeThrough(new TransformStream({async transform(t,r){const a=new File([t.bytes],new TextDecoder().decode(t.path),{type:t.isDirectory?"directory":void 0});r.enqueue(a)}}))}const x=()=>!0;function F(e,n=x){return new ReadableStream({async pull(r){const a=await q(e);if(!a){r.close();return}r.enqueue(a)}}).pipeThrough(p(({signature:r})=>r===h)).pipeThrough(p(n))}async function q(e){const t=new DataView((await c(e,4)).buffer).getUint32(0,!0);return t===h?await T(e,!0):t===y?await L(e,!0):t===g?await k(e,!0):null}async function T(e,n=!1){if(!n&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==h)return null;const t=new DataView((await c(e,26)).buffer),r=t.getUint16(22,!0),a=t.getUint16(24,!0),i={signature:h,version:t.getUint32(0,!0),generalPurpose:t.getUint16(2,!0),compressionMethod:t.getUint16(4,!0),lastModifiedTime:t.getUint16(6,!0),lastModifiedDate:t.getUint16(8,!0),crc:t.getUint32(10,!0),compressedSize:t.getUint32(14,!0),uncompressedSize:t.getUint32(18,!0)};i.path=await c(e,r),i.isDirectory=R(i.path),i.extra=await c(e,a);let s=S(e,i.compressedSize);if(i.compressionMethod===E){const o=new Uint8Array(10);o.set([31,139,8]);const u=new Uint8Array(8),f=new DataView(u.buffer);f.setUint32(0,i.crc,!0),f.setUint32(4,i.uncompressedSize%2**32,!0),s=s.pipeThrough(M(o)).pipeThrough(v(u)).pipeThrough(new DecompressionStream("gzip"))}return i.bytes=await s.pipeThrough(b(i.uncompressedSize)).getReader().read().then(({value:o})=>o),i}async function L(e,n=!1){if(!n&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==y)return null;const t=new DataView((await c(e,42)).buffer),r=t.getUint16(24,!0),a=t.getUint16(26,!0),i=t.getUint16(28,!0),s={signature:y,versionCreated:t.getUint16(0,!0),versionNeeded:t.getUint16(2,!0),generalPurpose:t.getUint16(4,!0),compressionMethod:t.getUint16(6,!0),lastModifiedTime:t.getUint16(8,!0),lastModifiedDate:t.getUint16(10,!0),crc:t.getUint32(12,!0),compressedSize:t.getUint32(16,!0),uncompressedSize:t.getUint32(20,!0),diskNumber:t.getUint16(30,!0),internalAttributes:t.getUint16(32,!0),externalAttributes:t.getUint32(34,!0),firstByteAt:t.getUint32(38,!0)};return s.lastByteAt=s.firstByteAt+_+r+a+s.compressedSize,s.path=await c(e,r),s.isDirectory=R(s.path),s.extra=await c(e,a),s.fileComment=await c(e,i),s}function R(e){return e[e.byteLength-1]==47}async function k(e,n=!1){if(!n&&new DataView((await c(e,4)).buffer).getUint32(0,!0)!==g)return null;const t=new DataView((await c(e,18)).buffer),r={signature:g,numberOfDisks:t.getUint16(0,!0),centralDirectoryStartDisk:t.getUint16(2,!0),numberCentralDirectoryRecordsOnThisDisk:t.getUint16(4,!0),numberCentralDirectoryRecords:t.getUint16(6,!0),centralDirectorySize:t.getUint32(8,!0),centralDirectoryOffset:t.getUint32(12,!0)},a=t.getUint16(16,!0);return r.comment=await c(e,a),r}const O=110*1024,z=10*1024,I=48,P=1024*1024*1,D=()=>!0;async function V(e,n=D){if(n===D){const l=await fetch(e);return w(l.body)}const t=await C(e);if(t<=P){const l=await fetch(e);return w(l.body)}const r=await fetch(e,{headers:{Range:"bytes=0-0","Accept-Encoding":"none"}}),[a,i]=r.body.tee(),s=a.getReader(),{value:o}=await s.read(),{done:u}=await s.read();if(s.releaseLock(),a.cancel(),!((o==null?void 0:o.length)===1&&u))return w(i);i.cancel();const d=await j(e,t);return H(d).pipeThrough(p(n)).pipeThrough(G(d.length)).pipeThrough($(d))}function H(e){const n=Z(e);return new ReadableStream({async pull(t){const r=await L(await n);if(!r){t.close();return}t.enqueue(r)}})}async function Z(e){const n=O;let t=new Uint8Array,r=e.length;do{r=Math.max(0,r-n);const a=Math.min(r+n,e.length),i=await c(await e.streamBytes(r,a));t=m(i,t);const s=new DataView(i.buffer);for(let o=s.byteLength-4;o>=0;o--){if(s.getUint32(o,!0)!==g)continue;const f=o+12+4;if(t.byteLength<f+4)throw new Error("Central directory not found");const d=s.getUint32(f,!0);if(d<r){const l=await c(await e.streamBytes(d,r));t=m(l,t)}else d>r&&(t=t.slice(d-r));return new Blob([t]).stream()}}while(r>=0);throw new Error("Central directory not found")}function G(e){let n=0,t=[];const r=Math.max(z,Math.ceil(e/I));return new TransformStream({transform(a,i){a.firstByteAt>n+r&&(i.enqueue(t),t=[]),n=a.lastByteAt,t.push(a)},flush(a){a.enqueue(t)}})}function $(e){return new TransformStream({async transform(n,t){if(!n.length)return;const r=await W(e,n);for(;;){const a=await T(r);if(!a)return;n.some(i=>Y(i.path,a.path))&&t.enqueue(a)}}})}function Y(e,n){return e.length===n.length&&e.every((t,r)=>t===n[r])}async function W(e,n){const t=n[n.length-1];return await e.streamBytes(n[0].firstByteAt,t.lastByteAt)}async function C(e){return await fetch(e,{method:"HEAD"}).then(n=>n.headers.get("Content-Length")).then(n=>{if(!n)throw new Error("Content-Length header is missing");const t=parseInt(n,10);if(isNaN(t)||t<0)throw new Error("Content-Length header is invalid");return t})}async function j(e,n){return n===void 0&&(n=await C(e)),{length:n,streamBytes:async(t,r)=>{const a=await fetch(e,{headers:{Range:`bytes=${t}-${r-1}`,"Accept-Encoding":"none"}});if(a.status!==206||!a.body)throw new Error(`Expected a partial zip range response, received ${a.status} ${a.statusText}`);return a.body}}}function K(e){return A(e).pipeThrough(Q())}function Q(){const e=new Map;let n=0;return new TransformStream({async transform(t,r){const a=new Uint8Array(await t.arrayBuffer());let i=await c(new Blob([a]).stream().pipeThrough(new CompressionStream("gzip")));const s=new DataView(i.buffer).getUint32(i.byteLength-8,!0);i=i.slice(10,i.byteLength-8);const o=new TextEncoder().encode(t.name),u={signature:h,version:2,generalPurpose:0,compressionMethod:t.type==="directory"||i.byteLength===0?N:E,lastModifiedTime:0,lastModifiedDate:0,crc:s,compressedSize:i.byteLength,uncompressedSize:a.byteLength,path:o,extra:new Uint8Array(0)};e.set(n,u);const f=X(u);r.enqueue(f),n+=f.byteLength,r.enqueue(i),n+=i.byteLength},flush(t){const r=n;let a=0;for(const[o,u]of e.entries()){const f={...u,signature:y,fileComment:new Uint8Array(0),diskNumber:0,internalAttributes:0,externalAttributes:0},d=J(f,o);t.enqueue(d),a+=d.byteLength}const i={signature:g,numberOfDisks:0,centralDirectoryOffset:r,centralDirectorySize:a,centralDirectoryStartDisk:0,numberCentralDirectoryRecordsOnThisDisk:e.size,numberCentralDirectoryRecords:e.size,comment:new Uint8Array(0)},s=ee(i);t.enqueue(s),e.clear()}})}function X(e){const n=new ArrayBuffer(30+e.path.byteLength+e.extra.byteLength),t=new DataView(n);t.setUint32(0,e.signature,!0),t.setUint16(4,e.version,!0),t.setUint16(6,e.generalPurpose,!0),t.setUint16(8,e.compressionMethod,!0),t.setUint16(10,e.lastModifiedDate,!0),t.setUint16(12,e.lastModifiedTime,!0),t.setUint32(14,e.crc,!0),t.setUint32(18,e.compressedSize,!0),t.setUint32(22,e.uncompressedSize,!0),t.setUint16(26,e.path.byteLength,!0),t.setUint16(28,e.extra.byteLength,!0);const r=new Uint8Array(n);return r.set(e.path,30),r.set(e.extra,30+e.path.byteLength),r}function J(e,n){const t=new ArrayBuffer(46+e.path.byteLength+e.extra.byteLength),r=new DataView(t);r.setUint32(0,e.signature,!0),r.setUint16(4,e.versionCreated,!0),r.setUint16(6,e.versionNeeded,!0),r.setUint16(8,e.generalPurpose,!0),r.setUint16(10,e.compressionMethod,!0),r.setUint16(12,e.lastModifiedDate,!0),r.setUint16(14,e.lastModifiedTime,!0),r.setUint32(16,e.crc,!0),r.setUint32(20,e.compressedSize,!0),r.setUint32(24,e.uncompressedSize,!0),r.setUint16(28,e.path.byteLength,!0),r.setUint16(30,e.extra.byteLength,!0),r.setUint16(32,e.fileComment.byteLength,!0),r.setUint16(34,e.diskNumber,!0),r.setUint16(36,e.internalAttributes,!0),r.setUint32(38,e.externalAttributes,!0),r.setUint32(42,n,!0);const a=new Uint8Array(t);return a.set(e.path,46),a.set(e.extra,46+e.path.byteLength),a}function ee(e){const n=new ArrayBuffer(22+e.comment.byteLength),t=new DataView(n);t.setUint32(0,e.signature,!0),t.setUint16(4,e.numberOfDisks,!0),t.setUint16(6,e.centralDirectoryStartDisk,!0),t.setUint16(8,e.numberCentralDirectoryRecordsOnThisDisk,!0),t.setUint16(10,e.numberCentralDirectoryRecords,!0),t.setUint32(12,e.centralDirectorySize,!0),t.setUint32(16,e.centralDirectoryOffset,!0),t.setUint16(20,e.comment.byteLength,!0);const r=new Uint8Array(n);return r.set(e.comment,22),r}exports.StreamedFile=U;exports.collectBytes=c;exports.collectFile=B;exports.decodeRemoteZip=V;exports.decodeZip=w;exports.encodeZip=K;exports.iteratorToStream=A;
+ //# sourceMappingURL=index.cjs.map
+diff --git a/node_modules/@php-wasm/stream-compression/index.js b/node_modules/@php-wasm/stream-compression/index.js
+index 0cc9cb5..d13408a 100644
+--- a/node_modules/@php-wasm/stream-compression/index.js
++++ b/node_modules/@php-wasm/stream-compression/index.js
+@@ -1,76 +1,75 @@
+-import { Semaphore as _ } from "@php-wasm/util";
+-function U(...e) {
+-  const r = new Uint8Array(
+-    e.reduce((n, a) => n + a.length, 0)
++function m(...e) {
++  const n = new Uint8Array(
++    e.reduce((r, a) => r + a.length, 0)
+   );
+   let t = 0;
+-  for (const n of e)
+-    r.set(n, t), t += n.length;
+-  return r;
++  for (const r of e)
++    n.set(r, t), t += r.length;
++  return n;
+ }
+-function S(e) {
++function D(e) {
+   if (e === void 0) {
+-    let r = new Uint8Array();
++    let n = new Uint8Array();
+     return new TransformStream({
+       transform(t) {
+-        r = U(r, t);
++        n = m(n, t);
+       },
+       flush(t) {
+-        t.enqueue(r);
++        t.enqueue(n);
+       }
+     });
+   } else {
+-    const r = new ArrayBuffer(e || 0);
++    const n = new ArrayBuffer(e || 0);
+     let t = 0;
+     return new TransformStream({
+-      transform(n) {
+-        new Uint8Array(r).set(n, t), t += n.byteLength;
++      transform(r) {
++        new Uint8Array(n).set(r, t), t += r.byteLength;
+       },
+-      flush(n) {
+-        n.enqueue(new Uint8Array(r));
++      flush(r) {
++        r.enqueue(new Uint8Array(n));
+       }
+     });
+   }
+ }
+-function A(e, r) {
+-  if (r === 0)
++function b(e, n) {
++  if (n === 0)
+     return new ReadableStream({
+       start(a) {
+         a.close();
+       }
+     });
+   const t = e.getReader({ mode: "byob" });
+-  let n = 0;
++  let r = 0;
+   return new ReadableStream({
+     async pull(a) {
+       const { value: i, done: s } = await t.read(
+-        new Uint8Array(r - n)
++        new Uint8Array(n - r)
+       );
+       if (s) {
+         t.releaseLock(), a.close();
+         return;
+       }
+-      n += i.length, a.enqueue(i), n >= r && (t.releaseLock(), a.close());
++      r += i.length, a.enqueue(i), r >= n && (t.releaseLock(), a.close());
+     },
+     cancel() {
+       t.cancel();
+     }
+   });
+ }
+-async function c(e, r) {
+-  return r !== void 0 && (e = A(e, r)), await e.pipeThrough(S(r)).getReader().read().then(({ value: t }) => t);
++async function u(e, n) {
++  return n !== void 0 && (e = b(e, n)), await e.pipeThrough(D(n)).getReader().read().then(({ value: t }) => t);
+ }
+-async function re(e, r) {
+-  return new File([await c(r)], e);
++async function j(e, n) {
++  return new File([await u(n)], e);
+ }
+-function q(e) {
++function C(e) {
+   if (e instanceof ReadableStream)
+     return e;
+-  let r;
+-  return Symbol.asyncIterator in e ? r = e[Symbol.asyncIterator]() : Symbol.iterator in e ? r = e[Symbol.iterator]() : r = e, new ReadableStream({
++  let n;
++  return Symbol.asyncIterator in e ? n = e[Symbol.asyncIterator]() : Symbol.iterator in e ? n = e[Symbol.iterator]() : n = e, new ReadableStream({
+     async pull(t) {
+-      const { done: n, value: a } = await r.next();
+-      if (n) {
++      const { done: r, value: a } = await n.next();
++      if (r) {
+         t.close();
+         return;
+       }
+@@ -78,16 +77,16 @@ function q(e) {
+     }
+   });
+ }
+-class E extends File {
+-  static fromArrayBuffer(r, t, n) {
+-    return new E(
++class S extends File {
++  static fromArrayBuffer(n, t, r) {
++    return new S(
+       new ReadableStream({
+         start(a) {
+-          a.enqueue(new Uint8Array(r)), a.close();
++          a.enqueue(new Uint8Array(n)), a.close();
+         }
+       }),
+       t,
+-      n
++      r
+     );
+   }
+   /**
+@@ -97,8 +96,8 @@ class E extends File {
+    * @param name The name of the file.
+    * @param options An object containing options such as the MIME type and file size.
+    */
+-  constructor(r, t, n) {
+-    super([], t, { type: n == null ? void 0 : n.type }), this.readableStream = r, this.filesize = n == null ? void 0 : n.filesize;
++  constructor(n, t, r) {
++    super([], t, { type: r == null ? void 0 : r.type }), this.readableStream = n, this.filesize = r == null ? void 0 : r.filesize;
+   }
+   /**
+    * Overrides the slice() method of the File class.
+@@ -130,15 +129,15 @@ class E extends File {
+    * @returns File data as an ArrayBuffer.
+    */
+   async arrayBuffer() {
+-    return await c(this.stream());
++    return await u(this.stream());
+   }
+ }
+ ReadableStream.prototype[Symbol.asyncIterator] || (ReadableStream.prototype[Symbol.asyncIterator] = async function* () {
+   const e = this.getReader();
+   try {
+     for (; ; ) {
+-      const { done: r, value: t } = await e.read();
+-      if (r)
++      const { done: n, value: t } = await e.read();
++      if (n)
+         return;
+       yield t;
+     }
+@@ -147,36 +146,36 @@ ReadableStream.prototype[Symbol.asyncIterator] || (ReadableStream.prototype[Symb
+   }
+ }, ReadableStream.prototype.iterate = // @ts-ignore
+ ReadableStream.prototype[Symbol.asyncIterator]);
+-const N = 32, h = 67324752, w = 33639248, g = 101010256, x = 0, L = 8;
+-function b(e) {
++const B = 30, h = 67324752, w = 33639248, g = 101010256, _ = 0, A = 8;
++function p(e) {
+   return new TransformStream({
+-    transform(r, t) {
+-      e(r) && t.enqueue(r);
++    transform(n, t) {
++      e(n) && t.enqueue(n);
+     }
+   });
+ }
+-function F(e) {
+-  let r = !1;
++function N(e) {
++  let n = !1;
+   return new TransformStream({
+-    async transform(t, n) {
+-      r || (r = !0, n.enqueue(e)), n.enqueue(t);
++    async transform(t, r) {
++      n || (n = !0, r.enqueue(e)), r.enqueue(t);
+     }
+   });
+ }
+-function k(e) {
++function x(e) {
+   return new TransformStream({
+-    async transform(r, t) {
+-      t.enqueue(r);
++    async transform(n, t) {
++      t.enqueue(n);
+     },
+-    async flush(r) {
+-      r.enqueue(e);
++    async flush(n) {
++      n.enqueue(e);
+     }
+   });
+ }
+-function p(e, r) {
+-  return v(e, r).pipeThrough(
++function y(e, n) {
++  return v(e, n).pipeThrough(
+     new TransformStream({
+-      async transform(t, n) {
++      async transform(t, r) {
+         const a = new File(
+           [t.bytes],
+           new TextDecoder().decode(t.path),
+@@ -184,36 +183,36 @@ function p(e, r) {
+             type: t.isDirectory ? "directory" : void 0
+           }
+         );
+-        n.enqueue(a);
++        r.enqueue(a);
+       }
+     })
+   );
+ }
+ const M = () => !0;
+-function v(e, r = M) {
++function v(e, n = M) {
+   return new ReadableStream({
+-    async pull(n) {
+-      const a = await O(e);
++    async pull(r) {
++      const a = await F(e);
+       if (!a) {
+-        n.close();
++        r.close();
+         return;
+       }
+-      n.enqueue(a);
++      r.enqueue(a);
+     }
+   }).pipeThrough(
+-    b(({ signature: n }) => n === h)
++    p(({ signature: r }) => r === h)
+   ).pipeThrough(
+-    b(r)
++    p(n)
+   );
+ }
+-async function O(e) {
+-  const t = new DataView((await c(e, 4)).buffer).getUint32(0, !0);
+-  return t === h ? await R(e, !0) : t === w ? await T(e, !0) : t === g ? await P(e, !0) : null;
++async function F(e) {
++  const t = new DataView((await u(e, 4)).buffer).getUint32(0, !0);
++  return t === h ? await E(e, !0) : t === w ? await T(e, !0) : t === g ? await q(e, !0) : null;
+ }
+-async function R(e, r = !1) {
+-  if (!r && new DataView((await c(e, 4)).buffer).getUint32(0, !0) !== h)
++async function E(e, n = !1) {
++  if (!n && new DataView((await u(e, 4)).buffer).getUint32(0, !0) !== h)
+     return null;
+-  const t = new DataView((await c(e, 26)).buffer), n = t.getUint16(22, !0), a = t.getUint16(24, !0), i = {
++  const t = new DataView((await u(e, 26)).buffer), r = t.getUint16(22, !0), a = t.getUint16(24, !0), i = {
+     signature: h,
+     version: t.getUint32(0, !0),
+     generalPurpose: t.getUint16(2, !0),
+@@ -224,20 +223,20 @@ async function R(e, r = !1) {
+     compressedSize: t.getUint32(14, !0),
+     uncompressedSize: t.getUint32(18, !0)
+   };
+-  i.path = await c(e, n), i.isDirectory = C(i.path), i.extra = await c(e, a);
+-  let s = A(e, i.compressedSize);
+-  if (i.compressionMethod === L) {
++  i.path = await u(e, r), i.isDirectory = L(i.path), i.extra = await u(e, a);
++  let s = b(e, i.compressedSize);
++  if (i.compressionMethod === A) {
+     const o = new Uint8Array(10);
+     o.set([31, 139, 8]);
+-    const f = new Uint8Array(8), u = new DataView(f.buffer);
+-    u.setUint32(0, i.crc, !0), u.setUint32(4, i.uncompressedSize % 2 ** 32, !0), s = s.pipeThrough(F(o)).pipeThrough(k(f)).pipeThrough(new DecompressionStream("gzip"));
++    const c = new Uint8Array(8), f = new DataView(c.buffer);
++    f.setUint32(0, i.crc, !0), f.setUint32(4, i.uncompressedSize % 2 ** 32, !0), s = s.pipeThrough(N(o)).pipeThrough(x(c)).pipeThrough(new DecompressionStream("gzip"));
+   }
+-  return i.bytes = await s.pipeThrough(S(i.uncompressedSize)).getReader().read().then(({ value: o }) => o), i;
++  return i.bytes = await s.pipeThrough(D(i.uncompressedSize)).getReader().read().then(({ value: o }) => o), i;
+ }
+-async function T(e, r = !1) {
+-  if (!r && new DataView((await c(e, 4)).buffer).getUint32(0, !0) !== w)
++async function T(e, n = !1) {
++  if (!n && new DataView((await u(e, 4)).buffer).getUint32(0, !0) !== w)
+     return null;
+-  const t = new DataView((await c(e, 42)).buffer), n = t.getUint16(24, !0), a = t.getUint16(26, !0), i = t.getUint16(28, !0), s = {
++  const t = new DataView((await u(e, 42)).buffer), r = t.getUint16(24, !0), a = t.getUint16(26, !0), i = t.getUint16(28, !0), s = {
+     signature: w,
+     versionCreated: t.getUint16(0, !0),
+     versionNeeded: t.getUint16(2, !0),
+@@ -253,18 +252,18 @@ async function T(e, r = !1) {
+     externalAttributes: t.getUint32(34, !0),
+     firstByteAt: t.getUint32(38, !0)
+   };
+-  return s.lastByteAt = s.firstByteAt + N + n + i + a + s.compressedSize - 1, s.path = await c(e, n), s.isDirectory = C(s.path), s.extra = await c(e, a), s.fileComment = await c(
++  return s.lastByteAt = s.firstByteAt + B + r + a + s.compressedSize, s.path = await u(e, r), s.isDirectory = L(s.path), s.extra = await u(e, a), s.fileComment = await u(
+     e,
+     i
+   ), s;
+ }
+-function C(e) {
++function L(e) {
+   return e[e.byteLength - 1] == 47;
+ }
+-async function P(e, r = !1) {
+-  if (!r && new DataView((await c(e, 4)).buffer).getUint32(0, !0) !== g)
++async function q(e, n = !1) {
++  if (!n && new DataView((await u(e, 4)).buffer).getUint32(0, !0) !== g)
+     return null;
+-  const t = new DataView((await c(e, 18)).buffer), n = {
++  const t = new DataView((await u(e, 18)).buffer), r = {
+     signature: g,
+     numberOfDisks: t.getUint16(0, !0),
+     centralDirectoryStartDisk: t.getUint16(2, !0),
+@@ -273,20 +272,20 @@ async function P(e, r = !1) {
+     centralDirectorySize: t.getUint32(8, !0),
+     centralDirectoryOffset: t.getUint32(12, !0)
+   }, a = t.getUint16(16, !0);
+-  return n.comment = await c(e, a), n;
++  return r.comment = await u(e, a), r;
+ }
+-const I = 110 * 1024, z = 10 * 1024, V = 1024 * 1024 * 1, H = new _({ concurrency: 10 }), D = () => !0;
+-async function ae(e, r = D) {
+-  if (r === D) {
+-    const d = await fetch(e);
+-    return p(d.body);
++const k = 110 * 1024, z = 10 * 1024, I = 48, O = 1024 * 1024 * 1, U = () => !0;
++async function J(e, n = U) {
++  if (n === U) {
++    const l = await fetch(e);
++    return y(l.body);
+   }
+-  const t = await B(e);
+-  if (t <= V) {
+-    const d = await fetch(e);
+-    return p(d.body);
++  const t = await R(e);
++  if (t <= O) {
++    const l = await fetch(e);
++    return y(l.body);
+   }
+-  const n = await fetch(e, {
++  const r = await fetch(e, {
+     headers: {
+       // 0-0 looks weird, doesn't it?
+       // The Range header is inclusive so it's actually
+@@ -294,175 +293,144 @@ async function ae(e, r = D) {
+       Range: "bytes=0-0",
+       "Accept-Encoding": "none"
+     }
+-  }), [a, i] = n.body.tee(), s = a.getReader(), { value: o } = await s.read(), { done: f } = await s.read();
+-  if (s.releaseLock(), a.cancel(), !((o == null ? void 0 : o.length) === 1 && f))
+-    return p(i);
++  }), [a, i] = r.body.tee(), s = a.getReader(), { value: o } = await s.read(), { done: c } = await s.read();
++  if (s.releaseLock(), a.cancel(), !((o == null ? void 0 : o.length) === 1 && c))
++    return y(i);
+   i.cancel();
+-  const l = await K(e, t);
+-  return Z(l).pipeThrough(b(r)).pipeThrough(W()).pipeThrough(
+-    Y(l)
++  const d = await Y(e, t);
++  return V(d).pipeThrough(p(n)).pipeThrough(H(d.length)).pipeThrough(
++    Z(d)
+   );
+ }
+-function Z(e) {
+-  let r;
++function V(e) {
++  const n = P(e);
+   return new ReadableStream({
+-    async start() {
+-      r = await G(e);
+-    },
+     async pull(t) {
+-      const n = await T(
+-        r
++      const r = await T(
++        await n
+       );
+-      if (!n) {
++      if (!r) {
+         t.close();
+         return;
+       }
+-      t.enqueue(n);
++      t.enqueue(r);
+     }
+   });
+ }
+-async function G(e) {
+-  const r = I;
+-  let t = new Uint8Array(), n = e.length;
++async function P(e) {
++  const n = k;
++  let t = new Uint8Array(), r = e.length;
+   do {
+-    n = Math.max(0, n - r);
+-    const a = Math.min(
+-      n + r - 1,
+-      e.length - 1
+-    ), i = await c(
+-      await e.streamBytes(n, a)
++    r = Math.max(0, r - n);
++    const a = Math.min(r + n, e.length), i = await u(
++      await e.streamBytes(r, a)
+     );
+-    t = U(i, t);
++    t = m(i, t);
+     const s = new DataView(i.buffer);
+     for (let o = s.byteLength - 4; o >= 0; o--) {
+       if (s.getUint32(o, !0) !== g)
+         continue;
+-      const u = o + 12 + 4;
+-      if (t.byteLength < u + 4)
++      const f = o + 12 + 4;
++      if (t.byteLength < f + 4)
+         throw new Error("Central directory not found");
+-      const l = s.getUint32(u, !0);
+-      if (l < n) {
+-        const d = await c(
+-          await e.streamBytes(l, n - 1)
++      const d = s.getUint32(f, !0);
++      if (d < r) {
++        const l = await u(
++          await e.streamBytes(d, r)
+         );
+-        t = U(
+-          d,
++        t = m(
++          l,
+           t
+         );
+-      } else l > n && (t = t.slice(
+-        l - n
++      } else d > r && (t = t.slice(
++        d - r
+       ));
+       return new Blob([t]).stream();
+     }
+-  } while (n >= 0);
++  } while (r >= 0);
+   throw new Error("Central directory not found");
+ }
+-function W() {
+-  let e = 0, r = [];
++function H(e) {
++  let n = 0, t = [];
++  const r = Math.max(
++    z,
++    Math.ceil(e / I)
++  );
+   return new TransformStream({
+-    transform(t, n) {
+-      t.firstByteAt > e + z && (n.enqueue(r), r = []), e = t.lastByteAt, r.push(t);
++    transform(a, i) {
++      a.firstByteAt > n + r && (i.enqueue(t), t = []), n = a.lastByteAt, t.push(a);
+     },
+-    flush(t) {
+-      t.enqueue(r);
++    flush(a) {
++      a.enqueue(t);
+     }
+   });
+ }
+-function Y(e) {
+-  let r = !1, t = 0, n;
+-  const a = [], i = new WritableStream({
+-    write(o, f) {
+-      o.length && (++t, $(e, o).then((u) => {
+-        a.push([o, u]);
+-      }).catch((u) => {
+-        f.error(u);
+-      }).finally(() => {
+-        --t;
+-      }));
+-    },
+-    abort() {
+-      r = !0, n.close();
+-    },
+-    async close() {
+-      r = !0;
++function Z(e) {
++  return new TransformStream({
++    async transform(n, t) {
++      if (!n.length)
++        return;
++      const r = await $(e, n);
++      for (; ; ) {
++        const a = await E(r);
++        if (!a)
++          return;
++        n.some(
++          (i) => G(i.path, a.path)
++        ) && t.enqueue(a);
++      }
+     }
+   });
+-  return {
+-    readable: new ReadableStream({
+-      start(o) {
+-        n = o;
+-      },
+-      async pull(o) {
+-        for (; ; ) {
+-          if (r && !a.length && t === 0) {
+-            o.close();
+-            return;
+-          }
+-          if (!a.length) {
+-            await new Promise((m) => setTimeout(m, 50));
+-            continue;
+-          }
+-          const [l, d] = a[0], y = await R(d);
+-          if (!y) {
+-            a.shift();
+-            continue;
+-          }
+-          if (l.find(
+-            (m) => m.path === y.path
+-          )) {
+-            o.enqueue(y);
+-            break;
+-          }
+-        }
+-      }
+-    }),
+-    writable: i
+-  };
+ }
+-async function $(e, r) {
+-  const t = await H.acquire();
+-  try {
+-    const n = r[r.length - 1];
+-    return await e.streamBytes(
+-      r[0].firstByteAt,
+-      n.lastByteAt
+-    );
+-  } finally {
+-    t();
+-  }
++function G(e, n) {
++  return e.length === n.length && e.every((t, r) => t === n[r]);
++}
++async function $(e, n) {
++  const t = n[n.length - 1];
++  return await e.streamBytes(
++    n[0].firstByteAt,
++    t.lastByteAt
++  );
+ }
+-async function B(e) {
+-  return await fetch(e, { method: "HEAD" }).then((r) => r.headers.get("Content-Length")).then((r) => {
+-    if (!r)
++async function R(e) {
++  return await fetch(e, { method: "HEAD" }).then((n) => n.headers.get("Content-Length")).then((n) => {
++    if (!n)
+       throw new Error("Content-Length header is missing");
+-    const t = parseInt(r, 10);
++    const t = parseInt(n, 10);
+     if (isNaN(t) || t < 0)
+       throw new Error("Content-Length header is invalid");
+     return t;
+   });
+ }
+-async function K(e, r) {
+-  return r === void 0 && (r = await B(e)), {
+-    length: r,
+-    streamBytes: async (t, n) => await fetch(e, {
+-      headers: {
+-        // The Range header is inclusive, so we need to subtract 1
+-        Range: `bytes=${t}-${n - 1}`,
+-        "Accept-Encoding": "none"
+-      }
+-    }).then((a) => a.body)
++async function Y(e, n) {
++  return n === void 0 && (n = await R(e)), {
++    length: n,
++    streamBytes: async (t, r) => {
++      const a = await fetch(e, {
++        headers: {
++          // The Range header is inclusive, so we need to subtract 1
++          Range: `bytes=${t}-${r - 1}`,
++          "Accept-Encoding": "none"
++        }
++      });
++      if (a.status !== 206 || !a.body)
++        throw new Error(
++          `Expected a partial zip range response, received ${a.status} ${a.statusText}`
++        );
++      return a.body;
++    }
+   };
+ }
+-function ie(e) {
+-  return q(e).pipeThrough(j());
++function ee(e) {
++  return C(e).pipeThrough(W());
+ }
+-function j() {
++function W() {
+   const e = /* @__PURE__ */ new Map();
+-  let r = 0;
++  let n = 0;
+   return new TransformStream({
+-    async transform(t, n) {
++    async transform(t, r) {
+       const a = new Uint8Array(await t.arrayBuffer());
+-      let i = await c(
++      let i = await u(
+         new Blob([a]).stream().pipeThrough(new CompressionStream("gzip"))
+       );
+       const s = new DataView(i.buffer).getUint32(
+@@ -470,11 +438,11 @@ function j() {
+         !0
+       );
+       i = i.slice(10, i.byteLength - 8);
+-      const o = new TextEncoder().encode(t.name), f = {
++      const o = new TextEncoder().encode(t.name), c = {
+         signature: h,
+         version: 2,
+         generalPurpose: 0,
+-        compressionMethod: t.type === "directory" || i.byteLength === 0 ? x : L,
++        compressionMethod: t.type === "directory" || i.byteLength === 0 ? _ : A,
+         lastModifiedTime: 0,
+         lastModifiedDate: 0,
+         crc: s,
+@@ -483,34 +451,34 @@ function j() {
+         path: o,
+         extra: new Uint8Array(0)
+       };
+-      e.set(r, f);
+-      const u = J(f);
+-      n.enqueue(u), r += u.byteLength, n.enqueue(i), r += i.byteLength;
++      e.set(n, c);
++      const f = K(c);
++      r.enqueue(f), n += f.byteLength, r.enqueue(i), n += i.byteLength;
+     },
+     flush(t) {
+-      const n = r;
++      const r = n;
+       let a = 0;
+       for (const [
+         o,
+-        f
++        c
+       ] of e.entries()) {
+-        const u = {
+-          ...f,
++        const f = {
++          ...c,
+           signature: w,
+           fileComment: new Uint8Array(0),
+           diskNumber: 0,
+           internalAttributes: 0,
+           externalAttributes: 0
+-        }, l = Q(
+-          u,
++        }, d = Q(
++          f,
+           o
+         );
+-        t.enqueue(l), a += l.byteLength;
++        t.enqueue(d), a += d.byteLength;
+       }
+       const i = {
+         signature: g,
+         numberOfDisks: 0,
+-        centralDirectoryOffset: n,
++        centralDirectoryOffset: r,
+         centralDirectorySize: a,
+         centralDirectoryStartDisk: 0,
+         numberCentralDirectoryRecordsOnThisDisk: e.size,
+@@ -521,35 +489,35 @@ function j() {
+     }
+   });
+ }
+-function J(e) {
+-  const r = new ArrayBuffer(
++function K(e) {
++  const n = new ArrayBuffer(
+     30 + e.path.byteLength + e.extra.byteLength
+-  ), t = new DataView(r);
++  ), t = new DataView(n);
+   t.setUint32(0, e.signature, !0), t.setUint16(4, e.version, !0), t.setUint16(6, e.generalPurpose, !0), t.setUint16(8, e.compressionMethod, !0), t.setUint16(10, e.lastModifiedDate, !0), t.setUint16(12, e.lastModifiedTime, !0), t.setUint32(14, e.crc, !0), t.setUint32(18, e.compressedSize, !0), t.setUint32(22, e.uncompressedSize, !0), t.setUint16(26, e.path.byteLength, !0), t.setUint16(28, e.extra.byteLength, !0);
+-  const n = new Uint8Array(r);
+-  return n.set(e.path, 30), n.set(e.extra, 30 + e.path.byteLength), n;
++  const r = new Uint8Array(n);
++  return r.set(e.path, 30), r.set(e.extra, 30 + e.path.byteLength), r;
+ }
+-function Q(e, r) {
++function Q(e, n) {
+   const t = new ArrayBuffer(
+     46 + e.path.byteLength + e.extra.byteLength
+-  ), n = new DataView(t);
+-  n.setUint32(0, e.signature, !0), n.setUint16(4, e.versionCreated, !0), n.setUint16(6, e.versionNeeded, !0), n.setUint16(8, e.generalPurpose, !0), n.setUint16(10, e.compressionMethod, !0), n.setUint16(12, e.lastModifiedDate, !0), n.setUint16(14, e.lastModifiedTime, !0), n.setUint32(16, e.crc, !0), n.setUint32(20, e.compressedSize, !0), n.setUint32(24, e.uncompressedSize, !0), n.setUint16(28, e.path.byteLength, !0), n.setUint16(30, e.extra.byteLength, !0), n.setUint16(32, e.fileComment.byteLength, !0), n.setUint16(34, e.diskNumber, !0), n.setUint16(36, e.internalAttributes, !0), n.setUint32(38, e.externalAttributes, !0), n.setUint32(42, r, !0);
++  ), r = new DataView(t);
++  r.setUint32(0, e.signature, !0), r.setUint16(4, e.versionCreated, !0), r.setUint16(6, e.versionNeeded, !0), r.setUint16(8, e.generalPurpose, !0), r.setUint16(10, e.compressionMethod, !0), r.setUint16(12, e.lastModifiedDate, !0), r.setUint16(14, e.lastModifiedTime, !0), r.setUint32(16, e.crc, !0), r.setUint32(20, e.compressedSize, !0), r.setUint32(24, e.uncompressedSize, !0), r.setUint16(28, e.path.byteLength, !0), r.setUint16(30, e.extra.byteLength, !0), r.setUint16(32, e.fileComment.byteLength, !0), r.setUint16(34, e.diskNumber, !0), r.setUint16(36, e.internalAttributes, !0), r.setUint32(38, e.externalAttributes, !0), r.setUint32(42, n, !0);
+   const a = new Uint8Array(t);
+   return a.set(e.path, 46), a.set(e.extra, 46 + e.path.byteLength), a;
+ }
+ function X(e) {
+-  const r = new ArrayBuffer(22 + e.comment.byteLength), t = new DataView(r);
++  const n = new ArrayBuffer(22 + e.comment.byteLength), t = new DataView(n);
+   t.setUint32(0, e.signature, !0), t.setUint16(4, e.numberOfDisks, !0), t.setUint16(6, e.centralDirectoryStartDisk, !0), t.setUint16(8, e.numberCentralDirectoryRecordsOnThisDisk, !0), t.setUint16(10, e.numberCentralDirectoryRecords, !0), t.setUint32(12, e.centralDirectorySize, !0), t.setUint32(16, e.centralDirectoryOffset, !0), t.setUint16(20, e.comment.byteLength, !0);
+-  const n = new Uint8Array(r);
+-  return n.set(e.comment, 22), n;
++  const r = new Uint8Array(n);
++  return r.set(e.comment, 22), r;
+ }
+ export {
+-  E as StreamedFile,
+-  c as collectBytes,
+-  re as collectFile,
+-  ae as decodeRemoteZip,
+-  p as decodeZip,
+-  ie as encodeZip,
+-  q as iteratorToStream
++  S as StreamedFile,
++  u as collectBytes,
++  j as collectFile,
++  J as decodeRemoteZip,
++  y as decodeZip,
++  ee as encodeZip,
++  C as iteratorToStream
+ };
+ //# sourceMappingURL=index.js.map

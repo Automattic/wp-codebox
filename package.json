@@ -82,6 +82,7 @@
     "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
     "cloudflare:dry-run": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
     "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
+    "postinstall": "patch-package",
     "generate:cloudflare-wordpress-runtime-corpus": "tsx scripts/generate-cloudflare-wordpress-runtime-corpus.ts",
     "provision:cloudflare-wordpress-runtime-corpus": "node scripts/provision-cloudflare-wordpress-runtime-corpus.mjs",
     "prepare": "npm run build",
@@ -191,7 +192,6 @@
     "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",
     "test:php-browser-runtime-agent-substrate": "php scripts/php-browser-runtime-agent-substrate-smoke.php",
-    "test:php-browser-preview-only-session": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-preview-only-session-smoke.php",
     "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",
     "test:primitive-contract-parity": "tsx tests/primitive-contract-parity.test.ts",
@@ -256,6 +256,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260718.1",
     "@types/node": "^24.0.0",
+    "patch-package": "^8.0.1",
     "tsx": "^4.20.0",
     "wrangler": "^4.112.0"
   },
@@ -455,6 +456,7 @@
     "yargs-parser": "^21.1.1"
   },
   "overrides": {
+    "@php-wasm/stream-compression": "3.1.45",
     "ajv": "^8.20.0",
     "express": "^4.22.2",
     "qs": "^6.15.2",

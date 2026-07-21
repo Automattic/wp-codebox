@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { stripVTControlCharacters } from "node:util"
 
 const port = 8792
 const origin = `http://127.0.0.1:${port}`
@@ -73,7 +74,7 @@ async function stopWorker() {
 async function waitForServer() {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
-    if (/Ready on http:\/\/(?:localhost|127\.0\.0\.1):8792/.test(output)) return
+    if (/Ready on http:\/\/(?:localhost|127\.0\.0\.1):8792/.test(stripVTControlCharacters(output))) return
     if (child.exitCode !== null) throw new Error(`workerd exited before starting:\n${output}`)
     await new Promise((resolve) => setTimeout(resolve, 100))
   }

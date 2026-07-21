@@ -328,7 +328,9 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
   const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
-  assert.match(generator, /decodeRemoteZip\(sourceUrl/)
+  assert.match(generator, /const response = await fetch\(sourceUrl\)/)
+  assert.match(generator, /decodeZip\(response\.body\)/)
+  assert.doesNotMatch(generator, /decodeRemoteZip/)
   assert.match(generator, /encodeZip\(selected\)/)
   assert.match(generator, /lastModified: 0/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
