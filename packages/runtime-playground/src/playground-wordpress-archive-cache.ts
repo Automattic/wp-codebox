@@ -42,6 +42,12 @@ interface LeaseState {
   token?: string
 }
 
+interface LeaseDirectory {
+  handle: FileHandle
+  path: string
+  access: "descriptor-relative" | "generation-checked-path"
+}
+
 class LeaseSidecarUnsafeError extends Error {}
 
 export interface PlaygroundArchiveCacheLock {
@@ -161,15 +167,15 @@ export async function acquirePlaygroundArchiveReference(archivePath: string, opt
   const policy = cacheLeasePolicy()
   const leaseMs = options.leaseMs ?? policy.leaseMs
   const referencesDirectory = `${archivePath}.refs`
-  const directoryHandle = await openSafeLeaseDirectory(referencesDirectory, true)
+  const directory = await openSafeLeaseDirectory(referencesDirectory, true)
   const token = randomUUID()
   const fileName = `${token}.json`
   const referencePath = join(referencesDirectory, fileName)
   let lease: LeaseHandle
   try {
-    lease = await createFileLease(directoryHandle, fileName, referencePath, token, leaseMs, options.heartbeat !== false, options.releaseInterlock)
+    lease = await createFileLease(directory, fileName, referencePath, token, leaseMs, options.heartbeat !== false, options.releaseInterlock)
   } catch (error) {
-    await directoryHandle.close()
+    await directory.handle.close()
     throw error
   }
 
@@ -359,31 +365,34 @@ async function tryAcquireCacheLock(lockPath: string, leaseMs: number): Promise<L
     }
     throw error
   }
-  let directoryHandle: FileHandle | undefined
+  let directory: LeaseDirectory | undefined
   try {
-    directoryHandle = await openSafeLeaseDirectory(lockPath, false)
-    return await createDirectoryLease(directoryHandle, lockPath, token, leaseMs)
+    directory = await openSafeLeaseDirectory(lockPath, false)
+    return await createDirectoryLease(directory, lockPath, token, leaseMs)
   } catch (error) {
-    await directoryHandle?.close().catch(() => undefined)
+    await directory?.handle.close().catch(() => undefined)
     await rmdir(lockPath).catch(() => undefined)
     if (isConcurrentDisappearance(error)) return undefined
     throw error
   }
 }
 
-async function createDirectoryLease(directoryHandle: FileHandle, lockPath: string, token: string, leaseMs: number): Promise<LeaseHandle> {
+async function createDirectoryLease(directory: LeaseDirectory, lockPath: string, token: string, leaseMs: number): Promise<LeaseHandle> {
   const fileName = `${token}.lease.json`
-  return createFileLease(directoryHandle, fileName, join(lockPath, fileName), token, leaseMs, true)
+  return createFileLease(directory, fileName, join(lockPath, fileName), token, leaseMs, true)
 }
 
-async function createFileLease(directoryHandle: FileHandle, fileName: string, displayPath: string, token: string, leaseMs: number, automaticHeartbeat: boolean, releaseInterlock?: (leasePath: string) => void | Promise<void>): Promise<LeaseHandle> {
-  const anchoredPath = join(fileDescriptorPath(directoryHandle), fileName)
-  const fileHandle = await open(anchoredPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600)
+async function createFileLease(directory: LeaseDirectory, fileName: string, displayPath: string, token: string, leaseMs: number, automaticHeartbeat: boolean, releaseInterlock?: (leasePath: string) => void | Promise<void>): Promise<LeaseHandle> {
+  const fileHandle = await openLeaseDirectoryChild(directory, fileName, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600)
   await writeOwnerToHandle(fileHandle, await ownerRecord(token, leaseMs))
   return heartbeatLease(fileHandle, token, leaseMs, async () => {
     await releaseInterlock?.(displayPath)
-    await fileHandle.close()
-    await directoryHandle.close()
+    try {
+      if (releaseInterlock) await assertLeaseDirectoryGeneration(directory)
+    } finally {
+      await fileHandle.close()
+      await directory.handle.close()
+    }
   }, displayPath, automaticHeartbeat)
 }
 
@@ -441,9 +450,9 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
     throw error
   }
   if (!lockStat.isDirectory() || lockStat.isSymbolicLink()) return true
-  let directoryHandle: FileHandle
+  let directory: LeaseDirectory
   try {
-    directoryHandle = await openSafeLeaseDirectory(lockPath, false)
+    directory = await openSafeLeaseDirectory(lockPath, false)
   } catch (error) {
     if (isConcurrentDisappearance(error)) return false
     if (error instanceof LeaseSidecarUnsafeError || errorHasCode(error, "ELOOP") || errorHasCode(error, "ENOTDIR")) return true
@@ -451,20 +460,19 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
   }
   let active = false
   try {
-    const anchoredDirectory = fileDescriptorPath(directoryHandle)
     let names: string[]
     try {
-      names = await readdir(anchoredDirectory)
+      names = await readLeaseDirectory(directory)
     } catch (error) {
       if (isConcurrentDisappearance(error)) return false
       throw error
     }
     for (const name of names.sort()) {
-      const path = join(anchoredDirectory, name)
+      const path = join(lockPath, name)
       if (name !== "owner.json" && !name.endsWith(".lease.json")) {
         let unknownStat
         try {
-          unknownStat = await lstat(path)
+          unknownStat = await lstatLeaseDirectoryChild(directory, name)
         } catch (error) {
           if (isConcurrentDisappearance(error)) continue
           throw error
@@ -472,18 +480,18 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
         if (unknownStat.isDirectory() || now - lockStat.mtimeMs <= policy.staleLockMs || !removeStale) {
           active = true
         } else {
-          await unlinkIfPresent(path)
+          await unlinkLeaseDirectoryChild(directory, name)
         }
         continue
       }
-      const state = await inspectLeaseFile(path, now, policy.staleLockMs, removeStale)
+      const state = await inspectLeaseFile(directory, name, now, policy.staleLockMs, removeStale)
       if (state.active) {
         active = true
       }
     }
     if (names.length === 0 && now - lockStat.mtimeMs <= policy.staleLockMs) active = true
   } finally {
-    await directoryHandle.close()
+    await directory.handle.close()
     if (removeStale && !active) {
       await rmdir(lockPath).catch((error) => {
         if (!isConcurrentDisappearance(error) && !errorHasCode(error, "ENOTEMPTY")) throw error
@@ -507,9 +515,9 @@ async function activeArchiveReferenceCount(archivePath: string, now: number, pol
     if (removeStale) await unlinkIfPresent(referencesDirectory)
     return removeStale ? 0 : 1
   }
-  let directoryHandle: FileHandle
+  let directory: LeaseDirectory
   try {
-    directoryHandle = await openSafeLeaseDirectory(referencesDirectory, false)
+    directory = await openSafeLeaseDirectory(referencesDirectory, false)
   } catch (error) {
     if (isConcurrentDisappearance(error)) return 0
     if (error instanceof LeaseSidecarUnsafeError || errorHasCode(error, "ELOOP") || errorHasCode(error, "ENOTDIR")) {
@@ -518,71 +526,78 @@ async function activeArchiveReferenceCount(archivePath: string, now: number, pol
     }
     throw error
   }
-  const anchoredDirectory = fileDescriptorPath(directoryHandle)
   let names: string[]
   try {
-    names = await readdir(anchoredDirectory)
+    names = await readLeaseDirectory(directory)
   } catch (error) {
-    await directoryHandle.close()
+    await directory.handle.close()
     if (isConcurrentDisappearance(error)) return 0
     throw error
   }
   let active = 0
   try {
     for (const name of names.sort()) {
-      const path = join(anchoredDirectory, name)
-      const state = await inspectLeaseFile(path, now, policy.staleLockMs, removeStale, diagnostics)
+      const state = await inspectLeaseFile(directory, name, now, policy.staleLockMs, removeStale, diagnostics)
       if (state.active) {
         active += 1
       }
     }
   } finally {
-    await directoryHandle.close()
+    await directory.handle.close()
   }
   return active
 }
 
-async function inspectLeaseFile(path: string, now: number, legacyStaleMs: number, removeUnsafe: boolean, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []): Promise<LeaseState> {
-  let pathStat
+async function inspectLeaseFile(directory: LeaseDirectory, name: string, now: number, legacyStaleMs: number, removeUnsafe: boolean, diagnostics: PlaygroundCustomArchiveCacheDiagnostic[] = []): Promise<LeaseState> {
+  const path = join(directory.path, name)
   try {
-    pathStat = await lstat(path)
-  } catch (error) {
-    if (isConcurrentDisappearance(error)) return { active: false }
-    throw error
-  }
-  if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
-    diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry is not a singly-linked regular file and was not followed.", severity: "warning", path })
-    if (removeUnsafe && !pathStat.isDirectory()) await unlinkIfPresent(path)
-    return { active: !removeUnsafe || pathStat.isDirectory() }
-  }
-
-  let handle: FileHandle | undefined
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    const openedStat = await handle.stat()
-    if (openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
-      diagnostics.push({ code: "custom-archive-ref-entry-changed", message: "Archive lease entry changed while opening and was conservatively protected.", severity: "warning", path })
-      return { active: true }
+    await assertLeaseDirectoryGeneration(directory)
+    let pathStat
+    try {
+      pathStat = await lstatLeaseDirectoryChild(directory, name)
+    } catch (error) {
+      if (isConcurrentDisappearance(error)) return { active: false }
+      throw error
     }
-    const owner = await readOwnerFromHandle(handle)
-    if (owner) {
-      const expiresAt = Date.parse(owner.expiresAt)
-      if (Number.isFinite(expiresAt) && expiresAt > now) return { active: true, token: owner.token }
-      if (removeUnsafe) await unlinkIfPresent(path)
-      return { active: false, token: owner.token }
+    if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
+      diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry is not a singly-linked regular file and was not followed.", severity: "warning", path })
+      if (removeUnsafe && !pathStat.isDirectory()) await unlinkLeaseDirectoryChild(directory, name)
+      return { active: !removeUnsafe || pathStat.isDirectory() }
     }
-    const active = now - pathStat.mtimeMs <= legacyStaleMs
-    if (!active && removeUnsafe) await unlinkIfPresent(path)
-    return { active }
-  } catch (error) {
-    if (isConcurrentDisappearance(error)) return { active: false }
-    if (errorHasCode(error, "ELOOP")) {
-      diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry became a symlink and was conservatively protected.", severity: "warning", path })
-      return { active: true }
+    let handle: FileHandle | undefined
+    try {
+      handle = await openLeaseDirectoryChild(directory, name, constants.O_RDONLY | constants.O_NOFOLLOW)
+      const openedStat = await handle.stat()
+      if (openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+        diagnostics.push({ code: "custom-archive-ref-entry-changed", message: "Archive lease entry changed while opening and was conservatively protected.", severity: "warning", path })
+        return { active: true }
+      }
+      const owner = await readOwnerFromHandle(handle)
+      if (owner) {
+        const expiresAt = Date.parse(owner.expiresAt)
+        if (Number.isFinite(expiresAt) && expiresAt > now) return { active: true, token: owner.token }
+        if (removeUnsafe) await unlinkLeaseDirectoryChild(directory, name)
+        return { active: false, token: owner.token }
+      }
+      const active = now - pathStat.mtimeMs <= legacyStaleMs
+      if (!active && removeUnsafe) await unlinkLeaseDirectoryChild(directory, name)
+      return { active }
+    } catch (error) {
+      if (isConcurrentDisappearance(error)) return { active: false }
+      if (errorHasCode(error, "ELOOP")) {
+        diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry became a symlink and was conservatively protected.", severity: "warning", path })
+        return { active: true }
+      }
+      throw error
+    } finally {
+      await handle?.close()
     }
-    throw error
   } finally {
-    await handle?.close()
+    try {
+      await assertLeaseDirectoryGeneration(directory)
+    } catch (error) {
+      if (!isConcurrentDisappearance(error)) throw error
+    }
   }
 }
 
@@ -649,7 +664,7 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
   }
 }
 
-async function openSafeLeaseDirectory(path: string, create: boolean): Promise<FileHandle> {
+async function openSafeLeaseDirectory(path: string, create: boolean): Promise<LeaseDirectory> {
   for (let attempt = 0; attempt < (create ? 3 : 1); attempt += 1) {
     try {
       if (create) {
@@ -673,7 +688,7 @@ async function openSafeLeaseDirectory(path: string, create: boolean): Promise<Fi
         await handle.close()
         throw new LeaseSidecarUnsafeError(`Playground cache lease sidecar changed while opening: ${path}`)
       }
-      return handle
+      return { handle, path, access: leaseDirectoryAccess() }
     } catch (error) {
       if (!create || !isConcurrentDisappearance(error) || attempt === 2) throw error
     }
@@ -681,10 +696,63 @@ async function openSafeLeaseDirectory(path: string, create: boolean): Promise<Fi
   throw new Error(`Unable to create Playground cache lease sidecar: ${path}`)
 }
 
-function fileDescriptorPath(handle: FileHandle): string {
-  if (process.platform === "linux") return `/proc/self/fd/${handle.fd}`
-  if (process.platform === "darwin" || process.platform === "freebsd") return `/dev/fd/${handle.fd}`
-  throw new Error("Playground cache leases require a platform with file-descriptor paths")
+function leaseDirectoryAccess(): LeaseDirectory["access"] {
+  if (process.platform === "linux") return "descriptor-relative"
+  if (process.platform === "darwin" || process.platform === "freebsd") return "generation-checked-path"
+  throw new Error("Playground cache leases require Linux descriptor-relative access or Darwin/FreeBSD generation-checked path access")
+}
+
+function leaseDirectoryChildPath(directory: LeaseDirectory, name?: string): string {
+  const path = directory.access === "descriptor-relative" ? `/proc/self/fd/${directory.handle.fd}` : directory.path
+  return name === undefined ? path : join(path, name)
+}
+
+async function assertLeaseDirectoryGeneration(directory: LeaseDirectory): Promise<void> {
+  if (directory.access !== "generation-checked-path") return
+  const [pathStat, handleStat] = await Promise.all([lstat(directory.path), directory.handle.stat()])
+  if (!pathStat.isDirectory() || pathStat.isSymbolicLink() || pathStat.dev !== handleStat.dev || pathStat.ino !== handleStat.ino) {
+    throw new LeaseSidecarUnsafeError(`Playground cache lease sidecar changed while accessing: ${directory.path}`)
+  }
+}
+
+async function readLeaseDirectory(directory: LeaseDirectory): Promise<string[]> {
+  await assertLeaseDirectoryGeneration(directory)
+  try {
+    return await readdir(leaseDirectoryChildPath(directory))
+  } finally {
+    await assertLeaseDirectoryGeneration(directory)
+  }
+}
+
+async function lstatLeaseDirectoryChild(directory: LeaseDirectory, name: string) {
+  await assertLeaseDirectoryGeneration(directory)
+  try {
+    return await lstat(leaseDirectoryChildPath(directory, name))
+  } finally {
+    await assertLeaseDirectoryGeneration(directory)
+  }
+}
+
+async function openLeaseDirectoryChild(directory: LeaseDirectory, name: string, flags: number, mode?: number): Promise<FileHandle> {
+  await assertLeaseDirectoryGeneration(directory)
+  let handle: FileHandle | undefined
+  try {
+    handle = await open(leaseDirectoryChildPath(directory, name), flags, mode)
+    await assertLeaseDirectoryGeneration(directory)
+    return handle
+  } catch (error) {
+    await handle?.close()
+    throw error
+  }
+}
+
+async function unlinkLeaseDirectoryChild(directory: LeaseDirectory, name: string): Promise<boolean> {
+  await assertLeaseDirectoryGeneration(directory)
+  try {
+    return await unlinkIfPresent(leaseDirectoryChildPath(directory, name))
+  } finally {
+    await assertLeaseDirectoryGeneration(directory)
+  }
 }
 
 async function readOwnerFromHandle(handle: FileHandle): Promise<CacheOwnerRecord | undefined> {
