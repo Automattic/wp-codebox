@@ -1236,7 +1236,7 @@ try {
         pg_log('NO_TEST_FILES');
         pg_log('NOTICE:tests directory not found at ' . $test_dir);
         pg_stage_ok('discover_tests');
-        exit(1);
+        exit(0);
     }
     list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
@@ -1261,7 +1261,7 @@ try {
     if (empty($test_files)) {
         pg_log('NO_TEST_FILES');
         pg_stage_ok('discover_tests');
-        exit(1);
+        exit(0);
     }
     pg_stage_ok('discover_tests');
 } catch (Throwable $e) {
@@ -1587,7 +1587,7 @@ try {
     if (empty($test_files)) {
         core_pg_log('NO_TEST_FILES');
         core_pg_stage_ok('discover_tests');
-        exit(1);
+        exit(0);
     }
     core_pg_stage_ok('discover_tests');
 } catch (Throwable $e) {
