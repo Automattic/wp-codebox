@@ -27,7 +27,12 @@
   "verification_commands": [
     {
       "command": "npm test",
-      "description": "Run checks"
+      "description": "Run checks",
+      "artifact": {
+        "name": "completion_report",
+        "type": "CompletionReport",
+        "path": "completion-report.json"
+      }
     }
   ],
   "drift_checks": [],
@@ -55,6 +60,12 @@
       {
         "schema": "wp-codebox/artifact-declaration/v1",
         "name": "agent_transcript"
+      },
+      {
+        "name": "completion_report",
+        "type": "CompletionReport",
+        "direction": "output",
+        "contentType": "application/json"
       }
     ],
     "transcript_name": "agent-transcript",

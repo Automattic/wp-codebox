@@ -80,6 +80,14 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     throw new Error(`Recipe must include at least one workflow step: ${recipePath}`)
   }
 
+  const sessions = new Set((recipe.inputs?.userSessions ?? []).map((session) => session.name))
+  const actors = new Set<string>()
+  for (const [index, actor] of (recipe.inputs?.browserActors ?? []).entries()) {
+    if (actors.has(actor.name)) throw new Error(`Recipe browser actor names must be unique: ${actor.name}`)
+    if (!sessions.has(actor.userSession)) throw new Error(`Recipe browser actor ${actor.name} references unknown user session ${actor.userSession} at inputs.browserActors[${index}]`)
+    actors.add(actor.name)
+  }
+
   for (const phase of ["before", "after"] as const) {
     if (recipe.workflow[phase] !== undefined && !Array.isArray(recipe.workflow[phase])) {
       throw new Error(`Recipe workflow ${phase} must be an array: ${recipePath}`)
@@ -952,6 +960,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   })
   const commands = [
     ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(boundedRuntimePlanCommands(recipe), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
@@ -985,6 +994,20 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     ...defaultPolicy,
     commands: [...new Set(commands)],
   }
+}
+
+function boundedRuntimePlanCommands(recipe: WorkspaceRecipe): string[] {
+  return recipeWorkflowSteps(recipe).flatMap(({ step }) => {
+    if (step.command !== "wp-codebox.bounded-runtime-plan") return []
+    const raw = step.args?.find((argument) => argument.startsWith("plan-json="))?.slice("plan-json=".length)
+    if (!raw) return []
+    try {
+      const plan = JSON.parse(raw) as { entries?: Array<{ argv?: unknown[] }> }
+      return (plan.entries ?? []).flatMap((entry) => typeof entry.argv?.[0] === "string" ? [entry.argv[0]] : [])
+    } catch {
+      return []
+    }
+  })
 }
 
 function validateFixtureDatabases(fixtureDatabases: WorkspaceRecipeFixtureDatabase[] | undefined, recipePath: string): void {

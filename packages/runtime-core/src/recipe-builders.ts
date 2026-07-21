@@ -1,4 +1,4 @@
-import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipePHPWasmExtensionManifest, WorkspaceRecipeRuntimeBackendPackage, WorkspaceRecipeRuntimeService, WorkspaceRecipeStep } from "./runtime-contracts.js"
+import type { RuntimePreviewSpec, RuntimeWordPressInstallMode, WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipePHPWasmExtensionManifest, WorkspaceRecipeRuntimeBackendPackage, WorkspaceRecipeRuntimeService, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
 export { buildRuntimePackageRunRecipe, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA, runtimePackageExecutionInput, type RuntimePackageArtifactDeclaration, type RuntimePackageExecutionInput, type RuntimePackageOutputProjection, type RuntimePackageRunRecipeOptions } from "./runtime-package-execution.js"
 export { RUNTIME_PACKAGE_DIAGNOSTIC_SCHEMA, RUNTIME_PACKAGE_RESULT_SCHEMA, RUNTIME_PACKAGE_TASK_SCHEMA, normalizeRuntimePackageResult, normalizeRuntimePackageTask, validateRuntimePackageTask, type RuntimePackageDiagnostic, type RuntimePackageResult, type RuntimePackageTask } from "./runtime-package-contracts.js"
@@ -14,9 +14,11 @@ export interface NormalizeRecipeMountsOptions {
 export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   phpVersion?: string
+  wordpressInstallMode?: RuntimeWordPressInstallMode
   blueprint?: unknown
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
+  preview?: RuntimePreviewSpec
   mounts?: WorkspaceRecipeMount[]
   services?: WorkspaceRecipeRuntimeService[]
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
@@ -77,7 +79,9 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
     runtime: {
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
       ...(options.phpVersion ? { phpVersion: options.phpVersion } : {}),
-      blueprint: options.blueprint ?? { steps: [] },
+      ...(options.wordpressInstallMode ? { wordpressInstallMode: options.wordpressInstallMode } : {}),
+      blueprint: blueprintWithMultisite(options.blueprint ?? { steps: [] }, options.multisite ?? false),
+      ...(options.preview || options.multisite ? { preview: multisitePreview(options.preview, options.multisite ?? false) } : {}),
       ...(options.extensions?.length ? { extensions: options.extensions } : {}),
       ...(options.backendPackage ? { backendPackage: options.backendPackage } : {}),
     },
@@ -223,6 +227,35 @@ function blueprintWithWpConfigDefines(blueprint: unknown, defines: JsonObject): 
   return {
     ...blueprint,
     steps: [...existingSteps, { step: "defineWpConfigConsts", consts: defines }],
+  }
+}
+
+function blueprintWithMultisite(blueprint: unknown, multisite: boolean): unknown {
+  if (!multisite) {
+    return blueprint
+  }
+
+  if (!isPlainObject(blueprint)) {
+    return { steps: [{ step: "enableMultisite" }] }
+  }
+
+  const existingSteps = Array.isArray(blueprint.steps) ? blueprint.steps : []
+  if (existingSteps.some((step) => isPlainObject(step) && step.step === "enableMultisite")) {
+    return blueprint
+  }
+  return {
+    ...blueprint,
+    steps: [{ step: "enableMultisite" }, ...existingSteps],
+  }
+}
+
+function multisitePreview(preview: RuntimePreviewSpec | undefined, multisite: boolean): RuntimePreviewSpec {
+  if (!multisite || preview?.siteUrl) {
+    return preview ?? {}
+  }
+  return {
+    ...preview,
+    siteUrl: "http://localhost",
   }
 }
 

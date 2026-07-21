@@ -1,19 +1,22 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
+import { stageReadonlyPlaygroundMounts } from "../packages/runtime-playground/src/mount-materialization.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-"))
 const readonlySource = join(root, "readonly.bin")
 const readwriteSource = join(root, "readwrite.bin")
+const wpConfigSource = join(root, "wp-config.php")
 const readonlyBytes = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 const readwriteBytes = Buffer.from([10, 20, 30])
 await writeFile(readonlySource, readonlyBytes)
 await writeFile(readwriteSource, readwriteBytes)
+await writeFile(wpConfigSource, "<?php // external database config\n")
 
 const spec: RuntimeCreateSpec = {
   backend: "wordpress-playground",
@@ -26,8 +29,10 @@ const cliModule: PlaygroundCliModule = {
   async runCLI(options) {
     const readonlyMount = options.mount.find((mount) => mount.vfsPath === "/readonly")
     const readwriteMount = options.mount.find((mount) => mount.vfsPath === "/readwrite")
+    const wpConfigMount = options["mount-before-install"]?.find((mount) => mount.vfsPath === "/wordpress/wp-config.php")
     assert.ok(readonlyMount)
     assert.ok(readwriteMount)
+    assert.ok(wpConfigMount)
     mountedReadonlyPath = readonlyMount.hostPath
     // This is the host path Playground's writable Node mount handler receives.
     await writeFile(readonlyMount.hostPath, Buffer.from("sandbox overwrite"))
@@ -41,10 +46,24 @@ const cliModule: PlaygroundCliModule = {
 }
 
 try {
+  const danglingSource = join(root, "dangling")
+  const largeSource = join(root, "large")
+  await mkdir(danglingSource)
+  await mkdir(largeSource)
+  await symlink("missing.php", join(danglingSource, "build.sh"))
+  await Promise.all(Array.from({ length: 500 }, (_, index) => writeFile(join(largeSource, `File${index}.php`), `<?php return ${index};\n`)))
+  const stagingDirectoriesBefore = await readonlyStagingDirectories()
+  await assert.rejects(stageReadonlyPlaygroundMounts([
+    { source: danglingSource, target: "/dangling", mode: "readonly" },
+    { source: largeSource, target: "/large", mode: "readonly" },
+  ]), /ENOENT/, "the source failure must not be masked by cleanup racing another mount copy")
+  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "failed concurrent staging must remove its temporary root")
+
   const beforeReadonlyHash = sha256(await readFile(readonlySource))
   const server = await startPlaygroundCliServer(spec, [
     { type: "file", source: readonlySource, target: "/readonly", mode: "readonly" },
     { type: "file", source: readwriteSource, target: "/readwrite", mode: "readwrite" },
+    { type: "file", source: wpConfigSource, target: "/wordpress/wp-config.php", mode: "readonly" },
   ], { cliModule })
 
   assert.equal(sha256(await readFile(readonlySource)), beforeReadonlyHash, "readonly source bytes must survive a sandbox overwrite")
@@ -59,6 +78,10 @@ try {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+async function readonlyStagingDirectories(): Promise<string[]> {
+  return (await readdir(tmpdir())).filter((entry) => entry.startsWith("wp-codebox-readonly-mounts-")).sort()
 }
 
 console.log("playground readonly mount isolation ok")

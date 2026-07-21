@@ -1,6 +1,6 @@
 {
   "name": "@automattic/wp-codebox-cli",
-  "version": "0.12.28",
+  "version": "0.12.29",
   "description": "WP Codebox CLI — secure WordPress code execution from anywhere. Run disposable Playground sandboxes from any host: CLI, CI, mobile, Node service, or WP plugin.",
   "type": "module",
   "bin": {
@@ -16,6 +16,10 @@
     "./recipe-secret-env": {
       "types": "./dist/recipe-secret-env.d.ts",
       "import": "./dist/recipe-secret-env.js"
+    },
+    "./bounded-recipe-plan": {
+      "types": "./dist/bounded-recipe-plan.d.ts",
+      "import": "./dist/bounded-recipe-plan.js"
     }
   },
   "files": [

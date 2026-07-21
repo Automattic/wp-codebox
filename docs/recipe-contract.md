@@ -66,6 +66,10 @@ WordPress runtime name and currently resolves to the WordPress Playground backen
 Existing recipes that specify `wordpress-playground` continue to work as a
 compatibility spelling.
 
+Input mounts capture artifacts by default. A large readwrite mount whose
+mutations are runtime-only can set `"captureArtifacts": false` to skip its
+pre-run baseline and post-run file/diff capture without changing mount access.
+
 Raw Playground-oriented fields such as `runtime.blueprint`, `runtime.phpVersion`,
 `runtime.wordpressInstallMode`, and Playground backend packages are advanced
 compatibility fields. Prefer the neutral `wordpress` backend and recipe inputs
@@ -96,11 +100,13 @@ top-level fields:
 - `dependency_overlays`
 - `runtimeEnv`
 - `secretEnv`
+- `services`
 - `externalServices`
 - `pluginRuntime`
 - `fixtureDatabases`
 - `fixtureUsers`
 - `userSessions`
+- `browserActors`
 - `siteSeeds`
 - `stagedFiles`
 - `sourcePackages`
@@ -556,6 +562,47 @@ caller-owned external checks:
   "input": { "url": "https://example.test/status", "expected": "ready" }
 }
 ```
+
+### Coordinated Browser Actors
+
+`inputs.browserActors` names the authenticated actors available to coordinated
+browser scenarios. Every actor must explicitly reference an existing
+`inputs.userSessions` entry. This keeps browser identity declarative and avoids
+ambient session selection.
+
+```json
+{
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "author", "username": "fixture-author", "role": "editor" },
+      { "name": "reviewer", "username": "fixture-reviewer", "role": "editor" }
+    ],
+    "userSessions": [
+      { "name": "author-session", "user": "author" },
+      { "name": "reviewer-session", "user": "reviewer" }
+    ],
+    "browserActors": [
+      { "name": "author", "userSession": "author-session" },
+      { "name": "reviewer", "userSession": "reviewer-session" }
+    ]
+  }
+}
+```
+
+Pass the public `wp-codebox/browser-multi-actor-scenario/v1` object as
+`wordpress.browser-scenario` `scenario-json`. It uses actor names, a seed, action
+ids, optional named barriers, and bounded request gates. Each actor receives an
+isolated authenticated Playwright context and page. The scenario summary records
+the complete input and deterministic schedule; actor-scoped screenshots, traces,
+console, network, step, and error files are written before deterministic teardown,
+including when a barrier or gate times out.
+
+Actions are launched in the seed-derived schedule order. A barrier holds its
+declared actors until every participant arrives. A request gate only holds the
+declared actor's matching URL; `occurrence` selects which matching request to
+hold (default `1`), and an action releases named gates in its declared order.
+Timeouts abort held requests, release all waits, and retain partial replay and
+actor evidence. Scenarios without `actors` keep the normal single-browser path.
 
 `tool` is the exact caller-provided host tool command name and must be allowed by
 runtime policy using that same command name. `input` must be JSON-serializable.

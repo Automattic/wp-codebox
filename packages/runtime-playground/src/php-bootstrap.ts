@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
-import { phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { phpCliStreamConstants, phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
@@ -20,7 +20,7 @@ require_once '/wordpress/wp-load.php';
 ${phpBody(code)}`
 }
 
-export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge): string {
+export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
   if (argValue(args, "bootstrap") === "none") {
     return code
   }
@@ -29,9 +29,11 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 
   return `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
+${failureDiagnosticFile ? phpFailureDiagnosticFilePhp(failureDiagnosticFile) : ""}
+${phpCliStreamConstants()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${saveQueriesBootstrapPhp(args)}
-${runtimeEnvPhp(spec)}
+${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
@@ -40,6 +42,16 @@ ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCli
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${command.body}`
+}
+
+function phpFailureDiagnosticFilePhp(path: string): string {
+  return `register_shutdown_function(static function (): void {
+    $wp_codebox_failure = error_get_last();
+    if (!is_array($wp_codebox_failure) || !in_array($wp_codebox_failure['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+        return;
+    }
+    @file_put_contents(${JSON.stringify(path)}, 'STAGE_FATAL:bootstrap:' . (string) ($wp_codebox_failure['message'] ?? '') . ' at ' . (string) ($wp_codebox_failure['file'] ?? '') . ':' . (int) ($wp_codebox_failure['line'] ?? 0) . "\\n", FILE_APPEND);
+});`
 }
 
 export function splitLeadingStrictTypesDeclare(code: string): { strictTypesDeclare: string; body: string } {
@@ -219,6 +231,13 @@ function secretEnvPhp(spec: RuntimeCreateSpec): string {
   return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.secretEnv ?? {}, { field: "secretEnv" }))
 }
 
-function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.runtimeEnv ?? {}, { field: "runtimeEnv" }))
+function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
+  const override = argValue(args, "runtime-env-json")
+  let executionEnvironment: Record<string, unknown> = {}
+  if (override) {
+    const parsed = JSON.parse(override) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("runtime-env-json must be a JSON object")
+    executionEnvironment = parsed as Record<string, unknown>
+  }
+  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
 }

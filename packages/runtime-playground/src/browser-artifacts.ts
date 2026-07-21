@@ -80,6 +80,7 @@ export interface BrowserArtifactFiles {
   performance?: string
   review?: string
   screenshot?: string
+  traces?: string[]
   domSnapshots?: string[]
   verifierResults?: string[]
   actionCorpus?: string
@@ -186,6 +187,12 @@ export interface BrowserArtifactSummary {
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   context?: BrowserProbeContextDetails
   auth?: BrowserProbeAuthSummary
+  multiActor?: {
+    seed: string
+    finalState: "completed" | "failed"
+    actors: string[]
+    replay: string
+  }
   capabilities?: BrowserProbeCapabilityDiagnostics
   replayability: BrowserProbeReplayability
   screenshot: boolean
@@ -1096,6 +1103,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
+  traces: { kind: "browser-trace", contentType: "application/zip", redact: true },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
   verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },
   actionCorpus: { kind: "browser-action-corpus", contentType: "application/json", redact: true },

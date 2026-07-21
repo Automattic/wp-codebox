@@ -1848,11 +1848,10 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
   })
 }
 
-async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<void> {
+export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<void> {
   const readinessTimeoutMs = Math.max(1_000, Math.min(10_000, timeoutMs))
   await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
   await page.evaluate(async (timeout) => {
-    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
     const until = Date.now() + timeout
 
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
@@ -1864,17 +1863,20 @@ async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Pr
             link.addEventListener("load", () => resolve(), { once: true })
             link.addEventListener("error", () => resolve(), { once: true })
           }),
-          sleep(100),
+          new Promise<void>((resolve) => setTimeout(resolve, 100)),
         ])
       }
     }))
 
     await (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready?.catch(() => undefined)
 
-    const images = Array.from(document.images).filter((image) => !image.complete)
+    const images = Array.from(document.images)
     await Promise.all(images.map(async (image) => {
       if (typeof image.decode === "function") {
-        await image.decode().catch(() => undefined)
+        await Promise.race([
+          image.decode().catch(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
+        ])
         return
       }
       if (image.complete) {
@@ -1885,7 +1887,7 @@ async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Pr
           image.addEventListener("load", () => resolve(), { once: true })
           image.addEventListener("error", () => resolve(), { once: true })
         }),
-        sleep(Math.max(0, until - Date.now())),
+        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
       ])
     }))
 

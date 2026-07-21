@@ -15,6 +15,7 @@ const wordpressEnvironment: EnvironmentSpec = {
   phpVersion: "8.3",
   blueprint: { preferredVersions: { php: "8.3" } },
   wordpressInstallMode: "install-from-existing-files-if-needed",
+  databaseSetup: "external",
   assets: {
     directory: "/workspace/site",
     archive: "/tmp/site.zip",

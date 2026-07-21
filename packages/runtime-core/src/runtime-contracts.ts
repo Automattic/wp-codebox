@@ -3,7 +3,7 @@ import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
-import type { BackendNeutralRuntimeProvenance, RuntimePHPWasmExtensionManifest, RuntimeWordPressAssetSpec, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
+import type { BackendNeutralRuntimeProvenance, RuntimePHPWasmExtensionManifest, RuntimeWordPressAssetSpec, RuntimeWordPressDatabaseSetupContract, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -19,6 +19,7 @@ export type SandboxWorkspaceMode = "repo-backed" | "site-backed"
 export interface EnvironmentSpec extends RuntimeWordPressEnvironmentSpec {}
 
 export type RuntimeWordPressInstallMode = RuntimeWordPressInstallModeContract
+export type RuntimeWordPressDatabaseSetup = RuntimeWordPressDatabaseSetupContract
 
 export interface RuntimeAssetSpec extends RuntimeWordPressAssetSpec {}
 
@@ -109,6 +110,7 @@ export interface WorkspaceRecipeMount {
   source: string
   target: string
   mode?: "readonly" | "readwrite"
+  captureArtifacts?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -136,7 +138,9 @@ export interface WorkspaceRecipeRuntimeService {
   id: string
   kind: "mysql" | (string & {})
   configuration?: {
+    engine?: "mysql" | "mariadb"
     rootAuthentication?: "generated-password" | "empty-password"
+    foreignKeyTargetPolicy?: "unique-only" | "indexed"
   }
   /** Explicit map from a provider output (for example `port`) to a runtime env name. */
   outputs: Record<string, string>
@@ -349,6 +353,12 @@ export interface WorkspaceRecipeUserSession {
   name: string
   user: string
   artifacts?: WorkspaceRecipeSessionArtifact[]
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeBrowserActor {
+  name: string
+  userSession: string
   metadata?: Record<string, unknown>
 }
 
@@ -604,6 +614,7 @@ export interface WorkspaceRecipe {
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
     fixtureUsers?: WorkspaceRecipeFixtureUser[]
     userSessions?: WorkspaceRecipeUserSession[]
+    browserActors?: WorkspaceRecipeBrowserActor[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     sourcePackages?: WorkspaceRecipeSourcePackage[]
@@ -700,15 +711,20 @@ export interface MountSpec {
   source: string
   target: string
   mode: "readonly" | "readwrite"
+  captureArtifacts?: boolean
   metadata?: Record<string, unknown>
 }
 
 export interface ExecutionSpec {
   command: string
   args?: string[]
+  environment?: Record<string, string>
+  processIdentity?: string
+  artifactNamespace?: string
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   cwd?: string
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 export type RuntimeEpisodeActionKind = "command" | "filesystem" | "http" | "browser"

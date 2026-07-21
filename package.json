@@ -1,6 +1,6 @@
 {
   "name": "wp-codebox-workspace",
-  "version": "0.12.28",
+  "version": "0.12.29",
   "private": true,
   "type": "module",
   "exports": {
@@ -63,6 +63,10 @@
     "./cli/recipe-secret-env": {
       "types": "./packages/cli/dist/recipe-secret-env.d.ts",
       "import": "./packages/cli/dist/recipe-secret-env.js"
+    },
+    "./cli/bounded-recipe-plan": {
+      "types": "./packages/cli/dist/bounded-recipe-plan.d.ts",
+      "import": "./packages/cli/dist/bounded-recipe-plan.js"
     }
   },
   "bin": {
@@ -109,6 +113,9 @@
     "test:playground-readonly-mounts": "tsx tests/playground-readonly-mounts.test.ts",
     "test:playground-readonly-mounts-integration": "tsx tests/playground-readonly-mounts-integration.test.ts",
     "test:playground-phpunit-readonly-cache-integration": "tsx tests/playground-phpunit-readonly-cache.integration.test.ts",
+    "test:playground-phpunit-bootstrap-failure-integration": "tsx tests/playground-phpunit-bootstrap-failure.integration.test.ts",
+    "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts",
+    "test:phpunit-runtime-failure-diagnostics": "tsx tests/phpunit-runtime-failure-diagnostics.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
@@ -129,6 +136,9 @@
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",
     "test:run-plan-executor": "tsx tests/run-plan-executor.test.ts",
+    "test:bounded-runtime-plan": "tsx tests/bounded-runtime-plan.test.ts",
+    "test:bounded-recipe-plan": "tsx tests/bounded-recipe-plan.test.ts",
+    "test:bounded-recipe-plan-integration": "tsx tests/bounded-recipe-plan.integration.test.ts",
     "test:fanout-execution": "tsx tests/fanout-execution.test.ts",
     "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:fanout-aggregation-contract-parity": "tsx tests/fanout-aggregation-contract-parity.test.ts",
@@ -162,6 +172,7 @@
     "test:browser-provider-bridge-inheritance": "tsx tests/browser-provider-bridge-inheritance.test.ts",
     "test:fixture-auth-storage-state": "tsx tests/fixture-auth-storage-state.test.ts",
     "test:recipe-user-session": "tsx tests/recipe-user-session.test.ts",
+    "test:browser-scenarios": "tsx tests/browser-multi-actor-scenario.test.ts",
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:command-router": "tsx tests/command-router.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
@@ -227,6 +238,7 @@
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
     "test:runtime-command-result-envelope": "tsx tests/runtime-command-result-envelope.test.ts",
+    "test:mount-artifact-capture-policy": "tsx tests/mount-artifact-capture-policy.test.ts",
     "test:wordpress-runtime-discovery-contracts": "tsx tests/wordpress-runtime-discovery-contracts.test.ts",
     "test:wordpress-runtime-discovery-coverage-plan": "tsx tests/wordpress-runtime-discovery-coverage-plan.test.ts",
     "test:wordpress-block-fuzz-suite": "tsx tests/wordpress-block-fuzz-suite.test.ts",
@@ -271,10 +283,11 @@
     "@automattic/wp-codebox-cli": "file:packages/cli",
     "@automattic/wp-codebox-core": "file:packages/runtime-core",
     "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
-    "@php-wasm/node-8-4": "^3.1.45",
+    "@php-wasm/node-8-4": "3.1.46",
+    "@php-wasm/universal": "3.1.46",
     "@types/pngjs": "^6.0.5",
-    "@wp-playground/cli": "^3.1.35",
-    "@wp-playground/wordpress-builds": "^0.9.4",
+    "@wp-playground/cli": "3.1.46",
+    "@wp-playground/wordpress-builds": "0.9.19",
     "abort-controller": "^3.0.0",
     "accepts": "^1.3.8",
     "aggregate-error": "^3.1.0",

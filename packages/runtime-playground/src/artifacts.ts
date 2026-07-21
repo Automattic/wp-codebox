@@ -571,6 +571,7 @@ export function buildArtifactProvenance({
       source: mount.source,
       target: mount.target,
       mode: mount.mode,
+      captureArtifacts: mount.captureArtifacts,
       metadata: mount.metadata,
     })),
   })

@@ -59,7 +59,24 @@ function commandList(name) {
     if (entry.description !== undefined && (typeof entry.description !== "string" || !entry.description.trim())) {
       throw new Error(`${name}[${index}].description must be a non-empty string when provided.`)
     }
-    return { command: entry.command.trim(), description: typeof entry.description === "string" ? entry.description.trim() : entry.command.trim() }
+    let artifact
+    if (entry.artifact !== undefined) {
+      if (!entry.artifact || typeof entry.artifact !== "object" || Array.isArray(entry.artifact)) {
+        throw new Error(`${name}[${index}].artifact must be an object with non-empty name, type, and path strings.`)
+      }
+      artifact = Object.fromEntries(["name", "type", "path"].map((key) => {
+        const value = entry.artifact[key]
+        if (typeof value !== "string" || !value.trim()) {
+          throw new Error(`${name}[${index}].artifact.${key} must be a non-empty string.`)
+        }
+        return [key, value.trim()]
+      }))
+    }
+    return {
+      command: entry.command.trim(),
+      description: typeof entry.description === "string" ? entry.description.trim() : entry.command.trim(),
+      ...(artifact ? { artifact } : {}),
+    }
   })
 }
 

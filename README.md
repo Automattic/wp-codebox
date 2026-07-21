@@ -519,6 +519,8 @@ kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
 
 When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url` and defines `WP_HOME` / `WP_SITEURL` in the sandbox config, so WordPress-generated links and canonical redirects align with the public preview URL. The local proxy URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
 
+Playground's content-addressed `custom-*.zip` WordPress archives are retained separately from stable release archives and cleaned after runtime use. The custom cache defaults to a seven-day age limit, 1 GiB, and 20 archives. Configure those bounds with `WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_AGE_MS`, `WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_BYTES`, and `WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_COUNT`; configure crashed legacy lock recovery with `WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_STALE_LOCK_MS`. All maintenance uses `WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR` when set. The Playground runtime package exports `maintainPlaygroundCustomArchiveCache()` for deterministic `diagnose`, `dry-run`, and `apply` evidence.
+
 Remote-host previews can opt into `--preview-bind <host>` with `--preview-port`. The flag changes the WP Codebox preview proxy bind address only; the upstream runtime server remains loopback-bound until backend bind-host control is available. The default stays `127.0.0.1`. Use `--preview-bind 0.0.0.0` only behind trusted firewall, tunnel, or reverse-proxy controls because the sandbox preview is reachable for the hold duration.
 
 ## Runtime Episodes
@@ -1060,6 +1062,8 @@ Current bundles include:
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline or are git work trees.
 - `files/diffs/<mount>.patch`: unified text diff from the mount baseline (a seeded baseline directory, or the git `HEAD` of a git work-tree mount) to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
+
+Readwrite mounts capture files and diffs by default. Set `captureArtifacts` to `false` on a mount when its mutations are runtime-only and do not need review or apply-back evidence. WP Codebox then skips both the pre-run filesystem baseline and post-run traversal for that mount while preserving readwrite behavior.
 
 Recipes that import a generated site into a clean runtime can export replay evidence before final artifact collection with a workflow step:
 

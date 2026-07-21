@@ -14,8 +14,9 @@ jobs:
       writable_paths: README.md,docs/**
       runner_workspace: '{"enabled":true,"repo":"Automattic/example-target"}'
       validation_dependencies: npm ci
-      verification_commands: '[{"command":"npm test","description":"Run checks"}]'
+      verification_commands: '[{"command":"npm test","description":"Run checks","artifact":{"name":"test_report","type":"TestReport","path":"test-report.json"}}]'
       drift_checks: '["git diff --exit-code"]'
+      artifact_declarations: '[{"name":"test_report","type":"TestReport","direction":"output","contentType":"application/json"}]'
       success_requires_pr: true
       access_token_repos: Automattic/example-target
       allowed_repos: '["Automattic/example-target"]'
@@ -30,19 +31,22 @@ public native package, invokes the package-declared agent through the native cha
 in a credential-free verification environment, and returns actual runtime and
 publication data.
 
-## Helper Release Tag
+## Helper Revision
 
-Callers must invoke the reusable workflow from an exact WP Codebox release tag
+By default, callers invoke the reusable workflow from an exact WP Codebox release tag
 and pass that same tag as `wp_codebox_release_ref`. For example, callers use
 `Automattic/wp-codebox/.github/workflows/run-agent-task.yml@v0.12.3` together
 with `wp_codebox_release_ref: v0.12.3`. The accepted format is exactly
 `vX.Y.Z`; branches, commit SHAs, moving major tags, prereleases, and arbitrary
-refs are rejected.
+refs are rejected for the packaged release.
 
-The workflow requires `wp_codebox_release_ref` to be an exact release tag. It
-always checks helpers out from `Automattic/wp-codebox`, verifies the checked-out
-commit equals the remote release tag commit, and verifies the checked-out
-`package.json` version equals the requested tag without its `v` prefix. The
+The workflow requires `wp_codebox_release_ref` to be an exact release tag. An
+accepted workflow commit may also pass the same full SHA as `wp_codebox_workflow_ref`
+to execute helper changes independently of packaged runtime assets. When omitted,
+the helper ref defaults to the release tag. The workflow checks helpers out from
+`Automattic/wp-codebox`, verifies the checked-out commit equals the selected helper
+revision, and verifies the checked-out `package.json` version equals the requested
+release tag without its `v` prefix. The
 caller cannot select a different helper repository. GitHub nested workflows
 expose the caller's `github.workflow_ref`, and the running workflow cannot
 introspect its own `uses:` ref, so helper selection relies on the required input
@@ -53,6 +57,7 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 ## Inputs
 
 - `wp_codebox_release_ref`: required exact immutable WP Codebox release tag in `vX.Y.Z` form.
+- `wp_codebox_workflow_ref`: optional full immutable helper commit SHA. It defaults to `wp_codebox_release_ref` for existing callers.
 - `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. Packages are supported only from publicly accessible GitHub repositories, fetched from canonical `https://github.com/OWNER/REPOSITORY.git` without credentials. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
 - `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 
@@ -61,7 +66,7 @@ This release-coherence contract fixes [#1759](https://github.com/Automattic/wp-c
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
 - `validation_dependencies`: optional shell command that installs validation dependencies in the target workspace.
-- `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass.
+- `verification_commands` and `drift_checks`: JSON arrays of non-empty command strings or `{command, description}` objects. Every entry runs and must pass. An object may declare one output as `artifact: {name, type, path}`. All three artifact fields are required, `path` is relative to `.codebox/agent-task-artifacts`, and the exact name/type pair must also be an output in `artifact_declarations`. After an exit-zero command, the workflow accepts only an existing regular UTF-8 file of at most 4 MiB without path traversal or symlinks. It adds a canonical `wp-codebox/typed-artifact/v1` reference to that verification record so declared-artifact upload staging collects the file. Artifact validation fails that verification before publication; failed commands never accept an artifact. Strings and command/description-only objects retain their existing behavior.
 - `success_requires_pr`: require a successful, published runner-workspace pull request for `target_repo`.
 - `access_token_repos`: comma-separated repositories available to the supplied access token.
 - `allowed_repos`: JSON repository allowlist. It and `access_token_repos` must explicitly include `target_repo`.
@@ -126,6 +131,9 @@ When `success_requires_pr` is true, success requires the canonical
 `status: published`, and a GitHub pull-request URL for `target_repo`.
 WP Codebox then resolves that pull request through the GitHub API with the
 runner token, so a fabricated publication result cannot satisfy the gate.
+Publication results record the effective head branch and resolved base SHA. An
+existing branch is extended only for an exact open pull request that descends
+from that base; otherwise publication starts a base-SHA-suffixed fresh branch.
 
 ## Outputs
 
