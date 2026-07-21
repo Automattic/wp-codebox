@@ -42,6 +42,8 @@ interface LeaseState {
   token?: string
 }
 
+class LeaseSidecarUnsafeError extends Error {}
+
 export interface PlaygroundArchiveCacheLock {
   path: string
   waitedMs: number
@@ -223,7 +225,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
         filesystemProtected,
       })
     } catch (error) {
-      if (!errorHasCode(error, "ENOENT")) {
+      if (!isConcurrentDisappearance(error)) {
         throw error
       }
     }
@@ -265,7 +267,7 @@ export async function maintainPlaygroundCustomArchiveCache(cacheDirectory = play
         try {
           current = await lstat(candidate.path)
         } catch (error) {
-          if (errorHasCode(error, "ENOENT")) {
+          if (isConcurrentDisappearance(error)) {
             continue
           }
           throw error
@@ -364,6 +366,7 @@ async function tryAcquireCacheLock(lockPath: string, leaseMs: number): Promise<L
   } catch (error) {
     await directoryHandle?.close().catch(() => undefined)
     await rmdir(lockPath).catch(() => undefined)
+    if (isConcurrentDisappearance(error)) return undefined
     throw error
   }
 }
@@ -434,33 +437,48 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
   try {
     lockStat = await lstat(lockPath)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) return false
+    if (isConcurrentDisappearance(error)) return false
     throw error
   }
   if (!lockStat.isDirectory() || lockStat.isSymbolicLink()) return true
-  const directoryHandle = await openSafeLeaseDirectory(lockPath, false)
+  let directoryHandle: FileHandle
+  try {
+    directoryHandle = await openSafeLeaseDirectory(lockPath, false)
+  } catch (error) {
+    if (isConcurrentDisappearance(error)) return false
+    if (error instanceof LeaseSidecarUnsafeError || errorHasCode(error, "ELOOP") || errorHasCode(error, "ENOTDIR")) return true
+    throw error
+  }
   let active = false
   try {
     const anchoredDirectory = fileDescriptorPath(directoryHandle)
-    const names = await readdir(anchoredDirectory)
+    let names: string[]
+    try {
+      names = await readdir(anchoredDirectory)
+    } catch (error) {
+      if (isConcurrentDisappearance(error)) return false
+      throw error
+    }
     for (const name of names.sort()) {
       const path = join(anchoredDirectory, name)
       if (name !== "owner.json" && !name.endsWith(".lease.json")) {
-        const unknownStat = await lstat(path)
+        let unknownStat
+        try {
+          unknownStat = await lstat(path)
+        } catch (error) {
+          if (isConcurrentDisappearance(error)) continue
+          throw error
+        }
         if (unknownStat.isDirectory() || now - lockStat.mtimeMs <= policy.staleLockMs || !removeStale) {
           active = true
         } else {
-          await unlink(path)
+          await unlinkIfPresent(path)
         }
         continue
       }
       const state = await inspectLeaseFile(path, now, policy.staleLockMs, removeStale)
       if (state.active) {
         active = true
-      } else if (removeStale) {
-        await unlink(path).catch((error) => {
-          if (!errorHasCode(error, "ENOENT")) throw error
-        })
       }
     }
     if (names.length === 0 && now - lockStat.mtimeMs <= policy.staleLockMs) active = true
@@ -468,7 +486,7 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
     await directoryHandle.close()
     if (removeStale && !active) {
       await rmdir(lockPath).catch((error) => {
-        if (!errorHasCode(error, "ENOENT") && !errorHasCode(error, "ENOTEMPTY")) throw error
+        if (!isConcurrentDisappearance(error) && !errorHasCode(error, "ENOTEMPTY")) throw error
       })
     }
   }
@@ -481,17 +499,34 @@ async function activeArchiveReferenceCount(archivePath: string, now: number, pol
   try {
     referencesStat = await lstat(referencesDirectory)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) return 0
+    if (isConcurrentDisappearance(error)) return 0
     throw error
   }
   if (!referencesStat.isDirectory() || referencesStat.isSymbolicLink()) {
     diagnostics.push({ code: "custom-archive-refs-not-directory", message: "Archive reference sidecar is not a real directory and was not followed.", severity: "warning", path: referencesDirectory })
-    if (removeStale) await unlink(referencesDirectory)
+    if (removeStale) await unlinkIfPresent(referencesDirectory)
     return removeStale ? 0 : 1
   }
-  const directoryHandle = await openSafeLeaseDirectory(referencesDirectory, false)
+  let directoryHandle: FileHandle
+  try {
+    directoryHandle = await openSafeLeaseDirectory(referencesDirectory, false)
+  } catch (error) {
+    if (isConcurrentDisappearance(error)) return 0
+    if (error instanceof LeaseSidecarUnsafeError || errorHasCode(error, "ELOOP") || errorHasCode(error, "ENOTDIR")) {
+      diagnostics.push({ code: "custom-archive-refs-changed", message: "Archive reference sidecar changed while opening and was conservatively protected.", severity: "warning", path: referencesDirectory })
+      return 1
+    }
+    throw error
+  }
   const anchoredDirectory = fileDescriptorPath(directoryHandle)
-  const names = await readdir(anchoredDirectory)
+  let names: string[]
+  try {
+    names = await readdir(anchoredDirectory)
+  } catch (error) {
+    await directoryHandle.close()
+    if (isConcurrentDisappearance(error)) return 0
+    throw error
+  }
   let active = 0
   try {
     for (const name of names.sort()) {
@@ -512,12 +547,12 @@ async function inspectLeaseFile(path: string, now: number, legacyStaleMs: number
   try {
     pathStat = await lstat(path)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) return { active: false }
+    if (isConcurrentDisappearance(error)) return { active: false }
     throw error
   }
   if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1) {
     diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry is not a singly-linked regular file and was not followed.", severity: "warning", path })
-    if (removeUnsafe && !pathStat.isDirectory()) await unlink(path)
+    if (removeUnsafe && !pathStat.isDirectory()) await unlinkIfPresent(path)
     return { active: !removeUnsafe || pathStat.isDirectory() }
   }
 
@@ -533,14 +568,14 @@ async function inspectLeaseFile(path: string, now: number, legacyStaleMs: number
     if (owner) {
       const expiresAt = Date.parse(owner.expiresAt)
       if (Number.isFinite(expiresAt) && expiresAt > now) return { active: true, token: owner.token }
-      if (removeUnsafe) await unlink(path)
+      if (removeUnsafe) await unlinkIfPresent(path)
       return { active: false, token: owner.token }
     }
     const active = now - pathStat.mtimeMs <= legacyStaleMs
-    if (!active && removeUnsafe) await unlink(path)
+    if (!active && removeUnsafe) await unlinkIfPresent(path)
     return { active }
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) return { active: false }
+    if (isConcurrentDisappearance(error)) return { active: false }
     if (errorHasCode(error, "ELOOP")) {
       diagnostics.push({ code: "custom-archive-ref-entry-unsafe", message: "Archive lease entry became a symlink and was conservatively protected.", severity: "warning", path })
       return { active: true }
@@ -592,13 +627,12 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
   try {
     sidecarStat = await lstat(path)
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) return false
+    if (isConcurrentDisappearance(error)) return false
     throw error
   }
   if (!sidecarStat.isDirectory() || sidecarStat.isSymbolicLink()) {
     diagnostics.push({ code: "custom-archive-refs-not-directory", message: "Archive reference sidecar is not a real directory and was unlinked without following it.", severity: "warning", path })
-    await unlink(path)
-    return true
+    return unlinkIfPresent(path)
   }
   if (await activeReferenceCountInDirectory(path, now, policy, true, diagnostics) > 0) {
     return false
@@ -607,7 +641,7 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
     await rmdir(path)
     return true
   } catch (error) {
-    if (errorHasCode(error, "ENOENT") || errorHasCode(error, "ENOTEMPTY")) {
+    if (isConcurrentDisappearance(error) || errorHasCode(error, "ENOTEMPTY")) {
       return false
     }
     diagnostics.push({ code: "orphan-reference-cleanup-failed", message: errorMessage(error), severity: "warning", path })
@@ -616,22 +650,35 @@ async function removeOrphanReferencesDirectory(path: string, now: number, policy
 }
 
 async function openSafeLeaseDirectory(path: string, create: boolean): Promise<FileHandle> {
-  if (create) {
-    await mkdir(path).catch((error) => {
-      if (!errorHasCode(error, "EEXIST")) throw error
-    })
+  for (let attempt = 0; attempt < (create ? 3 : 1); attempt += 1) {
+    try {
+      if (create) {
+        await mkdir(path).catch((error) => {
+          if (!errorHasCode(error, "EEXIST")) throw error
+        })
+      }
+      const pathStat = await lstat(path)
+      if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) {
+        throw new LeaseSidecarUnsafeError(`Playground cache lease sidecar must be a real directory: ${path}`)
+      }
+      const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+      let handleStat
+      try {
+        handleStat = await handle.stat()
+      } catch (error) {
+        await handle.close()
+        throw error
+      }
+      if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
+        await handle.close()
+        throw new LeaseSidecarUnsafeError(`Playground cache lease sidecar changed while opening: ${path}`)
+      }
+      return handle
+    } catch (error) {
+      if (!create || !isConcurrentDisappearance(error) || attempt === 2) throw error
+    }
   }
-  const pathStat = await lstat(path)
-  if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) {
-    throw new Error(`Playground cache lease sidecar must be a real directory: ${path}`)
-  }
-  const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
-  const handleStat = await handle.stat()
-  if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
-    await handle.close()
-    throw new Error(`Playground cache lease sidecar changed while opening: ${path}`)
-  }
-  return handle
+  throw new Error(`Unable to create Playground cache lease sidecar: ${path}`)
 }
 
 function fileDescriptorPath(handle: FileHandle): string {
@@ -725,6 +772,20 @@ function errorHasCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code)
 }
 
+function isConcurrentDisappearance(error: unknown): boolean {
+  return errorHasCode(error, "ENOENT") || errorHasCode(error, "ESTALE")
+}
+
+async function unlinkIfPresent(path: string): Promise<boolean> {
+  try {
+    await unlink(path)
+    return true
+  } catch (error) {
+    if (isConcurrentDisappearance(error)) return false
+    throw error
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
 }
@@ -734,7 +795,7 @@ async function pathExists(path: string): Promise<boolean> {
     await lstat(path)
     return true
   } catch (error) {
-    if (errorHasCode(error, "ENOENT")) {
+    if (isConcurrentDisappearance(error)) {
       return false
     }
     throw error

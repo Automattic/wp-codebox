@@ -257,6 +257,16 @@ try {
   })
   assert.equal(acquiredRecoveredTempLock, true, "stale heartbeat temp files from an older generation must not wedge archive acquisition")
 
+  const stressRoot = await mkdtemp(join(tmpdir(), "wp-codebox-playground-maintenance-stress-"))
+  for (let iteration = 0; iteration < 25; iteration += 1) {
+    const stressArchive = join(stressRoot, `custom-stress-${iteration}.zip`)
+    await writeFile(stressArchive, Buffer.alloc(4_096, "s"))
+    await utimes(stressArchive, 1, 1)
+    await Promise.all(Array.from({ length: 4 }, () => maintainPlaygroundCustomArchiveCache(stressRoot, { mode: "apply", maxAgeMs: 1, maxCount: 0 })))
+  }
+  assert.deepEqual((await readdir(stressRoot)).filter((name) => name.startsWith("custom-")), [], "concurrent maintenance must converge without inspect-open disappearance failures")
+  await rm(stressRoot, { recursive: true, force: true })
+
   const samePathLockVersion = "custom-same-path-lock-release"
   const samePathLockDirectory = join(root, `${samePathLockVersion}.zip.lock`)
   let replacementLockEntry = ""
