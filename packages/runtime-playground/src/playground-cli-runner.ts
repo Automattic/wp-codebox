@@ -126,7 +126,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
         phpIniEntries: pluginRuntimePhpIniEntries(spec),
         wordpressDirectory: wordpressDirectory!,
         wordpressInstallMode,
-        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!),
+        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!, "/internal/wp-codebox/auto_prepend_file.php"),
       })
     }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
@@ -400,9 +400,9 @@ function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "b
   return Object.keys(entries).length > 0 ? entries : undefined
 }
 
-function phpIniContent(entries: Record<string, string>): string {
+function phpIniContent(entries: Record<string, string>, autoPrependFile = "/internal/shared/wp-codebox-auto-prepend.php"): string {
   const lines = [
-    "auto_prepend_file=/internal/shared/wp-codebox-auto-prepend.php",
+    `auto_prepend_file=${autoPrependFile}`,
     // Runtime memory ceiling for all in-sandbox PHP, including artifact
     // collection. The collect_artifacts phase reads declared/typed artifacts and
     // runtime snapshot files into memory and base64-encodes them
