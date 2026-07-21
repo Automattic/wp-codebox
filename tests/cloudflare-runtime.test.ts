@@ -42,6 +42,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-state")), { kind: "r2-state" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-restore")), { kind: "operator-restore" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
 
@@ -235,6 +236,9 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /cookieStore: false/)
   assert.match(worker, /maxPhpInstances: 1/)
   assert.match(worker, /WORDPRESS_AUTH_SECRET/)
+  assert.match(worker, /Canonical restore requires an empty current pointer/)
+  assert.match(worker, /readMarkdownManifest\(env\.WORDPRESS_STATE_BUCKET, pointer\)/)
+  assert.match(worker, /sites\/default\/markdown\/revisions\/\$\{candidate\.revision\}\.json/)
   assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
   assert.match(worker, /authConstants/)
   assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request\)/)

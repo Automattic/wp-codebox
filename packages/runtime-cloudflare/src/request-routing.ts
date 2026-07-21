@@ -4,6 +4,7 @@ export type WorkerRequestRoute =
   | { kind: "r2-state" }
   | { kind: "r2-mutate" }
   | { kind: "operator-reset" }
+  | { kind: "operator-restore" }
   | { kind: "probe"; phase: string }
 
 export function routeWorkerRequest(request: Request): WorkerRequestRoute {
@@ -13,5 +14,6 @@ export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   if (phase === "r2-state") return { kind: "r2-state" }
   if (phase === "r2-mutate") return { kind: "r2-mutate" }
   if (phase === "operator-reset") return { kind: "operator-reset" }
+  if (phase === "operator-restore") return { kind: "operator-restore" }
   return { kind: "probe", phase }
 }

@@ -86,6 +86,7 @@ export default {
     const route = routeWorkerRequest(request)
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
+    if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
     if (route.kind === "probe") {
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
     }
@@ -146,6 +147,46 @@ async function resetCanonicalWordPress(request: Request, env: Env, coordinator: 
   const response = await coordinator.fetch(new Request(coordinatorUrl(request.url, "reset"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }))
   if (response.ok) await discardCachedRuntime()
   return response
+}
+
+async function restoreCanonicalWordPress(request: Request, env: Env, coordinator: DurableObjectStub): Promise<Response> {
+  if (request.method !== "POST") return new Response("Canonical restore requires POST.", { status: 405 })
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Canonical restore authorization failed.", { status: 401 })
+  }
+  let pointer: MarkdownPointer
+  try {
+    pointer = await request.json<MarkdownPointer>()
+  } catch {
+    return new Response("Canonical restore requires a JSON pointer.", { status: 400 })
+  }
+  if (!isCanonicalRestorePointer(pointer)) return new Response("Canonical restore pointer is invalid.", { status: 400 })
+  const manifest = await readMarkdownManifest(env.WORDPRESS_STATE_BUCKET, pointer)
+  if (!manifest || manifest.revision !== pointer.revision || manifest.manifestKey !== pointer.manifestKey || manifest.persistedAt !== pointer.persistedAt || !Array.isArray(manifest.files)) {
+    return new Response("Canonical restore manifest is unavailable or inconsistent.", { status: 409 })
+  }
+  const lease = await acquireLease(coordinator, request.url)
+  try {
+    if (lease.pointer) {
+      await abortLease(coordinator, request.url, lease)
+      return new Response("Canonical restore requires an empty current pointer.", { status: 409 })
+    }
+    const restored = await commitLease(coordinator, request.url, lease, pointer)
+    await discardCachedRuntime()
+    return Response.json({ restored: true, ...restored })
+  } catch (error) {
+    await abortLease(coordinator, request.url, lease)
+    throw error
+  }
+}
+
+function isCanonicalRestorePointer(pointer: unknown): pointer is MarkdownPointer {
+  if (!pointer || typeof pointer !== "object") return false
+  const candidate = pointer as Partial<MarkdownPointer>
+  return typeof candidate.revision === "string" && /^[a-f0-9-]{36}$/.test(candidate.revision)
+    && candidate.manifestKey === `sites/default/markdown/revisions/${candidate.revision}.json`
+    && typeof candidate.persistedAt === "string" && Number.isFinite(Date.parse(candidate.persistedAt))
 }
 
 async function secretsMatch(left: string, right: string): Promise<boolean> {
