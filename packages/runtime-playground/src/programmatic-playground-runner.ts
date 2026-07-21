@@ -50,6 +50,7 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
   }
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
+    maxPhpInstances: 1,
     phpVersion,
     siteUrl: spec.preview?.siteUrl ?? "http://127.0.0.1",
     documentRoot: "/wordpress",
