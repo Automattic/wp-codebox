@@ -836,6 +836,11 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
             $bootstrap = pg_project_bootstrap_from_config($phpunit_xml, $phpunit_xml_is_default);
             $from_config = $bootstrap !== '';
         }
+        if ($bootstrap === '') {
+            pg_log('NOTICE:project bootstrap not declared; continuing without one');
+            pg_stage_ok('project_bootstrap');
+            return;
+        }
         $bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);
         if ($bootstrap_real === null) {
             throw new RuntimeException('project bootstrap not found; pass project-bootstrap=<relative path> or declare phpunit bootstrap');

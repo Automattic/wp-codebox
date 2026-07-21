@@ -77,7 +77,7 @@ if (!await dockerAvailable()) {
     await mkdir(join(plugin, "tests"), { recursive: true })
     await writeFile(join(plugin, "bounded-phpunit-fixture.php"), "<?php\n/** Plugin Name: Bounded PHPUnit Fixture */\n")
     await writeFile(join(plugin, "phpunit.xml"), "<?xml version=\"1.0\"?><phpunit bootstrap=\"tests/bootstrap.php\"><testsuites><testsuite name=\"bounded\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
-    await writeFile(join(plugin, "tests", "bootstrap.php"), "<?php\n")
+    await writeFile(join(plugin, "tests", "bootstrap.php"), "<?php\nfunction add_filter(): void {}\n")
     await writeFile(join(plugin, "tests", "BoundedMariaDbTest.php"), `<?php
 final class BoundedMariaDbTest extends PHPUnit\\Framework\\TestCase {
     public function test_database_identity(): void {

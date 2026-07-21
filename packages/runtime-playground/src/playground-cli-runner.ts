@@ -3,7 +3,7 @@ import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./play
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
 import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
-import { randomBytes, randomInt } from "node:crypto"
+import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
 import { mkdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises"
@@ -80,11 +80,6 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
-    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
-      route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
-      token: randomBytes(32).toString("base64url"),
-      payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
-    }
     usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
     const stagedMounts = readonlyMountStaging.mounts
@@ -137,7 +132,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
       const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
-      const bootstrapSharedMounts = await pluginRuntimeBootstrapSharedMounts(spec, requestWorkerEndpoint)
+      const bootstrapSharedMounts = await pluginRuntimeBootstrapSharedMounts(spec)
       try {
         return await runCLI({
           command: "server",
@@ -179,7 +174,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
@@ -303,9 +298,10 @@ export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, o
     && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
 
-async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, requestWorkerEndpoint?: { route: string; token: string; payloadDirectory: string }): Promise<Array<{ hostPath: string; vfsPath: string }>> {
+async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec): Promise<Array<{ hostPath: string; vfsPath: string }>> {
   const iniEntries = runtimeBootstrapPhpIniEntries(spec)
-  if (!iniEntries && !requestWorkerEndpoint) {
+  const externalWpConfig = externalDatabaseWpConfig(spec)
+  if (!iniEntries && !externalWpConfig) {
     return []
   }
 
@@ -315,8 +311,6 @@ async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, reque
     await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
     await writeFile(join(directory, "wp-codebox-auto-prepend.php"), runtimeAutoPrependPhp(spec), "utf8")
   }
-  if (requestWorkerEndpoint) await writeFile(join(directory, "request-worker.php"), requestWorkerPhp(requestWorkerEndpoint.token), "utf8")
-  const externalWpConfig = externalDatabaseWpConfig(spec)
   if (externalWpConfig) await writeFile(join(directory, "wp-config.php"), externalWpConfig, "utf8")
 
   return [
@@ -324,44 +318,8 @@ async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, reque
       { hostPath: join(directory, "php.ini"), vfsPath: "/internal/shared/php.ini" },
       { hostPath: join(directory, "wp-codebox-auto-prepend.php"), vfsPath: "/internal/shared/wp-codebox-auto-prepend.php" },
     ] : []),
-    ...(requestWorkerEndpoint ? [
-      { hostPath: directory, vfsPath: "/internal/wp-codebox" },
-      { hostPath: join(directory, "request-worker.php"), vfsPath: `/wordpress${requestWorkerEndpoint.route}` },
-    ] : []),
     ...(externalWpConfig ? [{ hostPath: join(directory, "wp-config.php"), vfsPath: "/wordpress/wp-config.php" }] : []),
   ]
-}
-
-function requestWorkerPhp(token: string): string {
-  return `<?php
-if (!hash_equals(${phpLiteral(token)}, (string) ($_SERVER['HTTP_X_WP_CODEBOX_EXECUTION_TOKEN'] ?? ''))) {
-    http_response_code(404);
-    exit;
-}
-$wp_codebox_payload_id = (string) ($_SERVER['HTTP_X_WP_CODEBOX_EXECUTION_PAYLOAD'] ?? '');
-if (!preg_match('/^[a-f0-9]{32}$/', $wp_codebox_payload_id)) {
-    http_response_code(400);
-    exit;
-}
-$wp_codebox_payload = json_decode((string) file_get_contents('/internal/wp-codebox/execution-' . $wp_codebox_payload_id . '.json'), true);
-$wp_codebox_code = $wp_codebox_payload['code'] ?? null;
-$wp_codebox_environment = $wp_codebox_payload['environment'] ?? null;
-if (!is_string($wp_codebox_code) || !is_array($wp_codebox_environment)) {
-    http_response_code(400);
-    echo 'invalid execution payload';
-    exit;
-}
-foreach ($wp_codebox_environment as $wp_codebox_name => $wp_codebox_value) {
-    if (!is_string($wp_codebox_name) || !is_string($wp_codebox_value)) {
-        http_response_code(400);
-        exit;
-    }
-    putenv($wp_codebox_name . '=' . $wp_codebox_value);
-    $_ENV[$wp_codebox_name] = $wp_codebox_value;
-    $_SERVER[$wp_codebox_name] = $wp_codebox_value;
-}
-eval('?>' . $wp_codebox_code);
-`
 }
 
 function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {

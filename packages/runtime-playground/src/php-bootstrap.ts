@@ -21,11 +21,15 @@ ${phpBody(code)}`
 }
 
 export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
+  const command = splitLeadingStrictTypesDeclare(code)
   if (argValue(args, "bootstrap") === "none") {
-    return code
+    return `<?php
+${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${runtimeEnvPhp(spec, args)}
+${secretEnvPhp(spec)}
+${command.body}`
   }
 
-  const command = splitLeadingStrictTypesDeclare(code)
+  const wordpressBootstrap = argValue(args, "bootstrap-mode") === "project" ? "" : "require_once '/wordpress/wp-load.php';"
 
   const bootstrapped = `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
@@ -36,7 +40,7 @@ ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
-require_once '/wordpress/wp-load.php';
+${wordpressBootstrap}
 ${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
 ${recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
