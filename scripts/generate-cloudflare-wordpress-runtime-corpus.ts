@@ -5,6 +5,7 @@ import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { isWordPressRuntimeFile, isWordPressStaticAsset } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
+import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
 
 const sourceUrl = process.env.WORDPRESS_RUNTIME_ARCHIVE_URL ?? "https://downloads.wordpress.org/release/wordpress-7.0.2.zip"
 const sourceVersion = process.env.WORDPRESS_RUNTIME_VERSION ?? "7.0.2"
@@ -12,6 +13,9 @@ const output = resolve(process.env.WORDPRESS_RUNTIME_ARTIFACT_OUTPUT ?? "artifac
 const manifestOutput = resolve("packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json")
 const staticOutput = resolve(process.env.WORDPRESS_STATIC_ARTIFACT_OUTPUT ?? "artifacts/cloudflare-wordpress-static-corpus.bin")
 const staticManifestOutput = resolve("packages/runtime-cloudflare/assets/wordpress-static-artifact.json")
+const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
+const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
+const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
 const response = await fetch(sourceUrl)
 if (!response.ok || !response.body) throw new Error(`Unable to download WordPress archive: ${response.status}.`)
 const identity = response.headers.get("etag") ?? response.headers.get("last-modified") ?? undefined
@@ -59,9 +63,26 @@ const staticManifest: WordPressStaticArtifactManifest = {
 validateWordPressStaticArtifactManifest(staticManifest)
 await writeFile(staticOutput, staticBlob)
 await writeFile(staticManifestOutput, `${JSON.stringify(staticManifest, null, 2)}\n`)
+
+const sqliteResponse = await fetch(sqliteSourceUrl)
+if (!sqliteResponse.ok) throw new Error(`Unable to download SQLite integration archive: ${sqliteResponse.status}.`)
+const sqliteArchive = new Uint8Array(await sqliteResponse.arrayBuffer())
+const sqliteSha256 = sha256Hex(sqliteArchive)
+const sqliteIdentity = sqliteResponse.headers.get("etag") ?? sqliteResponse.headers.get("last-modified") ?? undefined
+const sqliteManifest: RuntimeArchiveArtifactManifest = {
+  schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
+  name: "sqlite-database-integration",
+  key: runtimeArchiveArtifactKey("sqlite-database-integration", sqliteSha256),
+  archive: { sha256: sqliteSha256, size: sqliteArchive.byteLength },
+  source: { url: sqliteSourceUrl, version: "2.2.23", ...(sqliteIdentity ? { identity: sqliteIdentity } : {}) },
+}
+validateRuntimeArchiveArtifactManifest(sqliteManifest)
+await writeFile(sqliteOutput, sqliteArchive)
+await writeFile(sqliteManifestOutput, `${JSON.stringify(sqliteManifest, null, 2)}\n`)
 console.log(JSON.stringify({
   runtime: { key: manifest.key, bytes: archive.byteLength, files: manifest.files.length, sha256: archiveSha256 },
   static: { key: staticManifest.key, bytes: staticBlob.byteLength, files: staticManifest.files.length, sha256: staticSha256 },
+  sqlite: { key: sqliteManifest.key, bytes: sqliteArchive.byteLength, sha256: sqliteSha256 },
   source: manifest.source,
 }))
 

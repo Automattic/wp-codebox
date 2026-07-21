@@ -14,6 +14,7 @@ import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./word
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, type WordPressStaticArtifactManifest } from "./wordpress-static-artifact.js"
+import { readRuntimeArchiveArtifact, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
 import type { MarkdownPointer } from "./state-coordinator.js"
 export { WordPressStateCoordinator } from "./state-coordinator.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
@@ -23,12 +24,12 @@ import markdownPrimaryBootstrapIndex from "../assets/markdown-primary-bootstrap-
 import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifact.json" with { type: "json" }
 import wordpressStaticArtifactManifest from "../assets/wordpress-static-artifact.json" with { type: "json" }
+import sqliteIntegrationArtifactManifest from "../assets/sqlite-database-integration-artifact.json" with { type: "json" }
 
 const PHP_VERSION = "8.5.8"
 const wordpressStaticArtifact = wordpressStaticArtifactManifest as WordPressStaticArtifactManifest
 validateWordPressStaticArtifactManifest(wordpressStaticArtifact)
 const wordpressStaticFiles = new Map(wordpressStaticArtifact.files.map((file) => [file.path, file]))
-const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const MARKDOWN_DATABASE_INTEGRATION_REVISION = "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
@@ -684,13 +685,12 @@ async function runBootProbe(phase: string, bucket: R2Bucket): Promise<Response> 
   if (phase === "wordpress-archive" || phase === "sqlite-archive") {
     const archiveBytes = phase === "wordpress-archive"
       ? (await readWordPressRuntimeArtifact(bucket)).byteLength
-      : (await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")).size
+      : (await readSqliteIntegrationArtifact(bucket)).size
     return probeResponse(phase, { archiveBytes })
   }
 
   if (phase === "archives") {
-    const wordpressBytes = await readWordPressRuntimeArtifact(bucket)
-    const sqliteZip = await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
+    const [wordpressBytes, sqliteZip] = await Promise.all([readWordPressRuntimeArtifact(bucket), readSqliteIntegrationArtifact(bucket)])
     return probeResponse(phase, { wordpressArchiveBytes: wordpressBytes.byteLength, sqliteArchiveBytes: sqliteZip.size })
   }
 
@@ -888,6 +888,8 @@ async function bootWordPressRuntime(
   shouldPatchCanonicalRuntimePoliciesAtInit = false,
   uploadFiles?: RuntimeFile[],
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
+  if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
+  const sqliteIntegrationPluginZip = includeSqlite ? readSqliteIntegrationArtifact(runtimeBucket!) : undefined
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
     constants: {
@@ -934,7 +936,7 @@ async function bootWordPressRuntime(
     phpVersion: "8.5",
     siteUrl,
     wordPressZip: undefined,
-    sqliteIntegrationPluginZip: includeSqlite ? fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip") : undefined,
+    sqliteIntegrationPluginZip,
     wordpressInstallMode,
   })
   const php = await requestHandler.getPrimaryPhp()
@@ -1088,6 +1090,12 @@ async function readWordPressRuntimeArtifact(bucket: R2Bucket): Promise<Uint8Arra
   return bytes
 }
 
+async function readSqliteIntegrationArtifact(bucket: R2Bucket): Promise<File> {
+  const manifest = sqliteIntegrationArtifactManifest as RuntimeArchiveArtifactManifest
+  const bytes = await readRuntimeArchiveArtifact(bucket, manifest)
+  return new File([Uint8Array.from(bytes).buffer], "sqlite-database-integration.zip", { type: "application/zip" })
+}
+
 async function serveWordPressUpload(request: Request, bucket: R2Bucket, coordinator: DurableObjectStub): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null
   const url = new URL(request.url)
@@ -1218,12 +1226,6 @@ function createPhpRuntime() {
     { dependencyFilename: "php_8_5.wasm", dependenciesTotalSize, phpWasmAsyncMode: "asyncify", init },
     { instantiateWasm: instantiatePrecompiledWasm(phpWasmModule) },
   )
-}
-
-async function fetchArchive(url: string, name: string): Promise<File> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`Unable to fetch ${name}: ${response.status}.`)
-  return new File([await response.arrayBuffer()], name, { type: "application/zip" })
 }
 
 function instantiatePrecompiledWasm(module: WebAssembly.Module) {

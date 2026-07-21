@@ -15,6 +15,7 @@ import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestF
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
+import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -262,6 +263,8 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /CONCATENATE_SCRIPTS: false/)
   assert.match(worker, /SCRIPT_DEBUG: false/)
   assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
+  assert.doesNotMatch(worker, /SQLITE_INTEGRATION_ARCHIVE_URL|fetchArchive\(/)
+  assert.match(worker, /readRuntimeArchiveArtifact\(bucket, manifest\)/)
   assert.match(worker, /bucket\.get\(wordpressStaticArtifact\.key, \{ range: \{ offset: file\.offset, length: file\.size \} \}\)/)
   assert.match(worker, /await sha256Hex\(bytes\) !== file\.sha256/)
   assert.match(worker, /request\.method === "HEAD" \? null : bytes/)
@@ -382,11 +385,29 @@ test("WordPress static artifacts require complete, ordered, content-addressed ra
   assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, blob: { ...manifest.blob, size: 4 } }), /do not cover/)
 })
 
+test("runtime archive dependencies are content-addressed and verified from R2", async () => {
+  const bytes = new TextEncoder().encode("immutable archive")
+  const sha256 = createHash("sha256").update(bytes).digest("hex")
+  const manifest: RuntimeArchiveArtifactManifest = {
+    schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
+    name: "sqlite-database-integration",
+    key: runtimeArchiveArtifactKey("sqlite-database-integration", sha256),
+    archive: { sha256, size: bytes.byteLength },
+    source: { url: "https://example.com/sqlite.zip", version: "1.0.0" },
+  }
+  const bucket = { get: async () => ({ size: bytes.byteLength, arrayBuffer: async () => bytes.buffer }) } as never
+  assert.deepEqual(await readRuntimeArchiveArtifact(bucket, manifest), bytes)
+  await assert.rejects(readRuntimeArchiveArtifact({ get: async () => null } as never, manifest), /unavailable/)
+  await assert.rejects(readRuntimeArchiveArtifact({ get: async () => ({ size: bytes.byteLength, arrayBuffer: async () => new Uint8Array(bytes.byteLength).buffer }) } as never, manifest), /hash does not match/)
+  assert.throws(() => runtimeArchiveArtifactKey("../sqlite", sha256), /name is invalid/)
+})
+
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
   const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
   const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
   const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
+  const sqliteManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
   assert.match(generator, /const response = await fetch\(sourceUrl\)/)
   assert.match(generator, /decodeZip\(response\.body\)/)
   assert.doesNotMatch(generator, /decodeRemoteZip/)
@@ -394,12 +415,14 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /lastModified: 0/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-static-corpus\.bin/)
+  assert.match(generator, /artifacts\/cloudflare-sqlite-database-integration\.zip/)
   assert.doesNotMatch(artifact, /decodeZip/)
   assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
   assert.ok(manifest.files.length > 0)
   assert.doesNotThrow(() => validateWordPressStaticArtifactManifest(staticManifest))
   assert.ok(staticManifest.files.length > 0)
+  assert.equal(sqliteManifest.key, runtimeArchiveArtifactKey(sqliteManifest.name, sqliteManifest.archive.sha256))
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {
