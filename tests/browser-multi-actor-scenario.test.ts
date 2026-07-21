@@ -1,6 +1,29 @@
 import assert from "node:assert/strict"
 import { BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, type BrowserMultiActorScenario } from "../packages/runtime-core/src/browser-multi-actor-scenario-contracts.js"
 import { BrowserMultiActorScenarioError, runBrowserMultiActorScenario, type BrowserMultiActorClient } from "../packages/runtime-playground/src/browser-multi-actor-scenario.js"
+import { navigateBrowserMultiActorPages } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
+
+const navigationStarted: string[] = []
+let releaseNavigation!: () => void
+const navigationRelease = new Promise<void>((resolve) => { releaseNavigation = resolve })
+const navigation = navigateBrowserMultiActorPages([
+  { actor: "author", page: { async goto(url) { navigationStarted.push(`author:${url}`); await navigationRelease; return null } } },
+  { actor: "reviewer", page: { async goto(url) { navigationStarted.push(`reviewer:${url}`); await navigationRelease; return null } } },
+], "https://example.test/wp-admin/post.php?post=1&action=edit")
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.deepEqual(navigationStarted, [
+  "author:https://example.test/wp-admin/post.php?post=1&action=edit",
+  "reviewer:https://example.test/wp-admin/post.php?post=1&action=edit",
+])
+releaseNavigation()
+await navigation
+
+await assert.rejects(
+  navigateBrowserMultiActorPages([
+    { actor: "reviewer", page: { async goto() { throw new Error("net::ERR_FAILED") } } },
+  ], "https://example.test/editor"),
+  /Actor reviewer failed to navigate to https:\/\/example\.test\/editor: net::ERR_FAILED/,
+)
 
 const closed: string[] = []
 const actions: string[] = []

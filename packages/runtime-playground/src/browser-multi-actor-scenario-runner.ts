@@ -1,3 +1,4 @@
+import type { Page } from "playwright"
 import { type BrowserMultiActorScenario, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now } from "@automattic/wp-codebox-core/internals"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -35,6 +36,7 @@ export async function runBrowserMultiActorScenarioCommand(input: {
 
   try {
     const clientEntries: Array<[string, BrowserMultiActorClient]> = []
+    const actorPages: Array<{ actor: string; page: Pick<Page, "goto"> }> = []
     // Playground PHP commands share one runtime endpoint, so provision identities
     // and install cookies serially before actions begin concurrently.
     for (const actor of scenario.actors) {
@@ -50,8 +52,10 @@ export async function runBrowserMultiActorScenarioCommand(input: {
       const networkTasks: Array<Promise<void>> = []
       attachBrowserCaptureListeners({ captureConsole: captures.has("console"), captureErrors: captures.has("errors"), captureNetwork: true, consoleMessages: actorEvidence.console, errors: actorEvidence.errors, network: actorEvidence.network, networkTasks, page })
       clientEntries.push([actor.name, actorClient({ actor: actor.name, artifacts, captures, context, evidence: actorEvidence, networkTasks, page, scenario, previewOrigin: topology.preview.effectiveOrigin })])
+      actorPages.push({ actor: actor.name, page })
     }
     const clients = Object.fromEntries(clientEntries)
+    await navigateBrowserMultiActorPages(actorPages, topology.resolveUrl(scenario.url))
     result = await runBrowserMultiActorScenario(scenario, clients)
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error))
@@ -76,6 +80,20 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   const artifact = { artifactType: "scenario" as const, requestedUrl: target, url: target, preview: topology.preview, ...topology.origins, files: { summary: "files/browser/multi-actor-scenario-summary.json", steps: "files/browser/multi-actor-events.json", network: "files/browser/multi-actor-network.json", requestCoverage: "files/browser/multi-actor-request-coverage.json", waterfall: "files/browser/multi-actor-waterfall.json", ...(traces.length > 0 ? { traces } : {}) }, summary: { actions: scenario.actions.length, steps: scenario.actions.length, consoleMessages: Object.values(evidence).reduce((total, actor) => total + actor.console.length, 0), errors: Object.values(evidence).reduce((total, actor) => total + actor.errors.length, 0), finalUrl: target, htmlSnapshot: false, networkEvents: network.length, replayability: browserProbeReplayability(captures), screenshot: captures.has("screenshot"), viewport: null, multiActor: { seed: scenario.seed, finalState: result?.finalState ?? "failed", actors: Object.keys(evidence), replay: "files/browser/multi-actor-replay.json" } } } satisfies BrowserArtifact
   if (failure) throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${failure.message}`, artifact)
   return { artifact, output: `${JSON.stringify({ command: "wordpress.browser-scenario", files: artifact.files, summary: artifact.summary, scenario: summary }, null, 2)}\n` }
+}
+
+export async function navigateBrowserMultiActorPages(
+  actorPages: Array<{ actor: string; page: Pick<Page, "goto"> }>,
+  url: string,
+): Promise<void> {
+  await Promise.all(actorPages.map(async ({ actor, page }) => {
+    try {
+      await page.goto(url, { waitUntil: "load" })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Actor ${actor} failed to navigate to ${url}: ${message}`)
+    }
+  }))
 }
 
 interface ActorEvidence {
