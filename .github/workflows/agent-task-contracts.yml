@@ -24,6 +24,10 @@ on:
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
+      - "packages/runtime-playground/src/playground-cli-runner.ts"
+      - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
+      - "tests/playground-custom-archive-cache*.test.ts"
+      - "tests/fixtures/playground-cache-lease-child.ts"
       - "tests/playground-phpunit-readonly-cache.integration.test.ts"
       - "tests/fixtures/phpunit-playground-harness/**"
   push:
@@ -49,6 +53,10 @@ on:
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
+      - "packages/runtime-playground/src/playground-cli-runner.ts"
+      - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
+      - "tests/playground-custom-archive-cache*.test.ts"
+      - "tests/fixtures/playground-cache-lease-child.ts"
       - "tests/playground-phpunit-readonly-cache.integration.test.ts"
       - "tests/fixtures/phpunit-playground-harness/**"
 
@@ -72,6 +80,7 @@ jobs:
       - run: npm run test:agent-task-contracts
       - run: npm run test:runtime-sources-playground-integration
       - run: npm run test:playground-phpunit-readonly-cache-integration
+      - run: npm run test:playground-custom-archive-cache
       - run: npm run test:native-agent-task-playground-e2e
       - run: npm run test:native-agent-task-interruption
       - run: npm run test:trusted-apply-artifact-channel
