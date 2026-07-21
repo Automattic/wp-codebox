@@ -42,7 +42,7 @@ import {
   previewLeaseSummary,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
-import { normalizeJsonValue, stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES, COMMAND_ARTIFACT_MAX_NODES, COMMAND_ARTIFACT_MAX_RECORDS, COMMAND_ARTIFACT_STRING_MAX_BYTES, COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES, boundedExecutionResultsForArtifacts, normalizeJsonValue, stripUndefined, truncateUtf8, type BoundedExecutionResult } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
 import { writeTrustedApplyArtifacts } from "./trusted-apply-artifact-channel.js"
@@ -92,7 +92,7 @@ export interface ArtifactBundleBuilderSource {
   pluginCheckManifestFiles(): ArtifactManifestFile[]
   themeCheckManifestFiles(): ArtifactManifestFile[]
   formatRuntimeLog(): string
-  formatCommandsLog(): string
+  formatCommandsLog(commands: ExecutionResult[]): string
   recordArtifactsCollected(bundleId: string, createdAt: string, spec: ArtifactSpec): void
 }
 
@@ -366,11 +366,25 @@ export class ArtifactBundleBuilder {
     if (replaySnapshot) {
       await writeRedactedArtifact(redactor, partialBlueprintAfterPath, source.artifactRoot, artifactJson(partialBlueprintAfter))
     }
+    let artifactCommands: BoundedExecutionResult[]
+    try {
+      artifactCommands = boundedExecutionResultsForArtifacts(source.commands)
+    } catch (error) {
+      throw commandArtifactCollectionError(source.commands, "commands.jsonl", error)
+    }
     await writeJsonLines(eventsPath, source.events, redactor, source.artifactRoot)
-    await writeJsonLines(commandsPath, source.commands, redactor, source.artifactRoot)
+    try {
+      await writeJsonLines(commandsPath, artifactCommands, redactor, source.artifactRoot)
+    } catch (error) {
+      throw commandArtifactCollectionError(source.commands, "commands.jsonl", error)
+    }
     await writeJsonLines(observationsPath, source.observations, redactor, source.artifactRoot)
     await writeRedactedArtifact(redactor, runtimeLogPath, source.artifactRoot, source.formatRuntimeLog())
-    await writeRedactedArtifact(redactor, commandsLogPath, source.artifactRoot, source.formatCommandsLog())
+    try {
+      await writeRedactedArtifact(redactor, commandsLogPath, source.artifactRoot, source.formatCommandsLog(artifactCommands))
+    } catch (error) {
+      throw commandArtifactCollectionError(source.commands, "logs/commands.log", error)
+    }
     await writeRedactedArtifact(redactor, mountsPath, source.artifactRoot, artifactJson(source.mounts))
     await writeRedactedArtifact(redactor, capturedMountsPath, source.artifactRoot, artifactJson(serializeCapturedMountFiles(capturedMounts)))
     await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, artifactJson(mountDiffs))
@@ -756,6 +770,31 @@ function isLocalPreviewHost(hostname: string): boolean {
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
   await writeRedactedArtifact(redactor, path, artifactRoot, artifactJsonLines(records.map((record) => normalizeJsonValue(record))))
+}
+
+function commandArtifactCollectionError(commands: ExecutionResult[], artifactPath: string, cause: unknown): Error {
+  const activeCommand = commands.at(-1)
+  return Object.assign(new Error(`Command artifact collection failed while writing ${artifactPath}`, { cause }), {
+    name: "CommandArtifactCollectionError",
+    code: "command-artifact-collection-failed",
+    operation: "serialize-command-evidence",
+    subsystem: "artifact-bundle",
+    artifactPath,
+    payload: {
+      commandCount: commands.length,
+      stdoutBytes: commands.reduce((total, command) => total + Buffer.byteLength(command.stdout, "utf8"), 0),
+      stderrBytes: commands.reduce((total, command) => total + Buffer.byteLength(command.stderr, "utf8"), 0),
+    },
+    limits: {
+      capturedStringBytesPerValue: COMMAND_ARTIFACT_STRING_MAX_BYTES,
+      capturedStringBytesPerCommand: COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
+      capturedStringBytesTotal: COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
+      nodes: COMMAND_ARTIFACT_MAX_NODES,
+      records: COMMAND_ARTIFACT_MAX_RECORDS,
+    },
+    ...(activeCommand ? { commandIndex: commands.length - 1, command: activeCommand.command, commandId: activeCommand.id } : {}),
+    causeStack: cause instanceof Error ? truncateUtf8(cause.stack ?? `${cause.name}: ${cause.message}`, 16 * 1024) : undefined,
+  })
 }
 
 function artifactJson(value: unknown): string {

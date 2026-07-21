@@ -301,6 +301,31 @@ export interface RecipeArtifactsFinalizationController {
 interface RecipeRuntimeArtifactCollectionOptions {
   timeoutMs?: number
   snapshotTimeoutMs?: number
+  activeExecution?: RecipeEvidenceExecutionResult
+}
+
+export class RecipeRuntimeArtifactCollectionError extends Error {
+  readonly code = "recipe-artifact-collection-failed"
+  readonly operation = "runtime.collect-artifacts"
+  readonly subsystem = "artifact-bundle"
+  readonly workflowStepIndex?: number
+  readonly command?: string
+  readonly artifactPath?: string
+  readonly payload?: unknown
+  readonly limits?: unknown
+  readonly causeStack?: string
+
+  constructor(activeExecution: RecipeEvidenceExecutionResult | undefined, cause: Error) {
+    const causeRecord = cause as Error & Record<string, unknown>
+    super(`Recipe artifact collection failed${activeExecution?.recipeStepIndex === undefined ? "" : ` at workflow step ${activeExecution.recipeStepIndex}`}: ${cause.message}`, { cause })
+    this.name = "RecipeRuntimeArtifactCollectionError"
+    this.workflowStepIndex = activeExecution?.recipeStepIndex
+    this.command = activeExecution?.recipeCommand ?? activeExecution?.command
+    this.artifactPath = typeof causeRecord.artifactPath === "string" ? causeRecord.artifactPath : undefined
+    this.payload = causeRecord.payload
+    this.limits = causeRecord.limits
+    this.causeStack = typeof causeRecord.causeStack === "string" ? causeRecord.causeStack : cause.stack?.slice(0, 16 * 1024)
+  }
 }
 
 const execFileAsync = promisify(execFile)
@@ -322,7 +347,7 @@ export async function collectAndFinalizeFailedRecipeArtifacts(args: {
 
   if (!artifacts) {
     try {
-      artifacts = await collectRecipeRuntimeArtifacts(args.runtime, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: 20_000, timeoutMs: 30_000 })
+      artifacts = await collectRecipeRuntimeArtifacts(args.runtime, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: 20_000, timeoutMs: 30_000, activeExecution: args.executions.at(-1) })
     } catch {
       return undefined
     }
@@ -354,11 +379,19 @@ export async function collectRecipeRuntimeArtifacts(runtime: Runtime, spec: Arti
     }
   }
 
-  const artifacts = runtime.collectArtifacts(spec)
-  if (options.timeoutMs && options.timeoutMs > 0) {
-    return timeoutOrReject(artifacts, options.timeoutMs, `Runtime artifact collection exceeded ${options.timeoutMs}ms`)
+  try {
+    const artifacts = runtime.collectArtifacts(spec)
+    if (options.timeoutMs && options.timeoutMs > 0) {
+      return await timeoutOrReject(artifacts, options.timeoutMs, `Runtime artifact collection exceeded ${options.timeoutMs}ms`)
+    }
+    return await artifacts
+  } catch (error) {
+    const candidate = error instanceof Error ? error as Error & Record<string, unknown> : undefined
+    if (candidate?.code === "command-artifact-collection-failed" || error instanceof RangeError) {
+      throw new RecipeRuntimeArtifactCollectionError(options.activeExecution, candidate ?? Object.assign(new Error(String(error)), { code: "runtime-allocation-failed" }))
+    }
+    throw error
   }
-  return artifacts
 }
 
 async function timeoutOrUndefined<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
