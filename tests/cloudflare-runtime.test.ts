@@ -16,6 +16,7 @@ import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticCont
 import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
 import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
+import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../packages/runtime-cloudflare/src/wp-content-persistence.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -30,6 +31,22 @@ test("Cloudflare upload manifests reject unbounded or non-canonical R2 files", (
   assert.throws(() => validateUploadMetadata([{ path: "large.png", size: MAX_UPLOAD_FILE_BYTES + 1 }]), /invalid file/)
   assert.throws(() => validateUploadManifestFiles([{ ...valid[0], objectKey: "runtime/wordpress/archive.zip" }]), /invalid file/)
   assert.throws(() => validateUploadManifestFiles([{ ...valid[0], sha256: "not-a-digest" }]), /invalid file/)
+})
+
+test("Cloudflare wp-content manifests allow bounded user code and reject runtime-owned files", () => {
+  const sha256 = "a".repeat(64)
+  const valid = [{ path: "plugins/example/example.php", size: 128, sha256, objectKey: `${R2_WP_CONTENT_OBJECT_PREFIX}/${sha256}` }]
+  assert.doesNotThrow(() => validateWpContentManifestFiles(valid))
+  assert.doesNotThrow(() => validateWpContentMetadata([{ path: "themes/example/style.css", size: 0 }, { path: "languages/example.mo", size: 1 }, { path: "mu-plugins/example.php", size: 1 }]))
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/../secret.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/markdown-database-integration/owned.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/sqlite-database-integration/owned.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php/child.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "themes/example/large.css", size: MAX_WP_CONTENT_FILE_BYTES + 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentManifestFiles([{ ...valid[0], objectKey: "sites/default/uploads/objects/foreign" }]), /invalid file/)
+  assert.doesNotThrow(() => validateWpContentDeletedPaths(["themes/example/style.css"]))
+  assert.throws(() => validateWpContentDeletedPaths(["themes/z/style.css", "themes/a/style.css"]), /non-deterministic/)
 })
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {
@@ -215,8 +232,8 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.match(patcher, /return \(string\) _wp_array_get\( \$this->theme_json, array\( 'styles', 'css' \), '' \)/)
   assert.doesNotMatch(patcher, /mu-plugins|add_action\(|WP_Site_Health|wp_schedule_site_health_cron|\$GLOBALS\['wp_filter'\]/)
   assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
-  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],/)
-  assert.match(worker, /authConstants, bucket, true, revision\.uploads\), pointer/)
+  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],\n  wpContentFiles\?: RuntimeFile\[\],/)
+  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted\), pointer/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
   assert.match(worker, /canonicalBootstrapPasswordCode/)
   assert.match(worker, /canonicalBootstrapUrlCode/)
@@ -258,8 +275,10 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /sites\/default\/markdown\/revisions\/\$\{candidate\.revision\}\.json/)
   assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
   assert.match(worker, /authConstants/)
+  assert.match(worker, /const wpContentResponse = await serveWordPressWpContent\(request, env\.WORDPRESS_STATE_BUCKET, coordinator\)/)
   assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request, env\.WORDPRESS_STATE_BUCKET\)/)
-  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf("const coordinator = env.WORDPRESS_STATE.getByName"))
+  assert.ok(worker.indexOf("const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator)") < worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)"))
+  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf("const route = routeWorkerRequest(request)"))
   assert.match(worker, /CONCATENATE_SCRIPTS: false/)
   assert.match(worker, /SCRIPT_DEBUG: false/)
   assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
@@ -289,6 +308,14 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /collectUploadFiles\(runtime\.php\)/)
   assert.match(worker, /materializeRuntimeFiles\(php, UPLOADS_ROOT, uploadFiles\)/)
   assert.match(worker, /"x-wp-codebox-static": "r2-upload"/)
+  assert.match(worker, /collectWpContentFiles\(runtime\.php\)/)
+  assert.match(worker, /persistWpContentObjects\(bucket, wpContent/)
+  assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\]\)/)
+  assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
+  assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-wp-content"/)
+  assert.match(worker, /url\.pathname\.startsWith\("\/wp-admin\/"\).*url\.searchParams\.get\("action"\)/)
+  assert.match(worker, /if \(!file\) return null/)
   assert.equal((worker.match(/validateUploadManifestFiles\(manifest\??\.uploads \?\? \[\]\)/g) ?? []).length, 2)
   assert.match(materializer, /materializeWordPressRuntimeArtifact\(php, bucket, wordpressRuntimeArtifactManifest/)
   assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL/)

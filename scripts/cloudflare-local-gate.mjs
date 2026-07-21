@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { stripVTControlCharacters } from "node:util"
+import { encodeZip } from "@php-wasm/stream-compression"
 
 const port = 8792
 const origin = `http://127.0.0.1:${port}`
@@ -28,6 +29,7 @@ try {
   }
   console.log(`Explanatory homepage timing: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
   const adminHtml = await login()
+  const deletedThemePath = await installDurablePlugin(adminHtml)
   const editorHtml = await assertPostNewEditor()
   const media = await createMedia(adminHtml)
   await assertMediaFile(media, "uploaded media")
@@ -47,10 +49,13 @@ try {
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertMediaFile(media, "media after cold restart")
   await assertMediaMetadata(media, "media metadata after cold restart")
+  await assertDurablePlugin("plugin after cold restart")
+  await assertDurablePluginAsset("plugin asset after cold restart")
+  await assertDeletedThemeFile(deletedThemePath, "bundled theme tombstone after cold restart")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, and session persistence.")
+  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, plugin, and session persistence.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -183,6 +188,87 @@ async function assertPostNewEditor() {
     throw new Error(`Expected the authenticated block editor, received ${response.status} at ${response.url}.`)
   }
   return body
+}
+
+async function installDurablePlugin(adminHtml) {
+  const uploadPage = await request(`${origin}/wp-admin/plugin-install.php?tab=upload`)
+  const uploadHtml = await uploadPage.text()
+  const nonce = uploadHtml.match(/name=["']_wpnonce["'][^>]*value=["']([^"']+)["']/i)?.[1]
+  if (!uploadPage.ok || !nonce) throw new Error("Plugin upload page did not expose its installation nonce.")
+  const source = `<?php
+/**
+ * Plugin Name: Cloudflare Durable Plugin Proof
+ */
+add_action( 'rest_api_init', static function () {
+	register_rest_route( 'wp-codebox/v1', '/durable-plugin', array(
+		'methods' => 'GET',
+		'callback' => static fn() => rest_ensure_response( array( 'durable' => true, 'source' => 'canonical-wp-content' ) ),
+		'permission_callback' => '__return_true',
+	) );
+	register_rest_route( 'wp-codebox/v1', '/delete-bundled-theme-file', array(
+		'methods' => 'POST',
+		'callback' => static function () {
+			foreach ( wp_get_themes() as $stylesheet => $theme ) {
+				if ( $stylesheet === get_stylesheet() ) continue;
+				$relative = 'themes/' . $stylesheet . '/style.css';
+				$absolute = WP_CONTENT_DIR . '/' . $relative;
+				if ( is_file( $absolute ) && unlink( $absolute ) ) return rest_ensure_response( array( 'deleted' => $relative ) );
+			}
+			return new WP_Error( 'no_inactive_theme_file', 'No inactive bundled theme file was available.', array( 'status' => 409 ) );
+		},
+		'permission_callback' => static fn() => current_user_can( 'delete_themes' ),
+	) );
+} );`
+  const archive = new Uint8Array(await new Response(encodeZip([
+    new File([source], "cloudflare-durable-proof/cloudflare-durable-proof.php", { lastModified: 0, type: "application/x-httpd-php" }),
+    new File([".cloudflare-durable-proof{display:block}"], "cloudflare-durable-proof/proof.css", { lastModified: 0, type: "text/css" }),
+  ])).arrayBuffer())
+  const form = new FormData()
+  form.set("_wpnonce", nonce)
+  form.set("_wp_http_referer", "/wp-admin/plugin-install.php?tab=upload")
+  form.set("pluginzip", new File([archive], "cloudflare-durable-proof.zip", { type: "application/zip" }))
+  form.set("install-plugin-submit", "Install Now")
+  const installed = await request(`${origin}/wp-admin/update.php?action=upload-plugin`, { method: "POST", body: form })
+  const installedHtml = await installed.text()
+  assertNoPhpDiagnostics(installedHtml, "plugin installation")
+  const activationHref = installedHtml.match(/href=["']([^"']*plugins\.php\?action=activate[^"']+)["'][^>]*>Activate Plugin</i)?.[1]
+  if (!installed.ok || !activationHref) throw new Error(`WordPress did not install the durable plugin: status=${installed.status}.`)
+  const activationUrl = new URL(activationHref.replaceAll("&#038;", "&").replaceAll("&amp;", "&"), `${origin}/wp-admin/`)
+  const activated = await request(activationUrl)
+  const activatedHtml = await activated.text()
+  assertNoPhpDiagnostics(activatedHtml, "plugin activation")
+  if (!activated.ok || !/Plugin activated/i.test(activatedHtml)) throw new Error(`WordPress did not activate the durable plugin: status=${activated.status}.`)
+  await assertDurablePlugin("newly activated plugin")
+  await assertDurablePluginAsset("newly installed plugin asset")
+  const deleted = await request(`${origin}/wp-json/wp-codebox/v1/delete-bundled-theme-file`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-wp-nonce": restNonce(adminHtml) },
+    body: "{}",
+  })
+  const deletedPayload = await deleted.json()
+  if (!deleted.ok || !/^themes\/[a-z0-9-]+\/style\.css$/.test(deletedPayload.deleted ?? "")) throw new Error(`Bundled theme deletion failed: status=${deleted.status} payload=${JSON.stringify(deletedPayload)}.`)
+  await assertDeletedThemeFile(deletedPayload.deleted, "new bundled theme tombstone")
+  return deletedPayload.deleted
+}
+
+async function assertDurablePlugin(label) {
+  const response = await request(`${origin}/wp-json/wp-codebox/v1/durable-plugin`)
+  const payload = await response.json()
+  if (!response.ok || payload.durable !== true || payload.source !== "canonical-wp-content") throw new Error(`Unexpected ${label} response: status=${response.status} payload=${JSON.stringify(payload)}.`)
+}
+
+async function assertDurablePluginAsset(label) {
+  const response = await request(`${origin}/wp-content/plugins/cloudflare-durable-proof/proof.css`)
+  const body = await response.text()
+  if (!response.ok || body !== ".cloudflare-durable-proof{display:block}" || response.headers.get("content-type") !== "text/css; charset=utf-8"
+    || response.headers.get("x-wp-codebox-static") !== "r2-wp-content") {
+    throw new Error(`Unexpected ${label} response: status=${response.status} source=${response.headers.get("x-wp-codebox-static")} body=${body}.`)
+  }
+}
+
+async function assertDeletedThemeFile(path, label) {
+  const response = await request(`${origin}/wp-content/${path}`)
+  if (response.status !== 404) throw new Error(`Expected ${label} to return 404, received ${response.status}.`)
 }
 
 async function assertConcurrentMutations() {
