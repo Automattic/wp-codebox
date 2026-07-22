@@ -1,4 +1,5 @@
-export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2" as const
+export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v3" as const
+const PREVIOUS_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2"
 const LEGACY_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1"
 export const PUBLISHED_PAGE_SCHEMA = "wp-codebox/wordpress-page/v2" as const
 export const R2_PUBLISHED_CURRENT_KEY = "sites/default/publications/current.json"
@@ -17,6 +18,7 @@ export interface PublishedRevision {
   schema: typeof PUBLISHED_REVISION_SCHEMA
   revision: string
   canonicalRevision: string
+  canonicalVersion: number
   publishedAt: string
   routes: PublishedRoute[]
 }
@@ -43,8 +45,10 @@ export function validatePublishedRevision(value: unknown): PublishedRevision {
   if (!value || typeof value !== "object") throw new Error("Published revision is invalid.")
   const revision = value as Partial<PublishedRevision>
   const legacy = (value as { schema?: unknown }).schema === LEGACY_PUBLISHED_REVISION_SCHEMA
-  if (![PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
+  const current = revision.schema === PUBLISHED_REVISION_SCHEMA
+  if (![PUBLISHED_REVISION_SCHEMA, PREVIOUS_PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
     || typeof revision.publishedAt !== "string" || !Number.isFinite(Date.parse(revision.publishedAt)) || !Array.isArray(revision.routes)
+    || (current && (typeof revision.canonicalVersion !== "number" || !Number.isSafeInteger(revision.canonicalVersion) || revision.canonicalVersion < 0))
     || revision.routes.length === 0 || revision.routes.length > MAX_PUBLISHED_ROUTES) throw new Error("Published revision is invalid.")
   let previous = ""
   const normalizedRoutes: PublishedRoute[] = []
@@ -57,7 +61,7 @@ export function validatePublishedRevision(value: unknown): PublishedRevision {
     previous = route.route
     normalizedRoutes.push({ route: route.route, objectKey: route.objectKey, canonicalRevision: routeRevision })
   }
-  return { ...revision, schema: PUBLISHED_REVISION_SCHEMA, routes: normalizedRoutes } as PublishedRevision
+  return { ...revision, schema: PUBLISHED_REVISION_SCHEMA, canonicalVersion: current ? revision.canonicalVersion! : 0, routes: normalizedRoutes } as PublishedRevision
 }
 
 export function normalizePublishedRoutes(value: unknown): string[] {

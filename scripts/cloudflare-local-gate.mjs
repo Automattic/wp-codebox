@@ -46,18 +46,17 @@ try {
   await assertAnonymousWordPressPage(origin, "homepage publication candidate")
   const initialPublication = await publishRoutes(["/", post.route])
   const updatedPost = await updatePost(adminHtml, post, initialPublication.revision)
-  const automaticallyPublishedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "automatically republished post")
+  // Restart with an explicit pending job to prove progress is durable rather than isolate-local.
+  await stopWorker()
+  await startWorker()
+  const automaticallyPublishedPost = await runScheduledPublicationUntil(new URL(post.route, origin), updatedPost.title, "automatically republished post")
   assertIncludes(automaticallyPublishedPost, updatedPost.title, "automatically republished post")
-  await assertPublishedRevision(origin, updatedPost.publicationRevision, "automatically republished homepage")
   post.title = updatedPost.title
   await assertHealthResponse()
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
   await assertLinkedAssets(editorHtml, "editor")
   await assertStaticResponseSemantics()
-  await stopWorker()
-
-  await startWorker()
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
   const restartedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "post after publication restart", ["publication-r2", "publication-edge"])
   assertIncludes(restartedPost, post.title, "post after cold restart")
@@ -69,7 +68,7 @@ try {
   await assertScheduledPost(scheduledPost.id, "draft", 0, scheduledPost.timestamp, "scheduled post before cron")
   await runScheduledCronUntilPost(scheduledPost.id)
   await assertScheduledPostEventually(scheduledPost.id, "publish", 1, false, "scheduled post after cron")
-  const scheduledPage = await assertPublishedWordPressPage(new URL(scheduledPost.route, origin), "automatically published scheduled post", ["publication-r2", "publication-edge"])
+  const scheduledPage = await runScheduledPublicationUntil(new URL(scheduledPost.route, origin), "Published by the Cloudflare scheduled handler.", "automatically published scheduled post")
   assertIncludes(scheduledPage, "Published by the Cloudflare scheduled handler.", "automatically published scheduled post")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   await stopWorker()
@@ -134,7 +133,7 @@ async function login() {
   const form = new URLSearchParams({ log: "admin", pwd: password, redirect_to: `${origin}/wp-admin/`, testcookie: "1", "wp-submit": "Log In" })
   const response = await request(`${origin}/wp-login.php`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "manual" })
   if (![301, 302].includes(response.status)) throw new Error(`Expected login redirect, received ${response.status}: ${await response.text()}`)
-  if (response.headers.has("x-wp-codebox-publication") || response.headers.has("x-wp-codebox-publication-revision")) throw new Error("Login must not trigger publication work.")
+  if (response.headers.get("x-wp-codebox-publication") === "queued" || response.headers.has("x-wp-codebox-publication-revision")) throw new Error("Login must not enqueue or promote publication work.")
   const location = response.headers.get("location")
   if (!location?.includes("/wp-admin/")) throw new Error(`Login did not redirect to wp-admin: ${location}`)
   const admin = await assertAuthenticatedDashboard(new URL(location, origin))
@@ -168,12 +167,12 @@ async function updatePost(adminHtml, post, previousPublicationRevision) {
   const body = await response.text()
   assertNoPhpDiagnostics(body, "REST post update with automatic publication")
   const publicationRevision = response.headers.get("x-wp-codebox-publication-revision")
-  if (response.status !== 200 || response.headers.get("x-wp-codebox-publication") !== "promoted" || !publicationRevision || publicationRevision === previousPublicationRevision) {
+  if (response.status !== 200 || response.headers.get("x-wp-codebox-publication") !== "queued" || !response.headers.get("x-wp-codebox-publication-job")) {
     throw new Error(`Automatic publication failed: status=${response.status} publication=${response.headers.get("x-wp-codebox-publication")} revision=${publicationRevision} body=${body}.`)
   }
   const payload = JSON.parse(body)
   if (payload.title?.rendered !== title) throw new Error(`Unexpected updated post response: ${body}`)
-  return { title, publicationRevision }
+  return { title }
 }
 
 async function createMedia(adminHtml) {
@@ -393,6 +392,17 @@ async function runScheduledCronUntilPost(id) {
   throw new Error("Scheduled post remained queued after five bounded cron ticks.")
 }
 
+async function runScheduledPublicationUntil(target, expected, label) {
+  for (let tick = 0; tick < 5; tick++) {
+    await runScheduledCron()
+    const response = await fetch(target)
+    const body = await response.text()
+    if (response.ok && ["publication-r2", "publication-edge"].includes(response.headers.get("x-wp-codebox-page-cache-source")) && body.includes(expected)) return body
+  }
+  const diagnostics = stripVTControlCharacters(output).split("\n").filter((line) => /publication|scheduled|error|exception/i.test(line)).slice(-30).join("\n")
+  throw new Error(`${label} did not reach coordinator-free R2 publication after five bounded scheduled ticks.\n${diagnostics}`)
+}
+
 async function assertWordPressCronDisabled() {
   const response = await request(`${origin}/wp-cron.php?doing_wp_cron=1`)
   if (response.status !== 404 || !((await response.text()).includes("Cloudflare scheduled handler"))) throw new Error(`Direct WordPress cron returned ${response.status}.`)
@@ -490,7 +500,7 @@ async function publishRoutes(routes) {
   } catch {
     throw new Error(`Canonical publication returned non-JSON: status=${response.status} body=${body}.\n${stripVTControlCharacters(output).split("\n").filter((line) => /error|exception|publication/i.test(line)).slice(-30).join("\n")}`)
   }
-  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v2" || payload.routes?.length !== routes.length) {
+  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v3" || payload.routes?.length !== routes.length) {
     throw new Error(`Canonical publication failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
   }
   return payload

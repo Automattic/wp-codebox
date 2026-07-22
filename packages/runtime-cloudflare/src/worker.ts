@@ -56,6 +56,13 @@ const WORDPRESS_PAGE_CACHE_SCHEMA = "v3"
 const PUBLIC_WP_CONTENT_EXTENSION = /\.(?:css|js|mjs|json|txt|xml|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/i
 const MAX_CRON_EVENTS_PER_INVOCATION = 5
 const MAX_CRON_INVOCATION_MS = 25_000
+const PUBLICATION_JOB_SCHEMA = "wp-codebox/publication-job/v1"
+const PUBLICATION_PROGRESS_SCHEMA = "wp-codebox/publication-progress/v1"
+const R2_PUBLICATION_JOB_PREFIX = "sites/default/publications/jobs"
+const R2_PUBLICATION_PROGRESS_PREFIX = "sites/default/publications/job-progress"
+const R2_PUBLICATION_CLAIM_PREFIX = "sites/default/publications/job-claims"
+const R2_PUBLICATION_RECEIPT_PREFIX = "sites/default/publications/job-receipts"
+const PUBLICATION_CLAIM_MS = 90_000
 const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
 define('SHORTINIT', true);
 require '/wordpress/wp-load.php';
@@ -156,7 +163,10 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
       return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
     },
     async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-      const evidence = await runScheduledWordPressCron(env, resolveCoordinator(env), controller.scheduledTime)
+      const coordinator = resolveCoordinator(env)
+      const publication = await drainNextPublicationJob(env, coordinator)
+      // A publication boot is intentionally the only heavyweight runtime in this invocation.
+      const evidence = publication ? publication : await runScheduledWordPressCron(env, coordinator, controller.scheduledTime)
       console.log(JSON.stringify(evidence))
     },
   }
@@ -210,6 +220,23 @@ interface CompiledPublicationRoute {
   body: string
 }
 
+interface PublicationJob {
+  schema: typeof PUBLICATION_JOB_SCHEMA
+  key: string
+  canonical: MarkdownPointer
+  coordinatorVersion: number
+  changes: PublicationChanges
+  createdAt: string
+}
+
+interface PublicationProgress {
+  schema: typeof PUBLICATION_PROGRESS_SCHEMA
+  next: number
+  rendered: string[]
+  plan?: { upsert: string[]; remove: string[] }
+  completedAt?: string
+}
+
 interface CanonicalSeedManifest {
   schema: string
   markdownDatabaseIntegrationRevision: string
@@ -231,8 +258,15 @@ interface CronInvocationEvidence {
   scheduledTime: number
   startedAt: string
   completedAt: string
-  events: Array<{ hook: string; timestamp: number; revision: string; publication: "promoted" | "conflict" | "failed" | "unchanged" }>
+  events: Array<{ hook: string; timestamp: number; revision: string; publication: "queued" | "unchanged" }>
   status: "completed" | "bounded" | "no-canonical-state"
+}
+
+interface PublicationInvocationEvidence {
+  schema: "wp-codebox/cloudflare-publication/v1"
+  status: "rendered" | "promoted" | "pending" | "stale" | "failed"
+  jobKey: string
+  route?: string
 }
 
 let cachedRuntime: { baseRevision: string; promise: Promise<Runtime> } | undefined
@@ -363,6 +397,7 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
     schema: PUBLISHED_REVISION_SCHEMA,
     revision: crypto.randomUUID(),
     canonicalRevision: state.pointer.revision,
+    canonicalVersion: state.version,
     publishedAt: new Date().toISOString(),
     routes: publishedRoutes,
   }
@@ -407,6 +442,176 @@ function publicationPlan(current: PublishedRevision, changes: PublicationChanges
   return { upsert, remove }
 }
 
+function publicationJobObjectKey(version: number, revision: string): string {
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error("Publication job coordinator version is invalid.")
+  if (!/^[a-f0-9-]{36}$/.test(revision)) throw new Error("Publication job canonical revision is invalid.")
+  return `${R2_PUBLICATION_JOB_PREFIX}/${String(version).padStart(20, "0")}-${revision}.json`
+}
+
+function publicationProgressObjectKey(job: PublicationJob): string {
+  return `${R2_PUBLICATION_PROGRESS_PREFIX}/${job.key.split("/").at(-1)}`
+}
+
+function publicationClaimObjectKey(job: PublicationJob): string {
+  return `${R2_PUBLICATION_CLAIM_PREFIX}/${job.key.split("/").at(-1)}`
+}
+
+function publicationReceiptObjectKey(job: PublicationJob): string {
+  return `${R2_PUBLICATION_RECEIPT_PREFIX}/${job.key.split("/").at(-1)}`
+}
+
+async function enqueuePublicationJob(bucket: R2Bucket, lease: Lease, canonical: MarkdownPointer, current: CurrentPublication | null, changes: PublicationChanges): Promise<PublicationJob | null> {
+  if (!current) return null
+  const plan = publicationPlan(current.publication, changes)
+  if (!plan.upsert.length && !plan.remove.length) return null
+  const coordinatorVersion = lease.version + 1
+  const key = publicationJobObjectKey(coordinatorVersion, canonical.revision)
+  const job: PublicationJob = {
+    schema: PUBLICATION_JOB_SCHEMA,
+    key,
+    canonical,
+    coordinatorVersion,
+    changes,
+    createdAt: new Date().toISOString(),
+  }
+  const serialized = JSON.stringify(job)
+  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Publication job exceeds its size budget.")
+  // The coordinator's historical receipt makes this staged object discoverable only
+  // after this exact version/pointer commits.
+  await putImmutableJson(bucket, key, serialized)
+  return job
+}
+
+async function readPublicationJob(bucket: R2Bucket, key: string): Promise<PublicationJob> {
+  const object = await bucket.get(key)
+  if (!object || object.size > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Publication job is unavailable or exceeds its size budget.")
+  const job = JSON.parse(await object.text()) as PublicationJob
+  if (job.schema !== PUBLICATION_JOB_SCHEMA || job.key !== key || job.key !== publicationJobObjectKey(job.coordinatorVersion, job.canonical?.revision ?? "")
+    || !isCanonicalRestorePointer(job.canonical) || !validatePublicationChanges(job.changes)
+    || !Number.isFinite(Date.parse(job.createdAt))) throw new Error("Publication job is invalid.")
+  return job
+}
+
+function validatePublicationChanges(changes: unknown): changes is PublicationChanges {
+  if (!changes || typeof changes !== "object") return false
+  const value = changes as PublicationChanges
+  return typeof value.all === "boolean" && Array.isArray(value.upsert) && Array.isArray(value.remove)
+    && value.upsert.every((route) => typeof route === "string" && canonicalPublicRoute(route) === route)
+    && value.remove.every((route) => typeof route === "string" && canonicalPublicRoute(route) === route)
+}
+
+function isPublicationPlan(plan: unknown): plan is { upsert: string[]; remove: string[] } {
+  return !!plan && typeof plan === "object" && Array.isArray((plan as { upsert?: unknown }).upsert) && Array.isArray((plan as { remove?: unknown }).remove)
+    && (plan as { upsert: unknown[] }).upsert.every((route) => typeof route === "string" && canonicalPublicRoute(route) === route)
+    && (plan as { remove: unknown[] }).remove.every((route) => typeof route === "string" && canonicalPublicRoute(route) === route)
+}
+
+async function readPublicationProgress(bucket: R2Bucket, job: PublicationJob): Promise<PublicationProgress> {
+  const object = await bucket.get(publicationProgressObjectKey(job))
+  if (!object) return { schema: PUBLICATION_PROGRESS_SCHEMA, next: 0, rendered: [] }
+  if (object.size > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Publication progress exceeds its size budget.")
+  const progress = JSON.parse(await object.text()) as PublicationProgress
+  if (progress.schema !== PUBLICATION_PROGRESS_SCHEMA || !Number.isSafeInteger(progress.next) || progress.next < 0
+    || !Array.isArray(progress.rendered) || (progress.plan && !isPublicationPlan(progress.plan))
+    || (progress.plan && (progress.next > progress.plan.upsert.length || progress.rendered.some((route) => !progress.plan!.upsert.includes(route))))) throw new Error("Publication progress is invalid.")
+  return progress
+}
+
+async function writePublicationProgress(bucket: R2Bucket, job: PublicationJob, progress: PublicationProgress): Promise<void> {
+  const serialized = JSON.stringify(progress)
+  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Publication progress exceeds its size budget.")
+  await bucket.put(publicationProgressObjectKey(job), serialized, { httpMetadata: { contentType: "application/json" } })
+}
+
+async function claimPublicationJob(bucket: R2Bucket, job: PublicationJob): Promise<{ token: string; etag?: string } | null> {
+  const key = publicationClaimObjectKey(job)
+  const existing = await bucket.get(key)
+  if (existing && existing.size <= 1_024) {
+    const claim = JSON.parse(await existing.text()) as { expiresAt?: unknown }
+    if (typeof claim.expiresAt === "number" && claim.expiresAt > Date.now()) return null
+  }
+  const token = crypto.randomUUID()
+  const onlyIf = existing ? { etagMatches: existing.etag } : { etagDoesNotMatch: "*" }
+  const written = await bucket.put(key, JSON.stringify({ token, expiresAt: Date.now() + PUBLICATION_CLAIM_MS }), { onlyIf, httpMetadata: { contentType: "application/json" } })
+  return written ? { token, etag: written.etag } : null
+}
+
+async function releasePublicationClaim(bucket: R2Bucket, job: PublicationJob, claim: { etag?: string }): Promise<void> {
+  // Conditional expiry cannot delete a newer claimant after an expired invocation resumes.
+  if (claim.etag) await bucket.put(publicationClaimObjectKey(job), JSON.stringify({ expiresAt: 0 }), { onlyIf: { etagMatches: claim.etag }, httpMetadata: { contentType: "application/json" } })
+}
+
+async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoordinator): Promise<PublicationInvocationEvidence | null> {
+  const listed = await env.WORDPRESS_STATE_BUCKET.list({ prefix: `${R2_PUBLICATION_JOB_PREFIX}/`, limit: 16 })
+  if (!listed.objects.length) return null
+  const state = await coordinator.state()
+  let job: PublicationJob | undefined
+  for (const object of listed.objects) {
+    const candidate = await readPublicationJob(env.WORDPRESS_STATE_BUCKET, object.key)
+    const committed = await coordinator.committed(candidate.coordinatorVersion)
+    if (committed?.revision === candidate.canonical.revision) {
+      job = candidate
+      break
+    }
+    if (state.version > candidate.coordinatorVersion || Date.now() - Date.parse(candidate.createdAt) > PUBLICATION_CLAIM_MS) {
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(candidate), JSON.stringify({ status: "orphaned", job: candidate.key, recordedAt: new Date().toISOString() }))
+      await env.WORDPRESS_STATE_BUCKET.delete(candidate.key)
+    }
+  }
+  if (!job) return listed.truncated ? { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: "scan" } : null
+  const claim = await claimPublicationJob(env.WORDPRESS_STATE_BUCKET, job)
+  if (!claim) return { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: job.key }
+  let runtime: Runtime | undefined
+  try {
+    let progress = await readPublicationProgress(env.WORDPRESS_STATE_BUCKET, job)
+    const current = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
+    if (!current || current.publication.canonicalVersion >= job.coordinatorVersion) {
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job), JSON.stringify({ status: "superseded", job: job.key, recordedAt: new Date().toISOString() }))
+      await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job)])
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: job.key }
+    }
+    if (!progress.plan) {
+      progress = { ...progress, plan: publicationPlan(current.publication, job.changes) }
+      await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, progress)
+    }
+    const plan = progress.plan
+    if (!plan) throw new Error("Publication progress plan is unavailable.")
+    if (progress.next < plan.upsert.length) {
+      const route = plan.upsert[progress.next]
+      runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, job.canonical, SITE_URL, await canonicalWordPressAuthConstants(env))
+      const compiled = await compilePublicationRoutes(runtime, [route], await runtimeSiteOrigin(runtime))
+      const page = compiled[0]
+      const objectKey = await publishedPageObjectKey(job.canonical.revision, page.route)
+      const snapshot: WordPressPageSnapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: job.canonical.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
+      const serialized = JSON.stringify(snapshot)
+      if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, objectKey, serialized)
+      await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, { ...progress, next: progress.next + 1, rendered: [...progress.rendered, route] })
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "rendered", jobKey: job.key, route }
+    }
+    const routes = new Map(current.publication.routes.map((route) => [route.route, route]))
+    for (const route of plan.remove) routes.delete(route)
+    for (const route of plan.upsert) routes.set(route, { route, objectKey: await publishedPageObjectKey(job.canonical.revision, route), canonicalRevision: job.canonical.revision })
+    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
+    const serialized = JSON.stringify(publication)
+    if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
+    await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision), serialized)
+    if (!await promoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, current, { serialized, invalidatedRoutes: [...new Set([...plan.upsert, ...plan.remove])].sort() }, SITE_URL)) {
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: job.key }
+    }
+    await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, { ...progress, completedAt: new Date().toISOString() })
+    await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job), JSON.stringify({ status: "promoted", job: job.key, publication: publication.revision, recordedAt: new Date().toISOString() }))
+    await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job)])
+    return { schema: "wp-codebox/cloudflare-publication/v1", status: "promoted", jobKey: job.key }
+  } catch (error) {
+    console.error("Publication job failed.", error)
+    return { schema: "wp-codebox/cloudflare-publication/v1", status: "failed", jobKey: job.key }
+  } finally {
+    if (runtime) await discardRuntime(runtime)
+    await releasePublicationClaim(env.WORDPRESS_STATE_BUCKET, job, claim)
+  }
+}
+
 async function compilePublicationRoutes(runtime: Runtime, routes: string[], origin: string): Promise<CompiledPublicationRoute[]> {
   const compiled: CompiledPublicationRoute[] = []
   for (const route of routes) {
@@ -422,45 +627,12 @@ async function compilePublicationRoutes(runtime: Runtime, routes: string[], orig
   return compiled
 }
 
-async function stageIncrementalPublication(bucket: R2Bucket, current: PublishedRevision, pointer: MarkdownPointer, compiled: CompiledPublicationRoute[], remove: string[]): Promise<{ publication: PublishedRevision; serialized: string; invalidatedRoutes: string[] }> {
-  const routes = new Map(current.routes.map((route) => [route.route, route]))
-  for (const route of remove) routes.delete(route)
-  for (const page of compiled) {
-    const objectKey = await publishedPageObjectKey(pointer.revision, page.route)
-    const snapshot: WordPressPageSnapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: pointer.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
-    const serialized = JSON.stringify(snapshot)
-    if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
-    await putImmutableJson(bucket, objectKey, serialized)
-    routes.set(page.route, { route: page.route, objectKey, canonicalRevision: pointer.revision })
-  }
-  const publication: PublishedRevision = {
-    schema: PUBLISHED_REVISION_SCHEMA,
-    revision: crypto.randomUUID(),
-    canonicalRevision: pointer.revision,
-    publishedAt: new Date().toISOString(),
-    routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)),
-  }
-  const serialized = JSON.stringify(publication)
-  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
-  await putImmutableJson(bucket, publishedRevisionObjectKey(publication.revision), serialized)
-  return { publication, serialized, invalidatedRoutes: [...new Set([...compiled.map(({ route }) => route), ...remove])].sort() }
-}
-
 async function promoteIncrementalPublication(bucket: R2Bucket, current: CurrentPublication, staged: { serialized: string; invalidatedRoutes: string[] }, origin: string): Promise<boolean> {
   const promoted = await bucket.put(R2_PUBLISHED_CURRENT_KEY, staged.serialized, { onlyIf: { etagMatches: current.etag }, httpMetadata: { contentType: "application/json" } })
   if (!promoted) return false
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
   if (cache) await Promise.all(staged.invalidatedRoutes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, origin))))))
   return true
-}
-
-async function safelyPromoteIncrementalPublication(bucket: R2Bucket, current: CurrentPublication, staged: { serialized: string; invalidatedRoutes: string[] }, origin: string): Promise<"promoted" | "conflict" | "failed"> {
-  try {
-    return await promoteIncrementalPublication(bucket, current, staged, origin) ? "promoted" : "conflict"
-  } catch (error) {
-    console.error("Incremental publication promotion failed after canonical commit.", error)
-    return "failed"
-  }
 }
 
 function publishedPageCacheRequest(request: Request): Request {
@@ -536,18 +708,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     }
     if (mutatesCanonicalState) {
       if (!canonicalChanges || !publicationChanges) throw new Error("Canonical mutation completed without its persistence evidence.")
-      const plan = currentPublication ? publicationPlan(currentPublication.publication, publicationChanges) : null
-      const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, new URL(request.url).origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
-      const stagedPublication = currentPublication && plan && (plan.upsert.length || plan.remove.length)
-        ? await stageIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication.publication, next, compiled, plan.remove)
-        : null
+      const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges)
       await commitLease(coordinator, request.url, lease, next)
-      if (currentPublication && stagedPublication) {
-        const publicationStatus = await safelyPromoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication, stagedPublication, new URL(request.url).origin)
-        response.headers.set("x-wp-codebox-publication", publicationStatus)
-        if (publicationStatus === "promoted") response.headers.set("x-wp-codebox-publication-revision", stagedPublication.publication.revision)
-      }
+      response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
+      if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)
     } else {
       await releaseLease(coordinator, request.url, lease)
     }
@@ -822,7 +987,6 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
     let finalized = false
     try {
       runtime = await getRuntime(env, lease.pointer, SITE_URL)
-      const currentPublication = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
       const event = await runNextCronEvent(runtime)
       if (!event.executed) {
         await releaseLease(coordinator, requestUrl, lease)
@@ -830,19 +994,12 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
         await discardRuntime(runtime)
         break
       }
-      const plan = currentPublication ? publicationPlan(currentPublication.publication, event.publicationChanges) : null
-      const origin = plan && plan.upsert.length ? await runtimeSiteOrigin(runtime) : SITE_URL
-      const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, event.canonicalChanges)
-      const stagedPublication = currentPublication && plan && (plan.upsert.length || plan.remove.length)
-        ? await stageIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication.publication, next, compiled, plan.remove)
-        : null
+      const currentPublication = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
+      const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, event.publicationChanges)
       await commitLease(coordinator, requestUrl, lease, next)
-      const publication = currentPublication && stagedPublication
-        ? await safelyPromoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication, stagedPublication, origin)
-        : "unchanged"
       finalized = true
-      evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision, publication })
+      evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision, publication: publicationJob ? "queued" : "unchanged" })
       await discardRuntime(runtime)
     } catch (error) {
       if (!finalized) await abortLease(coordinator, requestUrl, lease)
