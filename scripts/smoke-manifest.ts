@@ -122,6 +122,7 @@ export const smokeGroups = {
       npmScript("test:runtime-php-snippets"),
       npmScript("test:php-runtime-provider-registry"),
       tsxSmoke("composer-backed-source-hydration-smoke"),
+      tsxSmoke("composer-package-overlay-autoload-layout-smoke"),
       tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),
       tsxSmoke("runtime-component-lifecycle-replay-smoke"),
     ],
