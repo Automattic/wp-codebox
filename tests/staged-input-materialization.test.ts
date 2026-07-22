@@ -14,8 +14,10 @@ await withTempDir("wp-codebox-staged-input-materialization-", async (root) => {
   const written = new Map<string, string>()
   const server = {
     playground: {
-      async run() {
-        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 2, skipped: 0 }) }
+      async run({ code }: { code: string }) {
+        return code.includes("wp-codebox/host-mount-verification/v1")
+          ? { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired: 0, skipped: 0 }) }
+          : { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 2, skipped: 0 }) }
       },
       async writeFile(path: string, contents: string) {
         written.set(path, contents)
@@ -50,6 +52,9 @@ await withTempDir("wp-codebox-staged-input-materialization-fallback-", async (ro
   const server = {
     playground: {
       async run({ code }: { code: string }) {
+        if (code.includes("wp-codebox/host-mount-verification/v1")) {
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired: 0, skipped: 0 }) }
+        }
         if (code.includes("wp-codebox/host-mount-materialization/v1")) {
           fallbackWrites++
           return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: 1, skipped: 0 }) }

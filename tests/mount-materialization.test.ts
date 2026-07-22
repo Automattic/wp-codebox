@@ -16,7 +16,11 @@ try {
 
   const result = await materializePlaygroundStagedInputs({
     playground: {
-      async run() { return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) } },
+      async run({ code }: { code: string }) {
+        return code.includes("wp-codebox/host-mount-verification/v1")
+          ? { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired: 0, skipped: 0 }) }
+          : { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) }
+      },
       async writeFile(target: string, contents: string) { writes[target] = contents },
     },
   } as never, [{
@@ -45,6 +49,9 @@ try {
     playground: {
       async run({ code }: { code: string }) {
         const payload = materializationPayload(code)
+        if (code.includes("wp-codebox/host-mount-verification/v1")) {
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired: 0, skipped: 0 }) }
+        }
         for (const directory of payload.directories ?? []) {
           readableDirectories.add(directory)
         }
@@ -106,6 +113,50 @@ try {
   assert.deepEqual(fallbackFileBatches, [100, 100, 5])
 } finally {
   await rm(fallbackSource, { recursive: true, force: true })
+}
+
+const silentlyDroppedSource = await mkdtemp(join(tmpdir(), "wp-codebox-silently-dropped-materialization-"))
+const verifiedFiles: Record<string, string> = {}
+
+try {
+  await mkdir(join(silentlyDroppedSource, "composer"), { recursive: true })
+  await writeFile(join(silentlyDroppedSource, "composer", "autoload_real.php"), "<?php require __DIR__ . '/autoload_static.php';")
+  await writeFile(join(silentlyDroppedSource, "composer", "autoload_static.php"), "<?php class ComposerStaticInitFixture {}")
+
+  const result = await materializePlaygroundStagedInputs({
+    playground: {
+      async run({ code }: { code: string }) {
+        const payload = materializationPayload(code)
+        if (code.includes("wp-codebox/host-mount-verification/v1")) {
+          let repaired = 0
+          for (const file of payload.files ?? []) {
+            const contents = Buffer.from(file.contentsBase64, "base64").toString("utf8")
+            if (verifiedFiles[file.target] !== contents) {
+              verifiedFiles[file.target] = contents
+              repaired++
+            }
+          }
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired, skipped: 0 }) }
+        }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
+      },
+      async writeFile(target: string, contents: string) {
+        if (!target.endsWith("autoload_static.php")) {
+          verifiedFiles[target] = contents
+        }
+      },
+    },
+  } as never, [{
+    type: "directory",
+    source: silentlyDroppedSource,
+    target: "/wp-codebox-vendor",
+    mode: "readonly",
+  }])
+
+  assert.equal(result.materialized, 2)
+  assert.equal(verifiedFiles["/wp-codebox-vendor/composer/autoload_static.php"], "<?php class ComposerStaticInitFixture {}", "verification repairs a direct writer that silently omits a generated companion file")
+} finally {
+  await rm(silentlyDroppedSource, { recursive: true, force: true })
 }
 
 const unreadableTargetSource = await mkdtemp(join(tmpdir(), "wp-codebox-unreadable-target-"))

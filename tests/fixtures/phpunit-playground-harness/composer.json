@@ -9,6 +9,8 @@
     "yoast/phpunit-polyfills": "3.1.2"
   },
   "config": {
+    "classmap-authoritative": true,
+    "optimize-autoloader": true,
     "platform": {
       "php": "8.3.0"
     },
