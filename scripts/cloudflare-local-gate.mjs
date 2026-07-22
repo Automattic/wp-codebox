@@ -11,6 +11,8 @@ const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
 const authSecret = "cloudflare-runtime-test-auth-secret"
 const operatorToken = "cloudflare-runtime-test-operator-token"
+const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
+const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
 let child
@@ -23,6 +25,7 @@ try {
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
   await assertConcurrentMutations()
+  await assertCoordinatorBackend()
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
   await assertExplanatoryHomepage(warmHome.body)
@@ -70,7 +73,7 @@ try {
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.")
+  console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -86,7 +89,7 @@ async function run(command, args) {
 
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`], {
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -399,6 +402,14 @@ async function assertFullBootProbe() {
     throw new Error(`Canonical full-boot probe failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
   }
   console.log(`Canonical full-boot probe timing: ${Math.round(performance.now() - startedAt)}ms.`)
+}
+
+async function assertCoordinatorBackend() {
+  const response = await fetch(`${origin}/?phase=r2-state`)
+  const payload = await response.json()
+  if (!response.ok || payload.schema !== "wp-codebox/cloudflare-wordpress-state/v2" || payload.store !== coordinator || !payload.pointer?.revision) {
+    throw new Error(`Unexpected ${coordinator} coordinator state: status=${response.status} payload=${JSON.stringify(payload)}.`)
+  }
 }
 
 async function assertWordPressPage(target, label) {
