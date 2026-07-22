@@ -1,6 +1,6 @@
 {
     "schema": "wp-codebox/cloudflare-canonical-mdi-seed/v1",
-    "markdownDatabaseIntegrationRevision": "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c",
+    "markdownDatabaseIntegrationRevision": "bf6d434d1673fdd86d777501f7eaec292d32ad1f",
     "wordpressInstallSeedSha256": "7212b89f1c01f98a23b89e9a2dd2b214306a85c10adb0355b9c7a6005b4fe822",
     "archiveSha256": "4f05439e26a63ef749de250a9b56ee3467697b1b1a166aeb90c5660ecfc9e845",
     "files": [

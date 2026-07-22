@@ -20,6 +20,7 @@ try {
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   await startWorker()
   await assertFullBootProbe()
+  await assertWordPressCronDisabled()
   await assertConcurrentMutations()
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
@@ -29,7 +30,8 @@ try {
   }
   console.log(`Explanatory homepage timing: cold=${coldHome.elapsedMs}ms warm=${warmHome.elapsedMs}ms.`)
   const adminHtml = await login()
-  const deletedThemePath = await installDurablePlugin(adminHtml)
+  const { deletedThemePath, scheduledPost } = await installDurablePlugin(adminHtml)
+  await assertScheduledPost(scheduledPost.id, "draft", 0, scheduledPost.timestamp, "new scheduled post")
   const editorHtml = await assertPostNewEditor()
   const media = await createMedia(adminHtml)
   await assertMediaFile(media, "uploaded media")
@@ -52,10 +54,19 @@ try {
   await assertDurablePlugin("plugin after cold restart")
   await assertDurablePluginAsset("plugin asset after cold restart")
   await assertDeletedThemeFile(deletedThemePath, "bundled theme tombstone after cold restart")
+  await assertScheduledPost(scheduledPost.id, "draft", 0, scheduledPost.timestamp, "scheduled post before cron")
+  await runScheduledCronUntilPost(scheduledPost.id)
+  await assertScheduledPostEventually(scheduledPost.id, "publish", 1, false, "scheduled post after cron")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
+  await stopWorker()
+
+  await startWorker()
+  await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after cron restart")
+  await runScheduledCron()
+  await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, and cold-restart content, media, plugin, and session persistence.")
+  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded exactly-once scheduled callback execution.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -71,7 +82,7 @@ async function run(command, args) {
 
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`], {
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -218,9 +229,36 @@ add_action( 'rest_api_init', static function () {
 		},
 		'permission_callback' => static fn() => current_user_can( 'delete_themes' ),
 	) );
+	register_rest_route( 'wp-codebox/v1', '/schedule-durable-post', array(
+		'methods' => 'POST',
+		'callback' => static function () {
+			$post_id = wp_insert_post( array( 'post_title' => 'Durable Cron Proof', 'post_name' => 'durable-cron-proof', 'post_content' => 'Published by the Cloudflare scheduled handler.', 'post_status' => 'draft', 'post_type' => 'post' ), true );
+			if ( is_wp_error( $post_id ) ) return $post_id;
+			$timestamp = time() - 1;
+			$scheduled = wp_schedule_single_event( $timestamp, 'wp_codebox_publish_scheduled_post', array( $post_id ), true );
+			if ( is_wp_error( $scheduled ) ) return $scheduled;
+			if ( true !== $scheduled ) return new WP_Error( 'schedule_failed', 'WordPress did not persist the cron event.', array( 'status' => 500 ) );
+			return rest_ensure_response( array( 'id' => $post_id, 'timestamp' => $timestamp ) );
+		},
+		'permission_callback' => static fn() => current_user_can( 'publish_posts' ),
+	) );
+	register_rest_route( 'wp-codebox/v1', '/scheduled-post-status/(?P<id>\\d+)', array(
+		'methods' => 'GET',
+		'callback' => static function ( $request ) {
+			$post = get_post( (int) $request['id'] );
+			if ( !$post ) return new WP_Error( 'missing_post', 'Scheduled post is missing.', array( 'status' => 404 ) );
+			return rest_ensure_response( array( 'status' => $post->post_status, 'runs' => (int) get_option( 'wp_codebox_cron_runs', 0 ), 'next' => wp_next_scheduled( 'wp_codebox_publish_scheduled_post', array( $post->ID ) ) ) );
+		},
+		'permission_callback' => '__return_true',
+	) );
+} );`
+  const cronCallback = `
+add_action( 'wp_codebox_publish_scheduled_post', static function ( $post_id ) {
+	wp_publish_post( (int) $post_id );
+	update_option( 'wp_codebox_cron_runs', (int) get_option( 'wp_codebox_cron_runs', 0 ) + 1, false );
 } );`
   const archive = new Uint8Array(await new Response(encodeZip([
-    new File([source], "cloudflare-durable-proof/cloudflare-durable-proof.php", { lastModified: 0, type: "application/x-httpd-php" }),
+    new File([`${source}${cronCallback}`], "cloudflare-durable-proof/cloudflare-durable-proof.php", { lastModified: 0, type: "application/x-httpd-php" }),
     new File([".cloudflare-durable-proof{display:block}"], "cloudflare-durable-proof/proof.css", { lastModified: 0, type: "text/css" }),
   ])).arrayBuffer())
   const form = new FormData()
@@ -248,7 +286,14 @@ add_action( 'rest_api_init', static function () {
   const deletedPayload = await deleted.json()
   if (!deleted.ok || !/^themes\/[a-z0-9-]+\/style\.css$/.test(deletedPayload.deleted ?? "")) throw new Error(`Bundled theme deletion failed: status=${deleted.status} payload=${JSON.stringify(deletedPayload)}.`)
   await assertDeletedThemeFile(deletedPayload.deleted, "new bundled theme tombstone")
-  return deletedPayload.deleted
+  const scheduled = await request(`${origin}/wp-json/wp-codebox/v1/schedule-durable-post`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-wp-nonce": restNonce(adminHtml) },
+    body: "{}",
+  })
+  const scheduledPayload = await scheduled.json()
+  if (!scheduled.ok || !Number.isSafeInteger(scheduledPayload.id) || !Number.isSafeInteger(scheduledPayload.timestamp)) throw new Error(`Durable cron scheduling failed: status=${scheduled.status} payload=${JSON.stringify(scheduledPayload)}.`)
+  return { deletedThemePath: deletedPayload.deleted, scheduledPost: scheduledPayload }
 }
 
 async function assertDurablePlugin(label) {
@@ -269,6 +314,52 @@ async function assertDurablePluginAsset(label) {
 async function assertDeletedThemeFile(path, label) {
   const response = await request(`${origin}/wp-content/${path}`)
   if (response.status !== 404) throw new Error(`Expected ${label} to return 404, received ${response.status}.`)
+}
+
+async function assertScheduledPost(id, status, runs, next, label) {
+  const response = await request(`${origin}/wp-json/wp-codebox/v1/scheduled-post-status/${id}`)
+  const payload = await response.json()
+  if (!response.ok || payload.status !== status || payload.runs !== runs || payload.next !== next) throw new Error(`Unexpected ${label}: status=${response.status} payload=${JSON.stringify(payload)}.`)
+}
+
+async function assertScheduledPostEventually(id, status, runs, next, label) {
+  const deadline = Date.now() + 30_000
+  let last
+  while (Date.now() < deadline) {
+    const response = await request(`${origin}/wp-json/wp-codebox/v1/scheduled-post-status/${id}`)
+    const payload = await response.json()
+    if (response.ok && payload.status === status && payload.runs === runs && payload.next === next) return
+    last = { status: response.status, payload }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  const diagnostics = stripVTControlCharacters(output).split("\n").filter((line) => /scheduled|cron|error|exception/i.test(line) && !line.includes("scheduled-post-status")).slice(-30).join("\n")
+  throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(last)}.\nScheduled diagnostics:\n${diagnostics}`)
+}
+
+async function runScheduledCron() {
+  let response
+  try {
+    response = await fetch(`${origin}/__scheduled?cron=*+*+*+*+*`, { signal: AbortSignal.timeout(60_000) })
+  } catch (error) {
+    const diagnostics = stripVTControlCharacters(output).split("\n").filter((line) => /cloudflare-cron|scheduled|error|exception/i.test(line) && !line.includes("scheduled-post-status")).slice(-40).join("\n")
+    throw new Error(`Wrangler scheduled trigger did not complete: ${error instanceof Error ? error.message : String(error)}.\n${diagnostics}`)
+  }
+  if (!response.ok) throw new Error(`Wrangler scheduled trigger failed with ${response.status}: ${await response.text()}`)
+}
+
+async function runScheduledCronUntilPost(id) {
+  for (let tick = 0; tick < 5; tick++) {
+    await runScheduledCron()
+    const response = await request(`${origin}/wp-json/wp-codebox/v1/scheduled-post-status/${id}`)
+    const payload = await response.json()
+    if (response.ok && payload.status === "publish" && payload.runs === 1 && payload.next === false) return
+  }
+  throw new Error("Scheduled post remained queued after five bounded cron ticks.")
+}
+
+async function assertWordPressCronDisabled() {
+  const response = await request(`${origin}/wp-cron.php?doing_wp_cron=1`)
+  if (response.status !== 404 || !((await response.text()).includes("Cloudflare scheduled handler"))) throw new Error(`Direct WordPress cron returned ${response.status}.`)
 }
 
 async function assertConcurrentMutations() {

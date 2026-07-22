@@ -137,9 +137,10 @@ test("Cloudflare translates Fetch requests and PHP responses without losing brow
   assert.deepEqual(responseHeaders.getSetCookie?.() ?? [response.headers.get("set-cookie")], ["first=1; Path=/", "second=2; Path=/"])
 })
 
-test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", async () => {
-  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { limits?: { cpu_ms?: number } }
+test("Cloudflare runtime declares bounded CPU and scheduled execution", async () => {
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { limits?: { cpu_ms?: number }; triggers?: { crons?: string[] } }
   assert.equal(config.limits?.cpu_ms, 300_000)
+  assert.deepEqual(config.triggers?.crons, ["* * * * *"])
 })
 
 test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
@@ -165,7 +166,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
   assert.equal(canonicalSeed.subarray(0, 4).toString("hex"), "504b0304")
-  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c")
+  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "bf6d434d1673fdd86d777501f7eaec292d32ad1f")
   assert.equal(canonicalManifest.wordpressInstallSeedSha256, createHash("sha256").update(sqliteInput).digest("hex"))
   assert.equal(canonicalManifest.archiveSha256, createHash("sha256").update(canonicalSeed).digest("hex"))
   assert.ok(canonicalManifest.files.some((file) => file.path.endsWith(".md")))
@@ -177,7 +178,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 })
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
-  const revision = "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c"
+  const revision = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
   const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
@@ -223,6 +224,8 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.match(patcher, /remove_action\( 'init', 'wp_cron' \)/)
   assert.match(patcher, /remove_action\( 'init', 'wp_schedule_delete_old_privacy_export_files' \)/)
   assert.match(patcher, /remove_action\( 'init', 'wp_schedule_update_checks' \)/)
+  assert.match(patcher, /markdown_database_integration_ephemeral_option_names/)
+  assert.match(patcher, /array_diff\( \$names, array\( 'cron' \) \)/)
   assert.match(patcher, /add_filter\( 'pre_update_option_rewrite_rules'/)
   assert.match(patcher, /return \$old_value/)
   assert.equal((patcher.match(/do_action\( 'init' \);/g) ?? []).length, 1)
@@ -313,6 +316,13 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\]\)/)
   assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
   assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
+  assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
+  assert.match(worker, /pathname === "\/wp-cron\.php"/)
+  assert.match(worker, /MAX_CRON_EVENTS_PER_INVOCATION = 5/)
+  assert.match(worker, /while \(evidence\.events\.length < MAX_CRON_EVENTS_PER_INVOCATION/)
+  assert.match(worker, /wp_reschedule_event\(\(int\) \$timestamp, \$schedule, \$hook, \$args, true\)/)
+  assert.match(worker, /wp_unschedule_event\(\(int\) \$timestamp, \$hook, \$args, true\)/)
+  assert.match(worker, /await commitLease\(coordinator, requestUrl, lease, next\)/)
   assert.match(worker, /"x-wp-codebox-static": "r2-wp-content"/)
   assert.match(worker, /url\.pathname\.startsWith\("\/wp-admin\/"\).*url\.searchParams\.get\("action"\)/)
   assert.match(worker, /if \(!file\) return null/)
