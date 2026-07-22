@@ -136,6 +136,27 @@ echo "ok\n";
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
 }
 
+function assertNamedTestsuiteScopesDiscovery(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-named-testsuite-"))
+  const selected = join(tempDir, "SelectedTest.php")
+  const unrelated = join(tempDir, "UnrelatedTest.php")
+  const config = join(tempDir, "phpunit.xml")
+  const scriptPath = join(tempDir, "assert-named-testsuite.php")
+  writeFileSync(selected, "<?php // selected\n")
+  writeFileSync(unrelated, "<?php // unrelated\n")
+  writeFileSync(config, `<phpunit><testsuites><testsuite name="selected"><file>SelectedTest.php</file></testsuite><testsuite name="unrelated"><file>UnrelatedTest.php</file></testsuite></testsuites></phpunit>`)
+  writeFileSync(scriptPath, `<?php
+function pg_log($message) {}
+${extractPhpFunction(source, "wp_codebox_phpunit_parse_config")}
+list($directories, $suffixes, $prefixes, $excludes, $files) = wp_codebox_phpunit_parse_config(${phpString(config)}, ${phpString(tempDir)}, array('selected'));
+if ($directories !== array() || $files !== array(${phpString(selected)})) {
+    throw new RuntimeException('named testsuite discovery escaped its configured scope: ' . json_encode(array($directories, $files)));
+}
+echo "ok\n";
+`)
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
 function assertChangedScopeNoOp(source: string, filterFunctionName: string, relativeFunctionName: string): void {
   const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-changed-scope-"))
   const scriptPath = join(tempDir, "assert-changed-scope.php")
@@ -484,7 +505,7 @@ assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_
 assert.ok(projectModeCode.includes("function pg_project_bootstrap_from_config(string &$xml_path, bool $xml_is_default): string"))
 assertProjectBootstrapConfigResolution(projectModeCode, implicitProjectConfigCode)
 assert.ok(projectModeCode.includes("NOTICE:project bootstrap not declared; continuing without one"), "project mode permits PHPUnit configurations that do not declare a bootstrap")
-assert.ok(projectModeCode.includes("foreach ($xml->xpath('//testsuite/file') ?: array() as $file)"))
+assert.ok(projectModeCode.includes("foreach ($suite->xpath('./file') ?: array() as $file)"))
 assert.ok(projectModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config"))
 assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
@@ -492,6 +513,7 @@ assert.equal(projectModeCode.match(/return array\(\$directories, \$suffixes, \$p
 assert.equal(projectModeCode.match(/return \$return_values\(\);/g)?.length, 1)
 assert.match(projectModeCode, /configured PHPUnit test root is not a readable directory/)
 assertPhpunitConfigurationAndDiscoveryFailures(projectModeCode, "wp_codebox_phpunit_parse_config", "wp_codebox_phpunit_discover", "pg_log", false)
+assertNamedTestsuiteScopesDiscovery(projectModeCode)
 assertChangedScopeNoOp(projectModeCode, "pg_filter_changed_test_files", "pg_component_relative_path")
 assertSelectedTestFileResolution(projectModeCode)
 
@@ -546,7 +568,7 @@ await runPhpunitCommand({
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
     capturedCanonicalHarnessCode = input.code
-    return { text: "ok", exitCode: 0 }
+    return { text: "OK (1 test, 1 assertion)", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
   server: { playground: {} } as never,
@@ -574,7 +596,7 @@ await runPhpunitCommand({
   mounts: [],
   runPlaygroundCommand: async (_command, _server, input) => {
     capturedExplicitCode = input.code
-    return { text: "ok", exitCode: 0 }
+    return { text: "OK (1 test, 1 assertion)", exitCode: 0 }
   },
   runtimeSpec: phpunitRuntimeSpec,
   server: { playground: {} } as never,

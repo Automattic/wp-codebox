@@ -49,4 +49,17 @@ const preBootstrapRecorder = decodedBootstrap.indexOf("STAGE_FATAL:bootstrap:")
 const wordpressBootstrap = decodedBootstrap.indexOf("require_once '/wordpress/wp-load.php';")
 assert.ok(preBootstrapRecorder >= 0 && preBootstrapRecorder < wordpressBootstrap, "fatal diagnostics must be recorded before the WordPress bootstrap boundary")
 
+const emptySuccessArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-empty-success-"))
+await assert.rejects(
+  () => runPhpunitCommand({
+    artifactRoot: emptySuccessArtifactRoot,
+    mounts: [],
+    runPlaygroundCommand: async () => ({ exitCode: 0, errors: "", text: "WPCOM Codebox PHPUnit shutdown: mysql_port=unset" }),
+    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+    server: { playground: { readFileAsText: async () => { throw new Error("missing") } } } as never,
+    spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin"] },
+  }),
+  /exited successfully without a non-zero PHPUnit test summary/,
+)
+
 console.log("phpunit runtime failure diagnostics ok")

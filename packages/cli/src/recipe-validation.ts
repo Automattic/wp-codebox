@@ -743,11 +743,13 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
     if (service.kind !== "mysql") addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
-    for (const [output, name] of Object.entries(service.outputs)) {
+    for (const [output, names] of Object.entries(service.outputs)) {
       if (!/^(host|port|username|password|database)$/.test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
-      if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
-      if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
-      environment.add(name)
+      for (const name of Array.isArray(names) ? names : [names]) {
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
+        if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
+        environment.add(name)
+      }
     }
   }
 }

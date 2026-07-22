@@ -18,6 +18,9 @@ assert.throws(() => parseLoopbackPort("0.0.0.0:3306"), /loopback/)
 
 const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(valid.valid, true)
+const aliasedPortService = { ...service, outputs: { ...service.outputs, port: ["DB_PORT", "TC_MYSQL_PORT"] } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [aliasedPortService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: [] } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
 const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
@@ -103,6 +106,10 @@ const dependencies: RuntimeServiceDependencies = {
 const provisioned = await provisionRuntimeServices([service], { dependencies })
 assert.equal(provisioned.env.DB_PORT, "41001")
 assert.equal(provisioned.env.DB_PASSWORD, Buffer.alloc(24, 7).toString("base64url"))
+const aliasedPort = await provisionRuntimeServices([aliasedPortService], { dependencies })
+assert.equal(aliasedPort.env.DB_PORT, "41001")
+assert.equal(aliasedPort.env.TC_MYSQL_PORT, "41001")
+await aliasedPort.release()
 const runCall = calls.find((call) => call.args[0] === "run")
 assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
 assert.ok(runCall?.args.includes("127.0.0.1::3306"), "Docker publishes MySQL on a loopback ephemeral port")
@@ -118,7 +125,7 @@ assert.equal(runCall?.env?.DOCKER_HOST, process.env.DOCKER_HOST, "Docker provide
 assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()
 await provisioned.release()
-assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+assert.equal(calls.filter((call) => call.args[0] === "rm").length, 2, "each service is released exactly once")
 
 const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const emptyRootDependencies: RuntimeServiceDependencies = {

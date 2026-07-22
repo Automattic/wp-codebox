@@ -930,7 +930,12 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           outputs: {
             type: "object",
             minProperties: 1,
-            additionalProperties: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+            additionalProperties: {
+              anyOf: [
+                { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+                { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+              ],
+            },
           },
         },
       },

@@ -913,6 +913,7 @@ export async function runPhpunitCommand({
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
+  const phpunitArgs = jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string")
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
@@ -928,7 +929,7 @@ export async function runPhpunitCommand({
     phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
     changedTestFiles: changedTestFilesArg(args),
-    phpunitArgs: jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string"),
+    phpunitArgs,
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
@@ -968,6 +969,9 @@ export async function runPhpunitCommand({
   }
   if (structured) {
     throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit terminated before completing bootstrap"), "wordpress.phpunit structured diagnostics", structured)
+  }
+  if (!phpunitArgs.includes("--list-tests") && !/\bOK(?:, but there were issues!)? \([1-9]\d* tests?,/m.test(response.text)) {
+    throw new Error("wordpress.phpunit exited successfully without a non-zero PHPUnit test summary")
   }
 
   return response.text

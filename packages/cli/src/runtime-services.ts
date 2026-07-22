@@ -61,7 +61,7 @@ const defaultDependencies: RuntimeServiceDependencies = {
   randomBytes,
 }
 
-export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
+export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string | string[]> }> {
   return services.map((service) => {
     const provider = runtimeServiceProvider(service.kind)
     return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: "loopback", port: "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
@@ -177,7 +177,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     evidence.readiness = "ready"
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
-    return { env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])), evidence, async release() { await releaseService(container, evidence, dependencies) } }
+    return { env: Object.fromEntries(Object.entries(service.outputs).flatMap(([output, names]) => (Array.isArray(names) ? names : [names]).map((name) => [name, values[output] ?? ""]))), evidence, async release() { await releaseService(container, evidence, dependencies) } }
   } catch (error) {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"

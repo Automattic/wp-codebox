@@ -97,7 +97,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
   const suffixAssignment = options.replaceDefaultMatchers ? "$suffixes = $config_suffixes;" : "$suffixes = array_merge($suffixes, $config_suffixes);"
   const prefixAssignment = options.replaceDefaultMatchers ? "$prefixes = $config_prefixes;" : "$prefixes = array_merge($prefixes, $config_prefixes);"
 
-  return `function ${options.functionName}($xml_path, $test_dir_default) {
+  return `function ${options.functionName}($xml_path, $test_dir_default, $requested_suites = array()) {
     $directories = array($test_dir_default);
     $suffixes = array('Test.php');
     $prefixes = array('test-');
@@ -118,11 +118,23 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
         $first = $errors ? trim($errors[0]->message) : 'unknown';
         throw new RuntimeException('PHPUnit config could not be parsed at ' . $xml_path . ': ' . $first);
     }
+    $suite_nodes = $xml->xpath('//testsuite') ?: array();
+    if (!empty($requested_suites)) {
+        $requested_lookup = array_fill_keys(array_map('strval', $requested_suites), true);
+        $suite_nodes = array_values(array_filter($suite_nodes, static function($suite) use ($requested_lookup) {
+            return isset($requested_lookup[(string) ($suite['name'] ?? '')]);
+        }));
+        if (empty($suite_nodes)) {
+            throw new RuntimeException('Requested PHPUnit testsuite was not found in config: ' . implode(',', array_keys($requested_lookup)));
+        }
+    }
+    $directories = array();
     $base = ${options.basePathExpression};
     $config_dirs = array();
     $config_suffixes = array();
     $config_prefixes = array();
-    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
+    foreach ($suite_nodes as $suite) {
+      foreach ($suite->xpath('./directory') ?: array() as $dir) {
         $raw = trim((string) $dir);${directoryRestriction}
         $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
         foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
@@ -137,18 +149,23 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
                 $config_prefixes[] = $prefix;
             }
         }
+      }
     }
-    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
+    foreach ($suite_nodes as $suite) {
+      foreach ($suite->xpath('./exclude') ?: array() as $exclude) {
         $raw = trim((string) $exclude);
         if ($raw !== '') {
             $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
         }
+      }
     }
-    foreach ($xml->xpath('//testsuite/file') ?: array() as $file) {
+    foreach ($suite_nodes as $suite) {
+      foreach ($suite->xpath('./file') ?: array() as $file) {
         $raw = trim((string) $file);
         if ($raw !== '') {
             $files[] = $raw[0] === '/' ? $raw : $base . '/' . $raw;
         }
+      }
     }
     if (!empty($config_dirs)) {
         $directories = $config_dirs;
@@ -1227,13 +1244,28 @@ ${phpunitConfigDiscoveryPhp({
 
 ${phpunitDiscoveryPhp("wp_codebox_phpunit_discover", "pg_log")}
 
+function wp_codebox_requested_phpunit_suites($args): array {
+    $suites = array();
+    if (!is_array($args)) {
+        return $suites;
+    }
+    foreach ($args as $index => $arg) {
+        if ($arg === '--testsuite' && isset($args[$index + 1])) {
+            $suites = array_merge($suites, explode(',', (string) $args[$index + 1]));
+        } elseif (is_string($arg) && strpos($arg, '--testsuite=') === 0) {
+            $suites = array_merge($suites, explode(',', substr($arg, strlen('--testsuite='))));
+        }
+    }
+    return array_values(array_filter(array_map('trim', $suites), static function($suite) { return $suite !== ''; }));
+}
+
 pg_stage_begin('discover_tests');
 try {
     $test_dir = $test_root;
     if (!is_dir($test_dir)) {
         throw new RuntimeException('configured PHPUnit test root is not a readable directory: ' . $test_dir);
     }
-    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
+    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, wp_codebox_requested_phpunit_suites($phpunit_args_raw));
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
