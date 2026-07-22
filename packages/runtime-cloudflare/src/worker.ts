@@ -586,7 +586,7 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
     if (progress.next < plan.upsert.length) {
       const route = plan.upsert[progress.next]
       runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, job.canonical, SITE_URL, await canonicalWordPressAuthConstants(env))
-      const compiled = await compilePublicationRoutes(runtime, [route], await runtimeSiteOrigin(runtime))
+      const compiled = await compilePublicationRoutes(runtime, [route], SITE_URL)
       const page = compiled[0]
       const objectKey = await publishedPageObjectKey(job.canonical.revision, page.route)
       const snapshot: WordPressPageSnapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: job.canonical.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
@@ -1089,12 +1089,6 @@ async function runNextCronEvent(runtime: Runtime): Promise<{ executed: false } |
   if (!event.executed) return { executed: false }
   if (!event.hook || !Number.isSafeInteger(event.timestamp)) throw new Error("WordPress cron returned invalid event evidence.")
   return { executed: true, hook: event.hook, timestamp: event.timestamp!, canonicalChanges: readCanonicalChanges(runtime.php), publicationChanges: readPublicationChanges(runtime.php) }
-}
-
-async function runtimeSiteOrigin(runtime: Runtime): Promise<string> {
-  const output = (await runtime.php.run({ code: "<?php require '/wordpress/wp-load.php'; echo get_option('home');" })).text.trim()
-  const url = new URL(output)
-  return url.origin
 }
 
 async function health(runtime: Runtime): Promise<Response> {
