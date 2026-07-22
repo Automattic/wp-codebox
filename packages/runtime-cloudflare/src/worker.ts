@@ -399,9 +399,9 @@ function readPublicationChanges(php: PHP): PublicationChanges {
   return { all: value.all, upsert, remove }
 }
 
-function publicationPlan(current: PublishedRevision, changes: PublicationChanges, fallbackAll = true): { upsert: string[]; remove: string[] } {
+function publicationPlan(current: PublishedRevision, changes: PublicationChanges): { upsert: string[]; remove: string[] } {
   const existing = current.routes.map(({ route }) => route)
-  const upsert = changes.all || (fallbackAll && changes.upsert.length === 0 && changes.remove.length === 0) ? existing : changes.upsert
+  const upsert = changes.all ? existing : changes.upsert
   const remove = changes.remove.filter((route) => !upsert.includes(route))
   if (new Set([...existing, ...upsert]).size > MAX_PUBLISHED_ROUTES) throw new Error("Incremental publication exceeds its route budget.")
   return { upsert, remove }
@@ -536,8 +536,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     }
     if (mutatesCanonicalState) {
       if (!canonicalChanges || !publicationChanges) throw new Error("Canonical mutation completed without its persistence evidence.")
-      const hasCanonicalChanges = canonicalChanges.created.length + canonicalChanges.changed.length + canonicalChanges.deleted.length > 0
-      const plan = currentPublication ? publicationPlan(currentPublication.publication, publicationChanges, hasCanonicalChanges) : null
+      const plan = currentPublication ? publicationPlan(currentPublication.publication, publicationChanges) : null
       const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, new URL(request.url).origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
       const stagedPublication = currentPublication && plan && (plan.upsert.length || plan.remove.length)
@@ -831,7 +830,7 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
         await discardRuntime(runtime)
         break
       }
-      const plan = currentPublication ? publicationPlan(currentPublication.publication, event.publicationChanges, false) : null
+      const plan = currentPublication ? publicationPlan(currentPublication.publication, event.publicationChanges) : null
       const origin = plan && plan.upsert.length ? await runtimeSiteOrigin(runtime) : SITE_URL
       const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, event.canonicalChanges)

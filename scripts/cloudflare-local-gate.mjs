@@ -134,6 +134,7 @@ async function login() {
   const form = new URLSearchParams({ log: "admin", pwd: password, redirect_to: `${origin}/wp-admin/`, testcookie: "1", "wp-submit": "Log In" })
   const response = await request(`${origin}/wp-login.php`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "manual" })
   if (![301, 302].includes(response.status)) throw new Error(`Expected login redirect, received ${response.status}: ${await response.text()}`)
+  if (response.headers.has("x-wp-codebox-publication") || response.headers.has("x-wp-codebox-publication-revision")) throw new Error("Login must not trigger publication work.")
   const location = response.headers.get("location")
   if (!location?.includes("/wp-admin/")) throw new Error(`Login did not redirect to wp-admin: ${location}`)
   const admin = await assertAuthenticatedDashboard(new URL(location, origin))
