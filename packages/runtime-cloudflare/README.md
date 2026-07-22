@@ -16,7 +16,9 @@ The same revision transaction persists bounded user-managed files under `wp-cont
 
 The Worker forwards browser cookies directly to Playground and disables Playground's internal cookie store, preventing an empty per-isolate store from replacing a valid browser session after cold restart.
 
-The bundled MDI source is pinned to immutable commit `2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c` from [MDI PR #139](https://github.com/Automattic/markdown-database-integration/pull/139). The bundle generator, worker provenance, and source-contract test use the same revision.
+A minute Cloudflare Cron Trigger drains at most five due WordPress events or 25 seconds of work per invocation. Each event receives its own Durable Object lease and canonical R2 revision transaction. Direct `/wp-cron.php` requests are disabled so callbacks cannot bypass that transaction boundary.
+
+The bundled MDI source is pinned to immutable commit `bf6d434d1673fdd86d777501f7eaec292d32ad1f`, including [MDI PR #141](https://github.com/Automattic/markdown-database-integration/pull/141). The bundle generator, worker provenance, and source-contract test use the same revision.
 
 WordPress server files, browser assets, and pinned runtime dependencies are separate deployment artifacts, never Worker-module imports. `generate:cloudflare-wordpress-runtime-corpus` emits a deterministic server ZIP containing only `isWordPressRuntimeFile()` entries, one concatenated browser-asset blob containing the complete supported `wp-admin`, `wp-includes`, and bundled-theme surface, and the pinned SQLite integration ZIP. Checked-in manifests record content-addressed R2 keys, hashes, budgets, provenance, and each browser asset's exact byte range. Cold boot validates and streams the server ZIP into PHP MEMFS while loading SQLite integration from R2. Browser requests use one bounded R2 range read, validate the selected bytes, and populate an immutable artifact-versioned Worker cache. Runtime requests never fetch WordPress or SQLite integration release archives from third-party origins.
 

@@ -41,7 +41,7 @@ const wordpressWpContentRuntimeBaselinePaths = new Set((wordpressRuntimeArtifact
   .filter((file) => file.path.startsWith("wordpress/wp-content/"))
   .map((file) => file.path.slice("wordpress/wp-content/".length))
   .filter(isCanonicalWpContentPath))
-const MARKDOWN_DATABASE_INTEGRATION_REVISION = "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c"
+const MARKDOWN_DATABASE_INTEGRATION_REVISION = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
@@ -54,6 +54,8 @@ const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
 const R2_WORDPRESS_PAGE_PREFIX = "sites/default/pages"
 const WORDPRESS_PAGE_CACHE_SCHEMA = "v2"
 const PUBLIC_WP_CONTENT_EXTENSION = /\.(?:css|js|mjs|json|txt|xml|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/i
+const MAX_CRON_EVENTS_PER_INVOCATION = 5
+const MAX_CRON_INVOCATION_MS = 25_000
 const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
 define('SHORTINIT', true);
 require '/wordpress/wp-load.php';
@@ -91,6 +93,35 @@ if (empty($option_rows)) {
 }
 $changes = $runtime->flush();
 echo json_encode(['revisionValue' => $value, 'previousPostFound' => !empty($previous_rows), 'postId' => $post_id, 'wordpressVersion' => $wp_version, 'canonicalChanges' => $changes]);`
+const NEXT_CRON_EVENT_CODE = `<?php
+require '/wordpress/wp-load.php';
+$ready = wp_get_ready_cron_jobs();
+if (empty($ready)) {
+    echo json_encode(['executed' => false], JSON_THROW_ON_ERROR);
+    return;
+}
+ksort($ready, SORT_NUMERIC);
+foreach ($ready as $timestamp => $hooks) {
+    ksort($hooks, SORT_STRING);
+    foreach ($hooks as $hook => $events) {
+        ksort($events, SORT_STRING);
+        foreach ($events as $event) {
+            $schedule = $event['schedule'] ?? false;
+            $args = $event['args'] ?? array();
+            if ($schedule) {
+                $rescheduled = wp_reschedule_event((int) $timestamp, $schedule, $hook, $args, true);
+                if (is_wp_error($rescheduled)) throw new RuntimeException($rescheduled->get_error_message());
+            }
+            $unscheduled = wp_unschedule_event((int) $timestamp, $hook, $args, true);
+            if (is_wp_error($unscheduled)) throw new RuntimeException($unscheduled->get_error_message());
+            do_action_ref_array($hook, $args);
+            $GLOBALS['wpdb']->flush_canonical_writes();
+            echo json_encode(['executed' => true, 'hook' => $hook, 'timestamp' => (int) $timestamp], JSON_THROW_ON_ERROR);
+            return;
+        }
+    }
+}
+echo json_encode(['executed' => false], JSON_THROW_ON_ERROR);`
 interface Env {
   WORDPRESS_STATE: DurableObjectNamespace
   WORDPRESS_STATE_BUCKET: R2Bucket
@@ -101,6 +132,7 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (new URL(request.url).pathname === "/wp-cron.php") return new Response("WordPress cron is managed by the Cloudflare scheduled handler.", { status: 404 })
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator)
     if (wpContentResponse) return wpContentResponse
@@ -119,6 +151,10 @@ export default {
       return coordinator.fetch(new Request(coordinatorUrl(request.url, "state")))
     }
     return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
+  },
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    const evidence = await runScheduledWordPressCron(env, controller.scheduledTime)
+    console.log(JSON.stringify(evidence))
   },
 }
 
@@ -172,6 +208,15 @@ interface Runtime {
   requestHandler: PHPRequestHandler
   wordpressVersion: string
   pointer: MarkdownPointer
+}
+
+interface CronInvocationEvidence {
+  schema: "wp-codebox/cloudflare-cron/v1"
+  scheduledTime: number
+  startedAt: string
+  completedAt: string
+  events: Array<{ hook: string; timestamp: number; revision: string }>
+  status: "completed" | "bounded" | "no-canonical-state"
 }
 
 let cachedRuntime: { baseRevision: string; promise: Promise<Runtime> } | undefined
@@ -537,6 +582,61 @@ async function runSyntheticMutation(runtime: Runtime): Promise<{ response: Respo
   const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
   validateMarkdownChanges(mutation.canonicalChanges)
   return { response: Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: collectRuntimeFiles(runtime.php, MARKDOWN_ROOT).length, markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false }), canonicalChanges: mutation.canonicalChanges }
+}
+
+async function runScheduledWordPressCron(env: Env, scheduledTime: number): Promise<CronInvocationEvidence> {
+  const started = Date.now()
+  const evidence: CronInvocationEvidence = {
+    schema: "wp-codebox/cloudflare-cron/v1",
+    scheduledTime,
+    startedAt: new Date(started).toISOString(),
+    completedAt: "",
+    events: [],
+    status: "completed",
+  }
+  const coordinator = env.WORDPRESS_STATE.getByName("default")
+  const requestUrl = `${SITE_URL}/wp-cron.php?doing_wp_cron=${scheduledTime}`
+  while (evidence.events.length < MAX_CRON_EVENTS_PER_INVOCATION && Date.now() - started < MAX_CRON_INVOCATION_MS) {
+    const lease = await acquireLease(coordinator, requestUrl)
+    if (!lease.pointer) {
+      await releaseLease(coordinator, requestUrl, lease)
+      evidence.status = "no-canonical-state"
+      break
+    }
+    let runtime: Runtime | undefined
+    let finalized = false
+    try {
+      runtime = await getRuntime(env, lease.pointer, SITE_URL)
+      const event = await runNextCronEvent(runtime)
+      if (!event.executed) {
+        await releaseLease(coordinator, requestUrl, lease)
+        finalized = true
+        await discardRuntime(runtime)
+        break
+      }
+      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, event.canonicalChanges)
+      await commitLease(coordinator, requestUrl, lease, next)
+      finalized = true
+      evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision })
+      await discardRuntime(runtime)
+    } catch (error) {
+      if (!finalized) await abortLease(coordinator, requestUrl, lease)
+      if (runtime) await discardRuntime(runtime)
+      throw error
+    }
+  }
+  if (evidence.events.length === MAX_CRON_EVENTS_PER_INVOCATION || Date.now() - started >= MAX_CRON_INVOCATION_MS) evidence.status = "bounded"
+  evidence.completedAt = new Date().toISOString()
+  return evidence
+}
+
+async function runNextCronEvent(runtime: Runtime): Promise<{ executed: false } | { executed: true; hook: string; timestamp: number; canonicalChanges: MarkdownChanges }> {
+  runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+  const output = (await runtime.php.run({ code: NEXT_CRON_EVENT_CODE })).text.trim()
+  const event = JSON.parse(output) as { executed: boolean; hook?: string; timestamp?: number }
+  if (!event.executed) return { executed: false }
+  if (!event.hook || !Number.isSafeInteger(event.timestamp)) throw new Error("WordPress cron returned invalid event evidence.")
+  return { executed: true, hook: event.hook, timestamp: event.timestamp!, canonicalChanges: readCanonicalChanges(runtime.php) }
 }
 
 async function health(runtime: Runtime): Promise<Response> {
@@ -1065,6 +1165,10 @@ function patchCanonicalRuntimePoliciesAtInit(php: PHP): void {
 	remove_action( 'init', 'wp_schedule_delete_old_privacy_export_files' );
 	remove_action( 'init', 'wp_schedule_update_checks' );
 }
+// This runtime has an explicit scheduled handler, so cron events are canonical.
+add_filter( 'markdown_database_integration_ephemeral_option_names', static function ( $names ) {
+	return array_values( array_diff( $names, array( 'cron' ) ) );
+} );
 // Rewrite rules are derived for each runtime; keep them out of canonical MDI state.
 add_filter( 'pre_update_option_rewrite_rules', static function ( $value, $old_value ) {
 	return $old_value;

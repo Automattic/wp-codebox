@@ -5,6 +5,7 @@
   "compatibility_date": "2026-07-18",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 300000 },
+	"triggers": { "crons": ["* * * * *"] },
 	"r2_buckets": [
 		{ "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
 	],

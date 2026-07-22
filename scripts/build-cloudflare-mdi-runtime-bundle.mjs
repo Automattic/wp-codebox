@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 
-const revision = "2a8ee7f6a46e1d64b4606f1ee3c97e14032dc96c"
+const revision = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
 const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
 const archiveUrl = `https://codeload.github.com/Automattic/markdown-database-integration/zip/${revision}`
 const jsonMachineArchiveUrl = `https://codeload.github.com/halaxa/json-machine/zip/${jsonMachineRevision}`
