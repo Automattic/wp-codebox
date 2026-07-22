@@ -50,16 +50,32 @@ const wordpressBootstrap = decodedBootstrap.indexOf("require_once '/wordpress/wp
 assert.ok(preBootstrapRecorder >= 0 && preBootstrapRecorder < wordpressBootstrap, "fatal diagnostics must be recorded before the WordPress bootstrap boundary")
 
 const emptySuccessArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-empty-success-"))
+const successfulResponseSecret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
 await assert.rejects(
   () => runPhpunitCommand({
     artifactRoot: emptySuccessArtifactRoot,
     mounts: [],
-    runPlaygroundCommand: async () => ({ exitCode: 0, errors: "", text: "WPCOM Codebox PHPUnit shutdown: mysql_port=unset" }),
+    runPlaygroundCommand: async () => ({
+      exitCode: 0,
+      errors: `PHPUnit stderr token=${successfulResponseSecret}`,
+      text: `WPCOM Codebox PHPUnit shutdown: mysql_port=unset\n${"x".repeat(25_000)}`,
+    }),
     runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
     server: { playground: { readFileAsText: async () => { throw new Error("missing") } } } as never,
     spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin"] },
   }),
-  /exited successfully without a non-zero PHPUnit test summary/,
+  (error: Error) => {
+    assert.match(error.message, /exited successfully without a non-zero PHPUnit test summary/)
+    assert.match(error.message, /wordpress\.phpunit successful response diagnostics/)
+    assert.match(error.message, /--- stderr ---/)
+    assert.match(error.message, /--- stdout ---/)
+    assert.match(error.message, /WPCOM Codebox \[redacted\] shutdown: mysql_port=unset/)
+    assert.match(error.message, /PHPUnit stderr token=\[redacted\]/)
+    assert.match(error.message, /\[diagnostic truncated\]/)
+    assert.doesNotMatch(error.message, new RegExp(successfulResponseSecret))
+    assert.ok(error.message.length < 21_000, "successful response diagnostics must remain bounded")
+    return true
+  },
 )
 
 console.log("phpunit runtime failure diagnostics ok")
