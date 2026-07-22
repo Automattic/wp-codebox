@@ -79,6 +79,7 @@
     "packages/runtime-playground/package.json",
     "packages/cli/dist",
     "packages/cli/package.json",
+    "scripts/apply-development-patches.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -88,7 +89,7 @@
     "cloudflare:dry-run:d1": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.d1.jsonc",
     "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
     "cloudflare:local-gate:d1": "node scripts/cloudflare-local-gate.mjs --coordinator=d1",
-    "postinstall": "patch-package",
+    "postinstall": "node scripts/apply-development-patches.mjs",
     "generate:cloudflare-wordpress-runtime-corpus": "tsx scripts/generate-cloudflare-wordpress-runtime-corpus.ts",
     "provision:cloudflare-wordpress-runtime-corpus": "node scripts/provision-cloudflare-wordpress-runtime-corpus.mjs",
     "prepare": "npm run build",

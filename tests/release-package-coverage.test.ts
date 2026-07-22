@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -19,6 +20,11 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
 
 const { stdout } = await execFileAsync("npm", ["run", "release:package"], {
   cwd: repositoryRoot,
+  env: {
+    ...process.env,
+    WP_CODEBOX_RELEASE_PLATFORM: "linux",
+    WP_CODEBOX_RELEASE_ARCH: "x64",
+  },
   maxBuffer: 1024 * 1024 * 20,
 })
 const artifacts = JSON.parse(stdout.trim().split("\n").at(-1) ?? "[]")
@@ -58,5 +64,78 @@ const { stdout: tarEntries } = await execFileAsync("tar", ["-tzf", cliArtifact.p
   maxBuffer: 1024 * 1024 * 20,
 })
 assert.ok(tarEntries.split("\n").some((path) => path === "wp-codebox-cli/"), "CLI tarball root changed")
+
+const extractionRoot = await mkdtemp(join(tmpdir(), "wp-codebox-release-coverage-"))
+try {
+  const pluginExtraction = join(extractionRoot, "plugin")
+  const cliExtraction = join(extractionRoot, "cli")
+  await mkdir(pluginExtraction, { recursive: true })
+  await mkdir(cliExtraction, { recursive: true })
+  await execFileAsync("unzip", ["-q", resolve(repositoryRoot, pluginArtifact), "-d", pluginExtraction])
+  await execFileAsync("tar", ["-xzf", resolve(repositoryRoot, cliArtifact.path), "-C", cliExtraction])
+
+  const pluginCliRoot = join(pluginExtraction, "wp-codebox", "vendor", "wp-codebox-cli")
+  const tarCliRoot = join(cliExtraction, "wp-codebox-cli")
+  for (const root of [pluginCliRoot, tarCliRoot]) {
+    for (const packageName of ["wp-codebox-cli", "wp-codebox-core", "wp-codebox-playground"]) {
+      const packagePath = join(root, "node_modules", "@automattic", packageName)
+      const packageStat = await lstat(packagePath)
+      assert.equal(packageStat.isDirectory(), true, `${packagePath} must be a materialized directory`)
+      assert.equal(packageStat.isSymbolicLink(), false, `${packagePath} must not depend on archive symlinks`)
+      await lstat(join(packagePath, "package.json"))
+    }
+
+    const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
+    const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
+    assert.match(version, /^\d+\.\d+\.\d+\s*$/)
+    await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+
+    const wrapper = join(root, "bin", "wp-codebox")
+    const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
+      env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
+    })
+    assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+  }
+} finally {
+  await rm(extractionRoot, { recursive: true, force: true })
+}
+
+const rootPackage = JSON.parse(await readFile(resolve(repositoryRoot, "package.json"), "utf8"))
+assert.equal(rootPackage.scripts.postinstall, "node scripts/apply-development-patches.mjs")
+assert.ok(rootPackage.files.includes("scripts/apply-development-patches.mjs"))
+
+const lifecycleRoot = await mkdtemp(join(tmpdir(), "wp-codebox-production-lifecycle-"))
+try {
+  const lifecycleScript = resolve(repositoryRoot, "scripts", "apply-development-patches.mjs")
+  const packedLifecycleScript = join(lifecycleRoot, "scripts", "apply-development-patches.mjs")
+  await mkdir(join(lifecycleRoot, "scripts"), { recursive: true })
+  await cp(lifecycleScript, packedLifecycleScript)
+  const { stdout: lifecycleOutput } = await execFileAsync(process.execPath, [packedLifecycleScript], { cwd: lifecycleRoot })
+  assert.equal(lifecycleOutput, "Skipping development patches in the production package.\n")
+} finally {
+  await rm(lifecycleRoot, { recursive: true, force: true })
+}
+
+const consumerRoot = await mkdtemp(join(tmpdir(), "wp-codebox-consumer-install-"))
+try {
+  const packRoot = join(consumerRoot, "pack")
+  const installRoot = join(consumerRoot, "install")
+  await mkdir(packRoot, { recursive: true })
+  const { stdout: packOutput } = await execFileAsync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", packRoot], {
+    cwd: repositoryRoot,
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  const [packed] = JSON.parse(packOutput) as Array<{ filename: string }>
+  await execFileAsync("npm", ["install", "--global", "--prefix", installRoot, join(packRoot, packed.filename), "--omit=dev", "--no-audit", "--no-fund"], {
+    cwd: consumerRoot,
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  const installedCli = join(installRoot, "bin", "wp-codebox")
+  const { stdout: installedVersion } = await execFileAsync(installedCli, ["--version"])
+  assert.match(installedVersion, /^\d+\.\d+\.\d+\s*$/)
+  await execFileAsync(installedCli, ["commands"])
+} finally {
+  await rm(consumerRoot, { recursive: true, force: true })
+}
 
 console.log("release package coverage passed")
