@@ -153,6 +153,7 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
       if (uploadResponse) return uploadResponse
       if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
+      if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator)
       if (route.kind === "probe") {
         return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -320,6 +321,39 @@ async function restoreCanonicalWordPress(request: Request, env: RuntimeEnv, coor
     await abortLease(coordinator, request.url, lease)
     throw error
   }
+}
+
+async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator): Promise<Response> {
+  if (request.method !== "POST") return new Response("Canonical adoption requires POST.", { status: 405 })
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Canonical adoption authorization failed.", { status: 401 })
+  }
+  let pointer: MarkdownPointer
+  let version: number
+  try {
+    const body = await request.json<{ pointer?: unknown; version?: unknown }>()
+    pointer = body.pointer as MarkdownPointer
+    version = body.version as number
+  } catch {
+    return new Response("Canonical adoption requires JSON state.", { status: 400 })
+  }
+  if (!isCanonicalRestorePointer(pointer) || !Number.isSafeInteger(version) || version < 1) return new Response("Canonical adoption state is invalid.", { status: 400 })
+  const manifest = await readMarkdownManifest(env.WORDPRESS_STATE_BUCKET, pointer)
+  if (!manifest || manifest.revision !== pointer.revision || manifest.manifestKey !== pointer.manifestKey || manifest.persistedAt !== pointer.persistedAt || !Array.isArray(manifest.files)) {
+    return new Response("Canonical adoption manifest is unavailable or inconsistent.", { status: 409 })
+  }
+  let adopted: { pointer: MarkdownPointer; version: number }
+  try {
+    adopted = await coordinator.adopt(pointer, version)
+  } catch (error) {
+    if (!(error instanceof RevisionConflict)) throw error
+    const headers = new Headers()
+    if (error.retryAt) headers.set("retry-after", String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000))))
+    return Response.json({ schema: "wp-codebox/cloudflare-coordinator-conflict/v1", message: error.message, retryAt: error.retryAt }, { status: 409, headers })
+  }
+  await discardCachedRuntime()
+  return Response.json({ adopted: true, ...adopted })
 }
 
 function isCanonicalRestorePointer(pointer: unknown): pointer is MarkdownPointer {
