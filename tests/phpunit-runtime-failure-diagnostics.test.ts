@@ -15,7 +15,7 @@ await assert.rejects(
     mounts: [],
     runPlaygroundCommand: async (_command, _server, input) => {
       submittedCode = input.code
-      return { exitCode: 1, errors: "", text: "" }
+      return { exitCode: 0, errors: "", text: "" }
     },
     runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
     server: {
@@ -29,7 +29,7 @@ await assert.rejects(
     spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin"] },
   }),
   (error: Error) => {
-    assert.match(error.message, /wordpress\.phpunit failed with exit code 1/)
+    assert.match(error.message, /wordpress\.phpunit terminated before completing bootstrap/)
     assert.match(error.message, /wordpress\.phpunit structured diagnostics/)
     assert.match(error.message, /Bootstrap failed with token: \[redacted\]/)
     assert.match(error.message, /\[diagnostic truncated\]/)

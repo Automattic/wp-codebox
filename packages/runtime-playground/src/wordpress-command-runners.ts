@@ -966,6 +966,9 @@ export async function runPhpunitCommand({
     }
     throw error
   }
+  if (structured) {
+    throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit terminated before completing bootstrap"), "wordpress.phpunit structured diagnostics", structured)
+  }
 
   return response.text
 }

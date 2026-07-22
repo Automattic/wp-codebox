@@ -52,7 +52,7 @@ try {
   assert.match(commandLog, /PHPUnit bootstrap fixture token: \[redacted\]/)
   assert.doesNotMatch(commandLog, new RegExp(secret))
 
-  await writeFile(fatalMuPlugin, `<?php\necho 'PHPUnit bootstrap exit fixture token: ${secret}';\nexit(1);\n`)
+  await writeFile(fatalMuPlugin, `<?php\necho 'PHPUnit bootstrap exit fixture token: ${secret}';\nexit;\n`)
   const exitOutput = await runFailedRecipe(exitArtifactsPath)
   assert.equal(exitOutput.success, false, JSON.stringify(exitOutput))
   const exitMessage = exitOutput.error?.message ?? ""

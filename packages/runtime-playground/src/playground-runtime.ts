@@ -1898,9 +1898,11 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
 function executionSpecWithEnvironment(spec: ExecutionSpec): ExecutionSpec {
   if (!spec.environment || Object.keys(spec.environment).length === 0) return spec
+  const args = spec.args ?? []
+  const runtimeEnvironment = JSON.parse(argValue(args, "runtime-env-json") ?? "{}") as Record<string, string>
   return {
     ...spec,
-    args: [...(spec.args ?? []).filter((argument) => !argument.startsWith("runtime-env-json=")), `runtime-env-json=${JSON.stringify(spec.environment)}`],
+    args: [...args.filter((argument) => !argument.startsWith("runtime-env-json=")), `runtime-env-json=${JSON.stringify({ ...runtimeEnvironment, ...spec.environment })}`],
   }
 }
 
