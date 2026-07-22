@@ -48,6 +48,7 @@ try {
   await assertAnonymousWordPressPage(new URL(post.route, origin), "post publication candidate")
   await assertAnonymousWordPressPage(origin, "homepage publication candidate")
   const initialPublication = await publishRoutes(["/", post.route])
+  await assertCoordinatorFence(post.route)
   const updatedPost = await updatePost(adminHtml, post, initialPublication.revision)
   await assertAnonymousWordPressPage(new URL(post.route, origin), "updated post canonical snapshot before publication")
   // Restart with an explicit pending job to prove progress is durable rather than isolate-local.
@@ -482,6 +483,54 @@ async function assertCoordinatorAdoption() {
   })
   if (divergent.status !== 409) throw new Error(`Divergent coordinator adoption was not rejected: ${divergent.status} ${await divergent.text()}.`)
   await assertCoordinatorBackend()
+}
+
+async function assertCoordinatorFence(publishedRoute) {
+  const headers = { authorization: `Bearer ${operatorToken}` }
+  const beforeResponse = await fetch(`${origin}/?phase=operator-fence-status`, { headers })
+  const beforeBody = await beforeResponse.text()
+  if (!beforeResponse.ok) throw new Error(`Pre-fence cutover status failed: ${beforeResponse.status} ${beforeBody}.\nWorker output:\n${output}`)
+  const before = JSON.parse(beforeBody)
+  if (!beforeResponse.ok || !before.coherent || before.fence?.active || before.state?.store !== coordinator || !before.state?.pointer || before.receipt?.revision !== before.state.pointer.revision || before.manifest?.revision !== before.state.pointer.revision) {
+    throw new Error(`Unexpected pre-fence cutover status: ${beforeResponse.status} ${JSON.stringify(before)}.`)
+  }
+  const acquiredResponse = await fetch(`${origin}/?phase=operator-fence-acquire`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ ttlSeconds: 30 }),
+  })
+  const acquiredBody = await acquiredResponse.text()
+  if (!acquiredResponse.ok) throw new Error(`Coordinator fence acquisition failed: ${acquiredResponse.status} ${acquiredBody}.\nWorker output:\n${output}`)
+  const acquired = JSON.parse(acquiredBody)
+  if (!acquiredResponse.ok || !acquired.active || typeof acquired.token !== "string" || !Number.isSafeInteger(acquired.expiresAt)) throw new Error(`Coordinator fence acquisition failed: ${acquiredResponse.status} ${JSON.stringify(acquired)}.`)
+  const published = await fetch(new URL(publishedRoute, origin))
+  if (!published.ok || !["publication-r2", "publication-edge"].includes(published.headers.get("x-wp-codebox-page-cache-source"))) throw new Error("Anonymous publication was unavailable during the coordinator fence.")
+  const mutation = await fetch(`${origin}/?phase=r2-mutate`, { method: "POST" })
+  if (mutation.status !== 409) throw new Error(`Canonical mutation was not fenced: ${mutation.status} ${await mutation.text()}.`)
+  const publication = await fetch(`${origin}/?phase=operator-publish`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ routes: ["/", publishedRoute] }),
+  })
+  if (publication.status !== 409) throw new Error(`Canonical publication was not fenced: ${publication.status} ${await publication.text()}.`)
+  const active = await (await fetch(`${origin}/?phase=operator-fence-status`, { headers })).json()
+  if (!active.coherent || !active.fence?.active || active.state.version !== before.state.version || active.state.pointer?.revision !== before.state.pointer.revision) throw new Error(`Coordinator state changed under fence: ${JSON.stringify(active)}.`)
+  const renewedResponse = await fetch(`${origin}/?phase=operator-fence-renew`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ token: acquired.token, ttlSeconds: 60 }),
+  })
+  const renewed = await renewedResponse.json()
+  if (!renewedResponse.ok || renewed.token !== acquired.token || renewed.expiresAt <= acquired.expiresAt) throw new Error(`Coordinator fence renewal failed: ${renewedResponse.status} ${JSON.stringify(renewed)}.`)
+  const released = await fetch(`${origin}/?phase=operator-fence-release`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ token: acquired.token }),
+  })
+  if (!released.ok) throw new Error(`Coordinator fence release failed: ${released.status} ${await released.text()}.`)
+  const after = await (await fetch(`${origin}/?phase=operator-fence-status`, { headers })).json()
+  if (!after.coherent || after.fence?.active || after.state.version !== before.state.version || after.state.pointer?.revision !== before.state.pointer.revision) throw new Error(`Coordinator state changed across fence: ${JSON.stringify(after)}.`)
+  console.log(`Coordinator mutation fence passed for ${coordinator}.`)
 }
 
 async function assertWordPressPage(target, label) {

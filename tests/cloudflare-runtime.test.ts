@@ -79,6 +79,10 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-restore")), { kind: "operator-restore" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-adopt")), { kind: "operator-adopt" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-status")), { kind: "operator-fence", action: "status" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-acquire")), { kind: "operator-fence", action: "acquire" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-renew")), { kind: "operator-fence", action: "renew" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-release")), { kind: "operator-fence", action: "release" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-publish")), { kind: "operator-publish" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
@@ -316,7 +320,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   const scheduledCron = worker.slice(worker.indexOf("async function runScheduledWordPressCron"), worker.indexOf("async function runNextCronEvent"))
   const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
-  assert.match(worker, /return runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
+  assert.match(worker, /return await runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
   assert.match(worker, /let cachedRuntime/)
   assert.match(worker, /cachedRuntime\.baseRevision !== pointer\.revision/)
   assert.match(worker, /promise\.catch\(\(\) =>/)
@@ -342,7 +346,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(d1Coordinator, /lease_base_revision IS NULL AND \? IS NULL/)
   assert.match(d1Coordinator, /wp_codebox_commits/)
   assert.match(contract, /interface RevisionCoordinator/)
-  assert.match(contract, /acquire\(\): Promise<RevisionLease>/)
+  assert.match(contract, /acquire\(ttlMs\?: number\): Promise<RevisionLease>/)
   assert.match(contract, /committed\(version: number\): Promise<MarkdownPointer \| null>/)
   assert.match(durableObjectEntry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\("default"\)\)/)
   assert.match(d1Entry, /new D1RevisionCoordinator\(env\.WORDPRESS_STATE_DATABASE\)/)
@@ -438,7 +442,8 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
   assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
   assert.match(worker, /const publication = await drainNextPublicationJob\(env, coordinator\)/)
-  assert.match(worker, /const evidence = publication \? publication : await runScheduledWordPressCron/)
+  assert.match(worker, /const fence = publication \? undefined : await coordinator\.fenceStatus\(\)/)
+  assert.match(worker, /: await runScheduledWordPressCron\(env, coordinator, controller\.scheduledTime\)/)
   assert.match(worker, /pathname === "\/wp-cron\.php"/)
   assert.match(worker, /MAX_CRON_EVENTS_PER_INVOCATION = 5/)
   assert.match(worker, /while \(evidence\.events\.length < MAX_CRON_EVENTS_PER_INVOCATION/)
@@ -616,9 +621,26 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   assert.equal((await call("abort", { token: adoptedLease.token })).status, 200)
   assert.equal((await call("reset")).status, 200)
 
+  const fence = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string; expiresAt: number }
+  assert.ok(fence.expiresAt > Date.now())
+  assert.deepEqual(await (await call("fence-status")).json(), { active: true, expiresAt: fence.expiresAt })
+  assert.equal((await call("begin")).status, 409)
+  assert.equal((await call("reset")).status, 409)
+  const renewed = await (await call("fence-renew", { token: fence.token, ttlMs: 60_000 })).json() as { token: string; expiresAt: number }
+  assert.equal(renewed.token, fence.token)
+  assert.ok(renewed.expiresAt > fence.expiresAt)
+  assert.equal((await call("fence-release", { token: "wrong" })).status, 409)
+  assert.equal((await call("fence-release", { token: fence.token })).status, 200)
+  assert.deepEqual(await (await call("fence-status")).json(), { active: false })
+
   const first = await (await call("begin")).json() as { token: string; pointer: null; version: number }
   assert.equal(first.pointer, null)
+  const renewedLease = await (await call("renew", { token: first.token, ttlMs: 100 })).json() as { token: string; expiresAt: number }
+  assert.equal(renewedLease.token, first.token)
+  assert.ok(renewedLease.expiresAt > Date.now())
   assert.equal((await call("begin")).status, 409)
+  assert.equal((await call("fence-acquire", { ttlMs: 30_000 })).status, 409)
+  assert.equal((await call("reset")).status, 409)
   const pointer = { revision: "one", manifestKey: "sites/default/markdown/revisions/one.json", persistedAt: "2026-01-01T00:00:00.000Z" }
   const commit = await call("commit", { token: first.token, baseRevision: null, version: first.version, pointer })
   assert.equal(commit.status, 200, await commit.text())
@@ -635,6 +657,11 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   const resetState = await (await call("state")).json() as { pointer: null; version: number }
   assert.equal(resetState.pointer, null)
   assert.equal(resetState.version, 0)
+  const expiring = await (await call("begin", { ttlMs: 5 })).json() as { token: string }
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const cutover = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string }
+  assert.equal((await call("renew", { token: expiring.token, ttlMs: 50 })).status, 409)
+  assert.equal((await call("fence-release", { token: cutover.token })).status, 200)
 })
 
 test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {
