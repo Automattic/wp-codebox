@@ -1,4 +1,4 @@
-import { loadPHPRuntime, PHP, type PHPRequestHandler } from "@php-wasm/universal"
+import { loadPHPRuntime, PHP, type PHPRequestHandler, type PHPResponseData } from "@php-wasm/universal"
 import { decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
@@ -7,6 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
+import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { RevisionConflict, type MarkdownPointer, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
@@ -189,6 +190,12 @@ interface MarkdownManifest extends MarkdownPointer {
 interface RuntimeFile {
   path: string
   bytes: Uint8Array
+}
+
+interface RuntimeFileMetadata {
+  path: string
+  size: number
+  sha256: string
 }
 
 interface WordPressPageSnapshot {
@@ -683,8 +690,12 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     }
     runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
     const mutatesCanonicalState = isMutation(request, route)
+    const diagnosticsStartedAt = Date.now()
+    const retained = new MutationRetainedBytes()
     const currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET) : null
-    let response: Response
+    let response: Response | undefined
+    let phpResponse: PHPResponseData | undefined
+    let responseBodyBytes = 0
     let canonicalChanges: MarkdownChanges | undefined
     let publicationChanges: PublicationChanges | undefined
     if (route === "r2-mutate") {
@@ -700,7 +711,10 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
         runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
         initializePublicationChanges(runtime.php)
       }
-      response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+      phpResponse = await runtime.requestHandler.request(await toPHPRequest(request))
+      responseBodyBytes = phpResponse.bytes.byteLength
+      if (mutatesCanonicalState) retained.retain(responseBodyBytes)
+      if (!mutatesCanonicalState) response = toFetchResponse(request, phpResponse)
       if (mutatesCanonicalState) {
         canonicalChanges = readCanonicalChanges(runtime.php)
         publicationChanges = readPublicationChanges(runtime.php)
@@ -708,17 +722,27 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     }
     if (mutatesCanonicalState) {
       if (!canonicalChanges || !publicationChanges) throw new Error("Canonical mutation completed without its persistence evidence.")
-      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
+      logMutationPhase(diagnosticsStartedAt, "php-request", retained, { canonicalCreated: canonicalChanges.created.length, canonicalChanged: canonicalChanges.changed.length, canonicalDeleted: canonicalChanges.deleted.length })
+      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges, diagnosticsStartedAt, retained)
+      if (!response) {
+        if (!phpResponse) throw new Error("WordPress mutation completed without a PHP response.")
+        retained.retain(responseBodyBytes)
+        response = toFetchResponse(request, phpResponse)
+      }
+      await discardRuntime(runtime)
+      runtime = undefined
+      if (phpResponse) retained.release(responseBodyBytes)
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges)
-      await commitLease(coordinator, request.url, lease, next)
       response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
       if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)
+      await commitLease(coordinator, request.url, lease, next)
+      logMutationPhase(diagnosticsStartedAt, "commit", retained, { publication: publicationJob ? "queued" : "unchanged" })
     } else {
       await releaseLease(coordinator, request.url, lease)
     }
     finalized = true
-    if (mutatesCanonicalState) await discardRuntime(runtime)
-    else if (route === "wordpress") response = await cacheWordPressPage(request, lease.pointer, response, env.WORDPRESS_STATE_BUCKET)
+    if (!mutatesCanonicalState && route === "wordpress" && response) response = await cacheWordPressPage(request, lease.pointer, response, env.WORDPRESS_STATE_BUCKET)
+    if (!response) throw new Error("WordPress request completed without a response.")
     return response
   } catch (error) {
     if (!finalized) await abortLease(coordinator, request.url, lease)
@@ -870,7 +894,7 @@ async function discardCachedRuntime(): Promise<void> {
   cachedRuntime = undefined
   if (!cached) return
   try {
-    ;(await cached.promise).php.exit()
+    await disposeRequestHandler((await cached.promise).requestHandler)
   } catch {
     // A rejected boot has no live runtime to dispose.
   }
@@ -884,7 +908,13 @@ async function discardRuntime(runtime: Runtime): Promise<void> {
       cachedRuntime = undefined
     }
   }
-  runtime.php.exit()
+  await disposeRequestHandler(runtime.requestHandler)
+}
+
+async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise<void> {
+  const asyncDispose = (Symbol as unknown as { readonly asyncDispose: symbol }).asyncDispose
+  const dispose = (requestHandler as unknown as Record<symbol, () => Promise<void>>)[asyncDispose]
+  await dispose.call(requestHandler)
 }
 
 async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
@@ -944,11 +974,49 @@ async function canonicalWordPressAuthConstants(env: RuntimeEnv): Promise<Record<
   return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", "default")
 }
 
-async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges): Promise<MarkdownPointer> {
+async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes()): Promise<MarkdownPointer> {
   validateMarkdownChanges(changes)
+  const currentManifest = await readMarkdownManifest(bucket, runtime.pointer)
+  if (!currentManifest) throw new Error(`R2 Markdown manifest is missing: ${runtime.pointer.manifestKey}`)
+  validateUploadManifestFiles(currentManifest.uploads ?? [])
+  validateWpContentManifestFiles(currentManifest.wpContent ?? [])
+  validateWpContentDeletedPaths(currentManifest.wpContentDeleted ?? [])
   const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
-  const [uploads, wpContent] = await Promise.all([collectUploadFiles(runtime.php), collectWpContentFiles(runtime.php)])
-  return persistMarkdownRevision(bucket, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT, changedPaths), runtime.pointer, changes, uploads, wpContent.files, wpContent.deleted)
+  const uploads = await collectUploadFiles(runtime.php)
+  logMutationPhase(diagnosticsStartedAt, "upload-inventory", retained, { files: uploads.length, bytes: sumMetadataBytes(uploads) })
+  const uploadManifestFiles = await persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], R2_UPLOAD_OBJECT_PREFIX, retained)
+  logMutationPhase(diagnosticsStartedAt, "upload-persist", retained, { files: uploadManifestFiles.length })
+  const wpContent = await collectWpContentFiles(runtime.php)
+  logMutationPhase(diagnosticsStartedAt, "wp-content-inventory", retained, { files: wpContent.files.length, bytes: sumMetadataBytes(wpContent.files), deleted: wpContent.deleted.length })
+  const wpContentManifestFiles = await persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], R2_WP_CONTENT_OBJECT_PREFIX, retained)
+  logMutationPhase(diagnosticsStartedAt, "wp-content-persist", retained, { files: wpContentManifestFiles.length })
+
+  const manifestFiles = new Map(currentManifest.files.map((file) => [file.path, file]))
+  for (const path of changes.deleted) manifestFiles.delete(path)
+  for (const path of changedPaths) {
+    if (!isCanonicalRelativePath(path)) throw new Error(`Invalid canonical runtime path: ${path}`)
+    const absolute = `${MARKDOWN_ROOT}/${path}`
+    if (runtime.php.isDir(absolute)) throw new Error(`Canonical runtime file is missing: ${path}`)
+    const bytes = runtime.php.readFileAsBuffer(absolute)
+    retained.retain(bytes.byteLength)
+    try {
+      const sha256 = await sha256Hex(bytes)
+      const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
+      await bucket.put(objectKey, bytes)
+      manifestFiles.set(path, { path, objectKey, sha256, size: bytes.byteLength })
+    } finally {
+      retained.release(bytes.byteLength)
+    }
+  }
+  logMutationPhase(diagnosticsStartedAt, "markdown-persist", retained, { files: changedPaths.length })
+
+  const files = [...manifestFiles.values()].sort((left, right) => left.path.localeCompare(right.path))
+  const unchanged = !changes.created.length && !changes.changed.length && !changes.deleted.length
+    && JSON.stringify(currentManifest.uploads ?? []) === JSON.stringify(uploadManifestFiles)
+    && JSON.stringify(currentManifest.wpContent ?? []) === JSON.stringify(wpContentManifestFiles)
+    && JSON.stringify(currentManifest.wpContentDeleted ?? []) === JSON.stringify(wpContent.deleted)
+  if (unchanged) return runtime.pointer
+  return persistMarkdownManifest(bucket, files, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted)
 }
 
 function readCanonicalChanges(php: PHP): MarkdownChanges {
@@ -962,7 +1030,7 @@ async function runSyntheticMutation(runtime: Runtime): Promise<{ response: Respo
   const mutationOutput = (await runtime.php.run({ code: SERIALIZED_MARKDOWN_MUTATION_CODE })).text.trim()
   const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
   validateMarkdownChanges(mutation.canonicalChanges)
-  return { response: Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: collectRuntimeFiles(runtime.php, MARKDOWN_ROOT).length, markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false }), canonicalChanges: mutation.canonicalChanges }
+  return { response: Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: countRuntimeFiles(runtime.php, MARKDOWN_ROOT), markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false }), canonicalChanges: mutation.canonicalChanges }
 }
 
 async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionCoordinator, scheduledTime: number): Promise<CronInvocationEvidence> {
@@ -996,11 +1064,12 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
       }
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, event.canonicalChanges)
       const currentPublication = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
+      await discardRuntime(runtime)
+      runtime = undefined
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, event.publicationChanges)
       await commitLease(coordinator, requestUrl, lease, next)
       finalized = true
       evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision, publication: publicationJob ? "queued" : "unchanged" })
-      await discardRuntime(runtime)
     } catch (error) {
       if (!finalized) await abortLease(coordinator, requestUrl, lease)
       if (runtime) await discardRuntime(runtime)
@@ -1599,7 +1668,21 @@ function collectRuntimeFiles(php: PHP, root: string, paths?: string[]): RuntimeF
   return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
-async function collectUploadFiles(php: PHP): Promise<RuntimeFile[]> {
+function countRuntimeFiles(php: PHP, root: string): number {
+  let count = 0
+  const visit = (directory: string): void => {
+    for (const name of php.listFiles(directory)) {
+      if (name === "." || name === "..") continue
+      const path = `${directory}/${name}`
+      if (php.isDir(path)) visit(path)
+      else if (!name.includes(".tmp.") && !name.startsWith("markdown-index.sqlite")) count++
+    }
+  }
+  visit(root)
+  return count
+}
+
+async function collectUploadFiles(php: PHP): Promise<RuntimeFileMetadata[]> {
   if (!php.isDir(UPLOADS_ROOT)) return []
   const output = (await php.run({ code: `<?php
 $root = '${UPLOADS_ROOT}';
@@ -1608,16 +1691,17 @@ $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, 
 foreach ($iterator as $file) {
     if (!$file->isFile()) continue;
     $path = str_replace('\\\\', '/', $file->getPathname());
-    $files[] = array('path' => substr($path, strlen($root) + 1), 'size' => $file->getSize());
+    $files[] = array('path' => substr($path, strlen($root) + 1), 'size' => $file->getSize(), 'sha256' => hash_file('sha256', $path));
 }
 usort($files, static fn($left, $right) => strcmp($left['path'], $right['path']));
 echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).text.trim()
   const metadata: unknown = JSON.parse(output)
   validateUploadMetadata(metadata)
-  return metadata.map((file) => ({ path: file.path, bytes: php.readFileAsBuffer(`${UPLOADS_ROOT}/${file.path}`) }))
+  validateRuntimeFileHashes(metadata)
+  return metadata
 }
 
-async function collectWpContentFiles(php: PHP): Promise<{ files: RuntimeFile[]; deleted: string[] }> {
+async function collectWpContentFiles(php: PHP): Promise<{ files: RuntimeFileMetadata[]; deleted: string[] }> {
   const output = (await php.run({ code: `<?php
 $base = '/wordpress/wp-content';
 $files = array();
@@ -1636,19 +1720,15 @@ foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
         if ($size > ${MAX_WP_CONTENT_FILE_BYTES} || $total > ${MAX_WP_CONTENT_TOTAL_BYTES} || count($files) >= ${MAX_WP_CONTENT_FILES}) {
             throw new RuntimeException('Canonical wp-content files exceed their budget.');
         }
-        $files[] = array('path' => $path, 'size' => $size);
+        $files[] = array('path' => $path, 'size' => $size, 'sha256' => hash_file('sha256', $absolute));
     }
 }
 usort($files, static fn($left, $right) => strcmp($left['path'], $right['path']));
 echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).text.trim()
   const metadata: unknown = JSON.parse(output)
   validateWpContentMetadata(metadata)
-  const files = metadata.map((file) => ({ path: file.path, bytes: php.readFileAsBuffer(`/wordpress/wp-content/${file.path}`) }))
-  const persistent: RuntimeFile[] = []
-  for (const file of files) {
-    const baselineSha256 = wordpressWpContentBaselineHashes.get(file.path)
-    if (!baselineSha256 || await sha256Hex(file.bytes) !== baselineSha256) persistent.push(file)
-  }
+  validateRuntimeFileHashes(metadata)
+  const persistent = metadata.filter((file) => wordpressWpContentBaselineHashes.get(file.path) !== file.sha256)
   const currentPaths = new Set(metadata.map((file) => file.path))
   const deleted = new Set([...wordpressWpContentRuntimeBaselinePaths].filter((path) => {
     const absolute = `/wordpress/wp-content/${path}`
@@ -1665,8 +1745,39 @@ echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).tex
   return { files: persistent, deleted: sortedDeleted }
 }
 
+function validateRuntimeFileHashes(files: unknown): asserts files is RuntimeFileMetadata[] {
+  if (!Array.isArray(files) || files.some((file) => !file || typeof file !== "object" || typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256))) throw new Error("Canonical runtime inventory contains an invalid digest.")
+}
+
+function sumMetadataBytes(files: RuntimeFileMetadata[]): number {
+  return files.reduce((total, file) => total + file.size, 0)
+}
+
+async function persistRuntimeObjects(bucket: R2Bucket, php: PHP, root: string, files: RuntimeFileMetadata[], current: MarkdownManifestFile[], objectPrefix: string, retained: MutationRetainedBytes): Promise<MarkdownManifestFile[]> {
+  const currentFiles = new Map(current.map((file) => [file.path, file]))
+  const persisted: MarkdownManifestFile[] = []
+  for (const file of files) {
+    const existing = currentFiles.get(file.path)
+    if (existing && existing.sha256 === file.sha256 && existing.size === file.size) {
+      persisted.push(existing)
+      continue
+    }
+    const bytes = php.readFileAsBuffer(`${root}/${file.path}`)
+    retained.retain(bytes.byteLength)
+    try {
+      if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`Canonical runtime file changed during persistence: ${file.path}`)
+      const objectKey = `${objectPrefix}/${file.sha256}`
+      if (!await bucket.head(objectKey)) await bucket.put(objectKey, bytes)
+      persisted.push({ path: file.path, objectKey, sha256: file.sha256, size: file.size })
+    } finally {
+      retained.release(bytes.byteLength)
+    }
+  }
+  return persisted
+}
+
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer)
+  const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 

@@ -8,6 +8,7 @@ import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
+import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
 import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
@@ -165,6 +166,23 @@ test("Cloudflare translates Fetch requests and PHP responses without losing brow
   assert.deepEqual(responseHeaders.getSetCookie?.() ?? [response.headers.get("set-cookie")], ["first=1; Path=/", "second=2; Path=/"])
 })
 
+test("Cloudflare mutation persistence bounds retained JS bytes to one changed file", () => {
+  const MiB = 1024 * 1024
+  const shape = {
+    responseBytes: 256 * 1024,
+    markdownBytes: 2 * MiB,
+    uploadBytes: 64 * MiB,
+    wpContentBytes: 64 * MiB,
+    largestChangedFileBytes: 16 * MiB,
+  }
+  const evidence = mutationRetentionContract(shape)
+
+  assert.equal(MUTATION_DIAGNOSTIC_SCHEMA, "wp-codebox/cloudflare-mutation-phase/v1")
+  assert.equal(evidence.wholeTreePeakBytes, 146 * MiB + 256 * 1024)
+  assert.equal(evidence.incrementalPeakBytes, 16 * MiB + 256 * 1024)
+  assert.equal(mutationRetentionContract({ ...shape, responseBytes: 32 * MiB }).incrementalPeakBytes, 64 * MiB)
+})
+
 test("Cloudflare runtime declares bounded CPU and scheduled execution", async () => {
   const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { main?: string; limits?: { cpu_ms?: number }; triggers?: { crons?: string[] } }
   const d1Config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.d1.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
@@ -301,7 +319,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /let cachedRuntime/)
   assert.match(worker, /cachedRuntime\.baseRevision !== pointer\.revision/)
   assert.match(worker, /promise\.catch\(\(\) =>/)
-  assert.match(worker, /finalized = true\n    if \(mutatesCanonicalState\) await discardRuntime\(runtime\)/)
+  assert.match(coordinatedRequest, /await discardRuntime\(runtime\)\n      runtime = undefined[\s\S]{0,100}const publicationJob/)
   assert.match(worker, /if \(runtime\) await discardRuntime\(runtime\)/)
   assert.doesNotMatch(worker, /runtime\.pointer = next/)
   assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)
@@ -400,9 +418,14 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.ok(worker.indexOf("serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator)") < worker.indexOf("runCoordinatedWordPressRequest(request, env, coordinator, route.kind)"))
   assert.match(worker, /R2_UPLOAD_OBJECT_PREFIX/)
   assert.match(worker, /collectUploadFiles\(runtime\.php\)/)
+  assert.match(worker, /hash_file\('sha256', \$path\)/)
+  assert.match(worker, /persistRuntimeObjects\(bucket, runtime\.php, UPLOADS_ROOT/)
   assert.match(worker, /materializeRuntimeFiles\(php, UPLOADS_ROOT, uploadFiles\)/)
   assert.match(worker, /"x-wp-codebox-static": "r2-upload"/)
   assert.match(worker, /collectWpContentFiles\(runtime\.php\)/)
+  assert.match(worker, /wordpressWpContentBaselineHashes\.get\(file\.path\) !== file\.sha256/)
+  const sha256 = worker.slice(worker.indexOf("async function sha256Hex"), worker.indexOf("async function materializeMarkdownDatabaseIntegration"))
+  assert.doesNotMatch(sha256, /Uint8Array\.from\(bytes\)\.buffer/)
   assert.match(worker, /persistWpContentObjects\(bucket, wpContent/)
   assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\]\)/)
   assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
