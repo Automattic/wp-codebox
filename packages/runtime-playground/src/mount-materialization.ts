@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 import { assertPlaygroundResponseOk, errorMessage } from "./playground-command-errors.js"
@@ -36,6 +36,8 @@ export type StagedInputMaterializationResult = MountMaterializationResult
 
 export interface ReadonlyMountStaging {
   mounts: MountSpec[]
+  diagnostics: MaterializationDiagnostic[]
+  phaseResult: MaterializationPhaseResult
   [Symbol.asyncDispose](): Promise<void>
 }
 
@@ -78,6 +80,8 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
   if (readonlyMounts.length === 0) {
     return {
       mounts,
+      diagnostics: [],
+      phaseResult: readonlyMountStagingPhaseResult(0, []),
       async [Symbol.asyncDispose]() {},
     }
   }
@@ -86,11 +90,47 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
   try {
     const stagedMountResults = await Promise.allSettled(mounts.map(async (mount, index) => {
       if (mount.mode !== "readonly") {
-        return mount
+        return { mount, diagnostics: [] }
       }
       const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
-      await cp(mount.source, source, { recursive: mount.type !== "file", dereference: true })
-      return { ...mount, source }
+      const sourceRoot = await realpath(mount.source)
+      const diagnostics: MaterializationDiagnostic[] = []
+      await cp(mount.source, source, {
+        recursive: mount.type !== "file",
+        dereference: true,
+        async filter(entry) {
+          if (!(await lstat(entry)).isSymbolicLink()) {
+            return true
+          }
+          let reason: "dangling-target" | "source-escape"
+          try {
+            const target = await realpath(entry)
+            const relativeTarget = relative(sourceRoot, target)
+            if (relativeTarget !== ".." && !relativeTarget.startsWith(`..${sep}`) && !isAbsolute(relativeTarget)) {
+              return true
+            }
+            reason = "source-escape"
+          } catch {
+            reason = "dangling-target"
+          }
+          const path = relative(mount.source, entry).replace(/\\/g, "/") || "."
+          diagnostics.push({
+            code: "readonly-mount-symlink-skipped",
+            message: `Skipped ${reason} symlink in readonly mount: ${path}`,
+            severity: "warning",
+            phase: "playground-readonly-mount-staging",
+            metadata: {
+              mountIndex: index,
+              mountTarget: mount.target,
+              path,
+              reason,
+            },
+          })
+          return false
+        },
+      })
+      diagnostics.sort((left, right) => String(left.metadata?.path) < String(right.metadata?.path) ? -1 : String(left.metadata?.path) > String(right.metadata?.path) ? 1 : 0)
+      return { mount: { ...mount, source }, diagnostics }
     }))
     const failedMount = stagedMountResults.find((result) => result.status === "rejected")
     if (failedMount?.status === "rejected") {
@@ -100,10 +140,13 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       if (result.status !== "fulfilled") {
         throw result.reason
       }
-      return result.value
+      return result.value.mount
     })
+    const diagnostics = stagedMountResults.flatMap((result) => result.status === "fulfilled" ? result.value.diagnostics : [])
     return {
       mounts: stagedMounts,
+      diagnostics,
+      phaseResult: readonlyMountStagingPhaseResult(readonlyMounts.length, diagnostics),
       async [Symbol.asyncDispose]() {
         await rm(root, { recursive: true, force: true })
       },
@@ -112,6 +155,14 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
     await rm(root, { recursive: true, force: true })
     throw error
   }
+}
+
+function readonlyMountStagingPhaseResult(mounts: number, diagnostics: MaterializationDiagnostic[]): MaterializationPhaseResult {
+  return materializationPhaseResult({
+    phase: "playground-readonly-mount-staging",
+    status: mounts > 0 ? "completed" : "skipped",
+    metadata: { mounts, skipped: diagnostics.length, diagnostics },
+  })
 }
 
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
