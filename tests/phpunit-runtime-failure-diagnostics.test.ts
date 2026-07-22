@@ -57,7 +57,7 @@ await assert.rejects(
     mounts: [],
     runPlaygroundCommand: async () => ({
       exitCode: 0,
-      errors: `PHPUnit stderr token=${successfulResponseSecret}`,
+      errors: `PHPUnit stderr token=${successfulResponseSecret}\n${"e".repeat(25_000)}`,
       text: `WPCOM Codebox PHPUnit shutdown: mysql_port=unset\n${"x".repeat(25_000)}`,
     }),
     runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
@@ -71,9 +71,9 @@ await assert.rejects(
     assert.match(error.message, /--- stdout ---/)
     assert.match(error.message, /WPCOM Codebox \[redacted\] shutdown: mysql_port=unset/)
     assert.match(error.message, /PHPUnit stderr token=\[redacted\]/)
-    assert.match(error.message, /\[diagnostic truncated\]/)
+    assert.match(error.message, /\[stream truncated\]/)
     assert.doesNotMatch(error.message, new RegExp(successfulResponseSecret))
-    assert.ok(error.message.length < 21_000, "successful response diagnostics must remain bounded")
+    assert.ok(error.message.length < 19_000, "successful response diagnostics must remain bounded")
     return true
   },
 )

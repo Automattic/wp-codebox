@@ -971,14 +971,19 @@ export async function runPhpunitCommand({
     throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit terminated before completing bootstrap"), "wordpress.phpunit structured diagnostics", structured)
   }
   if (!phpunitArgs.includes("--list-tests") && !/\bOK(?:, but there were issues!)? \([1-9]\d* tests?,/m.test(response.text)) {
-    const diagnostics = [
-      response.errors?.trim() ? `--- stderr ---\n${response.errors.trim()}` : "",
-      response.text.trim() ? `--- stdout ---\n${response.text.trim()}` : "",
-    ].filter(Boolean).join("\n")
+    const diagnostics = successfulPhpunitResponseDiagnostics(response)
     throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit exited successfully without a non-zero PHPUnit test summary"), "wordpress.phpunit successful response diagnostics", diagnostics)
   }
 
   return response.text
+}
+
+function successfulPhpunitResponseDiagnostics(response: PlaygroundRunResponse): string {
+  const boundedStream = (value: string): string => value.length > 9_000 ? `${value.slice(0, 9_000)}\n[stream truncated]` : value
+  return [
+    response.errors?.trim() ? `--- stderr ---\n${boundedStream(response.errors.trim())}` : "",
+    response.text.trim() ? `--- stdout ---\n${boundedStream(response.text.trim())}` : "",
+  ].filter(Boolean).join("\n")
 }
 
 function boundedProcessIdentity(value: string | undefined): string {
