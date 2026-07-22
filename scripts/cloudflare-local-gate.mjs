@@ -46,6 +46,7 @@ try {
   await assertAnonymousWordPressPage(origin, "homepage publication candidate")
   const initialPublication = await publishRoutes(["/", post.route])
   const updatedPost = await updatePost(adminHtml, post, initialPublication.revision)
+  await assertAnonymousWordPressPage(new URL(post.route, origin), "updated post canonical snapshot before publication")
   // Restart with an explicit pending job to prove progress is durable rather than isolate-local.
   await stopWorker()
   await startWorker()
