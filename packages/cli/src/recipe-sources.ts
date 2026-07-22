@@ -1796,7 +1796,7 @@ echo wp_json_encode(array('command' => 'install-mu-plugins', 'plugins' => $plugi
 
 export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtraPlugin[]): string | null {
   const plugins = extraPlugins
-    .filter((plugin) => plugin.loadAs === "plugin")
+    .filter((plugin) => plugin.loadAs === "plugin" && plugin.activate)
     .map((plugin) => plugin.pluginFile)
 
   if (plugins.length === 0) {
@@ -1804,6 +1804,7 @@ export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtra
   }
 
   return `$plugins = ${JSON.stringify(plugins)};
+$autoloaders = array();
 if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
     throw new RuntimeException('Could not create mu-plugins directory.');
 }
@@ -1828,16 +1829,20 @@ foreach ($plugins as $plugin) {
     }
     $package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
     if (is_file($package_autoload)) {
-        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload_packages.php';";
+        $autoload_path = $plugin_dir . '/vendor/autoload_packages.php';
+        $autoloaders[] = $autoload_path;
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $autoload_path) . "';";
         continue;
     }
     $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
     if (is_file($autoload)) {
-        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
+        $autoload_path = $plugin_dir . '/vendor/autoload.php';
+        $autoloaders[] = $autoload_path;
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $autoload_path) . "';";
     }
 }
 if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {
     throw new RuntimeException('Could not write WP Codebox Composer autoloader loader.');
 }
-echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'autoloaders' => $autoloaders, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }
