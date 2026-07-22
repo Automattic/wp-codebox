@@ -8,6 +8,7 @@ import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
+import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
@@ -76,7 +77,30 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-restore")), { kind: "operator-restore" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-publish")), { kind: "operator-publish" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
+})
+
+test("Cloudflare publication contracts are host-independent, immutable, and bounded", async () => {
+  const canonicalRevision = "11111111-1111-4111-8111-111111111111"
+  const publicationRevision = "22222222-2222-4222-8222-222222222222"
+  assert.equal(canonicalPublicRoute("/news/?z=2&a=1"), "/news/?a=1&z=2")
+  assert.deepEqual(normalizePublishedRoutes(["/news/?z=2&a=1", "/"]), ["/", "/news/?a=1&z=2"])
+  assert.throws(() => normalizePublishedRoutes(["/", "/"]), /unique/)
+  assert.throws(() => normalizePublishedRoutes(["https://foreign.example/"]), /invalid/)
+  const objectKey = await publishedPageObjectKey(canonicalRevision, "/")
+  assert.equal(objectKey, await publishedPageObjectKey(canonicalRevision, canonicalPublicRoute("https://another-host.example/")))
+  const publication = validatePublishedRevision({
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: publicationRevision,
+    canonicalRevision,
+    publishedAt: "2026-07-22T00:00:00.000Z",
+    routes: [{ route: "/", objectKey }],
+  })
+  assert.equal(publication.routes[0].objectKey, objectKey)
+  assert.equal(publishedRevisionObjectKey(publicationRevision), `sites/default/publications/revisions/${publicationRevision}.json`)
+  assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
+  assert.throws(() => validatePublishedRevision({ ...publication, routes: [{ route: "/", objectKey: "sites/default/pages/foreign.json" }] }), /route is invalid/)
 })
 
 test("Cloudflare serves only safe browser assets from the WordPress archive", () => {
@@ -279,6 +303,8 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /canonicalWordPressAuthConstants\(env\)/)
   assert.match(worker, /authConstants/)
   assert.match(worker, /const wpContentResponse = await serveWordPressWpContent\(request, env\.WORDPRESS_STATE_BUCKET, coordinator\)/)
+  assert.match(worker, /const publishedResponse = await servePublishedWordPressPage\(request, env\.WORDPRESS_STATE_BUCKET\)/)
+  assert.ok(worker.indexOf("servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf('env.WORDPRESS_STATE.getByName("default")'))
   assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request, env\.WORDPRESS_STATE_BUCKET\)/)
   assert.ok(worker.indexOf("const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator)") < worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)"))
   assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf("const route = routeWorkerRequest(request)"))
@@ -300,11 +326,17 @@ test("Cloudflare keeps PHP-WASM in the entry Worker and uses the Durable Object 
   assert.match(worker, /matchWordPressPageCache\(request, lease\.pointer, env\.WORDPRESS_STATE_BUCKET\)/)
   assert.match(worker, /cacheWordPressPage\(request, lease\.pointer, response, env\.WORDPRESS_STATE_BUCKET\)/)
   assert.match(worker, /__wp_codebox_revision/)
-  assert.match(worker, /R2_WORDPRESS_PAGE_PREFIX/)
-  assert.match(worker, /"wp-codebox\/wordpress-page\/v1"/)
+  assert.match(worker, /R2_PUBLISHED_CURRENT_KEY/)
+  assert.match(worker, /publishedPageObjectKey\(pointer\.revision, canonicalPublicRoute\(request\)\)/)
+  assert.match(worker, /PUBLISHED_PAGE_SCHEMA/)
   assert.match(worker, /"x-wp-codebox-page-cache"/)
   assert.match(worker, /"x-wp-codebox-page-cache-source"/)
   assert.match(worker, /"public, max-age=60, s-maxage=31536000"/)
+  assert.match(worker, /"public, max-age=60, s-maxage=60"/)
+  assert.match(worker, /publishCanonicalWordPressPages\(request, env, coordinator\)/)
+  assert.match(worker, /https:\/\/wp-codebox-publication\.invalid/)
+  assert.match(worker, /onlyIf: \{ etagDoesNotMatch: "\*" \}/)
+  assert.match(worker, /Immutable R2 object conflicts with existing content/)
   assert.match(worker, /serveWordPressUpload\(request, env\.WORDPRESS_STATE_BUCKET, coordinator\)/)
   assert.ok(worker.indexOf("serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator)") < worker.indexOf("runCoordinatedWordPressRequest(request, env, coordinator, route.kind)"))
   assert.match(worker, /R2_UPLOAD_OBJECT_PREFIX/)

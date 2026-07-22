@@ -7,6 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
+import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
@@ -51,8 +52,7 @@ const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
-const R2_WORDPRESS_PAGE_PREFIX = "sites/default/pages"
-const WORDPRESS_PAGE_CACHE_SCHEMA = "v2"
+const WORDPRESS_PAGE_CACHE_SCHEMA = "v3"
 const PUBLIC_WP_CONTENT_EXTENSION = /\.(?:css|js|mjs|json|txt|xml|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/i
 const MAX_CRON_EVENTS_PER_INVOCATION = 5
 const MAX_CRON_INVOCATION_MS = 25_000
@@ -133,6 +133,8 @@ interface Env {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname === "/wp-cron.php") return new Response("WordPress cron is managed by the Cloudflare scheduled handler.", { status: 404 })
+    const publishedResponse = await servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET)
+    if (publishedResponse) return publishedResponse
     const coordinator = env.WORDPRESS_STATE.getByName("default")
     const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator)
     if (wpContentResponse) return wpContentResponse
@@ -143,6 +145,7 @@ export default {
     if (uploadResponse) return uploadResponse
     if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
     if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
+    if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator)
     if (route.kind === "probe") {
       return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
     }
@@ -182,7 +185,9 @@ interface CoordinatorState {
 }
 
 interface WordPressPageSnapshot {
-  schema: "wp-codebox/wordpress-page/v1"
+  schema: typeof PUBLISHED_PAGE_SCHEMA
+  canonicalRevision: string
+  route: string
   status: number
   statusText: string
   headers: Array<[string, string]>
@@ -283,6 +288,103 @@ async function secretsMatch(left: string, right: string): Promise<boolean> {
   return difference === 0
 }
 
+async function servePublishedWordPressPage(request: Request, bucket: R2Bucket): Promise<Response | null> {
+  if (!isCacheableWordPressPageRequest(request) || new URL(request.url).searchParams.has("phase")) return null
+  if (["/wp-content/", "/wp-includes/"].some((prefix) => new URL(request.url).pathname.startsWith(prefix))) return null
+  const route = canonicalPublicRoute(request)
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  const cacheRequest = publishedPageCacheRequest(request)
+  const cached = cache ? await cache.match(cacheRequest) : null
+  if (cached) return publishedPageResponse(cached, request.method === "HEAD", "edge")
+
+  const currentObject = await bucket.get(R2_PUBLISHED_CURRENT_KEY)
+  if (!currentObject) return null
+  if (currentObject.size > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Published revision exceeds its size budget.")
+  const publication = validatePublishedRevision(JSON.parse(await currentObject.text()))
+  const publishedRoute = publication.routes.find((candidate) => candidate.route === route)
+  if (!publishedRoute) return null
+  const snapshotObject = await bucket.get(publishedRoute.objectKey)
+  if (!snapshotObject) throw new Error(`Published page artifact is unavailable: ${publishedRoute.objectKey}.`)
+  if (snapshotObject.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Published page artifact exceeds its size budget: ${publishedRoute.objectKey}.`)
+  const snapshot = JSON.parse(await snapshotObject.text()) as WordPressPageSnapshot
+  validateWordPressPageSnapshot(snapshot, publication.canonicalRevision, route)
+  const response = new Response(snapshot.body, { status: snapshot.status, statusText: snapshot.statusText, headers: snapshot.headers })
+  const published = publishedPageResponse(response, request.method === "HEAD", "r2", publication.revision)
+  if (cache && request.method === "GET") {
+    try {
+      await cache.put(cacheRequest, published.clone())
+    } catch {
+      // The immutable R2 publication remains authoritative when edge caching is unavailable.
+    }
+  }
+  return published
+}
+
+async function publishCanonicalWordPressPages(request: Request, env: Env, coordinator: DurableObjectStub): Promise<Response> {
+  if (request.method !== "POST") return new Response("Canonical publication requires POST.", { status: 405 })
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Canonical publication authorization failed.", { status: 401 })
+  }
+  let routes: string[]
+  try {
+    const body = await request.json<{ routes?: unknown }>()
+    routes = normalizePublishedRoutes(body.routes)
+  } catch (error) {
+    return new Response(error instanceof Error ? error.message : "Canonical publication body is invalid.", { status: 400 })
+  }
+  const state = await coordinatorCall<CoordinatorState>(coordinator, request.url, "state")
+  if (!state.pointer) return new Response("Canonical publication requires initialized state.", { status: 409 })
+  let publishedRoutes: Array<{ route: string; objectKey: string }>
+  try {
+    publishedRoutes = await Promise.all(routes.map(async (route) => {
+      const objectKey = await publishedPageObjectKey(state.pointer!.revision, route)
+      const object = await env.WORDPRESS_STATE_BUCKET.get(objectKey)
+      if (!object) throw new Error(`Canonical publication route has not been rendered: ${route}.`)
+      if (object.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Canonical publication route exceeds its size budget: ${route}.`)
+      const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
+      validateWordPressPageSnapshot(snapshot, state.pointer!.revision, route)
+      return { route, objectKey }
+    }))
+  } catch (error) {
+    return new Response(error instanceof Error ? error.message : "Canonical publication artifacts are invalid.", { status: 409 })
+  }
+  const publication: PublishedRevision = {
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: crypto.randomUUID(),
+    canonicalRevision: state.pointer.revision,
+    publishedAt: new Date().toISOString(),
+    routes: publishedRoutes,
+  }
+  const serialized = JSON.stringify(publication)
+  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) return new Response("Canonical publication exceeds its size budget.", { status: 413 })
+  await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision), serialized)
+  await env.WORDPRESS_STATE_BUCKET.put(R2_PUBLISHED_CURRENT_KEY, serialized, { httpMetadata: { contentType: "application/json" } })
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  if (cache) await Promise.all(routes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, request.url))))))
+  return Response.json(publication)
+}
+
+function publishedPageCacheRequest(request: Request): Request {
+  return new Request(`https://wp-codebox-publication.invalid${canonicalPublicRoute(request)}`, { method: "GET" })
+}
+
+function publishedPageResponse(response: Response, head: boolean, source: "edge" | "r2", revision?: string): Response {
+  const headers = new Headers(response.headers)
+  headers.set("cache-control", "public, max-age=60, s-maxage=60")
+  headers.set("x-wp-codebox-page-cache", "hit")
+  headers.set("x-wp-codebox-page-cache-source", `publication-${source}`)
+  if (revision) headers.set("x-wp-codebox-publication-revision", revision)
+  return new Response(head ? null : response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+function validateWordPressPageSnapshot(snapshot: WordPressPageSnapshot, canonicalRevision: string, route: string): void {
+  if (snapshot.schema !== PUBLISHED_PAGE_SCHEMA || snapshot.canonicalRevision !== canonicalRevision || snapshot.route !== route
+    || !Number.isInteger(snapshot.status) || snapshot.status < 100 || snapshot.status > 599 || typeof snapshot.statusText !== "string"
+    || !Array.isArray(snapshot.headers) || snapshot.headers.some((header) => !Array.isArray(header) || header.length !== 2 || header.some((value) => typeof value !== "string"))
+    || typeof snapshot.body !== "string") throw new Error("Published page artifact is invalid.")
+}
+
 async function runCoordinatedWordPressRequest(request: Request, env: Env, coordinator: DurableObjectStub, route: "wordpress" | "health" | "r2-mutate"): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
   if (route === "wordpress" && isCacheableWordPressPageRequest(request)) {
@@ -359,7 +461,8 @@ async function matchWordPressPageCache(request: Request, pointer: MarkdownPointe
     const object = await bucket.get(await wordPressPageSnapshotKey(request, pointer))
     if (!object) return null
     const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
-    if (snapshot.schema !== "wp-codebox/wordpress-page/v1" || snapshot.status !== 200 || !Array.isArray(snapshot.headers) || typeof snapshot.body !== "string") return null
+    validateWordPressPageSnapshot(snapshot, pointer.revision, canonicalPublicRoute(request))
+    if (snapshot.status !== 200) return null
     const response = new Response(snapshot.body, { status: snapshot.status, statusText: snapshot.statusText, headers: snapshot.headers })
     if (cache) await cache.put(wordPressPageCacheKey(request, pointer), response.clone())
     return pageCacheResponse(response, request.method === "HEAD", "hit", "r2")
@@ -375,20 +478,31 @@ async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, re
   const cacheable = pageCacheResponse(response, false, "miss", "render")
   try {
     const snapshot: WordPressPageSnapshot = {
-      schema: "wp-codebox/wordpress-page/v1",
+      schema: PUBLISHED_PAGE_SCHEMA,
+      canonicalRevision: pointer.revision,
+      route: canonicalPublicRoute(request),
       status: cacheable.status,
       statusText: cacheable.statusText,
       headers: Array.from(cacheable.headers.entries()),
       body: await cacheable.clone().text(),
     }
+    const serialized = JSON.stringify(snapshot)
+    if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) return cacheable
     await Promise.all([
       cache ? cache.put(wordPressPageCacheKey(request, pointer), cacheable.clone()) : Promise.resolve(),
-      bucket.put(await wordPressPageSnapshotKey(request, pointer), JSON.stringify(snapshot), { httpMetadata: { contentType: "application/json" } }),
+      putImmutableJson(bucket, await wordPressPageSnapshotKey(request, pointer), serialized),
     ])
   } catch {
     // Page caching is an optimization; canonical rendering remains authoritative.
   }
   return cacheable
+}
+
+async function putImmutableJson(bucket: R2Bucket, key: string, serialized: string): Promise<void> {
+  const created = await bucket.put(key, serialized, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" } })
+  if (created) return
+  const existing = await bucket.get(key)
+  if (!existing || await existing.text() !== serialized) throw new Error(`Immutable R2 object conflicts with existing content: ${key}.`)
 }
 
 function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer): Request {
@@ -399,9 +513,7 @@ function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer): Requ
 }
 
 async function wordPressPageSnapshotKey(request: Request, pointer: MarkdownPointer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(new URL(request.url).toString()))
-  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
-  return `${R2_WORDPRESS_PAGE_PREFIX}/${pointer.revision}/${hash}.json`
+  return publishedPageObjectKey(pointer.revision, canonicalPublicRoute(request))
 }
 
 function pageCacheResponse(response: Response, head: boolean, status: "hit" | "miss", source: "edge" | "r2" | "render"): Response {
