@@ -1,4 +1,5 @@
-export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1" as const
+export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2" as const
+const LEGACY_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1"
 export const PUBLISHED_PAGE_SCHEMA = "wp-codebox/wordpress-page/v2" as const
 export const R2_PUBLISHED_CURRENT_KEY = "sites/default/publications/current.json"
 export const R2_PUBLISHED_REVISION_PREFIX = "sites/default/publications/revisions"
@@ -9,6 +10,7 @@ export const MAX_PUBLISHED_PAGE_BYTES = 8 * 1024 * 1024
 export interface PublishedRoute {
   route: string
   objectKey: string
+  canonicalRevision: string
 }
 
 export interface PublishedRevision {
@@ -40,17 +42,22 @@ export function publishedRevisionObjectKey(revision: string): string {
 export function validatePublishedRevision(value: unknown): PublishedRevision {
   if (!value || typeof value !== "object") throw new Error("Published revision is invalid.")
   const revision = value as Partial<PublishedRevision>
-  if (revision.schema !== PUBLISHED_REVISION_SCHEMA || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
+  const legacy = (value as { schema?: unknown }).schema === LEGACY_PUBLISHED_REVISION_SCHEMA
+  if (![PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
     || typeof revision.publishedAt !== "string" || !Number.isFinite(Date.parse(revision.publishedAt)) || !Array.isArray(revision.routes)
     || revision.routes.length === 0 || revision.routes.length > MAX_PUBLISHED_ROUTES) throw new Error("Published revision is invalid.")
   let previous = ""
+  const normalizedRoutes: PublishedRoute[] = []
   for (const route of revision.routes) {
+    const routeRevision = legacy ? revision.canonicalRevision : route.canonicalRevision
     if (!route || typeof route !== "object" || !isCanonicalRoute(route.route) || route.route <= previous
-      || route.objectKey !== `sites/default/pages/${revision.canonicalRevision}/${route.objectKey.split("/").at(-1)}`
+      || !isRevision(routeRevision)
+      || route.objectKey !== `sites/default/pages/${routeRevision}/${route.objectKey.split("/").at(-1)}`
       || !/^sites\/default\/pages\/[a-f0-9-]{36}\/[a-f0-9]{64}\.json$/.test(route.objectKey)) throw new Error("Published revision route is invalid.")
     previous = route.route
+    normalizedRoutes.push({ route: route.route, objectKey: route.objectKey, canonicalRevision: routeRevision })
   }
-  return revision as PublishedRevision
+  return { ...revision, schema: PUBLISHED_REVISION_SCHEMA, routes: normalizedRoutes } as PublishedRevision
 }
 
 export function normalizePublishedRoutes(value: unknown): string[] {

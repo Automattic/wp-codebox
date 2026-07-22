@@ -44,7 +44,12 @@ try {
   assertIncludes(frontPage, post.title, "published post")
   await assertAnonymousWordPressPage(new URL(post.route, origin), "post publication candidate")
   await assertAnonymousWordPressPage(origin, "homepage publication candidate")
-  await publishRoutes(["/", post.route])
+  const initialPublication = await publishRoutes(["/", post.route])
+  const updatedPost = await updatePost(adminHtml, post, initialPublication.revision)
+  const automaticallyPublishedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "automatically republished post")
+  assertIncludes(automaticallyPublishedPost, updatedPost.title, "automatically republished post")
+  await assertPublishedRevision(origin, updatedPost.publicationRevision, "automatically republished homepage")
+  post.title = updatedPost.title
   await assertHealthResponse()
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
@@ -54,7 +59,7 @@ try {
 
   await startWorker()
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
-  const restartedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "post after publication restart")
+  const restartedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "post after publication restart", ["publication-r2", "publication-edge"])
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertMediaFile(media, "media after cold restart")
   await assertMediaMetadata(media, "media metadata after cold restart")
@@ -64,6 +69,8 @@ try {
   await assertScheduledPost(scheduledPost.id, "draft", 0, scheduledPost.timestamp, "scheduled post before cron")
   await runScheduledCronUntilPost(scheduledPost.id)
   await assertScheduledPostEventually(scheduledPost.id, "publish", 1, false, "scheduled post after cron")
+  const scheduledPage = await assertPublishedWordPressPage(new URL(scheduledPost.route, origin), "automatically published scheduled post", ["publication-r2", "publication-edge"])
+  assertIncludes(scheduledPage, "Published by the Cloudflare scheduled handler.", "automatically published scheduled post")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   await stopWorker()
 
@@ -147,7 +154,25 @@ async function createPost(adminHtml) {
   const post = JSON.parse(body)
   if (typeof post.slug !== "string" || typeof post.link !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
   const link = new URL(post.link)
-  return { slug: post.slug, route: `${link.pathname}${link.search}`, title }
+  return { id: post.id, slug: post.slug, route: `${link.pathname}${link.search}`, title }
+}
+
+async function updatePost(adminHtml, post, previousPublicationRevision) {
+  const title = `Automatically published ${Date.now()}`
+  const response = await request(`${origin}/wp-json/wp/v2/posts/${post.id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-wp-nonce": restNonce(adminHtml) },
+    body: JSON.stringify({ title, content: "This edit was compiled and promoted by the canonical mutation transaction." }),
+  })
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "REST post update with automatic publication")
+  const publicationRevision = response.headers.get("x-wp-codebox-publication-revision")
+  if (response.status !== 200 || response.headers.get("x-wp-codebox-publication") !== "promoted" || !publicationRevision || publicationRevision === previousPublicationRevision) {
+    throw new Error(`Automatic publication failed: status=${response.status} publication=${response.headers.get("x-wp-codebox-publication")} revision=${publicationRevision} body=${body}.`)
+  }
+  const payload = JSON.parse(body)
+  if (payload.title?.rendered !== title) throw new Error(`Unexpected updated post response: ${body}`)
+  return { title, publicationRevision }
 }
 
 async function createMedia(adminHtml) {
@@ -246,7 +271,7 @@ add_action( 'rest_api_init', static function () {
 			$scheduled = wp_schedule_single_event( $timestamp, 'wp_codebox_publish_scheduled_post', array( $post_id ), true );
 			if ( is_wp_error( $scheduled ) ) return $scheduled;
 			if ( true !== $scheduled ) return new WP_Error( 'schedule_failed', 'WordPress did not persist the cron event.', array( 'status' => 500 ) );
-			return rest_ensure_response( array( 'id' => $post_id, 'timestamp' => $timestamp ) );
+			return rest_ensure_response( array( 'id' => $post_id, 'timestamp' => $timestamp, 'link' => get_permalink( $post_id ) ) );
 		},
 		'permission_callback' => static fn() => current_user_can( 'publish_posts' ),
 	) );
@@ -300,7 +325,9 @@ add_action( 'wp_codebox_publish_scheduled_post', static function ( $post_id ) {
     body: "{}",
   })
   const scheduledPayload = await scheduled.json()
-  if (!scheduled.ok || !Number.isSafeInteger(scheduledPayload.id) || !Number.isSafeInteger(scheduledPayload.timestamp)) throw new Error(`Durable cron scheduling failed: status=${scheduled.status} payload=${JSON.stringify(scheduledPayload)}.`)
+  if (!scheduled.ok || !Number.isSafeInteger(scheduledPayload.id) || !Number.isSafeInteger(scheduledPayload.timestamp) || typeof scheduledPayload.link !== "string") throw new Error(`Durable cron scheduling failed: status=${scheduled.status} payload=${JSON.stringify(scheduledPayload)}.`)
+  const scheduledLink = new URL(scheduledPayload.link)
+  scheduledPayload.route = `${scheduledLink.pathname}${scheduledLink.search}`
   return { deletedThemePath: deletedPayload.deleted, scheduledPost: scheduledPayload }
 }
 
@@ -420,15 +447,25 @@ async function assertWordPressPage(target, label) {
   return body
 }
 
-async function assertPublishedWordPressPage(target, label) {
+async function assertPublishedWordPressPage(target, label, sources = ["publication-r2"]) {
   const response = await fetch(target)
   const body = await response.text()
   assertNoPhpDiagnostics(body, label)
-  if (response.status !== 200 || response.headers.get("x-wp-codebox-page-cache-source") !== "publication-r2"
+  if (response.status !== 200 || !sources.includes(response.headers.get("x-wp-codebox-page-cache-source"))
     || !response.headers.get("x-wp-codebox-publication-revision") || !/<html[\s>]/i.test(body)) {
     throw new Error(`Expected a coordinator-free R2 ${label}, received ${response.status}/${response.headers.get("x-wp-codebox-page-cache-source")}.`)
   }
   return body
+}
+
+async function assertPublishedRevision(target, revision, label) {
+  const response = await fetch(target)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, label)
+  if (!response.ok || !["publication-r2", "publication-edge"].includes(response.headers.get("x-wp-codebox-page-cache-source"))
+    || response.headers.get("x-wp-codebox-publication-revision") !== revision) {
+    throw new Error(`Expected ${label} at publication ${revision}, received ${response.status}/${response.headers.get("x-wp-codebox-publication-revision")}.`)
+  }
 }
 
 async function assertAnonymousWordPressPage(target, label) {
@@ -452,9 +489,10 @@ async function publishRoutes(routes) {
   } catch {
     throw new Error(`Canonical publication returned non-JSON: status=${response.status} body=${body}.\n${stripVTControlCharacters(output).split("\n").filter((line) => /error|exception|publication/i.test(line)).slice(-30).join("\n")}`)
   }
-  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v1" || payload.routes?.length !== routes.length) {
+  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v2" || payload.routes?.length !== routes.length) {
     throw new Error(`Canonical publication failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
   }
+  return payload
 }
 
 async function timedWordPressPage(target, label) {
