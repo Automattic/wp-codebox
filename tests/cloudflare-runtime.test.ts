@@ -402,6 +402,8 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /coordinator\.committed\(candidate\.coordinatorVersion\)/)
   assert.match(worker, /\.list\(\{ prefix: `\$\{R2_PUBLICATION_JOB_PREFIX\}\/`, limit: 16 \}\)/)
   assert.match(worker, /canonicalVersion: job\.coordinatorVersion/)
+  assert.match(worker, /readWordPressPageSnapshot\(env\.WORDPRESS_STATE_BUCKET, objectKey, job\.canonical\.revision, route\)/)
+  assert.match(worker, /if \(!await readWordPressPageSnapshot\(env\.WORDPRESS_STATE_BUCKET, objectKey, job\.canonical\.revision, route\)\) throw error/)
   const publicationDrain = worker.slice(worker.indexOf("async function drainNextPublicationJob"), worker.indexOf("async function compilePublicationRoutes"))
   assert.match(publicationDrain, /bootRuntime\(env\.WORDPRESS_STATE_BUCKET, job\.canonical, SITE_URL/)
   assert.match(publicationDrain, /compilePublicationRoutes\(runtime, \[route\], SITE_URL\)/)

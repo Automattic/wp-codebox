@@ -585,14 +585,20 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
     if (!plan) throw new Error("Publication progress plan is unavailable.")
     if (progress.next < plan.upsert.length) {
       const route = plan.upsert[progress.next]
-      runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, job.canonical, SITE_URL, await canonicalWordPressAuthConstants(env))
-      const compiled = await compilePublicationRoutes(runtime, [route], SITE_URL)
-      const page = compiled[0]
-      const objectKey = await publishedPageObjectKey(job.canonical.revision, page.route)
-      const snapshot: WordPressPageSnapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: job.canonical.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
-      const serialized = JSON.stringify(snapshot)
-      if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
-      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, objectKey, serialized)
+      const objectKey = await publishedPageObjectKey(job.canonical.revision, route)
+      let snapshot = await readWordPressPageSnapshot(env.WORDPRESS_STATE_BUCKET, objectKey, job.canonical.revision, route)
+      if (!snapshot) {
+        runtime = await bootRuntime(env.WORDPRESS_STATE_BUCKET, job.canonical, SITE_URL, await canonicalWordPressAuthConstants(env))
+        const page = (await compilePublicationRoutes(runtime, [route], SITE_URL))[0]
+        snapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: job.canonical.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
+        const serialized = JSON.stringify(snapshot)
+        if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
+        try {
+          await putImmutableJson(env.WORDPRESS_STATE_BUCKET, objectKey, serialized)
+        } catch (error) {
+          if (!await readWordPressPageSnapshot(env.WORDPRESS_STATE_BUCKET, objectKey, job.canonical.revision, route)) throw error
+        }
+      }
       await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, { ...progress, next: progress.next + 1, rendered: [...progress.rendered, route] })
       return { schema: "wp-codebox/cloudflare-publication/v1", status: "rendered", jobKey: job.key, route }
     }
@@ -765,10 +771,9 @@ async function matchWordPressPageCache(request: Request, pointer: MarkdownPointe
   try {
     const cached = cache ? await cache.match(wordPressPageCacheKey(request, pointer)) : null
     if (cached) return pageCacheResponse(cached, request.method === "HEAD", "hit", "edge")
-    const object = await bucket.get(await wordPressPageSnapshotKey(request, pointer))
-    if (!object) return null
-    const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
-    validateWordPressPageSnapshot(snapshot, pointer.revision, canonicalPublicRoute(request))
+    const route = canonicalPublicRoute(request)
+    const snapshot = await readWordPressPageSnapshot(bucket, await wordPressPageSnapshotKey(request, pointer), pointer.revision, route)
+    if (!snapshot) return null
     if (snapshot.status !== 200) return null
     const response = new Response(snapshot.body, { status: snapshot.status, statusText: snapshot.statusText, headers: snapshot.headers })
     if (cache) await cache.put(wordPressPageCacheKey(request, pointer), response.clone())
@@ -776,6 +781,15 @@ async function matchWordPressPageCache(request: Request, pointer: MarkdownPointe
   } catch {
     return null
   }
+}
+
+async function readWordPressPageSnapshot(bucket: R2Bucket, objectKey: string, canonicalRevision: string, route: string): Promise<WordPressPageSnapshot | null> {
+  const object = await bucket.get(objectKey)
+  if (!object) return null
+  if (object.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Published page artifact exceeds its size budget: ${objectKey}.`)
+  const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
+  validateWordPressPageSnapshot(snapshot, canonicalRevision, route)
+  return snapshot
 }
 
 async function cacheWordPressPage(request: Request, pointer: MarkdownPointer, response: Response, bucket: R2Bucket): Promise<Response> {
