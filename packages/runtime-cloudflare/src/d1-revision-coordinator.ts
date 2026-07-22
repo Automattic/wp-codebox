@@ -38,6 +38,10 @@ export class D1RevisionCoordinator implements RevisionCoordinator {
     return commitStateLease(this.database, lease, pointer)
   }
 
+  committed(version: number): Promise<MarkdownPointer | null> {
+    return readCommittedPointer(this.database, version)
+  }
+
   async reset(): Promise<void> {
     await resetWordPressState(this.database)
   }
@@ -86,24 +90,41 @@ async function commitStateLease(database: D1Database, lease: RevisionLease, poin
   validatePointer(pointer)
   await ensureSchema(database)
   const baseRevision = lease.pointer?.revision ?? null
-  const result = await database.prepare(`UPDATE wp_codebox_state
+  const update = database.prepare(`UPDATE wp_codebox_state
     SET revision = ?, manifest_key = ?, persisted_at = ?, version = version + 1,
         lease_token = NULL, lease_base_revision = NULL, lease_version = NULL, lease_expires_at = NULL
     WHERE site_id = ? AND lease_token = ? AND lease_expires_at > ? AND version = ? AND lease_version = ?
       AND ((revision IS NULL AND ? IS NULL) OR revision = ?)
       AND ((lease_base_revision IS NULL AND ? IS NULL) OR lease_base_revision = ?)`)
     .bind(pointer.revision, pointer.manifestKey, pointer.persistedAt, SITE_ID, lease.token, Date.now(), lease.version, lease.version,
-      baseRevision, baseRevision, baseRevision, baseRevision).run()
-  if (result.meta.changes !== 1) throw new RevisionConflict("The canonical pointer changed before D1 promotion.")
+      baseRevision, baseRevision, baseRevision, baseRevision)
+  const receipt = database.prepare(`INSERT OR IGNORE INTO wp_codebox_commits (site_id, version, revision, manifest_key, persisted_at)
+    SELECT ?, ?, ?, ?, ? FROM wp_codebox_state WHERE site_id = ? AND version = ? AND revision = ?`)
+    .bind(SITE_ID, lease.version + 1, pointer.revision, pointer.manifestKey, pointer.persistedAt, SITE_ID, lease.version + 1, pointer.revision)
+  const [result, receiptResult] = await database.batch([update, receipt])
+  if (result.meta.changes !== 1 || receiptResult.meta.changes !== 1) throw new RevisionConflict("The canonical pointer changed before D1 promotion.")
   return { pointer, version: lease.version + 1 }
+}
+
+async function readCommittedPointer(database: D1Database, version: number): Promise<MarkdownPointer | null> {
+  if (!Number.isSafeInteger(version) || version < 1) throw new RevisionConflict("A canonical commit version is required.")
+  await ensureSchema(database)
+  const row = await database.prepare(`SELECT revision, manifest_key, persisted_at FROM wp_codebox_commits WHERE site_id = ? AND version = ?`).bind(SITE_ID, version).first<{ revision: string; manifest_key: string; persisted_at: string }>()
+  if (!row) return null
+  const pointer = { revision: row.revision, manifestKey: row.manifest_key, persistedAt: row.persisted_at }
+  validatePointer(pointer)
+  return pointer
 }
 
 async function resetWordPressState(database: D1Database): Promise<{ reset: true }> {
   await ensureSchema(database)
-  await database.prepare(`UPDATE wp_codebox_state
-    SET revision = NULL, manifest_key = NULL, persisted_at = NULL, version = version + 1,
-        lease_token = NULL, lease_base_revision = NULL, lease_version = NULL, lease_expires_at = NULL
-    WHERE site_id = ?`).bind(SITE_ID).run()
+  await database.batch([
+    database.prepare(`UPDATE wp_codebox_state
+      SET revision = NULL, manifest_key = NULL, persisted_at = NULL, version = version + 1,
+          lease_token = NULL, lease_base_revision = NULL, lease_version = NULL, lease_expires_at = NULL
+      WHERE site_id = ?`).bind(SITE_ID),
+    database.prepare(`DELETE FROM wp_codebox_commits WHERE site_id = ?`).bind(SITE_ID),
+  ])
   return { reset: true }
 }
 
@@ -156,6 +177,7 @@ function ensureSchema(database: D1Database): Promise<void> {
       lease_expires_at INTEGER
     )`).run()
     await database.prepare(`INSERT OR IGNORE INTO wp_codebox_state (site_id, version) VALUES (?, 0)`).bind(SITE_ID).run()
+    await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_commits (site_id TEXT NOT NULL, version INTEGER NOT NULL, revision TEXT NOT NULL, manifest_key TEXT NOT NULL, persisted_at TEXT NOT NULL, PRIMARY KEY (site_id, version))`).run()
   })()
   schemaReady.set(key, pending)
   pending.catch(() => schemaReady.delete(key))

@@ -46,6 +46,10 @@ export class DurableObjectRevisionCoordinator implements RevisionCoordinator {
     return this.call("commit", { token: lease.token, baseRevision: lease.pointer?.revision ?? null, version: lease.version, pointer })
   }
 
+  committed(version: number): Promise<MarkdownPointer | null> {
+    return this.call("committed", { version })
+  }
+
   async reset(): Promise<void> {
     await this.call("reset", {})
   }
@@ -98,6 +102,7 @@ export class WordPressStateCoordinator implements DurableObject {
     if (action === "release") return Response.json(await this.release(body))
     if (action === "abort") return Response.json(await this.abort(body))
     if (action === "commit") return Response.json(await this.commit(body))
+    if (action === "committed") return Response.json(await this.committed(body))
     if (action === "reset") return Response.json(await this.reset())
     return new Response("Unknown coordinator action.", { status: 404 })
   }
@@ -147,8 +152,16 @@ export class WordPressStateCoordinator implements DurableObject {
     record.pointer = pointer
     record.version++
     delete record.lease
-    await this.save(record)
+    await this.state.storage.transaction(async (transaction) => {
+      await transaction.put(`wordpress-state-commit/${record.version}`, pointer)
+      await transaction.put(STORAGE_KEY, record)
+    })
     return { pointer, version: record.version }
+  }
+
+  private async committed(body: Record<string, unknown>): Promise<MarkdownPointer | null> {
+    if (!Number.isSafeInteger(body.version) || (body.version as number) < 1) throw new RevisionConflict("A canonical commit version is required.")
+    return await this.state.storage.get<MarkdownPointer>(`wordpress-state-commit/${body.version}`) ?? null
   }
 
   private requireLease(record: CoordinatorRecord, body: Record<string, unknown>): StoredLease {

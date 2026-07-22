@@ -94,14 +94,16 @@ test("Cloudflare publication contracts are host-independent, immutable, and boun
     schema: PUBLISHED_REVISION_SCHEMA,
     revision: publicationRevision,
     canonicalRevision,
+    canonicalVersion: 7,
     publishedAt: "2026-07-22T00:00:00.000Z",
     routes: [{ route: "/", objectKey, canonicalRevision }],
   })
   assert.equal(publication.routes[0].objectKey, objectKey)
-  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v2")
+  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v3")
   assert.equal(publishedRevisionObjectKey(publicationRevision), `sites/default/publications/revisions/${publicationRevision}.json`)
   assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
   assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v1", routes: [{ route: "/", objectKey }] }).routes[0].canonicalRevision, canonicalRevision)
+  assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v2", canonicalVersion: undefined }).canonicalVersion, 0)
   assert.throws(() => validatePublishedRevision({ ...publication, routes: [{ route: "/", objectKey: "sites/default/pages/foreign.json" }] }), /route is invalid/)
 })
 
@@ -319,8 +321,10 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(d1Coordinator, /lease_token IS NULL OR lease_expires_at <= \?/)
   assert.match(d1Coordinator, /lease_token = \? AND lease_expires_at > \? AND version = \? AND lease_version = \?/)
   assert.match(d1Coordinator, /lease_base_revision IS NULL AND \? IS NULL/)
+  assert.match(d1Coordinator, /wp_codebox_commits/)
   assert.match(contract, /interface RevisionCoordinator/)
   assert.match(contract, /acquire\(\): Promise<RevisionLease>/)
+  assert.match(contract, /committed\(version: number\): Promise<MarkdownPointer \| null>/)
   assert.match(durableObjectEntry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\("default"\)\)/)
   assert.match(d1Entry, /new D1RevisionCoordinator\(env\.WORDPRESS_STATE_DATABASE\)/)
   assert.doesNotMatch(d1Entry, /DurableObject|WORDPRESS_STATE\.getByName/)
@@ -373,13 +377,22 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /add_action\( 'wp_update_nav_menu'/)
   assert.match(worker, /add_action\( 'updated_option'/)
   assert.match(worker, /staged\.serialized, \{ onlyIf: \{ etagMatches: current\.etag \}/)
-  assert.match(worker, /Incremental publication promotion failed after canonical commit/)
-  assert.ok(coordinatedRequest.indexOf("stageIncrementalPublication") < coordinatedRequest.indexOf("commitLease"))
-  assert.ok(coordinatedRequest.indexOf("commitLease") < coordinatedRequest.indexOf("safelyPromoteIncrementalPublication"))
+  assert.match(worker, /PUBLICATION_JOB_SCHEMA/)
+  assert.match(worker, /R2_PUBLICATION_CLAIM_PREFIX/)
+  assert.match(worker, /R2_PUBLICATION_RECEIPT_PREFIX/)
+  assert.match(worker, /async function drainNextPublicationJob/)
+  assert.match(worker, /coordinator\.committed\(candidate\.coordinatorVersion\)/)
+  assert.match(worker, /\.list\(\{ prefix: `\$\{R2_PUBLICATION_JOB_PREFIX\}\/`, limit: 16 \}\)/)
+  assert.match(worker, /canonicalVersion: job\.coordinatorVersion/)
+  assert.match(worker, /await runtimeSiteOrigin\(runtime\)/)
+  assert.match(worker, /await enqueuePublicationJob\(env\.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges\)/)
+  assert.ok(coordinatedRequest.indexOf("enqueuePublicationJob") < coordinatedRequest.indexOf("commitLease"))
+  assert.doesNotMatch(coordinatedRequest, /compilePublicationRoutes\(runtime/)
+  assert.doesNotMatch(coordinatedRequest, /stageIncrementalPublication/)
   assert.match(worker, /const upsert = changes\.all \? existing : changes\.upsert/)
   assert.doesNotMatch(worker, /fallbackAll|hasCanonicalChanges/)
-  assert.ok(scheduledCron.indexOf("stageIncrementalPublication") < scheduledCron.indexOf("commitLease"))
-  assert.ok(scheduledCron.indexOf("commitLease") < scheduledCron.indexOf("safelyPromoteIncrementalPublication"))
+  assert.match(scheduledCron, /await enqueuePublicationJob\(env\.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, event\.publicationChanges\)/)
+  assert.doesNotMatch(scheduledCron, /compilePublicationRoutes\(runtime/)
   assert.match(worker, /https:\/\/wp-codebox-publication\.invalid/)
   assert.match(worker, /onlyIf: \{ etagDoesNotMatch: "\*" \}/)
   assert.match(worker, /Immutable R2 object conflicts with existing content/)
@@ -395,6 +408,8 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
   assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
   assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
+  assert.match(worker, /const publication = await drainNextPublicationJob\(env, coordinator\)/)
+  assert.match(worker, /const evidence = publication \? publication : await runScheduledWordPressCron/)
   assert.match(worker, /pathname === "\/wp-cron\.php"/)
   assert.match(worker, /MAX_CRON_EVENTS_PER_INVOCATION = 5/)
   assert.match(worker, /while \(evidence\.events\.length < MAX_CRON_EVENTS_PER_INVOCATION/)
@@ -551,6 +566,7 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value) },
       delete: async (key: string) => { values.delete(key) },
+      transaction: async (callback: (transaction: { put: (key: string, value: unknown) => Promise<void> }) => Promise<void>) => callback({ put: async (key, value) => { values.set(key, value) } }),
     },
   }
   const bucket = {
@@ -565,7 +581,8 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   assert.equal(first.pointer, null)
   assert.equal((await call("begin")).status, 409)
   const pointer = { revision: "one", manifestKey: "sites/default/markdown/revisions/one.json", persistedAt: "2026-01-01T00:00:00.000Z" }
-  assert.equal((await call("commit", { token: first.token, baseRevision: null, version: first.version, pointer })).status, 200)
+  const commit = await call("commit", { token: first.token, baseRevision: null, version: first.version, pointer })
+  assert.equal(commit.status, 200, await commit.text())
   assert.equal(JSON.parse(objects.get("sites/default/markdown/current.json")!).revision, "one")
   const second = await (await call("begin")).json() as { token: string; pointer: { revision: string } }
   assert.equal(second.pointer.revision, "one")
