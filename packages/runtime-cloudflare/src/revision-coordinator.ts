@@ -25,6 +25,7 @@ export interface RevisionCoordinator {
   abort(lease: RevisionLease): Promise<void>
   commit(lease: RevisionLease, pointer: MarkdownPointer): Promise<{ pointer: MarkdownPointer; version: number }>
   committed(version: number): Promise<MarkdownPointer | null>
+  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }>
   reset(): Promise<void>
 }
 

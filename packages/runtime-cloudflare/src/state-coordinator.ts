@@ -50,6 +50,10 @@ export class DurableObjectRevisionCoordinator implements RevisionCoordinator {
     return this.call("committed", { version })
   }
 
+  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
+    return this.call("adopt", { pointer, version })
+  }
+
   async reset(): Promise<void> {
     await this.call("reset", {})
   }
@@ -103,6 +107,7 @@ export class WordPressStateCoordinator implements DurableObject {
     if (action === "abort") return Response.json(await this.abort(body))
     if (action === "commit") return Response.json(await this.commit(body))
     if (action === "committed") return Response.json(await this.committed(body))
+    if (action === "adopt") return Response.json(await this.adopt(body))
     if (action === "reset") return Response.json(await this.reset())
     return new Response("Unknown coordinator action.", { status: 404 })
   }
@@ -164,6 +169,26 @@ export class WordPressStateCoordinator implements DurableObject {
     return await this.state.storage.get<MarkdownPointer>(`wordpress-state-commit/${body.version}`) ?? null
   }
 
+  private async adopt(body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
+    const record = await this.record()
+    const pointer = body.pointer as MarkdownPointer
+    const version = body.version
+    if (!pointer || typeof pointer.revision !== "string" || typeof pointer.manifestKey !== "string" || typeof pointer.persistedAt !== "string"
+      || !Number.isSafeInteger(version) || (version as number) < 1) throw new RevisionConflict("A complete canonical pointer and positive version are required for adoption.")
+    if (record.lease && record.lease.expiresAt > Date.now()) throw new RevisionConflict("Coordinator adoption requires no active lease.", record.lease.expiresAt)
+    if (record.lease) delete record.lease
+    const empty = record.version === 0 && record.pointer === null
+    const exact = record.version === version && samePointer(record.pointer, pointer)
+    if (!empty && !exact) throw new RevisionConflict("Coordinator adoption requires empty or exactly matching state.")
+    record.pointer = pointer
+    record.version = version as number
+    await this.state.storage.transaction(async (transaction) => {
+      await transaction.put(`wordpress-state-commit/${record.version}`, pointer)
+      await transaction.put(STORAGE_KEY, record)
+    })
+    return { pointer, version: record.version }
+  }
+
   private requireLease(record: CoordinatorRecord, body: Record<string, unknown>): StoredLease {
     const lease = record.lease
     if (!lease || lease.expiresAt <= Date.now()) throw new RevisionConflict("The canonical WordPress lease has expired.")
@@ -189,4 +214,8 @@ export class WordPressStateCoordinator implements DurableObject {
   private save(record: CoordinatorRecord): Promise<void> {
     return this.state.storage.put(STORAGE_KEY, record)
   }
+}
+
+function samePointer(left: MarkdownPointer | null, right: MarkdownPointer): boolean {
+  return !!left && left.revision === right.revision && left.manifestKey === right.manifestKey && left.persistedAt === right.persistedAt
 }

@@ -42,6 +42,10 @@ export class D1RevisionCoordinator implements RevisionCoordinator {
     return readCommittedPointer(this.database, version)
   }
 
+  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
+    return adoptWordPressState(this.database, pointer, version)
+  }
+
   async reset(): Promise<void> {
     await resetWordPressState(this.database)
   }
@@ -116,6 +120,36 @@ async function readCommittedPointer(database: D1Database, version: number): Prom
   return pointer
 }
 
+async function adoptWordPressState(database: D1Database, pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
+  validatePointer(pointer)
+  if (!Number.isSafeInteger(version) || version < 1) throw new RevisionConflict("A positive canonical version is required for D1 adoption.")
+  await ensureSchema(database)
+  const now = Date.now()
+  await database.batch([
+    database.prepare(`UPDATE wp_codebox_state
+      SET revision = ?, manifest_key = ?, persisted_at = ?, version = ?,
+          lease_token = NULL, lease_base_revision = NULL, lease_version = NULL, lease_expires_at = NULL
+      WHERE site_id = ? AND (lease_token IS NULL OR lease_expires_at <= ?)
+        AND ((revision IS NULL AND manifest_key IS NULL AND persisted_at IS NULL)
+          OR (version = ? AND revision = ? AND manifest_key = ? AND persisted_at = ?))
+        AND (NOT EXISTS (SELECT 1 FROM wp_codebox_commits WHERE site_id = ? AND version = ?)
+          OR EXISTS (SELECT 1 FROM wp_codebox_commits WHERE site_id = ? AND version = ?
+            AND revision = ? AND manifest_key = ? AND persisted_at = ?))`)
+      .bind(pointer.revision, pointer.manifestKey, pointer.persistedAt, version, SITE_ID, now,
+        version, pointer.revision, pointer.manifestKey, pointer.persistedAt,
+        SITE_ID, version, SITE_ID, version, pointer.revision, pointer.manifestKey, pointer.persistedAt),
+    database.prepare(`INSERT OR IGNORE INTO wp_codebox_commits (site_id, version, revision, manifest_key, persisted_at)
+      SELECT site_id, version, revision, manifest_key, persisted_at FROM wp_codebox_state
+      WHERE site_id = ? AND version = ? AND revision = ? AND manifest_key = ? AND persisted_at = ? AND lease_token IS NULL`)
+      .bind(SITE_ID, version, pointer.revision, pointer.manifestKey, pointer.persistedAt),
+  ])
+  const [state, committed] = await Promise.all([readRow(database), readCommittedPointer(database, version)])
+  if (state.lease_token !== null || state.version !== version || !samePointer(pointerFromRow(state), pointer) || !samePointer(committed, pointer)) {
+    throw new RevisionConflict("D1 coordinator adoption requires empty or exactly matching state without an active lease.", state.lease_expires_at ?? undefined)
+  }
+  return { pointer, version }
+}
+
 async function resetWordPressState(database: D1Database): Promise<{ reset: true }> {
   await ensureSchema(database)
   await database.batch([
@@ -158,6 +192,10 @@ function validatePointer(pointer: unknown): asserts pointer is MarkdownPointer {
   if (typeof candidate.revision !== "string" || typeof candidate.manifestKey !== "string" || typeof candidate.persistedAt !== "string") {
     throw new RevisionConflict("A complete canonical pointer is required for D1 promotion.")
   }
+}
+
+function samePointer(left: MarkdownPointer | null, right: MarkdownPointer): boolean {
+  return !!left && left.revision === right.revision && left.manifestKey === right.manifestKey && left.persistedAt === right.persistedAt
 }
 
 function ensureSchema(database: D1Database): Promise<void> {

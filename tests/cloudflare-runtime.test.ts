@@ -78,6 +78,7 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-restore")), { kind: "operator-restore" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-adopt")), { kind: "operator-adopt" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-publish")), { kind: "operator-publish" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
 })
@@ -604,6 +605,16 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   }
   const coordinator = new WordPressStateCoordinator(state as never, { WORDPRESS_STATE_BUCKET: bucket as never, COORDINATOR_LEASE_MS: 50 })
   const call = async (action: string, body: Record<string, unknown> = {}) => coordinator.fetch(new Request(`https://worker.example/?__wp_codebox_coordinator=${action}`, { method: action === "state" ? "GET" : "POST", headers: { "content-type": "application/json" }, body: action === "state" ? undefined : JSON.stringify(body) }))
+
+  const adoptedPointer = { revision: "adopted", manifestKey: "sites/default/markdown/revisions/adopted.json", persistedAt: "2026-01-01T00:00:00.000Z" }
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 200)
+  assert.deepEqual(await (await call("committed", { version: 31 })).json(), adoptedPointer)
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 200)
+  assert.equal((await call("adopt", { pointer: { ...adoptedPointer, revision: "divergent" }, version: 31 })).status, 409)
+  const adoptedLease = await (await call("begin")).json() as { token: string }
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 409)
+  assert.equal((await call("abort", { token: adoptedLease.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
 
   const first = await (await call("begin")).json() as { token: string; pointer: null; version: number }
   assert.equal(first.pointer, null)

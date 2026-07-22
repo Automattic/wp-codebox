@@ -26,6 +26,9 @@ try {
   await assertWordPressCronDisabled()
   await assertConcurrentMutations()
   await assertCoordinatorBackend()
+  console.log(`Coordinator adoption probe starting for ${coordinator}.`)
+  await assertCoordinatorAdoption()
+  console.log(`Coordinator adoption probe passed for ${coordinator}.`)
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
   await assertExplanatoryHomepage(warmHome.body)
@@ -102,8 +105,14 @@ async function startWorker() {
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
     stdio: ["ignore", "pipe", "pipe"],
   })
-  child.stdout.on("data", (chunk) => { output += chunk })
-  child.stderr.on("data", (chunk) => { output += chunk })
+  child.stdout.on("data", (chunk) => {
+    output += chunk
+    if (process.env.CLOUDFLARE_GATE_DEBUG) process.stdout.write(chunk)
+  })
+  child.stderr.on("data", (chunk) => {
+    output += chunk
+    if (process.env.CLOUDFLARE_GATE_DEBUG) process.stderr.write(chunk)
+  })
   await waitForServer()
 }
 
@@ -449,6 +458,30 @@ async function assertCoordinatorBackend() {
   if (!response.ok || payload.schema !== "wp-codebox/cloudflare-wordpress-state/v2" || payload.store !== coordinator || !payload.pointer?.revision) {
     throw new Error(`Unexpected ${coordinator} coordinator state: status=${response.status} payload=${JSON.stringify(payload)}.`)
   }
+}
+
+async function assertCoordinatorAdoption() {
+  const before = await (await fetch(`${origin}/?phase=r2-state`)).json()
+  const reset = await fetch(`${origin}/?phase=operator-reset`, { method: "POST", headers: { authorization: `Bearer ${operatorToken}` } })
+  if (!reset.ok) throw new Error(`Coordinator reset before adoption failed: ${reset.status} ${await reset.text()}.`)
+  const adoption = await fetch(`${origin}/?phase=operator-adopt`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ pointer: before.pointer, version: before.version }),
+  })
+  const adoptionBody = await adoption.text()
+  if (!adoption.ok) throw new Error(`Exact coordinator adoption failed: status=${adoption.status} body=${adoptionBody}.\nWorker output:\n${output}`)
+  const adopted = JSON.parse(adoptionBody)
+  if (!adoption.ok || !adopted.adopted || adopted.version !== before.version || adopted.pointer?.revision !== before.pointer?.revision) {
+    throw new Error(`Exact coordinator adoption failed: status=${adoption.status} payload=${JSON.stringify(adopted)}.`)
+  }
+  const divergent = await fetch(`${origin}/?phase=operator-adopt`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ pointer: before.pointer, version: before.version + 1 }),
+  })
+  if (divergent.status !== 409) throw new Error(`Divergent coordinator adoption was not rejected: ${divergent.status} ${await divergent.text()}.`)
+  await assertCoordinatorBackend()
 }
 
 async function assertWordPressPage(target, label) {
