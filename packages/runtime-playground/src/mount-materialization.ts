@@ -60,6 +60,12 @@ interface HostMountFileMaterializationResponse {
   skipped?: number
 }
 
+interface HostMountFileVerificationResponse {
+  schema?: string
+  repaired?: number
+  skipped?: number
+}
+
 const HOST_MOUNT_FILE_BATCH_SIZE = 100
 const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
 
@@ -200,6 +206,7 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   let skipped = 0
   const directoryBatch: string[] = []
   const fileBatch: HostMountFilePayload[] = []
+  const verificationBatch: HostMountFilePayload[] = []
 
   const flushDirectories = async () => {
     if (directoryBatch.length === 0) {
@@ -222,6 +229,13 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
     const result = await materializeHostMountFilesWithPhp(server, fileBatch.splice(0, fileBatch.length), [])
     materialized += result.materialized
     created += result.created
+    skipped += result.skipped
+  }
+  const flushVerificationBatch = async () => {
+    if (verificationBatch.length === 0) {
+      return
+    }
+    const result = await verifyHostMountFilesWithPhp(server, verificationBatch.splice(0, verificationBatch.length))
     skipped += result.skipped
   }
   const writeFilePayload = async (payload: HostMountFilePayload) => {
@@ -249,6 +263,10 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
     try {
       await server.playground.writeFile(target, text)
       materialized++
+      verificationBatch.push(payload)
+      if (verificationBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushVerificationBatch()
+      }
     } catch {
       const fallback = await materializeHostMountFilesWithPhp(server, [payload], [])
       materialized += fallback.materialized
@@ -271,6 +289,7 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   }
   await flushDirectories()
   await flushFileBatch()
+  await flushVerificationBatch()
   return { materialized, created, skipped }
 }
 
@@ -362,6 +381,19 @@ async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, fil
   return {
     materialized: parsed.materialized ?? 0,
     created: parsed.created ?? 0,
+    skipped: parsed.skipped ?? 0,
+  }
+}
+
+async function verifyHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ repaired: number; skipped: number }> {
+  const response = await server.playground.run({ code: hostMountVerifyPhp(files) })
+  assertPlaygroundResponseOk("playground-staged-input-verify", response)
+  const parsed = parseMaterializationJson<HostMountFileVerificationResponse>(response.text, "wp-codebox/host-mount-verification/v1", "playground-staged-input-verify")
+  if ((parsed.skipped ?? 0) > 0) {
+    throw new Error(`playground-staged-input-verify could not preserve ${parsed.skipped} staged input file(s)`)
+  }
+  return {
+    repaired: parsed.repaired ?? 0,
     skipped: parsed.skipped ?? 0,
   }
 }
@@ -493,6 +525,7 @@ foreach (($payload['directories'] ?? array()) as $directory) {
     }
     $skipped++;
 }
+
 foreach (($payload['files'] ?? array()) as $file) {
     $target = (string) ($file['target'] ?? '');
     $contents = (string) ($file['contentsBase64'] ?? '');
@@ -513,6 +546,39 @@ foreach (($payload['files'] ?? array()) as $file) {
     $materialized++;
 }
 echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function hostMountVerifyPhp(files: HostMountFilePayload[]): string {
+  const payload = JSON.stringify(JSON.stringify({ files }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$repaired = 0;
+$skipped = 0;
+foreach (($payload['files'] ?? array()) as $file) {
+    $target = (string) ($file['target'] ?? '');
+    $contents = base64_decode((string) ($file['contentsBase64'] ?? ''), true);
+    if ('' === $target || str_contains($target, "\0") || false === $contents) {
+        $skipped++;
+        continue;
+    }
+    $target_hash = is_file($target) ? hash_file('sha256', $target) : false;
+    if (is_string($target_hash) && hash_equals(hash('sha256', $contents), $target_hash)) {
+        continue;
+    }
+    $directory = dirname($target);
+    if ((!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) || false === file_put_contents($target, $contents)) {
+        $skipped++;
+        continue;
+    }
+    $repaired_hash = hash_file('sha256', $target);
+    if (!is_string($repaired_hash) || !hash_equals(hash('sha256', $contents), $repaired_hash)) {
+        $skipped++;
+        continue;
+    }
+    $repaired++;
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-verification/v1', 'repaired' => $repaired, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
 `
 }
 

@@ -20,6 +20,10 @@ const sentinel = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 try {
   await cp("tests/fixtures/phpunit-playground-harness", harness, { recursive: true })
   await execFileAsync("composer", ["install", "--no-interaction", "--prefer-dist"], { cwd: harness, timeout: 300_000, maxBuffer: 2 * 1024 * 1024 })
+  const autoloadReal = await readFile(join(harness, "vendor", "composer", "autoload_real.php"), "utf8")
+  const staticClass = autoloadReal.match(/ComposerStaticInit[\da-f]+/i)?.[0]
+  assert.ok(staticClass, "fixture uses Composer's optimized static autoloader")
+  assert.match(await readFile(join(harness, "vendor", "composer", "autoload_static.php"), "utf8"), new RegExp(`class ${staticClass}`), "generated Composer autoload files define the same static initializer")
   await writeFixture()
   const sourceDigest = await digestTree(plugin)
 
@@ -53,6 +57,7 @@ try {
   await assert.rejects(readFile(join(plugin, ".phpunit.result.cache")), /ENOENT/, "PHPUnit must not create a host-source result cache")
   const runtime = JSON.parse(await readFile(join(artifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
   const diagnostic = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
+  assert.match(diagnostic, /^DISCOVERY: .* found=1$/m, "actual PHPUnit runner must discover the fixture test file")
   assert.match(diagnostic, /^STAGE_BEGIN:run_tests/m, "actual PHPUnit runner must reach its test stage")
 } finally {
   await rm(root, { recursive: true, force: true })
