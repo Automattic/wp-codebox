@@ -95,11 +95,13 @@ test("Cloudflare publication contracts are host-independent, immutable, and boun
     revision: publicationRevision,
     canonicalRevision,
     publishedAt: "2026-07-22T00:00:00.000Z",
-    routes: [{ route: "/", objectKey }],
+    routes: [{ route: "/", objectKey, canonicalRevision }],
   })
   assert.equal(publication.routes[0].objectKey, objectKey)
+  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v2")
   assert.equal(publishedRevisionObjectKey(publicationRevision), `sites/default/publications/revisions/${publicationRevision}.json`)
   assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
+  assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v1", routes: [{ route: "/", objectKey }] }).routes[0].canonicalRevision, canonicalRevision)
   assert.throws(() => validatePublishedRevision({ ...publication, routes: [{ route: "/", objectKey: "sites/default/pages/foreign.json" }] }), /route is invalid/)
 })
 
@@ -289,6 +291,8 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   const durableObjectEntry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-do.ts", import.meta.url), "utf8")
   const d1Entry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-d1.ts", import.meta.url), "utf8")
   const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("async function serveWordPressStaticAsset"))
+  const coordinatedRequest = worker.slice(worker.indexOf("async function runCoordinatedWordPressRequest"), worker.indexOf("async function matchWordPressPageCache"))
+  const scheduledCron = worker.slice(worker.indexOf("async function runScheduledWordPressCron"), worker.indexOf("async function runNextCronEvent"))
   const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return runCoordinatedWordPressRequest\(request, env, coordinator, route\.kind\)/)
@@ -363,6 +367,18 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /"public, max-age=60, s-maxage=31536000"/)
   assert.match(worker, /"public, max-age=60, s-maxage=60"/)
   assert.match(worker, /publishCanonicalWordPressPages\(request, env, coordinator\)/)
+  assert.match(worker, /PUBLICATION_CHANGES_PATH/)
+  assert.match(worker, /add_action\( 'save_post'/)
+  assert.match(worker, /add_action\( 'set_object_terms'/)
+  assert.match(worker, /add_action\( 'wp_update_nav_menu'/)
+  assert.match(worker, /add_action\( 'updated_option'/)
+  assert.match(worker, /staged\.serialized, \{ onlyIf: \{ etagMatches: current\.etag \}/)
+  assert.match(worker, /Incremental publication promotion failed after canonical commit/)
+  assert.ok(coordinatedRequest.indexOf("stageIncrementalPublication") < coordinatedRequest.indexOf("commitLease"))
+  assert.ok(coordinatedRequest.indexOf("commitLease") < coordinatedRequest.indexOf("safelyPromoteIncrementalPublication"))
+  assert.match(coordinatedRequest, /hasCanonicalChanges = canonicalChanges\.created\.length \+ canonicalChanges\.changed\.length \+ canonicalChanges\.deleted\.length > 0/)
+  assert.ok(scheduledCron.indexOf("stageIncrementalPublication") < scheduledCron.indexOf("commitLease"))
+  assert.ok(scheduledCron.indexOf("commitLease") < scheduledCron.indexOf("safelyPromoteIncrementalPublication"))
   assert.match(worker, /https:\/\/wp-codebox-publication\.invalid/)
   assert.match(worker, /onlyIf: \{ etagDoesNotMatch: "\*" \}/)
   assert.match(worker, /Immutable R2 object conflicts with existing content/)

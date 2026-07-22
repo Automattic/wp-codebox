@@ -7,7 +7,7 @@ import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
-import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
+import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { RevisionConflict, type MarkdownPointer, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
@@ -49,6 +49,7 @@ const UPLOADS_ROOT = "/wordpress/wp-content/uploads"
 const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
 const MARKDOWN_CHANGES_PATH = "/tmp/wp-codebox-canonical-changes.json"
+const PUBLICATION_CHANGES_PATH = "/tmp/wp-codebox-publication-changes.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
 const WORDPRESS_PAGE_CACHE_SCHEMA = "v3"
@@ -190,6 +191,25 @@ interface WordPressPageSnapshot {
   body: string
 }
 
+interface PublicationChanges {
+  all: boolean
+  upsert: string[]
+  remove: string[]
+}
+
+interface CurrentPublication {
+  publication: PublishedRevision
+  etag: string
+}
+
+interface CompiledPublicationRoute {
+  route: string
+  status: number
+  statusText: string
+  headers: Array<[string, string]>
+  body: string
+}
+
 interface CanonicalSeedManifest {
   schema: string
   markdownDatabaseIntegrationRevision: string
@@ -211,7 +231,7 @@ interface CronInvocationEvidence {
   scheduledTime: number
   startedAt: string
   completedAt: string
-  events: Array<{ hook: string; timestamp: number; revision: string }>
+  events: Array<{ hook: string; timestamp: number; revision: string; publication: "promoted" | "conflict" | "failed" | "unchanged" }>
   status: "completed" | "bounded" | "no-canonical-state"
 }
 
@@ -288,17 +308,16 @@ async function servePublishedWordPressPage(request: Request, bucket: R2Bucket): 
   const cached = cache ? await cache.match(cacheRequest) : null
   if (cached) return publishedPageResponse(cached, request.method === "HEAD", "edge")
 
-  const currentObject = await bucket.get(R2_PUBLISHED_CURRENT_KEY)
-  if (!currentObject) return null
-  if (currentObject.size > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Published revision exceeds its size budget.")
-  const publication = validatePublishedRevision(JSON.parse(await currentObject.text()))
+  const current = await readCurrentPublication(bucket)
+  if (!current) return null
+  const publication = current.publication
   const publishedRoute = publication.routes.find((candidate) => candidate.route === route)
   if (!publishedRoute) return null
   const snapshotObject = await bucket.get(publishedRoute.objectKey)
   if (!snapshotObject) throw new Error(`Published page artifact is unavailable: ${publishedRoute.objectKey}.`)
   if (snapshotObject.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Published page artifact exceeds its size budget: ${publishedRoute.objectKey}.`)
   const snapshot = JSON.parse(await snapshotObject.text()) as WordPressPageSnapshot
-  validateWordPressPageSnapshot(snapshot, publication.canonicalRevision, route)
+  validateWordPressPageSnapshot(snapshot, publishedRoute.canonicalRevision, route)
   const response = new Response(snapshot.body, { status: snapshot.status, statusText: snapshot.statusText, headers: snapshot.headers })
   const published = publishedPageResponse(response, request.method === "HEAD", "r2", publication.revision)
   if (cache && request.method === "GET") {
@@ -326,7 +345,7 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
   }
   const state = await coordinator.state()
   if (!state.pointer) return new Response("Canonical publication requires initialized state.", { status: 409 })
-  let publishedRoutes: Array<{ route: string; objectKey: string }>
+  let publishedRoutes: PublishedRevision["routes"]
   try {
     publishedRoutes = await Promise.all(routes.map(async (route) => {
       const objectKey = await publishedPageObjectKey(state.pointer!.revision, route)
@@ -335,7 +354,7 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
       if (object.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Canonical publication route exceeds its size budget: ${route}.`)
       const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
       validateWordPressPageSnapshot(snapshot, state.pointer!.revision, route)
-      return { route, objectKey }
+      return { route, objectKey, canonicalRevision: state.pointer!.revision }
     }))
   } catch (error) {
     return new Response(error instanceof Error ? error.message : "Canonical publication artifacts are invalid.", { status: 409 })
@@ -354,6 +373,94 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
   if (cache) await Promise.all(routes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, request.url))))))
   return Response.json(publication)
+}
+
+async function readCurrentPublication(bucket: R2Bucket): Promise<CurrentPublication | null> {
+  const object = await bucket.get(R2_PUBLISHED_CURRENT_KEY)
+  if (!object) return null
+  if (object.size > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Published revision exceeds its size budget.")
+  return { publication: validatePublishedRevision(JSON.parse(await object.text())), etag: object.etag }
+}
+
+function initializePublicationChanges(php: PHP): void {
+  php.writeFile(PUBLICATION_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ all: false, upsert: [], remove: [] })))
+}
+
+function readPublicationChanges(php: PHP): PublicationChanges {
+  const value = JSON.parse(new TextDecoder().decode(php.readFileAsBuffer(PUBLICATION_CHANGES_PATH))) as PublicationChanges
+  if (typeof value.all !== "boolean" || !Array.isArray(value.upsert) || !Array.isArray(value.remove)) throw new Error("WordPress returned invalid publication changes.")
+  const normalize = (routes: unknown[]): string[] => [...new Set(routes.map((route) => {
+    if (typeof route !== "string") throw new Error("WordPress returned an invalid publication route.")
+    return canonicalPublicRoute(route)
+  }))].sort()
+  const upsert = normalize(value.upsert)
+  const remove = normalize(value.remove)
+  if (upsert.length + remove.length > MAX_PUBLISHED_ROUTES) throw new Error("WordPress publication changes exceed their route budget.")
+  return { all: value.all, upsert, remove }
+}
+
+function publicationPlan(current: PublishedRevision, changes: PublicationChanges, fallbackAll = true): { upsert: string[]; remove: string[] } {
+  const existing = current.routes.map(({ route }) => route)
+  const upsert = changes.all || (fallbackAll && changes.upsert.length === 0 && changes.remove.length === 0) ? existing : changes.upsert
+  const remove = changes.remove.filter((route) => !upsert.includes(route))
+  if (new Set([...existing, ...upsert]).size > MAX_PUBLISHED_ROUTES) throw new Error("Incremental publication exceeds its route budget.")
+  return { upsert, remove }
+}
+
+async function compilePublicationRoutes(runtime: Runtime, routes: string[], origin: string): Promise<CompiledPublicationRoute[]> {
+  const compiled: CompiledPublicationRoute[] = []
+  for (const route of routes) {
+    const request = new Request(new URL(route, origin))
+    const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
+    if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || response.headers.has("set-cookie")) {
+      throw new Error(`Affected publication route did not render cacheable HTML: ${route}.`)
+    }
+    const body = await response.text()
+    if (new TextEncoder().encode(body).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication route exceeds its size budget: ${route}.`)
+    compiled.push({ route, status: response.status, statusText: response.statusText, headers: Array.from(response.headers.entries()), body })
+  }
+  return compiled
+}
+
+async function stageIncrementalPublication(bucket: R2Bucket, current: PublishedRevision, pointer: MarkdownPointer, compiled: CompiledPublicationRoute[], remove: string[]): Promise<{ publication: PublishedRevision; serialized: string; invalidatedRoutes: string[] }> {
+  const routes = new Map(current.routes.map((route) => [route.route, route]))
+  for (const route of remove) routes.delete(route)
+  for (const page of compiled) {
+    const objectKey = await publishedPageObjectKey(pointer.revision, page.route)
+    const snapshot: WordPressPageSnapshot = { schema: PUBLISHED_PAGE_SCHEMA, canonicalRevision: pointer.revision, route: page.route, status: page.status, statusText: page.statusText, headers: page.headers, body: page.body }
+    const serialized = JSON.stringify(snapshot)
+    if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
+    await putImmutableJson(bucket, objectKey, serialized)
+    routes.set(page.route, { route: page.route, objectKey, canonicalRevision: pointer.revision })
+  }
+  const publication: PublishedRevision = {
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: crypto.randomUUID(),
+    canonicalRevision: pointer.revision,
+    publishedAt: new Date().toISOString(),
+    routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)),
+  }
+  const serialized = JSON.stringify(publication)
+  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
+  await putImmutableJson(bucket, publishedRevisionObjectKey(publication.revision), serialized)
+  return { publication, serialized, invalidatedRoutes: [...new Set([...compiled.map(({ route }) => route), ...remove])].sort() }
+}
+
+async function promoteIncrementalPublication(bucket: R2Bucket, current: CurrentPublication, staged: { serialized: string; invalidatedRoutes: string[] }, origin: string): Promise<boolean> {
+  const promoted = await bucket.put(R2_PUBLISHED_CURRENT_KEY, staged.serialized, { onlyIf: { etagMatches: current.etag }, httpMetadata: { contentType: "application/json" } })
+  if (!promoted) return false
+  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+  if (cache) await Promise.all(staged.invalidatedRoutes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, origin))))))
+  return true
+}
+
+async function safelyPromoteIncrementalPublication(bucket: R2Bucket, current: CurrentPublication, staged: { serialized: string; invalidatedRoutes: string[] }, origin: string): Promise<"promoted" | "conflict" | "failed"> {
+  try {
+    return await promoteIncrementalPublication(bucket, current, staged, origin) ? "promoted" : "conflict"
+  } catch (error) {
+    console.error("Incremental publication promotion failed after canonical commit.", error)
+    return "failed"
+  }
 }
 
 function publishedPageCacheRequest(request: Request): Request {
@@ -404,23 +511,44 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     }
     runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
     const mutatesCanonicalState = isMutation(request, route)
+    const currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET) : null
     let response: Response
     let canonicalChanges: MarkdownChanges | undefined
+    let publicationChanges: PublicationChanges | undefined
     if (route === "r2-mutate") {
+      initializePublicationChanges(runtime.php)
       const mutation = await runSyntheticMutation(runtime)
       response = mutation.response
       canonicalChanges = mutation.canonicalChanges
+      publicationChanges = readPublicationChanges(runtime.php)
     } else if (route === "health") {
       response = await health(runtime)
     } else {
-      if (mutatesCanonicalState) runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+      if (mutatesCanonicalState) {
+        runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+        initializePublicationChanges(runtime.php)
+      }
       response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-      if (mutatesCanonicalState) canonicalChanges = readCanonicalChanges(runtime.php)
+      if (mutatesCanonicalState) {
+        canonicalChanges = readCanonicalChanges(runtime.php)
+        publicationChanges = readPublicationChanges(runtime.php)
+      }
     }
     if (mutatesCanonicalState) {
-      if (!canonicalChanges) throw new Error("Canonical mutation completed without an MDI change set.")
+      if (!canonicalChanges || !publicationChanges) throw new Error("Canonical mutation completed without its persistence evidence.")
+      const hasCanonicalChanges = canonicalChanges.created.length + canonicalChanges.changed.length + canonicalChanges.deleted.length > 0
+      const plan = currentPublication ? publicationPlan(currentPublication.publication, publicationChanges, hasCanonicalChanges) : null
+      const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, new URL(request.url).origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges)
+      const stagedPublication = currentPublication && plan && (plan.upsert.length || plan.remove.length)
+        ? await stageIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication.publication, next, compiled, plan.remove)
+        : null
       await commitLease(coordinator, request.url, lease, next)
+      if (currentPublication && stagedPublication) {
+        const publicationStatus = await safelyPromoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication, stagedPublication, new URL(request.url).origin)
+        response.headers.set("x-wp-codebox-publication", publicationStatus)
+        if (publicationStatus === "promoted") response.headers.set("x-wp-codebox-publication-revision", stagedPublication.publication.revision)
+      }
     } else {
       await releaseLease(coordinator, request.url, lease)
     }
@@ -695,6 +823,7 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
     let finalized = false
     try {
       runtime = await getRuntime(env, lease.pointer, SITE_URL)
+      const currentPublication = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
       const event = await runNextCronEvent(runtime)
       if (!event.executed) {
         await releaseLease(coordinator, requestUrl, lease)
@@ -702,10 +831,19 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
         await discardRuntime(runtime)
         break
       }
+      const plan = currentPublication ? publicationPlan(currentPublication.publication, event.publicationChanges, false) : null
+      const origin = plan && plan.upsert.length ? await runtimeSiteOrigin(runtime) : SITE_URL
+      const compiled = plan ? await compilePublicationRoutes(runtime, plan.upsert, origin) : []
       const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, event.canonicalChanges)
+      const stagedPublication = currentPublication && plan && (plan.upsert.length || plan.remove.length)
+        ? await stageIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication.publication, next, compiled, plan.remove)
+        : null
       await commitLease(coordinator, requestUrl, lease, next)
+      const publication = currentPublication && stagedPublication
+        ? await safelyPromoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, currentPublication, stagedPublication, origin)
+        : "unchanged"
       finalized = true
-      evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision })
+      evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision, publication })
       await discardRuntime(runtime)
     } catch (error) {
       if (!finalized) await abortLease(coordinator, requestUrl, lease)
@@ -718,13 +856,20 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
   return evidence
 }
 
-async function runNextCronEvent(runtime: Runtime): Promise<{ executed: false } | { executed: true; hook: string; timestamp: number; canonicalChanges: MarkdownChanges }> {
+async function runNextCronEvent(runtime: Runtime): Promise<{ executed: false } | { executed: true; hook: string; timestamp: number; canonicalChanges: MarkdownChanges; publicationChanges: PublicationChanges }> {
   runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+  initializePublicationChanges(runtime.php)
   const output = (await runtime.php.run({ code: NEXT_CRON_EVENT_CODE })).text.trim()
   const event = JSON.parse(output) as { executed: boolean; hook?: string; timestamp?: number }
   if (!event.executed) return { executed: false }
   if (!event.hook || !Number.isSafeInteger(event.timestamp)) throw new Error("WordPress cron returned invalid event evidence.")
-  return { executed: true, hook: event.hook, timestamp: event.timestamp!, canonicalChanges: readCanonicalChanges(runtime.php) }
+  return { executed: true, hook: event.hook, timestamp: event.timestamp!, canonicalChanges: readCanonicalChanges(runtime.php), publicationChanges: readPublicationChanges(runtime.php) }
+}
+
+async function runtimeSiteOrigin(runtime: Runtime): Promise<string> {
+  const output = (await runtime.php.run({ code: "<?php require '/wordpress/wp-load.php'; echo get_option('home');" })).text.trim()
+  const url = new URL(output)
+  return url.origin
 }
 
 async function health(runtime: Runtime): Promise<Response> {
@@ -1393,8 +1538,78 @@ add_action( 'markdown_database_integration_flushed', static function ( $changes 
 		throw new RuntimeException( 'Failed to expose the canonical MDI change set.' );
 	}
 }, PHP_INT_MAX );`
+  const publicationSource = `
+function wp_codebox_publication_read_changes() {
+	$path = '${PUBLICATION_CHANGES_PATH}';
+	if ( ! is_file( $path ) ) return array( 'all' => false, 'upsert' => array(), 'remove' => array() );
+	$changes = json_decode( (string) file_get_contents( $path ), true );
+	return is_array( $changes ) ? $changes : array( 'all' => false, 'upsert' => array(), 'remove' => array() );
+}
+function wp_codebox_publication_write_changes( $changes ) {
+	$changes['upsert'] = array_values( array_unique( $changes['upsert'] ) );
+	$changes['remove'] = array_values( array_unique( $changes['remove'] ) );
+	sort( $changes['upsert'], SORT_STRING );
+	sort( $changes['remove'], SORT_STRING );
+	if ( false === file_put_contents( '${PUBLICATION_CHANGES_PATH}', wp_json_encode( $changes, JSON_UNESCAPED_SLASHES ), LOCK_EX ) ) {
+		throw new RuntimeException( 'Failed to expose affected publication routes.' );
+	}
+}
+function wp_codebox_publication_route( $url ) {
+	$parts = wp_parse_url( $url );
+	if ( ! is_array( $parts ) ) return null;
+	$route = empty( $parts['path'] ) ? '/' : $parts['path'];
+	if ( ! empty( $parts['query'] ) ) {
+		parse_str( $parts['query'], $query );
+		ksort( $query, SORT_STRING );
+		$route .= '?' . http_build_query( $query, '', '&', PHP_QUERY_RFC3986 );
+	}
+	return $route;
+}
+function wp_codebox_publication_record_post( $post_id, $remove = false ) {
+	if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) return;
+	$post = get_post( $post_id );
+	if ( ! $post || 'attachment' === $post->post_type ) return;
+	$changes = wp_codebox_publication_read_changes();
+	$changes['upsert'][] = '/';
+	$route = wp_codebox_publication_route( get_permalink( $post ) );
+	if ( $route ) {
+		if ( $remove || 'publish' !== $post->post_status ) $changes['remove'][] = $route;
+		else $changes['upsert'][] = $route;
+	}
+	if ( 'publish' === $post->post_status ) {
+		$archive = get_post_type_archive_link( $post->post_type );
+		if ( $archive ) $changes['upsert'][] = wp_codebox_publication_route( $archive );
+		$author = get_author_posts_url( (int) $post->post_author );
+		if ( $author ) $changes['upsert'][] = wp_codebox_publication_route( $author );
+		foreach ( get_object_taxonomies( $post->post_type ) as $taxonomy ) {
+			$terms = get_the_terms( $post, $taxonomy );
+			if ( ! is_array( $terms ) ) continue;
+			foreach ( $terms as $term ) {
+				$link = get_term_link( $term );
+				if ( ! is_wp_error( $link ) ) $changes['upsert'][] = wp_codebox_publication_route( $link );
+			}
+		}
+	}
+	wp_codebox_publication_write_changes( $changes );
+}
+add_action( 'pre_post_update', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id, true ); }, 1 );
+add_action( 'save_post', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id ); }, PHP_INT_MAX );
+add_action( 'before_delete_post', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id, true ); }, 1 );
+add_action( 'set_object_terms', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id ); }, PHP_INT_MAX );
+add_action( 'updated_option', static function ( $option ) {
+	if ( in_array( $option, array( 'active_plugins', 'blogname', 'page_for_posts', 'page_on_front', 'permalink_structure', 'show_on_front', 'sidebars_widgets', 'stylesheet', 'template' ), true ) || str_starts_with( $option, 'theme_mods_' ) ) {
+		$changes = wp_codebox_publication_read_changes();
+		$changes['all'] = true;
+		wp_codebox_publication_write_changes( $changes );
+	}
+}, PHP_INT_MAX );
+add_action( 'wp_update_nav_menu', static function () {
+	$changes = wp_codebox_publication_read_changes();
+	$changes['all'] = true;
+	wp_codebox_publication_write_changes( $changes );
+}, PHP_INT_MAX );`
   php.mkdir(path.slice(0, path.lastIndexOf("/")))
-  php.writeFile(path, new TextEncoder().encode(source))
+  php.writeFile(path, new TextEncoder().encode(`${source}${publicationSource}`))
 }
 
 async function materializeWordPressServerFiles(php: PHP, bucket: R2Bucket | undefined): Promise<{ materializedFiles: number; materializedBytes: number }> {
