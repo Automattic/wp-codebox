@@ -66,7 +66,7 @@ try {
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded exactly-once scheduled callback execution.")
+  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.")
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
