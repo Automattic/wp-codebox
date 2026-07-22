@@ -10,6 +10,9 @@ const port = 8792
 const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
 const authSecret = "cloudflare-runtime-test-auth-secret"
+const operatorToken = "cloudflare-runtime-test-operator-token"
+const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
+const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
 let child
@@ -22,6 +25,7 @@ try {
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
   await assertConcurrentMutations()
+  await assertCoordinatorBackend()
   const coldHome = await timedWordPressPage(origin, "cold explanatory homepage")
   const warmHome = await timedWordPressPage(origin, "warm explanatory homepage")
   await assertExplanatoryHomepage(warmHome.body)
@@ -36,8 +40,11 @@ try {
   const media = await createMedia(adminHtml)
   await assertMediaFile(media, "uploaded media")
   const post = await createPost(adminHtml)
-  const frontPage = await assertWordPressPage(`${origin}/${post.slug}/`, "published post")
+  const frontPage = await assertWordPressPage(new URL(post.route, origin), "published post")
   assertIncludes(frontPage, post.title, "published post")
+  await assertAnonymousWordPressPage(new URL(post.route, origin), "post publication candidate")
+  await assertAnonymousWordPressPage(origin, "homepage publication candidate")
+  await publishRoutes(["/", post.route])
   await assertHealthResponse()
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
@@ -47,7 +54,7 @@ try {
 
   await startWorker()
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
-  const restartedPost = await assertWordPressPage(`${origin}/${post.slug}/`, "post after cold restart")
+  const restartedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "post after publication restart")
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertMediaFile(media, "media after cold restart")
   await assertMediaMetadata(media, "media metadata after cold restart")
@@ -66,7 +73,7 @@ try {
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
   cookies.length = 0
   await login()
-  console.log("Cloudflare local runtime gate passed: canonical full-boot probe, explanatory homepage, complete block styles, revision page cache, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.")
+  console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -82,7 +89,7 @@ async function run(command, args) {
 
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", "packages/runtime-cloudflare/wrangler.jsonc", "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`], {
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -138,8 +145,9 @@ async function createPost(adminHtml) {
   assertNoPhpDiagnostics(body, "REST post creation")
   if (response.status !== 201) throw new Error(`Expected REST post creation, received ${response.status}: ${body}`)
   const post = JSON.parse(body)
-  if (typeof post.slug !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
-  return { slug: post.slug, title }
+  if (typeof post.slug !== "string" || typeof post.link !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
+  const link = new URL(post.link)
+  return { slug: post.slug, route: `${link.pathname}${link.search}`, title }
 }
 
 async function createMedia(adminHtml) {
@@ -396,12 +404,57 @@ async function assertFullBootProbe() {
   console.log(`Canonical full-boot probe timing: ${Math.round(performance.now() - startedAt)}ms.`)
 }
 
+async function assertCoordinatorBackend() {
+  const response = await fetch(`${origin}/?phase=r2-state`)
+  const payload = await response.json()
+  if (!response.ok || payload.schema !== "wp-codebox/cloudflare-wordpress-state/v2" || payload.store !== coordinator || !payload.pointer?.revision) {
+    throw new Error(`Unexpected ${coordinator} coordinator state: status=${response.status} payload=${JSON.stringify(payload)}.`)
+  }
+}
+
 async function assertWordPressPage(target, label) {
   const response = await request(target)
   const body = await response.text()
   assertNoPhpDiagnostics(body, label)
   if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) throw new Error(`Expected an HTML ${label}, received ${response.status}: ${body}`)
   return body
+}
+
+async function assertPublishedWordPressPage(target, label) {
+  const response = await fetch(target)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, label)
+  if (response.status !== 200 || response.headers.get("x-wp-codebox-page-cache-source") !== "publication-r2"
+    || !response.headers.get("x-wp-codebox-publication-revision") || !/<html[\s>]/i.test(body)) {
+    throw new Error(`Expected a coordinator-free R2 ${label}, received ${response.status}/${response.headers.get("x-wp-codebox-page-cache-source")}.`)
+  }
+  return body
+}
+
+async function assertAnonymousWordPressPage(target, label) {
+  const response = await fetch(target)
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, label)
+  if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) throw new Error(`Expected an anonymous HTML ${label}, received ${response.status}: ${body}`)
+  return body
+}
+
+async function publishRoutes(routes) {
+  const response = await request(`${origin}/?phase=operator-publish`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ routes }),
+  })
+  const body = await response.text()
+  let payload
+  try {
+    payload = JSON.parse(body)
+  } catch {
+    throw new Error(`Canonical publication returned non-JSON: status=${response.status} body=${body}.\n${stripVTControlCharacters(output).split("\n").filter((line) => /error|exception|publication/i.test(line)).slice(-30).join("\n")}`)
+  }
+  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v1" || payload.routes?.length !== routes.length) {
+    throw new Error(`Canonical publication failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
+  }
 }
 
 async function timedWordPressPage(target, label) {
