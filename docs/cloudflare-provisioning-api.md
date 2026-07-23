@@ -14,6 +14,7 @@ The Worker compares SHA-256 token digests and never accepts plaintext API creden
 
 ## Resources
 
+- `PUT /v1/artifacts/{sha256}` requires `Authorization: Bearer ...` with `sites:create`. Its body is the canonical `blocks-engine/php-transformer/site-artifact/v1` JSON artifact. The Worker enforces the artifact byte, file, path, encoding, and digest bounds before an immutable conditional write, then returns the exact reference accepted by site creation. Replays of identical bytes converge; conflicting content at the digest-addressed key fails closed.
 - `POST /v1/sites` requires `Authorization: Bearer ...` with `sites:create` and `Idempotency-Key`. Its body is `wp-codebox/provisioning-create-request/v1`; it references an immutable staged artifact at `sites/provisioning/import-artifacts/<sha256>.json`. The Worker verifies the bounded artifact before allocating a site, then copies it immutably to the selected site namespace.
 - `GET /v1/sites/{siteId}` requires `sites:read`.
 - `POST /v1/sites/{siteId}/imports` requires `sites:import` and uses the existing bounded static-artifact request.
