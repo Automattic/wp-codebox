@@ -55,5 +55,34 @@ async function run(command) {
 }
 
 function parseJsonc(value) {
-  return JSON.parse(value.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
+  let output = ""
+  let string = false
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]
+    const next = value[index + 1]
+    if (lineComment) {
+      if (character === "\n") { lineComment = false; output += character }
+      continue
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") { blockComment = false; index++ }
+      else if (character === "\n") output += character
+      continue
+    }
+    if (string) {
+      output += character
+      if (escaped) escaped = false
+      else if (character === "\\") escaped = true
+      else if (character === '"') string = false
+      continue
+    }
+    if (character === '"') { string = true; output += character }
+    else if (character === "/" && next === "/") { lineComment = true; index++ }
+    else if (character === "/" && next === "*") { blockComment = true; index++ }
+    else output += character
+  }
+  return JSON.parse(output.replace(/,\s*([}\]])/g, "$1"))
 }
