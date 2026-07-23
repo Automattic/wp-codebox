@@ -759,7 +759,7 @@ The runtime provides:
 - `WP_TESTS_DIR` pointing at the configured WordPress tests library.
 - `WP_TESTS_CONFIG_FILE_PATH` and `WP_PHPUNIT__TESTS_CONFIG` pointing at the
   generated `wp-tests-config.php`.
-- An isolated SQLite test database via `DB_NAME=':memory:'`.
+- An isolated SQLite test database via `DB_NAME=':memory:'` by default.
 - A plugin working directory via `cwd=<sandbox path>`, matching the practical
   role of `wp-env run --env-cwd`.
 - Structured diagnostics in the recipe artifact bundle, including the raw test
@@ -774,6 +774,13 @@ created test tables and before test discovery and execution. Any dependency
 `plugins_loaded` callbacks registered during that load are invoked once after
 dependency activation.
 
+Set `databaseType` to `mysql` when managed PHPUnit tests require MySQL semantics.
+The builder provisions a disposable MySQL service, maps its canonical `DB_*`
+outputs into the runtime, and writes those values into `wp-tests-config.php`.
+An explicit MySQL declaration fails before tests if the runtime cannot provide
+that service; WP Codebox never substitutes SQLite for it. Omitting
+`databaseType` preserves the default SQLite behavior.
+
 Use `recipe build phpunit` when generating recipes for plugin CI or offloaded lab
 runners:
 
@@ -781,6 +788,7 @@ runners:
 {
   "pluginSlug": "woocommerce",
   "pluginSource": "../woocommerce/plugins/woocommerce",
+  "databaseType": "mysql",
   "services": [
     {
       "id": "mysql",

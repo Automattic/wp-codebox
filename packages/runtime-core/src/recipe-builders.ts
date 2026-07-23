@@ -14,6 +14,7 @@ export interface NormalizeRecipeMountsOptions {
 export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   phpVersion?: string
+  databaseType?: "sqlite" | "mysql"
   wordpressInstallMode?: RuntimeWordPressInstallMode
   blueprint?: unknown
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
@@ -73,6 +74,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   const pluginSlug = requiredPluginSlug(options.pluginSlug, "buildWordPressPhpunitRecipe")
   const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
   const autoloadFile = options.autoloadFile ?? (options.bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
+  const services = phpunitRuntimeServices(options.databaseType, options.services)
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
@@ -87,7 +89,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
     },
     inputs: {
       extra_plugins: normalizeExtraPlugins(options.extra_plugins),
-      ...(options.services && options.services.length > 0 ? { services: options.services } : {}),
+      ...(services.length > 0 ? { services } : {}),
       mounts: normalizeRecipeMounts([
         ...(options.pluginSource ? [{ source: options.pluginSource, target: pluginTarget } satisfies WorkspaceRecipeMount] : []),
         ...(options.mounts ?? []),
@@ -118,10 +120,28 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("bootstrap-mode", options.bootstrapMode ?? "managed"),
           commandArg("project-bootstrap", options.projectBootstrap ?? ""),
           commandArg("multisite", options.multisite ? "1" : "0"),
+          ...(options.databaseType ? [commandArg("database-type", options.databaseType)] : []),
         ],
       }],
     },
   }
+}
+
+function phpunitRuntimeServices(databaseType: WordPressPhpunitRecipeOptions["databaseType"], services: WorkspaceRecipeRuntimeService[] = []): WorkspaceRecipeRuntimeService[] {
+  if (databaseType !== undefined && databaseType !== "sqlite" && databaseType !== "mysql") {
+    throw new Error(`Unsupported PHPUnit database type: ${databaseType}`)
+  }
+  if (databaseType !== "mysql") {
+    return services
+  }
+
+  const mysqlIndex = services.findIndex((service) => service.kind === "mysql")
+  const canonicalOutputs = { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" }
+  if (mysqlIndex === -1) {
+    return [...services, { id: "wordpress-database", kind: "mysql", outputs: canonicalOutputs }]
+  }
+
+  return services.map((service, index) => index === mysqlIndex ? { ...service, outputs: { ...service.outputs, ...canonicalOutputs } } : service)
 }
 
 function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: string): WorkspaceRecipeStep[] {

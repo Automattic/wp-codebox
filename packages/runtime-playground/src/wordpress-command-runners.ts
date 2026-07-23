@@ -911,6 +911,20 @@ export async function runPhpunitCommand({
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
   const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
+  const declaredDatabaseType = argValue(args, "database-type")?.trim()
+  if (declaredDatabaseType && declaredDatabaseType !== "sqlite" && declaredDatabaseType !== "mysql") {
+    throw new Error(`wordpress.phpunit does not support database-type=${declaredDatabaseType}; supported backends are sqlite and mysql`)
+  }
+  const externalDatabase = runtimeSpec.environment?.databaseSetup === "external"
+  const databaseType: "sqlite" | "mysql" = declaredDatabaseType === "mysql" || declaredDatabaseType === "sqlite"
+    ? declaredDatabaseType
+    : externalDatabase && runtimeSpec.runtimeEnv?.DB_HOST ? "mysql" : "sqlite"
+  if (databaseType === "mysql" && !externalDatabase) {
+    throw new Error("wordpress.phpunit requires a managed external database service when database-type=mysql; refusing to substitute SQLite")
+  }
+  if (declaredDatabaseType === "sqlite" && externalDatabase) {
+    throw new Error("wordpress.phpunit declared database-type=sqlite but the runtime uses an external database; refusing backend substitution")
+  }
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
@@ -937,6 +951,7 @@ export async function runPhpunitCommand({
     bootstrapMode,
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
     multisite: booleanArg(args, "multisite"),
+    databaseType,
     resultFile,
   })
   if (!explicitCode && !pluginSlug) {
