@@ -371,7 +371,8 @@ function parseMaterializationJson<T extends { schema?: string }>(text: string, s
   try {
     parsed = JSON.parse(text || "{}")
   } catch (error) {
-    throw new Error(`${command} returned invalid JSON: ${errorMessage(error)}`)
+    const excerpt = text.trim().replace(/\s+/g, " ").slice(0, 500)
+    throw new Error(`${command} returned invalid JSON: ${errorMessage(error)}${excerpt ? `; response excerpt: ${excerpt}` : ""}`)
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as { schema?: unknown }).schema !== schema) {
     throw new Error(`${command} did not return ${schema}; received ${text.trim() || "empty response"}`)

@@ -115,4 +115,24 @@ await withTempDir("wp-codebox-staged-input-materialization-binary-", async (root
   assert.ok(binaryWriteCode.includes(contents.toString("base64")), "the PHP materializer receives the exact base64 payload")
 })
 
+await withTempDir("wp-codebox-staged-input-materialization-invalid-response-", async (root) => {
+  const source = join(root, "image.bin")
+  await writeFile(source, Buffer.from([0xff]))
+  const server = {
+    playground: {
+      async run({ code }: { code: string }) {
+        if (code.includes("wp-codebox/host-mount-materialization/v1")) {
+          return { text: "<br />\n<b>Fatal error</b>: materialization failed" }
+        }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) }
+      },
+    },
+  }
+
+  await assert.rejects(
+    materializePlaygroundStagedInputs(server as never, [{ type: "file", source, target: "/wordpress/image.bin", mode: "readwrite" }]),
+    /response excerpt: <br \/> <b>Fatal error<\/b>: materialization failed/,
+  )
+})
+
 console.log("staged input materialization ok")
