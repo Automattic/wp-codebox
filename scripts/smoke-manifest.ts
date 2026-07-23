@@ -120,6 +120,7 @@ export const smokeGroups = {
       tsxSmoke("replay-export-snapshot-scoping-smoke"),
       tsxSmoke("runtime-overlay-validation-smoke"),
       npmScript("test:runtime-php-snippets"),
+      npmScript("test:wp-cli-temporary-script"),
       npmScript("test:php-runtime-provider-registry"),
       tsxSmoke("composer-backed-source-hydration-smoke"),
       tsxSmoke("composer-package-overlay-autoload-layout-smoke"),
