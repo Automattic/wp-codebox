@@ -66,8 +66,8 @@ export class D1RevisionCoordinator implements RevisionCoordinator {
     await releaseMutationFence(this.database, this.siteId, token)
   }
 
-  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
-    return adoptWordPressState(this.database, this.siteId, pointer, version)
+  adopt(pointer: MarkdownPointer, version: number, fenceToken?: string, requireFence = false): Promise<{ pointer: MarkdownPointer; version: number }> {
+    return adoptWordPressState(this.database, this.siteId, pointer, version, fenceToken, requireFence)
   }
 
   async reset(): Promise<void> {
@@ -202,34 +202,41 @@ async function releaseMutationFence(database: D1Database, siteId: string, token:
   return { released: true }
 }
 
-async function adoptWordPressState(database: D1Database, siteId: string, pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
+async function adoptWordPressState(database: D1Database, siteId: string, pointer: MarkdownPointer, version: number, fenceToken?: string, requireFence = false): Promise<{ pointer: MarkdownPointer; version: number }> {
   validatePointer(pointer)
   if (!Number.isSafeInteger(version) || version < 1) throw new RevisionConflict("A positive canonical version is required for D1 adoption.")
   await ensureSchema(database, siteId)
   const now = Date.now()
+  const fence = await readMutationFence(database, siteId)
+  if (requireFence && !fence.active) throw new RevisionConflict("Selected coordinator adoption requires an active cutover fence.")
+  if (fence.active && !fenceToken) throw new RevisionConflict("D1 coordinator adoption is blocked by an unmatched fence.", fence.expiresAt)
   await database.batch([
     database.prepare(`UPDATE wp_codebox_state
       SET revision = ?, manifest_key = ?, persisted_at = ?, version = ?,
           lease_token = NULL, lease_base_revision = NULL, lease_version = NULL, lease_expires_at = NULL
       WHERE site_id = ? AND (lease_token IS NULL OR lease_expires_at <= ?)
-        AND NOT EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND expires_at > ?)
+        AND (NOT EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND expires_at > ?)
+          OR EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND token = ? AND expires_at > ?))
         AND ((revision IS NULL AND manifest_key IS NULL AND persisted_at IS NULL)
-          OR (version = ? AND revision = ? AND manifest_key = ? AND persisted_at = ?))
+          OR (version = ? AND revision = ? AND manifest_key = ? AND persisted_at = ?)
+          OR version < ?)
         AND (NOT EXISTS (SELECT 1 FROM wp_codebox_commits WHERE site_id = ? AND version = ?)
           OR EXISTS (SELECT 1 FROM wp_codebox_commits WHERE site_id = ? AND version = ?
             AND revision = ? AND manifest_key = ? AND persisted_at = ?))`)
       .bind(pointer.revision, pointer.manifestKey, pointer.persistedAt, version, siteId, now, siteId, now,
-        version, pointer.revision, pointer.manifestKey, pointer.persistedAt,
+        siteId, fenceToken ?? null, now,
+        version, pointer.revision, pointer.manifestKey, pointer.persistedAt, version,
         siteId, version, siteId, version, pointer.revision, pointer.manifestKey, pointer.persistedAt),
     database.prepare(`INSERT OR IGNORE INTO wp_codebox_commits (site_id, version, revision, manifest_key, persisted_at)
       SELECT site_id, version, revision, manifest_key, persisted_at FROM wp_codebox_state
       WHERE site_id = ? AND version = ? AND revision = ? AND manifest_key = ? AND persisted_at = ? AND lease_token IS NULL
-        AND NOT EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND expires_at > ?)`)
-      .bind(siteId, version, pointer.revision, pointer.manifestKey, pointer.persistedAt, siteId, now),
+        AND (NOT EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND expires_at > ?)
+          OR EXISTS (SELECT 1 FROM wp_codebox_fences WHERE site_id = ? AND token = ? AND expires_at > ?))`)
+      .bind(siteId, version, pointer.revision, pointer.manifestKey, pointer.persistedAt, siteId, now, siteId, fenceToken ?? null, now),
   ])
   const [state, committed] = await Promise.all([readRow(database, siteId), readCommittedPointer(database, siteId, version)])
   if (state.version !== version || !samePointer(pointerFromRow(state), pointer) || !samePointer(committed, pointer)) {
-    throw new RevisionConflict("D1 coordinator adoption requires empty or exactly matching state without an active lease or fence.")
+    throw new RevisionConflict("D1 coordinator adoption requires empty, exactly matching, or monotonic forward state without an active lease or an unmatched fence.")
   }
   return { pointer, version }
 }

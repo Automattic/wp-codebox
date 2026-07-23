@@ -8,6 +8,7 @@ import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
 import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
+import { selectOperatorCoordinator } from "./operator-coordinator.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { RevisionConflict, type MarkdownPointer, type MutationFence, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
@@ -210,7 +211,10 @@ export interface RuntimeEnv {
   WORDPRESS_OPERATOR_TOKEN?: string
 }
 
-export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinator: (env: Env, site: SiteContext) => RevisionCoordinator) {
+export function createCloudflareRuntime<Env extends RuntimeEnv>(
+  resolveCoordinator: (env: Env, site: SiteContext) => RevisionCoordinator,
+  resolveOperatorCoordinator?: (env: Env, site: SiteContext, selector: string) => RevisionCoordinator | undefined,
+) {
   return {
     async fetch(request: Request, env: Env): Promise<Response> {
       let site: SiteContext
@@ -223,17 +227,20 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
       if (new URL(request.url).pathname === "/wp-cron.php") return new Response("WordPress cron is managed by the Cloudflare scheduled handler.", { status: 404 })
       const publishedResponse = await servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET, site)
       if (publishedResponse) return publishedResponse
-      const coordinator = resolveCoordinator(env, site)
+      const route = routeWorkerRequest(request)
+      const selector = new URL(request.url).searchParams.get("coordinator")
+      const selection = selectOperatorCoordinator(resolveCoordinator(env, site), route, selector, (selected) => resolveOperatorCoordinator?.(env, site, selected))
+      if (!selection) return new Response("Unsupported operator coordinator selector.", { status: 400 })
+      const coordinator = selection.coordinator
       const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)
       if (wpContentResponse) return wpContentResponse
       const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)
       if (staticResponse) return staticResponse
-      const route = routeWorkerRequest(request)
       const uploadResponse = await serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)
       if (uploadResponse) return uploadResponse
       if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator, site)
       if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator, site)
-      if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator, site)
+      if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator, site, selection.selected)
       if (route.kind === "operator-fence") return operateCanonicalMutationFence(request, env, coordinator, site, route.action)
       if (route.kind === "operator-static-artifact-import") return importCanonicalStaticArtifact(request, env, coordinator, site)
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator, site)
@@ -418,20 +425,23 @@ async function restoreCanonicalWordPress(request: Request, env: RuntimeEnv, coor
   }
 }
 
-async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext): Promise<Response> {
+async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, requireFence = false): Promise<Response> {
   if (request.method !== "POST") return new Response("Canonical adoption requires POST.", { status: 405 })
   if (!await isAuthorizedOperator(request, env, site)) {
     return new Response("Canonical adoption authorization failed.", { status: 401 })
   }
   let pointer: MarkdownPointer
   let version: number
+  let fenceToken: string | undefined
   try {
-    const body = await request.json<{ pointer?: unknown; version?: unknown }>()
+    const body = await request.json<{ pointer?: unknown; version?: unknown; fenceToken?: unknown }>()
     pointer = body.pointer as MarkdownPointer
     version = body.version as number
+    fenceToken = typeof body.fenceToken === "string" ? body.fenceToken : undefined
   } catch {
     return new Response("Canonical adoption requires JSON state.", { status: 400 })
   }
+  if (requireFence && !fenceToken) return new Response("Selected coordinator adoption requires its active fence token.", { status: 400 })
   if (!isCanonicalRestorePointer(pointer, site) || !Number.isSafeInteger(version) || version < 1) return new Response("Canonical adoption state is invalid.", { status: 400 })
   const manifest = await readMarkdownManifest(env.WORDPRESS_STATE_BUCKET, pointer, site)
   if (!manifest || manifest.revision !== pointer.revision || manifest.manifestKey !== pointer.manifestKey || manifest.persistedAt !== pointer.persistedAt || !Array.isArray(manifest.files)) {
@@ -439,7 +449,7 @@ async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordi
   }
   let adopted: { pointer: MarkdownPointer; version: number }
   try {
-    adopted = await coordinator.adopt(pointer, version)
+    adopted = await coordinator.adopt(pointer, version, fenceToken, requireFence)
   } catch (error) {
     if (!(error instanceof RevisionConflict)) throw error
     return coordinatorConflictResponse(error)

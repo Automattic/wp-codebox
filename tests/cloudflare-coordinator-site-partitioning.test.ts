@@ -64,6 +64,24 @@ test("D1 coordinator partitions state, leases, fences, and commit receipts by si
   })
 })
 
+test("D1 adoption accepts monotonic forward state and requires an active fence token", async () => {
+  const coordinator = new D1RevisionCoordinator(d1Database(), "default")
+  const retained = pointer("default", "retained")
+  const current = pointer("default", "current")
+  const later = pointer("default", "later")
+
+  await coordinator.adopt(retained, 35)
+  assert.deepEqual(await coordinator.adopt(current, 36), { pointer: current, version: 36 })
+  await assert.rejects(() => coordinator.adopt(retained, 35), /monotonic forward/)
+  await assert.rejects(() => coordinator.adopt({ ...current, revision: "divergent" }, 36), /monotonic forward/)
+
+  const fence = await coordinator.acquireFence(30_000)
+  await assert.rejects(() => coordinator.adopt(later, 37), /unmatched fence/)
+  assert.deepEqual(await coordinator.adopt(later, 37, fence.token, true), { pointer: later, version: 37 })
+  await coordinator.releaseFence(fence.token)
+  await assert.rejects(() => coordinator.adopt(pointer("default", "required-fence"), 38, fence.token, true), /requires an active cutover fence/)
+})
+
 test("Durable Object coordinator writes the matching site pointer and preserves default compatibility", async () => {
   const objects = new Map<string, string>()
   const coordinator = (values: Map<string, unknown>) => new WordPressStateCoordinator({
