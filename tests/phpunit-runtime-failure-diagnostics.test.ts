@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PLUGIN_PHPUNIT_RESULT_FILE } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
-import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
+import { hasSuccessfulPhpunitSummary, runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
 
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-runtime-diagnostics-"))
 const secret = "sk-abcdefghijklmnopqrstuvwxyz"
@@ -51,6 +51,9 @@ assert.ok(preBootstrapRecorder >= 0 && preBootstrapRecorder < wordpressBootstrap
 
 const emptySuccessArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-empty-success-"))
 const successfulResponseSecret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+assert.equal(hasSuccessfulPhpunitSummary("OK (1 test, 1 assertion)"), true)
+assert.equal(hasSuccessfulPhpunitSummary("OK, but incomplete, skipped, or risky tests!\nTests: 21, Assertions: 27398, Skipped: 1."), true)
+assert.equal(hasSuccessfulPhpunitSummary("Tests: 21, Assertions: 27398, Failures: 1."), false)
 await assert.rejects(
   () => runPhpunitCommand({
     artifactRoot: emptySuccessArtifactRoot,

@@ -970,12 +970,16 @@ export async function runPhpunitCommand({
   if (structured) {
     throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit terminated before completing bootstrap"), "wordpress.phpunit structured diagnostics", structured)
   }
-  if (!phpunitArgs.includes("--list-tests") && !/\bOK(?:, but there were issues!)? \([1-9]\d* tests?,/m.test(response.text)) {
+  if (!phpunitArgs.includes("--list-tests") && !hasSuccessfulPhpunitSummary(response.text)) {
     const diagnostics = successfulPhpunitResponseDiagnostics(response)
     throw attachPlaygroundDiagnostics(new Error("wordpress.phpunit exited successfully without a non-zero PHPUnit test summary"), "wordpress.phpunit successful response diagnostics", diagnostics)
   }
 
   return response.text
+}
+
+export function hasSuccessfulPhpunitSummary(output: string): boolean {
+  return /\bOK(?:, but (?:there were issues!|incomplete, skipped, or risky tests!))?(?: \([1-9]\d* tests?,|\s+Tests:\s*[1-9]\d*,\s*Assertions:)/m.test(output)
 }
 
 function successfulPhpunitResponseDiagnostics(response: PlaygroundRunResponse): string {

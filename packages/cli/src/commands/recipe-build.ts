@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipePluginRuntime, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run" | "runtime-package-run"
@@ -16,6 +16,7 @@ interface WordPressPhpunitBuilderOptions {
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
   mounts?: WorkspaceRecipeMount[]
   services?: WorkspaceRecipeRuntimeService[]
+  pluginRuntime?: WorkspaceRecipePluginRuntime
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
   pluginSource?: string
   pluginSlug: string
@@ -86,6 +87,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         backendPackage: phpunitOptions.backendPackage,
         mounts: Array.isArray(phpunitOptions.mounts) ? phpunitOptions.mounts : [],
         services: Array.isArray(phpunitOptions.services) ? phpunitOptions.services : [],
+        pluginRuntime: phpunitOptions.pluginRuntime ? plainObject(phpunitOptions.pluginRuntime) as WorkspaceRecipePluginRuntime : undefined,
         extra_plugins: Array.isArray(phpunitOptions.extra_plugins) ? phpunitOptions.extra_plugins : [],
         pluginSource: stringOrUndefined(phpunitOptions.pluginSource),
         pluginSlug: requiredString(phpunitOptions.pluginSlug, "pluginSlug"),

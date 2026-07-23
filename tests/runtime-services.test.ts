@@ -33,6 +33,7 @@ assert.equal(runtimeServicePlan([mariaDbService])[0]?.version, "mariadb:11.4")
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, configuration: { foreignKeyTargetPolicy: "anything" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: [emptyRootService] }).inputs?.services, [emptyRootService])
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
+assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", pluginRuntime: { php: { memoryLimit: "2G" } } }).inputs?.pluginRuntime, { php: { memoryLimit: "2G" } })
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {
   const optionsPath = join(builderDirectory, "options.json")
