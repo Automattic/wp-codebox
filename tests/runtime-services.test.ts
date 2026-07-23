@@ -29,6 +29,12 @@ assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-r
 assert.equal(runtimeServicePlan([mariaDbService])[0]?.version, "mariadb:11.4")
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, configuration: { foreignKeyTargetPolicy: "anything" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: [emptyRootService] }).inputs?.services, [emptyRootService])
+const mysqlPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mysql" })
+assert.deepEqual(mysqlPhpunitRecipe.inputs?.services, [{ id: "wordpress-database", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" } }])
+assert.ok(mysqlPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mysql"))
+const sqlitePhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example" })
+assert.equal(sqlitePhpunitRecipe.inputs?.services, undefined)
+assert.equal(sqlitePhpunitRecipe.workflow.steps[0].args?.some((arg) => arg.startsWith("database-type=")), false)
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
 try {
@@ -37,6 +43,7 @@ try {
   await writeFile(optionsPath, JSON.stringify({
     pluginSlug: "example",
     phpVersion: "8.3",
+    databaseType: "mysql",
     extensions: [{ manifest: "./sodium/manifest.json" }],
     backendPackage: { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" },
     testRoot: "/home/example/bin/tests/core",
@@ -47,6 +54,8 @@ try {
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("test-root=/home/example/bin/tests/core"))
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("phpunit-xml=/home/example/bin/tests/core/phpunit.xml"))
   assert.equal(builtRecipe.runtime?.phpVersion, "8.3")
+  assert.equal(builtRecipe.inputs?.services?.[0]?.kind, "mysql")
+  assert.ok(builtRecipe.workflow.steps[0].args?.includes("database-type=mysql"))
   assert.deepEqual(builtRecipe.runtime?.extensions, [{ manifest: "./sodium/manifest.json" }])
   assert.deepEqual(builtRecipe.runtime?.backendPackage, { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" })
 

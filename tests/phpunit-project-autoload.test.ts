@@ -438,6 +438,7 @@ const projectModeCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   multisite: false,
+  databaseType: "sqlite",
 })
 
 const implicitProjectConfigCode = phpunitRunCode({
@@ -458,6 +459,7 @@ const implicitProjectConfigCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "",
   multisite: false,
+  databaseType: "sqlite",
 })
 assertConfiglessPluginUsesManagedDiscovery(implicitProjectConfigCode)
 
@@ -523,6 +525,7 @@ const canonicalHarnessProjectModeCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   multisite: false,
+  databaseType: "sqlite",
 })
 assert.ok(canonicalHarnessProjectModeCode.includes('$autoload_file_role = "harness";'))
 assert.ok(canonicalHarnessProjectModeCode.includes('$harness_autoload_file = $legacy_project_autoload_file !== \'\' ? \'/wp-codebox-vendor/autoload.php\' : $autoload_file;'))
@@ -587,6 +590,35 @@ assert.equal((decodedExplicitCode.match(/declare\(strict_types=1\);/g) ?? []).le
 assert.ok(decodedExplicitCode.includes("echo getenv('TC_MYSQL_PORT');"), "explicit PHPUnit code receives the same runtime bootstrap")
 assert.ok(decodedExplicitCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedExplicitCode.lastIndexOf("TC_MYSQL_PORT"), "explicit env-json handling remains after runtime environment bootstrap")
 
+let capturedMysqlCode = ""
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-artifacts-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    capturedMysqlCode = input.code
+    return { text: "ok", exitCode: 0 }
+  },
+  runtimeSpec: {
+    environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+    runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
+    policy: { commands: ["wordpress.phpunit"] },
+  } as never,
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
+})
+const decodedMysqlCode = decodedBootstrapWrapper(capturedMysqlCode)
+assert.ok(decodedMysqlCode.includes('$database_type = "mysql";'))
+assert.ok(decodedMysqlCode.includes("'DB_HOST' => $db_host"), "managed PHPUnit writes the provisioned MySQL host into wp-tests-config.php")
+assert.ok(decodedMysqlCode.includes("getenv('DB_PASSWORD')"), "managed PHPUnit consumes the provisioned MySQL credentials")
+await assert.rejects(runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-reject-")),
+  mounts: [],
+  runPlaygroundCommand: async () => { throw new Error("workload must not execute") },
+  runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
+}), /requires a managed external database service.*refusing to substitute SQLite/)
+
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
   testsDir: "/wordpress/tests/phpunit",
@@ -628,9 +660,11 @@ const managedModeCode = phpunitRunCode({
   bootstrapMode: "managed",
   projectBootstrap: "",
   multisite: false,
+  databaseType: "sqlite",
 })
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
+assert.ok(managedModeCode.includes("define('DB_NAME', ':memory:');"), "default managed PHPUnit remains on SQLite")
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
 assert.ok(managedModeCode.includes("global $argv, $pg_stage_output_buffering, $wp_rewrite;"), "managed WordPress installation must expose the rewrite global required by multisite setup")
 assert.ok(managedModeCode.includes('$dep_mounts = "/wordpress/wp-content/plugins/demo-plugin\\n/wordpress/wp-content/plugins/dependency";'), "dependency mounts must be newline-delimited for the generated PHP runner")

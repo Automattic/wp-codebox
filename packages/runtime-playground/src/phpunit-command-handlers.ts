@@ -21,6 +21,7 @@ export interface PhpunitRunCodeOptions {
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
+  databaseType: "sqlite" | "mysql"
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
    * to a /tmp path so diagnostics survive read-only plugin mounts and a mid-install
@@ -361,6 +362,7 @@ $preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFile
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
+$database_type = ${JSON.stringify(options.databaseType)};
 
 function pg_build_phpunit_argv($raw): array {
     $phpunit_argv = array('phpunit');
@@ -630,11 +632,33 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         $config = "<?php\n";
         pg_append_wp_config_defines($config, $extra_defines);
         $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
-        $config .= <<<'CONFIG'
+        $database_type = (string) ($cfg['database_type'] ?? 'sqlite');
+        if ($database_type === 'mysql') {
+            $db_host = getenv('DB_HOST');
+            if (!is_string($db_host) || $db_host === '') {
+                throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
+            }
+            $db_port = getenv('DB_PORT');
+            if (is_string($db_port) && $db_port !== '') {
+                $db_host .= ':' . $db_port;
+            }
+            foreach (array(
+                'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
+                'DB_USER' => getenv('DB_USER') ?: 'runtime',
+                'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
+                'DB_HOST' => $db_host,
+            ) as $name => $value) {
+                $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
+            }
+        } else {
+            $config .= <<<'CONFIG'
 define('DB_NAME', ':memory:');
 define('DB_USER', 'root');
 define('DB_PASSWORD', '');
 define('DB_HOST', 'localhost');
+CONFIG;
+        }
+        $config .= <<<'CONFIG'
 define('DB_CHARSET', 'utf8');
 define('WP_TESTS_DOMAIN', 'example.org');
 define('WP_TESTS_EMAIL', 'admin@example.org');
@@ -1075,7 +1099,7 @@ if ($autoload_file_role === '' && $bootstrap_mode === 'project' && $project_auto
 }
 $harness_autoload_file = $legacy_project_autoload_file !== '' ? '/wp-codebox-vendor/autoload.php' : $autoload_file;
 
-$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== ''));
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== '', 'database_type' => $database_type));
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
     pg_skip_project_bootstrap_shell_install();
