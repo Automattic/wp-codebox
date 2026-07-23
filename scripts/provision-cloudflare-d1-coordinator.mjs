@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 
 const args = process.argv.slice(2)
 const option = (name, fallback) => {
@@ -26,6 +26,7 @@ const database = matches[0]
 if (!database || typeof database.uuid !== "string" || !/^[a-f0-9-]{36}$/.test(database.uuid)) throw new Error(`D1 database ${databaseName} was not resolved after provisioning.`)
 
 const template = parseJsonc(await readFile(templatePath, "utf8"))
+if (typeof template.main === "string" && !template.main.startsWith("/")) template.main = resolve(dirname(templatePath), template.main)
 const configured = template.d1_databases?.find((candidate) => candidate.binding === binding && candidate.database_name === databaseName)
 if (!configured) throw new Error(`D1 template does not declare ${binding} for ${databaseName}.`)
 configured.database_id = database.uuid
