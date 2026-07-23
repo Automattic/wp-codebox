@@ -27,6 +27,7 @@ test("D1 provisioner creates once and emits a deployable config deterministicall
     assert.deepEqual(second, first)
     const config = JSON.parse(await readFile(output, "utf8"))
     assert.equal(config.d1_databases[0].database_id, first.databaseId)
+    assert.equal(config.main, join(directory, "src/worker-d1.ts"))
     const invocations = (await readFile(calls, "utf8")).trim().split("\n").map(JSON.parse)
     assert.equal(invocations.filter((args) => args[1] === "create").length, 1)
   } finally {
