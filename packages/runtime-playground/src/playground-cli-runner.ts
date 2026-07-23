@@ -87,6 +87,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
     usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
+    emitProgress("preview:materializing-mounts", "complete", "Prepared mounted inputs", {
+      materialization: readonlyMountStaging.phaseResult,
+    })
     const stagedMounts = readonlyMountStaging.mounts
     const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
     const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
