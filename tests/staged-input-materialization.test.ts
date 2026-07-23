@@ -113,6 +113,8 @@ await withTempDir("wp-codebox-staged-input-materialization-binary-", async (root
   assert.equal(result.skipped, 0)
   assert.equal(directWrites, 0, "arbitrary bytes bypass the UTF-8-only direct writer")
   assert.ok(binaryWriteCode.includes(contents.toString("base64")), "the PHP materializer receives the exact base64 payload")
+  assert.match(binaryWriteCode, /@mkdir\(/, "expected filesystem failures do not corrupt the JSON response channel")
+  assert.match(binaryWriteCode, /@file_put_contents\(/, "expected write failures remain structured skipped results")
 })
 
 await withTempDir("wp-codebox-staged-input-materialization-invalid-response-", async (root) => {

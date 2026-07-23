@@ -488,7 +488,7 @@ foreach (($payload['directories'] ?? array()) as $directory) {
         $skipped++;
         continue;
     }
-    if (is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory)) {
+    if (is_dir($directory) || @mkdir($directory, 0777, true) || is_dir($directory)) {
         $created++;
         continue;
     }
@@ -502,12 +502,12 @@ foreach (($payload['files'] ?? array()) as $file) {
         continue;
     }
     $directory = dirname($target);
-    if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+    if (!is_dir($directory) && !@mkdir($directory, 0777, true) && !is_dir($directory)) {
         $skipped++;
         continue;
     }
     $decoded = base64_decode($contents, true);
-    if (false === $decoded || false === file_put_contents($target, $decoded)) {
+    if (false === $decoded || false === @file_put_contents($target, $decoded)) {
         $skipped++;
         continue;
     }
@@ -532,7 +532,7 @@ foreach (($payload['directories'] ?? array()) as $directory) {
         $skipped++;
         continue;
     }
-    if (is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory)) {
+    if (is_dir($directory) || @mkdir($directory, 0777, true) || is_dir($directory)) {
         $created++;
         continue;
     }
