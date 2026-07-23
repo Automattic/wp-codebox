@@ -77,7 +77,7 @@ export class StaticArtifactImportError extends Error {
   }
 }
 
-async function readBoundedRequestBytes(request: Request): Promise<Uint8Array> {
+export async function readBoundedRequestBytes(request: Request): Promise<Uint8Array> {
   if (!request.body) return new Uint8Array()
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
@@ -101,7 +101,7 @@ async function readBoundedRequestBytes(request: Request): Promise<Uint8Array> {
   return bytes
 }
 
-async function validateStaticArtifact(value: unknown): Promise<void> {
+export async function validateStaticArtifact(value: unknown): Promise<void> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new StaticArtifactImportError("Static artifact must be an object.", 422)
   const artifact = value as Record<string, unknown>
   if (artifact.schema !== STATIC_ARTIFACT_SCHEMA || typeof artifact.root !== "string" || !isSafePath(artifact.root)

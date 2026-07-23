@@ -33,6 +33,9 @@ export function shouldRecoverPreparedCommit(prepared: StaticArtifactOperation["p
 export class D1OperationRepository {
   constructor(private readonly database: D1Database, private readonly claimMs = 600_000) {}
 
+  /** Makes the shipped operation/site schema available to API allocation code. */
+  async initialize(): Promise<void> { await ensureSchema(this.database) }
+
   async createOrConverge(site: SiteContext, input: StaticArtifactOperationInput): Promise<{ operation: StaticArtifactOperation; created: boolean }> {
     await ensureSchema(this.database)
     const now = Date.now()
