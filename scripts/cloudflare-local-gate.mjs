@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { stripVTControlCharacters } from "node:util"
@@ -21,6 +21,7 @@ let output = ""
 try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
+  const staticArtifactImport = await provisionStaticArtifact()
   await startWorker()
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
@@ -83,7 +84,27 @@ try {
   await runScheduledCron()
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
   cookies.length = 0
-  await login()
+  const finalAdmin = await login()
+  console.log(`Static artifact import starting for ${coordinator}.`)
+  const imported = await importStaticArtifact(staticArtifactImport)
+  console.log(`Static artifact import committed for ${coordinator}.`)
+  console.log(`Static artifact receipt: ${JSON.stringify({ pages: imported.pages, themeSlug: imported.themeSlug, quality: imported.quality })}`)
+  const importedPages = await assertImportedArtifactPages(finalAdmin, imported)
+  console.log(`Static artifact pages are editable for ${coordinator}.`)
+  const importedPublication = await runScheduledPublicationUntil(new URL(importedPages.secondary.route, origin), "A second imported page.", "imported static artifact publication", 12)
+  assertIncludes(importedPublication, "A second imported page.", "imported static artifact publication")
+  console.log(`Static artifact publication promoted for ${coordinator}.`)
+  await stopWorker()
+  await startWorker()
+  const importedAdmin = await login()
+  await assertImportedArtifactPages(importedAdmin, imported)
+  const duplicateStateBefore = await (await fetch(`${origin}/?phase=r2-state`)).json()
+  const duplicate = await importStaticArtifact(staticArtifactImport, 200)
+  const duplicateStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
+  if (duplicate.status !== "duplicate" || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
+  const conflicting = await importStaticArtifact({ ...staticArtifactImport, import: { ...staticArtifactImport.import, slug: "different-artifact-site" } }, 409)
+  const conflictStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
+  if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
   console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
 } finally {
   await stopWorker()
@@ -96,6 +117,43 @@ async function run(command, args) {
     childProcess.on("error", reject)
     childProcess.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`${command} ${args.join(" ")} failed with status ${code}.`)))
   })
+}
+
+async function provisionStaticArtifact() {
+  const artifact = {
+    schema: "blocks-engine/php-transformer/site-artifact/v1",
+    artifact_type: "website",
+    version: 1,
+    root: "website",
+    entrypoint: "website/index.html",
+    files: [{
+      path: "website/index.html",
+      role: "document",
+      kind: "html",
+      mime_type: "text/html",
+      encoding: "utf-8",
+      content: "<!doctype html><html><head><meta charset=\"utf-8\"><title>Verified Artifact Site</title></head><body><main><h1>Verified Artifact Site</h1><p>Imported from a verified R2 artifact.</p></main></body></html>",
+    }, {
+      path: "website/about/index.html",
+      role: "document",
+      kind: "html",
+      mime_type: "text/html",
+      encoding: "utf-8",
+      content: "<!doctype html><html><head><meta charset=\"utf-8\"><title>About the Verified Artifact</title></head><body><main><h1>About the Verified Artifact</h1><p>A second imported page.</p></main></body></html>",
+    }],
+  }
+  const serialized = JSON.stringify(artifact)
+  const sha256 = createHash("sha256").update(serialized).digest("hex")
+  const key = `sites/default/import-artifacts/${sha256}.json`
+  const path = join(stateDirectory, "static-site-artifact.json")
+  await writeFile(path, serialized)
+  await run("npm", ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${key}`, "--file", path, "--local", "--persist-to", stateDirectory])
+  return {
+    schema: "wp-codebox/cloudflare-static-artifact-import-request/v1",
+    idempotencyKey: `cloudflare-static-artifact-${sha256}`,
+    artifact: { r2Key: key, sha256, size: Buffer.byteLength(serialized) },
+    import: { slug: "verified-artifact-site", name: "Verified Artifact Site", siteTitle: "Verified Artifact Site" },
+  }
 }
 
 async function startWorker() {
@@ -166,6 +224,43 @@ async function createPost(adminHtml) {
   if (typeof post.slug !== "string" || typeof post.link !== "string" || post.title?.rendered !== title) throw new Error(`Unexpected REST post response: ${body}`)
   const link = new URL(post.link)
   return { id: post.id, slug: post.slug, route: `${link.pathname}${link.search}`, title }
+}
+
+async function importStaticArtifact(input, expectedStatus = 201) {
+  const response = await fetch(`${origin}/?phase=operator-static-artifact-import`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  const body = await response.text()
+  if (response.status !== expectedStatus) throw new Error(`Static artifact import failed: ${response.status} ${body}.\nWorker output:\n${output}`)
+  const result = JSON.parse(body)
+  if (expectedStatus === 201 && (result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
+    || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
+    || !response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))) {
+    throw new Error(`Static artifact import returned invalid evidence: ${body}.`)
+  }
+  return result
+}
+
+async function assertImportedArtifactPages(adminHtml, imported) {
+  const pageIds = Object.values(imported.pages ?? {}).filter(Number.isInteger)
+  if (pageIds.length !== 2) throw new Error(`Static artifact import did not return two page IDs: ${JSON.stringify(imported)}.`)
+  const pages = []
+  for (const pageId of pageIds) {
+    const response = await request(`${origin}/wp-json/wp/v2/pages/${pageId}?context=edit`, { headers: { "x-wp-nonce": restNonce(adminHtml) } })
+    const body = await response.text()
+    if (!response.ok) throw new Error(`Imported artifact page ${pageId} was unavailable: ${response.status} ${body}. Receipt: ${JSON.stringify(imported.pages)}.\nWorker output:\n${output}`)
+    const page = JSON.parse(body)
+    const raw = page.content?.raw
+    if (typeof raw !== "string" || !raw.includes("<!-- wp:") || /<!-- wp:(?:html|freeform)\b/.test(raw)) throw new Error(`Imported artifact page is not editable native block content: ${body}.`)
+    const link = new URL(page.link)
+    pages.push({ id: pageId, route: `${link.pathname}${link.search}`, raw })
+  }
+  const primary = pages.find(({ raw }) => raw.includes("Imported from a verified R2 artifact."))
+  const secondary = pages.find(({ raw }) => raw.includes("A second imported page."))
+  if (!primary || !secondary || secondary.route === "/") throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
+  return { primary, secondary }
 }
 
 async function updatePost(adminHtml, post, previousPublicationRevision) {
@@ -403,15 +498,15 @@ async function runScheduledCronUntilPost(id) {
   throw new Error("Scheduled post remained queued after five bounded cron ticks.")
 }
 
-async function runScheduledPublicationUntil(target, expected, label) {
-  for (let tick = 0; tick < 5; tick++) {
+async function runScheduledPublicationUntil(target, expected, label, maxTicks = 5) {
+  for (let tick = 0; tick < maxTicks; tick++) {
     await runScheduledCron()
     const response = await fetch(target)
     const body = await response.text()
     if (response.ok && ["publication-r2", "publication-edge"].includes(response.headers.get("x-wp-codebox-page-cache-source")) && body.includes(expected)) return body
   }
   const diagnostics = stripVTControlCharacters(output).split("\n").filter((line) => /publication|scheduled|error|exception/i.test(line)).slice(-30).join("\n")
-  throw new Error(`${label} did not reach coordinator-free R2 publication after five bounded scheduled ticks.\n${diagnostics}`)
+  throw new Error(`${label} did not reach coordinator-free R2 publication after ${maxTicks} bounded scheduled ticks.\n${diagnostics}`)
 }
 
 async function assertWordPressCronDisabled() {

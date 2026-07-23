@@ -32,6 +32,14 @@ The authenticated mutation-fence endpoints provide a bounded cutover window with
 
 Use authenticated `GET ?phase=operator-fence-status` after acquisition to export a coherent cutover envelope. It includes the coordinator store, pointer, version, matching commit receipt, validated R2 manifest identity, fence expiry, and a `coherent` verdict. Coherence also reads every referenced canonical object and verifies its declared size and SHA-256, so an incomplete target cannot be promoted. Adopt that exact pointer/version into the target coordinator, require the target status envelope to match, then promote the target Worker before the source fence expires. The first target mutation must commit version `N+1`. Rollback uses the same sequence in reverse after fencing the active target; relying on an unfenced status read is not a lossless cutover procedure.
 
+## Static Artifact Import
+
+An authenticated `POST ?phase=operator-static-artifact-import` materializes a verified website artifact into the existing canonical site. The request is limited to 16 KiB and references an immutable JSON object at `sites/default/import-artifacts/<sha256>.json`; the Worker requires the declared R2 key, size, and SHA-256 to agree before acquiring a coordinator lease. The canonical `blocks-engine/php-transformer/site-artifact/v1` payload is limited to 4 MiB serialized, 500 safe unique files, 8 MiB per decoded file, and 32 MiB decoded in aggregate.
+
+The import transaction boots a dedicated runtime with the pinned Static Site Importer v1.3.4 archive (`8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29`) from R2, invokes its public `static-site-importer/import-website-artifact` ability as the operator-authorized administrator, and requires the canonical quality gate plus zero fallback, core HTML, freeform, and invalid blocks. SSI and its MU loader are runtime-owned and excluded from canonical mutable `wp-content`; generated themes, pages, options, and assets persist normally through MDI/R2. Failed or partial imports discard the PHP runtime without committing. Successful imports return compact provenance and canonical revision/version headers, enqueue affected publication routes, and store at most 20 idempotency receipts in canonical options. Exact replay returns the existing receipt without a new revision; reuse with different input returns a conflict.
+
+SSI is extracted only for import requests, so normal browser, mutation, publication, and cron boots retain their existing memory and latency profile. The pinned normal plugin archive bundles Blocks Engine and supports website artifacts without the optional Figma zstd extension; compressed `.fig` import is outside this runtime contract.
+
 ## Verification
 
 1. Run `npm run generate:cloudflare-canonical-mdi-seed` and `npm run generate:cloudflare-wordpress-runtime-corpus` to regenerate deterministic runtime artifacts and manifests.
