@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { runWithTemporaryWpCliScript, shellArgv } from "../packages/runtime-playground/src/wp-cli-command-handlers.js"
+import { runWithTemporaryWpCliScript, shellArgv } from "../packages/runtime-playground/dist/wp-cli-command-handlers.js"
 
 class MemoryFilesystem {
   readonly files = new Map<string, string>()
