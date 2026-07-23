@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -249,7 +250,64 @@ try {
   await rm(malformedVerificationSource, { recursive: true, force: true })
 }
 
-function materializationPayload(code: string): { directories?: string[]; files?: Array<{ target: string; contentsBase64: string }> } {
+const chunkedSource = await mkdtemp(join(tmpdir(), "wp-codebox-chunked-materialization-"))
+
+try {
+  const sourcePath = join(chunkedSource, "artifact.bin")
+  const contents = Buffer.alloc(1024 * 1024 + 77)
+  for (let offset = 0; offset < contents.length; offset++) {
+    contents[offset] = (offset * 31 + 255) % 256
+  }
+  await writeFile(sourcePath, contents)
+
+  const target = "/wordpress/wp-content/uploads/artifact.bin"
+  const sandboxFiles = new Map<string, Buffer>([[target, Buffer.from("stale target contents")]])
+  const chunkPayloadLengths: number[] = []
+  let directWrites = 0
+  let sourceTruncated = false
+  let verificationPayload: { sha256?: string; contentsBase64?: string } | undefined
+  const result = await materializePlaygroundStagedInputs({
+    playground: {
+      async run({ code }: { code: string }) {
+        const payload = materializationPayload(code)
+        if (code.includes("wp-codebox/host-mount-chunk-materialization/v1")) {
+          const chunk = payload as { target: string; contentsBase64?: string }
+          if (chunk.contentsBase64 === undefined) {
+            await writeFile(sourcePath, Buffer.alloc(0))
+            sourceTruncated = true
+            sandboxFiles.set(chunk.target, Buffer.alloc(0))
+            return { text: JSON.stringify({ schema: "wp-codebox/host-mount-chunk-materialization/v1", materialized: 0, skipped: 0 }) }
+          }
+          chunkPayloadLengths.push(chunk.contentsBase64.length)
+          sandboxFiles.set(chunk.target, Buffer.concat([sandboxFiles.get(chunk.target) ?? Buffer.alloc(0), Buffer.from(chunk.contentsBase64, "base64")]))
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-chunk-materialization/v1", materialized: 1, skipped: 0 }) }
+        }
+        if (code.includes("wp-codebox/host-mount-verification/v1")) {
+          verificationPayload = payload.files?.[0]
+          const expected = verificationPayload?.sha256
+          const actual = sandboxFiles.has(target) ? createHash("sha256").update(sandboxFiles.get(target)!).digest("hex") : undefined
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-verification/v1", repaired: 0, skipped: expected === actual ? 0 : 1 }) }
+        }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
+      },
+      async writeFile() {
+        directWrites++
+      },
+    },
+  } as never, [{ type: "file", source: sourcePath, target, mode: "readwrite" }])
+
+  assert.equal(result.materialized, 1)
+  assert.equal(sourceTruncated, true, "chunked writes retain a snapshot when the mounted source inode is truncated")
+  assert.equal(directWrites, 0, "large files never use the whole-file direct writer")
+  assert.deepEqual(sandboxFiles.get(target), contents, "chunked writes preserve exact binary bytes and replace existing targets")
+  assert.deepEqual(chunkPayloadLengths, [349528, 349528, 349528, 349528, 104])
+  assert.equal(verificationPayload?.contentsBase64, undefined, "large-file verification does not embed the file contents")
+  assert.match(verificationPayload?.sha256 ?? "", /^[a-f0-9]{64}$/)
+} finally {
+  await rm(chunkedSource, { recursive: true, force: true })
+}
+
+function materializationPayload(code: string): { target?: string; contentsBase64?: string; directories?: string[]; files?: Array<{ target: string; contentsBase64?: string; sha256?: string }> } {
   const match = code.match(/\$payload = json_decode\((.*), true\);/)
   assert.ok(match, "materialization PHP includes a JSON payload")
   return JSON.parse(JSON.parse(match[1]))
