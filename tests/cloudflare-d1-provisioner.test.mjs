@@ -17,7 +17,7 @@ test("D1 provisioner creates once and emits a deployable config deterministicall
     const output = join(directory, "production.json")
     await writeFile(state, "missing")
     await writeFile(calls, "")
-    await writeFile(template, `// template\n{"name":"worker","main":"src/worker-d1.ts","d1_databases":[{"binding":"WORDPRESS_STATE_DATABASE","database_name":"wp-codebox-runtime-state","database_id":"00000000-0000-0000-0000-000000000000"}],}`)
+    await writeFile(template, `// template\n{"name":"worker","main":"src/worker-d1.ts","d1_databases":[{"binding":"WORDPRESS_STATE_DATABASE","database_name":"wp-codebox-runtime-state","database_id":"00000000-0000-0000-0000-000000000000"}],"rules":[{"globs":["**/*.wasm","https://example.test/*"]}],}`)
     await writeFile(wrangler, `#!${process.execPath}\nimport { appendFileSync, readFileSync, writeFileSync } from "node:fs"; const args=process.argv.slice(2); appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args)+"\\n"); if(args[1]==="list") process.stdout.write(readFileSync(${JSON.stringify(state)},"utf8")==="created"?JSON.stringify([{name:"wp-codebox-runtime-state",uuid:"11111111-2222-3333-4444-555555555555"}]):"[]"); else if(args[1]==="create") writeFileSync(${JSON.stringify(state)},"created");`)
     await chmod(wrangler, 0o755)
 
@@ -28,6 +28,7 @@ test("D1 provisioner creates once and emits a deployable config deterministicall
     const config = JSON.parse(await readFile(output, "utf8"))
     assert.equal(config.d1_databases[0].database_id, first.databaseId)
     assert.equal(config.main, join(directory, "src/worker-d1.ts"))
+    assert.deepEqual(config.rules[0].globs, ["**/*.wasm", "https://example.test/*"])
     const invocations = (await readFile(calls, "utf8")).trim().split("\n").map(JSON.parse)
     assert.equal(invocations.filter((args) => args[1] === "create").length, 1)
   } finally {
