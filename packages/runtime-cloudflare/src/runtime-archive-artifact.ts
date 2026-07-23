@@ -1,5 +1,5 @@
 export const RUNTIME_ARCHIVE_ARTIFACT_SCHEMA = "wp-codebox/runtime-archive-artifact/v1"
-export const RUNTIME_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
+export const RUNTIME_ARCHIVE_MAX_BYTES = 16 * 1024 * 1024
 
 export interface RuntimeArchiveArtifactManifest {
   schema: typeof RUNTIME_ARCHIVE_ARTIFACT_SCHEMA
