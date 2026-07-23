@@ -204,7 +204,9 @@ the mounted plugin slug.
 Supported `loadAs` values:
 
 - `plugin`: mount below `/wordpress/wp-content/plugins/<slug>` and activate when
-  `activate` is not `false`.
+  `activate` is not `false`. Composer autoloaders are preloaded only for these
+  active plugin inputs; an inactive plugin is mounted without executing its
+  `vendor/autoload.php`.
 - `mu-plugin`: mount below
   `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and load through
   WP Codebox's generated MU-plugin loader. Use this for sandbox runtime
