@@ -13,6 +13,7 @@ const plan: BoundedRuntimePlan = {
 }
 
 const lifecycle: string[] = []
+const completedEntries: string[] = []
 let active = 0
 let maximumActive = 0
 const executed: string[] = []
@@ -31,6 +32,7 @@ const adapter: BoundedRuntimePlanAdapter<{ root: string }, { id: string }, { id:
       active--
     }
   },
+  async onEntryResult(result) { completedEntries.push(result.id) },
   async stopServices() { lifecycle.push("stop-services") },
   async dispose() { lifecycle.push("dispose") },
 }
@@ -44,6 +46,7 @@ assert.deepEqual(result.counts, { total: 4, succeeded: 2, failed: 1, timedOut: 1
 assert.equal(result.entries.every((entry) => Number.isInteger(entry.durationMs) && entry.durationMs >= 0), true)
 assert.deepEqual(lifecycle, ["materialize", "start-services", "stop-services", "dispose"], "workspace, service, and runtime lifecycles are each owned once")
 assert.deepEqual(executed.sort(), ["failed", "first", "last", "slow"], "one failed entry does not isolate unrelated entries")
+assert.deepEqual(completedEntries.sort(), ["failed", "first", "last", "slow"], "each terminal entry is reported to the adapter")
 
 const retry = retryBoundedRuntimePlan(plan, result)
 assert.deepEqual(retry.entries.map((entry) => entry.id), ["failed", "slow"], "retry selects only unsuccessful prior entries")

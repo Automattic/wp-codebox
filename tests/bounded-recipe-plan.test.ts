@@ -57,6 +57,11 @@ try {
   assert.equal(await readFile(join(root, "entries/one/stdout.txt"), "utf8"), "password=[redacted]\n")
   assert.equal(await readFile(join(root, "entries/failed/stderr.txt"), "utf8"), "database [redacted] failed\n")
   assert.equal(JSON.parse(await readFile(join(root, "bounded-plan/result.json"), "utf8")).schema, "wp-codebox/bounded-runtime-plan-result/v1")
+  const progress = JSON.parse(await readFile(join(root, "bounded-plan/progress.json"), "utf8"))
+  assert.equal(progress.schema, "wp-codebox/bounded-runtime-plan-progress/v1")
+  assert.equal(progress.complete, true)
+  assert.deepEqual(progress.counts, { total: 2, succeeded: 1, failed: 1, timedOut: 0, cancelled: 0, unfinished: 0 })
+  assert.deepEqual(progress.entries.map((entry: { id: string }) => entry.id), ["one", "failed"])
 } finally {
   await rm(root, { recursive: true, force: true })
 }

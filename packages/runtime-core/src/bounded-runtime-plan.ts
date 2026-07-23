@@ -64,6 +64,7 @@ export interface BoundedRuntimePlanAdapter<TWorkspace = unknown, TRuntime = unkn
   materialize(): Promise<{ workspace: TWorkspace; runtime: TRuntime }>
   startServices(context: { workspace: TWorkspace; runtime: TRuntime }): Promise<TServices>
   execute(context: BoundedRuntimePlanExecution<TWorkspace, TRuntime, TServices>): Promise<{ success: boolean; exitCode?: number; message?: string; stdoutRef?: string; stderrRef?: string; resultRef?: string; artifactRefs?: string[] }>
+  onEntryResult?(result: BoundedRuntimePlanEntryResult): Promise<void>
   stopServices(context: { workspace: TWorkspace; runtime: TRuntime; services: TServices }): Promise<void>
   dispose(context: { workspace: TWorkspace; runtime: TRuntime }): Promise<void>
 }
@@ -134,10 +135,12 @@ async function executeEntries<TWorkspace, TRuntime, TServices>(plan: BoundedRunt
       const entry = plan.entries[index]!
       if (failed && plan.failFast) {
         results[index] = cancelledResult(entry)
+        await adapter.onEntryResult?.(results[index])
         continue
       }
       const result = await executeEntry(entry, materialized, services, adapter)
       results[index] = result
+      await adapter.onEntryResult?.(result)
       if (!result.success) failed = true
     }
   }
