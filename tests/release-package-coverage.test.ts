@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -18,15 +19,25 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
   archive_root: "wp-codebox",
 }])
 
-const { stdout } = await execFileAsync("npm", ["run", "release:package"], {
-  cwd: repositoryRoot,
-  env: {
-    ...process.env,
-    WP_CODEBOX_RELEASE_PLATFORM: "linux",
-    WP_CODEBOX_RELEASE_ARCH: "x64",
-  },
-  maxBuffer: 1024 * 1024 * 20,
-})
+await execFileAsync("npm", ["run", "build"], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 * 10 })
+const staleDistPath = resolve(repositoryRoot, "packages/runtime-playground/dist/mount-materialization.js")
+const currentDist = await readFile(staleDistPath)
+await writeFile(staleDistPath, "export const staleBuild = true\n")
+
+let stdout = ""
+try {
+  ({ stdout } = await execFileAsync("npm", ["run", "release:package"], {
+    cwd: repositoryRoot,
+    env: {
+      ...process.env,
+      WP_CODEBOX_RELEASE_PLATFORM: "linux",
+      WP_CODEBOX_RELEASE_ARCH: "x64",
+    },
+    maxBuffer: 1024 * 1024 * 20,
+  }))
+} finally {
+  await writeFile(staleDistPath, currentDist)
+}
 const artifacts = JSON.parse(stdout.trim().split("\n").at(-1) ?? "[]")
 assert.equal(artifacts.length, 2, "release package emitted unexpected artifacts")
 assert.deepEqual(artifacts.filter((artifact: { type: string }) => artifact.type === "wordpress-plugin-zip"), [
@@ -95,6 +106,8 @@ try {
       env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
     })
     assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+
+    await assertPackagedReadonlyMaterialization(root)
   }
 } finally {
   await rm(extractionRoot, { recursive: true, force: true })
@@ -139,3 +152,64 @@ try {
 }
 
 console.log("release package coverage passed")
+
+async function assertPackagedReadonlyMaterialization(root: string): Promise<void> {
+  const modulePath = join(root, "packages", "runtime-playground", "dist", "mount-materialization.js")
+  const runtime = await import(pathToFileURL(modulePath).href) as {
+    stageReadonlyPlaygroundMounts(mounts: Array<Record<string, unknown>>): Promise<{
+      mounts: Array<{ source: string }>
+      [Symbol.asyncDispose](): Promise<void>
+    }>
+    materializePlaygroundStagedInputs(server: unknown, mounts: Array<Record<string, unknown>>): Promise<{ materialized: number }>
+  }
+  assert.equal(typeof runtime.stageReadonlyPlaygroundMounts, "function", "packaged dist must contain readonly mount isolation")
+  assert.equal(typeof runtime.materializePlaygroundStagedInputs, "function", "packaged dist must contain staged input materialization")
+
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "wp-codebox-packaged-readonly-"))
+  const readonlySource = join(fixtureRoot, "font.woff2")
+  const binarySource = join(fixtureRoot, "translation.mo")
+  const readonlyBytes = Buffer.from("774f4632000100000000108000120000", "hex")
+  const binaryBytes = Buffer.from("de12049500000000c50000001c000000", "hex")
+  try {
+    await writeFile(readonlySource, readonlyBytes)
+    await writeFile(binarySource, binaryBytes)
+
+    const staging = await runtime.stageReadonlyPlaygroundMounts([{
+      type: "file",
+      source: readonlySource,
+      target: "/wordpress/wp-content/themes/example/font.woff2",
+      mode: "readonly",
+    }])
+    try {
+      await writeFile(staging.mounts[0].source, Buffer.from("sandbox overwrite"))
+      assert.deepEqual(await readFile(readonlySource), readonlyBytes, "packaged readonly staging must isolate host bytes")
+    } finally {
+      await staging[Symbol.asyncDispose]()
+    }
+
+    let directWrites = 0
+    let materializedBase64 = ""
+    const result = await runtime.materializePlaygroundStagedInputs({
+      playground: {
+        async writeFile() {
+          directWrites++
+        },
+        async run({ code }: { code: string }) {
+          const match = code.match(/\$payload = json_decode\((.*), true\);/)
+          assert.ok(match, "packaged binary fallback includes its materialization payload")
+          const payload = JSON.parse(JSON.parse(match[1])) as { directories?: string[]; files?: Array<{ contentsBase64?: string }> }
+          if (code.includes("wp-codebox/host-mount-directory-materialization/v1")) {
+            return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
+          }
+          materializedBase64 = payload.files?.[0]?.contentsBase64 ?? ""
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: 1, created: 0, skipped: 0 }) }
+        },
+      },
+    }, [{ type: "file", source: binarySource, target: "/wordpress/wp-content/languages/example.mo", mode: "readonly" }])
+    assert.equal(result.materialized, 1)
+    assert.equal(directWrites, 0, "invalid UTF-8 bytes must bypass Playground's text writer")
+    assert.equal(materializedBase64, binaryBytes.toString("base64"), "packaged binary fallback must preserve exact bytes")
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true })
+  }
+}

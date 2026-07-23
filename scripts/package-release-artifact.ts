@@ -20,7 +20,7 @@ const artifactPath = resolve(repoRoot, "dist", artifactName)
 const recursiveRmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }
 
 try {
-  await execFileAsync("npm", ["run", "build"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
+  await execFileAsync("npm", ["run", "build:release"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 
   await mkdir(packageRoot, { recursive: true })
 
