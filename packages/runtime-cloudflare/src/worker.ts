@@ -9,7 +9,7 @@ import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, clo
 import { leaseRetryDelayMs } from "./lease-retry.js"
 import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
-import { RevisionConflict, type MarkdownPointer, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
+import { RevisionConflict, type MarkdownPointer, type MutationFence, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
@@ -231,6 +231,7 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
       if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator)
+      if (route.kind === "operator-fence") return operateCanonicalMutationFence(request, env, coordinator, route.action)
       if (route.kind === "operator-static-artifact-import") return importCanonicalStaticArtifact(request, env, coordinator)
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator)
       if (route.kind === "probe") {
@@ -240,13 +241,21 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
         if (request.method !== "GET") return new Response("WordPress state read requires GET.", { status: 405 })
         return Response.json(await coordinator.state())
       }
-      return runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
+      try {
+        return await runCoordinatedWordPressRequest(request, env, coordinator, route.kind)
+      } catch (error) {
+        if (error instanceof RevisionConflict) return coordinatorConflictResponse(error)
+        throw error
+      }
     },
     async scheduled(controller: ScheduledController, env: Env): Promise<void> {
       const coordinator = resolveCoordinator(env)
       const publication = await drainNextPublicationJob(env, coordinator)
       // A publication boot is intentionally the only heavyweight runtime in this invocation.
-      const evidence = publication ? publication : await runScheduledWordPressCron(env, coordinator, controller.scheduledTime)
+      const fence = publication ? undefined : await coordinator.fenceStatus()
+      const evidence = publication ?? (fence?.active
+        ? { schema: "wp-codebox/cloudflare-publication/v1" as const, status: "fenced" as const, jobKey: "coordinator" }
+        : await runScheduledWordPressCron(env, coordinator, controller.scheduledTime))
       console.log(JSON.stringify(evidence))
     },
   }
@@ -350,7 +359,7 @@ interface CronInvocationEvidence {
 
 interface PublicationInvocationEvidence {
   schema: "wp-codebox/cloudflare-publication/v1"
-  status: "rendered" | "promoted" | "pending" | "stale" | "failed"
+  status: "rendered" | "promoted" | "pending" | "stale" | "failed" | "fenced"
   jobKey: string
   route?: string
 }
@@ -364,7 +373,12 @@ async function resetCanonicalWordPress(request: Request, env: RuntimeEnv, coordi
   if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
     return new Response("Canonical reset authorization failed.", { status: 401 })
   }
-  await coordinator.reset()
+  try {
+    await coordinator.reset()
+  } catch (error) {
+    if (!(error instanceof RevisionConflict)) throw error
+    return coordinatorConflictResponse(error)
+  }
   await discardCachedRuntime()
   return Response.json({ reset: true })
 }
@@ -426,12 +440,69 @@ async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordi
     adopted = await coordinator.adopt(pointer, version)
   } catch (error) {
     if (!(error instanceof RevisionConflict)) throw error
-    const headers = new Headers()
-    if (error.retryAt) headers.set("retry-after", String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000))))
-    return Response.json({ schema: "wp-codebox/cloudflare-coordinator-conflict/v1", message: error.message, retryAt: error.retryAt }, { status: 409, headers })
+    return coordinatorConflictResponse(error)
   }
   await discardCachedRuntime()
   return Response.json({ adopted: true, ...adopted })
+}
+
+async function operateCanonicalMutationFence(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, action: "status" | "acquire" | "renew" | "release"): Promise<Response> {
+  if ((action === "status" && request.method !== "GET") || (action !== "status" && request.method !== "POST")) {
+    return new Response(`Canonical mutation fence ${action} requires ${action === "status" ? "GET" : "POST"}.`, { status: 405 })
+  }
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Canonical mutation fence authorization failed.", { status: 401 })
+  }
+  try {
+    if (action === "status") return cutoverStatus(env.WORDPRESS_STATE_BUCKET, coordinator)
+    const body = await request.json<{ token?: unknown; ttlSeconds?: unknown }>()
+    if (action === "release") {
+      if (typeof body.token !== "string") return new Response("Canonical mutation fence release requires a token.", { status: 400 })
+      await coordinator.releaseFence(body.token)
+      return Response.json({ released: true })
+    }
+    if (!Number.isSafeInteger(body.ttlSeconds)) return new Response("Canonical mutation fence requires an integer ttlSeconds.", { status: 400 })
+    const ttlMs = (body.ttlSeconds as number) * 1_000
+    let fence: MutationFence
+    if (action === "acquire") fence = await coordinator.acquireFence(ttlMs)
+    else {
+      if (typeof body.token !== "string") return new Response("Canonical mutation fence renewal requires a token.", { status: 400 })
+      fence = await coordinator.renewFence(body.token, ttlMs)
+    }
+    return Response.json({ schema: "wp-codebox/cloudflare-cutover-fence/v1", active: true, token: fence.token, expiresAt: fence.expiresAt })
+  } catch (error) {
+    if (error instanceof RevisionConflict) return coordinatorConflictResponse(error)
+    if (error instanceof SyntaxError) return new Response("Canonical mutation fence requires a JSON body.", { status: 400 })
+    throw error
+  }
+}
+
+async function cutoverStatus(bucket: R2Bucket, coordinator: RevisionCoordinator): Promise<Response> {
+  const [state, fence] = await Promise.all([coordinator.state(), coordinator.fenceStatus()])
+  const receipt = state.pointer && state.version > 0 ? await coordinator.committed(state.version) : null
+  const manifest = state.pointer ? await readMarkdownManifest(bucket, state.pointer) : null
+  let validationError: string | undefined
+  let coherent = !state.pointer
+  if (state.pointer && receipt && samePointer(receipt, state.pointer) && manifest && samePointer(manifest, state.pointer)) {
+    try {
+      await readCanonicalRevision(bucket, state.pointer)
+      coherent = true
+    } catch (error) {
+      validationError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  return Response.json({ schema: "wp-codebox/cloudflare-cutover-status/v1", state, receipt, manifest: manifest ? { revision: manifest.revision, manifestKey: manifest.manifestKey, persistedAt: manifest.persistedAt } : null, fence, coherent, validationError }, { status: coherent ? 200 : 409 })
+}
+
+function coordinatorConflictResponse(error: RevisionConflict): Response {
+  const headers = new Headers()
+  if (error.retryAt) headers.set("retry-after", String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1_000))))
+  return Response.json({ schema: "wp-codebox/cloudflare-coordinator-conflict/v1", message: error.message, retryAt: error.retryAt }, { status: 409, headers })
+}
+
+function samePointer(left: MarkdownPointer, right: MarkdownPointer): boolean {
+  return left.revision === right.revision && left.manifestKey === right.manifestKey && left.persistedAt === right.persistedAt
 }
 
 async function importCanonicalStaticArtifact(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator): Promise<Response> {
@@ -519,37 +590,47 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
   } catch (error) {
     return new Response(error instanceof Error ? error.message : "Canonical publication body is invalid.", { status: 400 })
   }
-  const state = await coordinator.state()
-  if (!state.pointer) return new Response("Canonical publication requires initialized state.", { status: 409 })
-  let publishedRoutes: PublishedRevision["routes"]
+  let lease: RevisionLease
   try {
+    lease = await coordinator.acquire()
+  } catch (error) {
+    if (!(error instanceof RevisionConflict)) throw error
+    return coordinatorConflictResponse(error)
+  }
+  try {
+    if (!lease.pointer) return new Response("Canonical publication requires initialized state.", { status: 409 })
+    let publishedRoutes: PublishedRevision["routes"]
     publishedRoutes = await Promise.all(routes.map(async (route) => {
-      const objectKey = await publishedPageObjectKey(state.pointer!.revision, route)
+      const objectKey = await publishedPageObjectKey(lease.pointer!.revision, route)
       const object = await env.WORDPRESS_STATE_BUCKET.get(objectKey)
       if (!object) throw new Error(`Canonical publication route has not been rendered: ${route}.`)
       if (object.size > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Canonical publication route exceeds its size budget: ${route}.`)
       const snapshot = JSON.parse(await object.text()) as WordPressPageSnapshot
-      validateWordPressPageSnapshot(snapshot, state.pointer!.revision, route)
-      return { route, objectKey, canonicalRevision: state.pointer!.revision }
+      validateWordPressPageSnapshot(snapshot, lease.pointer!.revision, route)
+      return { route, objectKey, canonicalRevision: lease.pointer!.revision }
     }))
+    const publication: PublishedRevision = {
+      schema: PUBLISHED_REVISION_SCHEMA,
+      revision: crypto.randomUUID(),
+      canonicalRevision: lease.pointer.revision,
+      canonicalVersion: lease.version,
+      publishedAt: new Date().toISOString(),
+      routes: publishedRoutes,
+    }
+    const serialized = JSON.stringify(publication)
+    if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) return new Response("Canonical publication exceeds its size budget.", { status: 413 })
+    lease = await coordinator.renew(lease)
+    await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision), serialized)
+    lease = await coordinator.renew(lease)
+    await env.WORDPRESS_STATE_BUCKET.put(R2_PUBLISHED_CURRENT_KEY, serialized, { httpMetadata: { contentType: "application/json" } })
+    const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
+    if (cache) await Promise.all(routes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, request.url))))))
+    return Response.json(publication)
   } catch (error) {
     return new Response(error instanceof Error ? error.message : "Canonical publication artifacts are invalid.", { status: 409 })
+  } finally {
+    await abortLease(coordinator, request.url, lease)
   }
-  const publication: PublishedRevision = {
-    schema: PUBLISHED_REVISION_SCHEMA,
-    revision: crypto.randomUUID(),
-    canonicalRevision: state.pointer.revision,
-    canonicalVersion: state.version,
-    publishedAt: new Date().toISOString(),
-    routes: publishedRoutes,
-  }
-  const serialized = JSON.stringify(publication)
-  if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) return new Response("Canonical publication exceeds its size budget.", { status: 413 })
-  await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision), serialized)
-  await env.WORDPRESS_STATE_BUCKET.put(R2_PUBLISHED_CURRENT_KEY, serialized, { httpMetadata: { contentType: "application/json" } })
-  const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
-  if (cache) await Promise.all(routes.map((route) => cache.delete(publishedPageCacheRequest(new Request(new URL(route, request.url))))))
-  return Response.json(publication)
 }
 
 async function readCurrentPublication(bucket: R2Bucket): Promise<CurrentPublication | null> {
@@ -665,7 +746,7 @@ async function writePublicationProgress(bucket: R2Bucket, job: PublicationJob, p
   await bucket.put(publicationProgressObjectKey(job), serialized, { httpMetadata: { contentType: "application/json" } })
 }
 
-async function claimPublicationJob(bucket: R2Bucket, job: PublicationJob): Promise<{ token: string; etag?: string } | null> {
+async function claimPublicationJob(bucket: R2Bucket, job: PublicationJob, renewLease: () => Promise<void>): Promise<{ token: string; etag?: string } | null> {
   const key = publicationClaimObjectKey(job)
   const existing = await bucket.get(key)
   if (existing && existing.size <= 1_024) {
@@ -674,6 +755,7 @@ async function claimPublicationJob(bucket: R2Bucket, job: PublicationJob): Promi
   }
   const token = crypto.randomUUID()
   const onlyIf = existing ? { etagMatches: existing.etag } : { etagDoesNotMatch: "*" }
+  await renewLease()
   const written = await bucket.put(key, JSON.stringify({ token, expiresAt: Date.now() + PUBLICATION_CLAIM_MS }), { onlyIf, httpMetadata: { contentType: "application/json" } })
   return written ? { token, etag: written.etag } : null
 }
@@ -684,6 +766,24 @@ async function releasePublicationClaim(bucket: R2Bucket, job: PublicationJob, cl
 }
 
 async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoordinator): Promise<PublicationInvocationEvidence | null> {
+  let publicationLease: RevisionLease
+  try {
+    publicationLease = await coordinator.acquire()
+  } catch (error) {
+    if (!(error instanceof RevisionConflict)) throw error
+    const fence = await coordinator.fenceStatus()
+    return { schema: "wp-codebox/cloudflare-publication/v1", status: fence.active ? "fenced" : "pending", jobKey: "coordinator" }
+  }
+  try {
+    return await drainNextPublicationJobWhileLeased(env, coordinator, async () => {
+      publicationLease = await coordinator.renew(publicationLease)
+    })
+  } finally {
+    await abortLease(coordinator, SITE_URL, publicationLease)
+  }
+}
+
+async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: RevisionCoordinator, renewLease: () => Promise<void>): Promise<PublicationInvocationEvidence | null> {
   const listed = await env.WORDPRESS_STATE_BUCKET.list({ prefix: `${R2_PUBLICATION_JOB_PREFIX}/`, limit: 16 })
   if (!listed.objects.length) return null
   const state = await coordinator.state()
@@ -696,24 +796,29 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
       break
     }
     if (state.version > candidate.coordinatorVersion || Date.now() - Date.parse(candidate.createdAt) > PUBLICATION_CLAIM_MS) {
+      await renewLease()
       await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(candidate), JSON.stringify({ status: "orphaned", job: candidate.key, recordedAt: new Date().toISOString() }))
+      await renewLease()
       await env.WORDPRESS_STATE_BUCKET.delete(candidate.key)
     }
   }
   if (!job) return listed.truncated ? { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: "scan" } : null
-  const claim = await claimPublicationJob(env.WORDPRESS_STATE_BUCKET, job)
+  const claim = await claimPublicationJob(env.WORDPRESS_STATE_BUCKET, job, renewLease)
   if (!claim) return { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: job.key }
   let runtime: Runtime | undefined
   try {
     let progress = await readPublicationProgress(env.WORDPRESS_STATE_BUCKET, job)
     const current = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET)
     if (!current || current.publication.canonicalVersion >= job.coordinatorVersion) {
+      await renewLease()
       await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job), JSON.stringify({ status: "superseded", job: job.key, recordedAt: new Date().toISOString() }))
+      await renewLease()
       await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job)])
       return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: job.key }
     }
     if (!progress.plan) {
       progress = { ...progress, plan: publicationPlan(current.publication, job.changes) }
+      await renewLease()
       await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, progress)
     }
     const plan = progress.plan
@@ -729,11 +834,13 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
         const serialized = JSON.stringify(snapshot)
         if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_PAGE_BYTES) throw new Error(`Affected publication artifact exceeds its size budget: ${page.route}.`)
         try {
+          await renewLease()
           await putImmutableJson(env.WORDPRESS_STATE_BUCKET, objectKey, serialized)
         } catch (error) {
           if (!await readWordPressPageSnapshot(env.WORDPRESS_STATE_BUCKET, objectKey, job.canonical.revision, route)) throw error
         }
       }
+      await renewLease()
       await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, { ...progress, next: progress.next + 1, rendered: [...progress.rendered, route] })
       return { schema: "wp-codebox/cloudflare-publication/v1", status: "rendered", jobKey: job.key, route }
     }
@@ -743,12 +850,17 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
     const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
     const serialized = JSON.stringify(publication)
     if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
+    await renewLease()
     await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision), serialized)
+    await renewLease()
     if (!await promoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, current, { serialized, invalidatedRoutes: [...new Set([...plan.upsert, ...plan.remove])].sort() }, SITE_URL)) {
       return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: job.key }
     }
+    await renewLease()
     await writePublicationProgress(env.WORDPRESS_STATE_BUCKET, job, { ...progress, completedAt: new Date().toISOString() })
+    await renewLease()
     await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job), JSON.stringify({ status: "promoted", job: job.key, publication: publication.revision, recordedAt: new Date().toISOString() }))
+    await renewLease()
     await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job)])
     return { schema: "wp-codebox/cloudflare-publication/v1", status: "promoted", jobKey: job.key }
   } catch (error) {
@@ -756,7 +868,12 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
     return { schema: "wp-codebox/cloudflare-publication/v1", status: "failed", jobKey: job.key }
   } finally {
     if (runtime) await discardRuntime(runtime)
-    await releasePublicationClaim(env.WORDPRESS_STATE_BUCKET, job, claim)
+    try {
+      await renewLease()
+      await releasePublicationClaim(env.WORDPRESS_STATE_BUCKET, job, claim)
+    } catch (error) {
+      if (!(error instanceof RevisionConflict)) throw error
+    }
   }
 }
 
@@ -1017,6 +1134,7 @@ async function acquireLease(coordinator: RevisionCoordinator, _requestUrl: strin
     } catch (error) {
       if (!(error instanceof RevisionConflict)) throw error
       lastError = error
+      if ((await coordinator.fenceStatus()).active) throw error
       const retryAfter = error.retryAt ? Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000)) : undefined
       await new Promise((resolve) => setTimeout(resolve, leaseRetryDelayMs(retryAfter, deadline - Date.now())))
     }
