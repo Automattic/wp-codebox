@@ -275,10 +275,12 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
       const coordinator = resolveCoordinator(env, site)
       const operations = resolveOperations?.(env)
+      let provisioningReady = true
       if (operations && env.WORDPRESS_STATE_DATABASE) {
         try {
           await resumeProvisioningAllocation(env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, site, operations)
         } catch (error) {
+          provisioningReady = false
           console.error("Provisioning allocation recovery failed.", error)
         }
       }
@@ -286,9 +288,9 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       const siteCycle = Math.floor(controller.scheduledTime / (60_000 * sites.length))
       const operationFirst = siteCycle % 2 === 0
       // Alternate priority while allowing only one heavyweight runtime per invocation.
-      let operation = operationFirst && !fence.active ? await runNextStaticArtifactOperation(env, coordinator, site, operations) : null
+      let operation = operationFirst && provisioningReady && !fence.active ? await runNextStaticArtifactOperation(env, coordinator, site, operations) : null
       const publication = operation ? null : await drainNextPublicationJob(env, coordinator, site, operations)
-      if (!operationFirst && !publication && !fence.active) operation = await runNextStaticArtifactOperation(env, coordinator, site, operations)
+      if (!operationFirst && provisioningReady && !publication && !fence.active) operation = await runNextStaticArtifactOperation(env, coordinator, site, operations)
       const evidence = operation ?? publication ?? (fence.active
         ? { schema: "wp-codebox/cloudflare-publication/v1" as const, status: "fenced" as const, jobKey: "coordinator" }
         : await runScheduledWordPressCron(env, coordinator, site, controller.scheduledTime))
