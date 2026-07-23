@@ -1,4 +1,6 @@
-export const R2_UPLOAD_OBJECT_PREFIX = "sites/default/uploads/objects"
+import { DEFAULT_SITE_CONTEXT, siteStorageKeys, type SiteContext } from "./site-context.js"
+
+export const R2_UPLOAD_OBJECT_PREFIX = siteStorageKeys(DEFAULT_SITE_CONTEXT).uploadObjectPrefix
 export const MAX_UPLOAD_FILES = 5000
 export const MAX_UPLOAD_FILE_BYTES = 16 * 1024 * 1024
 export const MAX_UPLOAD_TOTAL_BYTES = 64 * 1024 * 1024
@@ -28,10 +30,10 @@ export function validateUploadMetadata(value: unknown): asserts value is UploadF
   if (total > MAX_UPLOAD_TOTAL_BYTES) throw new Error("Canonical upload files exceed their byte budget.")
 }
 
-export function validateUploadManifestFiles(value: unknown): asserts value is UploadManifestFile[] {
+export function validateUploadManifestFiles(value: unknown, site: SiteContext = DEFAULT_SITE_CONTEXT): asserts value is UploadManifestFile[] {
   validateUploadMetadata(value)
   for (const file of value as UploadManifestFile[]) {
-    if (!/^[a-f0-9]{64}$/.test(file.sha256) || file.objectKey !== `${R2_UPLOAD_OBJECT_PREFIX}/${file.sha256}`) {
+    if (!/^[a-f0-9]{64}$/.test(file.sha256) || file.objectKey !== `${siteStorageKeys(site).uploadObjectPrefix}/${file.sha256}`) {
       throw new Error("Canonical upload manifest contains an invalid file.")
     }
   }

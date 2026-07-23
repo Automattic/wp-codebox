@@ -1,7 +1,9 @@
 export const STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA = "wp-codebox/cloudflare-static-artifact-import-request/v1"
 export const STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA = "wp-codebox/cloudflare-static-artifact-import-result/v1"
 export const STATIC_ARTIFACT_SCHEMA = "blocks-engine/php-transformer/site-artifact/v1"
-export const R2_STATIC_ARTIFACT_PREFIX = "sites/default/import-artifacts"
+import { DEFAULT_SITE_CONTEXT, siteStorageKeys, type SiteContext } from "./site-context.js"
+
+export const R2_STATIC_ARTIFACT_PREFIX = siteStorageKeys(DEFAULT_SITE_CONTEXT).staticArtifactPrefix
 export const MAX_STATIC_ARTIFACT_REQUEST_BYTES = 16 * 1024
 export const MAX_STATIC_ARTIFACT_BYTES = 4 * 1024 * 1024
 export const MAX_STATIC_ARTIFACT_FILES = 500
@@ -16,7 +18,7 @@ export interface StaticArtifactImport {
   options: { slug: string; name: string; siteTitle: string }
 }
 
-export async function readStaticArtifactImport(request: Request, bucket: R2Bucket): Promise<StaticArtifactImport> {
+export async function readStaticArtifactImport(request: Request, bucket: R2Bucket, site: SiteContext = DEFAULT_SITE_CONTEXT): Promise<StaticArtifactImport> {
   const declaredLength = request.headers.get("content-length")
   if (declaredLength && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_STATIC_ARTIFACT_REQUEST_BYTES)) throw new StaticArtifactImportError("Static artifact import request exceeds its byte budget.", 413)
   const requestBytes = await readBoundedRequestBytes(request)
@@ -35,7 +37,7 @@ export async function readStaticArtifactImport(request: Request, bucket: R2Bucke
   if (!reference || typeof reference !== "object" || Array.isArray(reference)) throw new StaticArtifactImportError("Static artifact reference is required.", 400)
   const artifactReference = reference as Record<string, unknown>
   if (typeof artifactReference.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(artifactReference.sha256)
-    || artifactReference.r2Key !== `${R2_STATIC_ARTIFACT_PREFIX}/${artifactReference.sha256}.json`
+    || artifactReference.r2Key !== `${siteStorageKeys(site).staticArtifactPrefix}/${artifactReference.sha256}.json`
     || !Number.isSafeInteger(artifactReference.size) || (artifactReference.size as number) < 1 || (artifactReference.size as number) > MAX_STATIC_ARTIFACT_BYTES) {
     throw new StaticArtifactImportError("Static artifact reference is invalid or outside its byte budget.", 400)
   }

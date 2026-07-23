@@ -2,8 +2,8 @@ export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v3" as c
 const PREVIOUS_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2"
 const LEGACY_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1"
 export const PUBLISHED_PAGE_SCHEMA = "wp-codebox/wordpress-page/v2" as const
-export const R2_PUBLISHED_CURRENT_KEY = "sites/default/publications/current.json"
-export const R2_PUBLISHED_REVISION_PREFIX = "sites/default/publications/revisions"
+export const R2_PUBLISHED_CURRENT_KEY = siteStorageKeys(DEFAULT_SITE_CONTEXT).publishedCurrent
+export const R2_PUBLISHED_REVISION_PREFIX = siteStorageKeys(DEFAULT_SITE_CONTEXT).publishedRevisionPrefix
 export const MAX_PUBLISHED_ROUTES = 1_000
 export const MAX_PUBLISHED_REVISION_BYTES = 512 * 1024
 export const MAX_PUBLISHED_PAGE_BYTES = 8 * 1024 * 1024
@@ -29,19 +29,19 @@ export function canonicalPublicRoute(input: Request | URL | string): string {
   return `${url.pathname}${url.search}`
 }
 
-export async function publishedPageObjectKey(canonicalRevision: string, route: string): Promise<string> {
+export async function publishedPageObjectKey(canonicalRevision: string, route: string, site: SiteContext = DEFAULT_SITE_CONTEXT): Promise<string> {
   if (!isRevision(canonicalRevision) || !isCanonicalRoute(route)) throw new Error("Published page identity is invalid.")
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(route))
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
-  return `sites/default/pages/${canonicalRevision}/${hash}.json`
+  return `${siteStorageKeys(site).publishedPagePrefix}/${canonicalRevision}/${hash}.json`
 }
 
-export function publishedRevisionObjectKey(revision: string): string {
+export function publishedRevisionObjectKey(revision: string, site: SiteContext = DEFAULT_SITE_CONTEXT): string {
   if (!isRevision(revision)) throw new Error("Published revision identity is invalid.")
-  return `${R2_PUBLISHED_REVISION_PREFIX}/${revision}.json`
+  return `${siteStorageKeys(site).publishedRevisionPrefix}/${revision}.json`
 }
 
-export function validatePublishedRevision(value: unknown): PublishedRevision {
+export function validatePublishedRevision(value: unknown, site: SiteContext = DEFAULT_SITE_CONTEXT): PublishedRevision {
   if (!value || typeof value !== "object") throw new Error("Published revision is invalid.")
   const revision = value as Partial<PublishedRevision>
   const legacy = (value as { schema?: unknown }).schema === LEGACY_PUBLISHED_REVISION_SCHEMA
@@ -56,8 +56,8 @@ export function validatePublishedRevision(value: unknown): PublishedRevision {
     const routeRevision = legacy ? revision.canonicalRevision : route.canonicalRevision
     if (!route || typeof route !== "object" || !isCanonicalRoute(route.route) || route.route <= previous
       || !isRevision(routeRevision)
-      || route.objectKey !== `sites/default/pages/${routeRevision}/${route.objectKey.split("/").at(-1)}`
-      || !/^sites\/default\/pages\/[a-f0-9-]{36}\/[a-f0-9]{64}\.json$/.test(route.objectKey)) throw new Error("Published revision route is invalid.")
+      || route.objectKey !== `${siteStorageKeys(site).publishedPagePrefix}/${routeRevision}/${route.objectKey.split("/").at(-1)}`
+      || !new RegExp(`^${escapeRegExp(siteStorageKeys(site).publishedPagePrefix)}/[a-f0-9-]{36}/[a-f0-9]{64}\\.json$`).test(route.objectKey)) throw new Error("Published revision route is invalid.")
     previous = route.route
     normalizedRoutes.push({ route: route.route, objectKey: route.objectKey, canonicalRevision: routeRevision })
   }
@@ -86,3 +86,8 @@ function isCanonicalRoute(route: string): boolean {
 function isRevision(revision: unknown): revision is string {
   return typeof revision === "string" && /^[a-f0-9-]{36}$/.test(revision)
 }
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+import { DEFAULT_SITE_CONTEXT, siteStorageKeys, type SiteContext } from "./site-context.js"

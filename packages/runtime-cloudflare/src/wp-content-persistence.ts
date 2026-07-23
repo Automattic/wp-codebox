@@ -1,4 +1,6 @@
-export const R2_WP_CONTENT_OBJECT_PREFIX = "sites/default/wp-content/objects"
+import { DEFAULT_SITE_CONTEXT, siteStorageKeys, type SiteContext } from "./site-context.js"
+
+export const R2_WP_CONTENT_OBJECT_PREFIX = siteStorageKeys(DEFAULT_SITE_CONTEXT).wpContentObjectPrefix
 export const MAX_WP_CONTENT_FILES = 5000
 export const MAX_WP_CONTENT_FILE_BYTES = 8 * 1024 * 1024
 export const MAX_WP_CONTENT_TOTAL_BYTES = 64 * 1024 * 1024
@@ -28,10 +30,10 @@ export function validateWpContentMetadata(value: unknown): asserts value is WpCo
   if (total > MAX_WP_CONTENT_TOTAL_BYTES) throw new Error("Canonical wp-content files exceed their byte budget.")
 }
 
-export function validateWpContentManifestFiles(value: unknown): asserts value is WpContentManifestFile[] {
+export function validateWpContentManifestFiles(value: unknown, site: SiteContext = DEFAULT_SITE_CONTEXT): asserts value is WpContentManifestFile[] {
   validateWpContentMetadata(value)
   for (const file of value as WpContentManifestFile[]) {
-    if (!/^[a-f0-9]{64}$/.test(file.sha256) || file.objectKey !== `${R2_WP_CONTENT_OBJECT_PREFIX}/${file.sha256}`) {
+    if (!/^[a-f0-9]{64}$/.test(file.sha256) || file.objectKey !== `${siteStorageKeys(site).wpContentObjectPrefix}/${file.sha256}`) {
       throw new Error("Canonical wp-content manifest contains an invalid file.")
     }
   }
