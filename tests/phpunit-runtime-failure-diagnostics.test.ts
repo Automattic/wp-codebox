@@ -53,6 +53,8 @@ const emptySuccessArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpuni
 const successfulResponseSecret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
 assert.equal(hasSuccessfulPhpunitSummary("OK (1 test, 1 assertion)"), true)
 assert.equal(hasSuccessfulPhpunitSummary("OK, but incomplete, skipped, or risky tests!\nTests: 21, Assertions: 27398, Skipped: 1."), true)
+assert.equal(hasSuccessfulPhpunitSummary("##teamcity[testSuiteStarted name='example']\n##teamcity[testStarted name='works']\n##teamcity[testFinished name='works']\n##teamcity[testSuiteFinished name='example']"), true)
+assert.equal(hasSuccessfulPhpunitSummary("##teamcity[testSuiteStarted name='example']\n##teamcity[testSuiteFinished name='example']"), false)
 assert.equal(hasSuccessfulPhpunitSummary("Tests: 21, Assertions: 27398, Failures: 1."), false)
 await assert.rejects(
   () => runPhpunitCommand({

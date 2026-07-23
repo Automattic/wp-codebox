@@ -980,6 +980,7 @@ export async function runPhpunitCommand({
 
 export function hasSuccessfulPhpunitSummary(output: string): boolean {
   return /\bOK(?:, but (?:there were issues!|incomplete, skipped, or risky tests!))?(?: \([1-9]\d* tests?,|\s+Tests:\s*[1-9]\d*,\s*Assertions:)/m.test(output)
+    || (/##teamcity\[testStarted\b/m.test(output) && /##teamcity\[testSuiteFinished\b/m.test(output))
 }
 
 function successfulPhpunitResponseDiagnostics(response: PlaygroundRunResponse): string {
