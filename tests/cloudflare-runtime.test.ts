@@ -343,6 +343,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return await runCoordinatedWordPressRequest\(request, env, coordinator, site, route\.kind\)/)
+  assert.match(d1Entry, /export \{ WordPressStateCoordinator \} from "\.\/state-coordinator\.js"/)
   assert.match(worker, /const cachedRuntimes = new Map/)
   assert.match(worker, /cachedRuntimes\.get\(site\.id\)/)
   assert.match(worker, /promise\.catch\(\(\) =>/)

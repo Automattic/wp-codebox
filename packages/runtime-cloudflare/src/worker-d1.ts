@@ -1,4 +1,5 @@
 import { D1RevisionCoordinator } from "./d1-revision-coordinator.js"
+export { WordPressStateCoordinator } from "./state-coordinator.js"
 import type { SiteContext } from "./site-context.js"
 import { createCloudflareRuntime, type RuntimeEnv } from "./worker.js"
 
