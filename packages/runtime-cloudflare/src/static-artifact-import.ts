@@ -77,7 +77,7 @@ export class StaticArtifactImportError extends Error {
   }
 }
 
-export async function readBoundedRequestBytes(request: Request): Promise<Uint8Array> {
+export async function readBoundedRequestBytes(request: Request, maxBytes = MAX_STATIC_ARTIFACT_REQUEST_BYTES): Promise<Uint8Array> {
   if (!request.body) return new Uint8Array()
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
@@ -86,7 +86,7 @@ export async function readBoundedRequestBytes(request: Request): Promise<Uint8Ar
     const { done, value } = await reader.read()
     if (done) break
     total += value.byteLength
-    if (total > MAX_STATIC_ARTIFACT_REQUEST_BYTES) {
+    if (total > maxBytes) {
       await reader.cancel()
       throw new StaticArtifactImportError("Static artifact import request exceeds its byte budget.", 413)
     }

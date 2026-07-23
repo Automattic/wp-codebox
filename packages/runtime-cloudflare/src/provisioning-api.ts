@@ -6,6 +6,7 @@ import { deriveSiteCredential } from "./wordpress-auth.js"
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
 export const PROVISIONING_SITE_RESOURCE_SCHEMA = "wp-codebox/provisioning-site/v1"
+export const PROVISIONING_ARTIFACT_RESOURCE_SCHEMA = "wp-codebox/provisioning-artifact/v1"
 export const PROVISIONING_ERROR_SCHEMA = "wp-codebox/provisioning-error/v1"
 const SCOPES = new Set(["sites:create", "sites:read", "sites:import", "operations:read"])
 
@@ -21,6 +22,7 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
   const method = request.method
   if (parts[0] !== "v1") return notFound()
+  if (parts.length === 3 && parts[1] === "artifacts" && /^[a-f0-9]{64}$/.test(parts[2])) return method === "PUT" ? stageArtifact(request, env, parts[2]) : methodNotAllowed("PUT")
   if (parts.length === 2 && parts[1] === "sites") return method === "POST" ? create(request, env, operations) : methodNotAllowed("POST")
   if (parts.length < 3 || parts[1] !== "sites" || !validSiteId(parts[2])) return notFound()
   const siteId = parts[2]
@@ -30,6 +32,35 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   if (parts.length === 4 && parts[3] === "imports") return method === "POST" ? importSite(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 5 && parts[3] === "operations" && /^[0-9a-f-]{36}$/.test(parts[4])) return method === "GET" ? readOperation(request, env, operations, siteId, parts[4]) : methodNotAllowed("GET")
   return notFound()
+}
+
+async function stageArtifact(request: Request, env: ProvisioningEnv, expectedSha256: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:create"); if (token instanceof Response) return token
+  const declaredLength = request.headers.get("content-length")
+  if (declaredLength && (!/^\d+$/.test(declaredLength) || Number(declaredLength) < 1 || Number(declaredLength) > MAX_STATIC_ARTIFACT_BYTES)) return apiError(413, "invalid_artifact", "Provisioning artifact exceeds its byte budget.")
+  let bytes: Uint8Array
+  try { bytes = await readBoundedRequestBytes(request, MAX_STATIC_ARTIFACT_BYTES) } catch (error) { return importError(error) }
+  if (!bytes.byteLength) return apiError(400, "invalid_artifact", "Provisioning artifact is required.")
+  if (await sha(bytes) !== expectedSha256) return apiError(409, "artifact_digest_mismatch", "Provisioning artifact does not match its digest.")
+  try { await validateArtifact(bytes) } catch (error) { return importError(error) }
+  const key = stagedKey(expectedSha256)
+  const verify = async () => {
+    const object = await env.WORDPRESS_STATE_BUCKET.get(key)
+    if (!object) return false
+    const stored = new Uint8Array(await object.arrayBuffer())
+    if (object.size !== bytes.byteLength || stored.byteLength !== bytes.byteLength || await sha(stored) !== expectedSha256) throw new OperationConflict("Provisioning artifact staging conflicts with existing content.")
+    return true
+  }
+  try {
+    if (!await verify()) {
+      await env.WORDPRESS_STATE_BUCKET.put(key, bytes, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" } })
+      if (!await verify()) throw new OperationConflict("Provisioning artifact staging did not produce a verified object.")
+    }
+  } catch (error) {
+    if (error instanceof OperationConflict) return apiError(409, "artifact_conflict", error.message)
+    throw error
+  }
+  return Response.json({ schema: PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, artifact: { sha256: expectedSha256, size: bytes.byteLength, r2Key: key } }, { status: 200 })
 }
 
 async function create(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {

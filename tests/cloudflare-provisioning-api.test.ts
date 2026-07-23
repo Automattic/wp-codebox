@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
-import { PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
+import { PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
 import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
 
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
@@ -28,6 +28,7 @@ function createRequest(key = "create-1", change: Partial<{ sha256: string; size:
   const sha256 = change.sha256 ?? digest; const size = change.size ?? artifact.byteLength
   return new Request("https://control.invalid/v1/sites", { method: "POST", headers: { authorization: `Bearer ${token}`, "idempotency-key": key }, body: JSON.stringify({ schema: PROVISIONING_CREATE_REQUEST_SCHEMA, idempotencyKey: key, artifact: { sha256, size, r2Key: change.r2Key ?? `sites/provisioning/import-artifacts/${sha256}.json` }, import: { slug: "site", name: "Site", siteTitle: change.title ?? "Site" } }) })
 }
+function stageRequest(body: Uint8Array = artifact, sha256 = digest, token = "good") { return new Request(`https://control.invalid/v1/artifacts/${sha256}`, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body }) }
 async function create(runtime: ReturnType<typeof runtime>, key = "create-1") { return routeProvisioningApi(createRequest(key), runtime.env, runtime.operations) }
 function count(db: Db, table: string) { const exists = db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table); return exists ? Number((db.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count) : 0 }
 
@@ -38,6 +39,33 @@ test("auth failures, malformed config, expiry, and scope stop before body and R2
 })
 test("invalid, missing, and oversized artifacts create zero allocations", async () => {
   for (const change of [{ sha256: "bad" }, { sha256: "f".repeat(64) }, { size: 5 * 1024 * 1024 }]) { const r = runtime(); assert.ok((await routeProvisioningApi(createRequest("key", change), r.env, r.operations)).status >= 400); assert.equal(count(r.db, "wp_codebox_api_sites"), 0) }
+})
+test("authenticated artifact staging validates and converges immutable canonical bytes", async () => {
+  const r = runtime(); r.bucket.objects.clear()
+  const first = await routeProvisioningApi(stageRequest(), r.env, r.operations)
+  assert.equal(first.status, 200)
+  assert.deepEqual(await first.json(), { schema: PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, artifact: { sha256: digest, size: artifact.byteLength, r2Key: `sites/provisioning/import-artifacts/${digest}.json` } })
+  assert.equal((await routeProvisioningApi(stageRequest(), r.env, r.operations)).status, 200)
+  assert.equal(r.bucket.puts, 1)
+  assert.equal((await create(r)).status, 202)
+})
+test("artifact staging authenticates before reads and rejects mismatched or noncanonical bytes", async () => {
+  const unauthorized = runtime(); unauthorized.bucket.objects.clear()
+  assert.equal((await routeProvisioningApi(stageRequest(artifact, digest, "bad"), unauthorized.env, unauthorized.operations)).status, 401)
+  assert.equal(unauthorized.bucket.puts, 0)
+  const mismatch = runtime(); mismatch.bucket.objects.clear()
+  assert.equal((await routeProvisioningApi(stageRequest(new TextEncoder().encode("{}")), mismatch.env, mismatch.operations)).status, 409)
+  assert.equal(mismatch.bucket.puts, 0)
+  const invalid = new TextEncoder().encode(JSON.stringify({ schema: "wp-build/website-artifact-bundle/v1", root: "website/", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "ok" }] }))
+  const rejected = runtime(); rejected.bucket.objects.clear()
+  assert.equal((await routeProvisioningApi(stageRequest(invalid, hash(invalid)), rejected.env, rejected.operations)).status, 422)
+  assert.equal(rejected.bucket.puts, 0)
+})
+test("artifact staging verifies the winner of a conditional R2 race", async () => {
+  const same = runtime(); same.bucket.objects.clear(); same.bucket.race = artifact
+  assert.equal((await routeProvisioningApi(stageRequest(), same.env, same.operations)).status, 200)
+  const conflicting = runtime(); conflicting.bucket.objects.clear(); conflicting.bucket.race = new TextEncoder().encode("bad")
+  assert.equal((await routeProvisioningApi(stageRequest(), conflicting.env, conflicting.operations)).status, 409)
 })
 test("registered active contexts are excluded", async () => { const r = runtime(); await r.operations.createOrConverge({ id: "alpha", hostname: "alpha.example", origin: "https://alpha.example" }, { idempotencyKey: "legacy", fingerprint: "x", artifact: { r2Key: "x", sha256: digest, size: artifact.byteLength }, options: { slug: "x", name: "x", siteTitle: "x" } }); const body = await (await create(r)).json() as { site: { id: string } }; assert.equal(body.site.id, "beta") })
 test("exact and concurrent same-key creates converge", async () => { const r = runtime(); const [one, two] = await Promise.all([create(r), create(r)]); assert.equal(one.status, 202); assert.deepEqual(await one.json(), await two.json()); assert.equal(count(r.db, "wp_codebox_api_sites"), 1) })
@@ -51,7 +79,7 @@ test("cross-principal and site-restricted reads and imports fail closed", async 
 test("not-ready import is rejected and ready exact replay converges with an API link", async () => { const r = runtime(); const body = await (await create(r)).json() as { site: { id: string; operation: string } }; const url = `https://control.invalid/v1/sites/${body.site.id}/imports`; const importBody = { schema: STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA, idempotencyKey: "import-1", artifact: { r2Key: `sites/${body.site.id}/import-artifacts/${digest}.json`, sha256: digest, size: artifact.byteLength }, import: { slug: "import", name: "Import", siteTitle: "Import" } }; const pending = await routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: "Bearer good", "idempotency-key": "import-1" }, body: JSON.stringify(importBody) }), r.env, r.operations); assert.equal(pending.status, 409); r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(body.site.id); const one = await routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: "Bearer good", "idempotency-key": "import-1" }, body: JSON.stringify(importBody) }), r.env, r.operations); const two = await routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: "Bearer good", "idempotency-key": "import-1" }, body: JSON.stringify(importBody) }), r.env, r.operations); assert.deepEqual(await one.json(), await two.json()); assert.equal(count(r.db, "wp_codebox_api_operation_links"), 2) })
 test("unlinked same-site legacy operations return 404", async () => { const r = runtime(); const body = await (await create(r)).json() as { site: { id: string } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(body.site.id); const legacy = await r.operations.createOrConverge({ id: body.site.id, hostname: `${body.site.id}.example`, origin: `https://${body.site.id}.example` }, { idempotencyKey: "legacy", fingerprint: "legacy", artifact: { r2Key: "legacy", sha256: digest, size: artifact.byteLength }, options: { slug: "legacy", name: "Legacy", siteTitle: "Legacy" } }); const response = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${body.site.id}/operations/${legacy.operation.operationId}`, { headers: { authorization: "Bearer good" } }), r.env, r.operations); assert.equal(response.status, 404) })
 test("operation resources expose retry, error, and receipt without ownership tokens", async () => { const r = runtime(); const body = await (await create(r)).json() as { site: { id: string; operation: string } }; const id = body.site.operation.split("/").at(-1)!; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state='retryable', retry_at=1, error_code='x', error_message='y' WHERE site_id=? AND operation_id=?").run(body.site.id, id); const value = await (await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${body.site.id}/operations/${id}`, { headers: { authorization: "Bearer good" } }), r.env, r.operations)).text(); assert.match(value, /retryAt/); assert.match(value, /"error"/); assert.doesNotMatch(value, /claimToken|principal/) })
-test("route, method, Allow, and /v1 precedence behavior is explicit", async () => { const r = runtime(); assert.equal((await routeProvisioningApi(new Request("https://x.invalid/v1/wordpress"), r.env, r.operations)).status, 404); const response = await routeProvisioningApi(new Request("https://x.invalid/v1/sites", { method: "GET" }), r.env, r.operations); assert.equal(response.status, 405); assert.equal(response.headers.get("allow"), "POST"); const claim = await routeProvisioningApi(new Request("https://x.invalid/v1/sites/alpha/administrator-claim", { method: "GET" }), r.env, r.operations); assert.equal(claim.status, 405); assert.equal(claim.headers.get("allow"), "POST"); assert.equal((await routeProvisioningApi(new Request("https://x.invalid/not-v1"), r.env, r.operations)).status, 404) })
+test("route, method, Allow, and /v1 precedence behavior is explicit", async () => { const r = runtime(); assert.equal((await routeProvisioningApi(new Request("https://x.invalid/v1/wordpress"), r.env, r.operations)).status, 404); const response = await routeProvisioningApi(new Request("https://x.invalid/v1/sites", { method: "GET" }), r.env, r.operations); assert.equal(response.status, 405); assert.equal(response.headers.get("allow"), "POST"); const artifactMethod = await routeProvisioningApi(new Request(`https://x.invalid/v1/artifacts/${digest}`, { method: "POST" }), r.env, r.operations); assert.equal(artifactMethod.status, 405); assert.equal(artifactMethod.headers.get("allow"), "PUT"); const claim = await routeProvisioningApi(new Request("https://x.invalid/v1/sites/alpha/administrator-claim", { method: "GET" }), r.env, r.operations); assert.equal(claim.status, 405); assert.equal(claim.headers.get("allow"), "POST"); assert.equal((await routeProvisioningApi(new Request("https://x.invalid/not-v1"), r.env, r.operations)).status, 404) })
 test("administrator claims validate roots before allocation and persist only a digest", async () => {
   for (const key of ["WORDPRESS_ADMIN_CLAIM_SECRET", "WORDPRESS_ADMIN_PASSWORD"] as const) { const r = runtime(); delete r.env[key]; assert.equal((await create(r)).status, 503); assert.equal(count(r.db, "wp_codebox_api_sites"), 0) }
   const r = runtime(); const body = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }; assert.match(body.site.administratorClaim.token, /^[a-f0-9]{64}$/)
