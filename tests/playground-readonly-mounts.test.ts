@@ -53,11 +53,20 @@ try {
   await symlink("missing.php", join(danglingSource, "build.sh"))
   await Promise.all(Array.from({ length: 500 }, (_, index) => writeFile(join(largeSource, `File${index}.php`), `<?php return ${index};\n`)))
   const stagingDirectoriesBefore = await readonlyStagingDirectories()
-  await assert.rejects(stageReadonlyPlaygroundMounts([
+  await using danglingStaging = await stageReadonlyPlaygroundMounts([
     { source: danglingSource, target: "/dangling", mode: "readonly" },
+  ])
+  const stagedDanglingSource = danglingStaging.mounts[0]?.source
+  assert.ok(stagedDanglingSource)
+  await assert.rejects(access(join(stagedDanglingSource, "build.sh")), /ENOENT/, "unresolved links must be omitted from isolated readonly staging")
+  const stagingDirectoriesWithDangling = await readonlyStagingDirectories()
+  assert.equal(stagingDirectoriesWithDangling.length, stagingDirectoriesBefore.length + 1)
+
+  await assert.rejects(stageReadonlyPlaygroundMounts([
+    { source: join(root, "missing-source"), target: "/missing", mode: "readonly" },
     { source: largeSource, target: "/large", mode: "readonly" },
   ]), /ENOENT/, "the source failure must not be masked by cleanup racing another mount copy")
-  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "failed concurrent staging must remove its temporary root")
+  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesWithDangling, "failed concurrent staging must remove its temporary root")
 
   const beforeReadonlyHash = sha256(await readFile(readonlySource))
   const server = await startPlaygroundCliServer(spec, [

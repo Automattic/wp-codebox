@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
@@ -83,7 +83,22 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
         return mount
       }
       const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
-      await cp(mount.source, source, { recursive: mount.type !== "file", dereference: true })
+      await stat(mount.source)
+      await cp(mount.source, source, {
+        recursive: mount.type !== "file",
+        dereference: true,
+        filter: async (candidate) => {
+          const entry = await lstat(candidate)
+          if (!entry.isSymbolicLink()) return true
+          try {
+            await stat(candidate)
+            return true
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+            throw error
+          }
+        },
+      })
       return { ...mount, source }
     }))
     const failedMount = stagedMountResults.find((result) => result.status === "rejected")
