@@ -9,6 +9,7 @@ interface StoredLease {
 
 interface CoordinatorRecord {
   initialized: boolean
+  siteId: string
   pointer: MarkdownPointer | null
   version: number
   lease?: StoredLease
@@ -20,12 +21,11 @@ interface CoordinatorEnv {
   COORDINATOR_LEASE_MS?: number
 }
 
-const POINTER_KEY = "sites/default/markdown/current.json"
 const STORAGE_KEY = "wordpress-state-coordinator"
 const LEASE_MS = 90_000
 
 export class DurableObjectRevisionCoordinator implements RevisionCoordinator {
-  constructor(private readonly stub: DurableObjectStub) {}
+  constructor(private readonly stub: DurableObjectStub, private readonly siteId: string) {}
 
   state(): Promise<RevisionState> {
     return this.call("state")
@@ -82,6 +82,7 @@ export class DurableObjectRevisionCoordinator implements RevisionCoordinator {
   private async call<T>(action: string, body?: Record<string, unknown>): Promise<T> {
     const url = new URL("https://wp-codebox-coordinator.invalid/")
     url.searchParams.set("__wp_codebox_coordinator", action)
+    url.searchParams.set("siteId", this.siteId)
     const response = await this.stub.fetch(new Request(url, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined))
     if (!response.ok) {
       let payload: { message?: string; retryAt?: number } = {}
@@ -119,33 +120,35 @@ export class WordPressStateCoordinator implements DurableObject {
   }
 
   private async handle(request: Request): Promise<Response> {
-    const action = new URL(request.url).searchParams.get("__wp_codebox_coordinator")
-    if (request.method === "GET" && action === "state") return Response.json(await this.current())
-    if (request.method === "GET" && action === "fence-status") return Response.json(await this.fenceStatus())
+    const url = new URL(request.url)
+    const action = url.searchParams.get("__wp_codebox_coordinator")
+    const siteId = url.searchParams.get("siteId") ?? "default"
+    if (request.method === "GET" && action === "state") return Response.json(await this.current(siteId))
+    if (request.method === "GET" && action === "fence-status") return Response.json(await this.fenceStatus(siteId))
     if (request.method !== "POST" || !action) return new Response("Coordinator requests require an internal action.", { status: 404 })
     const body = await request.json<Record<string, unknown>>()
-    if (action === "begin") return Response.json(await this.begin(body))
-    if (action === "renew") return Response.json(await this.renew(body))
-    if (action === "release") return Response.json(await this.release(body))
-    if (action === "abort") return Response.json(await this.abort(body))
-    if (action === "commit") return Response.json(await this.commit(body))
-    if (action === "committed") return Response.json(await this.committed(body))
-    if (action === "fence-status") return Response.json(await this.fenceStatus())
-    if (action === "fence-acquire") return Response.json(await this.acquireFence(body))
-    if (action === "fence-renew") return Response.json(await this.renewFence(body))
-    if (action === "fence-release") return Response.json(await this.releaseFence(body))
-    if (action === "adopt") return Response.json(await this.adopt(body))
-    if (action === "reset") return Response.json(await this.reset())
+    if (action === "begin") return Response.json(await this.begin(siteId, body))
+    if (action === "renew") return Response.json(await this.renew(siteId, body))
+    if (action === "release") return Response.json(await this.release(siteId, body))
+    if (action === "abort") return Response.json(await this.abort(siteId, body))
+    if (action === "commit") return Response.json(await this.commit(siteId, body))
+    if (action === "committed") return Response.json(await this.committed(siteId, body))
+    if (action === "fence-status") return Response.json(await this.fenceStatus(siteId))
+    if (action === "fence-acquire") return Response.json(await this.acquireFence(siteId, body))
+    if (action === "fence-renew") return Response.json(await this.renewFence(siteId, body))
+    if (action === "fence-release") return Response.json(await this.releaseFence(siteId, body))
+    if (action === "adopt") return Response.json(await this.adopt(siteId, body))
+    if (action === "reset") return Response.json(await this.reset(siteId))
     return new Response("Unknown coordinator action.", { status: 404 })
   }
 
-  private async current(): Promise<RevisionState> {
-    const record = await this.record()
+  private async current(siteId: string): Promise<RevisionState> {
+    const record = await this.record(siteId)
     return { schema: "wp-codebox/cloudflare-wordpress-state/v2", store: "durable-object", pointer: record.pointer, version: record.version }
   }
 
-  private async begin(body: Record<string, unknown>): Promise<RevisionLease> {
-    const record = await this.record()
+  private async begin(siteId: string, body: Record<string, unknown>): Promise<RevisionLease> {
+    const record = await this.record(siteId)
     const now = Date.now()
     const fence = await this.activeFence(record)
     if (fence) throw new RevisionConflict("Canonical WordPress mutations are fenced for coordinator cutover.", fence.expiresAt)
@@ -157,32 +160,32 @@ export class WordPressStateCoordinator implements DurableObject {
     return { token: lease.token, pointer: lease.base, version: lease.version, expiresAt: lease.expiresAt }
   }
 
-  private async release(body: Record<string, unknown>): Promise<{ released: true }> {
-    const record = await this.record()
+  private async release(siteId: string, body: Record<string, unknown>): Promise<{ released: true }> {
+    const record = await this.record(siteId)
     this.requireLease(record, body)
     delete record.lease
     await this.save(record)
     return { released: true }
   }
 
-  private async renew(body: Record<string, unknown>): Promise<RevisionLease> {
-    const record = await this.record()
+  private async renew(siteId: string, body: Record<string, unknown>): Promise<RevisionLease> {
+    const record = await this.record(siteId)
     const lease = this.requireLease(record, body)
     lease.expiresAt = revisionLeaseExpiresAt((body.ttlMs as number | undefined) ?? this.env.COORDINATOR_LEASE_MS ?? LEASE_MS)
     await this.save(record)
     return { token: lease.token, pointer: lease.base, version: lease.version, expiresAt: lease.expiresAt }
   }
 
-  private async abort(body: Record<string, unknown>): Promise<{ aborted: true }> {
-    const record = await this.record()
+  private async abort(siteId: string, body: Record<string, unknown>): Promise<{ aborted: true }> {
+    const record = await this.record(siteId)
     this.requireLease(record, body)
     delete record.lease
     await this.save(record)
     return { aborted: true }
   }
 
-  private async commit(body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
-    const record = await this.record()
+  private async commit(siteId: string, body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
+    const record = await this.record(siteId)
     const lease = this.requireLease(record, body)
     const pointer = body.pointer as MarkdownPointer
     if (!pointer || typeof pointer.revision !== "string" || typeof pointer.manifestKey !== "string" || typeof pointer.persistedAt !== "string") {
@@ -191,7 +194,7 @@ export class WordPressStateCoordinator implements DurableObject {
     if (body.baseRevision !== (lease.base?.revision ?? null) || body.version !== lease.version || record.version !== lease.version || record.pointer?.revision !== lease.base?.revision) {
       throw new RevisionConflict("The canonical pointer changed before promotion.")
     }
-    await this.env.WORDPRESS_STATE_BUCKET.put(POINTER_KEY, JSON.stringify(pointer), { httpMetadata: { contentType: "application/json" } })
+    await this.env.WORDPRESS_STATE_BUCKET.put(pointerKey(siteId), JSON.stringify(pointer), { httpMetadata: { contentType: "application/json" } })
     record.pointer = pointer
     record.version++
     delete record.lease
@@ -202,18 +205,19 @@ export class WordPressStateCoordinator implements DurableObject {
     return { pointer, version: record.version }
   }
 
-  private async committed(body: Record<string, unknown>): Promise<MarkdownPointer | null> {
+  private async committed(siteId: string, body: Record<string, unknown>): Promise<MarkdownPointer | null> {
+    await this.record(siteId)
     if (!Number.isSafeInteger(body.version) || (body.version as number) < 1) throw new RevisionConflict("A canonical commit version is required.")
     return await this.state.storage.get<MarkdownPointer>(`wordpress-state-commit/${body.version}`) ?? null
   }
 
-  private async fenceStatus(): Promise<MutationFenceStatus> {
-    const fence = await this.activeFence(await this.record())
+  private async fenceStatus(siteId: string): Promise<MutationFenceStatus> {
+    const fence = await this.activeFence(await this.record(siteId))
     return fence ? { active: true, expiresAt: fence.expiresAt } : { active: false }
   }
 
-  private async acquireFence(body: Record<string, unknown>): Promise<MutationFence> {
-    const record = await this.record()
+  private async acquireFence(siteId: string, body: Record<string, unknown>): Promise<MutationFence> {
+    const record = await this.record(siteId)
     const now = Date.now()
     const expiresAt = mutationFenceExpiresAt(body.ttlMs as number, now)
     if (record.lease && record.lease.expiresAt > now) throw new RevisionConflict("A canonical WordPress lease is active.", record.lease.expiresAt)
@@ -226,8 +230,8 @@ export class WordPressStateCoordinator implements DurableObject {
     return fence
   }
 
-  private async renewFence(body: Record<string, unknown>): Promise<MutationFence> {
-    const record = await this.record()
+  private async renewFence(siteId: string, body: Record<string, unknown>): Promise<MutationFence> {
+    const record = await this.record(siteId)
     const active = await this.activeFence(record)
     if (!active || typeof body.token !== "string" || body.token !== active.token) throw new RevisionConflict("The coordinator cutover fence token is invalid or expired.")
     const fence = { token: active.token, expiresAt: mutationFenceExpiresAt(body.ttlMs as number) }
@@ -236,8 +240,8 @@ export class WordPressStateCoordinator implements DurableObject {
     return fence
   }
 
-  private async releaseFence(body: Record<string, unknown>): Promise<{ released: true }> {
-    const record = await this.record()
+  private async releaseFence(siteId: string, body: Record<string, unknown>): Promise<{ released: true }> {
+    const record = await this.record(siteId)
     const active = await this.activeFence(record)
     if (!active || typeof body.token !== "string" || body.token !== active.token) throw new RevisionConflict("The coordinator cutover fence token is invalid or expired.")
     delete record.fence
@@ -245,8 +249,8 @@ export class WordPressStateCoordinator implements DurableObject {
     return { released: true }
   }
 
-  private async adopt(body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
-    const record = await this.record()
+  private async adopt(siteId: string, body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
+    const record = await this.record(siteId)
     const fence = await this.activeFence(record)
     if (fence) throw new RevisionConflict("Coordinator adoption is blocked by an active cutover fence.", fence.expiresAt)
     const pointer = body.pointer as MarkdownPointer
@@ -274,22 +278,25 @@ export class WordPressStateCoordinator implements DurableObject {
     return lease
   }
 
-  private async reset(): Promise<{ reset: true }> {
-    const record = await this.record()
+  private async reset(siteId: string): Promise<{ reset: true }> {
+    const record = await this.record(siteId)
     const now = Date.now()
     const fence = await this.activeFence(record, now)
     if (fence) throw new RevisionConflict("Coordinator reset is blocked by an active cutover fence.", fence.expiresAt)
     if (record.lease && record.lease.expiresAt > now) throw new RevisionConflict("Coordinator reset is blocked by an active canonical lease.", record.lease.expiresAt)
-    await this.env.WORDPRESS_STATE_BUCKET.delete(POINTER_KEY)
+    await this.env.WORDPRESS_STATE_BUCKET.delete(pointerKey(siteId))
     await this.state.storage.delete(STORAGE_KEY)
     return { reset: true }
   }
 
-  private async record(): Promise<CoordinatorRecord> {
+  private async record(siteId: string): Promise<CoordinatorRecord> {
     const stored = await this.state.storage.get<CoordinatorRecord>(STORAGE_KEY)
-    if (stored?.initialized) return stored
-    const object = await this.env.WORDPRESS_STATE_BUCKET.get(POINTER_KEY)
-    const record: CoordinatorRecord = { initialized: true, pointer: object ? await object.json<MarkdownPointer>() : null, version: 0 }
+    if (stored?.initialized) {
+      if ((stored.siteId ?? "default") !== siteId) throw new RevisionConflict("The Durable Object belongs to a different site.")
+      return stored
+    }
+    const object = await this.env.WORDPRESS_STATE_BUCKET.get(pointerKey(siteId))
+    const record: CoordinatorRecord = { initialized: true, siteId, pointer: object ? await object.json<MarkdownPointer>() : null, version: 0 }
     await this.save(record)
     return record
   }
@@ -305,6 +312,10 @@ export class WordPressStateCoordinator implements DurableObject {
     await this.save(record)
     return undefined
   }
+}
+
+function pointerKey(siteId: string): string {
+  return `sites/${siteId}/markdown/current.json`
 }
 
 function samePointer(left: MarkdownPointer | null, right: MarkdownPointer): boolean {

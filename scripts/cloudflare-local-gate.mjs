@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { createHash } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,8 +15,14 @@ const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-
 const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
+let siteContexts = [{ id: "default", hostname: "127.0.0.1", origin }]
 let child
 let output = ""
+
+function siteCredential(rootCredential, siteId, purpose) {
+  if (siteId === "default") return rootCredential
+  return createHmac("sha256", rootCredential).update(`wp-codebox/site-credential/v1\0${siteId}\0${purpose}`).digest("hex")
+}
 
 try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
@@ -105,6 +111,7 @@ try {
   const conflicting = await importStaticArtifact({ ...staticArtifactImport, import: { ...staticArtifactImport.import, slug: "different-artifact-site" } }, 409)
   const conflictStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
+  await assertTwoSiteIsolation()
   console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
 } finally {
   await stopWorker()
@@ -156,9 +163,82 @@ async function provisionStaticArtifact() {
   }
 }
 
+async function assertTwoSiteIsolation() {
+  await stopWorker()
+  siteContexts = [
+    { id: "alpha", hostname: "alpha.localhost", origin: `http://alpha.localhost:${port}` },
+    { id: "beta", hostname: "beta.localhost", origin: `http://beta.localhost:${port}` },
+  ]
+  await startWorker()
+  const alpha = siteContexts[0].origin
+  const beta = siteContexts[1].origin
+  const unknown = await fetch(`http://unknown.localhost:${port}/?phase=r2-state`)
+  if (unknown.status !== 421) throw new Error(`Unknown hostname reached the runtime: ${unknown.status}.`)
+
+  const mutate = async (siteOrigin) => {
+    const response = await fetch(`${siteOrigin}/?phase=r2-mutate`, { method: "POST" })
+    if (!response.ok) throw new Error(`Site mutation failed for ${siteOrigin}: ${response.status} ${await response.text()}`)
+    return response.json()
+  }
+  const [alphaFirst, betaFirst] = await Promise.all([mutate(alpha), mutate(beta)])
+  const alphaSecond = await mutate(alpha)
+  if (alphaFirst.revisionValue !== 1 || alphaSecond.revisionValue !== 2 || betaFirst.revisionValue !== 1) throw new Error("Site mutations did not retain independent canonical histories.")
+
+  const [alphaState, betaState] = await Promise.all([
+    fetch(`${alpha}/?phase=r2-state`).then((response) => response.json()),
+    fetch(`${beta}/?phase=r2-state`).then((response) => response.json()),
+  ])
+  if (alphaState.version !== 3 || betaState.version !== 2 || alphaState.pointer?.revision === betaState.pointer?.revision
+    || !alphaState.pointer?.manifestKey.startsWith("sites/alpha/markdown/revisions/")
+    || !betaState.pointer?.manifestKey.startsWith("sites/beta/markdown/revisions/")) {
+    throw new Error(`Site coordinator or R2 state crossed namespaces: ${JSON.stringify({ alphaState, betaState })}`)
+  }
+
+  const [alphaPosts, betaPosts] = await Promise.all([
+    fetch(`${alpha}/wp-json/wp/v2/posts?slug=cloudflare-r2-proof-2`).then((response) => response.json()),
+    fetch(`${beta}/wp-json/wp/v2/posts?slug=cloudflare-r2-proof-2`).then((response) => response.json()),
+  ])
+  if (!Array.isArray(alphaPosts) || alphaPosts.length !== 1 || !Array.isArray(betaPosts) || betaPosts.length !== 0) throw new Error("Site REST collections crossed canonical namespaces.")
+
+  const loginStatus = async (siteOrigin, candidatePassword) => fetch(`${siteOrigin}/wp-login.php`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ log: "admin", pwd: candidatePassword, redirect_to: `${siteOrigin}/wp-admin/`, "wp-submit": "Log In" }),
+    redirect: "manual",
+  }).then((response) => response.status)
+  if (await loginStatus(alpha, siteCredential(password, "beta", "admin-password")) !== 200) throw new Error("Alpha accepted Beta's admin credential.")
+  if (![301, 302].includes(await loginStatus(alpha, siteCredential(password, "alpha", "admin-password")))) throw new Error("Alpha rejected its site-scoped admin credential.")
+  await Promise.all([fetch(alpha), fetch(beta)])
+  const [alphaPublishState, betaPublishState] = await Promise.all([
+    fetch(`${alpha}/?phase=r2-state`).then((response) => response.json()),
+    fetch(`${beta}/?phase=r2-state`).then((response) => response.json()),
+  ])
+
+  const publish = async (siteOrigin, siteId) => {
+    const response = await fetch(`${siteOrigin}/?phase=operator-publish`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${siteCredential(operatorToken, siteId, "operator-token")}`, "content-type": "application/json" },
+      body: JSON.stringify({ routes: ["/"] }),
+    })
+    if (!response.ok) throw new Error(`Site publication failed for ${siteOrigin}: ${response.status} ${await response.text()}`)
+    return response.json()
+  }
+  const rejectedCredentialReuse = await fetch(`${alpha}/?phase=operator-publish`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${siteCredential(operatorToken, "beta", "operator-token")}`, "content-type": "application/json" },
+    body: JSON.stringify({ routes: ["/"] }),
+  })
+  if (rejectedCredentialReuse.status !== 401) throw new Error(`Cross-site operator credential reuse returned ${rejectedCredentialReuse.status} instead of 401.`)
+  const [alphaPublication, betaPublication] = await Promise.all([publish(alpha, "alpha"), publish(beta, "beta")])
+  if (alphaPublication.revision === betaPublication.revision || alphaPublication.canonicalRevision !== alphaPublishState.pointer?.revision || betaPublication.canonicalRevision !== betaPublishState.pointer?.revision) throw new Error("Site publication receipts crossed namespaces.")
+  const [alphaPublished, betaPublished] = await Promise.all([fetch(alpha), fetch(beta)])
+  if (!alphaPublished.headers.get("x-wp-codebox-page-cache-source")?.startsWith("publication-") || !betaPublished.headers.get("x-wp-codebox-page-cache-source")?.startsWith("publication-")) throw new Error("Site publications did not resolve through isolated publication caches.")
+  console.log(`Two-site isolation passed for ${coordinator}.`)
+}
+
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`], {
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
