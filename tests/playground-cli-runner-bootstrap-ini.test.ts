@@ -49,7 +49,8 @@ try {
         inputs: {
           pluginRuntime: {
             php: {
-              iniEntries: { memory_limit: "512M" },
+              memoryLimit: "2G",
+              iniEntries: { max_input_vars: 2048 },
               bootstrapIniEntries: { "opcache.file_cache": "/tmp/opcache" },
             },
           },
@@ -75,7 +76,7 @@ try {
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
-  assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
+  assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "2G", max_input_vars: "2048" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
   const sharedPhpIniPath = calls[0]["mount-before-install"]?.[0]?.hostPath
   const sharedAutoPrependPath = calls[0]["mount-before-install"]?.[1]?.hostPath
@@ -85,7 +86,7 @@ try {
   assert.match(sharedPhpIni, /opcache\.file_cache = \/tmp\/opcache/)
   // The runtime default memory ceiling stays high enough for collect_artifacts to
   // base64 heavy snapshot/declared-artifact files without a hard PHP fatal.
-  assert.match(sharedPhpIni, /memory_limit=512M/)
+  assert.match(sharedPhpIni, /memory_limit = 2G/)
   assert.match(sharedPhpIni, /auto_prepend_file=\/internal\/shared\/wp-codebox-auto-prepend\.php/)
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)

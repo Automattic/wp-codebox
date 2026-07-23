@@ -332,14 +332,31 @@ function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, 
 }
 
 function pluginRuntimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
-  return pluginRuntimePhpEntries(spec, "bootstrapIniEntries")
+  const memoryLimit = pluginRuntimePhpMemoryLimit(spec)
+  return {
+    ...(memoryLimit ? { memory_limit: memoryLimit } : {}),
+    ...(pluginRuntimePhpEntries(spec, "bootstrapIniEntries") ?? {}),
+  }
 }
 
 function pluginRuntimePhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  const memoryLimit = pluginRuntimePhpMemoryLimit(spec)
   return {
     ...DEFAULT_RUNTIME_PHP_INI_ENTRIES,
+    ...(memoryLimit ? { memory_limit: memoryLimit } : {}),
     ...(pluginRuntimePhpEntries(spec, "iniEntries") ?? {}),
   }
+}
+
+function pluginRuntimePhpMemoryLimit(spec: RuntimeCreateSpec): string | undefined {
+  const pluginRuntime = spec.metadata?.recipe && typeof spec.metadata.recipe === "object" && !Array.isArray(spec.metadata.recipe)
+    ? (spec.metadata.recipe as { inputs?: { pluginRuntime?: unknown } }).inputs?.pluginRuntime
+    : undefined
+  const php = pluginRuntime && typeof pluginRuntime === "object" && !Array.isArray(pluginRuntime)
+    ? (pluginRuntime as { php?: Record<string, unknown> }).php
+    : undefined
+  const memoryLimit = php?.memoryLimit
+  return typeof memoryLimit === "string" && /^[0-9]+[KMG]?$/.test(memoryLimit) ? memoryLimit : undefined
 }
 
 function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "bootstrapIniEntries"): Record<string, string> | undefined {
