@@ -1,4 +1,4 @@
-# Cloudflare provisioning API core
+# Cloudflare provisioning API
 
 The D1 Worker exposes a versioned control-plane API before hostname-based WordPress routing. `/v1/*` never boots or falls through to WordPress.
 
@@ -18,7 +18,8 @@ The Worker compares SHA-256 token digests and never accepts plaintext API creden
 - `GET /v1/sites/{siteId}` requires `sites:read`.
 - `POST /v1/sites/{siteId}/imports` requires `sites:import` and uses the existing bounded static-artifact request.
 - `GET /v1/sites/{siteId}/operations/{operationId}` requires `operations:read`.
+- `POST /v1/sites/{siteId}/administrator-claim` exchanges its one-time bearer capability for the persistent site-scoped `admin` credential after provisioning succeeds. It does not accept an API bearer token.
 
 All responses use versioned WP Codebox provisioning schemas. Site IDs are allocated only from `WORDPRESS_SITE_CONTEXTS`; caller hostnames, DNS, and Cloudflare control APIs are not inputs. The allocation transaction reserves the same shipped D1 site identity used by legacy/operator operations, so both interfaces contend on one hostname and an existing site cannot be taken over. D1 stores allocation ownership, immutable artifact identity and import options, and API operation links. The scheduler resumes incomplete allocations for its selected site before it runs an operation; it verifies staged bytes and converges the conditional destination copy, operation, and API link without blocking publication or cron when recovery fails.
 
-This is the API core portion of #1971. Administrator claims are intentionally a follow-up and are not represented by a route, secret, D1 field, resource field, documentation contract, or test in this PR.
+`POST /v1/sites` validates `WORDPRESS_ADMIN_CLAIM_SECRET` and `WORDPRESS_ADMIN_PASSWORD` before allocation. Its create/replay response includes the deterministic pending capability while the configured root still derives the stored digest. Site reads expose only claim state, expiry, and the fixed endpoint. D1 stores capability and derived-credential digests, never either plaintext value. Scheduled allocation recovery issues a missing claim before provisioning work can run. Redemption requires the current site-scoped credential to match the digest pinned before bootstrap, then atomically consumes the capability exactly once and transfers that persistent administrator credential; it is not a one-time browser session. Rotating either root preserves the pending record but requires restoring the matching root before replay or redemption.

@@ -1,6 +1,7 @@
 import { D1OperationRepository, OperationConflict, type StaticArtifactOperation, type StaticArtifactOperationInput } from "./d1-operation-repository.js"
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { parseSiteContexts, siteStorageKeys, type SiteContext } from "./site-context.js"
+import { deriveSiteCredential } from "./wordpress-auth.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -14,7 +15,7 @@ export interface ProvisioningAllocation {
   artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"]
 }
 interface CreateInput { key: string; fingerprint: string; artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"] }
-export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_API_TOKENS?: string }
+export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
 
 export async function routeProvisioningApi(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
@@ -23,6 +24,8 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   if (parts.length === 2 && parts[1] === "sites") return method === "POST" ? create(request, env, operations) : methodNotAllowed("POST")
   if (parts.length < 3 || parts[1] !== "sites" || !validSiteId(parts[2])) return notFound()
   const siteId = parts[2]
+  // This capability endpoint must never fall through to API bearer authentication or WordPress.
+  if (parts.length === 4 && parts[3] === "administrator-claim") return method === "POST" ? claimAdministrator(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 3) return method === "GET" ? readSite(request, env, operations, siteId) : methodNotAllowed("GET")
   if (parts.length === 4 && parts[3] === "imports") return method === "POST" ? importSite(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 5 && parts[3] === "operations" && /^[0-9a-f-]{36}$/.test(parts[4])) return method === "GET" ? readOperation(request, env, operations, siteId, parts[4]) : methodNotAllowed("GET")
@@ -34,6 +37,7 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
   const key = idempotencyKey(request); if (key instanceof Response) return key
   let input: CreateInput
   try { input = await readCreate(request, env.WORDPRESS_STATE_BUCKET, key) } catch (error) { return importError(error) }
+  if (!claimConfiguration(env)) return apiError(503, "administrator_claim_unavailable", "Administrator claims are unavailable.")
   await operations.initialize()
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   let allocation: ProvisioningAllocation
@@ -48,8 +52,9 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
   if (!site) return notFound()
   try {
     const operation = await resumeProvisioningAllocation(env, site, operations)
-    return siteResource(site, operation, 202)
-  } catch (error) { if (error instanceof OperationConflict) return apiError(409, "idempotency_conflict", error.message); throw error }
+    const claim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
+    return siteResource(site, operation, 202, claim)
+  } catch (error) { if (error instanceof OperationConflict) return apiError(409, "idempotency_conflict", error.message); if (error instanceof AdministratorClaimError) return apiError(409, "administrator_claim_unavailable", "The administrator claim cannot continue provisioning."); throw error }
 }
 
 async function readSite(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
@@ -57,7 +62,26 @@ async function readSite(request: Request, env: ProvisioningEnv, operations: D1Op
   const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
   const site = context(env, siteId)
   if (!allocation || !site || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
-  return siteResource(site, allocation.operationId ? await operations.get(siteId, allocation.operationId) : null)
+  const claim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).metadata(siteId)
+  return siteResource(site, allocation.operationId ? await operations.get(siteId, allocation.operationId) : null, 200, claim)
+}
+
+async function claimAdministrator(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
+  const capability = request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/)?.[1]
+  if (!capability || !claimConfiguration(env)) return claimUnavailable()
+  const store = new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE)
+  const claim = await store.bySite(siteId)
+  if (!claim || claim.state !== "pending") return claimUnavailable()
+  if (claim.expiresAt <= Date.now()) { await store.expire(siteId); return claimUnavailable() }
+  const digest = await shaText(capability)
+  if (!await equal(digest, claim.capabilityDigest)) return claimUnavailable()
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  const operation = allocation?.operationId ? await operations.get(siteId, allocation.operationId) : null
+  if (operation?.state !== "succeeded") return apiError(409, "administrator_claim_not_ready", "The administrator credential is not ready.")
+  let password: string
+  try { password = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, siteId, "admin-password") } catch { return claimUnavailable() }
+  if (!await equal(await shaText(password), claim.credentialDigest)) return claimUnavailable()
+  return (await store.consume(siteId, digest)) ? Response.json({ schema: PROVISIONING_API_SCHEMA, credential: { username: "admin", password } }) : claimUnavailable()
 }
 
 async function importSite(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
@@ -89,6 +113,8 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   const allocation = await store.bySite(site.id)
   if (!allocation) return null
+  if (!claimConfiguration(env)) throw new AdministratorClaimError()
+  const administratorClaim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
   if (allocation.operationId) {
     const existing = await operations.get(site.id, allocation.operationId)
     if (existing) {
@@ -96,6 +122,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
       if (["publication-pending", "succeeded", "failed"].includes(existing.state)) return existing
     }
   }
+  if (administratorClaim.state !== "pending") throw new AdministratorClaimError()
   const input = await verifiedAllocationInput(env.WORDPRESS_STATE_BUCKET, site, allocation)
   await putVerifiedArtifact(env.WORDPRESS_STATE_BUCKET, site, input)
   const result = await operations.createOrConverge(site, input)
@@ -145,13 +172,15 @@ async function putVerifiedArtifact(bucket: R2Bucket, site: SiteContext, input: S
   if (!await verify()) throw new OperationConflict(result === null ? "Conditional artifact copy did not produce a destination object." : "Allocated artifact destination disappeared after its conditional write.")
 }
 
-function siteResource(site: SiteContext, operation: StaticArtifactOperation | null, status = 200): Response {
+function siteResource(site: SiteContext, operation: StaticArtifactOperation | null, status = 200, claim: AdministratorClaimMetadata | AdministratorClaimIssued | null = null): Response {
   const state = operation?.state === "succeeded" ? "ready" : operation?.state === "failed" ? "failed" : operation?.state === "publication-pending" ? "publication-pending" : "provisioning"
-  return Response.json({ schema: PROVISIONING_SITE_RESOURCE_SCHEMA, site: { id: site.id, status: state, url: site.origin, operation: operation ? `/v1/sites/${site.id}/operations/${operation.operationId}` : null } }, { status })
+  const administratorClaim = claim ? { url: `/v1/sites/${site.id}/administrator-claim`, state: claim.state, expiresAt: new Date(claim.expiresAt).toISOString(), ...("token" in claim ? { token: claim.token } : {}) } : undefined
+  return Response.json({ schema: PROVISIONING_SITE_RESOURCE_SCHEMA, site: { id: site.id, status: state, url: site.origin, operation: operation ? `/v1/sites/${site.id}/operations/${operation.operationId}` : null, ...(administratorClaim ? { administratorClaim } : {}) } }, { status })
 }
 function operationResource(siteId: string, operation: StaticArtifactOperation, status = 200): Response { return Response.json({ schema: PROVISIONING_API_SCHEMA, operation: { id: operation.operationId, siteId, state: operation.state, stage: operation.stage, progress: operation.progress, retryAt: operation.retryAt, error: operation.error, receipt: operation.receipt } }, { status }) }
 function apiError(status: number, code: string, message: string, allow?: string): Response { return Response.json({ schema: PROVISIONING_ERROR_SCHEMA, error: { code, message } }, { status, headers: allow ? { Allow: allow } : undefined }) }
 function notFound(): Response { return apiError(404, "not_found", "The API resource is unavailable.") }
+function claimUnavailable(): Response { return apiError(401, "administrator_claim_unavailable", "The administrator claim is unavailable.") }
 function methodNotAllowed(allow: string): Response { return apiError(405, "method_not_allowed", "The API method is unsupported.", allow) }
 function importError(error: unknown): Response { if (error instanceof StaticArtifactImportError) return apiError(error.status, "invalid_import", error.message); throw error }
 function allocationError(error: unknown): Response { if (error instanceof AllocationError) return apiError(error.code === "quota_exceeded" ? 429 : 409, error.code, error.code === "quota_exceeded" ? "The principal site quota is exhausted." : "No configured site context is available."); throw error }
@@ -189,6 +218,7 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 async function sha(bytes: Uint8Array): Promise<string> { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)), (byte) => byte.toString(16).padStart(2, "0")).join("") }
 async function shaText(value: string): Promise<string> { return sha(new TextEncoder().encode(value)) }
 async function equal(left: string, right: string): Promise<boolean> { if (left.length !== right.length) return false; let result = 0; for (let i = 0; i < left.length; i++) result |= left.charCodeAt(i) ^ right.charCodeAt(i); return result === 0 }
+function claimConfiguration(env: ProvisioningEnv): boolean { return typeof env.WORDPRESS_ADMIN_CLAIM_SECRET === "string" && env.WORDPRESS_ADMIN_CLAIM_SECRET.length >= 32 && typeof env.WORDPRESS_ADMIN_PASSWORD === "string" && env.WORDPRESS_ADMIN_PASSWORD.length > 0 }
 
 class AllocationError extends Error { constructor(readonly code: "quota_exceeded" | "capacity_exhausted") { super(code) } }
 class AllocationStore {
@@ -234,3 +264,40 @@ class AllocationStore {
   }
 }
 function allocation(row: Record<string, unknown>): ProvisioningAllocation { return { siteId: row.site_id as string, principal: row.principal as string, key: row.idempotency_key as string, fingerprint: row.fingerprint as string, operationId: row.operation_id as string | null, artifactSha256: row.artifact_sha256 as string, artifactSize: row.artifact_size as number, options: { slug: row.slug as string, name: row.name as string, siteTitle: row.site_title as string } } }
+
+interface AdministratorClaimMetadata { state: "pending" | "consumed" | "expired"; expiresAt: number }
+interface AdministratorClaimIssued extends AdministratorClaimMetadata { token: string }
+interface AdministratorClaimRecord extends AdministratorClaimMetadata { capabilityDigest: string; credentialDigest: string }
+class AdministratorClaimError extends Error {}
+class AdministratorClaimStore {
+  constructor(private readonly db: D1Database) {}
+  async issue(allocation: ProvisioningAllocation, env: ProvisioningEnv): Promise<AdministratorClaimIssued | AdministratorClaimMetadata> {
+    await this.schema()
+    const token = await claimCapability(env.WORDPRESS_ADMIN_CLAIM_SECRET!, allocation)
+    const digest = await shaText(token)
+    const credential = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, allocation.siteId, "admin-password")
+    const credentialDigest = await shaText(credential)
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000
+    await this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_admin_claims (site_id, capability_digest, credential_digest, expires_at, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)").bind(allocation.siteId, digest, credentialDigest, expiresAt, Date.now(), Date.now()).run()
+    const claim = await this.bySite(allocation.siteId)
+    if (!claim) throw new Error("Administrator claim was not persisted.")
+    if (claim.state === "pending" && claim.expiresAt <= Date.now()) {
+      await this.expire(allocation.siteId)
+      return { state: "expired", expiresAt: claim.expiresAt }
+    }
+    if (claim.state === "pending" && !await equal(credentialDigest, claim.credentialDigest)) throw new AdministratorClaimError()
+    return claim.state === "pending" && await equal(digest, claim.capabilityDigest) ? { state: claim.state, expiresAt: claim.expiresAt, token } : { state: claim.state, expiresAt: claim.expiresAt }
+  }
+  async metadata(siteId: string): Promise<AdministratorClaimMetadata | null> { const claim = await this.bySite(siteId); if (claim?.state === "pending" && claim.expiresAt <= Date.now()) { await this.expire(siteId); return { state: "expired", expiresAt: claim.expiresAt } } return claim && { state: claim.state, expiresAt: claim.expiresAt } }
+  async bySite(siteId: string): Promise<AdministratorClaimRecord | null> { await this.schema(); const row = await this.db.prepare("SELECT capability_digest, credential_digest, expires_at, state FROM wp_codebox_api_admin_claims WHERE site_id = ?").bind(siteId).first<{ capability_digest: string; credential_digest: string; expires_at: number; state: AdministratorClaimMetadata["state"] }>(); return row ? { capabilityDigest: row.capability_digest, credentialDigest: row.credential_digest, expiresAt: row.expires_at, state: row.state } : null }
+  async expire(siteId: string): Promise<void> { await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'expired', updated_at = ? WHERE site_id = ? AND state = 'pending' AND expires_at <= ?").bind(Date.now(), siteId, Date.now()).run() }
+  async consume(siteId: string, digest: string): Promise<boolean> { const result = await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'consumed', updated_at = ? WHERE site_id = ? AND state = 'pending' AND capability_digest = ? AND expires_at > ?").bind(Date.now(), siteId, digest, Date.now()).run(); return result.meta.changes === 1 }
+  private async schema(): Promise<void> { await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_admin_claims (site_id TEXT PRIMARY KEY, capability_digest TEXT NOT NULL, credential_digest TEXT NOT NULL, expires_at INTEGER NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','consumed','expired')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run() }
+}
+async function claimCapability(root: string, allocation: ProvisioningAllocation): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey("raw", encoder.encode(root), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const identity = `wp-codebox/administrator-claim/v1\0${allocation.siteId}\0${allocation.principal}\0${allocation.key}\0${allocation.fingerprint}`
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(identity))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
