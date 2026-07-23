@@ -14,6 +14,7 @@ import { RevisionConflict, type MarkdownPointer, type MutationFence, type Revisi
 import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
+import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { DEFAULT_SITE_CONTEXT, parseSiteContexts, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
@@ -210,6 +211,8 @@ export interface RuntimeEnv {
   WORDPRESS_ADMIN_PASSWORD?: string
   WORDPRESS_AUTH_SECRET?: string
   WORDPRESS_OPERATOR_TOKEN?: string
+  WORDPRESS_API_TOKENS?: string
+  WORDPRESS_STATE_DATABASE?: D1Database
 }
 
 export function createCloudflareRuntime<Env extends RuntimeEnv>(
@@ -219,6 +222,12 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
 ) {
   return {
     async fetch(request: Request, env: Env): Promise<Response> {
+      // The versioned control API is host-independent and must never boot WordPress.
+      if (new URL(request.url).pathname === "/v1" || new URL(request.url).pathname.startsWith("/v1/")) {
+        const operations = resolveOperations?.(env)
+        if (!operations || !("WORDPRESS_STATE_DATABASE" in env)) return Response.json({ schema: "wp-codebox/provisioning-api/v1", error: { code: "not_found", message: "The API resource is unavailable." } }, { status: 404 })
+        return routeProvisioningApi(request, env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, operations)
+      }
       let site: SiteContext
       try {
         site = resolveSiteContextFromRequest(request, parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS))
@@ -266,6 +275,13 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
       const coordinator = resolveCoordinator(env, site)
       const operations = resolveOperations?.(env)
+      if (operations && env.WORDPRESS_STATE_DATABASE) {
+        try {
+          await resumeProvisioningAllocation(env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, site, operations)
+        } catch (error) {
+          console.error("Provisioning allocation recovery failed.", error)
+        }
+      }
       const fence = await coordinator.fenceStatus()
       const siteCycle = Math.floor(controller.scheduledTime / (60_000 * sites.length))
       const operationFirst = siteCycle % 2 === 0
