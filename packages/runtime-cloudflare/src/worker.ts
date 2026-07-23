@@ -11,6 +11,7 @@ import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { RevisionConflict, type MarkdownPointer, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
+import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
 import { deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
@@ -27,6 +28,7 @@ import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifact.json" with { type: "json" }
 import wordpressStaticArtifactManifest from "../assets/wordpress-static-artifact.json" with { type: "json" }
 import sqliteIntegrationArtifactManifest from "../assets/sqlite-database-integration-artifact.json" with { type: "json" }
+import staticSiteImporterArtifactManifest from "../assets/static-site-importer-artifact.json" with { type: "json" }
 
 const PHP_VERSION = "8.5.8"
 const wordpressStaticArtifact = wordpressStaticArtifactManifest as WordPressStaticArtifactManifest
@@ -46,6 +48,10 @@ const MARKDOWN_DATABASE_INTEGRATION_REVISION = "bf6d434d1673fdd86d777501f7eaec29
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
+const STATIC_SITE_IMPORTER_ROOT = "/wordpress/wp-content/plugins/static-site-importer"
+const STATIC_SITE_IMPORTER_MU_LOADER = "/wordpress/wp-content/mu-plugins/wp-codebox-static-site-importer.php"
+const MAX_STATIC_SITE_IMPORTER_FILES = 10_000
+const MAX_STATIC_SITE_IMPORTER_BYTES = 64 * 1024 * 1024
 const UPLOADS_ROOT = "/wordpress/wp-content/uploads"
 const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
@@ -130,6 +136,77 @@ foreach ($ready as $timestamp => $hooks) {
     }
 }
 echo json_encode(['executed' => false], JSON_THROW_ON_ERROR);`
+const STATIC_ARTIFACT_IMPORT_PATH = "/tmp/wp-codebox-static-artifact.json"
+const STATIC_ARTIFACT_IMPORT_INPUT_PATH = "/tmp/wp-codebox-static-artifact-input.json"
+const STATIC_ARTIFACT_IMPORT_CODE = `<?php
+require '/wordpress/wp-load.php';
+wp_set_current_user(1);
+$artifact = json_decode((string) file_get_contents('${STATIC_ARTIFACT_IMPORT_PATH}'), true, 512, JSON_THROW_ON_ERROR);
+$input = json_decode((string) file_get_contents('${STATIC_ARTIFACT_IMPORT_INPUT_PATH}'), true, 512, JSON_THROW_ON_ERROR);
+$records = get_option('wp_codebox_static_artifact_imports', array());
+if (!is_array($records)) $records = array();
+$key = $input['idempotencyKey'];
+if (isset($records[$key])) {
+    if (!hash_equals((string) ($records[$key]['fingerprint'] ?? ''), $input['fingerprint'])) {
+        echo wp_json_encode(array('status' => 'conflict'), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        return;
+    }
+    echo wp_json_encode(array_merge(array('status' => 'duplicate'), $records[$key]), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    return;
+}
+if (count($records) >= 20) {
+    echo wp_json_encode(array('status' => 'failed', 'error' => array('code' => 'idempotency_capacity', 'message' => 'Static artifact import idempotency history is full.')), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    return;
+}
+$ability = function_exists('wp_get_ability') ? wp_get_ability('static-site-importer/import-website-artifact') : null;
+if (!$ability) {
+    echo wp_json_encode(array('status' => 'failed', 'error' => array('code' => 'ability_unavailable', 'message' => 'Static Site Importer ability is unavailable.')), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    return;
+}
+$ability_input = array(
+    'artifact' => $artifact,
+    'slug' => $input['slug'],
+    'name' => $input['name'],
+    'site_title' => $input['siteTitle'],
+    'activate' => true,
+    'overwrite' => true,
+    'fail_on_quality' => true,
+    'source_metadata' => array('provider' => 'wp-codebox-cloudflare', 'artifact_sha256' => $input['artifact']['sha256'], 'artifact_r2_key' => $input['artifact']['r2Key']),
+);
+$result = $ability->execute($ability_input);
+if (is_wp_error($result)) $result = array('success' => false, 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message()));
+if (!is_array($result) || empty($result['success']) || !isset($result['result']) || !is_array($result['result'])) {
+    $error = is_array($result) && isset($result['error']) && is_array($result['error']) ? $result['error'] : array('code' => 'import_failed', 'message' => 'Static Site Importer failed without a structured error.');
+    echo wp_json_encode(array('status' => 'failed', 'error' => $error), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    return;
+}
+$import = $result['result'];
+$quality = isset($import['quality']) && is_array($import['quality']) ? $import['quality'] : array();
+$counts = array(
+    'fallbackBlocks' => (int) ($quality['fallback_count'] ?? 0),
+    'coreHtmlBlocks' => (int) ($quality['core_html_block_count'] ?? 0),
+    'freeformBlocks' => (int) ($quality['freeform_block_count'] ?? 0),
+    'invalidBlocks' => (int) ($quality['invalid_block_count'] ?? 0),
+);
+if (empty($quality['pass']) || array_sum($counts) !== 0) {
+    echo wp_json_encode(array('status' => 'quality-failed', 'quality' => $counts), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    return;
+}
+$record = array(
+    'idempotencyKey' => $key,
+    'fingerprint' => $input['fingerprint'],
+    'artifact' => $input['artifact'],
+    'themeSlug' => (string) ($import['theme_slug'] ?? ''),
+    'pages' => isset($import['pages']) && is_array($import['pages']) ? $import['pages'] : array(),
+    'quality' => $counts,
+    'importedAt' => gmdate('c'),
+    'ability' => 'static-site-importer/import-website-artifact',
+    'staticSiteImporterVersion' => defined('STATIC_SITE_IMPORTER_VERSION') ? STATIC_SITE_IMPORTER_VERSION : '',
+);
+$records[$key] = $record;
+update_option('wp_codebox_static_artifact_imports', $records, false);
+$GLOBALS['wpdb']->flush_canonical_writes();
+echo wp_json_encode(array_merge(array('status' => 'imported'), $record), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);`
 export interface RuntimeEnv {
   WORDPRESS_STATE_BUCKET: R2Bucket
   WORDPRESS_ADMIN_PASSWORD?: string
@@ -154,6 +231,7 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(resolveCoordinat
       if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator)
       if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator)
+      if (route.kind === "operator-static-artifact-import") return importCanonicalStaticArtifact(request, env, coordinator)
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator)
       if (route.kind === "probe") {
         return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
@@ -356,6 +434,29 @@ async function adoptCanonicalWordPress(request: Request, env: RuntimeEnv, coordi
   return Response.json({ adopted: true, ...adopted })
 }
 
+async function importCanonicalStaticArtifact(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator): Promise<Response> {
+  if (request.method !== "POST") return new Response("Static artifact import requires POST.", { status: 405 })
+  const authorization = request.headers.get("authorization")
+  if (!env.WORDPRESS_OPERATOR_TOKEN || !authorization || !await secretsMatch(authorization, `Bearer ${env.WORDPRESS_OPERATOR_TOKEN}`)) {
+    return new Response("Static artifact import authorization failed.", { status: 401 })
+  }
+  let input: StaticArtifactImport
+  try {
+    input = await readStaticArtifactImport(request, env.WORDPRESS_STATE_BUCKET)
+  } catch (error) {
+    if (error instanceof StaticArtifactImportError) return Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, status: "rejected", error: error.message }, { status: error.status })
+    throw error
+  }
+  try {
+    return await runCoordinatedWordPressRequest(request, env, coordinator, "static-artifact-import", input)
+  } catch (error) {
+    if (!(error instanceof RevisionConflict)) throw error
+    const headers = new Headers()
+    if (error.retryAt) headers.set("retry-after", String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1_000))))
+    return Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, status: "conflict", error: error.message }, { status: 409, headers })
+  }
+}
+
 function isCanonicalRestorePointer(pointer: unknown): pointer is MarkdownPointer {
   if (!pointer || typeof pointer !== "object") return false
   const candidate = pointer as Partial<MarkdownPointer>
@@ -477,7 +578,7 @@ function readPublicationChanges(php: PHP): PublicationChanges {
 
 function publicationPlan(current: PublishedRevision, changes: PublicationChanges): { upsert: string[]; remove: string[] } {
   const existing = current.routes.map(({ route }) => route)
-  const upsert = changes.all ? existing : changes.upsert
+  const upsert = changes.all ? [...new Set([...existing, ...changes.upsert])].sort() : changes.upsert
   const remove = changes.remove.filter((route) => !upsert.includes(route))
   if (new Set([...existing, ...upsert]).size > MAX_PUBLISHED_ROUTES) throw new Error("Incremental publication exceeds its route budget.")
   return { upsert, remove }
@@ -702,7 +803,7 @@ function validateWordPressPageSnapshot(snapshot: WordPressPageSnapshot, canonica
     || typeof snapshot.body !== "string") throw new Error("Published page artifact is invalid.")
 }
 
-async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, route: "wordpress" | "health" | "r2-mutate"): Promise<Response> {
+async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, route: "wordpress" | "health" | "r2-mutate" | "static-artifact-import", staticArtifactImport?: StaticArtifactImport): Promise<Response> {
   if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
   if (route === "wordpress" && isCacheableWordPressPageRequest(request)) {
     const state = await coordinator.state()
@@ -728,7 +829,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       finalized = true
       return cachedPage
     }
-    runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin)
+    runtime = await getRuntime(env, lease.pointer, new URL(request.url).origin, route === "static-artifact-import")
     const mutatesCanonicalState = isMutation(request, route)
     const diagnosticsStartedAt = Date.now()
     const retained = new MutationRetainedBytes()
@@ -738,7 +839,24 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     let responseBodyBytes = 0
     let canonicalChanges: MarkdownChanges | undefined
     let publicationChanges: PublicationChanges | undefined
-    if (route === "r2-mutate") {
+    if (route === "static-artifact-import") {
+      if (!staticArtifactImport) throw new Error("Static artifact import input is unavailable.")
+      initializePublicationChanges(runtime.php)
+      runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
+      const imported = await runStaticArtifactImport(runtime, staticArtifactImport)
+      if (imported.status !== "imported") {
+        await discardRuntime(runtime)
+        runtime = undefined
+        await releaseLease(coordinator, request.url, lease)
+        finalized = true
+        const status = imported.status === "duplicate" ? 200 : imported.status === "conflict" ? 409 : 422
+        return Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, ...imported }, { status })
+      }
+      response = Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, ...imported }, { status: 201 })
+      canonicalChanges = readCanonicalChanges(runtime.php)
+      publicationChanges = readPublicationChanges(runtime.php)
+      console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-static-artifact-persistence/v1", canonicalChanges, publicationChanges }))
+    } else if (route === "r2-mutate") {
       initializePublicationChanges(runtime.php)
       const mutation = await runSyntheticMutation(runtime)
       response = mutation.response
@@ -775,7 +893,9 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges)
       response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
       if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)
-      await commitLease(coordinator, request.url, lease, next)
+      const committed = await commitLease(coordinator, request.url, lease, next)
+      response.headers.set("x-wp-codebox-canonical-revision", committed.pointer.revision)
+      response.headers.set("x-wp-codebox-canonical-version", String(committed.version))
       logMutationPhase(diagnosticsStartedAt, "commit", retained, { publication: publicationJob ? "queued" : "unchanged" })
     } else {
       await releaseLease(coordinator, request.url, lease)
@@ -879,8 +999,8 @@ function pageCacheResponse(response: Response, head: boolean, status: "hit" | "m
   return new Response(head ? null : response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
-function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate"): boolean {
-  if (route === "r2-mutate" || !["GET", "HEAD", "OPTIONS"].includes(request.method)) return true
+function isMutation(request: Request, route: "wordpress" | "health" | "r2-mutate" | "static-artifact-import"): boolean {
+  if (route === "r2-mutate" || route === "static-artifact-import" || !["GET", "HEAD", "OPTIONS"].includes(request.method)) return true
   if (route !== "wordpress" || request.method !== "GET") return false
   const url = new URL(request.url)
   return url.pathname.startsWith("/wp-admin/") && !!url.searchParams.get("action") && url.searchParams.get("action") !== "-1"
@@ -921,10 +1041,10 @@ function commitLease(coordinator: RevisionCoordinator, _requestUrl: string, leas
   return coordinator.commit(lease, pointer)
 }
 
-async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, origin: string): Promise<Runtime> {
-  if (cachedRuntime && cachedRuntime.baseRevision !== pointer.revision) await discardCachedRuntime()
+async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, origin: string, includeStaticSiteImporter = false): Promise<Runtime> {
+  if (cachedRuntime && (cachedRuntime.baseRevision !== pointer.revision || includeStaticSiteImporter)) await discardCachedRuntime()
   if (!cachedRuntime) {
-    const promise = bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, origin, await canonicalWordPressAuthConstants(env))
+    const promise = bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, origin, await canonicalWordPressAuthConstants(env), includeStaticSiteImporter)
     cachedRuntime = { baseRevision: pointer.revision, promise }
     promise.catch(() => {
       if (cachedRuntime?.promise === promise) cachedRuntime = undefined
@@ -965,9 +1085,9 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>): Promise<Runtime> {
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeStaticSiteImporter = false): Promise<Runtime> {
   const revision = await readCanonicalRevision(bucket, pointer)
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted), pointer }
+  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeStaticSiteImporter), pointer }
 }
 
 async function bootstrapCanonicalRuntime(env: RuntimeEnv, coordinator: RevisionCoordinator, requestUrl: string, lease: Lease): Promise<Runtime> {
@@ -1079,6 +1199,35 @@ async function runSyntheticMutation(runtime: Runtime): Promise<{ response: Respo
   const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
   validateMarkdownChanges(mutation.canonicalChanges)
   return { response: Response.json({ schema: "wp-codebox/cloudflare-wordpress-mutation/v1", source: "entry-worker-primary-runtime", ...mutation, canonicalFiles: countRuntimeFiles(runtime.php, MARKDOWN_ROOT), markdownDatabaseIntegrationRevision: MARKDOWN_DATABASE_INTEGRATION_REVISION, sqlitePersisted: false }), canonicalChanges: mutation.canonicalChanges }
+}
+
+interface StaticArtifactRuntimeResult {
+  status: "imported" | "duplicate" | "conflict" | "failed" | "quality-failed"
+  fingerprint?: string
+  artifact?: { r2Key: string; sha256: string; size: number }
+  themeSlug?: string
+  pages?: Record<string, number>
+  quality?: { fallbackBlocks: number; coreHtmlBlocks: number; freeformBlocks: number; invalidBlocks: number }
+  importedAt?: string
+  ability?: string
+  staticSiteImporterVersion?: string
+  error?: { code?: string; message?: string }
+}
+
+async function runStaticArtifactImport(runtime: Runtime, input: StaticArtifactImport): Promise<StaticArtifactRuntimeResult> {
+  runtime.php.writeFile(STATIC_ARTIFACT_IMPORT_PATH, new TextEncoder().encode(JSON.stringify(input.artifact)))
+  runtime.php.writeFile(STATIC_ARTIFACT_IMPORT_INPUT_PATH, new TextEncoder().encode(JSON.stringify({
+    idempotencyKey: input.idempotencyKey,
+    fingerprint: input.fingerprint,
+    artifact: input.artifactReference,
+    slug: input.options.slug,
+    name: input.options.name,
+    siteTitle: input.options.siteTitle,
+  })))
+  const output = (await runtime.php.run({ code: STATIC_ARTIFACT_IMPORT_CODE })).text.trim()
+  const result = JSON.parse(output) as StaticArtifactRuntimeResult
+  if (!["imported", "duplicate", "conflict", "failed", "quality-failed"].includes(result.status)) throw new Error("Static Site Importer returned an invalid status envelope.")
+  return result
 }
 
 async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionCoordinator, scheduledTime: number): Promise<CronInvocationEvidence> {
@@ -1553,10 +1702,12 @@ async function bootWordPressRuntime(
   uploadFiles?: RuntimeFile[],
   wpContentFiles?: RuntimeFile[],
   wpContentDeleted: string[] = [],
+  includeStaticSiteImporter = false,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
   validateWpContentDeletedPaths(wpContentDeleted)
   const sqliteIntegrationPluginZip = includeSqlite ? readSqliteIntegrationArtifact(runtimeBucket!) : undefined
+  const staticSiteImporterZip = includeStaticSiteImporter ? readStaticSiteImporterArtifact(runtimeBucket!) : undefined
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
     constants: {
@@ -1579,9 +1730,10 @@ async function bootWordPressRuntime(
     // Browser cookies are carried by the Worker Fetch request; Playground's
     // internal store would overwrite that header after an isolate restart.
     cookieStore: false,
-    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length ? {
-      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length ? async (php: PHP) => {
+    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? {
+      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? async (php: PHP) => {
         if (streamWordPressFiles) await materializeWordPressServerFiles(php, runtimeBucket)
+        if (staticSiteImporterZip) await materializeStaticSiteImporter(php, await staticSiteImporterZip)
         if (markdownFiles) {
           await materializeMarkdownDatabaseIntegration(php)
           materializeCanonicalChangeAdapter(php)
@@ -1756,7 +1908,7 @@ foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
         if (!$file->isFile()) continue;
         $absolute = str_replace('\\\\', '/', $file->getPathname());
         $path = $root . '/' . substr($absolute, strlen($directory) + 1);
-        if (str_starts_with($path, 'plugins/markdown-database-integration/') || str_starts_with($path, 'plugins/sqlite-database-integration/') || str_starts_with($path, 'mu-plugins/wp-codebox-cloudflare-canonical-changes.php')) continue;
+        if (str_starts_with($path, 'plugins/markdown-database-integration/') || str_starts_with($path, 'plugins/sqlite-database-integration/') || str_starts_with($path, 'plugins/static-site-importer/') || str_starts_with($path, 'mu-plugins/wp-codebox-cloudflare-canonical-changes.php') || str_starts_with($path, 'mu-plugins/wp-codebox-static-site-importer.php')) continue;
         $size = $file->getSize();
         $total += $size;
         if ($size > ${MAX_WP_CONTENT_FILE_BYTES} || $total > ${MAX_WP_CONTENT_TOTAL_BYTES} || count($files) >= ${MAX_WP_CONTENT_FILES}) {
@@ -1838,6 +1990,34 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
   }
 }
 
+async function materializeStaticSiteImporter(php: PHP, archive: Uint8Array): Promise<void> {
+  const required = new Set([
+    "static-site-importer/static-site-importer.php",
+    "static-site-importer/vendor/autoload.php",
+  ])
+  let count = 0
+  let total = 0
+  for await (const entry of decodeZip(new Blob([Uint8Array.from(archive).buffer]).stream())) {
+    if (entry.name.endsWith("/")) continue
+    if (!entry.name.startsWith("static-site-importer/") || entry.name.includes("\\") || entry.name.split("/").some((segment: string) => !segment || segment === "." || segment === "..")) {
+      throw new Error("Static Site Importer archive contains an invalid path.")
+    }
+    const bytes = new Uint8Array(await entry.arrayBuffer())
+    count++
+    total += bytes.byteLength
+    if (count > MAX_STATIC_SITE_IMPORTER_FILES || total > MAX_STATIC_SITE_IMPORTER_BYTES) throw new Error("Static Site Importer archive exceeds its extraction budget.")
+    const relative = entry.name.slice("static-site-importer/".length)
+    const destination = `${STATIC_SITE_IMPORTER_ROOT}/${relative}`
+    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
+    php.writeFile(destination, bytes)
+    required.delete(entry.name)
+  }
+  if (required.size) throw new Error(`Static Site Importer archive is missing required files: ${[...required].join(", ")}.`)
+  php.mkdir(STATIC_SITE_IMPORTER_MU_LOADER.slice(0, STATIC_SITE_IMPORTER_MU_LOADER.lastIndexOf("/")))
+  php.writeFile(STATIC_SITE_IMPORTER_MU_LOADER, new TextEncoder().encode(`<?php
+require_once '/wordpress/wp-content/plugins/static-site-importer/static-site-importer.php';`))
+}
+
 function materializeCanonicalChangeAdapter(php: PHP): void {
   const path = "/wordpress/wp-content/mu-plugins/wp-codebox-cloudflare-canonical-changes.php"
   const source = `<?php
@@ -1874,6 +2054,27 @@ function wp_codebox_publication_route( $url ) {
 	}
 	return $route;
 }
+function wp_codebox_publication_page_route( $post_id ) {
+	$uri = get_page_uri( $post_id );
+	if ( ! is_string( $uri ) || '' === trim( $uri, '/' ) ) return null;
+	return wp_codebox_publication_route( home_url( '/' . user_trailingslashit( trim( $uri, '/' ), 'page' ) ) );
+}
+function wp_codebox_publication_reconcile_front_page( &$changes, $old_front_id, $new_front_id ) {
+	$old_front_id = (int) $old_front_id;
+	$new_front_id = (int) $new_front_id;
+	if ( $old_front_id && $old_front_id !== $new_front_id ) {
+		$old_route = wp_codebox_publication_page_route( $old_front_id );
+		if ( $old_route ) $changes['upsert'][] = $old_route;
+	}
+	if ( $new_front_id ) {
+		$new_route = wp_codebox_publication_page_route( $new_front_id );
+		if ( $new_route ) {
+			$changes['upsert'] = array_values( array_diff( $changes['upsert'], array( $new_route ) ) );
+			$changes['remove'][] = $new_route;
+		}
+		$changes['upsert'][] = '/';
+	}
+}
 function wp_codebox_publication_record_post( $post_id, $remove = false ) {
 	if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) return;
 	$post = get_post( $post_id );
@@ -1905,13 +2106,19 @@ add_action( 'pre_post_update', static function ( $post_id ) { wp_codebox_publica
 add_action( 'save_post', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id ); }, PHP_INT_MAX );
 add_action( 'before_delete_post', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id, true ); }, 1 );
 add_action( 'set_object_terms', static function ( $post_id ) { wp_codebox_publication_record_post( $post_id ); }, PHP_INT_MAX );
-add_action( 'updated_option', static function ( $option ) {
+add_action( 'updated_option', static function ( $option, $old_value, $value ) {
 	if ( in_array( $option, array( 'active_plugins', 'blogname', 'page_for_posts', 'page_on_front', 'permalink_structure', 'show_on_front', 'sidebars_widgets', 'stylesheet', 'template' ), true ) || str_starts_with( $option, 'theme_mods_' ) ) {
 		$changes = wp_codebox_publication_read_changes();
 		$changes['all'] = true;
+		if ( 'page_on_front' === $option && 'page' === get_option( 'show_on_front' ) ) {
+			wp_codebox_publication_reconcile_front_page( $changes, $old_value, $value );
+		} elseif ( 'show_on_front' === $option ) {
+			$front_id = (int) get_option( 'page_on_front' );
+			wp_codebox_publication_reconcile_front_page( $changes, 'page' === $old_value ? $front_id : 0, 'page' === $value ? $front_id : 0 );
+		}
 		wp_codebox_publication_write_changes( $changes );
 	}
-}, PHP_INT_MAX );
+}, PHP_INT_MAX, 3 );
 add_action( 'wp_update_nav_menu', static function () {
 	$changes = wp_codebox_publication_read_changes();
 	$changes['all'] = true;
@@ -1939,6 +2146,10 @@ async function readSqliteIntegrationArtifact(bucket: R2Bucket): Promise<File> {
   const manifest = sqliteIntegrationArtifactManifest as RuntimeArchiveArtifactManifest
   const bytes = await readRuntimeArchiveArtifact(bucket, manifest)
   return new File([Uint8Array.from(bytes).buffer], "sqlite-database-integration.zip", { type: "application/zip" })
+}
+
+async function readStaticSiteImporterArtifact(bucket: R2Bucket): Promise<Uint8Array> {
+  return readRuntimeArchiveArtifact(bucket, staticSiteImporterArtifactManifest as RuntimeArchiveArtifactManifest)
 }
 
 async function serveWordPressWpContent(request: Request, bucket: R2Bucket, coordinator: RevisionCoordinator): Promise<Response | null> {

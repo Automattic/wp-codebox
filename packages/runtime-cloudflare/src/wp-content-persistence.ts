@@ -48,6 +48,9 @@ export function isCanonicalWpContentPath(path: string): boolean {
   if (!/^(?:plugins|themes|languages|mu-plugins)\//.test(path) || path.includes("\\") || path.split("/").some((segment) => !segment || segment === "." || segment === "..")) return false
   return !path.startsWith("plugins/markdown-database-integration/")
     && !path.startsWith("plugins/sqlite-database-integration/")
+    && !path.startsWith("plugins/static-site-importer/")
     && path !== "mu-plugins/wp-codebox-cloudflare-canonical-changes.php"
     && !path.startsWith("mu-plugins/wp-codebox-cloudflare-canonical-changes.php/")
+    && path !== "mu-plugins/wp-codebox-static-site-importer.php"
+    && !path.startsWith("mu-plugins/wp-codebox-static-site-importer.php/")
 }

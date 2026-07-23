@@ -6,6 +6,7 @@ export type WorkerRequestRoute =
   | { kind: "operator-reset" }
   | { kind: "operator-restore" }
   | { kind: "operator-adopt" }
+  | { kind: "operator-static-artifact-import" }
   | { kind: "operator-publish" }
   | { kind: "probe"; phase: string }
 
@@ -18,6 +19,7 @@ export function routeWorkerRequest(request: Request): WorkerRequestRoute {
   if (phase === "operator-reset") return { kind: "operator-reset" }
   if (phase === "operator-restore") return { kind: "operator-restore" }
   if (phase === "operator-adopt") return { kind: "operator-adopt" }
+  if (phase === "operator-static-artifact-import") return { kind: "operator-static-artifact-import" }
   if (phase === "operator-publish") return { kind: "operator-publish" }
   return { kind: "probe", phase }
 }
