@@ -16,6 +16,14 @@
 			"database_id": "00000000-0000-0000-0000-000000000000"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "WORDPRESS_STATE", "class_name": "WordPressStateCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["WordPressStateCoordinator"] }
+	],
 	"rules": [
 		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
 		{ "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip", "**/*-canonical-seed.zip"], "fallthrough": false }

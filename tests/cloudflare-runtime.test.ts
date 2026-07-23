@@ -9,6 +9,7 @@ import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runt
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
 import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
+import { selectOperatorCoordinator } from "../packages/runtime-cloudflare/src/operator-coordinator.js"
 import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
@@ -227,8 +228,8 @@ test("Cloudflare runtime declares bounded CPU and scheduled execution", async ()
   assert.equal(d1Config.limits?.cpu_ms, 300_000)
   assert.deepEqual(d1Config.triggers?.crons, ["* * * * *"])
   assert.deepEqual(d1Config.d1_databases?.map(({ binding, database_name }) => ({ binding, database_name })), [{ binding: "WORDPRESS_STATE_DATABASE", database_name: "wp-codebox-runtime-state" }])
-  assert.equal(d1Config.durable_objects, undefined)
-  assert.equal(d1Config.migrations, undefined)
+  assert.deepEqual((d1Config.durable_objects as { bindings?: Array<{ name?: string; class_name?: string }> } | undefined)?.bindings, [{ name: "WORDPRESS_STATE", class_name: "WordPressStateCoordinator" }])
+  assert.deepEqual(d1Config.migrations, [{ tag: "v1", new_sqlite_classes: ["WordPressStateCoordinator"] }])
 })
 
 test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
@@ -343,7 +344,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return await runCoordinatedWordPressRequest\(request, env, coordinator, site, route\.kind\)/)
-  assert.match(d1Entry, /export \{ WordPressStateCoordinator \} from "\.\/state-coordinator\.js"/)
+  assert.match(d1Entry, /export \{ WordPressStateCoordinator \}/)
   assert.match(worker, /const cachedRuntimes = new Map/)
   assert.match(worker, /cachedRuntimes\.get\(site\.id\)/)
   assert.match(worker, /promise\.catch\(\(\) =>/)
@@ -374,7 +375,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(contract, /committed\(version: number\): Promise<MarkdownPointer \| null>/)
   assert.match(durableObjectEntry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\(site\.id\), site\.id\)/)
   assert.match(d1Entry, /new D1RevisionCoordinator\(env\.WORDPRESS_STATE_DATABASE, site\.id\)/)
-  assert.doesNotMatch(d1Entry, /DurableObject|WORDPRESS_STATE\.getByName/)
+  assert.match(d1Entry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\(site\.id\), site\.id\)/)
   assert.match(coordinator, /token: crypto\.randomUUID\(\)/)
   assert.match(coordinator, /record\.version\+\+/)
   assert.match(coordinator, /lease\.expiresAt <= Date\.now\(\)/)
@@ -391,7 +392,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.ok(worker.indexOf("resolveSiteContextFromRequest") < worker.indexOf("servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET, site)"))
   assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request, env\.WORDPRESS_STATE_BUCKET\)/)
   assert.ok(worker.indexOf("const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)") < worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)"))
-  assert.ok(worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)") < worker.indexOf("const route = routeWorkerRequest(request)"))
+  assert.ok(worker.indexOf("const route = routeWorkerRequest(request)") < worker.indexOf("selectOperatorCoordinator("))
   assert.match(worker, /CONCATENATE_SCRIPTS: false/)
   assert.match(worker, /SCRIPT_DEBUG: false/)
   assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
@@ -652,10 +653,14 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   assert.deepEqual(await (await call("committed", { version: 31 })).json(), adoptedPointer)
   assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 200)
   assert.equal((await call("adopt", { pointer: { ...adoptedPointer, revision: "divergent" }, version: 31 })).status, 409)
+  const forwardPointer = { ...adoptedPointer, revision: "forward", manifestKey: "sites/default/markdown/revisions/forward.json" }
+  assert.equal((await call("adopt", { pointer: forwardPointer, version: 32 })).status, 200)
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 409)
   const adoptedLease = await (await call("begin")).json() as { token: string }
   assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 409)
   assert.equal((await call("abort", { token: adoptedLease.token })).status, 200)
   assert.equal((await call("reset")).status, 200)
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "receipt-collision" }, version: 32 })).status, 409)
 
   const fence = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string; expiresAt: number }
   assert.ok(fence.expiresAt > Date.now())
@@ -668,6 +673,12 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   assert.equal((await call("fence-release", { token: "wrong" })).status, 409)
   assert.equal((await call("fence-release", { token: fence.token })).status, 200)
   assert.deepEqual(await (await call("fence-status")).json(), { active: false })
+
+  const adoptionFence = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string }
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "fenced", manifestKey: "sites/default/markdown/revisions/fenced.json" }, version: 33 })).status, 409)
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "fenced", manifestKey: "sites/default/markdown/revisions/fenced.json" }, version: 33, fenceToken: adoptionFence.token })).status, 200)
+  assert.equal((await call("fence-release", { token: adoptionFence.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
 
   const first = await (await call("begin")).json() as { token: string; pointer: null; version: number }
   assert.equal(first.pointer, null)
@@ -698,6 +709,20 @@ test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers 
   const cutover = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string }
   assert.equal((await call("renew", { token: expiring.token, ttlMs: 50 })).status, 409)
   assert.equal((await call("fence-release", { token: cutover.token })).status, 200)
+})
+
+test("Cloudflare selects a dormant coordinator only for explicit operator cutover routes", () => {
+  const selected: string[] = []
+  const active = { id: "active" } as never
+  const dormant = { id: "durable-object" } as never
+  const resolve = (selector: string) => selector === "durable-object" ? (selected.push(selector), dormant) : undefined
+
+  assert.deepEqual(selectOperatorCoordinator(active, { kind: "r2-state" }, "durable-object", resolve), { coordinator: active, selected: false })
+  assert.deepEqual(selected, [])
+  assert.deepEqual(selectOperatorCoordinator(active, { kind: "operator-fence", action: "status" }, "durable-object", resolve), { coordinator: dormant, selected: true })
+  assert.deepEqual(selected, ["durable-object"])
+  assert.equal(selectOperatorCoordinator(active, { kind: "operator-adopt" }, "unknown", resolve), null)
+  assert.equal(selectOperatorCoordinator(active, { kind: "operator-reset" }, "durable-object", resolve), null)
 })
 
 test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {

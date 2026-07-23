@@ -56,7 +56,7 @@ export interface RevisionCoordinator {
   acquireFence(ttlMs: number): Promise<MutationFence>
   renewFence(token: string, ttlMs: number): Promise<MutationFence>
   releaseFence(token: string): Promise<void>
-  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }>
+  adopt(pointer: MarkdownPointer, version: number, fenceToken?: string, requireFence?: boolean): Promise<{ pointer: MarkdownPointer; version: number }>
   reset(): Promise<void>
 }
 

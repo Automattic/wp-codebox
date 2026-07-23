@@ -71,8 +71,8 @@ export class DurableObjectRevisionCoordinator implements RevisionCoordinator {
     await this.call("fence-release", { token })
   }
 
-  adopt(pointer: MarkdownPointer, version: number): Promise<{ pointer: MarkdownPointer; version: number }> {
-    return this.call("adopt", { pointer, version })
+  adopt(pointer: MarkdownPointer, version: number, fenceToken?: string, requireFence = false): Promise<{ pointer: MarkdownPointer; version: number }> {
+    return this.call("adopt", { pointer, version, fenceToken, requireFence })
   }
 
   async reset(): Promise<void> {
@@ -252,7 +252,8 @@ export class WordPressStateCoordinator implements DurableObject {
   private async adopt(siteId: string, body: Record<string, unknown>): Promise<{ pointer: MarkdownPointer; version: number }> {
     const record = await this.record(siteId)
     const fence = await this.activeFence(record)
-    if (fence) throw new RevisionConflict("Coordinator adoption is blocked by an active cutover fence.", fence.expiresAt)
+    if (body.requireFence === true && !fence) throw new RevisionConflict("Selected coordinator adoption requires an active cutover fence.")
+    if (fence && body.fenceToken !== fence.token) throw new RevisionConflict("Coordinator adoption is blocked by an active cutover fence.", fence.expiresAt)
     const pointer = body.pointer as MarkdownPointer
     const version = body.version
     if (!pointer || typeof pointer.revision !== "string" || typeof pointer.manifestKey !== "string" || typeof pointer.persistedAt !== "string"
@@ -261,7 +262,10 @@ export class WordPressStateCoordinator implements DurableObject {
     if (record.lease) delete record.lease
     const empty = record.version === 0 && record.pointer === null
     const exact = record.version === version && samePointer(record.pointer, pointer)
-    if (!empty && !exact) throw new RevisionConflict("Coordinator adoption requires empty or exactly matching state.")
+    const forward = (version as number) > record.version
+    if (!empty && !exact && !forward) throw new RevisionConflict("Coordinator adoption requires empty, exactly matching, or monotonic forward state.")
+    const committed = await this.state.storage.get<MarkdownPointer>(`wordpress-state-commit/${version}`)
+    if (committed && !samePointer(committed, pointer)) throw new RevisionConflict("Coordinator adoption cannot replace an existing commit receipt.")
     record.pointer = pointer
     record.version = version as number
     await this.state.storage.transaction(async (transaction) => {
