@@ -62,10 +62,22 @@ add_action('rest_api_init', static function (): void {
 	));
 });
 
-add_action('wp_ajax_wp_codebox_vulnerable_save', static function (): void {
+$wp_codebox_vulnerable_ajax = static function (): void {
 	// Intentionally vulnerable: no check_ajax_referer() or capability check.
 	update_option('wp_codebox_vulnerable_ajax', wp_unslash($_POST['value'] ?? ''), false);
 	wp_send_json_success(array('violations' => array('ajax-nonce-bypass')));
+};
+add_action('wp_ajax_wp_codebox_vulnerable_save', $wp_codebox_vulnerable_ajax);
+add_action('wp_ajax_nopriv_wp_codebox_vulnerable_save', $wp_codebox_vulnerable_ajax);
+
+function wp_codebox_adversarial_vulnerable_xmlrpc($args): array {
+	update_option('wp_codebox_vulnerable_xmlrpc', $args, false);
+	return array('saved' => true, 'violations' => array('xmlrpc-authorization-bypass'));
+}
+
+add_filter('xmlrpc_methods', static function (array $methods): array {
+	$methods['wpCodebox.vulnerable'] = 'wp_codebox_adversarial_vulnerable_xmlrpc';
+	return $methods;
 });
 
 add_shortcode('wp_codebox_vulnerable', static function (array $attributes): string {
