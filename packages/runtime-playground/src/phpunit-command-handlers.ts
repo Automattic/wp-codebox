@@ -537,16 +537,34 @@ function pg_defer_new_wordpress_hook_callbacks(string $hook_name, array $before)
 }
 
 function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args = array(), ?string $hook_name = null): void {
-    global $wp_current_filter;
+    global $wp_filter, $wp_current_filter;
     $pushed_hook = false;
+    $original_hook = null;
+    $replay_hook = null;
     if (is_string($hook_name) && $hook_name !== '') {
         if (!is_array($wp_current_filter)) {
             $wp_current_filter = array();
         }
         $wp_current_filter[] = $hook_name;
         $pushed_hook = true;
+        $original_hook = $wp_filter[$hook_name] ?? null;
+        $replay_hook = new WP_Hook();
+        $wp_filter[$hook_name] = $replay_hook;
+        foreach ($deferred as $entry) {
+            $callback = $entry['callback'] ?? null;
+            if (!is_array($callback) || !isset($callback['function'])) {
+                continue;
+            }
+            $priority = isset($entry['priority']) ? (int) $entry['priority'] : 10;
+            $accepted_args = isset($callback['accepted_args']) ? (int) $callback['accepted_args'] : count($args);
+            add_filter($hook_name, $callback['function'], $priority, $accepted_args);
+        }
     }
     try {
+        if ($replay_hook instanceof WP_Hook) {
+            $replay_hook->do_action($args);
+            return;
+        }
         foreach ($deferred as $entry) {
             $callback = $entry['callback'] ?? null;
             if (!is_array($callback) || !isset($callback['function'])) {
@@ -556,6 +574,21 @@ function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args =
             call_user_func_array($callback['function'], array_slice($args, 0, $accepted_args));
         }
     } finally {
+        if ($replay_hook instanceof WP_Hook && is_string($hook_name)) {
+            $retained_callbacks = $replay_hook->callbacks;
+            if ($original_hook instanceof WP_Hook) {
+                $wp_filter[$hook_name] = $original_hook;
+            } else {
+                unset($wp_filter[$hook_name]);
+            }
+            foreach ($retained_callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $callback) {
+                    if (isset($callback['function'])) {
+                        add_filter($hook_name, $callback['function'], (int) $priority, (int) ($callback['accepted_args'] ?? 0));
+                    }
+                }
+            }
+        }
         if ($pushed_hook) {
             array_pop($wp_current_filter);
         }

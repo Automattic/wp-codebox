@@ -65,6 +65,63 @@ function phpString(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
 }
 
+function assertDeferredHookReplayUsesWordPressLifecycle(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-deferred-hook-"))
+  const scriptPath = join(tempDir, "assert-deferred-hook.php")
+  writeFileSync(scriptPath, `<?php
+class WP_Hook {
+    public array $callbacks = array();
+    public function add_filter($hook, $callback, $priority, $accepted_args): void {
+        $id = is_string($callback) ? $callback : spl_object_hash($callback);
+        $this->callbacks[$priority][$id] = array('function' => $callback, 'accepted_args' => $accepted_args);
+    }
+    public function do_action($args): void {
+        $completed = array();
+        while (true) {
+            ksort($this->callbacks);
+            $next = null;
+            foreach ($this->callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $id => $callback) {
+                    $key = $priority . ':' . $id;
+                    if (!isset($completed[$key])) {
+                        $next = array($key, $callback);
+                        break 2;
+                    }
+                }
+            }
+            if ($next === null) return;
+            $completed[$next[0]] = true;
+            call_user_func_array($next[1]['function'], array_slice($args, 0, $next[1]['accepted_args']));
+        }
+    }
+}
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1): bool {
+    global $wp_filter;
+    if (!isset($wp_filter[$hook])) $wp_filter[$hook] = new WP_Hook();
+    $wp_filter[$hook]->add_filter($hook, $callback, $priority, $accepted_args);
+    return true;
+}
+function add_action($hook, $callback, $priority = 10, $accepted_args = 1): bool {
+    return add_filter($hook, $callback, $priority, $accepted_args);
+}
+${extractPhpFunction(source, "pg_run_deferred_wordpress_hook_callbacks")}
+$events = array();
+$wp_current_filter = array();
+$wp_filter = array('init' => new WP_Hook());
+add_action('init', function() use (&$events) { $events[] = 'core-must-not-replay'; }, 5, 0);
+$early = function() use (&$events) {
+    $events[] = 'early';
+    add_action('init', function() use (&$events) { $events[] = 'late'; }, 15, 0);
+};
+pg_run_deferred_wordpress_hook_callbacks(array(array('priority' => 0, 'callback' => array('function' => $early, 'accepted_args' => 0))), array(), 'init');
+if ($events !== array('early', 'late')) throw new RuntimeException('deferred init order was not faithful: ' . json_encode($events));
+if (count($wp_filter['init']->callbacks, COUNT_RECURSIVE) < 6) throw new RuntimeException('replayed callbacks were not retained');
+if ($wp_current_filter !== array()) throw new RuntimeException('current filter stack leaked');
+echo "ok\n";
+`)
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
 function assertPhpunitConfigurationAndDiscoveryFailures(source: string, functionName: string, discoveryFunctionName: string, logFunctionName: string, supportsImplicitFallback: boolean): void {
   const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-config-"))
   const malformedXml = join(tempDir, "phpunit.xml.dist")
@@ -662,6 +719,8 @@ const managedModeCode = phpunitRunCode({
   multisite: false,
   databaseType: "sqlite",
 })
+
+assertDeferredHookReplayUsesWordPressLifecycle(managedModeCode)
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("define('DB_NAME', ':memory:');"), "default managed PHPUnit remains on SQLite")
