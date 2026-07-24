@@ -33,6 +33,10 @@ const cliCommandRoutes = {
     readiness: "fuzzReadiness",
     capabilities: "fuzzReadiness",
   },
+  adversarial: {
+    run: "adversarialRun",
+    replay: "adversarialReplay",
+  },
   recipe: {
     validate: "recipeValidate",
     build: "recipeBuild",
@@ -152,7 +156,7 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
 }
 
 async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
-  if (!command || !["boot", "run", "recipe-run", "agent-task-run", "run-agent-task", "run-wordpress-workload"].includes(command)) {
+  if (!command || !["boot", "run", "recipe-run", "adversarial", "agent-task-run", "run-agent-task", "run-wordpress-workload"].includes(command)) {
     return undefined
   }
 

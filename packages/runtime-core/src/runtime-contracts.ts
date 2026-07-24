@@ -320,6 +320,50 @@ export interface WorkspaceRecipeFuzzRun {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeAdversarialCaseTemplate {
+  id: string
+  phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>>
+}
+
+export interface WorkspaceRecipeAdversarialCampaign {
+  schema: "wp-codebox/adversarial-recipe-campaign/v1"
+  id: string
+  seed: string
+  corpus: Array<{
+    id: string
+    actions: Array<{ type: string; input?: unknown; metadata?: Record<string, unknown> }>
+    input?: unknown
+    signals?: string[]
+    metadata?: Record<string, unknown>
+  }>
+  caseTemplates: WorkspaceRecipeAdversarialCaseTemplate[]
+  mutators: Array<"scalar" | "structured" | "binary" | "sequence">
+  oracles: Array<{
+    id: "runtime-status"
+    severity: "low" | "medium" | "high" | "critical"
+    description?: string
+    metadata?: Record<string, unknown>
+  }>
+  matrix?: Array<{ name: string; values: string[] }>
+  concurrency?: number
+  budgets?: Partial<{
+    maxCases: number
+    maxActionsPerCase: number
+    maxInputBytes: number
+    maxCaseTimeMs: number
+    maxWallTimeMs: number
+    maxArtifactBytes: number
+  }>
+  faultSchedule?: import("./transport-faults.js").TransportFaultModel
+  resetPolicy?: import("./fuzz-suite-contracts.js").FuzzSuiteResetPolicy
+  requiredCapabilities?: string[]
+  optionalCapabilities?: string[]
+  novelty?: { retainSignals?: boolean }
+  shrinking?: { enabled?: boolean }
+  replay?: { selection?: "findings" | "all" }
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeFixtureDatabaseReset {
   strategy?: "none" | "truncate-tables"
   tables?: string[]
@@ -631,6 +675,7 @@ export interface WorkspaceRecipe {
     after?: WorkspaceRecipeStep[]
   }
   fuzzRun?: WorkspaceRecipeFuzzRun
+  adversarialCampaigns?: WorkspaceRecipeAdversarialCampaign[]
   artifacts?: {
     directory?: string
     verify?: boolean | WorkspaceRecipeArtifactVerifier

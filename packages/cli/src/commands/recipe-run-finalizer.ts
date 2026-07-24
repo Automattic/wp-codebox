@@ -364,6 +364,7 @@ function classifyRecipePhaseFailure(phase: string): string {
     case "import_fixture_databases":
       return "fixture_database"
     case "run_workloads":
+    case "run_adversarial_campaigns":
       return "workload"
     case "run_probes":
       return "probe"

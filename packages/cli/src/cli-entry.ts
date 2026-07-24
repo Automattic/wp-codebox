@@ -14,6 +14,7 @@ import { runFuzzDescriptorCommand, runFuzzMinimizeCaseCommand, runFuzzReadinessC
 import { runRunsArtifactsCommand, runRunsCancelCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runTargetProvisionCommand } from "./commands/target.js"
 import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
+import { runAdversarialRecipeCommand, runAdversarialReplayCommand } from "./commands/adversarial.js"
 import { printHelp } from "./output.js"
 
 export async function runCli(args: string[]): Promise<number> {
@@ -29,6 +30,8 @@ export async function runCli(args: string[]): Promise<number> {
     runWordPressWorkload: runWordPressWorkloadCommand,
     fuzzDescriptor: runFuzzDescriptorCommand,
     fuzzReadiness: runFuzzReadinessCommand,
+    adversarialRun: runAdversarialRecipeCommand,
+    adversarialReplay: runAdversarialReplayCommand,
     recipeValidate: runRecipeValidateCommand,
     recipeBuild: runRecipeBuildCommand,
     workspacePolicyCheck: runWorkspacePolicyCheckCommand,

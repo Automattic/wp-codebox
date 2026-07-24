@@ -86,6 +86,7 @@ top-level fields:
 - `inputs`
 - `workflow`
 - `fuzzRun`
+- `adversarialCampaigns`
 - `artifacts`
 - `probes`
 - `metadata`
@@ -123,6 +124,37 @@ imports.
 Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
 artifact contracts. WP Codebox materializes declared repositories as sandbox
 workspace mounts; callers own the policy that decides which artifacts to pass.
+
+## Adversarial Campaigns
+
+`adversarialCampaigns` additively declares deterministic corpus campaigns without
+changing authored `fuzzRun.cases`. Each corpus action selects a registered
+`caseTemplates` id. Generated plans interpolate `{{case.id}}`, `{{case.input}}`,
+`{{action.input}}`, `{{action.inputBase64}}`, `{{matrix}}`, and
+`{{matrix.<name>}}` into template arguments, then execute the resulting phases
+through the existing runtime-backed fuzz suite, checkpoint, episode, command
+policy, and artifact lifecycle.
+
+The built-in mutator registry contains `scalar`, `structured`, `binary`, and
+`sequence`; the initial neutral oracle registry contains `runtime-status`.
+Required capabilities fail recipe validation before services or runtimes start.
+Optional capabilities are reported with explicit availability in run evidence.
+Concurrency above one requires an `isolated-workers` capability and therefore
+fails closed until the selected recipe runtime provides isolated workers.
+
+Run and replay through stable CLI routes:
+
+```bash
+wp-codebox adversarial run --recipe examples/recipes/adversarial-stateful.json --json
+wp-codebox adversarial replay --recipe recipe.json --replay files/adversarial/<campaign>/replay/<fingerprint>.json --json
+```
+
+Every campaign writes a bounded nested bundle under
+`files/adversarial/<campaign>/`, including the result, fingerprint-addressed
+findings, minimized replay envelopes, a manifest, and secret-scan evidence. The
+parent artifact manifest retains all nested files. Interruption returns bounded
+partial campaign evidence before the recipe runner performs its normal runtime
+and service teardown.
 
 ## External Service Boundaries
 

@@ -97,3 +97,28 @@ test("sealed finding bundles redact secrets and machine-specific paths", async (
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("campaign interruption stops scheduling and returns bounded partial evidence", async () => {
+  const controller = new AbortController()
+  let active = 0
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "interrupted",
+    seed: "interrupted-seed",
+    corpus: [{ id: "seed", actions: [{ type: "observe" }] }],
+    budgets: { maxCases: 100, workers: 2, maxCaseTimeMs: 1000, maxWallTimeMs: 10000, maxArtifactBytes: 1024 },
+  }), {
+    signal: controller.signal,
+    execute: async (_plan, signal) => {
+      active += 1
+      controller.abort("test interruption")
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active -= 1
+      return { status: signal.aborted ? "error" : "passed", artifacts: [{ path: "partial.json", kind: "partial", bytes: 16 }] }
+    },
+  })
+  assert.equal(result.status, "incomplete")
+  assert.equal(active, 0, "all active workers settle before interruption returns")
+  assert(result.summary.generated <= 2, "no later round is scheduled after interruption")
+  assert(result.resourceUsage.artifactBytes <= 1024)
+  assert(result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-interrupted"))
+})
