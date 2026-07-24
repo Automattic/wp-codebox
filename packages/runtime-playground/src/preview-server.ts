@@ -13,6 +13,7 @@ export interface PlaygroundCliServer {
     run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
     onMessage?(listener: (data: string) => Promise<string | void> | string | void): Promise<(() => Promise<void> | void) | void> | (() => Promise<void> | void) | void
     readFileAsText?(path: string): string | Promise<string>
+    unlink?(path: string): Promise<void> | void
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string

@@ -14,7 +14,7 @@ import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runB
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
-import { argValue, cleanWpCliOutput, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { argValue, cleanWpCliOutput, runWithTemporaryWpCliScript, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -1054,13 +1054,7 @@ class PlaygroundRuntime implements Runtime {
       throw new Error("wordpress.wp-cli requires a non-empty command")
     }
 
-    if (!server.playground.writeFile) {
-      throw new Error("wordpress.wp-cli requires a Playground backend with writeFile support")
-    }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    const response = await this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    const response = await this.runWpCliCommand(server, argv)
     assertPlaygroundResponseOk("wordpress.wp-cli", response)
 
     return cleanWpCliOutput(response.text)
@@ -1471,13 +1465,18 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async runWpCliCommand(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
-    if (!server.playground.writeFile) {
-      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
+    if (!server.playground.writeFile || !server.playground.unlink) {
+      throw new Error("WP-CLI commands require a Playground backend with writeFile and unlink support")
     }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    return runWithTemporaryWpCliScript(
+      {
+        writeFile: (path, contents) => server.playground.writeFile!(path, contents),
+        unlink: (path) => server.playground.unlink!(path),
+      },
+      this.runtimeId,
+      argv,
+      (scriptPath) => this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath }),
+    )
   }
 
   private async createRuntimeWpCliBridge(server: PlaygroundCliServer): Promise<RuntimeWpCliBridge> {
@@ -1758,13 +1757,7 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async runWpCliArgv(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
-    if (!server.playground.writeFile) {
-      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
-    }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    return this.runWpCliCommand(server, argv)
   }
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {

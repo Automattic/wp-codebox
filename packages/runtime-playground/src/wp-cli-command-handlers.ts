@@ -1,5 +1,11 @@
+import { randomBytes } from "node:crypto"
 import { argValue } from "./command-args.js"
 import { phpCliStreamConstants } from "./php-snippets.js"
+
+interface WpCliTemporaryScriptFilesystem {
+  writeFile(path: string, contents: string): Promise<void>
+  unlink(path: string): Promise<void> | void
+}
 
 export function wpCliCommandFromArgs(args: string[]): string {
   const explicit = argValue(args, "command")
@@ -56,6 +62,17 @@ $GLOBALS['argv'] = array_merge(array('/tmp/wp-cli.phar', '--path=/wordpress', '-
 ${phpCliStreamConstants()}
 require '/tmp/wp-cli.phar';
 `
+}
+
+export async function runWithTemporaryWpCliScript<T>(filesystem: WpCliTemporaryScriptFilesystem, runtimeId: string, argv: string[], run: (scriptPath: string) => Promise<T>): Promise<T> {
+  const runtimeNamespace = runtimeId.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 80) || "runtime"
+  const scriptPath = `/tmp/wp-codebox-wp-cli-${runtimeNamespace}-${randomBytes(16).toString("hex")}.php`
+  await filesystem.writeFile(scriptPath, wpCliPhpScript(argv))
+  try {
+    return await run(scriptPath)
+  } finally {
+    await Promise.resolve(filesystem.unlink(scriptPath)).catch(() => undefined)
+  }
 }
 
 export function cleanWpCliOutput(output: string): string {
