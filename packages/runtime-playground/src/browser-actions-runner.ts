@@ -238,6 +238,7 @@ export async function runBrowserActionsCommand({
           baseUrl: preview.effectiveOrigin,
           contract: adaptiveContract,
           observations: { consoleMessages, errors, network },
+          navigationScope: topology.navigationScope,
           signal: spec.signal,
         })
         adaptiveExplorationArtifact = { schema: "wp-codebox/browser-adaptive-exploration-artifact/v1", contract: adaptiveContract, result, capturedAt: now() }

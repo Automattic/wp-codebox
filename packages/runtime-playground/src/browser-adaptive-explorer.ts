@@ -16,6 +16,7 @@ import { stableJson } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
 
 import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
+import type { BrowserPreviewNavigationScope } from "./browser-preview-routing.js"
 
 interface AdaptiveObservationSources {
   consoleMessages: object[]
@@ -48,6 +49,7 @@ export async function exploreAdaptiveBrowserStateMachine({
   observations,
   signal,
   now = Date.now,
+  navigationScope,
 }: {
   page: Page
   baseUrl: string
@@ -55,6 +57,7 @@ export async function exploreAdaptiveBrowserStateMachine({
   observations: AdaptiveObservationSources
   signal?: AbortSignal
   now?: () => number
+  navigationScope?: BrowserPreviewNavigationScope
 }): Promise<BrowserAdaptiveExplorationResult> {
   const started = now()
   const states = new Map<string, BrowserAdaptiveState>()
@@ -67,7 +70,7 @@ export async function exploreAdaptiveBrowserStateMachine({
   let revisits = 0
   let exhausted: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
 
-  const initial = await captureAdaptiveState(page, contract, 0)
+  const initial = await captureAdaptiveState(page, contract, 0, navigationScope)
   appendDiagnostics(diagnostics, initial.diagnostics, contract.descriptorLimits.maxDiagnostics)
   states.set(initial.state.digest, initial.state)
   const frontier: FrontierEntry[] = [{ state: initial.state, path: [] }]
@@ -90,7 +93,7 @@ export async function exploreAdaptiveBrowserStateMachine({
 
       if (contract.resetPolicy.mode === "start-url" && (transitions.length > 0 || source.path.length > 0)) {
         if (actions + source.path.length >= contract.budgets.maxActions) { exhausted = "maxActions"; break }
-        const restored = await restoreAdaptivePath(page, baseUrl, contract, source.path, signal)
+        const restored = await restoreAdaptivePath(page, baseUrl, contract, source.path, signal, navigationScope)
         actions += restored.executed
         appendDiagnostics(diagnostics, restored.diagnostics, contract.descriptorLimits.maxDiagnostics)
         if (!restored.state || restored.state.digest !== source.state.digest) {
@@ -113,8 +116,9 @@ export async function exploreAdaptiveBrowserStateMachine({
         actionError = error instanceof Error ? error.message : String(error)
       }
       actions += 1
-      const stabilized = await stabilizeAdaptiveState(page, contract, source.path.length + 1, now)
+      const stabilized = await stabilizeAdaptiveState(page, contract, source.path.length + 1, now, navigationScope)
       appendDiagnostics(diagnostics, stabilized.diagnostics, contract.descriptorLimits.maxDiagnostics)
+      const scopeRejection = stabilized.diagnostics.find((diagnostic) => diagnostic.code === "browser_adaptive_redirect_scope_escape_rejected")
       const newConsoleErrors = consoleErrorMessages(observations.consoleMessages.slice(beforeConsole))
       const newPageErrors = errorMessages(observations.errors.slice(beforeErrors))
       const fingerprints = [...new Set([...newConsoleErrors, ...newPageErrors].map((message) => browserAdaptiveDigest("oracle", message)))].sort()
@@ -153,8 +157,8 @@ export async function exploreAdaptiveBrowserStateMachine({
           loadingAfter: stabilized.loading,
           oracleFingerprints: fingerprints,
         },
-        status: actionError ? "error" : newState ? "ok" : "revisited",
-        ...(actionError ? { diagnostic: { code: "browser_adaptive_action_error", message: actionError } } : {}),
+        status: actionError ? "error" : scopeRejection ? "rejected" : newState ? "ok" : "revisited",
+        ...(actionError ? { diagnostic: { code: "browser_adaptive_action_error", message: actionError } } : scopeRejection ? { diagnostic: { code: scopeRejection.code, message: scopeRejection.message } } : {}),
       }
       errors += newConsoleErrors.length + newPageErrors.length + (actionError ? 1 : 0)
       if (artifactBytes(states, [...transitions, transition], diagnostics, findings) > contract.budgets.maxArtifactBytes) {
@@ -199,7 +203,7 @@ export async function exploreAdaptiveBrowserStateMachine({
 
   if (findings.length > 0 && !signal?.aborted) {
     for (const finding of findings) {
-      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), started + contract.budgets.maxDurationMs, signal, now)
+      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), started + contract.budgets.maxDurationMs, signal, now, navigationScope)
       actions += minimized.executed
       finding.minimizedPath = minimized.path
       finding.replay.actions = finding.minimizedPath
@@ -223,8 +227,9 @@ export async function exploreAdaptiveBrowserStateMachine({
   }
 }
 
-async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplorationContract, depth: number): Promise<CapturedAdaptiveState> {
+async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplorationContract, depth: number, navigationScope?: BrowserPreviewNavigationScope): Promise<CapturedAdaptiveState> {
   const diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] = []
+  diagnostics.push(...(navigationScope?.drainDiagnostics() ?? []))
   const mainOrigin = origin(page.url())
   const frames = frameIdentities(page, contract.descriptorLimits.maxPerState)
   const descriptors: BrowserActionCorpusDescriptor[] = []
@@ -242,9 +247,15 @@ async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplora
       const discovery = await discoverBrowserActionCorpusDescriptors(frame)
       diagnostics.push(...discovery.diagnostics.map((diagnostic) => ({ ...diagnostic, metadata: { ...diagnostic.metadata, frameId: identity.id } })))
       const scopedDescriptors = discovery.descriptors.filter((descriptor) => {
-        const hrefOrigin = descriptor.href ? origin(descriptor.href) : undefined
-        if (!hrefOrigin || !mainOrigin || hrefOrigin === mainOrigin) return true
-        diagnostics.push({ code: "browser_adaptive_cross_origin_action_rejected", message: "A link leaving the exploration origin was excluded from the adaptive action frontier.", metadata: { frameId: identity.id, descriptorId: descriptor.id, href: descriptor.href } })
+        if (!descriptor.href) return true
+        const decision = navigationScope?.resolve(descriptor.href, frame.url())
+        const hrefOrigin = origin(descriptor.href)
+        if (decision?.allowed) {
+          if (decision.routeDecision === "routed-preview") diagnostics.push({ code: "browser_adaptive_routed_action_allowed", message: "A link using a declared preview route was included in the adaptive action frontier.", metadata: { frameId: identity.id, descriptorId: descriptor.id, rawHrefOrigin: decision.rawOrigin, effectiveOrigin: decision.effectiveOrigin, routeDecision: decision.routeDecision, reason: decision.reason } })
+          return true
+        }
+        if (!decision && (!hrefOrigin || !mainOrigin || hrefOrigin === mainOrigin)) return true
+        diagnostics.push({ code: "browser_adaptive_cross_origin_action_rejected", message: "A link leaving the declared preview navigation scope was excluded from the adaptive action frontier.", metadata: { frameId: identity.id, descriptorId: descriptor.id, rawHrefOrigin: decision?.rawOrigin ?? hrefOrigin, effectiveOrigin: decision?.effectiveOrigin ?? mainOrigin, routeDecision: decision?.routeDecision ?? "external", reason: decision?.reason ?? "origin-mismatch" } })
         return false
       })
       descriptors.push(...scopedDescriptors.slice(0, contract.descriptorLimits.maxPerState).map((descriptor) => ({ ...descriptor, frameId: identity.id })))
@@ -332,22 +343,35 @@ async function executeAdaptiveAction(page: Page, action: BrowserAdaptiveAction, 
   }
 }
 
-async function stabilizeAdaptiveState(page: Page, contract: BrowserAdaptiveExplorationContract, depth: number, now: () => number): Promise<StabilizationResult> {
+async function stabilizeAdaptiveState(page: Page, contract: BrowserAdaptiveExplorationContract, depth: number, now: () => number, navigationScope?: BrowserPreviewNavigationScope): Promise<StabilizationResult> {
   const started = now()
+  const diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] = []
+  const diagnosticKeys = new Set<string>()
+  const retainDiagnostics = (incoming: BrowserAdaptiveExplorationResult["diagnostics"]) => {
+    for (const diagnostic of incoming) {
+      const key = stableJson(diagnostic)
+      if (!diagnosticKeys.has(key)) {
+        diagnosticKeys.add(key)
+        diagnostics.push(diagnostic)
+      }
+    }
+  }
   let polls = 0
   let quietSince = started
   let previous: CapturedAdaptiveState | undefined
   while (now() - started < contract.stabilization.maxWaitMs) {
     await page.waitForTimeout(contract.stabilization.pollIntervalMs)
-    const current = await captureAdaptiveState(page, contract, depth)
+    const current = await captureAdaptiveState(page, contract, depth, navigationScope)
+    retainDiagnostics(current.diagnostics)
     polls += 1
     if (!previous || current.state.digest !== previous.state.digest) quietSince = now()
     previous = current
     if (current.loading === 0 && now() - quietSince >= contract.stabilization.quietWindowMs) break
   }
-  const state = previous ?? await captureAdaptiveState(page, contract, depth)
+  const state = previous ?? await captureAdaptiveState(page, contract, depth, navigationScope)
+  if (!previous) retainDiagnostics(state.diagnostics)
   const mutations = await readMutationObservers(page, contract)
-  return { ...state, waitedMs: Math.max(0, now() - started), polls, mutationRecords: mutations.count, mutationEvidenceTruncated: mutations.truncated }
+  return { ...state, diagnostics, waitedMs: Math.max(0, now() - started), polls, mutationRecords: mutations.count, mutationEvidenceTruncated: mutations.truncated }
 }
 
 async function installMutationObservers(page: Page, contract: BrowserAdaptiveExplorationContract): Promise<void> {
@@ -386,26 +410,26 @@ async function readMutationObservers(page: Page, contract: BrowserAdaptiveExplor
   return { count, truncated }
 }
 
-async function restoreAdaptivePath(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], signal?: AbortSignal): Promise<{ state?: BrowserAdaptiveState; executed: number; diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] }> {
+async function restoreAdaptivePath(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], signal?: AbortSignal, navigationScope?: BrowserPreviewNavigationScope): Promise<{ state?: BrowserAdaptiveState; executed: number; diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] }> {
   const diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] = []
   let executed = 0
   try {
     await page.goto(resolveUrl(contract.startUrl, baseUrl), { waitUntil: "domcontentloaded", timeout: contract.stabilization.maxWaitMs })
-    await stabilizeAdaptiveState(page, contract, 0, Date.now)
+    await stabilizeAdaptiveState(page, contract, 0, Date.now, navigationScope)
     for (const action of path) {
       if (signal?.aborted) return { executed, diagnostics }
       executed += 1
       await executeAdaptiveAction(page, action, contract.stabilization.maxWaitMs)
-      await stabilizeAdaptiveState(page, contract, executed, Date.now)
+      await stabilizeAdaptiveState(page, contract, executed, Date.now, navigationScope)
     }
-    return { state: (await captureAdaptiveState(page, contract, path.length)).state, executed, diagnostics }
+    return { state: (await captureAdaptiveState(page, contract, path.length, navigationScope)).state, executed, diagnostics }
   } catch (error) {
     diagnostics.push({ code: "browser_adaptive_reset_replay_failed", message: "The start-URL reset path could not reproduce a queued state.", metadata: { reason: error instanceof Error ? error.message : String(error) } })
     return { executed, diagnostics }
   }
 }
 
-async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now): Promise<{ path: BrowserAdaptiveAction[]; executed: number; exhausted?: "maxActions" | "maxDurationMs" | "cancelled" }> {
+async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now, navigationScope?: BrowserPreviewNavigationScope): Promise<{ path: BrowserAdaptiveAction[]; executed: number; exhausted?: "maxActions" | "maxDurationMs" | "cancelled" }> {
   let current = [...finding.originalPath]
   let chunk = Math.max(1, Math.floor(current.length / 2))
   let executed = 0
@@ -419,7 +443,7 @@ async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: Br
       if (executed + candidate.length > maximumActions) { exhausted = "maxActions"; break }
       const beforeConsole = observations.consoleMessages.length
       const beforeErrors = observations.errors.length
-      const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal)
+      const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal, navigationScope)
       executed += replay.executed
       const fingerprints = [...consoleErrorMessages(observations.consoleMessages.slice(beforeConsole)), ...errorMessages(observations.errors.slice(beforeErrors))].map((message) => browserAdaptiveDigest("oracle", message))
       if (replay.state && fingerprints.includes(finding.fingerprint) && (!finding.stateDigest || replay.state.digest === finding.stateDigest)) {
