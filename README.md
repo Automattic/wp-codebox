@@ -1,5 +1,9 @@
 # WP Codebox
 
+Adversarial campaign, transport fault, service disruption, browser oracle, and
+sealed replay contracts are documented in
+[`docs/adversarial-runtime.md`](docs/adversarial-runtime.md).
+
 **WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely - every sandbox is a disposable contained WordPress runtime that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.
 
 WordPress has historically lacked a clean scratch space for code execution. Modern dev workflows assume one - Node has `npm install` per project, Python has venvs, containers have ephemeral filesystems. WP Codebox provides that primitive as a usable runtime contract: real WordPress, fully ephemeral, no host filesystem access except via declared mounts. Any product - WordPress or not - can offer code execution against a real WordPress instance without risking the caller.

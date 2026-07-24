@@ -136,11 +136,14 @@ export interface WorkspaceRecipeExternalServiceBoundary {
 /** A short-lived host resource provisioned before the sandbox runtime starts. */
 export interface WorkspaceRecipeRuntimeService {
   id: string
-  kind: "mysql" | (string & {})
+  kind: "mysql" | "redis" | "smtp" | "http" | (string & {})
   configuration?: {
     engine?: "mysql" | "mariadb"
     rootAuthentication?: "generated-password" | "empty-password"
     foreignKeyTargetPolicy?: "unique-only" | "indexed"
+    image?: string
+    responseStatus?: number
+    responseBody?: string
   }
   /** Explicit map from a provider output (for example `port`) to a runtime env name. */
   outputs: Record<string, string>

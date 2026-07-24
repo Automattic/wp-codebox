@@ -917,7 +917,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         required: ["id", "kind", "outputs"],
         properties: {
           id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
-          kind: { const: "mysql" },
+          kind: { enum: ["mysql", "redis", "smtp", "http"] },
           configuration: {
             type: "object",
             additionalProperties: false,
@@ -925,6 +925,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
               engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
               foreignKeyTargetPolicy: { enum: ["unique-only", "indexed"] },
+              image: { type: "string", minLength: 1 },
+              responseStatus: { type: "integer", minimum: 100, maximum: 599 },
+              responseBody: { type: "string", maxLength: 65536 },
             },
           },
           outputs: {
