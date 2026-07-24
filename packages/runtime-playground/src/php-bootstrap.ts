@@ -21,7 +21,8 @@ ${phpBody(code)}`
 }
 
 export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
-  if (argValue(args, "bootstrap") === "none") {
+  const bootstrapMode = argValue(args, "bootstrap")
+  if (bootstrapMode === "none") {
     return code
   }
 
@@ -36,15 +37,15 @@ ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
-require_once '/wordpress/wp-load.php';
+${bootstrapMode === "runtime-only" ? "" : "require_once '/wordpress/wp-load.php';"}
 ${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
-${recipeActivePluginBootstrapPhp(spec, args)}
+${bootstrapMode === "runtime-only" ? "" : recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${command.body}`
 
-  return failureDiagnosticFile ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
+  return failureDiagnosticFile && bootstrapMode !== "runtime-only" ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
 }
 
 function phpFailureDiagnosticWrapperPhp(code: string, path: string): string {
