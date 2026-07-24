@@ -113,9 +113,9 @@ try {
   const importedAdmin = await login()
   await assertImportedArtifactPages(importedAdmin, imported)
   const duplicateStateBefore = await (await fetch(`${origin}/?phase=r2-state`)).json()
-  const duplicate = await importStaticArtifact(staticArtifactImport, 200)
+  const duplicate = await importStaticArtifact(staticArtifactImport, coordinator === "d1" ? 202 : 200)
   const duplicateStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
-  if (duplicate.status !== "duplicate" || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
+  if (!(["duplicate", ...(coordinator === "d1" ? ["imported"] : [])].includes(duplicate.status)) || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
   const conflicting = await importStaticArtifact({ ...staticArtifactImport, import: { ...staticArtifactImport.import, slug: "different-artifact-site" } }, 409)
   const conflictStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
@@ -394,7 +394,7 @@ async function createPost(adminHtml) {
   return { id: post.id, slug: post.slug, route: `${link.pathname}${link.search}`, title }
 }
 
-async function importStaticArtifact(input, expectedStatus = 201) {
+async function importStaticArtifact(input, expectedStatus = coordinator === "d1" ? 202 : 201) {
   const response = await fetch(`${origin}/?phase=operator-static-artifact-import`, {
     method: "POST",
     headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
@@ -402,10 +402,27 @@ async function importStaticArtifact(input, expectedStatus = 201) {
   })
   const body = await response.text()
   if (response.status !== expectedStatus) throw new Error(`Static artifact import failed: ${response.status} ${body}.\nWorker output:\n${output}`)
-  const result = JSON.parse(body)
-  if (expectedStatus === 201 && (result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
+  let result = JSON.parse(body)
+  if (expectedStatus === 202) {
+    if (typeof result.operationId !== "string") throw new Error(`Queued static artifact import omitted its operation ID: ${body}.`)
+    for (let tick = 0; tick < 10; tick++) {
+      await runScheduledCron()
+      const operationResponse = await fetch(`${origin}/?phase=operator-static-artifact-operation&operationId=${encodeURIComponent(result.operationId)}`, {
+        headers: { authorization: `Bearer ${operatorToken}` },
+      })
+      const operationBody = await operationResponse.text()
+      if (!operationResponse.ok) throw new Error(`Queued static artifact operation read failed: ${operationResponse.status} ${operationBody}.`)
+      const operation = JSON.parse(operationBody)
+      if (operation.state === "succeeded") {
+        result = operation.receipt?.ssiResult
+        break
+      }
+      if (operation.state === "failed") throw new Error(`Queued static artifact operation failed: ${operationBody}.`)
+    }
+  }
+  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
     || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
-    || !response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))) {
+    || (expectedStatus === 201 && (!response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))))) {
     throw new Error(`Static artifact import returned invalid evidence: ${body}.`)
   }
   return result
@@ -759,10 +776,11 @@ async function assertCoordinatorAdoption() {
   if (!adoption.ok || !adopted.adopted || adopted.version !== before.version || adopted.pointer?.revision !== before.pointer?.revision) {
     throw new Error(`Exact coordinator adoption failed: status=${adoption.status} payload=${JSON.stringify(adopted)}.`)
   }
+  const divergentRevision = "00000000-0000-4000-8000-000000000000"
   const divergent = await fetch(`${origin}/?phase=operator-adopt`, {
     method: "POST",
     headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ pointer: before.pointer, version: before.version + 1 }),
+    body: JSON.stringify({ pointer: { ...before.pointer, revision: divergentRevision, manifestKey: before.pointer.manifestKey.replace(before.pointer.revision, divergentRevision) }, version: before.version }),
   })
   if (divergent.status !== 409) throw new Error(`Divergent coordinator adoption was not rejected: ${divergent.status} ${await divergent.text()}.`)
   await assertCoordinatorBackend()
