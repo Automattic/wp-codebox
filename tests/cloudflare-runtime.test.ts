@@ -611,6 +611,8 @@ test("runtime archive dependencies are content-addressed and verified from R2", 
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
   const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
   const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const runtimeArchive = await readFile(new URL("../packages/runtime-cloudflare/src/runtime-archive-artifact.ts", import.meta.url), "utf8")
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
   const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
   const sqliteManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
@@ -625,6 +627,11 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /artifacts\/cloudflare-sqlite-database-integration\.zip/)
   assert.match(generator, /artifacts\/cloudflare-static-site-importer\.zip/)
   assert.match(generator, /8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29/)
+  assert.match(generator, /isStaticSiteImporterRuntimeFile/)
+  assert.match(generator, /encodeZip\(staticSiteImporterFiles\)/)
+  assert.match(generator, /blocks-engine-php-transformer\/php-transformer\//)
+  assert.doesNotMatch(worker, /Uint8Array\.from\(archive\)/)
+  assert.doesNotMatch(runtimeArchive, /Uint8Array\.from\(bytes\)/)
   assert.doesNotMatch(artifact, /decodeZip/)
   assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
@@ -634,6 +641,7 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.equal(sqliteManifest.key, runtimeArchiveArtifactKey(sqliteManifest.name, sqliteManifest.archive.sha256))
   assert.equal(RUNTIME_ARCHIVE_MAX_BYTES, 16 * 1024 * 1024)
   assert.doesNotThrow(() => validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest))
+  assert.ok(staticSiteImporterManifest.archive.size < 4 * 1024 * 1024)
   assert.equal(staticSiteImporterManifest.source.url, "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip")
   assert.equal(staticSiteImporterManifest.source.identity, "08b9dd650f3c3161c5b350796a5db6ef083516ae")
 })

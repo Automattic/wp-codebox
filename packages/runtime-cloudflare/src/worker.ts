@@ -2315,7 +2315,7 @@ async function materializeStaticSiteImporter(php: PHP, archive: Uint8Array): Pro
   ])
   let count = 0
   let total = 0
-  for await (const entry of decodeZip(new Blob([Uint8Array.from(archive).buffer]).stream())) {
+  for await (const entry of decodeZip(new Blob([archive as BlobPart]).stream())) {
     if (entry.name.endsWith("/")) continue
     if (!entry.name.startsWith("static-site-importer/") || entry.name.includes("\\") || entry.name.split("/").some((segment: string) => !segment || segment === "." || segment === "..")) {
       throw new Error("Static Site Importer archive contains an invalid path.")

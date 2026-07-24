@@ -17,7 +17,7 @@ const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integratio
 const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
 const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
 const staticSiteImporterSourceUrl = "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip"
-const staticSiteImporterSha256 = "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29"
+const staticSiteImporterSourceSha256 = "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29"
 const staticSiteImporterOutput = resolve("artifacts/cloudflare-static-site-importer.zip")
 const staticSiteImporterManifestOutput = resolve("packages/runtime-cloudflare/assets/static-site-importer-artifact.json")
 const response = await fetch(sourceUrl)
@@ -86,9 +86,20 @@ await writeFile(sqliteManifestOutput, `${JSON.stringify(sqliteManifest, null, 2)
 
 const staticSiteImporterResponse = await fetch(staticSiteImporterSourceUrl)
 if (!staticSiteImporterResponse.ok) throw new Error(`Unable to download Static Site Importer archive: ${staticSiteImporterResponse.status}.`)
-const staticSiteImporterArchive = new Uint8Array(await staticSiteImporterResponse.arrayBuffer())
-const actualStaticSiteImporterSha256 = sha256Hex(staticSiteImporterArchive)
-if (actualStaticSiteImporterSha256 !== staticSiteImporterSha256) throw new Error("Static Site Importer release archive does not match its pinned digest.")
+const staticSiteImporterSourceArchive = new Uint8Array(await staticSiteImporterResponse.arrayBuffer())
+if (sha256Hex(staticSiteImporterSourceArchive) !== staticSiteImporterSourceSha256) throw new Error("Static Site Importer release archive does not match its pinned digest.")
+const staticSiteImporterFiles: File[] = []
+for await (const file of decodeZip(new Blob([staticSiteImporterSourceArchive]).stream())) {
+  if (isStaticSiteImporterRuntimeFile(file.name)) staticSiteImporterFiles.push(new File([file], file.name, { lastModified: 0 }))
+}
+staticSiteImporterFiles.sort((left, right) => left.name.localeCompare(right.name))
+if (!staticSiteImporterFiles.some((file) => file.name === "static-site-importer/static-site-importer.php")
+  || !staticSiteImporterFiles.some((file) => file.name === "static-site-importer/vendor/autoload.php")
+  || !staticSiteImporterFiles.some((file) => file.name === "static-site-importer/vendor/automattic/blocks-engine-php-transformer/php-transformer/php-transformer.php")) {
+  throw new Error("Static Site Importer release archive did not yield the required website-import runtime.")
+}
+const staticSiteImporterArchive = new Uint8Array(await new Response(encodeZip(staticSiteImporterFiles)).arrayBuffer())
+const staticSiteImporterSha256 = sha256Hex(staticSiteImporterArchive)
 const staticSiteImporterManifest: RuntimeArchiveArtifactManifest = {
   schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
   name: "static-site-importer",
@@ -109,4 +120,16 @@ console.log(JSON.stringify({
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+function isStaticSiteImporterRuntimeFile(path: string): boolean {
+  const root = "static-site-importer/"
+  if (!path.startsWith(root) || path.endsWith("/")) return false
+  const relative = path.slice(root.length)
+  return relative === "static-site-importer.php"
+    || ["blocks/", "includes/", "lib/", "registry/"].some((prefix) => relative.startsWith(prefix))
+    || relative === "vendor/autoload.php"
+    || relative.startsWith("vendor/composer/")
+    || ["vendor/dflydev/", "vendor/league/", "vendor/nette/", "vendor/psr/", "vendor/symfony/"].some((prefix) => relative.startsWith(prefix))
+    || relative.startsWith("vendor/automattic/blocks-engine-php-transformer/php-transformer/")
 }

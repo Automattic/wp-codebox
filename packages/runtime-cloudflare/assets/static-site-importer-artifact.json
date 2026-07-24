@@ -1,10 +1,10 @@
 {
   "schema": "wp-codebox/runtime-archive-artifact/v1",
   "name": "static-site-importer",
-  "key": "runtime/archives/static-site-importer/8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29.zip",
+  "key": "runtime/archives/static-site-importer/c5aa5c2ef67503ed94c7b249b2bf102630f279f985ece44245df83169fa75e27.zip",
   "archive": {
-    "sha256": "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29",
-    "size": 13056371
+    "sha256": "c5aa5c2ef67503ed94c7b249b2bf102630f279f985ece44245df83169fa75e27",
+    "size": 1739484
   },
   "source": {
     "url": "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip",
