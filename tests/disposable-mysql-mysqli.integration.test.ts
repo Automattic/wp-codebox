@@ -45,6 +45,21 @@ if (!await dockerAvailable()) {
     assert.equal(result.success, true, JSON.stringify(result))
     assert.equal(result.executions.at(-1)?.stdout.trim(), "1")
 
+    const mysqliPollRecipePath = join(directory, "mysqli-poll-recipe.json")
+    const mysqliPollCode = "mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT); $first = mysqli_init(); $second = mysqli_init(); mysqli_real_connect($first, getenv('DB_HOST'), 'root', '', 'runtime', (int) getenv('DB_PORT')); mysqli_real_connect($second, getenv('DB_HOST'), 'root', '', 'runtime', (int) getenv('DB_PORT')); $first->query('CREATE TABLE poll_lock (id INT PRIMARY KEY) ENGINE=InnoDB'); $first->query('INSERT INTO poll_lock VALUES (1)'); $first->query('START TRANSACTION'); $first->query('SELECT id FROM poll_lock WHERE id = 1 FOR UPDATE'); $second->query('START TRANSACTION'); $second->query('SELECT id FROM poll_lock WHERE id = 1 FOR UPDATE', MYSQLI_ASYNC); $read = [$second]; $error = []; $reject = []; $started = microtime(true); $ready = mysqli_poll($read, $error, $reject, 0, 100000); echo json_encode(['ready' => $ready, 'elapsed_ms' => round((microtime(true) - $started) * 1000)]); $first->query('ROLLBACK'); $second->query('ROLLBACK');"
+    await writeFile(mysqliPollRecipePath, JSON.stringify({
+      schema: "wp-codebox/workspace-recipe/v1",
+      inputs: {
+        services: [{ id: "mysql", kind: "mysql", configuration: { rootAuthentication: "empty-password" }, outputs: { host: "DB_HOST", port: "DB_PORT" } }],
+      },
+      workflow: { steps: [{ command: "wordpress.run-php", args: [`code=${mysqliPollCode}`] }] },
+    }))
+    const mysqliPollResult = await runRecipe({ recipePath: mysqliPollRecipePath, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 20_000, json: true, summary: false, dryRun: false })
+    assert.equal(mysqliPollResult.success, true, JSON.stringify(mysqliPollResult))
+    const mysqliPollOutput = JSON.parse(mysqliPollResult.executions.at(-1)?.stdout ?? "{}")
+    assert.equal(mysqliPollOutput.ready, 0)
+    assert.ok(mysqliPollOutput.elapsed_ms >= 50 && mysqliPollOutput.elapsed_ms < 1_000, JSON.stringify(mysqliPollOutput))
+
     const mariaDbRecipePath = join(directory, "mariadb-recipe.json")
     const mariaDbCode = "if (!function_exists('mysqli_init')) { throw new RuntimeException('mysqli is unavailable'); } $db = mysqli_init(); if (!mysqli_real_connect($db, getenv('DB_HOST'), 'root', '', 'runtime', (int) getenv('DB_PORT'))) { throw new RuntimeException(mysqli_connect_error()); } mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT); mysqli_query($db, 'CREATE TABLE parent (id INT NOT NULL, KEY (id)) ENGINE=InnoDB'); mysqli_query($db, 'CREATE TABLE child (parent_id INT NOT NULL, FOREIGN KEY (parent_id) REFERENCES parent(id)) ENGINE=InnoDB'); mysqli_query($db, \"CREATE TABLE settings (payload LONGTEXT NOT NULL DEFAULT '{}') ENGINE=InnoDB\"); $result = mysqli_query($db, 'SELECT 1 AS connected'); echo mysqli_fetch_assoc($result)['connected'];"
     await writeFile(mariaDbRecipePath, JSON.stringify({
