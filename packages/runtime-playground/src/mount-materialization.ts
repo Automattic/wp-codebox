@@ -104,40 +104,11 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
       const sourceRoot = await realpath(mount.source)
       const diagnostics: MaterializationDiagnostic[] = []
-      await cp(mount.source, source, {
-        recursive: mount.type !== "file",
-        dereference: true,
-        async filter(entry) {
-          if (!(await lstat(entry)).isSymbolicLink()) {
-            return true
-          }
-          let reason: "dangling-target" | "source-escape"
-          try {
-            const target = await realpath(entry)
-            const relativeTarget = relative(sourceRoot, target)
-            if (relativeTarget !== ".." && !relativeTarget.startsWith(`..${sep}`) && !isAbsolute(relativeTarget)) {
-              return true
-            }
-            reason = "source-escape"
-          } catch {
-            reason = "dangling-target"
-          }
-          const path = relative(mount.source, entry).replace(/\\/g, "/") || "."
-          diagnostics.push({
-            code: "readonly-mount-symlink-skipped",
-            message: `Skipped ${reason} symlink in readonly mount: ${path}`,
-            severity: "warning",
-            phase: "playground-readonly-mount-staging",
-            metadata: {
-              mountIndex: index,
-              mountTarget: mount.target,
-              path,
-              reason,
-            },
-          })
-          return false
-        },
-      })
+      if (mount.type === "file") {
+        await cp(mount.source, source, { dereference: true })
+      } else {
+        await stageReadonlyDirectory(mount, index, sourceRoot, source, diagnostics)
+      }
       diagnostics.sort((left, right) => String(left.metadata?.path) < String(right.metadata?.path) ? -1 : String(left.metadata?.path) > String(right.metadata?.path) ? 1 : 0)
       return { mount: { ...mount, source }, diagnostics }
     }))
@@ -164,6 +135,74 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
     await rm(root, { recursive: true, force: true })
     throw error
   }
+}
+
+async function stageReadonlyDirectory(mount: MountSpec, mountIndex: number, sourceRoot: string, destination: string, diagnostics: MaterializationDiagnostic[]): Promise<void> {
+  const visit = async (directory: string, stagedDirectory: string, relativeDirectory: string, ancestors: ReadonlySet<string>): Promise<void> => {
+    await mkdir(stagedDirectory, { recursive: true })
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      const stagedPath = join(stagedDirectory, entry.name)
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+      const entryStat = await lstat(path)
+      if (!entryStat.isSymbolicLink()) {
+        if (entryStat.isDirectory()) {
+          const target = await realpath(path)
+          await visit(target, stagedPath, relativePath, new Set([...ancestors, target]))
+        } else {
+          await cp(path, stagedPath)
+        }
+        continue
+      }
+
+      let target: string
+      try {
+        target = await realpath(path)
+      } catch {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "dangling-target")
+        continue
+      }
+      if (!pathIsWithinRoot(sourceRoot, target)) {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "source-escape")
+        continue
+      }
+      const targetStat = await stat(target)
+      if (!targetStat.isDirectory()) {
+        await cp(target, stagedPath)
+        continue
+      }
+      if (ancestors.has(target)) {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "directory-cycle")
+        continue
+      }
+      await visit(target, stagedPath, relativePath, new Set([...ancestors, target]))
+    }
+  }
+
+  await visit(sourceRoot, destination, "", new Set([sourceRoot]))
+}
+
+function pathIsWithinRoot(root: string, path: string): boolean {
+  const relativePath = relative(root, path)
+  return relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
+}
+
+function addReadonlySymlinkDiagnostic(diagnostics: MaterializationDiagnostic[], mount: MountSpec, mountIndex: number, path: string, reason: "dangling-target" | "source-escape" | "directory-cycle"): void {
+  diagnostics.push({
+    code: "readonly-mount-symlink-skipped",
+    message: `Skipped ${reason} symlink in readonly mount: ${path}`,
+    severity: "warning",
+    phase: "playground-readonly-mount-staging",
+    metadata: {
+      mountIndex,
+      mountTarget: mount.target,
+      path,
+      reason,
+    },
+  })
 }
 
 function readonlyMountStagingPhaseResult(mounts: number, diagnostics: MaterializationDiagnostic[]): MaterializationPhaseResult {
