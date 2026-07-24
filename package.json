@@ -90,6 +90,7 @@
     "cloudflare:dry-run:d1": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.d1.jsonc",
     "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
     "cloudflare:local-gate:d1": "node scripts/cloudflare-local-gate.mjs --coordinator=d1",
+    "cloudflare:local-gate:provisioning": "node scripts/cloudflare-local-gate.mjs --coordinator=d1 --public-provisioning",
     "postinstall": "node scripts/apply-development-patches.mjs",
     "generate:cloudflare-wordpress-runtime-corpus": "tsx scripts/generate-cloudflare-wordpress-runtime-corpus.ts",
     "provision:cloudflare-wordpress-runtime-corpus": "node scripts/provision-cloudflare-wordpress-runtime-corpus.mjs",
