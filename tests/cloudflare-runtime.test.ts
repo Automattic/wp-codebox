@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import test from "node:test"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
 import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
@@ -33,6 +34,27 @@ test("Cloudflare publications accept only cache-safe HTML and permanent redirect
   assert.equal(isCacheablePublicationResponse(new Response(null, { status: 302, headers: { location: "/destination/" } })), false)
   assert.equal(isCacheablePublicationResponse(new Response(null, { status: 301 })), false)
   assert.equal(isCacheablePublicationResponse(new Response("<h1>Private</h1>", { headers: { "content-type": "text/html", "set-cookie": "session=secret" } })), false)
+})
+
+test("runtime package profiles select declared capabilities without consumer path knowledge", () => {
+  const manifest = parseRuntimePackageManifest(JSON.stringify({
+    schema: "static-site-importer/runtime-package-manifest/v1",
+    package: "static-site-importer",
+    package_root: "static-site-importer",
+    profiles: {
+      "website-artifact-import": {
+        abilities: ["static-site-importer/import-website-artifact"],
+        selectors: [{ type: "file", path: "runtime-package-manifest.json" }, { type: "prefix", path: "includes/" }],
+        required_files: ["runtime-package-manifest.json", "includes/import.php"],
+      },
+    },
+  }))
+  const paths = ["release/runtime-package-manifest.json", "release/includes/import.php", "release/vendor/figma.php"]
+  assert.deepEqual(selectRuntimePackageProfileFiles(manifest, "website-artifact-import", paths, paths[0]), [
+    { sourcePath: "release/includes/import.php", targetPath: "static-site-importer/includes/import.php" },
+    { sourcePath: "release/runtime-package-manifest.json", targetPath: "static-site-importer/runtime-package-manifest.json" },
+  ])
+  assert.throws(() => selectRuntimePackageProfileFiles(manifest, "website-artifact-import", paths.filter((path) => !path.endsWith("import.php")), paths[0]), /missing required file/)
 })
 
 test("Cloudflare static artifact imports require bounded content-addressed R2 input", async () => {
@@ -638,7 +660,9 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /artifacts\/cloudflare-sqlite-database-integration\.zip/)
   assert.match(generator, /artifacts\/cloudflare-static-site-importer\.zip/)
   assert.match(generator, /8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29/)
-  assert.match(generator, /isStaticSiteImporterRuntimeFile/)
+  assert.match(generator, /selectRuntimePackageProfileFiles/)
+  assert.match(generator, /website-artifact-import/)
+  assert.match(generator, /selectPinnedLegacyStaticSiteImporterFiles/)
   assert.match(generator, /encodeZip\(staticSiteImporterFiles\)/)
   assert.match(generator, /blocks-engine-php-transformer\/php-transformer\//)
   assert.doesNotMatch(worker, /Uint8Array\.from\(archive\)/)

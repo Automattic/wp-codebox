@@ -6,6 +6,7 @@ import { isWordPressRuntimeFile, isWordPressStaticAsset } from "../packages/runt
 import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
 import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
 
 const sourceUrl = process.env.WORDPRESS_RUNTIME_ARCHIVE_URL ?? "https://downloads.wordpress.org/release/wordpress-7.0.2.zip"
 const sourceVersion = process.env.WORDPRESS_RUNTIME_VERSION ?? "7.0.2"
@@ -88,10 +89,14 @@ const staticSiteImporterResponse = await fetch(staticSiteImporterSourceUrl)
 if (!staticSiteImporterResponse.ok) throw new Error(`Unable to download Static Site Importer archive: ${staticSiteImporterResponse.status}.`)
 const staticSiteImporterSourceArchive = new Uint8Array(await staticSiteImporterResponse.arrayBuffer())
 if (sha256Hex(staticSiteImporterSourceArchive) !== staticSiteImporterSourceSha256) throw new Error("Static Site Importer release archive does not match its pinned digest.")
-const staticSiteImporterFiles: File[] = []
+const staticSiteImporterSourceFiles: File[] = []
 for await (const file of decodeZip(new Blob([staticSiteImporterSourceArchive]).stream())) {
-  if (isStaticSiteImporterRuntimeFile(file.name)) staticSiteImporterFiles.push(new File([file], file.name, { lastModified: 0 }))
+  if (!file.name.endsWith("/")) staticSiteImporterSourceFiles.push(file)
 }
+const staticSiteImporterPackageManifest = staticSiteImporterSourceFiles.find((file) => file.name.endsWith("/runtime-package-manifest.json"))
+const staticSiteImporterFiles = staticSiteImporterPackageManifest
+  ? await selectProfileFiles(staticSiteImporterSourceFiles, staticSiteImporterPackageManifest)
+  : selectPinnedLegacyStaticSiteImporterFiles(staticSiteImporterSourceFiles, staticSiteImporterSourceSha256)
 staticSiteImporterFiles.sort((left, right) => left.name.localeCompare(right.name))
 if (!staticSiteImporterFiles.some((file) => file.name === "static-site-importer/static-site-importer.php")
   || !staticSiteImporterFiles.some((file) => file.name === "static-site-importer/vendor/autoload.php")
@@ -122,7 +127,23 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
-function isStaticSiteImporterRuntimeFile(path: string): boolean {
+async function selectProfileFiles(files: File[], manifestFile: File): Promise<File[]> {
+  const manifest = parseRuntimePackageManifest(await manifestFile.text())
+  const selected = selectRuntimePackageProfileFiles(manifest, "website-artifact-import", files.map((file) => file.name), manifestFile.name)
+  const filesByPath = new Map(files.map((file) => [file.name, file]))
+  return selected.map(({ sourcePath, targetPath }) => {
+    const file = filesByPath.get(sourcePath)
+    if (!file) throw new Error(`Runtime package profile selected an unavailable archive file: ${sourcePath}`)
+    return new File([file], targetPath, { lastModified: 0 })
+  })
+}
+
+function selectPinnedLegacyStaticSiteImporterFiles(files: File[], sourceSha256: string): File[] {
+  if (sourceSha256 !== "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29") throw new Error("Static Site Importer archive does not declare a runtime package manifest.")
+  return files.filter((file) => isPinnedLegacyStaticSiteImporterRuntimeFile(file.name)).map((file) => new File([file], file.name, { lastModified: 0 }))
+}
+
+function isPinnedLegacyStaticSiteImporterRuntimeFile(path: string): boolean {
   const root = "static-site-importer/"
   if (!path.startsWith(root) || path.endsWith("/")) return false
   const relative = path.slice(root.length)
