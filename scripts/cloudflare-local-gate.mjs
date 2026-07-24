@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createHash, createHmac } from "node:crypto"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { stripVTControlCharacters } from "node:util"
@@ -15,6 +15,7 @@ const apiToken = "cloudflare-runtime-test-api-token"
 const administratorClaimSecret = "cloudflare-runtime-test-administrator-claim-secret"
 const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
 const publicProvisioning = process.argv.includes("--public-provisioning")
+const artifactPath = process.argv.find((argument) => argument.startsWith("--artifact="))?.slice("--artifact=".length)
 const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
@@ -135,7 +136,7 @@ async function run(command, args) {
 }
 
 async function provisionStaticArtifact() {
-  const artifact = {
+  const fixture = {
     schema: "blocks-engine/php-transformer/site-artifact/v1",
     artifact_type: "website",
     version: 1,
@@ -157,7 +158,9 @@ async function provisionStaticArtifact() {
       content: "<!doctype html><html><head><meta charset=\"utf-8\"><title>About the Verified Artifact</title></head><body><main><h1>About the Verified Artifact</h1><p>A second imported page.</p></main></body></html>",
     }],
   }
-  const serialized = JSON.stringify(artifact)
+  const serialized = artifactPath ? await readFile(artifactPath, "utf8") : JSON.stringify(fixture)
+  const artifact = JSON.parse(serialized)
+  if (artifact?.schema !== "blocks-engine/php-transformer/site-artifact/v1") throw new Error(`The provisioning artifact at ${artifactPath} does not use the canonical portable schema.`)
   const sha256 = createHash("sha256").update(serialized).digest("hex")
   const key = `sites/default/import-artifacts/${sha256}.json`
   if (!publicProvisioning) {
@@ -176,6 +179,7 @@ async function provisionStaticArtifact() {
 
 async function assertPublicProvisioning(input) {
   const authorization = { authorization: `Bearer ${apiToken}` }
+  const expectedPageCount = JSON.parse(input.serialized).files.filter((file) => file.path.endsWith(".html")).length
   const stagedResponse = await fetch(`${origin}/v1/artifacts/${input.artifact.sha256}`, {
     method: "PUT",
     headers: { ...authorization, "content-type": "application/json" },
@@ -214,7 +218,7 @@ async function assertPublicProvisioning(input) {
   }
   const imported = operation?.receipt?.ssiResult
   if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
-    || !imported.pages || Object.keys(imported.pages).length !== 2 || Object.values(imported.quality ?? {}).some((count) => count !== 0)
+    || !imported.pages || Object.keys(imported.pages).length !== expectedPageCount || Object.values(imported.quality ?? {}).some((count) => count !== 0)
     || operation.receipt?.publication?.status !== "none") {
     throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
   }
@@ -398,7 +402,7 @@ async function importStaticArtifact(input, expectedStatus = 201) {
 
 async function assertImportedArtifactPages(adminHtml, imported) {
   const pageIds = Object.values(imported.pages ?? {}).filter(Number.isInteger)
-  if (pageIds.length !== 2) throw new Error(`Static artifact import did not return two page IDs: ${JSON.stringify(imported)}.`)
+  if (!pageIds.length) throw new Error(`Static artifact import did not return page IDs: ${JSON.stringify(imported)}.`)
   const pages = []
   for (const pageId of pageIds) {
     const response = await request(`${origin}/wp-json/wp/v2/pages/${pageId}?context=edit`, { headers: { "x-wp-nonce": restNonce(adminHtml) } })
@@ -410,10 +414,10 @@ async function assertImportedArtifactPages(adminHtml, imported) {
     const link = new URL(page.link)
     pages.push({ id: pageId, route: `${link.pathname}${link.search}`, raw })
   }
-  const primary = pages.find(({ raw }) => raw.includes("Imported from a verified R2 artifact."))
-  const secondary = pages.find(({ raw }) => raw.includes("A second imported page."))
-  if (!primary || !secondary || secondary.route === "/") throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
-  return { primary, secondary }
+  const primary = pages.find(({ route }) => route === "/")
+  const secondary = pages.find(({ route }) => route !== "/")
+  if (!primary || (pages.length > 1 && !secondary)) throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
+  return { primary, secondary: secondary ?? primary }
 }
 
 async function updatePost(adminHtml, post, previousPublicationRevision) {
