@@ -325,10 +325,13 @@ function assertDiscoveredTestExecutes(source: string, stagePrefix: "pg" | "core_
     : `public function __construct($name) { $this->name = $name; }`
 
   writeFileSync(testFile, `<?php
-class ConcreteHelper extends PHPUnit\\Framework\\TestCase {
+abstract class ProjectTestCase extends PHPUnit\\Framework\\TestCase {
+    public static function suite($class) {}
+}
+class ConcreteHelper extends ProjectTestCase {
     public function helperMethod(): void {}
 }
-class DiscoveredTest extends PHPUnit\\Framework\\TestCase {
+class DiscoveredTest extends ProjectTestCase {
     public function testDiscovered(): void {}
     public function run(): void {
         file_put_contents(getenv('EXECUTION_MARKER'), 'executed');

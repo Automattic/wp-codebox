@@ -352,8 +352,11 @@ function ${functionName}(array $argv) {
 
 function phpunitClassHasTestsPhp(functionName: string): string {
   return `function ${functionName}(ReflectionClass $class): bool {
-    if ($class->hasMethod('suite') && $class->getMethod('suite')->isStatic()) {
-        return true;
+    if ($class->hasMethod('suite')) {
+        $suite_method = $class->getMethod('suite');
+        if ($suite_method->isStatic() && $suite_method->getDeclaringClass()->getName() === $class->getName()) {
+            return true;
+        }
     }
     foreach ((new PHPUnit\\Util\\Reflection())->publicMethodsInTestClass($class) as $method) {
         if (PHPUnit\\Util\\Test::isTestMethod($method)) {
