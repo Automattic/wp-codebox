@@ -313,6 +313,7 @@ echo "BOUNDARY_OK\n";
 function assertDiscoveredTestExecutes(source: string, stagePrefix: "pg" | "core_pg", privateConstructor: boolean): void {
   const tempDir = mkdtempSync(join(tmpdir(), `wp-codebox-${stagePrefix}-testsuite-`))
   const testFile = join(tempDir, "DiscoveredTest.php")
+  const legacyTestFile = join(tempDir, "LegacyTest.php")
   const scriptPath = join(tempDir, "run-generated-harness.php")
   const executionMarker = join(tempDir, "executed.txt")
   const stageLog = join(tempDir, "stages.txt")
@@ -335,6 +336,15 @@ class DiscoveredTest extends ProjectTestCase {
     public function testDiscovered(): void {}
     public function run(): void {
         file_put_contents(getenv('EXECUTION_MARKER'), 'executed');
+    }
+}
+`)
+  writeFileSync(legacyTestFile, `<?php
+class LegacyTest {}
+class Legacy_Test extends ProjectTestCase {
+    public function testLegacy(): void {}
+    public function run(): void {
+        throw new RuntimeException('filename-mismatched legacy test was scheduled');
     }
 }
 `)
@@ -381,7 +391,7 @@ final class TestRunner {
 }
 }
 namespace {
-$test_files = array(${phpString(testFile)});
+$test_files = array(${phpString(testFile)}, ${phpString(legacyTestFile)});
 $phpunit_argv = array('phpunit');
 $argv = array('phpunit');
 function ${stagePrefix}_stage_begin($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_BEGIN:' . $stage . "\\n", FILE_APPEND); }

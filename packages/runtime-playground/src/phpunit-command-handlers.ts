@@ -367,6 +367,32 @@ function phpunitClassHasTestsPhp(functionName: string): string {
 }`
 }
 
+function phpunitClassesOwnedByTestFilesPhp(functionName: string): string {
+  return `function ${functionName}(array $class_names): array {
+    $classes = array();
+    $owners = array();
+    foreach ($class_names as $class_name) {
+        try {
+            $class = new ReflectionClass($class_name);
+            $file = $class->getFileName();
+            if ($file === false) {
+                continue;
+            }
+            $classes[$class_name] = array($class, $file);
+            if ($class->getShortName() === pathinfo($file, PATHINFO_FILENAME)) {
+                $owners[$file] = $class_name;
+            }
+        } catch (Throwable $e) {
+            continue;
+        }
+    }
+    return array_values(array_filter(array_keys($classes), static function($class_name) use ($classes, $owners) {
+        $file = $classes[$class_name][1];
+        return !isset($owners[$file]) || $owners[$file] === $class_name;
+    }));
+}`
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -1332,7 +1358,8 @@ try {
 }
 $after_classes = get_declared_classes();
 ${phpunitClassHasTestsPhp("pg_phpunit_class_has_tests")}
-foreach (array_diff($after_classes, $before_classes) as $class_name) {
+${phpunitClassesOwnedByTestFilesPhp("pg_phpunit_classes_owned_by_test_files")}
+foreach (pg_phpunit_classes_owned_by_test_files(array_diff($after_classes, $before_classes)) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
         if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase') && pg_phpunit_class_has_tests($ref)) {
@@ -1656,7 +1683,8 @@ try {
 }
 $after_classes = get_declared_classes();
 ${phpunitClassHasTestsPhp("core_pg_phpunit_class_has_tests")}
-foreach (array_diff($after_classes, $before_classes) as $class_name) {
+${phpunitClassesOwnedByTestFilesPhp("core_pg_phpunit_classes_owned_by_test_files")}
+foreach (core_pg_phpunit_classes_owned_by_test_files(array_diff($after_classes, $before_classes)) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
         if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase') && core_pg_phpunit_class_has_tests($ref)) {
