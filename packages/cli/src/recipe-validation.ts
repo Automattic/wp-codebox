@@ -733,17 +733,28 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
-  const environment = new Set<string>([
+  const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
     ...(recipe.inputs?.secretEnv ?? []),
   ])
+  const environment = new Set(exposedEnvironment)
   for (const [index, service] of (recipe.inputs?.services ?? []).entries()) {
     const path = `$.inputs.services[${index}]`
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
     if (!["mysql", "redis", "smtp", "http"].includes(service.kind)) addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    if (service.configuration?.provider === "external") {
+      if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The external provider supports only MySQL-compatible services.")
+      for (const field of ["hostEnv", "portEnv", "usernameEnv", "passwordEnv"] as const) {
+        const name = service.configuration[field]
+        if (name && exposedEnvironment.has(name)) addIssue("runtime-service-admin-env-exposed", `${path}.configuration.${field}`, `External service administration environment must remain host-only: ${name}`)
+      }
+      for (const field of ["image", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
+        if (service.configuration[field] !== undefined) addIssue("unsupported-external-runtime-service-option", `${path}.configuration.${field}`, `External MySQL services do not support ${field}.`)
+      }
+    }
     const supportedOutputs: Record<string, RegExp> = {
       mysql: /^(host|port|username|password|database)$/,
       redis: /^(host|port|url)$/,

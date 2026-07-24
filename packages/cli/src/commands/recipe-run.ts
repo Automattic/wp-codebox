@@ -140,7 +140,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   }
   const secretEnvResolution = resolveRecipeSecretEnv(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const secretEnv = secretEnvResolution.values
-  const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
+  let effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
   let dependencyOverlays: PreparedDependencyOverlay[] = []
@@ -198,6 +198,11 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     ))
     serviceEvidence = managedServices.evidence
     Object.assign(runtimeEnv, managedServices.env)
+    for (const [name, value] of Object.entries(managedServices.secretEnv)) {
+      delete runtimeEnv[name]
+      secretEnv[name] = value
+    }
+    if (Object.keys(managedServices.secretEnv).length > 0) effectivePolicy = { ...policy, secrets: "connector-scoped" }
     const runtimeEnvironment = {
       kind: "wordpress" as const,
       name: plan.runtime.name,

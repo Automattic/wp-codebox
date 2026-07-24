@@ -928,13 +928,22 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "object",
             additionalProperties: false,
             properties: {
+              provider: { enum: ["docker", "external"] },
               engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
               foreignKeyTargetPolicy: { enum: ["unique-only", "indexed"] },
+              hostEnv: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+              portEnv: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+              usernameEnv: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+              passwordEnv: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
               image: { type: "string", minLength: 1 },
               responseStatus: { type: "integer", minimum: 100, maximum: 599 },
               responseBody: { type: "string", maxLength: 65536 },
             },
+            allOf: [{
+              if: { properties: { provider: { const: "external" } }, required: ["provider"] },
+              then: { required: ["hostEnv", "usernameEnv", "passwordEnv"] },
+            }],
           },
           outputs: {
             type: "object",

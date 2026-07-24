@@ -247,7 +247,7 @@
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:runtime-requirements-readiness": "tsx tests/runtime-requirements-readiness.test.ts",
-    "test:runtime-services": "tsx tests/runtime-services.test.ts",
+    "test:runtime-services": "tsx tests/runtime-services.test.ts && tsx tests/external-mysql-runtime-service.test.ts",
     "test:runtime-services-lifecycle": "tsx tests/runtime-services-lifecycle.test.ts",
     "test:disposable-mysql-mysqli-e2e": "tsx tests/disposable-mysql-mysqli.integration.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",

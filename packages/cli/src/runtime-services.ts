@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process"
+import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { createConnection } from "node:net"
-import { promisify } from "node:util"
 import type { WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
 
-const execFileAsync = promisify(execFile)
 const MYSQL_IMAGES = { mysql: "mysql:8.4", mariadb: "mariadb:11.4" } as const
 const SERVICE_IMAGES = { redis: "redis:7.4-alpine", smtp: "axllent/mailpit:v1.27", http: "hashicorp/http-echo:1.0" } as const
 
@@ -50,15 +48,17 @@ export function runtimeServiceEvidenceFromError(error: unknown): RuntimeServiceE
 
 interface ManagedRuntimeService {
   env: Record<string, string>
+  secretEnv: Record<string, string>
   evidence: RuntimeServiceEvidence
   release(): Promise<void>
   control(action: RuntimeServiceControlAction, options?: Record<string, unknown>): Promise<RuntimeServiceControlResult>
 }
 
 export interface RuntimeServiceDependencies {
-  execute(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number }): Promise<{ stdout: string }>
+  execute(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string }): Promise<{ stdout: string }>
   waitForReady(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<void>
   randomBytes(size: number): Buffer
+  environment?: Record<string, string | undefined>
 }
 
 export interface RuntimeServiceProvider {
@@ -69,25 +69,27 @@ export interface RuntimeServiceProvider {
 }
 
 const defaultDependencies: RuntimeServiceDependencies = {
-  execute: async (command, args, options) => await execFileAsync(command, args, options),
+  execute: executeProcess,
   waitForReady: waitForTcpProtocol,
   randomBytes,
+  environment: process.env,
 }
 
-export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback"; port: "ephemeral"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
+export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback" | "configured"; port: "ephemeral" | "configured"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
   return services.map((service) => {
-    const provider = runtimeServiceProvider(service.kind)
-    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: "loopback", port: "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
+    const provider = runtimeServiceProvider(service)
+    const external = provider.name === "external"
+    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: external ? "configured" : "loopback", port: external ? "configured" : "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
   })
 }
 
-export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies } = {}): Promise<{ env: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
+export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies } = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
   const dependencies = options.dependencies ?? defaultDependencies
   const provisioned: ManagedRuntimeService[] = []
   const evidence: RuntimeServiceEvidence[] = []
   try {
     for (const service of services) {
-      const managed = await runtimeServiceProvider(service.kind).provision(service, dependencies, options.signal, evidence)
+      const managed = await runtimeServiceProvider(service).provision(service, dependencies, options.signal, evidence)
       provisioned.push(managed)
     }
   } catch (error) {
@@ -103,6 +105,7 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
 
   return {
     env: Object.assign({}, ...provisioned.map((service) => service.env)),
+    secretEnv: Object.assign({}, ...provisioned.map((service) => service.secretEnv)),
     evidence,
     async control(serviceId, action, controlOptions) {
       const service = provisioned.find((candidate) => candidate.evidence.id === serviceId)
@@ -157,6 +160,13 @@ const mysqlDockerProvider: RuntimeServiceProvider = {
   provision: provisionMysqlDockerService,
 }
 
+const mysqlExternalProvider: RuntimeServiceProvider = {
+  name: "external",
+  kind: "mysql",
+  version: (service) => `mysql-compatible:${service.configuration?.engine ?? "mysql"}`,
+  provision: provisionMysqlExternalService,
+}
+
 const redisDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "redis", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.redis, provision: provisionRedisDockerService }
 const smtpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "smtp", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.smtp, provision: provisionSmtpDockerService }
 const httpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "http", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.http, provision: provisionHttpDockerService }
@@ -165,12 +175,13 @@ function mysqlDockerImage(service: WorkspaceRecipeRuntimeService): string {
   return MYSQL_IMAGES[service.configuration?.engine ?? "mysql"]
 }
 
-function runtimeServiceProvider(kind: string): RuntimeServiceProvider {
-  if (kind === mysqlDockerProvider.kind) return mysqlDockerProvider
-  if (kind === redisDockerProvider.kind) return redisDockerProvider
-  if (kind === smtpDockerProvider.kind) return smtpDockerProvider
-  if (kind === httpDockerProvider.kind) return httpDockerProvider
-  throw new Error(`Unsupported managed runtime service kind: ${kind}`)
+function runtimeServiceProvider(service: WorkspaceRecipeRuntimeService): RuntimeServiceProvider {
+  if (service.kind === mysqlDockerProvider.kind) return service.configuration?.provider === "external" ? mysqlExternalProvider : mysqlDockerProvider
+  if (service.configuration?.provider === "external") throw new Error(`Managed runtime service kind does not support the external provider: ${service.kind}`)
+  if (service.kind === redisDockerProvider.kind) return redisDockerProvider
+  if (service.kind === smtpDockerProvider.kind) return smtpDockerProvider
+  if (service.kind === httpDockerProvider.kind) return httpDockerProvider
+  throw new Error(`Unsupported managed runtime service kind: ${service.kind}`)
 }
 
 async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
@@ -204,6 +215,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
     return {
       env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, async (customAction) => {
         if (customAction === "flush") {
@@ -225,6 +237,149 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     evidence.diagnostic = { code: signal?.aborted ? "interrupted" : started ? "readiness-failed" : "provision-failed" }
     if (started) await releaseService(container, evidence, dependencies, undefined).catch(() => undefined)
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
+  }
+}
+
+async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  const engine = service.configuration?.engine ?? "mysql"
+  const version = `mysql-compatible:${engine}`
+  const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "external", version, readiness: "pending", lifecycle: "provisioning", controls: [] }
+  evidenceList.push(evidence)
+
+  let connection: ReturnType<typeof externalMysqlConnection>
+  try {
+    connection = externalMysqlConnection(service, dependencies.environment ?? process.env)
+  } catch {
+    evidence.readiness = "failed"
+    evidence.lifecycle = "failed"
+    evidence.diagnostic = { code: "provision-failed" }
+    throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
+  }
+  const client = engine === "mariadb" ? "mariadb" : "mysql"
+  const suffix = dependencies.randomBytes(12).toString("hex")
+  const database = validateGeneratedMysqlIdentifier(`wp_codebox_${suffix}`)
+  const username = validateGeneratedMysqlIdentifier(`wpcb_${suffix}`)
+  const password = dependencies.randomBytes(24).toString("base64url")
+  const adminArgs = mysqlConnectionArgs(connection.host, connection.port, connection.username)
+  const adminEnvironment = { ...process.env, MYSQL_PWD: connection.password }
+  let namespaceProven = false
+  let databaseAttempted = false
+  let userAttempted = false
+  let readinessAttempted = false
+
+  const executeAdminSql = async (sql: string, cleanup = false): Promise<{ stdout: string }> => await dependencies.execute(client, adminArgs, {
+    env: adminEnvironment,
+    signal: cleanup ? undefined : signal,
+    timeout: 30_000,
+    stdin: sql,
+  })
+
+  const cleanup = async (): Promise<void> => {
+    if (evidence.teardown === "completed") return
+    const results: PromiseSettledResult<unknown>[] = []
+    if (databaseAttempted) results.push(await settle(executeAdminSql(`DROP DATABASE IF EXISTS ${quoteMysqlIdentifier(database)};\n`, true)))
+    if (userAttempted) results.push(await settle(executeAdminSql(`DROP USER IF EXISTS ${quoteMysqlValue(username)}@'%';\n`, true)))
+    const failure = results.find((result) => result.status === "rejected")
+    if (failure) {
+      evidence.lifecycle = "failed"
+      evidence.teardown = "failed"
+      evidence.diagnostic = { code: "teardown-failed" }
+      throw new Error(`Managed runtime service teardown failed: ${service.id}`)
+    }
+    evidence.lifecycle = "released"
+    evidence.teardown = "completed"
+  }
+
+  try {
+    throwIfAborted(signal)
+    const preflight = await executeAdminSql([
+      `SELECT EXISTS(SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=${quoteMysqlValue(database)});`,
+      `SELECT EXISTS(SELECT 1 FROM mysql.user WHERE User=${quoteMysqlValue(username)} AND Host='%');`,
+      "",
+    ].join("\n"))
+    if (preflight.stdout.trim().split(/\s+/).join(" ") !== "0 0") throw new Error("External MySQL isolation namespace is unavailable or cannot be proven unused")
+    namespaceProven = true
+
+    databaseAttempted = true
+    await executeAdminSql(`CREATE DATABASE ${quoteMysqlIdentifier(database)};\n`)
+    throwIfAborted(signal)
+    userAttempted = true
+    await executeAdminSql(`CREATE USER ${quoteMysqlValue(username)}@'%' IDENTIFIED BY ${quoteMysqlValue(password)};\n`)
+    throwIfAborted(signal)
+    await executeAdminSql(`GRANT ALL PRIVILEGES ON ${quoteMysqlIdentifier(database)}.* TO ${quoteMysqlValue(username)}@'%';\n`)
+    throwIfAborted(signal)
+
+    readinessAttempted = true
+    await dependencies.execute(client, [...mysqlConnectionArgs(connection.host, connection.port, username), "--database", database], {
+      env: { ...process.env, MYSQL_PWD: password },
+      signal,
+      timeout: 30_000,
+      stdin: "SELECT 1;\n",
+    })
+    throwIfAborted(signal)
+    evidence.readiness = "ready"
+    evidence.lifecycle = "provisioned"
+    const values: Record<string, string> = { host: connection.host, port: String(connection.port), username, password, database }
+    return {
+      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      evidence,
+      async control(action) {
+        const result: RuntimeServiceControlResult = { serviceId: service.id, action, status: "unsupported", fidelity: "unsupported", reason: `The ${service.kind} provider does not support ${action}.` }
+        evidence.controls?.push(result)
+        return result
+      },
+      release: cleanup,
+    }
+  } catch {
+    evidence.readiness = "failed"
+    evidence.lifecycle = "failed"
+    evidence.diagnostic = { code: signal?.aborted ? "interrupted" : readinessAttempted ? "readiness-failed" : "provision-failed" }
+    if (namespaceProven && (databaseAttempted || userAttempted)) await cleanup().catch(() => undefined)
+    throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
+  }
+}
+
+function externalMysqlConnection(service: WorkspaceRecipeRuntimeService, environment: Record<string, string | undefined>): { host: string; port: number; username: string; password: string } {
+  const configuration = service.configuration
+  const host = configuredEnvironmentValue(configuration?.hostEnv, environment, "hostEnv")
+  const username = configuredEnvironmentValue(configuration?.usernameEnv, environment, "usernameEnv")
+  const password = configuredEnvironmentValue(configuration?.passwordEnv, environment, "passwordEnv", true)
+  const portValue = configuration?.portEnv ? configuredEnvironmentValue(configuration.portEnv, environment, "portEnv") : "3306"
+  const port = Number(portValue)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("External MySQL port environment value must be an integer between 1 and 65535")
+  return { host, port, username, password }
+}
+
+function configuredEnvironmentValue(name: string | undefined, environment: Record<string, string | undefined>, field: string, allowEmpty = false): string {
+  if (!name || !/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`External MySQL ${field} must reference a runtime environment variable`)
+  const value = environment[name]
+  if (value === undefined || (!allowEmpty && value.trim() === "")) throw new Error(`External MySQL ${field} environment variable is unavailable`)
+  return value
+}
+
+function mysqlConnectionArgs(host: string, port: number, username: string): string[] {
+  return ["--batch", "--skip-column-names", "--protocol=TCP", "--host", host, "--port", String(port), "--user", username]
+}
+
+function validateGeneratedMysqlIdentifier(identifier: string): string {
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(identifier)) throw new Error("Generated MySQL isolation identifier is unsafe")
+  return identifier
+}
+
+function quoteMysqlIdentifier(identifier: string): string {
+  return `\`${validateGeneratedMysqlIdentifier(identifier).replaceAll("`", "``")}\``
+}
+
+function quoteMysqlValue(value: string): string {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`
+}
+
+async function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  try {
+    return { status: "fulfilled", value: await promise }
+  } catch (reason) {
+    return { status: "rejected", reason }
   }
 }
 
@@ -288,6 +443,7 @@ async function provisionSimpleDockerService(
     const values = spec.values(ports)
     return {
       env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      secretEnv: {},
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, spec.customControl ? async (candidate, candidateOptions) => await spec.customControl?.(container, candidate, candidateOptions) ?? false : undefined, async () => await dependencies.waitForReady("127.0.0.1", ports[0] as number, 30_000)) },
       async release() { await releaseService(container, evidence, dependencies) },
@@ -475,5 +631,31 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<voi
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, milliseconds)
     signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("Managed runtime service provisioning interrupted")) }, { once: true })
+  })
+}
+
+function executeProcess(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string }): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: options.env,
+      signal: options.signal,
+      timeout: options.timeout,
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk))
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk))
+    child.once("error", reject)
+    child.once("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout: Buffer.concat(stdout).toString("utf8") })
+        return
+      }
+      const error = new Error(`Command failed with exit code ${code ?? "unknown"}`) as Error & { stderr: string }
+      error.stderr = Buffer.concat(stderr).toString("utf8")
+      reject(error)
+    })
+    child.stdin.end(options.stdin)
   })
 }
