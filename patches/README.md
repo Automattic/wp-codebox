@@ -9,8 +9,9 @@ and browser asset path before that upstream change can be merged and released.
 Remove this patch and the package override after a published Playground package
 contains the same change.
 
-`@wp-playground+cli+3.1.46.patch` makes blueprint worker threads rethrow
-unhandled runtime rejections after logging them. The released CLI otherwise
-keeps a poisoned PHP-WASM worker alive and leaves the parent request pending
-until the recipe timeout. Remove the patch after the Playground CLI ships the
-same worker terminalization behavior.
+`@wp-playground+cli+3.1.46.patch` makes blueprint worker threads rethrow fatal
+`WebAssembly.RuntimeError` rejections originating from `php.wasm` after logging
+them. Other unhandled rejections retain the released CLI's log-only behavior.
+Without this narrow terminalization, a poisoned PHP-WASM worker remains alive
+and leaves the parent request pending until the recipe timeout. Remove the patch
+after the Playground CLI ships the same worker terminalization behavior.
