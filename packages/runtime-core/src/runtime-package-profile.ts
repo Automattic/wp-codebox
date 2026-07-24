@@ -1,7 +1,5 @@
-export const RUNTIME_PACKAGE_MANIFEST_SCHEMA = "static-site-importer/runtime-package-manifest/v1" as const
-
 export interface RuntimePackageManifest {
-  schema: typeof RUNTIME_PACKAGE_MANIFEST_SCHEMA
+  schema: string
   package: string
   package_root: string
   profiles: Record<string, {
@@ -26,7 +24,7 @@ export function parseRuntimePackageManifest(value: string): RuntimePackageManife
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Runtime package manifest must be an object.")
   const manifest = parsed as Partial<RuntimePackageManifest>
-  if (manifest.schema !== RUNTIME_PACKAGE_MANIFEST_SCHEMA) throw new Error("Runtime package manifest schema is invalid.")
+  if (typeof manifest.schema !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*\/runtime-package-manifest\/v1$/.test(manifest.schema)) throw new Error("Runtime package manifest schema is invalid.")
   if (!isSafeSegment(manifest.package) || !isSafeSegment(manifest.package_root)) throw new Error("Runtime package manifest identity is invalid.")
   if (!manifest.profiles || typeof manifest.profiles !== "object" || Array.isArray(manifest.profiles)) throw new Error("Runtime package manifest profiles are invalid.")
   return manifest as RuntimePackageManifest
