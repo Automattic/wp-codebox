@@ -82,7 +82,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
       ...(options.phpVersion ? { phpVersion: options.phpVersion } : {}),
       ...(options.wordpressInstallMode ? { wordpressInstallMode: options.wordpressInstallMode } : {}),
-      blueprint: blueprintWithMultisite(options.blueprint ?? { steps: [] }, options.multisite ?? false),
+      blueprint: blueprintWithMultisite(options.blueprint ?? { steps: [] }, (options.multisite ?? false) && options.databaseType !== "mysql"),
       ...(options.preview || options.multisite ? { preview: multisitePreview(options.preview, options.multisite ?? false) } : {}),
       ...(options.extensions?.length ? { extensions: options.extensions } : {}),
       ...(options.backendPackage ? { backendPackage: options.backendPackage } : {}),

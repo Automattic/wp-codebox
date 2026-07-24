@@ -537,16 +537,34 @@ function pg_defer_new_wordpress_hook_callbacks(string $hook_name, array $before)
 }
 
 function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args = array(), ?string $hook_name = null): void {
-    global $wp_current_filter;
+    global $wp_filter, $wp_current_filter;
     $pushed_hook = false;
+    $original_hook = null;
+    $replay_hook = null;
     if (is_string($hook_name) && $hook_name !== '') {
         if (!is_array($wp_current_filter)) {
             $wp_current_filter = array();
         }
         $wp_current_filter[] = $hook_name;
         $pushed_hook = true;
+        $original_hook = $wp_filter[$hook_name] ?? null;
+        $replay_hook = new WP_Hook();
+        $wp_filter[$hook_name] = $replay_hook;
+        foreach ($deferred as $entry) {
+            $callback = $entry['callback'] ?? null;
+            if (!is_array($callback) || !isset($callback['function'])) {
+                continue;
+            }
+            $priority = isset($entry['priority']) ? (int) $entry['priority'] : 10;
+            $accepted_args = isset($callback['accepted_args']) ? (int) $callback['accepted_args'] : count($args);
+            add_filter($hook_name, $callback['function'], $priority, $accepted_args);
+        }
     }
     try {
+        if ($replay_hook instanceof WP_Hook) {
+            $replay_hook->do_action($args);
+            return;
+        }
         foreach ($deferred as $entry) {
             $callback = $entry['callback'] ?? null;
             if (!is_array($callback) || !isset($callback['function'])) {
@@ -556,6 +574,21 @@ function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args =
             call_user_func_array($callback['function'], array_slice($args, 0, $accepted_args));
         }
     } finally {
+        if ($replay_hook instanceof WP_Hook && is_string($hook_name)) {
+            $retained_callbacks = $replay_hook->callbacks;
+            if ($original_hook instanceof WP_Hook) {
+                $wp_filter[$hook_name] = $original_hook;
+            } else {
+                unset($wp_filter[$hook_name]);
+            }
+            foreach ($retained_callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $callback) {
+                    if (isset($callback['function'])) {
+                        add_filter($hook_name, $callback['function'], (int) $priority, (int) ($callback['accepted_args'] ?? 0));
+                    }
+                }
+            }
+        }
         if ($pushed_hook) {
             array_pop($wp_current_filter);
         }
@@ -1080,7 +1113,7 @@ if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
 }
 if ($multisite) {
-    $wp_config_defines += array(
+    $multisite_defines = array(
         'WP_TESTS_MULTISITE' => true,
         'MULTISITE' => true,
         'SUBDOMAIN_INSTALL' => false,
@@ -1089,6 +1122,12 @@ if ($multisite) {
         'SITE_ID_CURRENT_SITE' => 1,
         'BLOG_ID_CURRENT_SITE' => 1,
     );
+    $wp_config_defines += $multisite_defines;
+    foreach ($multisite_defines as $name => $value) {
+        if (!defined($name)) {
+            define($name, $value);
+        }
+    }
     putenv('WP_MULTISITE=1');
     $_ENV['WP_MULTISITE'] = '1';
 }
@@ -1127,8 +1166,10 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
 pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
+$pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
 $loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
 $deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);
+$deferred_dependency_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_dependency_init_callbacks);
 $activation_files = $loaded_dep_files;
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
@@ -1140,7 +1181,7 @@ $reopened_ability_categories_init = pg_reopen_wordpress_action('wp_abilities_api
 $reopened_ability_init = pg_reopen_wordpress_action('wp_abilities_api_init');
 pg_run_deferred_wordpress_hook_callbacks($deferred_install_plugins_loaded_callbacks, array(), 'plugins_loaded');
 pg_run_deferred_wordpress_hook_callbacks($deferred_dependency_plugins_loaded_callbacks, array(), 'plugins_loaded');
-$deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
+$deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, $deferred_dependency_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
 usort($deferred_install_init_callbacks, static function (array $left, array $right): int {
     return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
 });
