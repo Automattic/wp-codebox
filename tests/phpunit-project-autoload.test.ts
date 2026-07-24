@@ -325,7 +325,11 @@ function assertDiscoveredTestExecutes(source: string, stagePrefix: "pg" | "core_
     : `public function __construct($name) { $this->name = $name; }`
 
   writeFileSync(testFile, `<?php
+class ConcreteHelper extends PHPUnit\\Framework\\TestCase {
+    public function helperMethod(): void {}
+}
 class DiscoveredTest extends PHPUnit\\Framework\\TestCase {
+    public function testDiscovered(): void {}
     public function run(): void {
         file_put_contents(getenv('EXECUTION_MARKER'), 'executed');
     }
@@ -339,9 +343,22 @@ final class TestSuite {
     private $name;
     private $tests = array();
     ${testSuiteFactory}
-    public function addTestSuite(\\ReflectionClass $class): void { $this->tests[] = $class->newInstance(); }
+    public function addTestSuite(\\ReflectionClass $class): void {
+        if ($class->getName() === 'ConcreteHelper') { throw new \\RuntimeException('concrete helper was scheduled as a test'); }
+        $this->tests[] = $class->newInstance();
+    }
     public function tests(): array { return $this->tests; }
     public function count(): int { return count($this->tests); }
+}
+}
+namespace PHPUnit\\Util {
+final class Reflection {
+    public function publicMethodsInTestClass(\\ReflectionClass $class): array { return $class->getMethods(\\ReflectionMethod::IS_PUBLIC); }
+}
+final class Test {
+    public static function isTestMethod(\\ReflectionMethod $method): bool {
+        return strpos($method->getName(), 'test') === 0 || strpos((string) $method->getDocComment(), '@test') !== false;
+    }
 }
 }
 namespace PHPUnit\\TextUI {

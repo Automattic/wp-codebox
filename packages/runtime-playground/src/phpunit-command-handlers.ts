@@ -350,6 +350,20 @@ function ${functionName}(array $argv) {
 }`
 }
 
+function phpunitClassHasTestsPhp(functionName: string): string {
+  return `function ${functionName}(ReflectionClass $class): bool {
+    if ($class->hasMethod('suite') && $class->getMethod('suite')->isStatic()) {
+        return true;
+    }
+    foreach ((new PHPUnit\\Util\\Reflection())->publicMethodsInTestClass($class) as $method) {
+        if (PHPUnit\\Util\\Test::isTestMethod($method)) {
+            return true;
+        }
+    }
+    return false;
+}`
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -1314,10 +1328,11 @@ try {
     exit(1);
 }
 $after_classes = get_declared_classes();
+${phpunitClassHasTestsPhp("pg_phpunit_class_has_tests")}
 foreach (array_diff($after_classes, $before_classes) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
-        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
+        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase') && pg_phpunit_class_has_tests($ref)) {
             $suite->addTestSuite($ref);
         }
     } catch (Throwable $e) {
@@ -1637,10 +1652,11 @@ try {
     exit(1);
 }
 $after_classes = get_declared_classes();
+${phpunitClassHasTestsPhp("core_pg_phpunit_class_has_tests")}
 foreach (array_diff($after_classes, $before_classes) as $class_name) {
     try {
         $ref = new ReflectionClass($class_name);
-        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
+        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase') && core_pg_phpunit_class_has_tests($ref)) {
             $suite->addTestSuite($ref);
         }
     } catch (Throwable $e) {
