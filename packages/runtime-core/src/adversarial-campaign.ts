@@ -152,7 +152,10 @@ export interface AdversarialCampaignRunnerOptions {
   execute(plan: AdversarialCasePlan, signal: AbortSignal): Promise<AdversarialExecutionObservation>
   evaluate?(plan: AdversarialCasePlan, observation: AdversarialExecutionObservation, oracles: readonly AdversarialOracleContract[]): Promise<AdversarialOracleResult[]> | AdversarialOracleResult[]
   now?: () => number
-  replayCommand?: (campaign: AdversarialCampaign, plan: AdversarialCasePlan) => string
+  replayCommand?: (campaign: AdversarialCampaign, plan: AdversarialCasePlan, fingerprint: string) => string
+  signal?: AbortSignal
+  retainNovelty?: boolean
+  minimize?: boolean
 }
 
 export interface DifferentialCell {
@@ -209,6 +212,7 @@ export async function runAdversarialCampaign(campaignInput: AdversarialCampaign,
   let incomplete = false
 
   for (let round = 0; generated < campaign.budgets.maxCases; round += 1) {
+    if (options.signal?.aborted) { incomplete = true; diagnostics.push({ code: "campaign-interrupted", message: "Campaign stopped after an interruption request." }); break }
     if ((options.now ?? Date.now)() - started >= campaign.budgets.maxWallTimeMs) { incomplete = true; diagnostics.push({ code: "campaign-wall-time-exhausted", message: "Campaign stopped at its wall-time budget." }); break }
     const roundPlans: AdversarialCasePlan[] = []
     for (let workerId = 0; workerId < campaign.budgets.workers && generated < campaign.budgets.maxCases; workerId += 1) {
@@ -229,12 +233,13 @@ export async function runAdversarialCampaign(campaignInput: AdversarialCampaign,
 
       const newSignals = (observation.signals ?? []).filter((signal) => !novelty.has(signal))
       for (const signal of newSignals) novelty.add(signal)
-      if (newSignals.length > 0) corpus.push({ id: plan.caseId, actions: plan.actions, input: plan.input, signals: [...new Set(observation.signals ?? [])], metadata: { retainedFrom: plan.corpusId, mutation: plan.mutation } })
+      if (newSignals.length > 0 && options.retainNovelty !== false) corpus.push({ id: plan.caseId, actions: plan.actions, input: plan.input, signals: [...new Set(observation.signals ?? [])], metadata: { retainedFrom: plan.corpusId, mutation: plan.mutation } })
 
       const oracleResults = options.evaluate ? await options.evaluate(plan, observation, campaign.oracles) : defaultOracleResults(observation)
       const failedOracles = oracleResults.filter((result) => result.failed)
       if (failedOracles.length > 0 || observation.status !== "passed") {
-        const minimized = await minimizeAdversarialCase(campaign, plan, failedOracles, options)
+        if (options.signal?.aborted) { incomplete = true; diagnostics.push({ code: "campaign-interrupted", message: "Campaign stopped before finding minimization after an interruption request." }); break }
+        const minimized = options.minimize === false ? normalizeCorpusEntry({ id: plan.caseId, actions: plan.actions, input: plan.input }) : await minimizeAdversarialCase(campaign, plan, failedOracles, options)
         const fingerprint = adversarialFindingFingerprint({ oracleIds: failedOracles.map((result) => result.oracleId), status: observation.status, diagnosticCodes: (observation.diagnostics ?? []).map((item) => item.code).sort(), matrix: plan.matrix })
         const existing = findings.get(fingerprint)
         if (existing) existing.duplicates += 1
@@ -290,6 +295,8 @@ export function classifyDifferentialResult(cells: DifferentialCell[]): Different
 
 async function executeBoundedCase(campaign: AdversarialCampaign, plan: AdversarialCasePlan, options: AdversarialCampaignRunnerOptions): Promise<AdversarialExecutionObservation> {
   const controller = new AbortController()
+  const abort = () => controller.abort(options.signal?.reason)
+  options.signal?.addEventListener("abort", abort, { once: true })
   let timer: NodeJS.Timeout | undefined
   try {
     return await Promise.race([
@@ -300,6 +307,7 @@ async function executeBoundedCase(campaign: AdversarialCampaign, plan: Adversari
     return { status: "error", diagnostics: [{ code: "case-execution-error", message: error instanceof Error ? error.message : String(error) }] }
   } finally {
     if (timer) clearTimeout(timer)
+    options.signal?.removeEventListener("abort", abort)
   }
 }
 
@@ -330,6 +338,7 @@ function mutateCorpusEntry(campaign: AdversarialCampaign, source: AdversarialCor
 async function minimizeAdversarialCase(campaign: AdversarialCampaign, plan: AdversarialCasePlan, originalOracles: AdversarialOracleResult[], options: AdversarialCampaignRunnerOptions): Promise<AdversarialCorpusEntry> {
   const oracleIds = new Set(originalOracles.filter((item) => item.failed).map((item) => item.oracleId))
   const preserves = async (candidate: AdversarialCorpusEntry): Promise<boolean> => {
+    if (options.signal?.aborted) return false
     const candidatePlan = { ...plan, actions: candidate.actions, input: candidate.input }
     const observation = await executeBoundedCase(campaign, candidatePlan, options)
     const oracleResults = options.evaluate ? await options.evaluate(candidatePlan, observation, campaign.oracles) : defaultOracleResults(observation)
@@ -354,7 +363,7 @@ async function minimizeAdversarialCase(campaign: AdversarialCampaign, plan: Adve
 }
 
 function createFinding(campaign: AdversarialCampaign, plan: AdversarialCasePlan, minimized: AdversarialCorpusEntry, observation: AdversarialExecutionObservation, oracles: AdversarialOracleResult[], schedule: AdversarialScheduleEntry[], options: AdversarialCampaignRunnerOptions, fingerprint: string): AdversarialFinding {
-  const command = options.replayCommand?.(campaign, plan) ?? campaign.replayCommand ?? `wp-codebox adversarial replay --campaign ${campaign.id} --case ${plan.caseId}`
+  const command = options.replayCommand?.(campaign, plan, fingerprint) ?? campaign.replayCommand ?? `wp-codebox adversarial replay --campaign ${campaign.id} --case ${plan.caseId}`
   return {
     schema: ADVERSARIAL_FINDING_SCHEMA,
     fingerprint,

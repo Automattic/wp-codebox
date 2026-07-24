@@ -31,6 +31,7 @@ import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import { runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
@@ -155,6 +156,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   let distributionStartupProbes: RecipeRunDistributionStartupProbe[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
+  let adversarialCampaigns: RecipeAdversarialCampaignOutput[] = []
   let stepFailures: RecipeStepFailure[] = []
   let advisoryFailures: RecipeAdvisoryFailure[] = []
   let browserEvidence: RecipeBrowserEvidence[] = []
@@ -315,6 +317,21 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       }
     })
 
+    adversarialCampaigns = await phaseTracker.run("run_adversarial_campaigns", { campaigns: recipe.adversarialCampaigns?.map(({ id, seed }) => ({ id, seed })) ?? [] }, async () => runRecipeAdversarialCampaigns({
+      recipe,
+      recipePath,
+      recipeDirectory,
+      runtime: runtime!,
+      sandboxWorkspace,
+      artifactRoot: configuredArtifactsDirectory,
+      runOptions: options,
+      inputMountPathMap,
+      signal: interruption?.signal,
+      executions,
+      provenance: recipeRunProvenance(recipe, recipePath) as unknown as Record<string, unknown>,
+    }))
+    interruption?.throwIfInterrupted()
+
     probes = await phaseTracker.run("run_probes", phaseProbeData(recipe), async () => await awaitRecipe("recipe-probes.run", runRecipeProbes(recipe, recipeDirectory, runtime!, executions)))
     const probeFailure = recipeProbeFailure(probes)
     if (probeFailure) {
@@ -328,6 +345,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
+      await writeRecipeAdversarialEvidence(artifacts, adversarialCampaigns, Object.values(secretEnv))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -412,7 +430,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath) },
       })
     }
 
@@ -431,7 +449,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath) },
     })
   } catch (error) {
     const failedServiceEvidence = runtimeServiceEvidenceFromError(error)
@@ -477,6 +495,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       }))
       if (artifacts) {
         const collectedArtifacts = artifacts
+        await writeRecipeAdversarialEvidence(artifacts, adversarialCampaigns, Object.values(secretEnv)).catch(() => undefined)
         browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
@@ -555,6 +574,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
         ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
         ...(fuzzRunResult ? { fuzzRun: fuzzRunResult } : {}),
+        ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}),
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
         provenance: recipeRunProvenance(recipe, recipePath, diagnosticArtifacts),
       },
@@ -798,6 +818,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--policy":
         options.policy = parseRecipePolicy(value)
+        break
+      case "--adversarial-replay":
+        options.adversarialReplayPath = value
         break
       default:
         throw new Error(`Unknown option: ${name}`)

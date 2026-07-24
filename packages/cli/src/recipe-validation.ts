@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -12,7 +12,7 @@ export interface RecipeValidationIssue {
   message: string
 }
 
-export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after" | `fuzz:${WorkspaceRecipeFuzzCasePhase}`
+export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after" | `fuzz:${WorkspaceRecipeFuzzCasePhase}` | `adversarial:${WorkspaceRecipeFuzzCasePhase}`
 
 export interface RecipeWorkflowStepRef {
   phase: Exclude<RecipeWorkflowPhase, "setup">
@@ -225,6 +225,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateFixtureDatabases(recipe.inputs?.fixtureDatabases, recipePath)
   validateRecipeProbes(recipe.probes, recipePath)
   validateRecipeFuzzRun(recipe.fuzzRun, recipePath)
+  validateRecipeAdversarialCampaigns(recipe, recipePath)
   validateDeclaredArtifacts(recipe.artifacts?.paths, recipePath)
 
   const siteSeeds = recipe.inputs?.siteSeeds ?? []
@@ -551,7 +552,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     await validateExistingBackendPackageSource(resolve(recipeDirectory, recipe.runtime.backendPackage.source), "$.runtime.backendPackage.source", addIssue)
   }
 
-  for (const { phase, index, step } of recipeWorkflowSteps(recipe)) {
+  for (const { phase, index, step } of recipeDeclaredWorkflowSteps(recipe)) {
     const path = `$.workflow.${phase}[${index}]`
     if (!supportedRecipeCommands.has(step.command) && !hostRecipeCommandPattern.test(step.command)) {
       addIssue("unsupported-command", `${path}.command`, `Unsupported recipe command: ${step.command}`)
@@ -939,6 +940,19 @@ export function recipeWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStep
   ]
 }
 
+export function recipeDeclaredWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
+  return [...recipeWorkflowSteps(recipe), ...recipeAdversarialWorkflowSteps(recipe)]
+}
+
+function recipeAdversarialWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
+  const phaseNames: WorkspaceRecipeFuzzCasePhase[] = ["setup", "action", "assert", "teardown"]
+  return (recipe.adversarialCampaigns ?? []).flatMap((campaign) => campaign.caseTemplates.flatMap((template) => phaseNames.flatMap((phase) => (template.phases[phase] ?? []).map((step, index) => ({
+    phase: `adversarial:${phase}` as const,
+    index,
+    step,
+  })))))
+}
+
 function recipeFuzzWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
   const phaseNames: WorkspaceRecipeFuzzCasePhase[] = ["setup", "action", "assert", "teardown"]
   return (recipe.fuzzRun?.cases ?? []).flatMap((fuzzCase, fuzzCaseIndex) => phaseNames.flatMap((fuzzPhase) => (fuzzCase.phases[fuzzPhase] ?? []).map((step, fuzzStepIndex) => ({
@@ -965,16 +979,16 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     return []
   })
   const commands = [
-    ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(recipeDeclaredWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(boundedRuntimePlanCommands(recipe), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
   ]
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench")) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench")) {
     commands.unshift("wordpress.run-php")
   }
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
     commands.unshift("wordpress.wp-cli")
   }
   if (recipeExtraPlugins(recipe).length > 0) {
@@ -992,7 +1006,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   // Auto-grant the evaluate capability when a browser-actions step opts into the
   // arbitrary-JS escape hatch by including an evaluate step. Recipe authors opt in
   // by writing the step; direct `run` invocations still control the gate via --policy.
-  if (recipeWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
     commands.push("wordpress.browser-actions.evaluate")
   }
 
@@ -1118,6 +1132,49 @@ function validateRecipeFuzzRun(fuzzRun: WorkspaceRecipe["fuzzRun"] | undefined, 
           throw new Error(`Recipe fuzzRun ${phase}[${stepIndex}] args must be arrays at ${casePath}: ${recipePath}`)
         }
       }
+    }
+  }
+}
+
+export function recipeAdversarialCapabilities(recipe: WorkspaceRecipe): string[] {
+  return [...new Set([
+    "adversarial-campaign",
+    "artifact-export",
+    "bounded-evidence",
+    "replay",
+    ...RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities,
+    ...listCliRecipeCommandIds().map((command) => `command:${command}`),
+  ])]
+}
+
+function validateRecipeAdversarialCampaigns(recipe: WorkspaceRecipe, recipePath: string): void {
+  const campaigns = recipe.adversarialCampaigns
+  if (campaigns === undefined) return
+  if (!Array.isArray(campaigns) || campaigns.length === 0) throw new Error(`Recipe adversarialCampaigns must be a non-empty array: ${recipePath}`)
+  const campaignIds = new Set<string>()
+  const available = new Set(recipeAdversarialCapabilities(recipe))
+  for (const [campaignIndex, campaign] of campaigns.entries()) {
+    const campaignPath = `$.adversarialCampaigns[${campaignIndex}]`
+    if (!campaign || typeof campaign !== "object" || Array.isArray(campaign)) throw new Error(`Recipe adversarial campaigns must be objects at ${campaignPath}: ${recipePath}`)
+    if (!campaign.id || typeof campaign.id !== "string") throw new Error(`Recipe adversarial campaign requires id at ${campaignPath}: ${recipePath}`)
+    if (!Array.isArray(campaign.caseTemplates) || campaign.caseTemplates.length === 0) throw new Error(`Recipe adversarial campaign requires caseTemplates at ${campaignPath}: ${recipePath}`)
+    if (!Array.isArray(campaign.corpus) || campaign.corpus.length === 0) throw new Error(`Recipe adversarial campaign requires corpus at ${campaignPath}: ${recipePath}`)
+    if (campaignIds.has(campaign.id)) throw new Error(`Recipe adversarial campaign ids must be unique: ${campaign.id}: ${recipePath}`)
+    campaignIds.add(campaign.id)
+    const templateIds = new Set(campaign.caseTemplates.map((template) => template.id))
+    if (templateIds.size !== campaign.caseTemplates.length) throw new Error(`Recipe adversarial case template ids must be unique at ${campaignPath}: ${recipePath}`)
+    for (const entry of campaign.corpus) {
+      for (const action of entry.actions) {
+        if (!templateIds.has(action.type)) throw new Error(`Recipe adversarial corpus action references unknown case template ${action.type} at ${campaignPath}: ${recipePath}`)
+      }
+    }
+    const missing = (campaign.requiredCapabilities ?? []).filter((capability) => !available.has(capability))
+    if (missing.length > 0) throw new Error(`Recipe adversarial campaign ${campaign.id} requires unavailable capabilities: ${missing.join(", ")}: ${recipePath}`)
+    if (campaign.faultSchedule && !(campaign.requiredCapabilities ?? []).includes("transport-faults")) {
+      throw new Error(`Recipe adversarial campaign ${campaign.id} faultSchedule requires the transport-faults capability: ${recipePath}`)
+    }
+    if ((campaign.concurrency ?? 1) > 1 && !(campaign.requiredCapabilities ?? []).includes("isolated-workers")) {
+      throw new Error(`Recipe adversarial campaign ${campaign.id} concurrency above 1 requires isolated-workers capability: ${recipePath}`)
     }
   }
 }

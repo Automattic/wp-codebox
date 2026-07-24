@@ -1,0 +1,100 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress"
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.run-php",
+        "args": ["code=delete_option( 'wp_codebox_adversarial_state' );"]
+      }
+    ]
+  },
+  "adversarialCampaigns": [
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "neutral-stateful",
+      "seed": "neutral-stateful-v1",
+      "corpus": [
+        {
+          "id": "option-seed",
+          "actions": [
+            {
+              "type": "option-roundtrip",
+              "input": {
+                "value": "alpha"
+              }
+            }
+          ],
+          "input": {
+            "source": "recipe"
+          },
+          "signals": ["baseline"]
+        }
+      ],
+      "caseTemplates": [
+        {
+          "id": "option-roundtrip",
+          "phases": {
+            "action": [
+              {
+                "command": "wordpress.run-php",
+                "args": ["code=$value = json_decode( base64_decode( '{{action.inputBase64}}' ), true ); update_option( 'wp_codebox_adversarial_state', $value );"]
+              }
+            ],
+            "assert": [
+              {
+                "command": "wordpress.run-php",
+                "args": ["code=if ( get_option( 'wp_codebox_adversarial_state', null ) === null ) { throw new RuntimeException( 'state was not retained' ); }"]
+              }
+            ],
+            "teardown": [
+              {
+                "command": "wordpress.run-php",
+                "args": ["code=delete_option( 'wp_codebox_adversarial_state' );"]
+              }
+            ]
+          }
+        }
+      ],
+      "mutators": ["scalar", "structured", "sequence"],
+      "oracles": [
+        {
+          "id": "runtime-status",
+          "severity": "high"
+        }
+      ],
+      "matrix": [
+        {
+          "name": "storage",
+          "values": ["options"]
+        }
+      ],
+      "concurrency": 1,
+      "budgets": {
+        "maxCases": 8,
+        "maxActionsPerCase": 8,
+        "maxInputBytes": 65536,
+        "maxCaseTimeMs": 10000,
+        "maxWallTimeMs": 120000,
+        "maxArtifactBytes": 10485760
+      },
+      "resetPolicy": {
+        "mode": "checkpoint-per-case",
+        "checkpointName": "neutral-stateful-baseline"
+      },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "command:wordpress.run-php"],
+      "optionalCapabilities": ["transport-faults"],
+      "novelty": {
+        "retainSignals": true
+      },
+      "shrinking": {
+        "enabled": true
+      },
+      "replay": {
+        "selection": "findings"
+      }
+    }
+  ]
+}
