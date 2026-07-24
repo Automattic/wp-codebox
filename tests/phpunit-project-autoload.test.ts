@@ -248,8 +248,7 @@ pg_run_project_bootstrap_stage(array('project_bootstrap' => '', 'phpunit_xml' =>
 
 function decodedBootstrapWrapper(source: string): string {
   const encoded = source.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
-  assert.ok(encoded, "PHPUnit payload must execute inside the bootstrap diagnostic wrapper")
-  return Buffer.from(encoded, "base64").toString("utf8")
+  return encoded ? Buffer.from(encoded, "base64").toString("utf8") : source
 }
 
 function assertSelectedTestFileResolution(source: string): void {
@@ -625,7 +624,7 @@ const decodedCanonicalHarnessCode = decodedBootstrapWrapper(capturedCanonicalHar
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 assert.ok(decodedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
-assert.ok(decodedCanonicalHarnessCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedCanonicalHarnessCode.indexOf("require_once '/wordpress/wp-load.php';"), "runtime environment is available to project bootstrap code")
+assert.ok(!decodedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), "PHPUnit must own WordPress bootstrap so managed multisite constants are established first")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({

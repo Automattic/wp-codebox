@@ -959,7 +959,8 @@ export async function runPhpunitCommand({
   }
   let response: PlaygroundRunResponse
   try {
-    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, args, undefined, resultFile) })
+    const bootstrapArgs = explicitCode ? args : [...args, "bootstrap=runtime-only"]
+    response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, bootstrapArgs, undefined, resultFile) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
     await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
