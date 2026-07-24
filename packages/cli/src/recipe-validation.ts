@@ -742,9 +742,15 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
-    if (service.kind !== "mysql") addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    if (!["mysql", "redis", "smtp", "http"].includes(service.kind)) addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    const supportedOutputs: Record<string, RegExp> = {
+      mysql: /^(host|port|username|password|database)$/,
+      redis: /^(host|port|url)$/,
+      smtp: /^(host|port|httpPort|url)$/,
+      http: /^(host|port|url)$/,
+    }
     for (const [output, name] of Object.entries(service.outputs)) {
-      if (!/^(host|port|username|password|database)$/.test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
+      if (!(supportedOutputs[service.kind] ?? /^$/).test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
       if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
       if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
       environment.add(name)

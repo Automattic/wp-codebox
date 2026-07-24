@@ -33,6 +33,10 @@ import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_
 import { SANDBOX_ISOLATION_PROOF_SCHEMA } from "./sandbox-isolation-proof-contracts.js"
 import { CACHE_CHURN_OBSERVATION_SCHEMA } from "./cache-churn-observation.js"
 import { QUERY_OBSERVATION_SCHEMA } from "./query-observation-contracts.js"
+import { ADVERSARIAL_CAMPAIGN_RESULT_SCHEMA, ADVERSARIAL_CAMPAIGN_SCHEMA, ADVERSARIAL_FINDING_SCHEMA, ADVERSARIAL_REPLAY_SCHEMA, DIFFERENTIAL_RESULT_SCHEMA } from "./adversarial-campaign.js"
+import { ADVERSARIAL_BROWSER_ORACLE_RESULT_SCHEMA, ADVERSARIAL_BROWSER_PLAN_SCHEMA, CLOCK_CONTROL_CAPABILITIES_SCHEMA } from "./adversarial-browser.js"
+import { ADVERSARIAL_EVIDENCE_BUNDLE_SCHEMA } from "./adversarial-artifacts.js"
+import { TRANSPORT_FAULT_CAPABILITIES_SCHEMA, TRANSPORT_FAULT_EVIDENCE_SCHEMA, TRANSPORT_FAULT_MODEL_SCHEMA } from "./transport-faults.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/v1" as const
@@ -97,6 +101,20 @@ export const CODEBOX_PUBLIC_RUNTIME_READINESS = {
 } as const
 
 export const RUNTIME_CONTRACT_SCHEMAS = {
+  adversarial: {
+    campaign: ADVERSARIAL_CAMPAIGN_SCHEMA,
+    campaignResult: ADVERSARIAL_CAMPAIGN_RESULT_SCHEMA,
+    finding: ADVERSARIAL_FINDING_SCHEMA,
+    replay: ADVERSARIAL_REPLAY_SCHEMA,
+    evidenceBundle: ADVERSARIAL_EVIDENCE_BUNDLE_SCHEMA,
+    transportFaultModel: TRANSPORT_FAULT_MODEL_SCHEMA,
+    transportFaultCapabilities: TRANSPORT_FAULT_CAPABILITIES_SCHEMA,
+    transportFaultEvidence: TRANSPORT_FAULT_EVIDENCE_SCHEMA,
+    browserPlan: ADVERSARIAL_BROWSER_PLAN_SCHEMA,
+    browserOracleResult: ADVERSARIAL_BROWSER_ORACLE_RESULT_SCHEMA,
+    clockControlCapabilities: CLOCK_CONTROL_CAPABILITIES_SCHEMA,
+    differentialResult: DIFFERENTIAL_RESULT_SCHEMA,
+  },
   agentTask: {
     runRequest: AGENT_TASK_RUN_REQUEST_SCHEMA,
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,

@@ -15,9 +15,16 @@ const plan = runtimeServicePlan([service])
 assert.deepEqual(plan, [{ id: "test-db", kind: "mysql", provider: "docker", version: "mysql:8.4", bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }])
 assert.equal(parseLoopbackPort("127.0.0.1:44001\n"), 44001)
 assert.throws(() => parseLoopbackPort("0.0.0.0:3306"), /loopback/)
+const auxiliaryServices = [
+  { id: "cache", kind: "redis", outputs: { host: "REDIS_HOST", port: "REDIS_PORT", url: "REDIS_URL" } },
+  { id: "mail", kind: "smtp", outputs: { host: "SMTP_HOST", port: "SMTP_PORT", httpPort: "SMTP_HTTP_PORT" } },
+  { id: "upstream", kind: "http", configuration: { responseStatus: 503, responseBody: "unavailable" }, outputs: { url: "FIXTURE_URL" } },
+] satisfies WorkspaceRecipe["inputs"] extends { services?: infer T } ? NonNullable<T> : never
+assert.deepEqual(runtimeServicePlan(auxiliaryServices).map(({ kind, version }) => [kind, version]), [["redis", "redis:7.4-alpine"], ["smtp", "axllent/mailpit:v1.27"], ["http", "hashicorp/http-echo:1.0"]])
 
 const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(valid.valid, true)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: auxiliaryServices }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
 const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
@@ -157,6 +164,30 @@ const indexedForeignKey = await provisionRuntimeServices([indexedForeignKeyServi
 const indexedForeignKeyRun = indexedForeignKeyCalls.find((call) => call.args[0] === "run")
 assert.deepEqual(indexedForeignKeyRun?.args.slice(-2), ["mysql:8.4", "--restrict-fk-on-non-standard-key=OFF"], "indexed foreign-key targets opt into the MySQL compatibility mode")
 await indexedForeignKey.release()
+
+const auxiliaryCalls: string[][] = []
+const auxiliaryDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    auxiliaryCalls.push(args)
+    return await dependencies.execute(command, args, options)
+  },
+}
+const auxiliary = await provisionRuntimeServices(auxiliaryServices, { dependencies: auxiliaryDependencies })
+assert.equal(auxiliary.env.REDIS_URL, "redis://127.0.0.1:41001")
+assert.equal(auxiliary.env.FIXTURE_URL, "http://127.0.0.1:41001")
+assert.equal((await auxiliary.control("cache", "pause")).status, "applied")
+assert.equal((await auxiliary.control("cache", "resume")).status, "applied")
+assert.equal((await auxiliary.control("cache", "stop")).status, "applied")
+assert.equal((await auxiliary.control("cache", "start")).status, "applied")
+assert.equal((await auxiliary.control("cache", "flush")).status, "applied")
+assert.equal((await auxiliary.control("mail", "restart")).status, "applied")
+assert.equal((await auxiliary.control("upstream", "latency", { milliseconds: 50 })).status, "unsupported")
+assert.ok(auxiliaryCalls.some((args) => args.includes("redis:7.4-alpine")))
+assert.ok(auxiliaryCalls.some((args) => args.includes("axllent/mailpit:v1.27")))
+assert.ok(auxiliaryCalls.some((args) => args.includes("hashicorp/http-echo:1.0")))
+assert.equal(auxiliary.evidence.find((item) => item.id === "cache")?.controls?.length, 5)
+await auxiliary.release()
 
 const mariaDbCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const mariaDbDependencies: RuntimeServiceDependencies = {

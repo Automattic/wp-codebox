@@ -230,6 +230,7 @@
     "test:recipe-run-provenance": "tsx tests/recipe-run-provenance.test.ts",
     "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
     "test:fuzz-suite-runner": "tsx tests/fuzz-suite-runner.test.ts",
+    "test:adversarial-runtime": "tsx --test tests/transport-faults.test.ts tests/adversarial-campaign.test.ts tests/adversarial-browser.test.ts tests/browser-clock-control.test.ts",
     "test:playground-fuzz-suite-public": "tsx tests/playground-fuzz-suite-public.test.ts",
     "test:nested-fuzz-suite-recipe-command": "tsx tests/nested-fuzz-suite-recipe-command.test.ts",
     "test:wordpress-fuzz-suite-builders": "tsx tests/wordpress-fuzz-suite-builders.test.ts",
