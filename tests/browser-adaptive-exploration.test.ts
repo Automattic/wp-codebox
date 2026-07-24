@@ -38,6 +38,27 @@ document.querySelector('#configure').addEventListener('click', () => setTimeout(
 }, 80));
 </script>`
 
+const interceptedRepeatFixture = `<!doctype html>
+<style>
+button { display:block; width:180px; height:30px; margin:8px; }
+#overlay { position:fixed; inset:0; z-index:10; background:white; }
+</style>
+<button id="open-overlay">Open overlay</button>
+<button id="continue">Continue <span id="count">0</span></button>
+<script>
+document.querySelector('#open-overlay').addEventListener('click', () => {
+  if (document.querySelector('#overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'overlay';
+  overlay.innerHTML = '<button id="overlay-action">Overlay action</button>';
+  document.body.append(overlay);
+});
+document.querySelector('#continue').addEventListener('click', () => {
+  const count = document.querySelector('#count');
+  count.textContent = String(Number(count.textContent) + 1);
+});
+</script>`
+
 test("adaptive browser exploration is an additive public browser-actions mode", () => {
   const definition = getCommandDefinition("wordpress.browser-actions")
   const argument = definition?.acceptedArgs.find((candidate) => candidate.name === "adaptive-exploration-json")
@@ -136,6 +157,52 @@ test("identical seed and DOM produce deterministic state and action graph identi
   assert.deepEqual(stableGraph(second.result), stableGraph(first.result))
 })
 
+test("partially failed actions retain evidence without creating unreplayable frontier paths", async () => {
+  const input = {
+    seed: "partial-repeat",
+    failOnFinding: false,
+    budgets: { maxActions: 8, maxStates: 8, maxTransitions: 8, maxDurationMs: 15_000, maxErrors: 4 },
+    actionFamilies: ["repeat"],
+  }
+  const first = await runFixture(interceptedRepeatFixture, input)
+  const second = await runFixture(interceptedRepeatFixture, input)
+  const failedIndex = first.result.transitions.findIndex((transition) => transition.status === "error" && transition.action.steps[0]?.selector === "#open-overlay")
+  const failed = first.result.transitions[failedIndex]
+  assert(failed, "the intercepted second click must remain as error transition evidence")
+  assert.equal(failed.action.steps.length, 2)
+  assert.equal(failed.diagnostic?.code, "browser_adaptive_action_error")
+  assert(!first.result.states.some((state) => state.digest === failed.destinationDigest), "the partially reached destination must not become a replayable state")
+  assert(first.result.transitions.slice(failedIndex + 1).some((transition) => transition.status !== "error" && transition.action.steps[0]?.selector === "#continue"), "other actions from the replayable source must continue")
+  assert(!first.result.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_reset_replay_failed" || diagnostic.code === "browser_adaptive_source_state_not_reproduced"))
+  assert(!first.result.transitions.some((transition) => transition.diagnostic?.code === "browser_adaptive_source_state_not_reproduced"))
+  assert.equal(first.result.findings.length, 0, "a failed full action must not produce an unreplayable finding or minimization path")
+  assert.notEqual(first.result.summary.budgetExhausted, "maxDurationMs")
+
+  const stableGraph = (result: typeof first.result) => ({
+    states: result.states.map((state) => state.digest),
+    transitions: result.transitions.map((transition) => ({ source: transition.sourceDigest, destination: transition.destinationDigest, action: transition.action.id, status: transition.status, diagnostic: transition.diagnostic?.code })),
+    summary: result.summary,
+  })
+  assert.deepEqual(stableGraph(second.result), stableGraph(first.result))
+})
+
+test("cancellation during a partially failed action retains bounded non-replayable evidence", async () => {
+  const controller = new AbortController()
+  const run = await runFixture(interceptedRepeatFixture, {
+    seed: "partial-repeat",
+    failOnFinding: false,
+    budgets: { maxActions: 8, maxStates: 8, maxTransitions: 8, maxDurationMs: 15_000, maxErrors: 4 },
+    actionFamilies: ["repeat"],
+  }, controller.signal, () => setTimeout(() => controller.abort("cancel during intercepted click"), 250))
+  const failed = run.result.transitions.find((transition) => transition.status === "error")
+  assert(failed)
+  assert.equal(run.result.status, "incomplete")
+  assert.equal(run.result.summary.budgetExhausted, "cancelled")
+  assert(!run.result.states.some((state) => state.digest === failed.destinationDigest))
+  assert.equal(run.result.findings.length, 0)
+  assert(!run.result.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_reset_replay_failed"))
+})
+
 test("loops, budgets, cancellation, frames, and partial evidence remain bounded", async () => {
   const loopFixture = `<!doctype html><style>button,input,a,iframe { display:block;width:100px;height:30px }</style><button id="toggle">Toggle</button><form id="first"><input name="query"></form><form id="second"><input name="query"></form><a id="external" href="https://example.test/outside">External</a><iframe id="same" srcdoc="<style>button{width:100px;height:30px}</style><button id='framed'>Framed</button>"></iframe><script>toggle.onclick=()=>document.body.classList.toggle('on')</script>`
   const bounded = await runFixture(loopFixture, {
@@ -179,7 +246,7 @@ test("no-reset exploration remains a truthful linear state chain", async () => {
   }
 })
 
-async function runFixture(html: string, input: Record<string, unknown>, signal?: AbortSignal) {
+async function runFixture(html: string, input: Record<string, unknown>, signal?: AbortSignal, beforeExplore?: () => void) {
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage()
   const consoleMessages: object[] = []
@@ -193,6 +260,7 @@ async function runFixture(html: string, input: Record<string, unknown>, signal?:
   await page.goto(startUrl, { waitUntil: "load" })
   const contract = browserAdaptiveExplorationContract({ startUrl, stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1500, maxMutationRecords: 40 }, ...input })
   try {
+    beforeExplore?.()
     const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, signal })
     return { result, contract }
   } finally {
