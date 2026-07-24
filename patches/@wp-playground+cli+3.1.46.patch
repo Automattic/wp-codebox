@@ -6,7 +6,7 @@ index 93b7099..65f76be 100644
  }
  process.on("unhandledRejection", (r) => {
    S.error("Unhandled rejection:", r);
-+  if (r instanceof WebAssembly.RuntimeError && String(r.stack).includes("php.wasm"))
++  if (r?.name === "RuntimeError" && String(r.stack).includes("php.wasm"))
 +    throw r;
  });
  const i = new _(), [c, p] = y(
@@ -19,7 +19,7 @@ index fb79a59..77ddb67 100644
  }
  process.on("unhandledRejection", (r) => {
    E.error("Unhandled rejection:", r);
-+  if (r instanceof WebAssembly.RuntimeError && String(r.stack).includes("php.wasm"))
++  if (r?.name === "RuntimeError" && String(r.stack).includes("php.wasm"))
 +    throw r;
  });
  const i = new m(), [h, u] = k(

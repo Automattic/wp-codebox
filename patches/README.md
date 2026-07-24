@@ -11,7 +11,9 @@ contains the same change.
 
 `@wp-playground+cli+3.1.46.patch` makes blueprint worker threads rethrow fatal
 `WebAssembly.RuntimeError` rejections originating from `php.wasm` after logging
-them. Other unhandled rejections retain the released CLI's log-only behavior.
+them. Detection uses the error name because PHP-WASM errors may cross JavaScript
+realm boundaries where `instanceof` is false. Other unhandled rejections retain
+the released CLI's log-only behavior.
 Without this narrow terminalization, a poisoned PHP-WASM worker remains alive
 and leaves the parent request pending until the recipe timeout. Remove the patch
 after the Playground CLI ships the same worker terminalization behavior.

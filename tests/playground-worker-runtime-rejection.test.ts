@@ -10,13 +10,14 @@ const preloadPath = join(root, "reject-on-command.mjs")
 
 await writeFile(preloadPath, `
 import { parentPort } from "node:worker_threads"
+import { runInNewContext } from "node:vm"
 parentPort?.on("message", (message) => {
   if (message === "wp-codebox-trigger-non-wasm-rejection") {
     Promise.reject(new Error("ordinary worker rejection"))
     setTimeout(() => parentPort?.postMessage("wp-codebox-worker-survived"), 25)
   }
   if (message === "wp-codebox-trigger-php-wasm-rejection") {
-    const error = new WebAssembly.RuntimeError("null function or function signature mismatch")
+    const error = runInNewContext('new WebAssembly.RuntimeError("null function or function signature mismatch")')
     error.stack = "RuntimeError: null function or function signature mismatch\\n    at php.wasm.zif_mysqli_poll (wasm://wasm/php.wasm-05996276:wasm-function[12986]:0x9949a8)"
     Promise.reject(error)
   }
