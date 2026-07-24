@@ -5,6 +5,7 @@ import { isAbsolute, join, relative } from "node:path"
 import {
   ADVERSARIAL_ORACLE_SCHEMA,
   adversarialCampaign,
+  adversarialFindingFingerprint,
   artifactManifestFile,
   refreshArtifactManifestFileSha256s,
   runAdversarialCampaign,
@@ -129,17 +130,31 @@ async function runRecipeAdversarialReplay(
     const started = Date.now()
     const observation = await execute(plan, controller.signal)
     const signals = [...new Set(observation.signals ?? [])].sort()
+    const replayMismatch = Boolean(replay.expectedStateDigest && observation.stateDigest !== replay.expectedStateDigest)
+    const replayFingerprint = adversarialFindingFingerprint({
+      oracleIds: observation.status === "passed" ? [] : ["runtime-status"],
+      status: observation.status,
+      diagnosticCodes: (observation.diagnostics ?? []).map((diagnostic) => diagnostic.code).sort(),
+      stateDigest: observation.stateDigest,
+      matrix: plan.matrix,
+    })
+    const fingerprintMismatch = Boolean(replay.expectedFingerprint && replayFingerprint !== replay.expectedFingerprint)
+    const reproduced = observation.status === "passed" && !replayMismatch && !fingerprintMismatch
     return {
       schema: "wp-codebox/adversarial-campaign-result/v1",
       campaignId: campaign.id,
       seed: replay.seed,
-      status: observation.status === "passed" ? "passed" : "findings",
-      summary: { generated: 1, executed: 1, retained: 1, findings: observation.status === "passed" ? 0 : 1, duplicates: 0, timedOut: observation.status === "timed-out" ? 1 : 0 },
+      status: reproduced ? "passed" : "findings",
+      summary: { generated: 1, executed: 1, retained: 1, findings: reproduced ? 0 : 1, duplicates: 0, timedOut: observation.status === "timed-out" ? 1 : 0 },
       corpus: [{ id: replay.caseId, actions: replay.actions, input: replay.input, signals }],
       findings: [],
       schedule: replay.schedule,
       noveltySignals: signals,
-      diagnostics: [{ code: "adversarial-replay-completed", message: `Replayed ${replay.caseId} through the recipe fuzz lifecycle.` }],
+      diagnostics: replayMismatch
+        ? [{ code: "adversarial-replay-state-mismatch", message: `Replay ${replay.caseId} did not reproduce the recorded state digest.` }]
+        : fingerprintMismatch
+          ? [{ code: "adversarial-replay-fingerprint-mismatch", message: `Replay ${replay.caseId} did not reproduce the recorded finding fingerprint.` }]
+          : [{ code: "adversarial-replay-completed", message: `Replayed ${replay.caseId} through the recipe fuzz lifecycle.` }],
       resourceUsage: { wallTimeMs: Date.now() - started, artifactBytes: (observation.artifacts ?? []).reduce((sum, artifact) => sum + (artifact.bytes ?? 0), 0) },
     }
   } finally {

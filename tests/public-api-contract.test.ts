@@ -159,6 +159,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./browser-artifact-lifecycle.js",
   "./browser-callback-contracts.js",
   "./browser-interaction.js",
+  "./browser-adaptive-exploration.js",
   "./browser-multi-actor-scenario-contracts.js",
   "./browser-probe-contract.js",
   "./browser-playground-session-run.js",
@@ -242,6 +243,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
 assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
   "./browser-multi-actor-scenario-contracts.js",
+  "./browser-adaptive-exploration.js",
   "./command-registry.js",
   "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",

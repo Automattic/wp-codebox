@@ -122,3 +122,26 @@ test("campaign interruption stops scheduling and returns bounded partial evidenc
   assert(result.resourceUsage.artifactBytes <= 1024)
   assert(result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-interrupted"))
 })
+
+test("minimization preserves the exact oracle and state fingerprint", async () => {
+  const exactState = adversarialCampaign({
+    id: "exact-state",
+    seed: "exact-state-seed",
+    corpus: [{ id: "journey", actions: [{ type: "open" }, { type: "trigger" }], input: { value: "fixture" } }],
+    mutationKinds: ["scalar"],
+    budgets: { maxCases: 1, maxActionsPerCase: 4, maxCaseTimeMs: 1_000, maxWallTimeMs: 5_000 },
+    oracles: [{ schema: "wp-codebox/adversarial-oracle/v1", id: "fixture-defect", severity: "high" }],
+  })
+  const result = await runAdversarialCampaign(exactState, {
+    execute: async (plan) => ({
+      status: "failed",
+      stateDigest: plan.actions.some((action) => action.type === "open") ? "modal-open" : "modal-closed",
+      diagnostics: [{ code: "fixture-defect", message: "same visible error in a different state" }],
+    }),
+    evaluate: async () => [{ oracleId: "fixture-defect", failed: true }],
+  })
+  const finding = result.findings[0]!
+  assert.equal(finding.replay.expectedStateDigest, "modal-open")
+  assert.equal(finding.replay.expectedFingerprint, finding.fingerprint)
+  assert(finding.minimized.actions.some((action) => action.type === "open"), "a candidate in the wrong state must not be accepted")
+})

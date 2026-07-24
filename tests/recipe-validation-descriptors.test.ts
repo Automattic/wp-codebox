@@ -27,7 +27,7 @@ await withTempDir("wp-codebox-recipe-validation-descriptors-", async (recipeDire
     { code: "invalid-capture", path: "$.workflow.steps[0].args", message: "wordpress.browser-probe capture does not support: bogus" },
   ])
   assert.deepEqual(issues.filter((issue) => issue.path === "$.workflow.steps[1].args"), [
-    { code: "missing-steps", path: "$.workflow.steps[1].args", message: "wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>." },
+    { code: "missing-steps", path: "$.workflow.steps[1].args", message: "wordpress.browser-actions requires steps-json=<array>, url=<path-or-url>, or adaptive-exploration-json=<object>." },
     { code: "invalid-duration", path: "$.workflow.steps[1].args", message: "wordpress.browser-actions timeout must look like 500ms or 2s." },
     { code: "invalid-capture", path: "$.workflow.steps[1].args", message: "wordpress.browser-actions capture does not support: bogus" },
   ])
