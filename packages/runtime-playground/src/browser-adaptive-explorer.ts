@@ -120,11 +120,12 @@ export async function exploreAdaptiveBrowserStateMachine({
       const fingerprints = [...new Set([...newConsoleErrors, ...newPageErrors].map((message) => browserAdaptiveDigest("oracle", message)))].sort()
       const existing = states.get(stabilized.state.digest)
       const newState = !existing
-      if (newState && states.size < contract.budgets.maxStates) {
+      const replayableDestination = !actionError
+      if (replayableDestination && newState && states.size < contract.budgets.maxStates) {
         states.set(stabilized.state.digest, stabilized.state)
-      } else if (newState) {
+      } else if (replayableDestination && newState) {
         exhausted = "maxStates"
-      } else {
+      } else if (replayableDestination && existing) {
         revisits += 1
         existing.visits += 1
       }
@@ -157,14 +158,14 @@ export async function exploreAdaptiveBrowserStateMachine({
       }
       errors += newConsoleErrors.length + newPageErrors.length + (actionError ? 1 : 0)
       if (artifactBytes(states, [...transitions, transition], diagnostics, findings) > contract.budgets.maxArtifactBytes) {
-        if (newState) states.delete(stabilized.state.digest)
+        if (replayableDestination && newState) states.delete(stabilized.state.digest)
         exhausted = "maxArtifactBytes"
         break
       }
       transitions.push(transition)
 
       const path = [...source.path, action]
-      if (fingerprints.length > 0) {
+      if (replayableDestination && fingerprints.length > 0) {
         const fingerprint = fingerprints[0] as string
         const finding: BrowserAdaptiveFinding = {
           fingerprint,
@@ -190,8 +191,8 @@ export async function exploreAdaptiveBrowserStateMachine({
         break
       }
       if (errors >= contract.budgets.maxErrors) { exhausted = "maxErrors"; break }
-      if (newState && states.size <= contract.budgets.maxStates) frontier.push({ state: destination, path })
-      if (!newState && destination.visits < contract.revisitPolicy.maxStateVisits) frontier.push({ state: destination, path })
+      if (replayableDestination && newState && states.size <= contract.budgets.maxStates) frontier.push({ state: destination, path })
+      if (replayableDestination && !newState && destination.visits < contract.revisitPolicy.maxStateVisits) frontier.push({ state: destination, path })
       if (contract.resetPolicy.mode === "none") break
     }
   }
