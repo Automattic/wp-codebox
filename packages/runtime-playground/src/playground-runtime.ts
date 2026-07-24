@@ -17,7 +17,7 @@ import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requir
 import { argValue, cleanWpCliOutput, runWithTemporaryWpCliScript, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
-import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, terminalizeOnPhpWasmRuntimeRejection, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
@@ -365,9 +365,14 @@ class PlaygroundRuntime implements Runtime {
     this.activeExecutionAbortControllers.add(abortController)
     try {
       const executionSpec = executionSpecWithEnvironment(spec)
-      const output = await this.executionSignals.run(abortController.signal, async () => spec.processIdentity
-        ? await this.requestWorkerExecutions.run(spec.environment ?? {}, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
-        : await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
+      const output = await this.executionSignals.run(abortController.signal, async () => {
+        const executeCommand = async () => spec.processIdentity
+          ? await this.requestWorkerExecutions.run(spec.environment ?? {}, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
+          : await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController)
+        return spec.command === "wordpress.phpunit"
+          ? await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
+          : await executeCommand()
+      })
       const finishedAt = now()
       const envelope = typeof output === "string"
         ? runtimeCommandResultEnvelopeFromOutput({
