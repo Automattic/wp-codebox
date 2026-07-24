@@ -1,0 +1,94 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "wordpress-adversarial-vulnerable",
+    "wp": "latest"
+  },
+  "inputs": {
+    "mounts": [
+      {
+        "source": "../../tests/fixtures/wordpress-adversarial/vulnerable-plugin",
+        "target": "/wordpress/wp-content/plugins/wp-codebox-adversarial-vulnerable",
+        "mode": "readonly",
+        "metadata": { "kind": "fixture", "disposableOnly": true }
+      },
+      {
+        "source": "../../tests/fixtures/wordpress-adversarial/vulnerable-theme",
+        "target": "/wordpress/wp-content/themes/wp-codebox-adversarial-vulnerable",
+        "mode": "readonly",
+        "metadata": { "kind": "fixture", "disposableOnly": true }
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.run-php",
+        "args": ["code=require_once ABSPATH . 'wp-admin/includes/plugin.php'; activate_plugin('wp-codebox-adversarial-vulnerable/vulnerable-plugin.php'); switch_theme('wp-codebox-adversarial-vulnerable'); delete_option('wp_codebox_vulnerable_authorization'); delete_option('wp_codebox_vulnerable_partial_state');"]
+      }
+    ]
+  },
+  "adversarialCampaigns": [
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-authorization",
+      "seed": "wordpress-vulnerable-authorization-v1",
+      "corpus": [
+        { "id": "unauthenticated-rest", "actions": [{ "type": "authorization-rest", "input": { "role": "subscriber", "secret": "fixture-secret" } }], "signals": ["route:authorization"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "authorization-rest",
+          "phases": {
+            "action": [{ "command": "wordpress.rest-request", "args": ["method=POST", "path=/wp-codebox-vulnerable/v1/authorization", "body-json={{action.input}}", "capture-diagnostics=wpdb-queries"] }],
+            "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('wp_codebox_vulnerable_authorization', null) !== null) { throw new RuntimeException('authorization-bypass'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_vulnerable_authorization');"] }]
+          }
+        }
+      ],
+      "mutators": ["scalar", "structured", "sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "critical", "description": "Unauthenticated state changes must fail closed." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 4, "maxActionsPerCase": 4, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-authorization-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.rest-request", "command:wordpress.run-php"],
+      "optionalCapabilities": ["transport-faults"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "authorization", "network": "deny" }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-state",
+      "seed": "wordpress-vulnerable-state-v1",
+      "corpus": [
+        { "id": "partial-state", "actions": [{ "type": "partial-state-rest", "input": {} }], "signals": ["route:partial-state"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "partial-state-rest",
+          "phases": {
+            "action": [{ "command": "wordpress.rest-request", "args": ["method=POST", "path=/wp-codebox-vulnerable/v1/partial-state", "body-json={{action.input}}", "capture-diagnostics=wpdb-queries"] }],
+            "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('wp_codebox_vulnerable_partial_state', null) !== null) { throw new RuntimeException('partial-state-commit'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_vulnerable_partial_state');"] }]
+          }
+        }
+      ],
+      "mutators": ["scalar", "sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "high", "description": "Failed requests must not commit partial state." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 3, "maxActionsPerCase": 3, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-state-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.rest-request", "command:wordpress.run-php"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "state-corruption", "network": "deny" }
+    }
+  ],
+  "artifacts": {
+    "directory": "./artifacts/wordpress-adversarial-vulnerable"
+  }
+}
