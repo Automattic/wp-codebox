@@ -57,9 +57,6 @@ export function shellArgv(command: string): string[] {
 
 export function wpCliPhpScript(argv: string[]): string {
   return `<?php
-register_shutdown_function(static function (): void {
-    @unlink(__FILE__);
-});
 putenv('SHELL_PIPE=0');
 $GLOBALS['argv'] = array_merge(array('/tmp/wp-cli.phar', '--path=/wordpress', '--no-color'), json_decode(${JSON.stringify(JSON.stringify(argv))}, true));
 ${phpCliStreamConstants()}
@@ -74,7 +71,6 @@ export async function runWithTemporaryWpCliScript<T>(filesystem: WpCliTemporaryS
   try {
     return await run(scriptPath)
   } finally {
-    // The wrapper also removes itself on PHP shutdown, so a missing file is expected here.
     await Promise.resolve(filesystem.unlink(scriptPath)).catch(() => undefined)
   }
 }
