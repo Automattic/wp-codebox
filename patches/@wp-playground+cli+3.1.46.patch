@@ -1,0 +1,26 @@
+diff --git a/node_modules/@wp-playground/cli/worker-thread-v1.js b/node_modules/@wp-playground/cli/worker-thread-v1.js
+index 93b7099..65f76be 100644
+--- a/node_modules/@wp-playground/cli/worker-thread-v1.js
++++ b/node_modules/@wp-playground/cli/worker-thread-v1.js
+@@ -157,6 +157,8 @@ async function C(r, e) {
+ }
+ process.on("unhandledRejection", (r) => {
+   S.error("Unhandled rejection:", r);
++  if (r instanceof WebAssembly.RuntimeError && String(r.stack).includes("php.wasm"))
++    throw r;
+ });
+ const i = new _(), [c, p] = y(
+   new F(new f()),
+diff --git a/node_modules/@wp-playground/cli/worker-thread-v2.js b/node_modules/@wp-playground/cli/worker-thread-v2.js
+index fb79a59..77ddb67 100644
+--- a/node_modules/@wp-playground/cli/worker-thread-v2.js
++++ b/node_modules/@wp-playground/cli/worker-thread-v2.js
+@@ -168,6 +168,8 @@ async function j(r, e) {
+ }
+ process.on("unhandledRejection", (r) => {
+   E.error("Unhandled rejection:", r);
++  if (r instanceof WebAssembly.RuntimeError && String(r.stack).includes("php.wasm"))
++    throw r;
+ });
+ const i = new m(), [h, u] = k(
+   new L(new b()),

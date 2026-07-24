@@ -8,3 +8,10 @@ WP Codebox needs the repaired bounded Range decoder for the Cloudflare dev rig
 and browser asset path before that upstream change can be merged and released.
 Remove this patch and the package override after a published Playground package
 contains the same change.
+
+`@wp-playground+cli+3.1.46.patch` makes blueprint worker threads rethrow fatal
+`WebAssembly.RuntimeError` rejections originating from `php.wasm` after logging
+them. Other unhandled rejections retain the released CLI's log-only behavior.
+Without this narrow terminalization, a poisoned PHP-WASM worker remains alive
+and leaves the parent request pending until the recipe timeout. Remove the patch
+after the Playground CLI ships the same worker terminalization behavior.

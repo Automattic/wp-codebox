@@ -125,6 +125,7 @@
     "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts && tsx tests/playground-custom-archive-cache-process.test.ts && tsx tests/playground-custom-archive-cache.integration.test.ts",
     "test:phpunit-runtime-failure-diagnostics": "tsx tests/phpunit-runtime-failure-diagnostics.test.ts",
     "test:phpunit-runtime-rejection": "tsx tests/phpunit-runtime-rejection.test.ts",
+    "test:playground-worker-runtime-rejection": "tsx tests/playground-worker-runtime-rejection.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
