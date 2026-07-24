@@ -460,6 +460,8 @@ function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
   const host = spec.runtimeEnv?.DB_HOST
   if (!host) return undefined
   const port = spec.runtimeEnv?.DB_PORT
+  const multisite = blueprintEnablesMultisite(spec.environment.blueprint)
+  const multisiteSite = multisiteSiteIdentity(spec.preview?.siteUrl)
   const values = {
     DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
     DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
@@ -474,9 +476,31 @@ define('DB_HOST', ${phpLiteral(values.DB_HOST)});
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');
 $table_prefix = 'wp_';
-if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
+${multisite ? `define('MULTISITE', true);
+define('SUBDOMAIN_INSTALL', false);
+define('DOMAIN_CURRENT_SITE', ${phpLiteral(multisiteSite.domain)});
+define('PATH_CURRENT_SITE', ${phpLiteral(multisiteSite.path)});
+define('SITE_ID_CURRENT_SITE', 1);
+define('BLOG_ID_CURRENT_SITE', 1);
+` : ""}if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
 `
+}
+
+function blueprintEnablesMultisite(blueprint: unknown): boolean {
+  if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) return false
+  const steps = Array.isArray((blueprint as { steps?: unknown }).steps) ? (blueprint as { steps: unknown[] }).steps : []
+  return steps.some((step) => Boolean(step && typeof step === "object" && !Array.isArray(step) && (step as { step?: unknown }).step === "enableMultisite"))
+}
+
+function multisiteSiteIdentity(siteUrl?: string): { domain: string; path: string } {
+  try {
+    const url = new URL(siteUrl || "http://localhost")
+    const path = `/${url.pathname.replace(/^\/+|\/+$/g, "")}`
+    return { domain: url.hostname || "localhost", path: path === "/" ? path : `${path}/` }
+  } catch {
+    return { domain: "localhost", path: "/" }
+  }
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

@@ -146,6 +146,61 @@ require_once ABSPATH . 'wp-settings.php';
     assert.deepEqual(aggregate.counts, { total: 2, succeeded: 2, failed: 0, timedOut: 0, cancelled: 0 })
     assert.deepEqual(aggregate.entries.map((entry: { artifactNamespace: string }) => entry.artifactNamespace), ["phpunit/one", "phpunit/two"])
     assert.deepEqual(aggregate.entries.map((entry: { inputIndex: number }) => entry.inputIndex), [0, 1])
+
+    const multisitePlugin = join(directory, "managed-multisite-fixture")
+    const multisiteRecipePath = join(directory, "managed-multisite-recipe.json")
+    await mkdir(join(multisitePlugin, "tests"), { recursive: true })
+    await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
+/** Plugin Name: Managed Multisite Fixture */
+add_action('init', static function (): void {
+    update_option('wp_codebox_parent_init_ran', 1);
+    add_action('init', static function (): void {
+        update_option('wp_codebox_nested_init_ran', 1);
+        do_action('wp_codebox_nested_init_replayed');
+    }, 15);
+}, 0);
+`)
+    await writeFile(join(multisitePlugin, "phpunit.xml.dist"), "<?xml version=\"1.0\"?><phpunit><testsuites><testsuite name=\"managed-multisite\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
+    await writeFile(join(multisitePlugin, "tests", "ManagedMultisiteTest.php"), `<?php
+final class ManagedMultisiteTest extends WP_UnitTestCase {
+    public function test_external_mysql_preserves_multisite_blog_switching(): void {
+        $this->assertTrue(is_multisite());
+        $original = get_current_blog_id();
+        $blog_id = self::factory()->blog->create();
+        switch_to_blog($blog_id);
+        $this->assertSame($blog_id, get_current_blog_id());
+        $this->assertTrue(ms_is_switched());
+        restore_current_blog();
+        $this->assertSame($original, get_current_blog_id());
+        $this->assertFalse(ms_is_switched());
+    }
+
+    public function test_external_mysql_replays_wordpress_lifecycle_in_order(): void {
+        $this->assertGreaterThan(0, did_action('init'));
+        $this->assertSame(1, (int) get_option('wp_codebox_parent_init_ran'));
+        $this->assertSame(1, (int) get_option('wp_codebox_nested_init_ran'));
+        $this->assertSame(1, did_action('wp_codebox_nested_init_replayed'));
+    }
+
+    public function test_runtime_uses_real_mysql(): void {
+        global $wpdb;
+        $this->assertInstanceOf(mysqli::class, $wpdb->dbh);
+        $this->assertSame('1', (string) $wpdb->get_var("SELECT JSON_VALID('{\\"valid\\":true}')"));
+    }
+}
+`)
+    const multisiteRecipe = buildWordPressPhpunitRecipe({
+      pluginSlug: "managed-multisite-fixture",
+      phpVersion: "8.3",
+      databaseType: "mysql",
+      multisite: true,
+      pluginSource: multisitePlugin,
+      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-fixture"],
+      mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
+    })
+    await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)
+    const multisiteResult = await runRecipe({ recipePath: multisiteRecipePath, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
+    assert.equal(multisiteResult.success, true, JSON.stringify(multisiteResult))
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })
