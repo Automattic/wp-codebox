@@ -134,6 +134,8 @@ test("Cloudflare publication contracts are host-independent, immutable, and boun
   assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
   assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v1", routes: [{ route: "/", objectKey }] }).routes[0].canonicalRevision, canonicalRevision)
   assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v2", canonicalVersion: undefined }).canonicalVersion, 0)
+  assert.deepEqual(validatePublishedRevision({ ...publication, routes: [] }).routes, [])
+  assert.throws(() => normalizePublishedRoutes([]), /bounded routes array/)
   assert.throws(() => validatePublishedRevision({ ...publication, routes: [{ route: "/", objectKey: "sites/default/pages/foreign.json" }] }), /route is invalid/)
 })
 
@@ -349,7 +351,7 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /const cachedRuntimes = new Map/)
   assert.match(worker, /cachedRuntimes\.get\(site\.id\)/)
   assert.match(worker, /promise\.catch\(\(\) =>/)
-  assert.match(coordinatedRequest, /await discardRuntime\(runtime, site\)\n      runtime = undefined[\s\S]{0,100}const publicationJob/)
+  assert.match(coordinatedRequest, /await discardRuntime\(runtime, site\)\n      runtime = undefined[\s\S]*initializeProvisioningPublication[\s\S]*const publicationJob/)
   assert.match(worker, /if \(runtime\) await discardRuntime\(runtime, site\)/)
   assert.doesNotMatch(worker, /runtime\.pointer = next/)
   assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)

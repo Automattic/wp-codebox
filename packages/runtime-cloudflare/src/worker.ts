@@ -738,6 +738,27 @@ async function readCurrentPublication(bucket: R2Bucket, site: SiteContext): Prom
   return { publication: validatePublishedRevision(JSON.parse(await object.text()), site), etag: object.etag }
 }
 
+async function initializeProvisioningPublication(bucket: R2Bucket, lease: Lease, site: SiteContext): Promise<CurrentPublication> {
+  const existing = await readCurrentPublication(bucket, site)
+  if (existing) return existing
+  if (!lease.pointer) throw new Error("Provisioning publication requires a committed canonical revision.")
+  const publication: PublishedRevision = {
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: crypto.randomUUID(),
+    canonicalRevision: lease.pointer.revision,
+    canonicalVersion: lease.version,
+    publishedAt: new Date().toISOString(),
+    routes: [],
+  }
+  const serialized = JSON.stringify(publication)
+  await putImmutableJson(bucket, publishedRevisionObjectKey(publication.revision, site), serialized)
+  const created = await bucket.put(siteStorageKeys(site).publishedCurrent, serialized, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" } })
+  if (created) return { publication, etag: created.etag }
+  const winner = await readCurrentPublication(bucket, site)
+  if (!winner) throw new Error("Provisioning publication did not produce a current revision.")
+  return winner
+}
+
 function initializePublicationChanges(php: PHP): void {
   php.writeFile(PUBLICATION_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ all: false, upsert: [], remove: [] })))
 }
@@ -1075,7 +1096,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     const mutatesCanonicalState = isMutation(request, route)
     const diagnosticsStartedAt = Date.now()
     const retained = new MutationRetainedBytes()
-    const currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site) : null
+    let currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site) : null
     let response: Response | undefined
     let phpResponse: PHPResponseData | undefined
     let responseBodyBytes = 0
@@ -1136,6 +1157,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       await discardRuntime(runtime, site)
       runtime = undefined
       if (phpResponse) retained.release(responseBodyBytes)
+      if (route === "static-artifact-import" && !currentPublication) currentPublication = await initializeProvisioningPublication(env.WORDPRESS_STATE_BUCKET, lease, site)
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges, site)
       response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
       if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)

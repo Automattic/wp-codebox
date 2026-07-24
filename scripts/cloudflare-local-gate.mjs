@@ -35,7 +35,7 @@ try {
   await startWorker()
   if (publicProvisioning) {
     await assertPublicProvisioning(staticArtifactImport)
-    console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, scheduled import, cold-restart site read, administrator claim, login, and editable native blocks.")
+    console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, initial publication, cold-restart site read, administrator claim, native-block edit, automatic republication, and post-restart persistence.")
   } else {
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
@@ -219,7 +219,7 @@ async function assertPublicProvisioning(input) {
   const imported = operation?.receipt?.ssiResult
   if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
     || !imported.pages || Object.keys(imported.pages).length !== expectedPageCount || Object.values(imported.quality ?? {}).some((count) => count !== 0)
-    || operation.receipt?.publication?.status !== "none") {
+    || operation.receipt?.publication?.status !== "promoted") {
     throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
   }
 
@@ -236,7 +236,18 @@ async function assertPublicProvisioning(input) {
   const claim = JSON.parse(claimBody)
   if (!claimResponse.ok || claim.credential?.username !== "admin" || claim.credential?.password !== password) throw new Error(`Administrator claim failed: ${claimResponse.status} ${claimBody}.`)
   const adminHtml = await login(claim.credential.password)
-  await assertImportedArtifactPages(adminHtml, imported)
+  const importedPages = await assertImportedArtifactPages(adminHtml, imported)
+  const edited = await updateImportedPage(adminHtml, importedPages.secondary)
+  const published = await runScheduledPublicationUntil(new URL(edited.route, origin), edited.marker, "provisioned site edit publication", 12)
+  assertIncludes(published, edited.marker, "provisioned site edit publication")
+  await stopWorker()
+  await startWorker()
+  const persisted = await assertPublishedWordPressPage(new URL(edited.route, origin), "provisioned site edit after restart", ["publication-r2", "publication-edge"])
+  assertIncludes(persisted, edited.marker, "provisioned site edit after restart")
+  const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
+  const persistedPages = await assertImportedArtifactPages(restartedAdmin, imported)
+  const persistedEdit = [persistedPages.primary, persistedPages.secondary].find((page) => page.id === edited.id)
+  if (!persistedEdit?.raw.includes(edited.marker)) throw new Error(`Provisioned site edit was not retained as editable block content after restart: ${JSON.stringify(persistedPages)}.`)
 }
 
 async function assertTwoSiteIsolation() {
@@ -418,6 +429,26 @@ async function assertImportedArtifactPages(adminHtml, imported) {
   const secondary = pages.find(({ route }) => route !== "/")
   if (!primary || (pages.length > 1 && !secondary)) throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
   return { primary, secondary: secondary ?? primary }
+}
+
+async function updateImportedPage(adminHtml, page) {
+  const marker = `Provisioned site edit ${Date.now()}`
+  const content = `<!-- wp:paragraph --><p>${marker}</p><!-- /wp:paragraph -->`
+  const response = await request(`${origin}/wp-json/wp/v2/pages/${page.id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-wp-nonce": restNonce(adminHtml) },
+    body: JSON.stringify({ content, status: "publish" }),
+  })
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "provisioned site page edit")
+  if (response.status !== 200 || response.headers.get("x-wp-codebox-publication") !== "queued" || !response.headers.get("x-wp-codebox-publication-job")) {
+    throw new Error(`Provisioned site page edit did not queue publication: status=${response.status} publication=${response.headers.get("x-wp-codebox-publication")} body=${body}.`)
+  }
+  const updated = JSON.parse(body)
+  const raw = updated.content?.raw
+  if (typeof raw !== "string" || !raw.includes(marker) || /<!-- wp:(?:html|freeform)\b/.test(raw)) throw new Error(`Provisioned site page edit was not retained as native block content: ${body}.`)
+  const link = new URL(updated.link)
+  return { id: page.id, marker, route: `${link.pathname}${link.search}` }
 }
 
 async function updatePost(adminHtml, post, previousPublicationRevision) {
