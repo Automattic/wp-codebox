@@ -738,6 +738,27 @@ async function readCurrentPublication(bucket: R2Bucket, site: SiteContext): Prom
   return { publication: validatePublishedRevision(JSON.parse(await object.text()), site), etag: object.etag }
 }
 
+async function initializeProvisioningPublication(bucket: R2Bucket, lease: Lease, site: SiteContext): Promise<CurrentPublication> {
+  const existing = await readCurrentPublication(bucket, site)
+  if (existing) return existing
+  if (!lease.pointer) throw new Error("Provisioning publication requires a committed canonical revision.")
+  const publication: PublishedRevision = {
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: crypto.randomUUID(),
+    canonicalRevision: lease.pointer.revision,
+    canonicalVersion: lease.version,
+    publishedAt: new Date().toISOString(),
+    routes: [],
+  }
+  const serialized = JSON.stringify(publication)
+  await putImmutableJson(bucket, publishedRevisionObjectKey(publication.revision, site), serialized)
+  const created = await bucket.put(siteStorageKeys(site).publishedCurrent, serialized, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" } })
+  if (created) return { publication, etag: created.etag }
+  const winner = await readCurrentPublication(bucket, site)
+  if (!winner) throw new Error("Provisioning publication did not produce a current revision.")
+  return winner
+}
+
 function initializePublicationChanges(php: PHP): void {
   php.writeFile(PUBLICATION_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ all: false, upsert: [], remove: [] })))
 }
@@ -930,6 +951,17 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
   try {
     let progress = await readPublicationProgress(env.WORDPRESS_STATE_BUCKET, job, site)
     const current = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site)
+    const recoveredPromotion = current?.publication.canonicalVersion === job.coordinatorVersion
+      && current.publication.canonicalRevision === job.canonical.revision
+      && current.publication.sourceJob === job.key
+    if (recoveredPromotion) {
+      await renewLease()
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job, site), JSON.stringify({ status: "promoted", job: job.key, publication: current.publication.revision, recordedAt: new Date().toISOString() }))
+      await operations?.reconcilePublication(site.id, job.key, "promoted", current.publication.revision)
+      await renewLease()
+      await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job, site)])
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "promoted", jobKey: job.key }
+    }
     if (!current || current.publication.canonicalVersion >= job.coordinatorVersion) {
       await renewLease()
       await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job, site), JSON.stringify({ status: "superseded", job: job.key, recordedAt: new Date().toISOString() }))
@@ -969,7 +1001,7 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
     const routes = new Map(current.publication.routes.map((route) => [route.route, route]))
     for (const route of plan.remove) routes.delete(route)
     for (const route of plan.upsert) routes.set(route, { route, objectKey: await publishedPageObjectKey(job.canonical.revision, route, site), canonicalRevision: job.canonical.revision })
-    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
+    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, sourceJob: job.key, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
     const serialized = JSON.stringify(publication)
     if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
     await renewLease()
@@ -1075,7 +1107,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     const mutatesCanonicalState = isMutation(request, route)
     const diagnosticsStartedAt = Date.now()
     const retained = new MutationRetainedBytes()
-    const currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site) : null
+    let currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site) : null
     let response: Response | undefined
     let phpResponse: PHPResponseData | undefined
     let responseBodyBytes = 0
@@ -1136,6 +1168,7 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       await discardRuntime(runtime, site)
       runtime = undefined
       if (phpResponse) retained.release(responseBodyBytes)
+      if (route === "static-artifact-import" && !currentPublication) currentPublication = await initializeProvisioningPublication(env.WORDPRESS_STATE_BUCKET, lease, site)
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges, site)
       response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
       if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)

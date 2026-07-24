@@ -35,7 +35,7 @@ try {
   await startWorker()
   if (publicProvisioning) {
     await assertPublicProvisioning(staticArtifactImport)
-    console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, scheduled import, cold-restart site read, administrator claim, login, and editable native blocks.")
+    console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, initial publication, cold-restart site read, administrator claim, native-block edit, automatic republication, and post-restart persistence.")
   } else {
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
@@ -113,9 +113,9 @@ try {
   const importedAdmin = await login()
   await assertImportedArtifactPages(importedAdmin, imported)
   const duplicateStateBefore = await (await fetch(`${origin}/?phase=r2-state`)).json()
-  const duplicate = await importStaticArtifact(staticArtifactImport, 200)
+  const duplicate = await importStaticArtifact(staticArtifactImport, coordinator === "d1" ? 202 : 200)
   const duplicateStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
-  if (duplicate.status !== "duplicate" || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
+  if (!(["duplicate", ...(coordinator === "d1" ? ["imported"] : [])].includes(duplicate.status)) || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
   const conflicting = await importStaticArtifact({ ...staticArtifactImport, import: { ...staticArtifactImport.import, slug: "different-artifact-site" } }, 409)
   const conflictStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
@@ -219,7 +219,7 @@ async function assertPublicProvisioning(input) {
   const imported = operation?.receipt?.ssiResult
   if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
     || !imported.pages || Object.keys(imported.pages).length !== expectedPageCount || Object.values(imported.quality ?? {}).some((count) => count !== 0)
-    || operation.receipt?.publication?.status !== "none") {
+    || operation.receipt?.publication?.status !== "promoted") {
     throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
   }
 
@@ -236,7 +236,18 @@ async function assertPublicProvisioning(input) {
   const claim = JSON.parse(claimBody)
   if (!claimResponse.ok || claim.credential?.username !== "admin" || claim.credential?.password !== password) throw new Error(`Administrator claim failed: ${claimResponse.status} ${claimBody}.`)
   const adminHtml = await login(claim.credential.password)
-  await assertImportedArtifactPages(adminHtml, imported)
+  const importedPages = await assertImportedArtifactPages(adminHtml, imported)
+  const edited = await updateImportedPage(adminHtml, importedPages.secondary)
+  const published = await runScheduledPublicationUntil(new URL(edited.route, origin), edited.marker, "provisioned site edit publication", 12)
+  assertIncludes(published, edited.marker, "provisioned site edit publication")
+  await stopWorker()
+  await startWorker()
+  const persisted = await assertPublishedWordPressPage(new URL(edited.route, origin), "provisioned site edit after restart", ["publication-r2", "publication-edge"])
+  assertIncludes(persisted, edited.marker, "provisioned site edit after restart")
+  const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
+  const persistedPages = await assertImportedArtifactPages(restartedAdmin, imported)
+  const persistedEdit = [persistedPages.primary, persistedPages.secondary].find((page) => page.id === edited.id)
+  if (!persistedEdit?.raw.includes(edited.marker)) throw new Error(`Provisioned site edit was not retained as editable block content after restart: ${JSON.stringify(persistedPages)}.`)
 }
 
 async function assertTwoSiteIsolation() {
@@ -383,7 +394,7 @@ async function createPost(adminHtml) {
   return { id: post.id, slug: post.slug, route: `${link.pathname}${link.search}`, title }
 }
 
-async function importStaticArtifact(input, expectedStatus = 201) {
+async function importStaticArtifact(input, expectedStatus = coordinator === "d1" ? 202 : 201) {
   const response = await fetch(`${origin}/?phase=operator-static-artifact-import`, {
     method: "POST",
     headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
@@ -391,10 +402,27 @@ async function importStaticArtifact(input, expectedStatus = 201) {
   })
   const body = await response.text()
   if (response.status !== expectedStatus) throw new Error(`Static artifact import failed: ${response.status} ${body}.\nWorker output:\n${output}`)
-  const result = JSON.parse(body)
-  if (expectedStatus === 201 && (result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
+  let result = JSON.parse(body)
+  if (expectedStatus === 202) {
+    if (typeof result.operationId !== "string") throw new Error(`Queued static artifact import omitted its operation ID: ${body}.`)
+    for (let tick = 0; tick < 10; tick++) {
+      await runScheduledCron()
+      const operationResponse = await fetch(`${origin}/?phase=operator-static-artifact-operation&operationId=${encodeURIComponent(result.operationId)}`, {
+        headers: { authorization: `Bearer ${operatorToken}` },
+      })
+      const operationBody = await operationResponse.text()
+      if (!operationResponse.ok) throw new Error(`Queued static artifact operation read failed: ${operationResponse.status} ${operationBody}.`)
+      const operation = JSON.parse(operationBody)
+      if (operation.state === "succeeded") {
+        result = operation.receipt?.ssiResult
+        break
+      }
+      if (operation.state === "failed") throw new Error(`Queued static artifact operation failed: ${operationBody}.`)
+    }
+  }
+  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
     || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
-    || !response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))) {
+    || (expectedStatus === 201 && (!response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))))) {
     throw new Error(`Static artifact import returned invalid evidence: ${body}.`)
   }
   return result
@@ -418,6 +446,26 @@ async function assertImportedArtifactPages(adminHtml, imported) {
   const secondary = pages.find(({ route }) => route !== "/")
   if (!primary || (pages.length > 1 && !secondary)) throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
   return { primary, secondary: secondary ?? primary }
+}
+
+async function updateImportedPage(adminHtml, page) {
+  const marker = `Provisioned site edit ${Date.now()}`
+  const content = `<!-- wp:paragraph --><p>${marker}</p><!-- /wp:paragraph -->`
+  const response = await request(`${origin}/wp-json/wp/v2/pages/${page.id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-wp-nonce": restNonce(adminHtml) },
+    body: JSON.stringify({ content, status: "publish" }),
+  })
+  const body = await response.text()
+  assertNoPhpDiagnostics(body, "provisioned site page edit")
+  if (response.status !== 200 || response.headers.get("x-wp-codebox-publication") !== "queued" || !response.headers.get("x-wp-codebox-publication-job")) {
+    throw new Error(`Provisioned site page edit did not queue publication: status=${response.status} publication=${response.headers.get("x-wp-codebox-publication")} body=${body}.`)
+  }
+  const updated = JSON.parse(body)
+  const raw = updated.content?.raw
+  if (typeof raw !== "string" || !raw.includes(marker) || /<!-- wp:(?:html|freeform)\b/.test(raw)) throw new Error(`Provisioned site page edit was not retained as native block content: ${body}.`)
+  const link = new URL(updated.link)
+  return { id: page.id, marker, route: `${link.pathname}${link.search}` }
 }
 
 async function updatePost(adminHtml, post, previousPublicationRevision) {
@@ -728,10 +776,11 @@ async function assertCoordinatorAdoption() {
   if (!adoption.ok || !adopted.adopted || adopted.version !== before.version || adopted.pointer?.revision !== before.pointer?.revision) {
     throw new Error(`Exact coordinator adoption failed: status=${adoption.status} payload=${JSON.stringify(adopted)}.`)
   }
+  const divergentRevision = "00000000-0000-4000-8000-000000000000"
   const divergent = await fetch(`${origin}/?phase=operator-adopt`, {
     method: "POST",
     headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ pointer: before.pointer, version: before.version + 1 }),
+    body: JSON.stringify({ pointer: { ...before.pointer, revision: divergentRevision, manifestKey: before.pointer.manifestKey.replace(before.pointer.revision, divergentRevision) }, version: before.version }),
   })
   if (divergent.status !== 409) throw new Error(`Divergent coordinator adoption was not rejected: ${divergent.status} ${await divergent.text()}.`)
   await assertCoordinatorBackend()
