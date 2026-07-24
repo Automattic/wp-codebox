@@ -726,6 +726,7 @@ assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is 
 assert.ok(managedModeCode.includes("define('DB_NAME', ':memory:');"), "default managed PHPUnit remains on SQLite")
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
 assert.ok(managedModeCode.includes("global $argv, $pg_stage_output_buffering, $wp_rewrite;"), "managed WordPress installation must expose the rewrite global required by multisite setup")
+assert.ok(managedModeCode.includes("foreach ($multisite_defines as $name => $value)"), "managed multisite must establish network constants before the WordPress test installer runs")
 assert.ok(managedModeCode.includes('$dep_mounts = "/wordpress/wp-content/plugins/demo-plugin\\n/wordpress/wp-content/plugins/dependency";'), "dependency mounts must be newline-delimited for the generated PHP runner")
 const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
 const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)

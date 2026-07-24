@@ -1113,7 +1113,7 @@ if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
 }
 if ($multisite) {
-    $wp_config_defines += array(
+    $multisite_defines = array(
         'WP_TESTS_MULTISITE' => true,
         'MULTISITE' => true,
         'SUBDOMAIN_INSTALL' => false,
@@ -1122,6 +1122,12 @@ if ($multisite) {
         'SITE_ID_CURRENT_SITE' => 1,
         'BLOG_ID_CURRENT_SITE' => 1,
     );
+    $wp_config_defines += $multisite_defines;
+    foreach ($multisite_defines as $name => $value) {
+        if (!defined($name)) {
+            define($name, $value);
+        }
+    }
     putenv('WP_MULTISITE=1');
     $_ENV['WP_MULTISITE'] = '1';
 }
