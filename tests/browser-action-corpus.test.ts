@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { chromium } from "playwright"
 
 import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
 import {
@@ -10,6 +11,7 @@ import {
   planBrowserActionCorpus,
   type BrowserActionCorpusDescriptor,
 } from "../packages/runtime-core/src/browser-interaction.js"
+import { discoverBrowserActionCorpusDescriptors } from "../packages/runtime-playground/src/browser-actions-runner.js"
 
 const representativeFormDescriptors: BrowserActionCorpusDescriptor[] = [
   { id: "input:#title::Title", kind: "input", selector: "#title", label: "Title", name: "title", type: "text", formId: "post" },
@@ -59,4 +61,79 @@ test("browser action corpus artifact records replayable steps and correlated obs
   assert.equal(artifact.plan.observations.descriptorsSelected, artifact.plan.replay.descriptorIds.length)
   assert.equal(artifact.plan.replay.startUrl, "/wp-admin/post-new.php")
   assert.ok(artifact.plan.descriptors.some((descriptor) => descriptor.formId === "post"))
+})
+
+test("browser action corpus discovery retains only uniquely resolvable deterministic selectors", async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent(`
+      <style>a, button, input { display: inline-block; width: 100px; height: 20px; }</style>
+      <nav><a href="/shared">Open</a><a href="/news">News</a></nav>
+      <main><a href="/shared">Open</a><section><a href="/feature">Feature</a></section></main>
+      <form id="primary-form">
+        <label>Search <input name="query" type="search"></label>
+        <button aria-label='Save "draft" \\ copy' type="button">Save</button>
+      </form>
+      <form id="secondary-form">
+        <label>Search <input name="query" type="search"></label>
+        <button aria-label="Save" type="button">Save</button>
+      </form>
+      <input id="unique-email" name="contact" type="email">
+    `)
+    // tsx names nested functions with this helper before Playwright serializes page callbacks.
+    await page.evaluate("globalThis.__name = value => value")
+
+    const first = await discoverBrowserActionCorpusDescriptors(page)
+    const second = await discoverBrowserActionCorpusDescriptors(page)
+
+    assert.deepEqual(second, first)
+    assert.equal(first.diagnostics.length, 0)
+    assert.ok(first.descriptors.length >= 9)
+    assert.ok(first.descriptors.some((descriptor) => descriptor.selector === "#unique-email"))
+    assert.equal(new Set(first.descriptors.map((descriptor) => descriptor.id)).size, first.descriptors.length)
+    for (const descriptor of first.descriptors) {
+      const matches = await page.locator(descriptor.selector).count()
+      assert.equal(matches, 1, `${descriptor.selector} must resolve uniquely`)
+    }
+
+    const sharedLinks = first.descriptors.filter((descriptor) => descriptor.href?.endsWith("/shared"))
+    assert.equal(sharedLinks.length, 2)
+    assert.ok(sharedLinks.every((descriptor) => descriptor.selector !== "a:nth-of-type(1)"))
+    const repeatedInputs = first.descriptors.filter((descriptor) => descriptor.name === "query")
+    assert.equal(repeatedInputs.length, 2)
+    assert.equal(new Set(repeatedInputs.map((descriptor) => descriptor.selector)).size, 2)
+
+    const contract = browserActionCorpusContract({ seed: "unique-selector-seed", context: "browser", maxSteps: 9 })
+    assert.deepEqual(planBrowserActionCorpus(contract, second.descriptors), planBrowserActionCorpus(contract, first.descriptors))
+  } finally {
+    await browser.close()
+  }
+})
+
+test("browser action corpus discovery rejects controls that lose unique identity", async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent('<style>button { width: 100px; height: 20px; }</style><button id="stable">Stable</button><button id="rerendered">Rerendered</button>')
+    await page.evaluate("globalThis.__name = value => value")
+    await page.evaluate(() => {
+      const element = document.querySelector("#rerendered")!
+      const getAttribute = element.getAttribute.bind(element)
+      element.getAttribute = (name: string) => {
+        const value = getAttribute(name)
+        if (name === "id") element.remove()
+        return value
+      }
+    })
+
+    const discovery = await discoverBrowserActionCorpusDescriptors(page)
+
+    assert.deepEqual(discovery.descriptors.map((descriptor) => descriptor.selector), ["#stable"])
+    assert.equal(discovery.diagnostics.length, 1)
+    assert.equal(discovery.diagnostics[0]?.code, "browser_action_corpus_selector_not_unique")
+    assert.equal(discovery.diagnostics[0]?.metadata?.label, "Rerendered")
+  } finally {
+    await browser.close()
+  }
 })
