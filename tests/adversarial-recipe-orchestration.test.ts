@@ -4,8 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { assertWorkspaceRecipeJsonSchema, type ArtifactBundle, type ExecutionSpec, type Runtime, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
-import { runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence } from "../packages/cli/src/adversarial-recipe.js"
+import { recipeAdversarialCampaignFailure, resolveAdversarialReplayPath, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence } from "../packages/cli/src/adversarial-recipe.js"
 import { recipePolicy, validateWorkspaceRecipeSemantics, validateWorkspaceRecipeShape } from "../packages/cli/src/recipe-validation.js"
+import type { RecipeExecutionResult } from "../packages/cli/src/commands/recipe-run-types.js"
 
 const recipe: WorkspaceRecipe = {
   schema: "wp-codebox/workspace-recipe/v1",
@@ -83,6 +84,26 @@ assert.throws(() => validateWorkspaceRecipeShape(unsupportedRecipe, "unsupported
 const unsafeFaultRecipe = structuredClone(recipe)
 unsafeFaultRecipe.adversarialCampaigns![0]!.faultSchedule = { schema: "wp-codebox/transport-fault-model/v1", seed: "faults", rules: [] }
 assert.throws(() => validateWorkspaceRecipeShape(unsafeFaultRecipe, "faults.json"), /faultSchedule requires the transport-faults capability/)
+
+assert.equal(resolveAdversarialReplayPath("files/replay.json", "/workspace"), "/workspace/files/replay.json")
+assert.throws(() => resolveAdversarialReplayPath("../replay.json", "/workspace"), /escapes the invocation workspace/)
+assert.throws(() => resolveAdversarialReplayPath("/outside/replay.json", "/workspace"), /escapes the invocation workspace/)
+
+const findingExecutions: RecipeExecutionResult[] = []
+const findingRuntime = {
+  ...runtime,
+  execute: async (spec: ExecutionSpec) => {
+    const failed = spec.args?.some((arg) => arg.includes("neutral-state-") && arg.startsWith("code=")) ?? false
+    return { id: `finding-${findingExecutions.length}`, command: spec.command, args: spec.args ?? [], exitCode: failed ? 1 : 0, stdout: failed ? "" : "ok\n", stderr: failed ? "declared assertion" : "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
+  },
+} as unknown as Runtime
+const findingCampaigns = await runRecipeAdversarialCampaigns({ recipe, recipePath: "/portable/recipe.json", recipeDirectory: "/portable", runtime: findingRuntime, executions: findingExecutions })
+assert.equal(findingCampaigns[0]?.result.status, "findings")
+assert.equal(findingExecutions.some((execution) => execution.exitCode !== 0 && execution.recipeAdvisory === true), true, "declared findings must remain nonzero evidence without becoming infrastructure failures")
+assert.equal(recipeAdversarialCampaignFailure(findingCampaigns), undefined)
+const incompleteCampaigns = structuredClone(findingCampaigns)
+incompleteCampaigns[0]!.result.status = "incomplete"
+assert.equal(recipeAdversarialCampaignFailure(incompleteCampaigns)?.code, "adversarial-campaign-incomplete")
 
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-adversarial-recipe-"))
 try {

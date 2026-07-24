@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
-import { isAbsolute, join, relative } from "node:path"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 
 import {
   ADVERSARIAL_ORACLE_SCHEMA,
@@ -41,6 +41,16 @@ export interface RecipeAdversarialCampaignOutput {
   evidence?: Awaited<ReturnType<typeof writeAdversarialEvidenceBundle>>
 }
 
+export function recipeAdversarialCampaignFailure(campaigns: RecipeAdversarialCampaignOutput[]): { name: string; code: string; message: string } | undefined {
+  const incomplete = campaigns.find((campaign) => campaign.result.status === "incomplete")
+  if (!incomplete) return undefined
+  return {
+    name: "RecipeAdversarialCampaignError",
+    code: "adversarial-campaign-incomplete",
+    message: `Adversarial campaign ${incomplete.declaration.id} did not complete: ${incomplete.result.diagnostics.map(({ message }) => message).join(" ") || "resource or orchestration failure"}`,
+  }
+}
+
 interface RunRecipeAdversarialCampaignsOptions {
   recipe: WorkspaceRecipe
   recipePath: string
@@ -58,9 +68,16 @@ interface RunRecipeAdversarialCampaignsOptions {
 export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversarialCampaignsOptions): Promise<RecipeAdversarialCampaignOutput[]> {
   const outputs: RecipeAdversarialCampaignOutput[] = []
   const capabilities = recipeAdversarialCapabilities(options.recipe)
-  const replay = options.runOptions?.adversarialReplayPath ? await readAdversarialReplay(options.runOptions.adversarialReplayPath, options.recipeDirectory) : undefined
+  const replay = options.runOptions?.adversarialReplayPath ? await readAdversarialReplay(options.runOptions.adversarialReplayPath, process.cwd()) : undefined
   for (const declaration of options.recipe.adversarialCampaigns ?? []) {
     if (replay && replay.campaignId !== declaration.id) continue
+    const checkpointName = declaration.resetPolicy?.mode === "checkpoint-per-case"
+      ? declaration.resetPolicy.checkpointName ?? declaration.resetPolicy.checkpoint_name ?? `${declaration.id}-baseline`
+      : undefined
+    if (checkpointName) {
+      if (!options.runtime.createCheckpoint || !options.runtime.restoreCheckpoint) throw new Error(`Adversarial campaign ${declaration.id} requires runtime checkpoint create and restore support.`)
+      await options.runtime.createCheckpoint({ name: checkpointName, metadata: { campaignId: declaration.id, immutableBaseline: true } })
+    }
     const templates = new Map(declaration.caseTemplates.map((template) => [template.id, template]))
     const campaign = adversarialCampaign({
       id: declaration.id,
@@ -80,7 +97,12 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
         resetPolicy: declaration.resetPolicy,
       }),
     })
-    const execute = async (plan: AdversarialCasePlan, signal: AbortSignal) => executeRecipeAdversarialCase(declaration, templates, plan, signal, options)
+    const campaignExecutions: RecipeExecutionResult[] = []
+    const campaignOptions = { ...options, executions: campaignExecutions }
+    const execute = async (plan: AdversarialCasePlan, signal: AbortSignal) => {
+      if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
+      return executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions)
+    }
     const result = replay
       ? await runRecipeAdversarialReplay(campaign, declaration, templates, replay, execute, options.signal)
       : await runAdversarialCampaign(campaign, {
@@ -90,6 +112,7 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
       replayCommand: (_campaign, _plan, fingerprint) => `wp-codebox adversarial replay --recipe ${portableRecipeRef(options.recipePath)} --replay files/adversarial/${declaration.id}/replay/${fingerprint}.json`,
       execute,
     })
+    options.executions.push(...campaignExecutions.map((execution) => result.status === "findings" ? { ...execution, recipeAdvisory: true } : execution))
     outputs.push({
       declaration,
       result,
@@ -162,11 +185,21 @@ async function runRecipeAdversarialReplay(
   }
 }
 
-async function readAdversarialReplay(path: string, recipeDirectory: string): Promise<AdversarialReplay> {
-  const resolved = isAbsolute(path) ? path : join(recipeDirectory, path)
-  const replay = JSON.parse(await readFile(resolved, "utf8")) as AdversarialReplay
+async function readAdversarialReplay(path: string, invocationDirectory: string): Promise<AdversarialReplay> {
+  const resolvedPath = resolveAdversarialReplayPath(path, invocationDirectory)
+  const replay = JSON.parse(await readFile(resolvedPath, "utf8")) as AdversarialReplay
   if (replay.schema !== "wp-codebox/adversarial-replay/v1" || !replay.campaignId || !replay.caseId || !Array.isArray(replay.actions)) throw new Error(`Invalid adversarial replay envelope: ${path}`)
   return replay
+}
+
+export function resolveAdversarialReplayPath(path: string, invocationDirectory = process.cwd()): string {
+  const workspace = resolve(invocationDirectory)
+  const resolvedPath = resolve(workspace, path)
+  const workspaceRelativePath = relative(workspace, resolvedPath)
+  if (workspaceRelativePath === ".." || workspaceRelativePath.startsWith(`..${sep}`) || isAbsolute(workspaceRelativePath)) {
+    throw new Error(`Adversarial replay path escapes the invocation workspace: ${path}`)
+  }
+  return resolvedPath
 }
 
 async function executeRecipeAdversarialCase(
@@ -182,7 +215,7 @@ async function executeRecipeAdversarialCase(
     schema: "wp-codebox/fuzz-suite/v1",
     id: `${declaration.id}-${plan.caseId}`,
     target: { kind: "runtime", id: "wordpress.run-workload" },
-    resetPolicy: declaration.resetPolicy ?? { mode: "none" },
+    resetPolicy: declaration.resetPolicy?.mode === "checkpoint-per-case" ? { mode: "none" as const } : declaration.resetPolicy ?? { mode: "none" as const },
     cases: [{
       id: plan.caseId,
       input: { schema: "wp-codebox/wordpress-workload-run/v1", id: plan.caseId, steps: [], metadata: { adversarial: { campaignId: declaration.id, corpusId: plan.corpusId, iteration: plan.iteration, workerId: plan.workerId, matrix: plan.matrix, mutation: plan.mutation } } },
@@ -196,7 +229,6 @@ async function executeRecipeAdversarialCase(
     index: plan.iteration,
     step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(suite)}`], metadata: { campaignId: declaration.id, caseId: plan.caseId } },
   }, options.recipeDirectory, options.sandboxWorkspace, options.artifactRoot, options.runOptions, options.inputMountPathMap)
-  options.executions.push(execution)
   const parsed = parseObject(execution.stdout)
   const fuzzCase = Array.isArray(parsed?.cases) ? parseObjectValue(parsed.cases[0]) : undefined
   const diagnostics = Array.isArray(fuzzCase?.diagnostics) ? fuzzCase.diagnostics.flatMap((item) => {
@@ -208,9 +240,11 @@ async function executeRecipeAdversarialCase(
     return ref && typeof ref.path === "string" ? [{ path: ref.path, kind: String(ref.kind ?? "fuzz-artifact"), bytes: typeof ref.bytes === "number" ? ref.bytes : undefined, sha256: typeof ref.sha256 === "string" ? ref.sha256 : undefined }] : []
   }) : []
   const status = fuzzCase?.status === "passed" && execution.exitCode === 0 ? "passed" : fuzzCase?.status === "failed" ? "failed" : "error"
+  options.executions.push(execution)
   const signals = [
     `status:${status}`,
     ...diagnostics.map((diagnostic) => `diagnostic:${diagnostic.code}`),
+    ...diagnostics.map((diagnostic) => `diagnostic-message:${createHash("sha256").update(stableAdversarialDiagnosticMessage(diagnostic.message, plan.caseId)).digest("hex").slice(0, 16)}`),
     ...(typeof fuzzCase?.skipReason === "string" ? [`skip:${fuzzCase.skipReason}`] : []),
   ]
   return stripUndefined({
@@ -218,9 +252,22 @@ async function executeRecipeAdversarialCase(
     signals,
     diagnostics,
     artifacts: artifactRefs,
-    stateDigest: createHash("sha256").update(JSON.stringify({ status, signals, matrix: plan.matrix })).digest("hex"),
+    stateDigest: createHash("sha256").update(JSON.stringify({ campaignId: declaration.id, status, signals, matrix: plan.matrix })).digest("hex"),
     metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule },
   }) as AdversarialExecutionObservation
+}
+
+function stableAdversarialDiagnosticMessage(message: string, caseId: string): string {
+  const browserAssertion = message.match(/wordpress\.browser-actions [^\n]*? assertion failed at step \d+/i)?.[0]
+  if (browserAssertion) return browserAssertion
+  const runtimeException = message.match(/Uncaught RuntimeException:\s*([^\n<]+)/i)?.[1]?.split(" [redacted]")[0]?.trim()
+  if (runtimeException) return `RuntimeException:${runtimeException}`
+  return (message.split("\n", 1)[0] ?? message)
+    .split(caseId).join("[case]")
+    .replace(/runtime-[a-z0-9-]+/gi, "runtime-[id]")
+    .replace(/command-[a-z0-9-]+/gi, "command-[id]")
+    .replace(/https?:\/\/[^\s/]+/gi, "http://runtime-[origin]")
+    .replace(/\b\d{4,5}\b/g, "[number]")
 }
 
 function materializeCasePhases(plan: AdversarialCasePlan, templates: Map<string, WorkspaceRecipeAdversarialCampaign["caseTemplates"][number]>): Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>> {

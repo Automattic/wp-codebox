@@ -6,6 +6,7 @@ import test from "node:test"
 
 import { adversarialCampaign, adversarialFindingFingerprint, classifyDifferentialResult, runAdversarialCampaign, type AdversarialCasePlan, type AdversarialExecutionObservation } from "../packages/runtime-core/src/adversarial-campaign.js"
 import { writeAdversarialEvidenceBundle } from "../packages/runtime-core/src/adversarial-artifacts.js"
+import { verifyArtifactBundle } from "../packages/runtime-core/src/artifact-bundle-verifier.js"
 
 const campaign = adversarialCampaign({
   id: "neutral-component",
@@ -93,6 +94,7 @@ test("sealed finding bundles redact secrets and machine-specific paths", async (
     assert.ok(manifest.files.some((file: { path: string }) => file.path === bundle.secretScanPath))
     assert.doesNotMatch(replay, /fixture-secret|\/var\/lib\/private/)
     assert.match(replay, /\[redacted\]/)
+    assert.equal((await verifyArtifactBundle(directory)).valid, true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -144,4 +146,24 @@ test("minimization preserves the exact oracle and state fingerprint", async () =
   assert.equal(finding.replay.expectedStateDigest, "modal-open")
   assert.equal(finding.replay.expectedFingerprint, finding.fingerprint)
   assert(finding.minimized.actions.some((action) => action.type === "open"), "a candidate in the wrong state must not be accepted")
+})
+
+test("minimization shrinks structured action inputs such as browser journeys", async () => {
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "structured-action-input",
+    seed: "structured-action-input-seed",
+    corpus: [{ id: "browser", actions: [{ type: "browser", input: ["navigate", "click", "trigger", "capture", "capture", "capture"] }] }],
+    mutationKinds: ["sequence"],
+    budgets: { maxCases: 1, maxActionsPerCase: 2, maxCaseTimeMs: 1_000, maxWallTimeMs: 5_000 },
+    oracles: [{ schema: "wp-codebox/adversarial-oracle/v1", id: "browser-defect", severity: "high" }],
+  }), {
+    execute: async (plan) => {
+      const journey = plan.actions[0]?.input
+      const failed = Array.isArray(journey) && journey.includes("trigger")
+      return { status: failed ? "failed" : "passed", stateDigest: failed ? "browser-defect" : "clean", diagnostics: failed ? [{ code: "browser-defect", message: "trigger reproduced" }] : [] }
+    },
+    evaluate: async (_plan, observation) => [{ oracleId: "browser-defect", failed: observation.status === "failed" }],
+  })
+  const minimizedJourney = result.findings[0]?.minimized.actions[0]?.input
+  assert.deepEqual(minimizedJourney, ["navigate", "click", "trigger"])
 })
