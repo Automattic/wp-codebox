@@ -7,6 +7,8 @@ import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type Wo
 import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
 import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
 import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
+import { runtimeArchiveComponentSource } from "../packages/runtime-core/src/runtime-archive-component.js"
+import websiteImporterSourceContract from "../packages/runtime-cloudflare/components/website-importer.json" with { type: "json" }
 
 const sourceUrl = process.env.WORDPRESS_RUNTIME_ARCHIVE_URL ?? "https://downloads.wordpress.org/release/wordpress-7.0.2.zip"
 const sourceVersion = process.env.WORDPRESS_RUNTIME_VERSION ?? "7.0.2"
@@ -17,10 +19,9 @@ const staticManifestOutput = resolve("packages/runtime-cloudflare/assets/wordpre
 const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
 const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
-const staticSiteImporterSourceUrl = "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip"
-const staticSiteImporterSourceSha256 = "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29"
-const staticSiteImporterOutput = resolve("artifacts/cloudflare-static-site-importer.zip")
-const staticSiteImporterManifestOutput = resolve("packages/runtime-cloudflare/assets/static-site-importer-artifact.json")
+const websiteImporterSource = runtimeArchiveComponentSource(websiteImporterSourceContract)
+const websiteImporterOutput = resolve(`artifacts/cloudflare-${websiteImporterSource.component.id}.zip`)
+const websiteImporterManifestOutput = resolve(`packages/runtime-cloudflare/assets/${websiteImporterSource.component.id}-artifact.json`)
 const response = await fetch(sourceUrl)
 if (!response.ok || !response.body) throw new Error(`Unable to download WordPress archive: ${response.status}.`)
 const identity = response.headers.get("etag") ?? response.headers.get("last-modified") ?? undefined
@@ -85,41 +86,39 @@ validateRuntimeArchiveArtifactManifest(sqliteManifest)
 await writeFile(sqliteOutput, sqliteArchive)
 await writeFile(sqliteManifestOutput, `${JSON.stringify(sqliteManifest, null, 2)}\n`)
 
-const staticSiteImporterResponse = await fetch(staticSiteImporterSourceUrl)
-if (!staticSiteImporterResponse.ok) throw new Error(`Unable to download Static Site Importer archive: ${staticSiteImporterResponse.status}.`)
-const staticSiteImporterSourceArchive = new Uint8Array(await staticSiteImporterResponse.arrayBuffer())
-if (sha256Hex(staticSiteImporterSourceArchive) !== staticSiteImporterSourceSha256) throw new Error("Static Site Importer release archive does not match its pinned digest.")
-const staticSiteImporterSourceFiles: File[] = []
-for await (const file of decodeZip(new Blob([staticSiteImporterSourceArchive]).stream())) {
-  if (!file.name.endsWith("/")) staticSiteImporterSourceFiles.push(file)
+const websiteImporterResponse = await fetch(websiteImporterSource.source.url)
+if (!websiteImporterResponse.ok) throw new Error(`Unable to download runtime archive component ${websiteImporterSource.component.id}: ${websiteImporterResponse.status}.`)
+const websiteImporterSourceArchive = new Uint8Array(await websiteImporterResponse.arrayBuffer())
+if (sha256Hex(websiteImporterSourceArchive) !== websiteImporterSource.source.sha256) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} does not match its pinned digest.`)
+const websiteImporterSourceFiles: File[] = []
+for await (const file of decodeZip(new Blob([websiteImporterSourceArchive]).stream())) {
+  if (!file.name.endsWith("/")) websiteImporterSourceFiles.push(file)
 }
-const staticSiteImporterPackageManifest = staticSiteImporterSourceFiles.find((file) => file.name.endsWith("/runtime-package-manifest.json"))
-const staticSiteImporterFiles = staticSiteImporterPackageManifest
-  ? await selectProfileFiles(staticSiteImporterSourceFiles, staticSiteImporterPackageManifest)
-  : selectPinnedLegacyStaticSiteImporterFiles(staticSiteImporterSourceFiles, staticSiteImporterSourceSha256)
-staticSiteImporterFiles.sort((left, right) => left.name.localeCompare(right.name))
-if (!staticSiteImporterFiles.some((file) => file.name === "static-site-importer/static-site-importer.php")
-  || !staticSiteImporterFiles.some((file) => file.name === "static-site-importer/vendor/autoload.php")
-  || !staticSiteImporterFiles.some((file) => file.name === "static-site-importer/vendor/automattic/blocks-engine-php-transformer/php-transformer/php-transformer.php")) {
-  throw new Error("Static Site Importer release archive did not yield the required website-import runtime.")
-}
-const staticSiteImporterArchive = new Uint8Array(await new Response(encodeZip(staticSiteImporterFiles)).arrayBuffer())
-const staticSiteImporterSha256 = sha256Hex(staticSiteImporterArchive)
-const staticSiteImporterManifest: RuntimeArchiveArtifactManifest = {
+const websiteImporterPackageManifest = websiteImporterSourceFiles.find((file) => file.name.endsWith("/runtime-package-manifest.json"))
+const websiteImporterFiles = websiteImporterPackageManifest
+  ? await selectProfileFiles(websiteImporterSourceFiles, websiteImporterPackageManifest, websiteImporterSource.component.package.profile)
+  : selectMigrationProfileFiles(websiteImporterSourceFiles)
+websiteImporterFiles.sort((left, right) => left.name.localeCompare(right.name))
+const bootstrapPath = `${websiteImporterSource.component.package.root}/${websiteImporterSource.component.wordpress.bootstrap_file}`
+if (!websiteImporterFiles.some((file) => file.name === bootstrapPath)) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} is missing its bootstrap file: ${bootstrapPath}`)
+const websiteImporterArchive = new Uint8Array(await new Response(encodeZip(websiteImporterFiles)).arrayBuffer())
+const websiteImporterSha256 = sha256Hex(websiteImporterArchive)
+const websiteImporterManifest: RuntimeArchiveArtifactManifest = {
   schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
-  name: "static-site-importer",
-  key: runtimeArchiveArtifactKey("static-site-importer", staticSiteImporterSha256),
-  archive: { sha256: staticSiteImporterSha256, size: staticSiteImporterArchive.byteLength },
-  source: { url: staticSiteImporterSourceUrl, version: "1.3.4", identity: "08b9dd650f3c3161c5b350796a5db6ef083516ae" },
+  name: websiteImporterSource.component.id,
+  key: runtimeArchiveArtifactKey(websiteImporterSource.component.id, websiteImporterSha256),
+  archive: { sha256: websiteImporterSha256, size: websiteImporterArchive.byteLength },
+  source: { url: websiteImporterSource.source.url, ...(websiteImporterSource.source.version ? { version: websiteImporterSource.source.version } : {}), ...(websiteImporterSource.source.identity ? { identity: websiteImporterSource.source.identity } : {}) },
+  component: websiteImporterSource.component,
 }
-validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest)
-await writeFile(staticSiteImporterOutput, staticSiteImporterArchive)
-await writeFile(staticSiteImporterManifestOutput, `${JSON.stringify(staticSiteImporterManifest, null, 2)}\n`)
+validateRuntimeArchiveArtifactManifest(websiteImporterManifest)
+await writeFile(websiteImporterOutput, websiteImporterArchive)
+await writeFile(websiteImporterManifestOutput, `${JSON.stringify(websiteImporterManifest, null, 2)}\n`)
 console.log(JSON.stringify({
   runtime: { key: manifest.key, bytes: archive.byteLength, files: manifest.files.length, sha256: archiveSha256 },
   static: { key: staticManifest.key, bytes: staticBlob.byteLength, files: staticManifest.files.length, sha256: staticSha256 },
   sqlite: { key: sqliteManifest.key, bytes: sqliteArchive.byteLength, sha256: sqliteSha256 },
-  staticSiteImporter: { key: staticSiteImporterManifest.key, bytes: staticSiteImporterArchive.byteLength, sha256: staticSiteImporterSha256 },
+  [websiteImporterSource.component.id]: { key: websiteImporterManifest.key, bytes: websiteImporterArchive.byteLength, sha256: websiteImporterSha256 },
   source: manifest.source,
 }))
 
@@ -127,30 +126,37 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
-async function selectProfileFiles(files: File[], manifestFile: File): Promise<File[]> {
+async function selectProfileFiles(files: File[], manifestFile: File, profile: string): Promise<File[]> {
   const manifest = parseRuntimePackageManifest(await manifestFile.text())
-  const selected = selectRuntimePackageProfileFiles(manifest, "website-artifact-import", files.map((file) => file.name), manifestFile.name)
+  if (manifest.package_root !== websiteImporterSource.component.package.root) throw new Error(`Runtime package profile root does not match component ${websiteImporterSource.component.id}.`)
+  return materializeSelectedFiles(files, selectRuntimePackageProfileFiles(manifest, profile, files.map((file) => file.name), manifestFile.name))
+}
+
+function selectMigrationProfileFiles(files: File[]): File[] {
+  const migration = websiteImporterSource.migration
+  if (!migration || migration.source_sha256 !== websiteImporterSource.source.sha256) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} does not declare package profile ${websiteImporterSource.component.package.profile}.`)
+  const root = `${websiteImporterSource.component.package.root}/`
+  const manifestPath = `${root}runtime-package-manifest.json`
+  const syntheticManifest = parseRuntimePackageManifest(JSON.stringify({
+    schema: `${websiteImporterSource.component.id}/runtime-package-manifest/v1`,
+    package: websiteImporterSource.component.id,
+    package_root: websiteImporterSource.component.package.root,
+    profiles: {
+      [websiteImporterSource.component.package.profile]: {
+        abilities: Object.values(websiteImporterSource.component.abilities),
+        selectors: migration.selectors,
+        required_files: migration.required_files,
+      },
+    },
+  }))
+  return materializeSelectedFiles(files, selectRuntimePackageProfileFiles(syntheticManifest, websiteImporterSource.component.package.profile, files.map((file) => file.name), manifestPath))
+}
+
+function materializeSelectedFiles(files: File[], selected: Array<{ sourcePath: string; targetPath: string }>): File[] {
   const filesByPath = new Map(files.map((file) => [file.name, file]))
   return selected.map(({ sourcePath, targetPath }) => {
     const file = filesByPath.get(sourcePath)
     if (!file) throw new Error(`Runtime package profile selected an unavailable archive file: ${sourcePath}`)
     return new File([file], targetPath, { lastModified: 0 })
   })
-}
-
-function selectPinnedLegacyStaticSiteImporterFiles(files: File[], sourceSha256: string): File[] {
-  if (sourceSha256 !== "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29") throw new Error("Static Site Importer archive does not declare a runtime package manifest.")
-  return files.filter((file) => isPinnedLegacyStaticSiteImporterRuntimeFile(file.name)).map((file) => new File([file], file.name, { lastModified: 0 }))
-}
-
-function isPinnedLegacyStaticSiteImporterRuntimeFile(path: string): boolean {
-  const root = "static-site-importer/"
-  if (!path.startsWith(root) || path.endsWith("/")) return false
-  const relative = path.slice(root.length)
-  return relative === "static-site-importer.php"
-    || ["blocks/", "includes/", "lib/", "registry/"].some((prefix) => relative.startsWith(prefix))
-    || relative === "vendor/autoload.php"
-    || relative.startsWith("vendor/composer/")
-    || ["vendor/dflydev/", "vendor/league/", "vendor/nette/", "vendor/psr/", "vendor/symfony/"].some((prefix) => relative.startsWith(prefix))
-    || relative.startsWith("vendor/automattic/blocks-engine-php-transformer/php-transformer/")
 }

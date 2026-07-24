@@ -7,6 +7,7 @@ export interface RuntimeArchiveArtifactManifest {
   key: string
   archive: { sha256: string; size: number }
   source: { url: string; version?: string; identity?: string }
+  component?: RuntimeArchiveComponent
 }
 
 export function runtimeArchiveArtifactKey(name: string, sha256: string): string {
@@ -20,6 +21,7 @@ export function validateRuntimeArchiveArtifactManifest(manifest: RuntimeArchiveA
   if (manifest.key !== runtimeArchiveArtifactKey(manifest.name, manifest.archive.sha256)) throw new Error("Runtime archive artifact key is not content addressed.")
   if (!Number.isSafeInteger(manifest.archive.size) || manifest.archive.size < 1 || manifest.archive.size > RUNTIME_ARCHIVE_MAX_BYTES) throw new Error("Runtime archive artifact size is outside the allowed budget.")
   if (!manifest.source.url.startsWith("https://")) throw new Error("Runtime archive artifact source URL is invalid.")
+  if (manifest.component) runtimeArchiveComponent(manifest.component)
 }
 
 export async function readRuntimeArchiveArtifact(bucket: R2Bucket, manifest: RuntimeArchiveArtifactManifest): Promise<Uint8Array> {
@@ -36,3 +38,4 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
+import { runtimeArchiveComponent, type RuntimeArchiveComponent } from "../../runtime-core/src/runtime-archive-component.js"
