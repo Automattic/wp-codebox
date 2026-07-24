@@ -11,7 +11,10 @@ const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
 const authSecret = "cloudflare-runtime-test-auth-secret"
 const operatorToken = "cloudflare-runtime-test-operator-token"
+const apiToken = "cloudflare-runtime-test-api-token"
+const administratorClaimSecret = "cloudflare-runtime-test-administrator-claim-secret"
 const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
+const publicProvisioning = process.argv.includes("--public-provisioning")
 const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
@@ -29,6 +32,10 @@ try {
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   const staticArtifactImport = await provisionStaticArtifact()
   await startWorker()
+  if (publicProvisioning) {
+    await assertPublicProvisioning(staticArtifactImport)
+    console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, scheduled import, cold-restart site read, administrator claim, login, and editable native blocks.")
+  } else {
   await assertFullBootProbe()
   await assertWordPressCronDisabled()
   await assertConcurrentMutations()
@@ -113,6 +120,7 @@ try {
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
   await assertTwoSiteIsolation()
   console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
+  }
 } finally {
   await stopWorker()
   await rm(stateDirectory, { recursive: true, force: true })
@@ -152,15 +160,79 @@ async function provisionStaticArtifact() {
   const serialized = JSON.stringify(artifact)
   const sha256 = createHash("sha256").update(serialized).digest("hex")
   const key = `sites/default/import-artifacts/${sha256}.json`
-  const path = join(stateDirectory, "static-site-artifact.json")
-  await writeFile(path, serialized)
-  await run("npm", ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${key}`, "--file", path, "--local", "--persist-to", stateDirectory])
-  return {
+  if (!publicProvisioning) {
+    const path = join(stateDirectory, "static-site-artifact.json")
+    await writeFile(path, serialized)
+    await run("npm", ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${key}`, "--file", path, "--local", "--persist-to", stateDirectory])
+  }
+  const request = {
     schema: "wp-codebox/cloudflare-static-artifact-import-request/v1",
     idempotencyKey: `cloudflare-static-artifact-${sha256}`,
     artifact: { r2Key: key, sha256, size: Buffer.byteLength(serialized) },
     import: { slug: "verified-artifact-site", name: "Verified Artifact Site", siteTitle: "Verified Artifact Site" },
   }
+  return publicProvisioning ? { ...request, serialized } : request
+}
+
+async function assertPublicProvisioning(input) {
+  const authorization = { authorization: `Bearer ${apiToken}` }
+  const stagedResponse = await fetch(`${origin}/v1/artifacts/${input.artifact.sha256}`, {
+    method: "PUT",
+    headers: { ...authorization, "content-type": "application/json" },
+    body: input.serialized,
+  })
+  const stagedBody = await stagedResponse.text()
+  if (stagedResponse.status !== 200) throw new Error(`Public artifact staging failed: ${stagedResponse.status} ${stagedBody}.`)
+  const staged = JSON.parse(stagedBody)
+  if (staged.schema !== "wp-codebox/provisioning-artifact/v1" || staged.artifact?.sha256 !== input.artifact.sha256 || staged.artifact?.size !== input.artifact.size
+    || staged.artifact?.r2Key !== `sites/provisioning/import-artifacts/${input.artifact.sha256}.json`) {
+    throw new Error(`Public artifact staging returned an invalid reference: ${stagedBody}.`)
+  }
+
+  const idempotencyKey = `cloudflare-public-provisioning-${input.artifact.sha256}`
+  const requestBody = JSON.stringify({ schema: "wp-codebox/provisioning-create-request/v1", idempotencyKey, artifact: staged.artifact, import: input.import })
+  const createSite = () => fetch(`${origin}/v1/sites`, { method: "POST", headers: { ...authorization, "content-type": "application/json", "idempotency-key": idempotencyKey }, body: requestBody })
+  const createdResponse = await createSite()
+  const createdBody = await createdResponse.text()
+  if (createdResponse.status !== 202) throw new Error(`Public site creation failed: ${createdResponse.status} ${createdBody}.`)
+  const created = JSON.parse(createdBody)
+  if (created.schema !== "wp-codebox/provisioning-site/v1" || created.site?.id !== "default" || typeof created.site.operation !== "string"
+    || typeof created.site.administratorClaim?.token !== "string") throw new Error(`Public site creation returned an invalid resource: ${createdBody}.`)
+  const replayResponse = await createSite()
+  const replayBody = await replayResponse.text()
+  if (replayResponse.status !== 202 || replayBody !== createdBody) throw new Error(`Public site creation replay did not converge: ${replayResponse.status} ${replayBody}.`)
+
+  let operation
+  for (let tick = 0; tick < 8; tick++) {
+    const response = await fetch(new URL(created.site.operation, origin), { headers: authorization })
+    const body = await response.text()
+    if (!response.ok) throw new Error(`Public provisioning operation read failed: ${response.status} ${body}.`)
+    operation = JSON.parse(body).operation
+    if (operation?.state === "succeeded") break
+    if (operation?.state === "failed") throw new Error(`Public provisioning operation failed: ${body}.`)
+    await runScheduledCron()
+  }
+  const imported = operation?.receipt?.ssiResult
+  if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
+    || !imported.pages || Object.keys(imported.pages).length !== 2 || Object.values(imported.quality ?? {}).some((count) => count !== 0)
+    || operation.receipt?.publication?.status !== "none") {
+    throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
+  }
+
+  await stopWorker()
+  await startWorker()
+  const siteResponse = await fetch(`${origin}/v1/sites/${created.site.id}`, { headers: authorization })
+  const siteBody = await siteResponse.text()
+  const site = JSON.parse(siteBody)
+  if (!siteResponse.ok || site.site?.status !== "ready" || site.site?.administratorClaim?.state !== "pending" || siteBody.includes(created.site.administratorClaim.token)) {
+    throw new Error(`Cold-restart public site read returned invalid state: ${siteResponse.status} ${siteBody}.`)
+  }
+  const claimResponse = await fetch(new URL(created.site.administratorClaim.url, origin), { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } })
+  const claimBody = await claimResponse.text()
+  const claim = JSON.parse(claimBody)
+  if (!claimResponse.ok || claim.credential?.username !== "admin" || claim.credential?.password !== password) throw new Error(`Administrator claim failed: ${claimResponse.status} ${claimBody}.`)
+  const adminHtml = await login(claim.credential.password)
+  await assertImportedArtifactPages(adminHtml, imported)
 }
 
 async function assertTwoSiteIsolation() {
@@ -238,7 +310,8 @@ async function assertTwoSiteIsolation() {
 
 async function startWorker() {
   output = ""
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`], {
+  const apiTokens = [{ id: "local-gate", principal: "local-gate", digest: createHash("sha256").update(apiToken).digest("hex"), scopes: ["sites:create", "sites:read", "sites:import", "operations:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]
+  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`], {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -277,9 +350,9 @@ async function assertLoginForm() {
   if (!/<form[^>]+id=["']loginform["']/i.test(html)) throw new Error("wp-login.php did not return the login form.")
 }
 
-async function login() {
+async function login(candidatePassword = password) {
   await assertLoginForm()
-  const form = new URLSearchParams({ log: "admin", pwd: password, redirect_to: `${origin}/wp-admin/`, testcookie: "1", "wp-submit": "Log In" })
+  const form = new URLSearchParams({ log: "admin", pwd: candidatePassword, redirect_to: `${origin}/wp-admin/`, testcookie: "1", "wp-submit": "Log In" })
   const response = await request(`${origin}/wp-login.php`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "manual" })
   if (![301, 302].includes(response.status)) throw new Error(`Expected login redirect, received ${response.status}: ${await response.text()}`)
   if (response.headers.get("x-wp-codebox-publication") === "queued" || response.headers.has("x-wp-codebox-publication-revision")) throw new Error("Login must not enqueue or promote publication work.")
