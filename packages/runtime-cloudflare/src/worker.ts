@@ -951,6 +951,17 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
   try {
     let progress = await readPublicationProgress(env.WORDPRESS_STATE_BUCKET, job, site)
     const current = await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site)
+    const recoveredPromotion = current?.publication.canonicalVersion === job.coordinatorVersion
+      && current.publication.canonicalRevision === job.canonical.revision
+      && current.publication.sourceJob === job.key
+    if (recoveredPromotion) {
+      await renewLease()
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job, site), JSON.stringify({ status: "promoted", job: job.key, publication: current.publication.revision, recordedAt: new Date().toISOString() }))
+      await operations?.reconcilePublication(site.id, job.key, "promoted", current.publication.revision)
+      await renewLease()
+      await env.WORDPRESS_STATE_BUCKET.delete([job.key, publicationProgressObjectKey(job, site)])
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "promoted", jobKey: job.key }
+    }
     if (!current || current.publication.canonicalVersion >= job.coordinatorVersion) {
       await renewLease()
       await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(job, site), JSON.stringify({ status: "superseded", job: job.key, recordedAt: new Date().toISOString() }))
@@ -990,7 +1001,7 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
     const routes = new Map(current.publication.routes.map((route) => [route.route, route]))
     for (const route of plan.remove) routes.delete(route)
     for (const route of plan.upsert) routes.set(route, { route, objectKey: await publishedPageObjectKey(job.canonical.revision, route, site), canonicalRevision: job.canonical.revision })
-    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
+    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, sourceJob: job.key, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
     const serialized = JSON.stringify(publication)
     if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
     await renewLease()

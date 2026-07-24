@@ -19,6 +19,7 @@ export interface PublishedRevision {
   revision: string
   canonicalRevision: string
   canonicalVersion: number
+  sourceJob?: string
   publishedAt: string
   routes: PublishedRoute[]
 }
@@ -49,6 +50,7 @@ export function validatePublishedRevision(value: unknown, site: SiteContext = DE
   if (![PUBLISHED_REVISION_SCHEMA, PREVIOUS_PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
     || typeof revision.publishedAt !== "string" || !Number.isFinite(Date.parse(revision.publishedAt)) || !Array.isArray(revision.routes)
     || (current && (typeof revision.canonicalVersion !== "number" || !Number.isSafeInteger(revision.canonicalVersion) || revision.canonicalVersion < 0))
+    || (revision.sourceJob !== undefined && (typeof revision.sourceJob !== "string" || !new RegExp(`^${escapeRegExp(siteStorageKeys(site).publicationJobPrefix)}/[0-9]{20}-[a-f0-9-]{36}\\.json$`).test(revision.sourceJob)))
     || revision.routes.length > MAX_PUBLISHED_ROUTES) throw new Error("Published revision is invalid.")
   let previous = ""
   const normalizedRoutes: PublishedRoute[] = []
