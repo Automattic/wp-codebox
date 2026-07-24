@@ -79,6 +79,10 @@ const unsupportedRecipe = structuredClone(recipe)
 unsupportedRecipe.adversarialCampaigns![0]!.requiredCapabilities = ["missing-adapter"]
 assert.throws(() => validateWorkspaceRecipeShape(unsupportedRecipe, "unsupported.json"), /requires unavailable capabilities: missing-adapter/)
 
+const unsafeFaultRecipe = structuredClone(recipe)
+unsafeFaultRecipe.adversarialCampaigns![0]!.faultSchedule = { schema: "wp-codebox/transport-fault-model/v1", seed: "faults", rules: [] }
+assert.throws(() => validateWorkspaceRecipeShape(unsafeFaultRecipe, "faults.json"), /faultSchedule requires the transport-faults capability/)
+
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-adversarial-recipe-"))
 try {
   const manifestPath = join(artifactRoot, "manifest.json")

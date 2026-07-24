@@ -1170,6 +1170,9 @@ function validateRecipeAdversarialCampaigns(recipe: WorkspaceRecipe, recipePath:
     }
     const missing = (campaign.requiredCapabilities ?? []).filter((capability) => !available.has(capability))
     if (missing.length > 0) throw new Error(`Recipe adversarial campaign ${campaign.id} requires unavailable capabilities: ${missing.join(", ")}: ${recipePath}`)
+    if (campaign.faultSchedule && !(campaign.requiredCapabilities ?? []).includes("transport-faults")) {
+      throw new Error(`Recipe adversarial campaign ${campaign.id} faultSchedule requires the transport-faults capability: ${recipePath}`)
+    }
     if ((campaign.concurrency ?? 1) > 1 && !(campaign.requiredCapabilities ?? []).includes("isolated-workers")) {
       throw new Error(`Recipe adversarial campaign ${campaign.id} concurrency above 1 requires isolated-workers capability: ${recipePath}`)
     }
