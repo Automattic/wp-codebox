@@ -11,6 +11,7 @@ import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retr
 import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
 import { selectOperatorCoordinator } from "../packages/runtime-cloudflare/src/operator-coordinator.js"
 import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
+import { isCacheablePublicationResponse } from "../packages/runtime-cloudflare/src/publication-response.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
@@ -23,6 +24,16 @@ import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_AR
 import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../packages/runtime-cloudflare/src/wp-content-persistence.js"
 
 const execFileAsync = promisify(execFile)
+
+test("Cloudflare publications accept only cache-safe HTML and permanent redirects", () => {
+  assert.equal(isCacheablePublicationResponse(new Response("<h1>Page</h1>", { headers: { "content-type": "text/html; charset=UTF-8" } })), true)
+  assert.equal(isCacheablePublicationResponse(new Response(null, { status: 301, headers: { location: "/destination/" } })), true)
+  assert.equal(isCacheablePublicationResponse(new Response(null, { status: 308, headers: { location: "/destination/" } })), true)
+  assert.equal(isCacheablePublicationResponse(new Response("json", { headers: { "content-type": "application/json" } })), false)
+  assert.equal(isCacheablePublicationResponse(new Response(null, { status: 302, headers: { location: "/destination/" } })), false)
+  assert.equal(isCacheablePublicationResponse(new Response(null, { status: 301 })), false)
+  assert.equal(isCacheablePublicationResponse(new Response("<h1>Private</h1>", { headers: { "content-type": "text/html", "set-cookie": "session=secret" } })), false)
+})
 
 test("Cloudflare static artifact imports require bounded content-addressed R2 input", async () => {
   const artifact = { schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "<h1>Verified</h1>" }] }

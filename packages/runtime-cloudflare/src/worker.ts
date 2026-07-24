@@ -10,6 +10,7 @@ import { leaseRetryDelayMs } from "./lease-retry.js"
 import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
 import { selectOperatorCoordinator } from "./operator-coordinator.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
+import { isCacheablePublicationResponse } from "./publication-response.js"
 import { RevisionConflict, type MarkdownPointer, type MutationFence, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
 import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
@@ -1037,7 +1038,7 @@ async function compilePublicationRoutes(runtime: Runtime, routes: string[], orig
   for (const route of routes) {
     const request = new Request(new URL(route, origin))
     const response = toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
-    if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || response.headers.has("set-cookie")) {
+    if (!isCacheablePublicationResponse(response)) {
       throw new Error(`Affected publication route did not render cacheable HTML: ${route}.`)
     }
     const body = await response.text()
