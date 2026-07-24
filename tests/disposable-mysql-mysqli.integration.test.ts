@@ -149,6 +149,7 @@ require_once ABSPATH . 'wp-settings.php';
 
     const multisitePlugin = join(directory, "managed-multisite-fixture")
     const multisiteRecipePath = join(directory, "managed-multisite-recipe.json")
+    const multisiteArtifacts = join(directory, "managed-multisite-artifacts")
     await mkdir(join(multisitePlugin, "tests"), { recursive: true })
     await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
 /** Plugin Name: Managed Multisite Fixture */
@@ -199,8 +200,9 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
       mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
     })
     await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)
-    const multisiteResult = await runRecipe({ recipePath: multisiteRecipePath, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
-    assert.equal(multisiteResult.success, true, JSON.stringify(multisiteResult))
+    const multisiteResult = await runRecipe({ recipePath: multisiteRecipePath, artifactsDirectory: multisiteArtifacts, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
+    const multisiteFailure = multisiteResult as typeof multisiteResult & { error?: unknown }
+    assert.equal(multisiteResult.success, true, JSON.stringify({ error: multisiteFailure.error, executions: multisiteResult.executions }))
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })
