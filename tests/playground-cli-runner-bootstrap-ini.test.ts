@@ -103,21 +103,6 @@ try {
   const externalWpConfig = await readFile(externalWpConfigPath as string, "utf8")
   assert.match(externalWpConfig, /define\('DB_HOST', "127\.0\.0\.1:33061"\)/)
   assert.match(externalWpConfig, /define\('DB_PASSWORD', "secret"\)/)
-  assert.doesNotMatch(externalWpConfig, /define\('MULTISITE'/)
-
-  calls.length = 0
-  const externalMultisiteSpec: RuntimeCreateSpec = {
-    ...spec,
-    environment: { ...spec.environment, blueprint: { steps: [{ step: "enableMultisite" }] } },
-  }
-  const externalMultisiteServer = await startPlaygroundCliServer(externalMultisiteSpec, [], { cliModule })
-  await externalMultisiteServer[Symbol.asyncDispose]()
-  const externalMultisiteConfigPath = calls[0]["mount-before-install"]?.find((mount) => mount.vfsPath === "/wordpress/wp-config.php")?.hostPath
-  assert.equal(typeof externalMultisiteConfigPath, "string")
-  const externalMultisiteConfig = await readFile(externalMultisiteConfigPath as string, "utf8")
-  assert.match(externalMultisiteConfig, /define\('MULTISITE', true\)/)
-  assert.match(externalMultisiteConfig, /define\('SUBDOMAIN_INSTALL', false\)/)
-  assert.match(externalMultisiteConfig, /define\('DOMAIN_CURRENT_SITE', "localhost"\)/)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {

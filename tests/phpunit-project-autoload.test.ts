@@ -770,6 +770,14 @@ assert.deepEqual((multisiteRecipe.runtime.blueprint as { steps: unknown[] }).ste
 assert.equal(multisiteRecipe.runtime.preview?.siteUrl, "http://localhost", "multisite PHPUnit recipes need a canonical site URL without the dynamic Playground port")
 assert.ok(multisiteRecipe.workflow.steps[0].args.includes("multisite=1"))
 
+const externalMysqlMultisiteRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "network-plugin",
+  databaseType: "mysql",
+  multisite: true,
+})
+assert.deepEqual((externalMysqlMultisiteRecipe.runtime.blueprint as { steps: unknown[] }).steps, [], "external MySQL must boot single-site until the managed PHPUnit installer creates network tables")
+assert.ok(externalMysqlMultisiteRecipe.workflow.steps[0].args.includes("multisite=1"), "managed PHPUnit still receives the declared multisite contract")
+
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")
 const phpunitArgsProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-cache-args-")), "probe.php")
