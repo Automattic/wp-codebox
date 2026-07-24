@@ -124,6 +124,8 @@ export interface AdversarialReplay {
   schedule: AdversarialScheduleEntry[]
   provenance?: Record<string, unknown>
   command: string
+  expectedFingerprint?: string
+  expectedStateDigest?: string
 }
 
 export interface AdversarialScheduleEntry {
@@ -239,8 +241,8 @@ export async function runAdversarialCampaign(campaignInput: AdversarialCampaign,
       const failedOracles = oracleResults.filter((result) => result.failed)
       if (failedOracles.length > 0 || observation.status !== "passed") {
         if (options.signal?.aborted) { incomplete = true; diagnostics.push({ code: "campaign-interrupted", message: "Campaign stopped before finding minimization after an interruption request." }); break }
-        const minimized = options.minimize === false ? normalizeCorpusEntry({ id: plan.caseId, actions: plan.actions, input: plan.input }) : await minimizeAdversarialCase(campaign, plan, failedOracles, options)
-        const fingerprint = adversarialFindingFingerprint({ oracleIds: failedOracles.map((result) => result.oracleId), status: observation.status, diagnosticCodes: (observation.diagnostics ?? []).map((item) => item.code).sort(), matrix: plan.matrix })
+        const fingerprint = observationFingerprint(plan, observation, failedOracles)
+        const minimized = options.minimize === false ? normalizeCorpusEntry({ id: plan.caseId, actions: plan.actions, input: plan.input }) : await minimizeAdversarialCase(campaign, plan, failedOracles, fingerprint, options)
         const existing = findings.get(fingerprint)
         if (existing) existing.duplicates += 1
         else findings.set(fingerprint, createFinding(campaign, plan, minimized, observation, failedOracles, schedule, options, fingerprint))
@@ -335,14 +337,15 @@ function mutateCorpusEntry(campaign: AdversarialCampaign, source: AdversarialCor
   return { id: `${source.id}-mutation-${iteration}`, caseId: `${campaign.id}-${iteration}`, corpusId: source.id, iteration, workerId, matrix, actions, input, mutation, metadata: source.metadata }
 }
 
-async function minimizeAdversarialCase(campaign: AdversarialCampaign, plan: AdversarialCasePlan, originalOracles: AdversarialOracleResult[], options: AdversarialCampaignRunnerOptions): Promise<AdversarialCorpusEntry> {
+async function minimizeAdversarialCase(campaign: AdversarialCampaign, plan: AdversarialCasePlan, originalOracles: AdversarialOracleResult[], expectedFingerprint: string, options: AdversarialCampaignRunnerOptions): Promise<AdversarialCorpusEntry> {
   const oracleIds = new Set(originalOracles.filter((item) => item.failed).map((item) => item.oracleId))
   const preserves = async (candidate: AdversarialCorpusEntry): Promise<boolean> => {
     if (options.signal?.aborted) return false
     const candidatePlan = { ...plan, actions: candidate.actions, input: candidate.input }
     const observation = await executeBoundedCase(campaign, candidatePlan, options)
     const oracleResults = options.evaluate ? await options.evaluate(candidatePlan, observation, campaign.oracles) : defaultOracleResults(observation)
-    return observation.status !== "passed" || oracleResults.some((item) => item.failed && (oracleIds.size === 0 || oracleIds.has(item.oracleId)))
+    const preservesOracle = observation.status !== "passed" || oracleResults.some((item) => item.failed && (oracleIds.size === 0 || oracleIds.has(item.oracleId)))
+    return preservesOracle && observationFingerprint(candidatePlan, observation, oracleResults.filter((item) => item.failed)) === expectedFingerprint
   }
   let actions = [...plan.actions]
   let chunk = Math.max(1, Math.floor(actions.length / 2))
@@ -373,7 +376,7 @@ function createFinding(campaign: AdversarialCampaign, plan: AdversarialCasePlan,
     status: observation.status,
     minimized,
     original: { id: plan.caseId, actions: plan.actions, input: plan.input },
-    replay: stripUndefined({ schema: ADVERSARIAL_REPLAY_SCHEMA, campaignId: campaign.id, seed: campaign.seed, caseId: plan.caseId, corpusId: plan.corpusId, workerId: plan.workerId, iteration: plan.iteration, matrix: plan.matrix, actions: minimized.actions, input: minimized.input, faultSchedule: campaign.faults, schedule: [...schedule], provenance: campaign.provenance, command }),
+    replay: stripUndefined({ schema: ADVERSARIAL_REPLAY_SCHEMA, campaignId: campaign.id, seed: campaign.seed, caseId: plan.caseId, corpusId: plan.corpusId, workerId: plan.workerId, iteration: plan.iteration, matrix: plan.matrix, actions: minimized.actions, input: minimized.input, faultSchedule: campaign.faults, schedule: [...schedule], provenance: campaign.provenance, command, expectedFingerprint: fingerprint, expectedStateDigest: observation.stateDigest }),
     diagnostics: observation.diagnostics ?? [],
     artifactRefs: observation.artifacts ?? [],
     secretScan: { status: "passed", redactions: 0 },
@@ -384,6 +387,16 @@ function createFinding(campaign: AdversarialCampaign, plan: AdversarialCasePlan,
 
 function defaultOracleResults(observation: AdversarialExecutionObservation): AdversarialOracleResult[] {
   return observation.status === "passed" ? [] : [{ oracleId: "runtime-status", failed: true, code: observation.status, message: observation.diagnostics?.[0]?.message ?? `Runtime status was ${observation.status}.` }]
+}
+
+function observationFingerprint(plan: AdversarialCasePlan, observation: AdversarialExecutionObservation, oracles: AdversarialOracleResult[]): string {
+  return adversarialFindingFingerprint({
+    oracleIds: oracles.filter((result) => result.failed).map((result) => result.oracleId).sort(),
+    status: observation.status,
+    diagnosticCodes: (observation.diagnostics ?? []).map((item) => item.code).sort(),
+    stateDigest: observation.stateDigest,
+    matrix: plan.matrix,
+  })
 }
 
 function normalizeBudgets(input: Partial<AdversarialResourceBudget> | undefined): AdversarialResourceBudget {

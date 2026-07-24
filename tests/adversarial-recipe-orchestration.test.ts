@@ -74,6 +74,7 @@ assert.deepEqual(first[0]?.result.findings, second[0]?.result.findings)
 assert.equal(first[0]?.capabilities.optional[0]?.available, false, "optional fidelity must be explicit")
 assert(executions.length > 0, "generated cases must execute through runtime commands")
 assert(checkpointOperations.includes("create:baseline") && checkpointOperations.includes("restore:baseline"), "campaign cases must use the existing checkpoint reset path")
+assert(checkpointOperations.filter((operation) => operation === "restore:baseline").length >= (first[0]?.result.summary.generated ?? 0) + (second[0]?.result.summary.generated ?? 0), "every campaign and minimization execution must restore the declared baseline before running")
 
 const unsupportedRecipe = structuredClone(recipe)
 unsupportedRecipe.adversarialCampaigns![0]!.requiredCapabilities = ["missing-adapter"]

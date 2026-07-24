@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserActionCorpusDescriptor, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -21,6 +21,10 @@ import { argValue, commaListArg, durationArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import type { Page } from "playwright"
+import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
+import { exploreAdaptiveBrowserStateMachine } from "./browser-adaptive-explorer.js"
+
+export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -41,6 +45,7 @@ export interface BrowserActionsRunPlan {
   storageStateImport?: BrowserStorageStateImport
   maxDomSnapshotElements: number
   actionCorpus?: BrowserActionCorpusContract
+  adaptiveExploration?: BrowserAdaptiveExplorationContract
 }
 
 interface BrowserRunPlan {
@@ -70,9 +75,12 @@ export async function runBrowserActionsCommand({
   const args = spec.args ?? []
   const runPlan = plan ?? await browserActionsRunPlanFromArgs(args, artifactRoot)
   const steps = [...runPlan.steps]
-  const initialUrl = runPlan.initialUrl
+  if (runPlan.adaptiveExploration && (runPlan.initialUrl || runPlan.actionCorpus || steps.length > 0)) {
+    throw new Error("wordpress.browser-actions adaptive-exploration-json is a standalone additive mode and cannot be combined with url, steps-json, or action-corpus-json")
+  }
+  const initialUrl = runPlan.initialUrl ?? runPlan.adaptiveExploration?.startUrl
   if (steps.length === 0 && !initialUrl) {
-    throw new Error("wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>")
+    throw new Error("wordpress.browser-actions requires steps-json=<array>, url=<path-or-url>, or adaptive-exploration-json=<object>")
   }
 
   if (initialUrl && steps[0]?.kind !== "navigate") {
@@ -131,6 +139,8 @@ export async function runBrowserActionsCommand({
   let wordpressDiagnosticsReady = false
   let actionCorpusArtifact: BrowserActionCorpusArtifact | undefined
   let actionCorpusSummary: BrowserArtifact["summary"]["actionCorpus"] | undefined
+  let adaptiveExplorationArtifact: BrowserAdaptiveExplorationArtifact | undefined
+  let adaptiveExplorationSummary: BrowserArtifact["summary"]["adaptiveExploration"] | undefined
 
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
@@ -163,8 +173,8 @@ export async function runBrowserActionsCommand({
     wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
-      captureConsole: capture.has("console"),
-      captureErrors: capture.has("errors"),
+      captureConsole: capture.has("console") || Boolean(runPlan.adaptiveExploration),
+      captureErrors: capture.has("errors") || Boolean(runPlan.adaptiveExploration),
       captureNetwork: true,
       captureWebSocket: capture.has("websocket"),
       consoleMessages,
@@ -175,9 +185,10 @@ export async function runBrowserActionsCommand({
       webSockets,
     })
 
-    if (runPlan.actionCorpus) {
-      if (!steps.some((step) => step.kind === "navigate") && runPlan.actionCorpus.startUrl) {
-        steps.unshift({ kind: "navigate", url: runPlan.actionCorpus.startUrl, waitFor: "domcontentloaded" })
+    if (runPlan.actionCorpus || runPlan.adaptiveExploration) {
+      const generatedStartUrl = runPlan.actionCorpus?.startUrl ?? runPlan.adaptiveExploration?.startUrl
+      if (!steps.some((step) => step.kind === "navigate") && generatedStartUrl) {
+        steps.unshift({ kind: "navigate", url: generatedStartUrl, waitFor: "domcontentloaded" })
       }
       if (steps[0]?.kind === "navigate") {
         const navigateStep = steps.shift()!
@@ -198,24 +209,58 @@ export async function runBrowserActionsCommand({
           throw error
         }
       }
-      const discovery = await discoverBrowserActionCorpusDescriptors(page)
-      actionCorpusArtifact = browserActionCorpusArtifact(runPlan.actionCorpus, discovery.descriptors, now())
-      actionCorpusArtifact.plan.diagnostics.push(...discovery.diagnostics)
-      await artifactSession.writeJson("actionCorpus", "action-corpus.json", actionCorpusArtifact)
-      const corpusSteps = actionCorpusArtifact.plan.steps
-      steps.unshift(...corpusSteps)
-      actionCorpusSummary = {
-        schema: BROWSER_ACTION_CORPUS_SCHEMA,
-        seed: actionCorpusArtifact.contract.seed,
-        descriptorsDiscovered: actionCorpusArtifact.plan.observations.descriptorsDiscovered,
-        descriptorsSelected: actionCorpusArtifact.plan.observations.descriptorsSelected,
-        stepsPlanned: actionCorpusArtifact.plan.observations.stepsPlanned,
-        artifact: "files/browser/action-corpus.json",
+      if (runPlan.actionCorpus) {
+        const discovery = await discoverBrowserActionCorpusDescriptors(page)
+        actionCorpusArtifact = browserActionCorpusArtifact(runPlan.actionCorpus, discovery.descriptors, now())
+        actionCorpusArtifact.plan.diagnostics.push(...discovery.diagnostics)
+        await artifactSession.writeJson("actionCorpus", "action-corpus.json", actionCorpusArtifact)
+        const corpusSteps = actionCorpusArtifact.plan.steps
+        steps.unshift(...corpusSteps)
+        actionCorpusSummary = {
+          schema: BROWSER_ACTION_CORPUS_SCHEMA,
+          seed: actionCorpusArtifact.contract.seed,
+          descriptorsDiscovered: actionCorpusArtifact.plan.observations.descriptorsDiscovered,
+          descriptorsSelected: actionCorpusArtifact.plan.observations.descriptorsSelected,
+          stepsPlanned: actionCorpusArtifact.plan.observations.stepsPlanned,
+          artifact: "files/browser/action-corpus.json",
+        }
+      }
+      if (runPlan.adaptiveExploration) {
+        const adaptiveContract = {
+          ...runPlan.adaptiveExploration,
+          budgets: {
+            ...runPlan.adaptiveExploration.budgets,
+            maxDurationMs: Math.min(runPlan.adaptiveExploration.budgets.maxDurationMs, livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)),
+          },
+        }
+        const result = await exploreAdaptiveBrowserStateMachine({
+          page,
+          baseUrl: preview.effectiveOrigin,
+          contract: adaptiveContract,
+          observations: { consoleMessages, errors, network },
+          signal: spec.signal,
+        })
+        adaptiveExplorationArtifact = { schema: "wp-codebox/browser-adaptive-exploration-artifact/v1", contract: adaptiveContract, result, capturedAt: now() }
+        await artifactSession.writeJson("adaptiveExploration", "adaptive-exploration.json", adaptiveExplorationArtifact)
+        adaptiveExplorationSummary = {
+          schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA,
+          seed: result.seed,
+          status: result.status,
+          states: result.summary.states,
+          transitions: result.summary.transitions,
+          findings: result.summary.findings,
+          artifact: "files/browser/adaptive-exploration.json",
+        }
+        finalUrl = page.url()
+        if (result.findings.length > 0 && adaptiveContract.failOnFinding) {
+          pendingError = new Error(`Adaptive browser exploration found ${result.findings.length} reproducible oracle failure(s).`)
+        }
       }
     }
 
     const stepIndexOffset = stepRecords.length
     for (const [loopIndex, step] of steps.entries()) {
+      if (pendingError) break
       const index = loopIndex + stepIndexOffset
       const recordStartedAt = now()
       const recordStartedAtMs = Date.now()
@@ -397,6 +442,7 @@ export async function runBrowserActionsCommand({
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
         ...(actionCorpusArtifact ? { actionCorpus: "files/browser/action-corpus.json" } : {}),
+        ...(adaptiveExplorationArtifact ? { adaptiveExploration: "files/browser/adaptive-exploration.json" } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
@@ -413,6 +459,7 @@ export async function runBrowserActionsCommand({
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         ...(verifierResults.length > 0 ? { verifierResults } : {}),
         ...(actionCorpusSummary ? { actionCorpus: actionCorpusSummary } : {}),
+        ...(adaptiveExplorationSummary ? { adaptiveExploration: adaptiveExplorationSummary } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
         ...(capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(webSockets) } : {}),
@@ -450,6 +497,7 @@ export async function runBrowserActionsCommand({
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       ...(verifierResults.length > 0 ? { verifierResults } : {}),
       ...(actionCorpusArtifact ? { actionCorpus: actionCorpusArtifact.plan } : {}),
+      ...(adaptiveExplorationArtifact ? { adaptiveExploration: adaptiveExplorationArtifact.result } : {}),
       viewport,
       summary: artifact.summary,
     })
@@ -596,6 +644,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
+    adaptiveExploration: browserAdaptiveExplorationFromArgs(args),
   }
 }
 
@@ -606,148 +655,11 @@ function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContrac
   return browserActionCorpusContract(parsed)
 }
 
-export async function discoverBrowserActionCorpusDescriptors(page: Page): Promise<{
-  descriptors: BrowserActionCorpusDescriptor[]
-  diagnostics: Array<{ code: string; message: string; metadata?: Record<string, unknown> }>
-}> {
-  return await page.evaluate(() => {
-    const MAX_REJECTION_DIAGNOSTICS = 20
-    const descriptors: BrowserActionCorpusDescriptor[] = []
-    const rejected: Array<{ kind: string; tag: string; label: string }> = []
-    const cssEscape = (value: string) => {
-      const escapeFn = (globalThis as typeof globalThis & { CSS?: { escape?: (raw: string) => string } }).CSS?.escape
-      return escapeFn ? escapeFn(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&")
-    }
-    const text = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim().slice(0, 120)
-    const attributeSelector = (name: string, value: string) => `[${name}=${cssEscape(value)}]`
-    const uniquelySelects = (selector: string, element: Element) => {
-      try {
-        const matches = document.querySelectorAll(selector)
-        return matches.length === 1 && matches[0] === element
-      } catch {
-        return false
-      }
-    }
-    const selectorFor = (element: Element): string | undefined => {
-      const tag = element.tagName.toLowerCase()
-      const candidates: string[] = []
-      const seen = new Set<string>()
-      const addCandidate = (selector: string) => {
-        if (!seen.has(selector)) {
-          seen.add(selector)
-          candidates.push(selector)
-        }
-      }
-      const id = element.getAttribute("id")
-      if (id) addCandidate(`#${cssEscape(id)}`)
-
-      const attributes = new Map(["aria-label", "aria-labelledby", "name", "type", "value", "title", "href", "role"].flatMap((name) => {
-        const value = element.getAttribute(name)
-        return value ? [[name, value] as const] : []
-      }))
-      const addAttributeCombination = (...names: string[]) => {
-        if (names.every((name) => attributes.has(name))) {
-          addCandidate(`${tag}${names.map((name) => attributeSelector(name, attributes.get(name)!)).join("")}`)
-        }
-      }
-      for (const names of [
-        ["aria-label"], ["aria-labelledby"],
-        ["name", "type", "value"], ["name", "type"], ["name", "value"], ["name"],
-        ["href"], ["title"],
-        ["role", "type", "value"], ["role", "type"], ["role"],
-        ["type", "value"], ["value"], ["type"],
-      ]) {
-        addAttributeCombination(...names)
-      }
-
-      const form = (element as HTMLInputElement).form
-      const formId = form?.getAttribute("id")
-      if (form && formId) {
-        const formSelector = `#${cssEscape(formId)}`
-        if (uniquelySelects(formSelector, form)) {
-          for (const candidate of [...candidates]) addCandidate(`${formSelector} ${candidate}`)
-        }
-      }
-      for (const candidate of candidates) {
-        if (uniquelySelects(candidate, element)) return candidate
-      }
-
-      const parts: string[] = []
-      let current: Element | null = element
-      while (current) {
-        let part = current.tagName.toLowerCase()
-        const parent: Element | null = current.parentElement
-        if (parent) {
-          const sameTagSiblings = Array.from(parent.children).filter((child) => child.tagName === current?.tagName)
-          if (sameTagSiblings.length > 1) part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`
-        }
-        parts.unshift(part)
-        const candidate = parts.join(" > ")
-        if (uniquelySelects(candidate, element)) return candidate
-        current = parent
-      }
-      return undefined
-    }
-    const labelFor = (element: Element) => {
-      const labelledBy = element.getAttribute("aria-labelledby")
-      if (labelledBy) {
-        const labelled = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent).filter(Boolean).join(" ")
-        if (text(labelled)) return text(labelled)
-      }
-      const aria = text(element.getAttribute("aria-label"))
-      if (aria) return aria
-      const id = element.getAttribute("id")
-      const label = id ? document.querySelector(`label[for="${cssEscape(id)}"]`) : null
-      if (label && text(label.textContent)) return text(label.textContent)
-      return text(element.textContent)
-    }
-    const descriptorId = (kind: string, selector: string, element: Element) => `${kind}:${selector}:${element.getAttribute("name") || ""}:${labelFor(element)}`
-    const visible = (element: Element) => {
-      const htmlElement = element as HTMLElement
-      const style = window.getComputedStyle(htmlElement)
-      const rect = htmlElement.getBoundingClientRect()
-      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
-    }
-    document.querySelectorAll("a[href], button, input, textarea, select").forEach((element) => {
-      if (!visible(element)) return
-      const tag = element.tagName.toLowerCase()
-      const input = element as HTMLInputElement
-      const kind = tag === "a" ? "link" : tag === "button" ? "button" : tag === "textarea" ? "textarea" : tag === "select" ? "select" : "input"
-      const selector = selectorFor(element)
-      if (!selector) {
-        rejected.push({ kind, tag, label: labelFor(element) })
-        return
-      }
-      const descriptor: BrowserActionCorpusDescriptor = {
-        id: descriptorId(kind, selector, element),
-        kind,
-        selector,
-        label: labelFor(element),
-        name: element.getAttribute("name") || undefined,
-        role: element.getAttribute("role") || undefined,
-        type: input.type || element.getAttribute("type") || undefined,
-        formId: (element as HTMLInputElement).form?.id || undefined,
-        href: tag === "a" ? (element as HTMLAnchorElement).href : undefined,
-        disabled: Boolean((element as HTMLButtonElement).disabled),
-        readonly: Boolean(input.readOnly),
-        optionValues: tag === "select" ? Array.from((element as HTMLSelectElement).options).map((option) => option.value).filter(Boolean) : undefined,
-      }
-      descriptors.push(descriptor)
-    })
-    const diagnostics: Array<{ code: string; message: string; metadata?: Record<string, unknown> }> = rejected.slice(0, MAX_REJECTION_DIAGNOSTICS).map((item) => ({
-      code: "browser_action_corpus_selector_not_unique",
-      message: "An actionable control was rejected because discovery could not produce a selector resolving uniquely to that element.",
-      metadata: item,
-    }))
-    if (rejected.length > MAX_REJECTION_DIAGNOSTICS) {
-      diagnostics[MAX_REJECTION_DIAGNOSTICS - 1] = {
-        code: "browser_action_corpus_selector_rejections_truncated",
-        message: "Additional actionable controls without unique selectors were omitted from diagnostics.",
-        metadata: { rejected: rejected.length, retainedDiagnostics: MAX_REJECTION_DIAGNOSTICS - 1 },
-      }
-    }
-    return { descriptors, diagnostics }
-  })
+function browserAdaptiveExplorationFromArgs(args: string[]): BrowserAdaptiveExplorationContract | undefined {
+  const raw = argValue(args, "adaptive-exploration-json")
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  return browserAdaptiveExplorationContract(parsed)
 }
 
 async function captureBrowserActionDomSnapshot({
