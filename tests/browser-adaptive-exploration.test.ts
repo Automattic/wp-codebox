@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createServer } from "node:http"
 import test from "node:test"
 import { chromium, type Page } from "playwright"
 
@@ -9,6 +10,8 @@ import {
 } from "../packages/runtime-core/src/browser-adaptive-exploration.js"
 import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
 import { exploreAdaptiveBrowserStateMachine } from "../packages/runtime-playground/src/browser-adaptive-explorer.js"
+import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { closeHttpServer, listenLocalHttpServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const modalFixture = `<!doctype html>
 <style>button,input,select { display:block; width:180px; height:30px; margin:8px; }</style>
@@ -203,6 +206,45 @@ test("cancellation during a partially failed action retains bounded non-replayab
   assert(!run.result.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_reset_replay_failed"))
 })
 
+test("adaptive exploration follows routed canonical multisite links and rejects redirect escapes", async () => {
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://preview.invalid").pathname
+    response.setHeader("content-type", "text/html")
+    if (path === "/escape/") {
+      response.statusCode = 302
+      response.setHeader("location", "https://outside.example/private?token=secret")
+      response.end()
+      return
+    }
+    const next = path === "/" ? "http://localhost/alpha/" : path === "/alpha/" ? "/beta/" : undefined
+    response.end(`<!doctype html><style>a{display:block;width:180px;height:30px}</style><h1>${path}</h1>${next ? `<a id="next" href="${next}">Next</a>` : ""}`)
+  })
+  const effectiveOrigin = await listenLocalHttpServer(server)
+  const topology = browserPreviewTopology(["route-host=localhost,preview.test", "network-policy=block", "allow-host=localhost,cdn.example.test"], undefined, effectiveOrigin)
+  try {
+    const first = await runRoutedFixture(topology, effectiveOrigin)
+    const second = await runRoutedFixture(topology, effectiveOrigin)
+    assert(first.states.some((state) => state.url === "http://localhost/alpha/"))
+    assert(first.states.some((state) => state.url === "http://localhost/beta/"))
+    assert(!first.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_cross_origin_action_rejected"))
+    assert(first.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_routed_action_allowed" && diagnostic.metadata?.rawHrefOrigin === "http://localhost" && diagnostic.metadata?.effectiveOrigin === new URL(effectiveOrigin).origin && diagnostic.metadata?.routeDecision === "routed-preview" && diagnostic.metadata?.reason === "declared-route-host"))
+    assert.deepEqual(stableAdaptiveEvidence(second), stableAdaptiveEvidence(first))
+
+    const escape = await runRoutedFixture(topology, effectiveOrigin, "<a id='escape' href='http://localhost/escape/'>Escape</a>")
+    const diagnostic = escape.diagnostics.find((item) => item.code === "browser_adaptive_redirect_scope_escape_rejected")
+    assert.deepEqual(diagnostic?.metadata, {
+      rawHrefOrigin: "https://outside.example",
+      effectiveOrigin: new URL(effectiveOrigin).origin,
+      routeDecision: "external",
+      reason: "redirect-host-not-routed-to-preview",
+    })
+    assert.equal(escape.transitions[0]?.status, "rejected")
+    assert(!JSON.stringify(diagnostic).includes("secret"), "redirect evidence must not retain query secrets")
+  } finally {
+    await closeHttpServer(server)
+  }
+})
+
 test("loops, budgets, cancellation, frames, and partial evidence remain bounded", async () => {
   const loopFixture = `<!doctype html><style>button,input,a,iframe { display:block;width:100px;height:30px }</style><button id="toggle">Toggle</button><form id="first"><input name="query"></form><form id="second"><input name="query"></form><a id="external" href="https://example.test/outside">External</a><iframe id="same" srcdoc="<style>button{width:100px;height:30px}</style><button id='framed'>Framed</button>"></iframe><script>toggle.onclick=()=>document.body.classList.toggle('on')</script>`
   const bounded = await runFixture(loopFixture, {
@@ -265,5 +307,43 @@ async function runFixture(html: string, input: Record<string, unknown>, signal?:
     return { result, contract }
   } finally {
     await browser.close()
+  }
+}
+
+async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopology>, effectiveOrigin: string, initialHtml?: string) {
+  const browser = await chromium.launch({ headless: true })
+  const context = await browser.newContext()
+  await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, effectiveOrigin)
+  const page = await context.newPage()
+  const consoleMessages: object[] = []
+  const errors: object[] = []
+  const network: object[] = []
+  page.on("console", (message) => consoleMessages.push({ type: message.type(), text: message.text() }))
+  page.on("pageerror", (error) => errors.push({ message: error.message }))
+  page.on("request", (request) => network.push({ url: request.url(), method: request.method() }))
+  await page.addInitScript("globalThis.__name = value => value")
+  await page.goto(effectiveOrigin, { waitUntil: "load" })
+  if (initialHtml) await page.setContent(`<!doctype html><style>a{display:block;width:180px;height:30px}</style>${initialHtml}`)
+  const contract = browserAdaptiveExplorationContract({
+    seed: "routed-multisite",
+    startUrl: effectiveOrigin,
+    failOnFinding: false,
+    resetPolicy: { mode: "none" },
+    actionFamilies: ["click"],
+    budgets: { maxActions: initialHtml ? 1 : 2, maxStates: 4, maxTransitions: 2, maxDurationMs: 10_000 },
+    stabilization: { pollIntervalMs: 25, quietWindowMs: 50, maxWaitMs: 500, maxMutationRecords: 20 },
+  })
+  try {
+    return await exploreAdaptiveBrowserStateMachine({ page, baseUrl: effectiveOrigin, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope })
+  } finally {
+    await browser.close()
+  }
+}
+
+function stableAdaptiveEvidence(result: Awaited<ReturnType<typeof runRoutedFixture>>) {
+  return {
+    states: result.states.map((state) => ({ digest: state.digest, url: state.url, descriptors: state.descriptors.map((descriptor) => descriptor.id) })),
+    transitions: result.transitions.map((transition) => ({ source: transition.sourceDigest, destination: transition.destinationDigest, action: transition.action.id, status: transition.status })),
+    diagnostics: result.diagnostics,
   }
 }
