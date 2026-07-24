@@ -78,6 +78,12 @@ try {
   await symlink("../host-secret.php", join(pluginSource, "host-secret.php"))
   await symlink("host-secret.php", join(pluginSource, "host-secret-chain.php"))
   await symlink("../tracked-symlink-plugin-private/secret.php", join(pluginSource, "prefix-secret.php"))
+  await mkdir(join(pluginSource, "package-a", "vendor"), { recursive: true })
+  await mkdir(join(pluginSource, "package-b", "vendor"), { recursive: true })
+  await writeFile(join(pluginSource, "package-a", "package.php"), "<?php return 'package-a';\n")
+  await writeFile(join(pluginSource, "package-b", "package.php"), "<?php return 'package-b';\n")
+  await symlink("../../package-b", join(pluginSource, "package-a", "vendor", "package-b"))
+  await symlink("../../package-a", join(pluginSource, "package-b", "vendor", "package-a"))
   await execFileAsync("git", ["init", "--quiet"], { cwd: pluginSource })
   await execFileAsync("git", ["add", "."], { cwd: pluginSource })
   const trackedSymlinks = (await execFileAsync("git", ["ls-files", "-s", "--", "*.php", "*.sh"], { cwd: pluginSource })).stdout.trim().split("\n").filter((entry) => entry.startsWith("120000 ")).map((entry) => entry.split("\t")[1]).sort()
@@ -92,6 +98,9 @@ try {
   assert.equal(await readFile(join(stagedPlugin, "includes", "runtime.php"), "utf8"), "<?php return 'runtime';\n", "nested runtime files remain available")
   assert.equal(await readFile(join(stagedPlugin, "runtime-link.php"), "utf8"), "<?php return 'runtime';\n", "a contained symlink is dereferenced into the staged mount")
   assert.equal(await readFile(join(stagedPlugin, "runtime-chain.php"), "utf8"), "<?php return 'runtime';\n", "a contained symlink chain is dereferenced into the staged mount")
+  assert.equal(await readFile(join(stagedPlugin, "package-a", "vendor", "package-b", "package.php"), "utf8"), "<?php return 'package-b';\n", "a contained directory symlink is dereferenced into the staged mount")
+  await assert.rejects(access(join(stagedPlugin, "package-a", "vendor", "package-b", "vendor", "package-a")), /ENOENT/, "a directory cycle stops at the repeated real directory")
+  await assert.rejects(access(join(stagedPlugin, "package-b", "vendor", "package-a", "vendor", "package-b")), /ENOENT/, "both cycle directions remain bounded")
   await assert.rejects(access(join(stagedPlugin, "build.sh")), /ENOENT/, "a tracked dangling symlink is not materialized")
   await assert.rejects(access(join(stagedPlugin, "build-chain.sh")), /ENOENT/, "a chained dangling symlink is not materialized")
   await assert.rejects(access(join(stagedPlugin, "host-secret.php")), /ENOENT/, "a symlink escaping the source cannot expose a host file")
@@ -102,13 +111,15 @@ try {
     { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "build.sh", reason: "dangling-target" } },
     { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "host-secret-chain.php", reason: "source-escape" } },
     { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "host-secret.php", reason: "source-escape" } },
+    { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "package-a/vendor/package-b/vendor/package-a", reason: "directory-cycle" } },
+    { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "package-b/vendor/package-a/vendor/package-b", reason: "directory-cycle" } },
     { code: "readonly-mount-symlink-skipped", metadata: { mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/tracked-symlink-plugin", path: "prefix-secret.php", reason: "source-escape" } },
   ], "skipped symlinks produce deterministic structured diagnostics")
   const serializedDiagnostics = JSON.stringify(staging.diagnostics)
   assert.equal(serializedDiagnostics.includes(root), false, "diagnostics do not expose absolute host paths")
   assert.equal(serializedDiagnostics.includes("../../../.github/build.sh"), false, "diagnostics do not expose dangling link targets")
   assert.equal(serializedDiagnostics.includes("../tracked-symlink-plugin-private/secret.php"), false, "diagnostics do not expose escaping link targets")
-  assert.deepEqual(staging.phaseResult.metadata, { mounts: 1, skipped: 5, diagnostics: staging.diagnostics }, "staging evidence includes the skip diagnostics")
+  assert.deepEqual(staging.phaseResult.metadata, { mounts: 1, skipped: 7, diagnostics: staging.diagnostics }, "staging evidence includes the skip diagnostics")
   await staging[Symbol.asyncDispose]()
   assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "successful staging cleanup removes its temporary root")
 
@@ -126,7 +137,7 @@ try {
   const mountMaterialization = startupProgress.find((event) => event.phase === "preview:materializing-mounts")?.detail?.materialization
   assert.deepEqual((mountMaterialization as { metadata?: Record<string, unknown> })?.metadata, {
     mounts: 3,
-    skipped: 5,
+    skipped: 7,
     diagnostics: staging.diagnostics.map((diagnostic) => ({
       ...diagnostic,
       metadata: { ...diagnostic.metadata, mountIndex: 3 },
