@@ -3,6 +3,9 @@ import { errorMessage, parseJsonObject } from "@automattic/wp-codebox-core/inter
 
 export { errorMessage }
 
+type PhpWasmUnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void
+const phpWasmRuntimeRejectionListeners = new Set<PhpWasmUnhandledRejectionListener>()
+
 export interface PlaygroundRunResponse {
   bytes?: unknown
   cause?: unknown
@@ -45,6 +48,56 @@ export class PlaygroundCommandCrashError extends Error {
     super(playgroundCrashMessage(command, cause, request))
     this.name = "PlaygroundCommandCrashError"
   }
+}
+
+export class PhpWasmRuntimeRejectionError extends Error {
+  readonly code = "wp-codebox-php-wasm-runtime-rejection"
+  readonly failureClassification = "infrastructure-failure"
+  readonly runtime: { kind: "php-wasm"; signal: "unhandledRejection"; errorName: string; message: string }
+
+  constructor(cause: unknown) {
+    const message = redactDiagnosticText(errorMessage(cause))
+    super(`PHP WASM runtime rejected while a command was active: ${message}`)
+    this.name = "PhpWasmRuntimeRejectionError"
+    this.runtime = {
+      kind: "php-wasm",
+      signal: "unhandledRejection",
+      errorName: cause instanceof Error ? cause.name : "Error",
+      message,
+    }
+  }
+}
+
+export async function terminalizeOnPhpWasmRuntimeRejection<T>(operation: () => Promise<T>, abort: () => void): Promise<T> {
+  let rejectRuntime: (error: PhpWasmRuntimeRejectionError) => void = () => undefined
+  const runtimeRejection = new Promise<never>((_resolve, reject) => {
+    rejectRuntime = reject
+  })
+  const onUnhandledRejection: PhpWasmUnhandledRejectionListener = (reason) => {
+    if (isPhpWasmRuntimeRejection(reason)) {
+      rejectRuntime(new PhpWasmRuntimeRejectionError(reason))
+      abort()
+    } else if (!process.listeners("unhandledRejection").some((listener) => !phpWasmRuntimeRejectionListeners.has(listener as PhpWasmUnhandledRejectionListener))) {
+      queueMicrotask(() => { throw reason })
+    }
+  }
+
+  phpWasmRuntimeRejectionListeners.add(onUnhandledRejection)
+  process.on("unhandledRejection", onUnhandledRejection)
+  try {
+    return await Promise.race([Promise.resolve().then(operation), runtimeRejection])
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection)
+    phpWasmRuntimeRejectionListeners.delete(onUnhandledRejection)
+  }
+}
+
+function isPhpWasmRuntimeRejection(reason: unknown): boolean {
+  if (!(reason instanceof Error) || reason.name !== "RuntimeError") {
+    return false
+  }
+
+  return typeof reason.stack === "string" && /(?:wasm:\/\/wasm\/)?php\.wasm[.:]/.test(reason.stack)
 }
 
 export class PlaygroundCliExitError extends Error {
