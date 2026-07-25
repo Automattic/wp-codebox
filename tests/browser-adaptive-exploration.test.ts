@@ -160,6 +160,47 @@ test("identical seed and DOM produce deterministic state and action graph identi
   assert.deepEqual(stableGraph(second.result), stableGraph(first.result))
 })
 
+test("volatile generated ids preserve semantic replay and distinct control identity", async () => {
+  let render = 0
+  const server = createServer((_request, response) => {
+    render += 1
+    const suffix = render.toString(16).padStart(10, "0")
+    response.setHeader("content-type", "text/html")
+    response.end(`<!doctype html>
+      <style>button { display:block; width:180px; height:30px; margin:8px; }</style>
+      <button id="choice-primary-dm${suffix}">Choose</button>
+      <button id="choice-secondary-dm${suffix}">Choose</button>
+      <output>Waiting</output>
+      <script>
+        document.querySelectorAll('button').forEach((button, index) => button.addEventListener('click', () => {
+          document.querySelector('output').textContent = index === 0 ? 'Primary selected' : 'Secondary selected';
+        }));
+      </script>`)
+  })
+  const startUrl = await listenLocalHttpServer(server)
+  try {
+    const run = await runUrlFixture(startUrl, {
+      seed: "volatile-generated-ids",
+      failOnFinding: false,
+      budgets: { maxActions: 12, maxStates: 8, maxTransitions: 8, maxDurationMs: 15_000 },
+      actionFamilies: ["click"],
+    })
+    const initial = run.result.states[0]!
+    const choices = initial.descriptors.filter((descriptor) => descriptor.label === "Choose")
+    assert.equal(choices.length, 2)
+    assert.equal(new Set(choices.map((descriptor) => descriptor.id)).size, 2, "semantic occurrence keeps equivalent controls distinct")
+    assert.equal(new Set(choices.map((descriptor) => descriptor.selector)).size, 2, "execution retains each concrete selector")
+    const choiceTransitions = run.result.transitions.filter((transition) => transition.sourceDigest === initial.digest && transition.action.descriptorId && choices.some((descriptor) => descriptor.id === transition.action.descriptorId))
+    assert.equal(new Set(choiceTransitions.map((transition) => transition.destinationDigest)).size, 2, "distinct controls reach distinct semantic states")
+    assert(!run.result.transitions.some((transition) => transition.diagnostic?.code === "browser_adaptive_source_state_not_reproduced"))
+    assert(!run.result.diagnostics.some((diagnostic) => diagnostic.code === "browser_adaptive_reset_replay_failed"))
+    assert.notEqual(run.result.summary.budgetExhausted, "maxDurationMs")
+    assert(render > 2, "the fixture must generate fresh ids across resets")
+  } finally {
+    await closeHttpServer(server)
+  }
+})
+
 test("partially failed actions retain evidence without creating unreplayable frontier paths", async () => {
   const input = {
     seed: "partial-repeat",
@@ -304,6 +345,26 @@ async function runFixture(html: string, input: Record<string, unknown>, signal?:
   try {
     beforeExplore?.()
     const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, signal })
+    return { result, contract }
+  } finally {
+    await browser.close()
+  }
+}
+
+async function runUrlFixture(startUrl: string, input: Record<string, unknown>) {
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  const consoleMessages: object[] = []
+  const errors: object[] = []
+  const network: object[] = []
+  page.on("console", (message) => consoleMessages.push({ type: message.type(), text: message.text() }))
+  page.on("pageerror", (error) => errors.push({ message: error.message }))
+  page.on("request", (request) => network.push({ url: request.url(), method: request.method() }))
+  await page.addInitScript("globalThis.__name = value => value")
+  await page.goto(startUrl, { waitUntil: "load" })
+  const contract = browserAdaptiveExplorationContract({ startUrl, stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1500, maxMutationRecords: 40 }, ...input })
+  try {
+    const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network } })
     return { result, contract }
   } finally {
     await browser.close()

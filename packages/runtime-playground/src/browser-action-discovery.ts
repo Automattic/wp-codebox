@@ -9,6 +9,7 @@ export async function discoverBrowserActionCorpusDescriptors(page: Page | Frame)
     const MAX_REJECTION_DIAGNOSTICS = 20
     const descriptors: BrowserActionCorpusDescriptor[] = []
     const rejected: Array<{ kind: string; tag: string; label: string }> = []
+    const identityOccurrences = new Map<string, number>()
     const cssEscape = (value: string) => {
       const escapeFn = (globalThis as typeof globalThis & { CSS?: { escape?: (raw: string) => string } }).CSS?.escape
       return escapeFn ? escapeFn(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&")
@@ -96,7 +97,21 @@ export async function discoverBrowserActionCorpusDescriptors(page: Page | Frame)
       if (label && text(label.textContent)) return text(label.textContent)
       return text(element.textContent)
     }
-    const descriptorId = (kind: string, selector: string, element: Element) => `${kind}:${selector}:${element.getAttribute("name") || ""}:${labelFor(element)}`
+    const descriptorId = (kind: string, element: Element) => {
+      const input = element as HTMLInputElement
+      const identity = JSON.stringify({
+        kind,
+        label: labelFor(element),
+        name: element.getAttribute("name") || "",
+        role: element.getAttribute("role") || "",
+        type: input.type || element.getAttribute("type") || "",
+        href: element.tagName.toLowerCase() === "a" ? (element as HTMLAnchorElement).href : "",
+        options: element.tagName.toLowerCase() === "select" ? Array.from((element as HTMLSelectElement).options).map((option) => option.value) : [],
+      })
+      const occurrence = identityOccurrences.get(identity) ?? 0
+      identityOccurrences.set(identity, occurrence + 1)
+      return `${kind}:${identity}:${occurrence}`
+    }
     const visible = (element: Element) => {
       const htmlElement = element as HTMLElement
       const style = window.getComputedStyle(htmlElement)
@@ -114,7 +129,7 @@ export async function discoverBrowserActionCorpusDescriptors(page: Page | Frame)
         return
       }
       descriptors.push({
-        id: descriptorId(kind, selector, element),
+        id: descriptorId(kind, element),
         kind,
         selector,
         label: labelFor(element),
