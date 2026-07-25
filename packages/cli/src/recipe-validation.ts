@@ -753,18 +753,36 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
+  const services = recipe.inputs?.services ?? []
   const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
     ...(recipe.inputs?.secretEnv ?? []),
   ])
   const environment = new Set(exposedEnvironment)
-  for (const [index, service] of (recipe.inputs?.services ?? []).entries()) {
+  const outputOwners = new Map<string, Array<{ serviceIndex: number; output: string }>>()
+  for (const [serviceIndex, service] of services.entries()) {
+    for (const [output, name] of Object.entries(service.outputs)) {
+      const owners = outputOwners.get(name) ?? []
+      owners.push({ serviceIndex, output })
+      outputOwners.set(name, owners)
+    }
+  }
+  const connectorTargets = new Set<string>()
+  for (const [index, service] of services.entries()) {
     const path = `$.inputs.services[${index}]`
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
     if (!["mysql", "redis", "smtp", "http"].includes(service.kind)) addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    if (service.kind === "mysql" && service.outputs.password) {
+      const target = "DB_PASSWORD"
+      if (exposedEnvironment.has(target)) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target is already injected by recipe environment: ${target}`)
+      const conflictingOutput = (outputOwners.get(target) ?? []).some((owner) => !(owner.serviceIndex === index && owner.output === "password" && service.outputs.password === target))
+      if (conflictingOutput) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target collides with a managed output: ${target}`)
+      if (connectorTargets.has(target)) addIssue("ambiguous-runtime-service-secret-target", `${path}.outputs.password`, `Multiple managed connectors target the same runtime environment name: ${target}`)
+      connectorTargets.add(target)
+    }
     if (service.configuration?.provider === "external") {
       if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The external provider supports only MySQL-compatible services.")
       const boundary = recipe.inputs?.externalServices?.find((candidate) => candidate.id === service.configuration?.externalService)

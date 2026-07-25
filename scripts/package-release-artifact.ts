@@ -26,6 +26,7 @@ try {
 
   await copyIfPresent("README.md")
   await copyIfPresent("LICENSE")
+  await cp(resolve(repoRoot, "patches"), join(packageRoot, "patches"), { recursive: true })
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
   await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
 
@@ -38,6 +39,10 @@ try {
   }
 
   await execFileAsync("npm", ["install", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
+    cwd: packageRoot,
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })

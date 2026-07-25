@@ -50,6 +50,7 @@ export function runtimeServiceEvidenceFromError(error: unknown): RuntimeServiceE
 interface ManagedRuntimeService {
   env: Record<string, string>
   secretEnv: Record<string, string>
+  secretEnvTargets: Record<string, string>
   evidence: RuntimeServiceEvidence
   release(): Promise<void>
   control(action: RuntimeServiceControlAction, options?: Record<string, unknown>): Promise<RuntimeServiceControlResult>
@@ -66,6 +67,7 @@ export interface RuntimeServiceProvider {
   readonly name: string
   readonly kind: string
   version(service: WorkspaceRecipeRuntimeService): string
+  secretEnvTargets(service: WorkspaceRecipeRuntimeService): Record<string, string>
   provision(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidence: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService>
 }
 
@@ -82,6 +84,7 @@ export interface ProvisionRuntimeServicesOptions {
   policy?: RuntimePolicy
   externalServices?: WorkspaceRecipeExternalServiceBoundary[]
   externalServiceWritesApproved?: boolean
+  reservedEnvNames?: readonly string[]
 }
 
 const defaultDependencies: RuntimeServiceDependencies = {
@@ -99,10 +102,11 @@ export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): A
   })
 }
 
-export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: ProvisionRuntimeServicesOptions = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
+export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: ProvisionRuntimeServicesOptions = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; secretEnvTargets: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
   const dependencies = options.dependencies ?? defaultDependencies
   const provisioned: ManagedRuntimeService[] = []
   const evidence: RuntimeServiceEvidence[] = []
+  let environment: ReturnType<typeof aggregateRuntimeServiceEnvironment>
   const context: RuntimeServiceProvisionContext = {
     signal: options.signal,
     policy: options.policy,
@@ -110,10 +114,12 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
     externalServiceWritesApproved: options.externalServiceWritesApproved ?? false,
   }
   try {
+    validateDeclaredRuntimeServiceSecretTargets(services, options.reservedEnvNames ?? [])
     for (const service of services) {
       const managed = await runtimeServiceProvider(service).provision(service, dependencies, context, evidence)
       provisioned.push(managed)
     }
+    environment = aggregateRuntimeServiceEnvironment(provisioned, options.reservedEnvNames ?? [])
   } catch (error) {
     await releaseServices(provisioned).catch(() => undefined)
     if (error instanceof RuntimeServiceProvisionError) throw error
@@ -126,8 +132,7 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
   const lease = provisioned.length > 0 ? setInterval(() => undefined, 1_000) : undefined
 
   return {
-    env: Object.assign({}, ...provisioned.map((service) => service.env)),
-    secretEnv: Object.assign({}, ...provisioned.map((service) => service.secretEnv)),
+    ...environment,
     evidence,
     async control(serviceId, action, controlOptions) {
       const service = provisioned.find((candidate) => candidate.evidence.id === serviceId)
@@ -159,6 +164,7 @@ export async function provisionRuntimeServicesForRecipe(
     policy: options.policy,
     externalServices: options.externalServices,
     externalServiceWritesApproved: options.externalServiceWritesApproved,
+    reservedEnvNames: options.reservedEnvNames,
   })
   try {
     return await guard(provisioning)
@@ -185,6 +191,7 @@ const mysqlDockerProvider: RuntimeServiceProvider = {
   name: "docker",
   kind: "mysql",
   version: mysqlDockerImage,
+  secretEnvTargets: mysqlRuntimeServiceSecretTargets,
   provision: provisionMysqlDockerService,
 }
 
@@ -192,15 +199,20 @@ const mysqlExternalProvider: RuntimeServiceProvider = {
   name: "external",
   kind: "mysql",
   version: (service) => `mysql-compatible:${service.configuration?.engine ?? "mysql"}`,
+  secretEnvTargets: mysqlRuntimeServiceSecretTargets,
   provision: provisionMysqlExternalService,
 }
 
-const redisDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "redis", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.redis, provision: provisionRedisDockerService }
-const smtpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "smtp", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.smtp, provision: provisionSmtpDockerService }
-const httpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "http", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.http, provision: provisionHttpDockerService }
+const redisDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "redis", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.redis, secretEnvTargets: () => ({}), provision: provisionRedisDockerService }
+const smtpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "smtp", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.smtp, secretEnvTargets: () => ({}), provision: provisionSmtpDockerService }
+const httpDockerProvider: RuntimeServiceProvider = { name: "docker", kind: "http", version: (service) => service.configuration?.image ?? SERVICE_IMAGES.http, secretEnvTargets: () => ({}), provision: provisionHttpDockerService }
 
 function mysqlDockerImage(service: WorkspaceRecipeRuntimeService): string {
   return MYSQL_IMAGES[service.configuration?.engine ?? "mysql"]
+}
+
+function mysqlRuntimeServiceSecretTargets(service: WorkspaceRecipeRuntimeService): Record<string, string> {
+  return service.outputs.password ? { DB_PASSWORD: service.outputs.password } : {}
 }
 
 function runtimeServiceProvider(service: WorkspaceRecipeRuntimeService): RuntimeServiceProvider {
@@ -243,8 +255,9 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
     return {
-      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
       secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      secretEnvTargets: mysqlRuntimeServiceSecretTargets(service),
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, async (customAction) => {
         if (customAction === "flush") {
@@ -352,8 +365,9 @@ async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeServ
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: connection.host, port: String(connection.port), username, password, database }
     return {
-      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
       secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      secretEnvTargets: mysqlRuntimeServiceSecretTargets(service),
       evidence,
       async control(action) {
         const result: RuntimeServiceControlResult = { serviceId: service.id, action, status: "unsupported", fidelity: "unsupported", reason: `The ${service.kind} provider does not support ${action}.` }
@@ -417,6 +431,62 @@ function configuredEnvironmentValue(name: string | undefined, environment: Recor
 
 function mysqlConnectionArgs(host: string, port: number, username: string): string[] {
   return ["--batch", "--skip-column-names", "--protocol=TCP", "--host", host, "--port", String(port), "--user", username]
+}
+
+function runtimeServiceOutputEnvironment(service: WorkspaceRecipeRuntimeService, values: Record<string, string>, secretOutputs: ReadonlySet<string> = new Set()): Record<string, string> {
+  return Object.fromEntries(Object.entries(service.outputs)
+    .filter(([output]) => !secretOutputs.has(output))
+    .map(([output, name]) => [name, values[output] ?? ""]))
+}
+
+function validateDeclaredRuntimeServiceSecretTargets(services: readonly WorkspaceRecipeRuntimeService[], reservedEnvNames: readonly string[]): void {
+  const reserved = new Set(reservedEnvNames)
+  const outputOwners = new Map<string, Array<{ serviceIndex: number; output: string }>>()
+  for (const [serviceIndex, service] of services.entries()) {
+    for (const [output, name] of Object.entries(service.outputs)) {
+      const owners = outputOwners.get(name) ?? []
+      owners.push({ serviceIndex, output })
+      outputOwners.set(name, owners)
+    }
+  }
+  const targets = new Map<string, string>()
+  for (const [serviceIndex, service] of services.entries()) {
+    for (const [target, source] of Object.entries(runtimeServiceProvider(service).secretEnvTargets(service))) {
+      if (reserved.has(target)) throw new Error(`Managed runtime service secret target is reserved by injected environment: ${target}`)
+      const conflictingOutput = (outputOwners.get(target) ?? []).some((owner) => !(owner.serviceIndex === serviceIndex && owner.output === "password" && source === target))
+      if (conflictingOutput) throw new Error(`Managed runtime service secret target collides with managed output: ${target}`)
+      if (targets.has(target)) throw new Error(`Managed runtime service secret target is ambiguous: ${target}`)
+      targets.set(target, source)
+    }
+  }
+}
+
+function aggregateRuntimeServiceEnvironment(services: readonly ManagedRuntimeService[], reservedEnvNames: readonly string[]): { env: Record<string, string>; secretEnv: Record<string, string>; secretEnvTargets: Record<string, string> } {
+  const env: Record<string, string> = {}
+  const secretEnv: Record<string, string> = {}
+  const secretEnvTargets: Record<string, string> = {}
+  for (const service of services) {
+    mergeUniqueEnvironment(env, service.env, "runtime service environment")
+    mergeUniqueEnvironment(secretEnv, service.secretEnv, "runtime service secret environment")
+    for (const [target, source] of Object.entries(service.secretEnvTargets)) {
+      const existing = secretEnvTargets[target]
+      if (existing !== undefined && existing !== source) throw new Error(`Managed runtime service secret target is ambiguous: ${target}`)
+      secretEnvTargets[target] = source
+    }
+  }
+  for (const [target, source] of Object.entries(secretEnvTargets)) {
+    if (!(source in secretEnv)) throw new Error(`Managed runtime service secret target references an unavailable secret: ${target}`)
+    if (target in env) throw new Error(`Managed runtime service secret target collides with non-secret environment: ${target}`)
+    if (reservedEnvNames.includes(target)) throw new Error(`Managed runtime service secret target is reserved by injected environment: ${target}`)
+  }
+  return { env, secretEnv, secretEnvTargets }
+}
+
+function mergeUniqueEnvironment(target: Record<string, string>, source: Record<string, string>, label: string): void {
+  for (const [name, value] of Object.entries(source)) {
+    if (name in target) throw new Error(`Duplicate ${label} name: ${name}`)
+    target[name] = value
+  }
 }
 
 function validateGeneratedMysqlIdentifier(identifier: string): string {
@@ -501,6 +571,7 @@ async function provisionSimpleDockerService(
     return {
       env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
       secretEnv: {},
+      secretEnvTargets: {},
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, spec.customControl ? async (candidate, candidateOptions) => await spec.customControl?.(container, candidate, candidateOptions) ?? false : undefined, async () => await dependencies.waitForReady("127.0.0.1", ports[0] as number, 30_000)) },
       async release() { await releaseService(container, evidence, dependencies) },

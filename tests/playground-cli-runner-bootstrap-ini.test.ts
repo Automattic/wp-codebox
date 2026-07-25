@@ -9,6 +9,7 @@ import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 const wordpressDevelopDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-wordpress-develop-"))
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-artifacts-"))
 const calls: Parameters<PlaygroundCliModule["runCLI"]>[0][] = []
+const runs: Array<({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }> = []
 
 const cliModule: PlaygroundCliModule = {
   async runCLI(options) {
@@ -16,8 +17,9 @@ const cliModule: PlaygroundCliModule = {
     return {
       serverUrl: "http://127.0.0.1:65535",
       playground: {
-        async run() {
-          return { text: "" }
+        async run(runOptions) {
+          runs.push(runOptions)
+          return { text: options.phpEnv?.DB_PASSWORD ?? "" }
         },
       },
       async [Symbol.asyncDispose]() {},
@@ -58,10 +60,18 @@ try {
     },
     runtimeEnv: { TC_MYSQL_PORT: "33060", DB_HOST: "127.0.0.1", DB_PORT: "33061", DB_USER: "runtime", DB_NAME: "runtime" },
     secretEnv: { DB_PASSWORD: "secret" },
+    secretEnvTargets: { DB_PASSWORD: "DB_PASSWORD" },
     artifactsDirectory,
   }
 
+  await assert.rejects(startPlaygroundCliServer({
+    ...spec,
+    metadata: { recipe: { distribution: { name: "shadow", wordpress: { root: "/wordpress" }, env: { DB_PASSWORD: "shadow" } } } },
+  }, [], { cliModule }), /collides with injected environment/)
+  assert.equal(calls.length, 0, "distribution target shadows fail before Playground startup")
+
   const server = await startPlaygroundCliServer(spec, [], { cliModule })
+  assert.equal((await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "secret")
   await server[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
@@ -77,6 +87,7 @@ try {
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
+  assert.equal(calls[0].phpEnv?.DB_PASSWORD, "secret")
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
@@ -93,19 +104,25 @@ try {
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
   assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.match(sharedAutoPrepend, /putenv\("DB_PASSWORD=secret"\);/)
+  assert.doesNotMatch(sharedAutoPrepend, /secret|DB_PASSWORD/)
+  assert.equal(runs[0]?.env?.DB_PASSWORD, undefined)
   const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
   assert.equal(typeof requestWorkerPath, "string")
-  const requestWorker = await readFile(requestWorkerPath as string, "utf8")
-  assert.match(requestWorker, /HTTP_X_WP_CODEBOX_EXECUTION_TOKEN/)
-  assert.match(requestWorker, /hash_equals/)
-  assert.match(requestWorker, /\$_ENV\[\$wp_codebox_name\] = \$wp_codebox_value/)
+  assert.doesNotMatch(await readFile(requestWorkerPath as string, "utf8"), /secret/)
   const externalWpConfigPath = calls[0]["mount-before-install"]?.[4]?.hostPath
   assert.equal(typeof externalWpConfigPath, "string")
   const externalWpConfig = await readFile(externalWpConfigPath as string, "utf8")
   assert.match(externalWpConfig, /define\('DB_HOST', "127\.0\.0\.1:33061"\)/)
   assert.match(externalWpConfig, /define\('DB_PASSWORD', \(string\) getenv\('DB_PASSWORD'\)\)/)
   assert.doesNotMatch(externalWpConfig, /secret/)
+
+  calls.length = 0
+  const passwordlessExternalServer = await startPlaygroundCliServer({ ...spec, secretEnv: {}, secretEnvTargets: {} }, [], { cliModule })
+  assert.equal((await passwordlessExternalServer.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "", "connector secrets do not leak across runtime instances")
+  await passwordlessExternalServer[Symbol.asyncDispose]()
+  assert.equal(calls[0]?.phpEnv, undefined)
+  assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => mount.vfsPath === "/internal/wp-codebox"), true, "passwordless external databases retain isolated request workers")
+  assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/.test(mount.vfsPath)), true)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {

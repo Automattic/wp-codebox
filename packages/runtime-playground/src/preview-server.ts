@@ -10,7 +10,7 @@ export interface PlaygroundServerRunResponse {
 
 export interface PlaygroundCliServer {
   playground: {
-    run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundServerRunResponse>
+    run(options: ({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }): Promise<PlaygroundServerRunResponse>
     onMessage?(listener: (data: string) => Promise<string | void> | string | void): Promise<(() => Promise<void> | void) | void> | (() => Promise<void> | void) | void
     readFileAsText?(path: string): string | Promise<string>
     unlink?(path: string): Promise<void> | void

@@ -2,7 +2,7 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
+import { assertRuntimeSecretEnvTargetsAvailable, normalizeLiveProgressEvent, previewLease, resolveRuntimeSecretEnvTargets, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
@@ -34,6 +34,7 @@ export interface PlaygroundCliModule {
     skipSqliteSetup?: boolean
     "site-url"?: string
     phpIniEntries?: Record<string, string>
+    phpEnv?: Record<string, string>
     phpExtension?: string[]
   }): Promise<PlaygroundCliServer>
 }
@@ -44,6 +45,7 @@ export interface PlaygroundCliStartupOptions {
 }
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, distributionEnv(recipeDistribution(spec)?.env))
   const startedAt = Date.now()
   const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
     const event = {
@@ -168,6 +170,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
+          phpEnv: connectorSecretEnvironment(spec),
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
@@ -451,19 +454,18 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
-  const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(connectorRuntimeEnv(spec)) : ""
+  const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(spec.runtimeEnv ?? {}) : ""
   return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
 }
 
 function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
   if (spec.environment.databaseSetup !== "external") return undefined
-  const connectorEnv = connectorRuntimeEnv(spec)
-  const host = connectorEnv.DB_HOST
+  const host = spec.runtimeEnv?.DB_HOST
   if (!host) return undefined
-  const port = connectorEnv.DB_PORT
+  const port = spec.runtimeEnv?.DB_PORT
   const values = {
-    DB_NAME: connectorEnv.DB_NAME ?? "runtime",
-    DB_USER: connectorEnv.DB_USER ?? "root",
+    DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
+    DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
     DB_HOST: port ? `${host}:${port}` : host,
   }
   return `<?php
@@ -479,8 +481,10 @@ require_once ABSPATH . 'wp-settings.php';
 `
 }
 
-function connectorRuntimeEnv(spec: RuntimeCreateSpec): Record<string, string> {
-  return { ...(spec.runtimeEnv ?? {}), ...(spec.secretEnv ?? {}) }
+function connectorSecretEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  if (spec.environment.databaseSetup !== "external") return undefined
+  const resolved = resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets)
+  return Object.keys(resolved).length > 0 ? resolved : undefined
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

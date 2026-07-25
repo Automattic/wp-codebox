@@ -83,6 +83,7 @@ final class BoundedMariaDbTest extends PHPUnit\\Framework\\TestCase {
     public function test_database_identity(): void {
         $index = (string) getenv('TC_DB_INDEX');
         $this->assertMatchesRegularExpression('/^[12]$/', $index);
+        $this->assertNotSame('', (string) getenv('DB_PASSWORD'));
         $db = mysqli_init();
         $this->assertTrue(mysqli_real_connect($db, '127.0.0.1', 'root', '', 'runtime', (int) getenv('TC_MYSQL_PORT')));
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
@@ -111,7 +112,7 @@ require_once ABSPATH . 'wp-settings.php';
       pluginSlug: "bounded-phpunit-fixture",
       phpVersion: "8.3",
       pluginSource: plugin,
-      services: [{ id: "phpunit-mariadb", kind: "mysql", configuration: { engine: "mariadb", rootAuthentication: "empty-password" }, outputs: { port: "TC_MYSQL_PORT" } }],
+      services: [{ id: "phpunit-mariadb", kind: "mysql", configuration: { engine: "mariadb", rootAuthentication: "empty-password" }, outputs: { port: "TC_MYSQL_PORT", password: "DB_PASSWORD" } }],
       mounts: [
         { source: wpConfig, target: "/wordpress/wp-config.php", mode: "readonly" },
         { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },

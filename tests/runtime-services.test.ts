@@ -88,7 +88,7 @@ const collisions: WorkspaceRecipe = {
 }
 assert.deepEqual(
   (await validateWorkspaceRecipeSemantics(collisions, "recipe.json")).map((issue) => issue.code),
-  ["duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
+  ["runtime-service-secret-target-collision", "duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
 )
 
 const server = createServer((socket) => socket.end(Buffer.from([1, 0, 0, 0, 10])))
@@ -117,19 +117,22 @@ const dependencies: RuntimeServiceDependencies = {
   async waitForReady() {},
 }
 const provisioned = await provisionRuntimeServices([service], { dependencies })
+const provisionedPassword = Buffer.alloc(24, 7).toString("base64url")
 assert.equal(provisioned.env.DB_PORT, "41001")
-assert.equal(provisioned.env.DB_PASSWORD, Buffer.alloc(24, 7).toString("base64url"))
+assert.equal(provisioned.env.DB_PASSWORD, undefined, "password is excluded from the non-secret output channel")
+assert.equal(provisioned.secretEnv.DB_PASSWORD, provisionedPassword)
+assert.deepEqual(provisioned.secretEnvTargets, { DB_PASSWORD: "DB_PASSWORD" })
 const runCall = calls.find((call) => call.args[0] === "run")
 assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
 assert.ok(runCall?.args.includes("127.0.0.1::3306"), "Docker publishes MySQL on a loopback ephemeral port")
 assert.deepEqual(runCall?.args.slice(runCall.args.indexOf("--tmpfs"), runCall.args.indexOf("--tmpfs") + 2), ["--tmpfs", "/var/lib/mysql"])
 assert.equal(runCall?.args.includes("--volume") || runCall?.args.includes("--mount"), false, "Docker uses no persistent volume")
-assert.equal(runCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "credentials never enter Docker argv")
+assert.equal(runCall?.args.some((arg) => arg.includes(provisionedPassword)), false, "credentials never enter Docker argv")
 const readinessCall = calls.find((call) => call.args[0] === "exec")
 assert.ok(readinessCall?.args.includes("mysql"), "MySQL readiness authenticates against the initialized database")
-assert.equal(readinessCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "readiness credentials never enter Docker argv")
-assert.equal(readinessCall?.env?.MYSQL_PWD, provisioned.env.DB_PASSWORD, "readiness credentials use the child environment")
-assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PASSWORD), false, "credentials never enter evidence")
+assert.equal(readinessCall?.args.some((arg) => arg.includes(provisionedPassword)), false, "readiness credentials never enter Docker argv")
+assert.equal(readinessCall?.env?.MYSQL_PWD, provisionedPassword, "readiness credentials use the child environment")
+assert.equal(JSON.stringify(provisioned.evidence).includes(provisionedPassword), false, "credentials never enter evidence")
 assert.equal(runCall?.env?.DOCKER_HOST, process.env.DOCKER_HOST, "Docker provider context is preserved")
 assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()

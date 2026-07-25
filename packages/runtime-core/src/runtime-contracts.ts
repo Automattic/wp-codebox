@@ -31,6 +31,8 @@ export interface RuntimeCreateSpec {
   artifactsDirectory?: string
   runtimeEnv?: Record<string, string>
   secretEnv?: Record<string, string>
+  /** Maps an environment target to the secretEnv name that supplies its value. */
+  secretEnvTargets?: Record<string, string>
   metadata?: Record<string, unknown>
   preview?: RuntimePreviewSpec
   onBrowserStartupProgress?: BrowserStartupProgressListener
