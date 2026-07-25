@@ -10,6 +10,10 @@ export const BROWSER_ADAPTIVE_EXPLORATION_ARTIFACT_SCHEMA = "wp-codebox/browser-
 export const BROWSER_ADAPTIVE_ACTION_FAMILIES = ["click", "fill", "select", "submit", "keyboard", "back", "reload", "repeat", "double-submit"] as const
 export type BrowserAdaptiveActionFamily = typeof BROWSER_ADAPTIVE_ACTION_FAMILIES[number]
 
+const TEXT_FILLABLE_INPUT_TYPES = new Set(["text", "search", "tel", "url", "email", "password", "number"])
+const CLICKABLE_INPUT_TYPES = new Set(["checkbox", "radio", "button", "reset", "submit", "image"])
+const SUBMIT_INPUT_TYPES = new Set(["submit", "image"])
+
 export interface BrowserAdaptiveExplorationContract {
   schema: typeof BROWSER_ADAPTIVE_EXPLORATION_SCHEMA
   context: BrowserRandomWalkContext
@@ -197,28 +201,35 @@ export function planBrowserAdaptiveStateActions(state: BrowserAdaptiveState, con
     const id = `${family}:${frameId}:${descriptor?.id ?? state.digest}`
     actions.push({ id, family, frameId, ...(descriptor ? { descriptorId: descriptor.id } : {}), steps, ...(input !== undefined ? { input } : {}) })
   }
+  const addClicks = (descriptor: BrowserActionCorpusDescriptor, submit: boolean) => {
+    const selector = descriptor.selector
+    add("click", descriptor, [{ kind: "click", selector }])
+    add("repeat", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
+    if (submit && descriptor.formId) {
+      add("submit", descriptor, [{ kind: "click", selector }])
+      add("double-submit", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
+    }
+  }
   for (const descriptor of state.descriptors) {
     if (descriptor.disabled || descriptor.readonly) continue
     const selector = descriptor.selector
-    if (descriptor.kind === "input" || descriptor.kind === "textarea") {
+    const inputType = (descriptor.type ?? "text").toLowerCase()
+    if (descriptor.kind === "textarea" || (descriptor.kind === "input" && TEXT_FILLABLE_INPUT_TYPES.has(inputType))) {
       const value = generatedValue(contract.seed, descriptor)
       add("fill", descriptor, [{ kind: "fill", selector, value }], value)
       add("keyboard", descriptor, [{ kind: "press", selector, key: "Enter" }])
       if (descriptor.formId) add("submit", descriptor, [{ kind: "fill", selector, value }, { kind: "press", selector, key: "Enter" }], value)
       add("repeat", descriptor, [{ kind: "fill", selector, value }, { kind: "fill", selector, value }], value)
+    } else if (descriptor.kind === "input" && CLICKABLE_INPUT_TYPES.has(inputType)) {
+      addClicks(descriptor, SUBMIT_INPUT_TYPES.has(inputType))
     } else if (descriptor.kind === "select") {
       const values = descriptor.optionValues?.filter(Boolean) ?? []
       if (values.length > 0) {
         const value = values[parseInt(browserAdaptiveDigest("action", `${contract.seed}:${descriptor.id}`).slice(0, 8), 16) % values.length] as string
         add("select", descriptor, [{ kind: "select", selector, value }], value)
       }
-    } else {
-      add("click", descriptor, [{ kind: "click", selector }])
-      add("repeat", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
-      if (descriptor.type === "submit" && descriptor.formId) {
-        add("submit", descriptor, [{ kind: "click", selector }])
-        add("double-submit", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
-      }
+    } else if (descriptor.kind !== "input") {
+      addClicks(descriptor, inputType === "submit")
     }
   }
   if (contract.accessibility && contract.actionFamilies.includes("keyboard")) {
