@@ -279,7 +279,7 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
     const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, resolved.source)
+    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, plugin.composer, resolved.source)
     await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), sourceRef)
     plugins.push({
       source: prepared.source,
@@ -300,9 +300,13 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   return plugins
 }
 
-async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, copyRoot = prepared.source): Promise<PreparedExternalSource> {
-  if (prepared.provenance.kind !== "local") {
+async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, strategy: WorkspaceRecipeExtraPlugin["composer"], copyRoot = prepared.source): Promise<PreparedExternalSource> {
+  if (strategy !== "install") {
     return prepared
+  }
+
+  if (prepared.provenance.kind !== "local") {
+    throw new Error(`Recipe extra plugin Composer preparation only supports local sources: ${sourceRef}`)
   }
 
   try {
@@ -317,7 +321,6 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   try {
     const autoload = await stat(join(prepared.source, "vendor", "autoload.php"))
     if (autoload.isFile()) {
-      await writeComposerInstalledPackageAutoloader(prepared.source)
       return prepared
     }
   } catch {
@@ -401,6 +404,7 @@ if (is_file($wp_codebox_composer_package_classmap)) {
 
   await writeFile(packageAutoloader, `<?php
 defined( 'ABSPATH' ) || exit;
+require_once __DIR__ . '/autoload.php';
 ${classmapLoader}
 `)
 }

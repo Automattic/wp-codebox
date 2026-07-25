@@ -481,6 +481,7 @@ export interface WorkspaceRecipeExtraPlugin {
   activate?: boolean
   sha256?: string
   loadAs?: "plugin" | "mu-plugin"
+  composer?: "install"
   metadata?: Record<string, unknown>
 }
 
