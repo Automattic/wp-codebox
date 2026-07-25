@@ -17,7 +17,8 @@ interface PageAccessibilityState {
   active: ElementEvidence
   dialogs: ElementEvidence[]
   findings: Array<Omit<BrowserAccessibilityFinding, "fingerprint" | "stateDigest" | "transitionId" | "actionId">>
-  diagnostics: Array<{ code: string; message: string }>
+  diagnostics: Array<{ code: string; message: string; metadata?: Record<string, unknown> }>
+  nativeKeyboardScroll?: NativeKeyboardScrollEvidence
 }
 
 interface ElementEvidence {
@@ -26,9 +27,22 @@ interface ElementEvidence {
   tag: string
   role?: string
   visible: boolean
+  rendered: boolean
   insideDialog: boolean
   states?: BrowserAccessibilityFinding["target"]["states"]
   box?: BrowserAccessibilityFinding["target"]["box"]
+}
+
+interface NativeKeyboardScrollEvidence {
+  target: ElementEvidence
+  activeElementRetained: boolean
+  defaultPrevented: boolean
+  eventCompleted: boolean
+  synchronousScroll: boolean
+  scroll: { fromX: number; fromY: number; toX: number; toY: number }
+  boxBefore: NonNullable<ElementEvidence["box"]>
+  visibleBefore: boolean
+  inertBefore: boolean
 }
 
 export function createBrowserAccessibilityCollector(page: Page, contract: BrowserAccessibilityContract): BrowserAccessibilityCollector {
@@ -46,6 +60,7 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
     async beforeAction(action) {
       currentAction = action
       before = await inspectPage(page, contract)
+      await beginNativeKeyboardScrollObservation(page, action)
     },
     async scan(input) {
       if (scanAttempts >= contract.budgets.maxScans) {
@@ -58,7 +73,26 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
       const findings = [...state.findings]
       const action = input.action ?? currentAction
 
-      if (contract.ruleTags.includes("focus-loss") && action && state.url === before?.url && state.active.locator === "body" && before.active.locator !== "body") {
+      if (action && state.nativeKeyboardScroll && isNativeGeneratedSpaceScroll(action, state)) {
+        const index = findings.findIndex((item) => item.code === "browser-focused-element-hidden" && item.target.frameId === state.active.frameId && item.target.locator === state.active.locator)
+        if (index >= 0) {
+          findings.splice(index, 1)
+          const scroll = state.nativeKeyboardScroll.scroll
+          state.diagnostics.push({
+            code: "browser_focus_visibility_native_keyboard_scroll_suppressed",
+            message: "Offscreen focus was retained after an uncanceled generated Space action produced native page scrolling.",
+            metadata: {
+              actionId: action.id,
+              target: state.active.locator,
+              scrollDelta: { x: scroll.toX - scroll.fromX, y: scroll.toY - scroll.fromY },
+              activeElementRetained: true,
+            },
+          })
+        }
+      }
+
+      const interactionTarget = state.nativeKeyboardScroll?.target.locator ?? before?.active.locator
+      if (contract.ruleTags.includes("focus-loss") && action && state.url === before?.url && state.active.locator === "body" && interactionTarget && interactionTarget !== "body") {
         findings.push(finding("focus", "focus-loss", "browser-focus-lost", "serious", "focus-lost-to-document", state.active, "an interaction target", "document body"))
       }
 
@@ -173,6 +207,7 @@ async function inspectPage(page: Page, contract: BrowserAccessibilityContract): 
     dialogs: states.flatMap((state) => state.dialogs),
     findings: states.flatMap((state) => state.findings).slice(0, contract.budgets.maxViolationsPerScan * contract.budgets.maxTargetsPerViolation),
     diagnostics: [...states.flatMap((state) => state.diagnostics), ...diagnostics],
+    nativeKeyboardScroll: focused?.nativeKeyboardScroll ?? main?.nativeKeyboardScroll,
   }
 }
 
@@ -213,7 +248,7 @@ async function inspectFrame(frame: Frame, frameId: string, contract: BrowserAcce
         return value === null ? [] : [[name, value.slice(0, 120)]]
       }))
       if (target.closest("[inert]")) states.inert = "true"
-      return { locator: path(target), frameId, tag: target.tagName.toLowerCase(), role: role(target), visible: visible(target), insideDialog: Boolean(target.closest("dialog,[role='dialog'],[role='alertdialog']")), states, box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height), viewportWidth: innerWidth, viewportHeight: innerHeight } }
+      return { locator: path(target), frameId, tag: target.tagName.toLowerCase(), role: role(target), visible: visible(target), rendered: rendered(target), insideDialog: Boolean(target.closest("dialog,[role='dialog'],[role='alertdialog']")), states, box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height), viewportWidth: innerWidth, viewportHeight: innerHeight } }
     }
     const invalidScopes = [...includeScopes, ...excludeScopes].filter((selector) => { try { document.querySelector(selector); return false } catch { return true } })
     const inScope = (element: Element) => {
@@ -284,8 +319,95 @@ async function inspectFrame(frame: Frame, frameId: string, contract: BrowserAcce
       try { nativeModal = element.matches(":modal") } catch { nativeModal = element.tagName === "DIALOG" && (element as HTMLDialogElement).open }
       return (nativeModal || element.getAttribute("aria-modal") === "true") && visible(element) && inScope(element)
     }).map(evidence)
-    return { url: location.href, focusedDocument: document.hasFocus(), active, dialogs, findings, diagnostics: invalidScopes.length > 0 ? [{ code: "browser_accessibility_scope_invalid", message: "One or more accessibility scope selectors were invalid; the scan is inconclusive." }] : [] }
+    const observed = (globalThis as typeof globalThis & { __wpCodeboxNativeKeyboardScroll?: { active?: Element; defaultPrevented: boolean; eventCompleted: boolean; synchronousScroll: boolean; fromX: number; fromY: number; boxBefore: NonNullable<ElementEvidence["box"]>; visibleBefore: boolean; inertBefore: boolean } }).__wpCodeboxNativeKeyboardScroll
+    const nativeKeyboardScroll = observed ? {
+      target: evidence(observed.active ?? null),
+      activeElementRetained: observed.active === document.activeElement,
+      defaultPrevented: observed.defaultPrevented,
+      eventCompleted: observed.eventCompleted,
+      synchronousScroll: observed.synchronousScroll,
+      scroll: { fromX: observed.fromX, fromY: observed.fromY, toX: scrollX, toY: scrollY },
+      boxBefore: observed.boxBefore,
+      visibleBefore: observed.visibleBefore,
+      inertBefore: observed.inertBefore,
+    } : undefined
+    return { url: location.href, focusedDocument: document.hasFocus(), active, dialogs, findings, diagnostics: invalidScopes.length > 0 ? [{ code: "browser_accessibility_scope_invalid", message: "One or more accessibility scope selectors were invalid; the scan is inconclusive." }] : [], nativeKeyboardScroll }
   }, { includeScopes: contract.includeScopes, excludeScopes: contract.excludeScopes, rules: contract.ruleTags, maxTargets: contract.budgets.maxViolationsPerScan * contract.budgets.maxTargetsPerViolation, frameId })
+}
+
+async function beginNativeKeyboardScrollObservation(page: Page, action: BrowserAdaptiveAction): Promise<void> {
+  if (!isGeneratedDocumentSpaceAction(action)) return
+  await page.evaluate(() => {
+    type Observation = { active?: Element; defaultPrevented: boolean; eventCompleted: boolean; synchronousScroll: boolean; fromX: number; fromY: number; boxBefore: { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number }; visibleBefore: boolean; inertBefore: boolean }
+    const target = globalThis as typeof globalThis & { __wpCodeboxNativeKeyboardScroll?: Observation; __wpCodeboxNativeKeyboardScrollInstalled?: boolean }
+    target.__wpCodeboxNativeKeyboardScroll = undefined
+    if (target.__wpCodeboxNativeKeyboardScrollInstalled) return
+    target.__wpCodeboxNativeKeyboardScrollInstalled = true
+    addEventListener("keydown", (event) => {
+      if (event.key !== " " || !document.activeElement) return
+      const rect = document.activeElement.getBoundingClientRect()
+      const style = getComputedStyle(document.activeElement)
+      const hiddenAncestor = document.activeElement.closest("[hidden],[inert],[aria-hidden='true']")
+      target.__wpCodeboxNativeKeyboardScroll = {
+        active: document.activeElement,
+        defaultPrevented: event.defaultPrevented,
+        eventCompleted: false,
+        synchronousScroll: false,
+        fromX: scrollX,
+        fromY: scrollY,
+        boxBefore: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height), viewportWidth: innerWidth, viewportHeight: innerHeight },
+        visibleBefore: !hiddenAncestor && rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth,
+        inertBefore: Boolean(document.activeElement.closest("[inert]")),
+      }
+    }, true)
+    addEventListener("keydown", (event) => {
+      const observed = target.__wpCodeboxNativeKeyboardScroll
+      if (event.key !== " " || !observed) return
+      observed.defaultPrevented = event.defaultPrevented
+      observed.synchronousScroll ||= scrollX !== observed.fromX || scrollY !== observed.fromY
+    })
+    addEventListener("keyup", (event) => {
+      const observed = target.__wpCodeboxNativeKeyboardScroll
+      if (event.key !== " " || !observed) return
+      observed.defaultPrevented ||= event.defaultPrevented
+      observed.synchronousScroll ||= scrollX !== observed.fromX || scrollY !== observed.fromY
+      observed.eventCompleted = true
+    })
+  })
+}
+
+function isGeneratedDocumentSpaceAction(action: BrowserAdaptiveAction): boolean {
+  if (action.family !== "keyboard" || action.frameId !== "document" || action.descriptorId || action.descriptor) return false
+  const keys = action.steps.map((step) => step.kind === "press" && !step.selector ? String(step.key ?? "") : "")
+  return keys.length > 0 && keys.every(Boolean) && keys.at(-1) === "Space" && action.id === `keyboard:document:${keys.join(">")}`
+}
+
+function isNativeGeneratedSpaceScroll(action: BrowserAdaptiveAction, state: PageAccessibilityState): boolean {
+  const observed = state.nativeKeyboardScroll
+  const before = observed?.boxBefore
+  const after = state.active.box
+  if (!observed || !before || !after || !isGeneratedDocumentSpaceAction(action)) return false
+  const deltaX = observed.scroll.toX - observed.scroll.fromX
+  const deltaY = observed.scroll.toY - observed.scroll.fromY
+  const geometryTolerance = 2
+  return observed.eventCompleted
+    && !observed.defaultPrevented
+    && !observed.synchronousScroll
+    && observed.activeElementRetained
+    && observed.target.locator === state.active.locator
+    && observed.target.frameId === state.active.frameId
+    && observed.target.tag === "a"
+    && observed.target.role === "link"
+    && observed.visibleBefore
+    && !observed.inertBefore
+    && state.active.rendered
+    && state.active.states?.inert !== "true"
+    && deltaY > 0
+    && Math.abs(deltaX) <= geometryTolerance
+    && Math.abs((after.x - before.x) + deltaX) <= geometryTolerance
+    && Math.abs((after.y - before.y) + deltaY) <= geometryTolerance
+    && Math.abs(after.width - before.width) <= geometryTolerance
+    && Math.abs(after.height - before.height) <= geometryTolerance
 }
 
 async function accessibilityTree(page: Page, contract: BrowserAccessibilityContract): Promise<NonNullable<BrowserAccessibilityScan["accessibilityTree"]>> {
