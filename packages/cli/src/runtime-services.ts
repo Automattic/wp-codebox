@@ -243,7 +243,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
     return {
-      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
       secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, async (customAction) => {
@@ -352,7 +352,7 @@ async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeServ
     evidence.lifecycle = "provisioned"
     const values: Record<string, string> = { host: connection.host, port: String(connection.port), username, password, database }
     return {
-      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
       secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
       evidence,
       async control(action) {
@@ -417,6 +417,12 @@ function configuredEnvironmentValue(name: string | undefined, environment: Recor
 
 function mysqlConnectionArgs(host: string, port: number, username: string): string[] {
   return ["--batch", "--skip-column-names", "--protocol=TCP", "--host", host, "--port", String(port), "--user", username]
+}
+
+function runtimeServiceOutputEnvironment(service: WorkspaceRecipeRuntimeService, values: Record<string, string>, secretOutputs: ReadonlySet<string> = new Set()): Record<string, string> {
+  return Object.fromEntries(Object.entries(service.outputs)
+    .filter(([output]) => !secretOutputs.has(output))
+    .map(([output, name]) => [name, values[output] ?? ""]))
 }
 
 function validateGeneratedMysqlIdentifier(identifier: string): string {

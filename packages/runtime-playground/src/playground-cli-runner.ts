@@ -80,7 +80,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
-    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
+    const requestWorkerEndpoint = useProgrammaticRunner || spec.environment.databaseSetup === "external" ? undefined : {
       route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
       token: randomBytes(32).toString("base64url"),
       payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
@@ -182,7 +182,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const connectorServer = withConnectorSecretEnvironment(server, spec)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...connectorServer, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
@@ -451,19 +452,18 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 }
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
-  const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(connectorRuntimeEnv(spec)) : ""
+  const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(spec.runtimeEnv ?? {}) : ""
   return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
 }
 
 function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
   if (spec.environment.databaseSetup !== "external") return undefined
-  const connectorEnv = connectorRuntimeEnv(spec)
-  const host = connectorEnv.DB_HOST
+  const host = spec.runtimeEnv?.DB_HOST
   if (!host) return undefined
-  const port = connectorEnv.DB_PORT
+  const port = spec.runtimeEnv?.DB_PORT
   const values = {
-    DB_NAME: connectorEnv.DB_NAME ?? "runtime",
-    DB_USER: connectorEnv.DB_USER ?? "root",
+    DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
+    DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
     DB_HOST: port ? `${host}:${port}` : host,
   }
   return `<?php
@@ -479,8 +479,18 @@ require_once ABSPATH . 'wp-settings.php';
 `
 }
 
-function connectorRuntimeEnv(spec: RuntimeCreateSpec): Record<string, string> {
-  return { ...(spec.runtimeEnv ?? {}), ...(spec.secretEnv ?? {}) }
+function withConnectorSecretEnvironment(server: PlaygroundCliServer, spec: RuntimeCreateSpec): PlaygroundCliServer {
+  const password = spec.environment.databaseSetup === "external" ? spec.secretEnv?.DB_PASSWORD : undefined
+  if (password === undefined) return server
+  return {
+    ...server,
+    playground: {
+      ...server.playground,
+      async run(options) {
+        return await server.playground.run({ ...options, env: { ...(options.env ?? {}), DB_PASSWORD: password } })
+      },
+    },
+  }
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

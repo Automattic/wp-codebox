@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { executeRuntimeServiceProcess, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
@@ -116,35 +116,40 @@ assert.equal(provisioned.env.DB_HOST, "database.internal")
 assert.equal(provisioned.env.DB_PORT, "3307")
 assert.match(provisioned.env.DB_NAME ?? "", /^wp_codebox_[a-f0-9]{24}$/)
 assert.match(provisioned.env.DB_USER ?? "", /^wpcb_[a-f0-9]{24}$/)
-assert.equal(provisioned.secretEnv.DB_PASSWORD, provisioned.env.DB_PASSWORD)
+const generatedPassword = provisioned.secretEnv.DB_PASSWORD ?? ""
+assert.match(generatedPassword, /^[A-Za-z0-9_-]+$/)
+assert.equal(provisioned.env.DB_PASSWORD, undefined, "password is absent from the non-secret output channel")
 assert.equal(provisioned.evidence[0]?.provider, "external")
 assert.equal(provisioned.evidence[0]?.readiness, "ready")
 const createDatabase = successFake.calls.find((call) => call.stdin?.startsWith("CREATE DATABASE"))
 const createUser = successFake.calls.find((call) => call.stdin?.startsWith("CREATE USER"))
 assert.match(createDatabase?.stdin ?? "", /^CREATE DATABASE `wp_codebox_[a-f0-9]{24}`;\n$/)
 assert.match(createUser?.stdin ?? "", /^CREATE USER 'wpcb_[a-f0-9]{24}'@'%' IDENTIFIED BY '[A-Za-z0-9_-]+';\n$/)
-assert.equal(successFake.calls.some((call) => call.args.some((arg) => arg.includes(adminPassword) || arg.includes(provisioned.env.DB_PASSWORD ?? ""))), false, "passwords never enter argv")
+assert.equal(successFake.calls.some((call) => call.args.some((arg) => arg.includes(adminPassword) || arg.includes(generatedPassword))), false, "passwords never enter argv")
 assert.equal(JSON.stringify(runtimeServicePlan([externalService])).includes(adminPassword), false)
 assert.equal(JSON.stringify(provisioned.evidence).includes(adminPassword), false)
-assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PASSWORD ?? ""), false)
+assert.equal(JSON.stringify(provisioned.evidence).includes(generatedPassword), false)
 const bootstrapRoot = await mkdtemp(join(tmpdir(), "wp-codebox-external-mysql-bootstrap-"))
 const wordpressRoot = await mkdtemp(join(tmpdir(), "wp-codebox-external-mysql-wordpress-"))
 try {
   const bootstrapCalls: Parameters<PlaygroundCliModule["runCLI"]>[0][] = []
+  const bootstrapRuns: Array<({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }> = []
   const cliModule: PlaygroundCliModule = { async runCLI(options) {
     bootstrapCalls.push(options)
-    return { serverUrl: "http://127.0.0.1:65535", playground: { async run() { return { text: "" } } }, async [Symbol.asyncDispose]() {} }
+    return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: runOptions.env?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
   } }
-  const { DB_PASSWORD: _password, ...runtimeEnv } = provisioned.env
   const runtimeSpec: RuntimeCreateSpec = {
     backend: "wordpress-playground",
     environment: { version: "mounted", wordpressInstallMode: "do-not-attempt-installing", databaseSetup: "external", assets: { wordpressDirectory: wordpressRoot }, blueprint: {} },
     policy,
-    runtimeEnv,
+    runtimeEnv: provisioned.env,
     secretEnv: provisioned.secretEnv,
     artifactsDirectory: bootstrapRoot,
   }
   const server = await startPlaygroundCliServer(runtimeSpec, [], { cliModule })
+  const connectorResponse = await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })
+  assert.equal(connectorResponse.text, generatedPassword, "generated password reaches PHP through the ephemeral run environment")
+  assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, generatedPassword)
   await server[Symbol.asyncDispose]()
   const mounts = bootstrapCalls[0]?.["mount-before-install"] ?? []
   const autoPrependPath = mounts.find((mount) => mount.vfsPath === "/internal/shared/wp-codebox-auto-prepend.php")?.hostPath
@@ -152,9 +157,11 @@ try {
   assert.ok(autoPrependPath && wpConfigPath)
   const autoPrepend = await readFile(autoPrependPath, "utf8")
   const wpConfig = await readFile(wpConfigPath, "utf8")
-  assert.match(autoPrepend, new RegExp(`putenv\\("DB_PASSWORD=${provisioned.env.DB_PASSWORD}`), "generated password reaches the connector bootstrap environment")
   assert.match(wpConfig, /getenv\('DB_PASSWORD'\)/)
-  assert.equal(wpConfig.includes(provisioned.env.DB_PASSWORD ?? ""), false, "generated password is not serialized into wp-config")
+  assert.equal(autoPrepend.includes(generatedPassword), false, "generated password is not serialized into auto-prepend PHP")
+  assert.equal(wpConfig.includes(generatedPassword), false, "generated password is not serialized into wp-config")
+  assert.equal(await directoryContains(bootstrapRoot, generatedPassword), false, "generated password is absent from persisted artifact files")
+  assert.equal(await directoryContains(wordpressRoot, generatedPassword), false, "generated password is absent from persisted WordPress files")
 } finally {
   await rm(bootstrapRoot, { recursive: true, force: true })
   await rm(wordpressRoot, { recursive: true, force: true })
@@ -243,3 +250,15 @@ await assert.rejects(executeRuntimeServiceProcess(process.execPath, ["-e", "proc
 })
 
 console.log("external MySQL runtime service tests passed")
+
+async function directoryContains(root: string, needle: string): Promise<boolean> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) {
+      if (await directoryContains(path, needle)) return true
+    } else if (entry.isFile() && (await readFile(path)).includes(Buffer.from(needle))) {
+      return true
+    }
+  }
+  return false
+}

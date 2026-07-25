@@ -9,6 +9,7 @@ import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 const wordpressDevelopDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-wordpress-develop-"))
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-artifacts-"))
 const calls: Parameters<PlaygroundCliModule["runCLI"]>[0][] = []
+const runs: Array<({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }> = []
 
 const cliModule: PlaygroundCliModule = {
   async runCLI(options) {
@@ -16,8 +17,9 @@ const cliModule: PlaygroundCliModule = {
     return {
       serverUrl: "http://127.0.0.1:65535",
       playground: {
-        async run() {
-          return { text: "" }
+        async run(options) {
+          runs.push(options)
+          return { text: options.env?.DB_PASSWORD ?? "" }
         },
       },
       async [Symbol.asyncDispose]() {},
@@ -62,17 +64,16 @@ try {
   }
 
   const server = await startPlaygroundCliServer(spec, [], { cliModule })
+  assert.equal((await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "secret")
   await server[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]["mount-before-install"]?.length, 6)
+  assert.equal(calls[0]["mount-before-install"]?.length, 4)
   assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/shared/php.ini")
   assert.equal(calls[0]["mount-before-install"]?.[1]?.vfsPath, "/internal/shared/wp-codebox-auto-prepend.php")
-  assert.equal(calls[0]["mount-before-install"]?.[2]?.vfsPath, "/internal/wp-codebox")
-  assert.match(calls[0]["mount-before-install"]?.[3]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
   // A wordpress-develop checkout is the runtime root, not an ordinary post-startup mount.
-  assert.equal(calls[0]["mount-before-install"]?.[4]?.vfsPath, "/wordpress/wp-config.php")
-  assert.deepEqual(calls[0]["mount-before-install"]?.[5], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
+  assert.equal(calls[0]["mount-before-install"]?.[2]?.vfsPath, "/wordpress/wp-config.php")
+  assert.deepEqual(calls[0]["mount-before-install"]?.[3], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
   assert.equal(calls[0].workers, 6)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
@@ -93,14 +94,9 @@ try {
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
   assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.match(sharedAutoPrepend, /putenv\("DB_PASSWORD=secret"\);/)
-  const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
-  assert.equal(typeof requestWorkerPath, "string")
-  const requestWorker = await readFile(requestWorkerPath as string, "utf8")
-  assert.match(requestWorker, /HTTP_X_WP_CODEBOX_EXECUTION_TOKEN/)
-  assert.match(requestWorker, /hash_equals/)
-  assert.match(requestWorker, /\$_ENV\[\$wp_codebox_name\] = \$wp_codebox_value/)
-  const externalWpConfigPath = calls[0]["mount-before-install"]?.[4]?.hostPath
+  assert.doesNotMatch(sharedAutoPrepend, /secret|DB_PASSWORD/)
+  assert.equal(runs[0]?.env?.DB_PASSWORD, "secret")
+  const externalWpConfigPath = calls[0]["mount-before-install"]?.[2]?.hostPath
   assert.equal(typeof externalWpConfigPath, "string")
   const externalWpConfig = await readFile(externalWpConfigPath as string, "utf8")
   assert.match(externalWpConfig, /define\('DB_HOST', "127\.0\.0\.1:33061"\)/)
