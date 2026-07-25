@@ -725,7 +725,7 @@ Supported runtime commands today:
 - `wordpress.server-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` through the live preview HTTP server without a browser. Its performance observation is marked `source=server-http` and `kind=server-page-load`.
 - `wordpress.browser-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` in Playwright by wrapping `wordpress.browser-probe`.
 - `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
-- `wordpress.browser-actions`: boot the live preview, drive it with an ordered interaction script (`steps-json`), assert browser behavior, and capture replay/audit evidence under `files/browser/`.
+- `wordpress.browser-actions`: boot the live preview, drive it with an ordered interaction script (`steps-json`) or bounded adaptive exploration, optionally classify accessibility/keyboard/focus failures, and capture replay/audit evidence under `files/browser/`.
 
 `wordpress.run-php` loads `/wordpress/wp-load.php` by default. Use `--arg bootstrap=none` for raw PHP.
 

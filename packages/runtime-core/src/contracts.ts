@@ -1,5 +1,6 @@
 /** Inspectable Codebox contract metadata for CLI and orchestrator consumers. */
 export * from "./browser-probe-contract.js"
+export * from "./browser-accessibility.js"
 export * from "./browser-multi-actor-scenario-contracts.js"
 export * from "./browser-adaptive-exploration.js"
 export * from "./command-registry.js"

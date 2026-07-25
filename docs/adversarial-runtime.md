@@ -16,6 +16,10 @@ and replay surfaces; they do not replace those surfaces.
   does not assume a browser, HTTP library, application, or transport.
 - `adversarial-browser.ts` owns DOM-derived journey planning, hostile generic
   input generation, journey minimization, and user-facing oracle contracts.
+- `browser-accessibility.ts` owns provider-neutral accessibility configuration,
+  normalized findings, capability status, and stable privacy-safe fingerprints.
+  The Playground adapter collects bounded DOM, focus, keyboard, geometry, and
+  redacted ARIA-tree evidence through the existing adaptive browser runner.
 - `adversarial-artifacts.ts` writes bounded manifested finding and replay bundles,
   removes declared secrets and machine-specific paths, and seals corpus/finding
   identity with a deterministic content digest.
@@ -165,6 +169,40 @@ controls are repeated to expose duplicate side effects. Generic oracles cover:
 
 Journey minimization uses deterministic subset replay to retain the shortest
 sequence that preserves the oracle failure.
+
+### Accessibility and keyboard exploration
+
+Add `accessibility` to `adaptive-exploration-json` to scan the initial state,
+each novel state, and the final state. The contract accepts `ruleTags`,
+`includeScopes`, `excludeScopes`, `impactThreshold`, `cadence`, required or
+optional `rules`, `focus`, and `accessibilityTree` capabilities, plus explicit
+scan, violation, focus-history, tree-size, and keyboard-action budgets.
+
+```json
+{
+  "schema": "wp-codebox/browser-adaptive-exploration/v1",
+  "seed": "accessible-settings",
+  "startUrl": "/settings/",
+  "accessibility": {
+    "ruleTags": ["accessible-name", "keyboard-reachable", "focus-visible", "dialog-focus", "aria-state"],
+    "impactThreshold": "serious",
+    "cadence": ["initial", "novel-state", "final"],
+    "capabilities": { "rules": "required", "focus": "required", "accessibilityTree": "optional" },
+    "budgets": { "maxScans": 24, "maxViolationsPerScan": 25, "maxFocusTransitions": 100, "maxTreeChars": 20000, "maxKeyboardActions": 8 }
+  }
+}
+```
+
+The collector classifies unnamed controls, keyboard-unreachable custom
+controls, unexpected tab stops, hidden/inert/clipped/offscreen focus, focus loss,
+dialog entry/containment/restoration failures, and observable ARIA state drift.
+Every finding records its oracle, rule, impact, structural target, state and
+transition context, screenshot, correlated bounded DOM snapshot, and stable
+fingerprint. ARIA-tree names are redacted and target evidence excludes text.
+Unavailable tree capabilities produce an explicit `unsupported` scan. Required
+capabilities make the exploration incomplete; optional capabilities allow the
+campaign to continue without turning the unsupported check into a pass.
+Existing caller-supplied `accessibilityViolations` remain supported.
 
 ## Evidence and safety
 
