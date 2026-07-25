@@ -80,7 +80,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
-    const requestWorkerEndpoint = useProgrammaticRunner || spec.environment.databaseSetup === "external" ? undefined : {
+    const requestWorkerEndpoint = useProgrammaticRunner || connectorSecretPassword(spec) !== undefined ? undefined : {
       route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
       token: randomBytes(32).toString("base64url"),
       payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
@@ -480,7 +480,7 @@ require_once ABSPATH . 'wp-settings.php';
 }
 
 function withConnectorSecretEnvironment(server: PlaygroundCliServer, spec: RuntimeCreateSpec): PlaygroundCliServer {
-  const password = spec.environment.databaseSetup === "external" ? spec.secretEnv?.DB_PASSWORD : undefined
+  const password = connectorSecretPassword(spec)
   if (password === undefined) return server
   return {
     ...server,
@@ -491,6 +491,10 @@ function withConnectorSecretEnvironment(server: PlaygroundCliServer, spec: Runti
       },
     },
   }
+}
+
+function connectorSecretPassword(spec: RuntimeCreateSpec): string | undefined {
+  return spec.environment.databaseSetup === "external" ? spec.secretEnv?.DB_PASSWORD : undefined
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

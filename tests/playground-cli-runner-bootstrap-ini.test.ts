@@ -104,6 +104,12 @@ try {
   assert.doesNotMatch(externalWpConfig, /secret/)
 
   calls.length = 0
+  const passwordlessExternalServer = await startPlaygroundCliServer({ ...spec, secretEnv: {} }, [], { cliModule })
+  await passwordlessExternalServer[Symbol.asyncDispose]()
+  assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => mount.vfsPath === "/internal/wp-codebox"), true, "passwordless external databases retain isolated request workers")
+  assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/.test(mount.vfsPath)), true)
+
+  calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {
     ...spec,
     environment: { ...spec.environment, databaseSetup: undefined },
