@@ -275,6 +275,7 @@
     "test:cache-churn-observation-contracts": "tsx tests/cache-churn-observation-contracts.test.ts",
     "test:wordpress-db-contracts": "tsx tests/wordpress-db-contracts.test.ts",
     "test:wp-cli-temporary-script": "tsx tests/wp-cli-temporary-script.test.ts",
+    "test:wp-cli-recipe-result": "tsx tests/wp-cli-recipe-result.test.ts",
     "test:browser-sdk-facade": "tsx tests/browser-sdk-facade.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },
