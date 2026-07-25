@@ -15,9 +15,12 @@ interface PageAccessibilityState {
   url: string
   focusedDocument?: boolean
   active: ElementEvidence
+  activeInScope: boolean
+  activeDialogKey?: string
   dialogs: ElementEvidence[]
   findings: Array<Omit<BrowserAccessibilityFinding, "fingerprint" | "stateDigest" | "transitionId" | "actionId">>
   diagnostics: Array<{ code: string; message: string }>
+  includeScopeMatches: number
 }
 
 interface ElementEvidence {
@@ -35,9 +38,10 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
   const scans: BrowserAccessibilityScan[] = []
   const focusHistory: BrowserAccessibilityEvidence["focusHistory"] = []
   const diagnostics: BrowserAccessibilityEvidence["diagnostics"] = []
-  const dialogTriggers = new Map<string, string>()
+  const dialogTriggers = new Map<string, ElementEvidence>()
   let before: PageAccessibilityState | undefined
-  let previousActive: string | undefined
+  let previousActiveKey: string | undefined
+  let previousActiveLocator: string | undefined
   let currentAction: BrowserAdaptiveAction | undefined
   let truncated = false
   let scanAttempts = 0
@@ -58,26 +62,28 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
       const findings = [...state.findings]
       const action = input.action ?? currentAction
 
-      if (contract.ruleTags.includes("focus-loss") && action && state.url === before?.url && state.active.locator === "body" && before.active.locator !== "body") {
-        findings.push(finding("focus", "focus-loss", "browser-focus-lost", "serious", "focus-lost-to-document", state.active, "an interaction target", "document body"))
+      if (contract.ruleTags.includes("focus-loss") && action && state.url === before?.url && state.active.locator === "body" && before.active.locator !== "body" && before.activeInScope) {
+        findings.push(finding("focus", "focus-loss", "browser-focus-lost", "serious", "focus-lost-to-document", before.active, "focus retained or moved intentionally", "document body"))
       }
 
       if (contract.ruleTags.includes("dialog-focus")) {
-        const beforeDialogs = new Set((before?.dialogs ?? []).map((dialog) => dialog.locator))
-        const currentDialogs = new Set(state.dialogs.map((dialog) => dialog.locator))
+        const beforeDialogs = new Set((before?.dialogs ?? []).map(elementKey))
+        const currentDialogs = new Set(state.dialogs.map(elementKey))
         for (const dialog of state.dialogs) {
-          if (!beforeDialogs.has(dialog.locator) && action) dialogTriggers.set(dialog.locator, before?.active.locator ?? "body")
-          if (!state.active.insideDialog) {
+          const key = elementKey(dialog)
+          if (!beforeDialogs.has(key) && action) dialogTriggers.set(key, before?.active ?? state.active)
+          if (state.activeDialogKey !== key) {
             findings.push(finding("focus", "dialog-focus", "browser-dialog-focus-entry", "serious", "dialog-focus-not-contained", dialog, "focus inside the open dialog", state.active.locator))
           }
         }
         for (const dialog of before?.dialogs ?? []) {
-          if (currentDialogs.has(dialog.locator)) continue
-          const trigger = dialogTriggers.get(dialog.locator)
-          if (trigger && state.active.locator !== trigger) {
-            findings.push(finding("focus", "dialog-focus", "browser-dialog-focus-restoration", "serious", "dialog-focus-not-restored", state.active, trigger, state.active.locator))
+          const key = elementKey(dialog)
+          if (currentDialogs.has(key)) continue
+          const trigger = dialogTriggers.get(key)
+          if (trigger && elementKey(state.active) !== elementKey(trigger)) {
+            findings.push(finding("focus", "dialog-focus", "browser-dialog-focus-restoration", "serious", "dialog-focus-not-restored", dialog, trigger.locator, state.active.locator))
           }
-          dialogTriggers.delete(dialog.locator)
+          dialogTriggers.delete(key)
         }
       }
 
@@ -90,17 +96,20 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
         })
       if (findings.length > retained.length) truncated = true
 
-      if (state.active.locator !== previousActive && focusHistory.length < contract.budgets.maxFocusTransitions) {
-        focusHistory.push({ index: focusHistory.length, phase: input.phase, actionId: action?.id, from: previousActive, to: state.active.locator, visible: state.active.visible, insideDialog: state.active.insideDialog })
-      } else if (state.active.locator !== previousActive) {
+      const activeKey = elementKey(state.active)
+      if (activeKey !== previousActiveKey && focusHistory.length < contract.budgets.maxFocusTransitions) {
+        focusHistory.push({ index: focusHistory.length, phase: input.phase, actionId: action?.id, from: previousActiveLocator, to: state.active.locator, visible: state.active.visible, insideDialog: state.active.insideDialog })
+      } else if (activeKey !== previousActiveKey) {
         truncated = true
       }
-      previousActive = state.active.locator
+      previousActiveKey = activeKey
+      previousActiveLocator = state.active.locator
 
       const tree = await accessibilityTree(page, contract)
       const requiredUnavailable = tree.status !== "captured" && contract.capabilities.accessibilityTree === "required"
       const treeUnavailable = tree.status !== "captured" && contract.capabilities.accessibilityTree !== "disabled"
-      const status: BrowserAccessibilityScan["status"] = retained.length > 0 ? "findings" : treeUnavailable ? "unsupported" : state.diagnostics.some((item) => item.code === "browser_accessibility_scope_invalid") ? "inconclusive" : "passed"
+      const scopeInconclusive = state.diagnostics.some((item) => item.code === "browser_accessibility_scope_invalid" || item.code === "browser_accessibility_scope_unmatched")
+      const status: BrowserAccessibilityScan["status"] = retained.length > 0 ? "findings" : treeUnavailable ? "unsupported" : scopeInconclusive ? "inconclusive" : "passed"
       const scan: BrowserAccessibilityScan = {
         index: scanAttempts - 1,
         phase: input.phase,
@@ -119,7 +128,8 @@ export function createBrowserAccessibilityCollector(page: Page, contract: Browse
     },
     async reset() {
       before = undefined
-      previousActive = undefined
+      previousActiveKey = undefined
+      previousActiveLocator = undefined
       currentAction = undefined
       dialogTriggers.clear()
     },
@@ -167,12 +177,19 @@ async function inspectPage(page: Page, contract: BrowserAccessibilityContract): 
   }
   const main = states.find((state) => state.url === page.url()) ?? states[0]
   const focused = [...states].reverse().find((state) => state.focusedDocument)
+  const stateDiagnostics = states.flatMap((state) => state.diagnostics)
+  if (contract.includeScopes.length > 0 && states.reduce((count, state) => count + state.includeScopeMatches, 0) === 0) {
+    stateDiagnostics.push({ code: "browser_accessibility_scope_unmatched", message: "No declared accessibility include scope matched an inspectable frame; the scan is inconclusive." })
+  }
   return {
     url: page.url(),
     active: focused?.active ?? main?.active ?? { locator: "body", frameId: "document", tag: "body", visible: true, insideDialog: false },
+    activeInScope: focused?.activeInScope ?? main?.activeInScope ?? false,
+    activeDialogKey: focused?.activeDialogKey ?? main?.activeDialogKey,
     dialogs: states.flatMap((state) => state.dialogs),
     findings: states.flatMap((state) => state.findings).slice(0, contract.budgets.maxViolationsPerScan * contract.budgets.maxTargetsPerViolation),
-    diagnostics: [...states.flatMap((state) => state.diagnostics), ...diagnostics],
+    diagnostics: [...stateDiagnostics, ...diagnostics],
+    includeScopeMatches: states.reduce((count, state) => count + state.includeScopeMatches, 0),
   }
 }
 
@@ -216,6 +233,7 @@ async function inspectFrame(frame: Frame, frameId: string, contract: BrowserAcce
       return { locator: path(target), frameId, tag: target.tagName.toLowerCase(), role: role(target), visible: visible(target), insideDialog: Boolean(target.closest("dialog,[role='dialog'],[role='alertdialog']")), states, box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height), viewportWidth: innerWidth, viewportHeight: innerHeight } }
     }
     const invalidScopes = [...includeScopes, ...excludeScopes].filter((selector) => { try { document.querySelector(selector); return false } catch { return true } })
+    const includeScopeMatches = includeScopes.reduce((count, selector) => { try { return count + (document.querySelector(selector) ? 1 : 0) } catch { return count } }, 0)
     const inScope = (element: Element) => {
       const included = includeScopes.length === 0 || includeScopes.some((selector) => { try { return element.matches(selector) || Boolean(element.closest(selector)) } catch { return false } })
       const excluded = excludeScopes.some((selector) => { try { return element.matches(selector) || Boolean(element.closest(selector)) } catch { return false } })
@@ -278,13 +296,16 @@ async function inspectFrame(frame: Frame, frameId: string, contract: BrowserAcce
       }
     }
     const active = evidence(document.activeElement)
-    if (rules.includes("focus-visible") && document.activeElement && document.activeElement !== document.body && !active.visible) findings.push({ oracle: "focus", rule: "focus-visible", code: "browser-focused-element-hidden", impact: "serious", classification: "focus-in-hidden-inert-or-offscreen-content", target: active, expected: "visible and operable", actual: active.states?.inert === "true" ? "inert" : "hidden, clipped, or offscreen" })
+    const activeInScope = Boolean(document.activeElement && inScope(document.activeElement))
+    const activeDialog = document.activeElement?.closest("dialog,[role='dialog'],[role='alertdialog']")
+    const activeDialogKey = activeDialog ? `${frameId}\n${path(activeDialog)}` : undefined
+    if (rules.includes("focus-visible") && document.activeElement && document.activeElement !== document.body && activeInScope && !active.visible) findings.push({ oracle: "focus", rule: "focus-visible", code: "browser-focused-element-hidden", impact: "serious", classification: "focus-in-hidden-inert-or-offscreen-content", target: active, expected: "visible and operable", actual: active.states?.inert === "true" ? "inert" : "hidden, clipped, or offscreen" })
     const dialogs = Array.from(document.querySelectorAll("dialog,[role='dialog'],[role='alertdialog']")).filter((element) => {
       let nativeModal = false
       try { nativeModal = element.matches(":modal") } catch { nativeModal = element.tagName === "DIALOG" && (element as HTMLDialogElement).open }
       return (nativeModal || element.getAttribute("aria-modal") === "true") && visible(element) && inScope(element)
     }).map(evidence)
-    return { url: location.href, focusedDocument: document.hasFocus(), active, dialogs, findings, diagnostics: invalidScopes.length > 0 ? [{ code: "browser_accessibility_scope_invalid", message: "One or more accessibility scope selectors were invalid; the scan is inconclusive." }] : [] }
+    return { url: location.href, focusedDocument: document.hasFocus(), active, activeInScope, activeDialogKey, dialogs, findings, diagnostics: invalidScopes.length > 0 ? [{ code: "browser_accessibility_scope_invalid", message: "One or more accessibility scope selectors were invalid; the scan is inconclusive." }] : [], includeScopeMatches }
   }, { includeScopes: contract.includeScopes, excludeScopes: contract.excludeScopes, rules: contract.ruleTags, maxTargets: contract.budgets.maxViolationsPerScan * contract.budgets.maxTargetsPerViolation, frameId })
 }
 
@@ -303,6 +324,8 @@ async function accessibilityTree(page: Page, contract: BrowserAccessibilityContr
 function finding(oracle: BrowserAccessibilityFinding["oracle"], rule: BrowserAccessibilityFinding["rule"], code: string, impact: BrowserAccessibilityFinding["impact"], classification: string, target: ElementEvidence, expected?: string, actual?: string): Omit<BrowserAccessibilityFinding, "fingerprint" | "stateDigest" | "transitionId" | "actionId"> {
   return { oracle, rule, code, impact, classification, target, expected, actual }
 }
+
+function elementKey(element: ElementEvidence): string { return `${element.frameId}\n${element.locator}` }
 
 function impactRank(impact: BrowserAccessibilityFinding["impact"]): number { return { minor: 0, moderate: 1, serious: 2, critical: 3 }[impact] }
 

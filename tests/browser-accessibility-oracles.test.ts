@@ -116,6 +116,96 @@ test("same-origin frame findings retain frame identity", async () => {
   })
 })
 
+test("include and exclude scopes constrain static and focused targets", async () => {
+  await withPage(`<!doctype html>
+    <style>.offscreen { position:absolute; left:-5000px; width:20px; height:20px }</style>
+    <section id="component">
+      <input id="inside-unnamed">
+      <div id="inside-custom" role="button">Action</div>
+      <div id="inside-tab" tabindex="0">Tab stop</div>
+      <button id="inside-aria" aria-controls="panel" aria-expanded="false">Toggle</button><div id="panel">Panel</div>
+      <button id="inside-focus" class="offscreen">Inside focus</button>
+      <div id="excluded"><button id="excluded-unnamed"></button></div>
+    </section>
+    <button id="outside-unnamed"></button><button id="outside-focus" class="offscreen">Outside focus</button>`, async (page) => {
+    const contract = browserAccessibilityContract({ includeScopes: ["#component"], excludeScopes: ["#excluded"], impactThreshold: "moderate", capabilities: { accessibilityTree: "disabled" } })!
+    const collector = createBrowserAccessibilityCollector(page, contract)
+
+    await page.locator("#outside-focus").focus()
+    const outsideFocused = await collector.scan({ phase: "initial" })
+    assert(!outsideFocused.findings.some((finding) => finding.code === "browser-focused-element-hidden"), "out-of-scope focus is context, not a finding")
+    const unnamed = outsideFocused.findings.filter((finding) => finding.code === "browser-accessible-name-missing")
+    assert.equal(unnamed.length, 1)
+    assert.equal(unnamed[0]?.target.tag, "input", "outside and excluded unnamed buttons are filtered")
+    assert(outsideFocused.findings.some((finding) => finding.code === "browser-keyboard-unreachable"))
+    assert(outsideFocused.findings.some((finding) => finding.code === "browser-unexpected-tab-stop"))
+    assert(outsideFocused.findings.some((finding) => finding.code === "browser-aria-expanded-drift"))
+
+    await page.locator("#inside-focus").focus()
+    const insideFocused = await collector.scan({ phase: "novel-state" })
+    assert(insideFocused.findings.some((finding) => finding.code === "browser-focused-element-hidden" && finding.target.tag === "button"))
+    assert.equal(collector.evidence().focusHistory.length, 2, "bounded focus history retains cross-boundary context")
+  })
+})
+
+test("focus loss is attributed only to the scoped element that lost focus", async () => {
+  await withPage("<!doctype html><section id='component'><button id='inside'>Inside</button></section><button id='outside'>Outside</button>", async (page) => {
+    const contract = browserAccessibilityContract({ includeScopes: ["#component"], ruleTags: ["focus-loss"], capabilities: { accessibilityTree: "disabled" } })!
+    const collector = createBrowserAccessibilityCollector(page, contract)
+    const blur = action("blur", "#inside")
+
+    await page.locator("#outside").focus()
+    await collector.beforeAction(blur)
+    await page.evaluate(() => { document.body.tabIndex = -1; document.body.focus() })
+    const outside = await collector.scan({ phase: "novel-state", action: blur })
+    assert(!outside.findings.some((finding) => finding.code === "browser-focus-lost"))
+
+    await page.locator("#inside").focus()
+    await collector.beforeAction(blur)
+    await page.evaluate(() => document.body.focus())
+    const inside = await collector.scan({ phase: "novel-state", action: blur })
+    assert(inside.findings.some((finding) => finding.code === "browser-focus-lost" && finding.target.locator !== "body"))
+  })
+})
+
+test("scoped dialogs may cross focus boundaries without emitting out-of-scope targets", async () => {
+  await withPage(`<!doctype html>
+    <button id="outside-trigger">Open</button>
+    <div id="outside-dialog" role="dialog" aria-modal="true"><button id="outside-dialog-action">Outside dialog</button></div>
+    <section id="component"><div id="dialog" role="dialog" aria-modal="true" hidden><button>Close</button></div></section>
+    <script>
+      document.querySelector('#outside-trigger').onclick=()=>{ document.querySelector('#dialog').hidden=false };
+    </script>`, async (page) => {
+    const contract = browserAccessibilityContract({ includeScopes: ["#component"], ruleTags: ["dialog-focus"], capabilities: { accessibilityTree: "disabled" } })!
+    const collector = createBrowserAccessibilityCollector(page, contract)
+    const open = action("open", "#outside-trigger")
+    await page.locator("#outside-trigger").focus()
+    await collector.beforeAction(open)
+    await page.locator("#outside-trigger").click()
+    await page.locator("#outside-dialog-action").focus()
+    const opened = await collector.scan({ phase: "novel-state", action: open })
+    assert(opened.findings.some((finding) => finding.code === "browser-dialog-focus-entry" && finding.target.role === "dialog"))
+    assert(opened.findings.every((finding) => finding.target.role === "dialog"))
+
+    await collector.beforeAction(action("close", "#dialog"))
+    await page.locator("#dialog").evaluate((element) => { element.setAttribute("hidden", ""); document.querySelector<HTMLElement>("#outside-trigger")?.focus() })
+    const closed = await collector.scan({ phase: "novel-state" })
+    assert(!closed.findings.some((finding) => finding.code === "browser-dialog-focus-restoration"), "restoration to an out-of-scope trigger remains valid")
+  })
+})
+
+test("same-origin frame scopes filter static and focused findings within that frame", async () => {
+  await withPage(`<!doctype html><iframe srcdoc="<style>.offscreen{position:absolute;left:-5000px;width:20px;height:20px}</style><section class='scope'><input id='inside'><button id='inside-focus' class='offscreen'>Focus</button></section><button id='outside'></button>"></iframe>`, async (page) => {
+    const frame = page.locator("iframe").contentFrame()
+    await frame.locator("#inside-focus").focus()
+    const contract = browserAccessibilityContract({ includeScopes: [".scope"], ruleTags: ["accessible-name", "focus-visible"], capabilities: { accessibilityTree: "disabled" } })!
+    const scan = await createBrowserAccessibilityCollector(page, contract).scan({ phase: "initial" })
+    assert(scan.findings.some((finding) => finding.code === "browser-accessible-name-missing" && finding.target.frameId === "frame:0" && finding.target.tag === "input"))
+    assert(scan.findings.some((finding) => finding.code === "browser-focused-element-hidden" && finding.target.frameId === "frame:0"))
+    assert(!scan.findings.some((finding) => finding.code === "browser-accessible-name-missing" && finding.target.tag === "button"))
+  })
+})
+
 test("ARIA state drift is observed after both opening and closing a controlled panel", async () => {
   await withPage(`<!doctype html><button id="toggle" aria-controls="panel" aria-expanded="false">Toggle</button><div id="panel" hidden>Panel</div><script>document.querySelector('#toggle').onclick=()=>{ const panel=document.querySelector('#panel'); panel.hidden=!panel.hidden }</script>`, async (page) => {
     const collector = createBrowserAccessibilityCollector(page, requiredContract())
@@ -262,6 +352,15 @@ test("invalid scopes are inconclusive rather than false passes", async () => {
     const scan = await createBrowserAccessibilityCollector(page, contract).scan({ phase: "initial" })
     assert.equal(scan.status, "inconclusive")
     assert.equal(scan.diagnostics[0]?.code, "browser_accessibility_scope_invalid")
+  })
+})
+
+test("valid include scopes that match no inspectable frame are inconclusive", async () => {
+  await withPage("<!doctype html><button>Pass</button>", async (page) => {
+    const contract = browserAccessibilityContract({ includeScopes: ["#missing"], capabilities: { accessibilityTree: "disabled" } })!
+    const scan = await createBrowserAccessibilityCollector(page, contract).scan({ phase: "initial" })
+    assert.equal(scan.status, "inconclusive")
+    assert(scan.diagnostics.some((diagnostic) => diagnostic.code === "browser_accessibility_scope_unmatched"))
   })
 })
 
