@@ -34,7 +34,7 @@
               {
                 "command": "wordpress.browser-actions",
                 "args": [
-                  "adaptive-exploration-json={\"schema\":\"wp-codebox/browser-adaptive-exploration/v1\",\"seed\":\"adaptive-browser-v1\",\"startUrl\":\"/\",\"budgets\":{\"maxActions\":24,\"maxStates\":16,\"maxTransitions\":32,\"maxDurationMs\":60000,\"maxArtifactBytes\":2097152,\"maxErrors\":10},\"actionFamilies\":[\"click\",\"fill\",\"select\",\"submit\",\"keyboard\",\"back\",\"reload\",\"repeat\",\"double-submit\"],\"resetPolicy\":{\"mode\":\"start-url\"}}",
+                  "adaptive-exploration-json={\"schema\":\"wp-codebox/browser-adaptive-exploration/v1\",\"seed\":\"adaptive-browser-v1\",\"startUrl\":\"/\",\"budgets\":{\"maxActions\":24,\"maxStates\":16,\"maxTransitions\":32,\"maxDurationMs\":60000,\"maxArtifactBytes\":2097152,\"maxErrors\":10},\"actionFamilies\":[\"click\",\"fill\",\"select\",\"submit\",\"keyboard\",\"back\",\"reload\",\"repeat\",\"double-submit\"],\"resetPolicy\":{\"mode\":\"start-url\"},\"accessibility\":{\"ruleTags\":[\"accessible-name\",\"keyboard-reachable\",\"focus-visible\",\"dialog-focus\",\"aria-state\"],\"impactThreshold\":\"serious\",\"cadence\":[\"initial\",\"novel-state\",\"final\"],\"capabilities\":{\"rules\":\"required\",\"focus\":\"required\",\"accessibilityTree\":\"optional\"},\"budgets\":{\"maxScans\":24,\"maxViolationsPerScan\":25,\"maxFocusTransitions\":100,\"maxTreeChars\":20000,\"maxKeyboardActions\":8}}}",
                   "capture=steps,console,errors,network"
                 ]
               }

@@ -11,6 +11,8 @@ import {
   type BrowserAdaptiveFrameIdentity,
   type BrowserAdaptiveState,
   type BrowserAdaptiveTransition,
+  type BrowserAccessibilityCollector,
+  type BrowserAccessibilityFinding as BrowserA11yFinding,
 } from "@automattic/wp-codebox-core"
 import { stableJson } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
@@ -50,6 +52,8 @@ export async function exploreAdaptiveBrowserStateMachine({
   signal,
   now = Date.now,
   navigationScope,
+  accessibilityCollector,
+  onAccessibilityFindingEvidence,
 }: {
   page: Page
   baseUrl: string
@@ -58,6 +62,8 @@ export async function exploreAdaptiveBrowserStateMachine({
   signal?: AbortSignal
   now?: () => number
   navigationScope?: BrowserPreviewNavigationScope
+  accessibilityCollector?: BrowserAccessibilityCollector
+  onAccessibilityFindingEvidence?: (scan: Awaited<ReturnType<BrowserAccessibilityCollector["scan"]>>) => Promise<{ screenshot?: string; domSnapshot?: string }>
 }): Promise<BrowserAdaptiveExplorationResult> {
   const started = now()
   const states = new Map<string, BrowserAdaptiveState>()
@@ -68,13 +74,20 @@ export async function exploreAdaptiveBrowserStateMachine({
   let actions = 0
   let errors = 0
   let revisits = 0
+  let keyboardActions = 0
   let exhausted: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
 
   const initial = await captureAdaptiveState(page, contract, 0, navigationScope)
   appendDiagnostics(diagnostics, initial.diagnostics, contract.descriptorLimits.maxDiagnostics)
   states.set(initial.state.digest, initial.state)
   const frontier: FrontierEntry[] = [{ state: initial.state, path: [] }]
-  if (artifactBytes(states, transitions, diagnostics, findings) > contract.budgets.maxArtifactBytes) exhausted = "maxArtifactBytes"
+  if (accessibilityCollector && contract.accessibility?.cadence.includes("initial")) {
+    const scan = await accessibilityCollector.scan({ phase: "initial", stateDigest: initial.state.digest })
+    if (scan.findings.length > 0 && onAccessibilityFindingEvidence) scan.artifacts = await onAccessibilityFindingEvidence(scan)
+    findings.push(...adaptiveAccessibilityFindings(scan.findings, contract, [], "initial"))
+    if (artifactBytes(states, transitions, diagnostics, findings) + Buffer.byteLength(stableJson(accessibilityCollector.evidence())) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) exhausted = "maxArtifactBytes"
+  }
+  if (artifactBytes(states, transitions, diagnostics, findings) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) exhausted = "maxArtifactBytes"
 
   while (frontier.length > 0 && !exhausted && findings.length === 0) {
     if (signal?.aborted) { exhausted = "cancelled"; break }
@@ -86,6 +99,7 @@ export async function exploreAdaptiveBrowserStateMachine({
       if (actions >= contract.budgets.maxActions) { exhausted = "maxActions"; break }
       if (transitions.length >= contract.budgets.maxTransitions) { exhausted = "maxTransitions"; break }
       if (now() - started >= contract.budgets.maxDurationMs) { exhausted = "maxDurationMs"; break }
+      const keyboardBudget = contract.accessibility?.budgets.maxKeyboardActions ?? Number.POSITIVE_INFINITY
       const actionVisitKey = `${source.state.digest}:${action.id}`
       const visits = actionVisits.get(actionVisitKey) ?? 0
       if (visits >= contract.revisitPolicy.maxActionVisits) continue
@@ -93,12 +107,14 @@ export async function exploreAdaptiveBrowserStateMachine({
 
       if (contract.resetPolicy.mode === "start-url" && (transitions.length > 0 || source.path.length > 0)) {
         if (actions + source.path.length >= contract.budgets.maxActions) { exhausted = "maxActions"; break }
-        const restored = await restoreAdaptivePath(page, baseUrl, contract, source.path, signal, navigationScope)
+        if (keyboardActions + countKeyboardActions(source.path) > keyboardBudget) { exhausted = "maxKeyboardActions"; break }
+        const restored = await restoreAdaptivePath(page, baseUrl, contract, source.path, signal, navigationScope, accessibilityCollector)
         actions += restored.executed
+        keyboardActions += restored.keyboardExecuted
         appendDiagnostics(diagnostics, restored.diagnostics, contract.descriptorLimits.maxDiagnostics)
         if (!restored.state || restored.state.digest !== source.state.digest) {
           const rejected = rejectedTransition(source.state, action, page.url(), "browser_adaptive_source_state_not_reproduced", "The declared start URL and replay path did not reproduce the queued source state.")
-          if (artifactBytes(states, [...transitions, rejected], diagnostics, findings) > contract.budgets.maxArtifactBytes) { exhausted = "maxArtifactBytes"; break }
+          if (artifactBytes(states, [...transitions, rejected], diagnostics, findings) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) { exhausted = "maxArtifactBytes"; break }
           transitions.push(rejected)
           continue
         }
@@ -109,6 +125,8 @@ export async function exploreAdaptiveBrowserStateMachine({
       const beforeNetwork = observations.network.length
       const transitionStarted = now()
       await installMutationObservers(page, contract)
+      if (action.family === "keyboard" && keyboardActions >= keyboardBudget) { exhausted = "maxKeyboardActions"; break }
+      await accessibilityCollector?.beforeAction(action)
       let actionError: string | undefined
       try {
         await executeAdaptiveAction(page, action, contract.stabilization.maxWaitMs)
@@ -116,6 +134,7 @@ export async function exploreAdaptiveBrowserStateMachine({
         actionError = error instanceof Error ? error.message : String(error)
       }
       actions += 1
+      if (action.family === "keyboard") keyboardActions += 1
       const stabilized = await stabilizeAdaptiveState(page, contract, source.path.length + 1, now, navigationScope)
       appendDiagnostics(diagnostics, stabilized.diagnostics, contract.descriptorLimits.maxDiagnostics)
       const scopeRejection = stabilized.diagnostics.find((diagnostic) => diagnostic.code === "browser_adaptive_redirect_scope_escape_rejected")
@@ -124,6 +143,14 @@ export async function exploreAdaptiveBrowserStateMachine({
       const fingerprints = [...new Set([...newConsoleErrors, ...newPageErrors].map((message) => browserAdaptiveDigest("oracle", message)))].sort()
       const existing = states.get(stabilized.state.digest)
       const newState = !existing
+      const transitionId = `transition-${transitions.length}`
+      const accessibilityScan = accessibilityCollector && contract.accessibility?.cadence.includes("novel-state") && (newState || action.family === "keyboard") && !actionError
+        ? await accessibilityCollector.scan({ phase: "novel-state", stateDigest: stabilized.state.digest, transitionId, action })
+        : undefined
+      const accessibilityFingerprints = accessibilityScan?.findings.map((finding) => finding.fingerprint) ?? []
+      if (accessibilityScan && accessibilityScan.findings.length > 0 && onAccessibilityFindingEvidence) accessibilityScan.artifacts = await onAccessibilityFindingEvidence(accessibilityScan)
+      fingerprints.push(...accessibilityFingerprints)
+      fingerprints.sort()
       const replayableDestination = !actionError
       if (replayableDestination && newState && states.size < contract.budgets.maxStates) {
         states.set(stabilized.state.digest, stabilized.state)
@@ -135,7 +162,7 @@ export async function exploreAdaptiveBrowserStateMachine({
       }
       const destination = existing ?? stabilized.state
       const transition: BrowserAdaptiveTransition = {
-        id: `transition-${transitions.length}`,
+        id: transitionId,
         sourceDigest: source.state.digest,
         destinationDigest: destination.digest,
         action,
@@ -156,12 +183,13 @@ export async function exploreAdaptiveBrowserStateMachine({
           loadingBefore: source.state.loadingIndicators,
           loadingAfter: stabilized.loading,
           oracleFingerprints: fingerprints,
+          ...(accessibilityFingerprints.length > 0 ? { accessibilityFindingFingerprints: accessibilityFingerprints } : {}),
         },
         status: actionError ? "error" : scopeRejection ? "rejected" : newState ? "ok" : "revisited",
         ...(actionError ? { diagnostic: { code: "browser_adaptive_action_error", message: actionError } } : scopeRejection ? { diagnostic: { code: scopeRejection.code, message: scopeRejection.message } } : {}),
       }
       errors += newConsoleErrors.length + newPageErrors.length + (actionError ? 1 : 0)
-      if (artifactBytes(states, [...transitions, transition], diagnostics, findings) > contract.budgets.maxArtifactBytes) {
+      if (artifactBytes(states, [...transitions, transition], diagnostics, findings) + (accessibilityCollector ? Buffer.byteLength(stableJson(accessibilityCollector.evidence())) : 0) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) {
         if (replayableDestination && newState) states.delete(stabilized.state.digest)
         exhausted = "maxArtifactBytes"
         break
@@ -187,7 +215,7 @@ export async function exploreAdaptiveBrowserStateMachine({
             resetPolicy: contract.resetPolicy,
           },
         }
-        if (artifactBytes(states, transitions, diagnostics, [finding]) > contract.budgets.maxArtifactBytes) {
+        if (artifactBytes(states, transitions, diagnostics, [finding]) + (accessibilityCollector ? Buffer.byteLength(stableJson(accessibilityCollector.evidence())) : 0) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) {
           exhausted = "maxArtifactBytes"
           break
         }
@@ -203,24 +231,33 @@ export async function exploreAdaptiveBrowserStateMachine({
 
   if (findings.length > 0 && !signal?.aborted) {
     for (const finding of findings) {
-      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), started + contract.budgets.maxDurationMs, signal, now, navigationScope)
+      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), Math.max(0, (contract.accessibility?.budgets.maxKeyboardActions ?? Number.POSITIVE_INFINITY) - keyboardActions), started + contract.budgets.maxDurationMs, signal, now, navigationScope, accessibilityCollector)
       actions += minimized.executed
+      keyboardActions += minimized.keyboardExecuted
       finding.minimizedPath = minimized.path
       finding.replay.actions = finding.minimizedPath
       if (minimized.exhausted && !exhausted) exhausted = minimized.exhausted
     }
+  }
+  if (accessibilityCollector && findings.length === 0 && contract.accessibility?.cadence.includes("final")) {
+    const finalState = await captureAdaptiveState(page, contract, 0, navigationScope)
+    const scan = await accessibilityCollector.scan({ phase: "final", stateDigest: finalState.state.digest })
+    if (scan.findings.length > 0 && onAccessibilityFindingEvidence) scan.artifacts = await onAccessibilityFindingEvidence(scan)
+    findings.push(...adaptiveAccessibilityFindings(scan.findings, contract, [], "final"))
+    if (artifactBytes(states, transitions, diagnostics, findings) + Buffer.byteLength(stableJson(accessibilityCollector.evidence())) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) exhausted = "maxArtifactBytes"
   }
   if (!exhausted && findings.length === 0 && frontier.length > 0) exhausted = "frontier"
   if (exhausted) appendTerminalDiagnostic(diagnostics, { code: exhausted === "cancelled" ? "browser_adaptive_cancelled" : "browser_adaptive_budget_exhausted", message: exhausted === "cancelled" ? "Adaptive exploration stopped scheduling actions after cancellation and retained partial evidence." : `Adaptive exploration stopped at the ${exhausted} bound.`, metadata: { budget: exhausted } }, contract.descriptorLimits.maxDiagnostics)
 
   return {
     schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA,
-    status: exhausted ? "incomplete" : findings.length > 0 ? "findings" : "completed",
+    status: exhausted || accessibilityCollector?.evidence().summary.truncated || accessibilityRequirementsUnavailable(accessibilityCollector?.evidence(), contract) || accessibilityCollector?.evidence().scans.some((scan) => scan.status === "inconclusive") ? "incomplete" : findings.length > 0 ? "findings" : "completed",
     seed: contract.seed,
     startUrl: contract.startUrl,
     states: [...states.values()],
     transitions,
     findings,
+    ...(accessibilityCollector ? { accessibility: accessibilityCollector.evidence() } : {}),
     diagnostics: diagnostics.slice(0, contract.descriptorLimits.maxDiagnostics),
     summary: { actions, states: states.size, transitions: transitions.length, revisits, errors, findings: findings.length, ...(exhausted ? { budgetExhausted: exhausted } : {}) },
     replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, contract },
@@ -339,6 +376,7 @@ async function executeAdaptiveAction(page: Page, action: BrowserAdaptiveAction, 
   }
   for (const step of action.steps) {
     const selector = currentSelector ?? step.selector
+    if (!selector && step.kind === "press") { await page.keyboard.press(String(step.key ?? "")); continue }
     if (!selector) throw new Error(`Adaptive ${step.kind} action requires a unique selector.`)
     const locator = frame.locator(selector)
     const count = await locator.count()
@@ -418,30 +456,47 @@ async function readMutationObservers(page: Page, contract: BrowserAdaptiveExplor
   return { count, truncated }
 }
 
-async function restoreAdaptivePath(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], signal?: AbortSignal, navigationScope?: BrowserPreviewNavigationScope): Promise<{ state?: BrowserAdaptiveState; executed: number; diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] }> {
+async function restoreAdaptivePath(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], signal?: AbortSignal, navigationScope?: BrowserPreviewNavigationScope, accessibilityCollector?: BrowserAccessibilityCollector): Promise<{ state?: BrowserAdaptiveState; executed: number; keyboardExecuted: number; diagnostics: BrowserAdaptiveExplorationResult["diagnostics"]; oracleFingerprints: string[]; finalAccessibilityFingerprints: string[] }> {
   const diagnostics: BrowserAdaptiveExplorationResult["diagnostics"] = []
   let executed = 0
+  let keyboardExecuted = 0
+  const oracleFingerprints: string[] = []
+  let finalAccessibilityFingerprints: string[] = []
   try {
+    await accessibilityCollector?.reset()
     await page.goto(resolveUrl(contract.startUrl, baseUrl), { waitUntil: "domcontentloaded", timeout: contract.stabilization.maxWaitMs })
     await stabilizeAdaptiveState(page, contract, 0, Date.now, navigationScope)
-    for (const action of path) {
-      if (signal?.aborted) return { executed, diagnostics }
-      executed += 1
-      await executeAdaptiveAction(page, action, contract.stabilization.maxWaitMs)
-      await stabilizeAdaptiveState(page, contract, executed, Date.now, navigationScope)
+    if (accessibilityCollector) {
+      const initialScan = await accessibilityCollector.scan({ phase: "replay", record: false })
+      finalAccessibilityFingerprints = initialScan.findings.map((finding) => finding.fingerprint)
+      oracleFingerprints.push(...finalAccessibilityFingerprints)
     }
-    return { state: (await captureAdaptiveState(page, contract, path.length, navigationScope)).state, executed, diagnostics }
+    for (const action of path) {
+      if (signal?.aborted) return { executed, keyboardExecuted, diagnostics, oracleFingerprints, finalAccessibilityFingerprints }
+      executed += 1
+      if (action.family === "keyboard") keyboardExecuted += 1
+      await accessibilityCollector?.beforeAction(action)
+      await executeAdaptiveAction(page, action, contract.stabilization.maxWaitMs)
+      const stabilized = await stabilizeAdaptiveState(page, contract, executed, Date.now, navigationScope)
+      if (accessibilityCollector) {
+        const scan = await accessibilityCollector.scan({ phase: "replay", stateDigest: stabilized.state.digest, action, record: false })
+        finalAccessibilityFingerprints = scan.findings.map((finding) => finding.fingerprint)
+        oracleFingerprints.push(...finalAccessibilityFingerprints)
+      }
+    }
+    return { state: (await captureAdaptiveState(page, contract, path.length, navigationScope)).state, executed, keyboardExecuted, diagnostics, oracleFingerprints, finalAccessibilityFingerprints }
   } catch (error) {
     diagnostics.push({ code: "browser_adaptive_reset_replay_failed", message: "The start-URL reset path could not reproduce a queued state.", metadata: { reason: error instanceof Error ? error.message : String(error) } })
-    return { executed, diagnostics }
+    return { executed, keyboardExecuted, diagnostics, oracleFingerprints, finalAccessibilityFingerprints }
   }
 }
 
-async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now, navigationScope?: BrowserPreviewNavigationScope): Promise<{ path: BrowserAdaptiveAction[]; executed: number; exhausted?: "maxActions" | "maxDurationMs" | "cancelled" }> {
+async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, maximumKeyboardActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now, navigationScope?: BrowserPreviewNavigationScope, accessibilityCollector?: BrowserAccessibilityCollector): Promise<{ path: BrowserAdaptiveAction[]; executed: number; keyboardExecuted: number; exhausted?: "maxActions" | "maxKeyboardActions" | "maxDurationMs" | "cancelled" }> {
   let current = [...finding.originalPath]
   let chunk = Math.max(1, Math.floor(current.length / 2))
   let executed = 0
-  let exhausted: "maxActions" | "maxDurationMs" | "cancelled" | undefined
+  let keyboardExecuted = 0
+  let exhausted: "maxActions" | "maxKeyboardActions" | "maxDurationMs" | "cancelled" | undefined
   while (current.length > 1 && chunk >= 1 && !signal?.aborted) {
     let reduced = false
     for (let start = 0; start < current.length; start += chunk) {
@@ -449,11 +504,13 @@ async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: Br
       if (candidate.length === 0) continue
       if (now() >= deadline) { exhausted = "maxDurationMs"; break }
       if (executed + candidate.length > maximumActions) { exhausted = "maxActions"; break }
+      if (keyboardExecuted + countKeyboardActions(candidate) > maximumKeyboardActions) { exhausted = "maxKeyboardActions"; break }
       const beforeConsole = observations.consoleMessages.length
       const beforeErrors = observations.errors.length
-      const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal, navigationScope)
+      const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal, navigationScope, accessibilityCollector)
       executed += replay.executed
-      const fingerprints = [...consoleErrorMessages(observations.consoleMessages.slice(beforeConsole)), ...errorMessages(observations.errors.slice(beforeErrors))].map((message) => browserAdaptiveDigest("oracle", message))
+      keyboardExecuted += replay.keyboardExecuted
+      const fingerprints = [...consoleErrorMessages(observations.consoleMessages.slice(beforeConsole)), ...errorMessages(observations.errors.slice(beforeErrors))].map((message) => browserAdaptiveDigest("oracle", message)).concat(replay.finalAccessibilityFingerprints)
       if (replay.state && fingerprints.includes(finding.fingerprint) && (!finding.stateDigest || replay.state.digest === finding.stateDigest)) {
         current = candidate
         reduced = true
@@ -464,7 +521,7 @@ async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: Br
     if (!reduced) chunk = Math.floor(chunk / 2)
   }
   if (signal?.aborted) exhausted = "cancelled"
-  return { path: current, executed, ...(exhausted ? { exhausted } : {}) }
+  return { path: current, executed, keyboardExecuted, ...(exhausted ? { exhausted } : {}) }
 }
 
 function frameIdentities(page: Page, maximum: number): BrowserAdaptiveFrameIdentity[] {
@@ -515,6 +572,32 @@ function recordMessage(record: Record<string, unknown>): string {
 
 function artifactBytes(states: Map<string, BrowserAdaptiveState>, transitions: BrowserAdaptiveTransition[], diagnostics: BrowserAdaptiveExplorationResult["diagnostics"], findings: BrowserAdaptiveFinding[]): number {
   return Buffer.byteLength(stableJson({ states: [...states.values()], transitions, diagnostics, findings }))
+}
+
+function adaptiveJsonArtifactBudget(contract: BrowserAdaptiveExplorationContract, collector?: BrowserAccessibilityCollector): number {
+  return collector ? Math.max(512, Math.floor(contract.budgets.maxArtifactBytes / 2)) : contract.budgets.maxArtifactBytes
+}
+
+function countKeyboardActions(actions: BrowserAdaptiveAction[]): number {
+  return actions.filter((action) => action.family === "keyboard").length
+}
+
+function accessibilityRequirementsUnavailable(evidence: ReturnType<BrowserAccessibilityCollector["evidence"]> | undefined, contract: BrowserAdaptiveExplorationContract): boolean {
+  if (!evidence || !contract.accessibility) return false
+  return (contract.accessibility.capabilities.rules === "required" && evidence.collector.capabilities.rules !== "supported")
+    || (contract.accessibility.capabilities.focus === "required" && evidence.collector.capabilities.focus !== "supported")
+    || (contract.accessibility.capabilities.accessibilityTree === "required" && evidence.collector.capabilities.accessibilityTree !== "supported")
+}
+
+function adaptiveAccessibilityFindings(items: BrowserA11yFinding[], contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], transitionId: string): BrowserAdaptiveFinding[] {
+  return items.map((item) => ({
+    fingerprint: item.fingerprint,
+    stateDigest: item.stateDigest,
+    transitionId,
+    originalPath: path,
+    minimizedPath: path,
+    replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, expectedFingerprint: item.fingerprint, expectedStateDigest: item.stateDigest, actions: path, resetPolicy: contract.resetPolicy },
+  }))
 }
 
 function appendDiagnostics(target: BrowserAdaptiveExplorationResult["diagnostics"], incoming: BrowserAdaptiveExplorationResult["diagnostics"], maximum: number): void {

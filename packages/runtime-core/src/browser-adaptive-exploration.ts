@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import type { BrowserActionCorpusDescriptor, BrowserInteractionStep, BrowserRandomWalkContext } from "./browser-interaction.js"
+import { browserAccessibilityContract, type BrowserAccessibilityContract, type BrowserAccessibilityEvidence } from "./browser-accessibility.js"
 import { isPlainObject, stableJson, stripUndefined } from "./object-utils.js"
 
 export const BROWSER_ADAPTIVE_EXPLORATION_SCHEMA = "wp-codebox/browser-adaptive-exploration/v1" as const
@@ -28,6 +29,7 @@ export interface BrowserAdaptiveExplorationContract {
   descriptorLimits: { maxPerState: number; maxDiagnostics: number; maxTextLength: number }
   stabilization: { pollIntervalMs: number; quietWindowMs: number; maxWaitMs: number; maxMutationRecords: number }
   failOnFinding: boolean
+  accessibility?: BrowserAccessibilityContract
   metadata?: Record<string, unknown>
 }
 
@@ -78,6 +80,7 @@ export interface BrowserAdaptiveTransition {
     loadingBefore: number
     loadingAfter: number
     oracleFingerprints: string[]
+    accessibilityFindingFingerprints?: string[]
   }
   status: "ok" | "revisited" | "rejected" | "error" | "cancelled"
   diagnostic?: { code: string; message: string }
@@ -108,6 +111,7 @@ export interface BrowserAdaptiveExplorationResult {
   states: BrowserAdaptiveState[]
   transitions: BrowserAdaptiveTransition[]
   findings: BrowserAdaptiveFinding[]
+  accessibility?: BrowserAccessibilityEvidence
   diagnostics: Array<{ code: string; message: string; metadata?: Record<string, unknown> }>
   summary: {
     actions: number
@@ -116,7 +120,7 @@ export interface BrowserAdaptiveExplorationResult {
     revisits: number
     errors: number
     findings: number
-    budgetExhausted?: keyof BrowserAdaptiveExplorationContract["budgets"] | "cancelled" | "frontier"
+    budgetExhausted?: keyof BrowserAdaptiveExplorationContract["budgets"] | "maxKeyboardActions" | "cancelled" | "frontier"
   }
   replay: { schema: typeof BROWSER_ADAPTIVE_EXPLORATION_SCHEMA; seed: string; startUrl: string; contract: BrowserAdaptiveExplorationContract }
 }
@@ -135,6 +139,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
   const descriptors = object(input.descriptorLimits ?? input.descriptor_limits)
   const stabilization = object(input.stabilization)
   const reset = object(input.resetPolicy ?? input.reset_policy)
+  const accessibility = browserAccessibilityContract(input.accessibility)
   const families = Array.isArray(input.actionFamilies ?? input.action_families)
     ? (input.actionFamilies ?? input.action_families) as unknown[]
     : []
@@ -150,7 +155,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
       maxStates: integer(budgets.maxStates ?? budgets.max_states, 24, 1, 250),
       maxTransitions: integer(budgets.maxTransitions ?? budgets.max_transitions, 64, 1, 1_000),
       maxDurationMs: integer(budgets.maxDurationMs ?? budgets.max_duration_ms, 120_000, 100, 3_600_000),
-      maxArtifactBytes: integer(budgets.maxArtifactBytes ?? budgets.max_artifact_bytes, 5 * 1_048_576, 1_024, 100 * 1_048_576),
+      maxArtifactBytes: integer(budgets.maxArtifactBytes ?? budgets.max_artifact_bytes, 5 * 1_048_576, accessibility ? 1_048_576 : 1_024, 100 * 1_048_576),
       maxErrors: integer(budgets.maxErrors ?? budgets.max_errors, 20, 1, 1_000),
     },
     actionFamilies: actionFamilies.length > 0 ? actionFamilies : [...BROWSER_ADAPTIVE_ACTION_FAMILIES],
@@ -171,6 +176,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
       maxMutationRecords: integer(stabilization.maxMutationRecords ?? stabilization.max_mutation_records, 100, 1, 5_000),
     },
     failOnFinding: input.failOnFinding !== false && input.fail_on_finding !== false,
+    accessibility,
     metadata: isPlainObject(input.metadata) ? input.metadata : undefined,
   })
 }
@@ -213,6 +219,14 @@ export function planBrowserAdaptiveStateActions(state: BrowserAdaptiveState, con
         add("submit", descriptor, [{ kind: "click", selector }])
         add("double-submit", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
       }
+    }
+  }
+  if (contract.accessibility && contract.actionFamilies.includes("keyboard")) {
+    const sequences = [["Tab"], ["Tab", "Tab"], ["Tab", "Tab", "Tab"], ["Tab", "Tab", "Tab", "Tab"], ["Shift+Tab"], ["Tab", "Enter"], ["Tab", "Space"], ["Tab", "Escape"], ["Tab", "ArrowDown"], ["Tab", "ArrowUp"], ["Tab", "ArrowRight"], ["Tab", "ArrowLeft"]]
+      .slice(0, contract.accessibility.budgets.maxKeyboardActions)
+    for (const keys of sequences) {
+      const steps = keys.map((key) => ({ kind: "press" as const, key }))
+      actions.push({ id: `keyboard:document:${keys.join(">")}`, family: "keyboard", frameId: "document", steps })
     }
   }
   add("back", undefined, [])

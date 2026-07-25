@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import type { BrowserActionCorpusDescriptor, BrowserInteractionStep } from "./browser-interaction.js"
+import type { BrowserAccessibilityFinding } from "./browser-accessibility.js"
 
 export const ADVERSARIAL_BROWSER_PLAN_SCHEMA = "wp-codebox/adversarial-browser-plan/v1" as const
 export const ADVERSARIAL_BROWSER_ORACLE_RESULT_SCHEMA = "wp-codebox/adversarial-browser-oracle-result/v1" as const
@@ -26,6 +27,7 @@ export interface AdversarialBrowserObservation {
   loadingIndicators?: Array<{ id: string; visibleForMs: number }>
   boxes?: Array<{ id: string; x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number; focused?: boolean; visible?: boolean; clipped?: boolean }>
   accessibilityViolations?: Array<{ rule: string; target: string; impact?: string }>
+  accessibilityFindings?: BrowserAccessibilityFinding[]
   effects?: Array<{ id: string; count: number; expectedMaximum?: number }>
 }
 
@@ -91,6 +93,7 @@ export function evaluateAdversarialBrowserOracles(observation: AdversarialBrowse
     if (box.focused && box.visible === false) failures.push({ oracle: "layout", code: "browser-invisible-focus", message: `Focused element ${box.id} is not visible.`, target: box.id })
   }
   for (const violation of observation.accessibilityViolations ?? []) failures.push({ oracle: "accessibility", code: `browser-a11y-${violation.rule}`, message: `Accessibility rule ${violation.rule} failed.`, target: violation.target })
+  for (const finding of observation.accessibilityFindings ?? []) failures.push({ oracle: finding.oracle === "accessibility" ? "accessibility" : finding.oracle === "focus" ? "layout" : "dead-control", code: finding.code, message: `${finding.classification} (${finding.impact}).`, target: finding.target.locator })
   for (const effect of observation.effects ?? []) {
     if (effect.count > (effect.expectedMaximum ?? 1)) failures.push({ oracle: "duplicate-effect", code: "browser-duplicate-effect", message: `Effect ${effect.id} occurred ${effect.count} times.`, target: effect.id })
   }

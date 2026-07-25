@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { evaluateAdversarialBrowserOracles, minimizeAdversarialBrowserJourney, planAdversarialBrowserJourney } from "../packages/runtime-core/src/adversarial-browser.js"
+import { browserAccessibilityFindingFingerprint, type BrowserAccessibilityFinding } from "../packages/runtime-core/src/browser-accessibility.js"
 
 const descriptors = [
   { id: "input:name", kind: "input" as const, selector: "#name", type: "text" },
@@ -17,16 +18,26 @@ test("browser adversary discovers hostile inputs and repeated interactions deter
 })
 
 test("generic browser oracles report crashes, dead controls, layout, accessibility, duplicate effects, and stuck state", () => {
+  const normalized = {
+    oracle: "keyboard",
+    rule: "keyboard-reachable",
+    code: "browser-keyboard-unreachable",
+    impact: "serious",
+    classification: "actionable-element-unreachable-by-keyboard",
+    target: { locator: "div[role=button]", frameId: "document", tag: "div", role: "button" },
+  } satisfies Omit<BrowserAccessibilityFinding, "fingerprint">
   const result = evaluateAdversarialBrowserOracles({
     pageErrors: ["uncaught fixture error"],
     controls: [{ id: "save", expectedAction: true, actionObserved: false }],
     loadingIndicators: [{ id: "spinner", visibleForMs: 20_000 }],
     boxes: [{ id: "dialog", x: 900, y: 0, width: 300, height: 100, viewportWidth: 1024, viewportHeight: 768 }],
     accessibilityViolations: [{ rule: "label", target: "#name" }],
+    accessibilityFindings: [{ ...normalized, fingerprint: browserAccessibilityFindingFingerprint(normalized) }],
     effects: [{ id: "save", count: 2 }],
   })
   assert.equal(result.failed, true)
   assert.deepEqual(new Set(result.failures.map((failure) => failure.oracle)), new Set(["crash", "dead-control", "stuck-interaction", "layout", "accessibility", "duplicate-effect"]))
+  assert(result.failures.some((failure) => failure.code === "browser-keyboard-unreachable"))
 })
 
 test("browser journeys minimize automatically to the shortest reproduced failure", async () => {
