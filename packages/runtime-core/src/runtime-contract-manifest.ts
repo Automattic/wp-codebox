@@ -48,6 +48,8 @@ export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-
 export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
 export const CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY = "wp-codebox/resolve-runtime-requirements" as const
 export const RUNTIME_DESCRIPTOR_SCHEMA = "wp-codebox/runtime-descriptor/v1" as const
+export const RUNTIME_SERVICE_CAPABILITIES_SCHEMA = "wp-codebox/runtime-service-capabilities/v1" as const
+export const NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY = "runtime-service:mysql:native:mariadb" as const
 
 export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "agent-task:run",
@@ -55,6 +57,7 @@ export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "agent-task:fanout",
   "runtime-package:run",
   "runtime-requirements:resolve",
+  NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY,
   "wordpress-runtime:workload",
   "wordpress-runtime:fuzz-suite",
   "wordpress-runtime:sandbox-isolation-proof",
@@ -87,6 +90,10 @@ export const CODEBOX_PUBLIC_RUNTIME_COMMANDS = {
 } as const
 
 export const CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES = {
+  runtimeServices: {
+    schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
+    capabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY],
+  },
   wordpressRuntime: {
     commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS.wordpressRuntime,
     capabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
@@ -129,6 +136,9 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     browserSessionProductDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
     browserPreviewBootConfig: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
     runtimeAccess: RUNTIME_ACCESS_SCHEMA,
+  },
+  runtimeService: {
+    capabilities: RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
   },
   browserSession: {
     productDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,

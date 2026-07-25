@@ -445,7 +445,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath) },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
       })
     }
 
@@ -464,7 +464,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath) },
+      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
     })
   } catch (error) {
     const failedServiceEvidence = runtimeServiceEvidenceFromError(error)
@@ -592,6 +592,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}),
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
         provenance: recipeRunProvenance(recipe, recipePath, diagnosticArtifacts),
+        managedRuntimeServices: serviceEvidence,
       },
     })
   } finally {
@@ -611,16 +612,12 @@ export async function runManagedServiceCleanup(
   cleanup: () => Promise<void>,
 ): Promise<RunResourceCleanupEvidence> {
   try {
-    return await runRecipeCleanup(runRegistry, runRecord, cleanup)
+    return await runRecipeCleanup(runRegistry, runRecord, cleanup, () => ({ managedRuntimeServices: serviceEvidence }))
   } catch (error) {
     if (preservePrimaryFailure && error instanceof RunResourceCleanupError) {
       return error.evidence
     }
     throw error
-  } finally {
-    await runRegistry.update(runRecord.runId, {
-      metadata: { managedRuntimeServices: serviceEvidence },
-    })
   }
 }
 

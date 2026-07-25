@@ -5,6 +5,7 @@ import type { RecipeExternalServiceBoundaryHostCorrelation } from "../recipe-ext
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import type { RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
+import type { RuntimeServiceEvidence } from "../runtime-services.js"
 
 export interface RecipeRunOptions {
   recipePath: string
@@ -83,6 +84,7 @@ export interface RecipeRunOutput {
   fuzzRun?: RecipeFuzzRunResult
   adversarialCampaigns?: RecipeAdversarialCampaignOutput[]
   provenance?: RecipeRunProvenance
+  managedRuntimeServices?: RuntimeServiceEvidence[]
   result?: RecipeRunSummary
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
@@ -263,6 +265,7 @@ export interface RecipeArtifactPointerState {
   browserEvidence?: RecipeBrowserEvidence[]
   diagnosticArtifacts?: RecipeDiagnosticArtifactRef[]
   result?: RecipeRunSummary
+  managedRuntimeServices?: RuntimeServiceEvidence[]
 }
 
 export interface RecipeEffectiveRecipeArtifact {

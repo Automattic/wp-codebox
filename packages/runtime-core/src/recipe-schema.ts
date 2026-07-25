@@ -937,7 +937,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "object",
             additionalProperties: false,
             properties: {
-              provider: { enum: ["docker", "external"] },
+              provider: { enum: ["docker", "external", "native"] },
               externalService: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
               engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
@@ -953,6 +953,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             allOf: [{
               if: { properties: { provider: { const: "external" } }, required: ["provider"] },
               then: { required: ["externalService", "hostEnv", "usernameEnv", "passwordEnv"] },
+            }, {
+              if: { properties: { provider: { const: "native" } }, required: ["provider"] },
+              then: { required: ["engine"], properties: { engine: { const: "mariadb" } } },
             }],
           },
           outputs: {

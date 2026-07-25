@@ -60,6 +60,8 @@ import {
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNTIME_DESCRIPTOR_SCHEMA,
+  RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
+  NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY,
   RUNTIME_RUN_RESULT_SCHEMA,
   SANDBOX_ISOLATION_PROOF_SCHEMA,
   TYPED_ARTIFACT_SCHEMA,
@@ -94,6 +96,7 @@ assert.equal(manifest.schemas.agentTask.runRequest, AGENT_TASK_RUN_REQUEST_SCHEM
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.previewLease, PREVIEW_LEASE_SCHEMA)
+assert.equal(manifest.schemas.runtimeService.capabilities, RUNTIME_SERVICE_CAPABILITIES_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.browserSessionProductDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)
 assert.equal(manifest.schemas.browserSession.productDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)
 assert.equal(manifest.schemas.browserSession.containedSiteStatus, BROWSER_CONTAINED_SITE_STATUS_SCHEMA)
@@ -164,6 +167,7 @@ assert.equal(manifest.capabilities.wordpressRuntime.commands.runWorkload, "run-w
 assert.equal(manifest.capabilities.wordpressRuntime.commands.runFuzzSuite, "run-fuzz-suite")
 assert.equal(manifest.capabilities.wordpressRuntime.capabilities.commands?.includes("wordpress.run-workload"), true)
 assert.equal(manifest.capabilities.wordpressRuntime.runner_modes["runtime-backed"], true)
+assert.deepEqual(manifest.capabilities.runtimeServices, { schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA, capabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] })
 assert.equal(manifest.readiness.wordpressRuntime.schema, FUZZ_RUNNER_READINESS_SCHEMA)
 assert.equal(manifest.readiness.wordpressRuntime.status, "ready")
 assert.equal(manifest.readiness.wordpressRuntime.mode, "runtime-backed")
@@ -197,6 +201,7 @@ assert.equal(descriptor.readiness.contractManifest, true)
 assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
 assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
 assert.ok(descriptor.capabilities.includes("wordpress-runtime:sandbox-isolation-proof"))
+assert.ok(descriptor.capabilities.includes(NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY))
 assert.deepEqual(descriptor.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 assert.deepEqual(descriptor.contractManifest, manifest)
 

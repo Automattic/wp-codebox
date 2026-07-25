@@ -100,6 +100,10 @@ try {
     const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
     assert.match(version, /^\d+\.\d+\.\d+\s*$/)
     await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+    const descriptorModule = await import(pathToFileURL(join(root, "packages", "runtime-core", "dist", "runtime-contract-manifest.js")).href) as { runtimeDescriptor(): { capabilities: string[]; contractManifest: { capabilities: { runtimeServices: { capabilities: string[] } } } } }
+    const descriptor = descriptorModule.runtimeDescriptor()
+    assert.ok(descriptor.capabilities.includes("runtime-service:mysql:native:mariadb"), "packaged descriptor must advertise native MariaDB runtime services")
+    assert.deepEqual(descriptor.contractManifest.capabilities.runtimeServices.capabilities, ["runtime-service:mysql:native:mariadb"])
 
     const wrapper = join(root, "bin", "wp-codebox")
     const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
