@@ -138,11 +138,13 @@ export function wordpressAdversarialActionSpec(action: WordPressAdversarialActio
     return { kind: "command", command: "wordpress.wp-cli", args: [`command=${command}`], operation: `adversarial:${action.surface}`, metadata: actionMetadata(action, capability) }
   }
   if (action.surface === "ajax") {
+    requirePostOperation(action)
     if (!action.target) throw new Error("WordPress adversarial AJAX actions require the target action name.")
-    const body = new URLSearchParams({ action: action.target, ...httpFormValues(action.input) }).toString()
+    const body = new URLSearchParams({ ...httpFormValues(action.input), action: action.target }).toString()
     return { kind: "command", command: "wordpress.browser-actions", args: [`steps-json=${JSON.stringify(httpBrowserSteps("/wp-admin/admin-ajax.php", "application/x-www-form-urlencoded", body))}`], operation: "adversarial:ajax", metadata: actionMetadata(action, capability) }
   }
   if (action.surface === "xmlrpc") {
+    requirePostOperation(action)
     if (typeof action.input !== "string" || action.input.trim() === "") throw new Error("WordPress adversarial XML-RPC actions require a non-empty XML request body.")
     return { kind: "command", command: "wordpress.browser-actions", args: [`steps-json=${JSON.stringify(httpBrowserSteps("/xmlrpc.php", "text/xml", action.input))}`], operation: "adversarial:xmlrpc", metadata: actionMetadata(action, capability) }
   }
@@ -322,6 +324,12 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 function httpFormValues(value: unknown): Record<string, string> {
   const record = recordValue(value)
   return Object.fromEntries(Object.entries(record ?? {}).map(([name, item]) => [name, typeof item === "string" ? item : JSON.stringify(item)]))
+}
+
+function requirePostOperation(action: WordPressAdversarialAction): void {
+  if (action.operation.trim().toUpperCase() !== "POST") {
+    throw new Error(`WordPress adversarial ${action.surface.toUpperCase()} actions only support POST requests.`)
+  }
 }
 
 function httpBrowserSteps(path: string, contentType: string, body: string): Array<Record<string, unknown>> {
