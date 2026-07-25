@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { executeRuntimeServiceProcess, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateRecipeRuntimePolicy, validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.ts"
+import { bootstrapAbilityPhpCode, bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.ts"
 import { validateWorkspaceRecipeJsonSchema, type RuntimeCreateSpec, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
 const adminPassword = "admin-secret-'\\-value"
@@ -136,7 +137,7 @@ try {
   const bootstrapRuns: Array<({ code: string } | { scriptPath: string }) & { env?: Record<string, string> }> = []
   const cliModule: PlaygroundCliModule = { async runCLI(options) {
     bootstrapCalls.push(options)
-    return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: runOptions.env?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
+    return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: options.phpEnv?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
   } }
   const runtimeSpec: RuntimeCreateSpec = {
     backend: "wordpress-playground",
@@ -146,11 +147,18 @@ try {
     secretEnv: provisioned.secretEnv,
     artifactsDirectory: bootstrapRoot,
   }
+  const generatedCommandPhp = bootstrapPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');", [])
+  const generatedAbilityPhp = bootstrapAbilityPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');")
+  assert.equal(generatedCommandPhp.includes(generatedPassword), false, "connector password is absent from generated command PHP")
+  assert.equal(generatedAbilityPhp.includes(generatedPassword), false, "connector password is absent from generated ability PHP")
   const server = await startPlaygroundCliServer(runtimeSpec, [], { cliModule })
   const connectorResponse = await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })
+  await server.playground.run({ code: generatedCommandPhp })
+  await server.playground.run({ code: generatedAbilityPhp })
   assert.equal(connectorResponse.text, generatedPassword, "generated password reaches PHP through the ephemeral run environment")
-  assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, generatedPassword)
-  assert.equal(JSON.stringify(bootstrapCalls).includes(generatedPassword), false, "Playground startup options do not serialize the generated password")
+  assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, undefined, "direct runs rely on the isolated PHP runtime environment")
+  assert.equal(bootstrapRuns.every((run) => !("code" in run) || !run.code.includes(generatedPassword)), true, "captured PHP source never contains the connector password")
+  assert.equal(bootstrapCalls[0]?.phpEnv?.DB_PASSWORD, generatedPassword, "Playground startup receives the generated password through its in-memory PHP environment")
   await server[Symbol.asyncDispose]()
   const mounts = bootstrapCalls[0]?.["mount-before-install"] ?? []
   const autoPrependPath = mounts.find((mount) => mount.vfsPath === "/internal/shared/wp-codebox-auto-prepend.php")?.hostPath
