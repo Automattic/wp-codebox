@@ -56,7 +56,8 @@ try {
         },
       },
     },
-    runtimeEnv: { TC_MYSQL_PORT: "33060", DB_HOST: "127.0.0.1", DB_PORT: "33061", DB_USER: "runtime", DB_PASSWORD: "secret", DB_NAME: "runtime" },
+    runtimeEnv: { TC_MYSQL_PORT: "33060", DB_HOST: "127.0.0.1", DB_PORT: "33061", DB_USER: "runtime", DB_NAME: "runtime" },
+    secretEnv: { DB_PASSWORD: "secret" },
     artifactsDirectory,
   }
 
@@ -92,6 +93,7 @@ try {
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
   assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
+  assert.match(sharedAutoPrepend, /putenv\("DB_PASSWORD=secret"\);/)
   const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
   assert.equal(typeof requestWorkerPath, "string")
   const requestWorker = await readFile(requestWorkerPath as string, "utf8")
@@ -102,7 +104,8 @@ try {
   assert.equal(typeof externalWpConfigPath, "string")
   const externalWpConfig = await readFile(externalWpConfigPath as string, "utf8")
   assert.match(externalWpConfig, /define\('DB_HOST', "127\.0\.0\.1:33061"\)/)
-  assert.match(externalWpConfig, /define\('DB_PASSWORD', "secret"\)/)
+  assert.match(externalWpConfig, /define\('DB_PASSWORD', \(string\) getenv\('DB_PASSWORD'\)\)/)
+  assert.doesNotMatch(externalWpConfig, /secret/)
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {

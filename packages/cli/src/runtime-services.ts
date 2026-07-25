@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { createConnection } from "node:net"
-import type { WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
+import type { RuntimePolicy, WorkspaceRecipeExternalServiceBoundary, WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
 
 const MYSQL_IMAGES = { mysql: "mysql:8.4", mariadb: "mariadb:11.4" } as const
 const SERVICE_IMAGES = { redis: "redis:7.4-alpine", smtp: "axllent/mailpit:v1.27", http: "hashicorp/http-echo:1.0" } as const
+const DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES = 1024 * 1024
 
 export type RuntimeServiceControlAction = "stop" | "start" | "pause" | "resume" | "restart" | "disconnect" | "reconnect" | "flush" | "read-only" | "read-write" | "latency"
 
@@ -55,7 +56,7 @@ interface ManagedRuntimeService {
 }
 
 export interface RuntimeServiceDependencies {
-  execute(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string }): Promise<{ stdout: string }>
+  execute(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string; maxOutputBytes?: number }): Promise<{ stdout: string }>
   waitForReady(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<void>
   randomBytes(size: number): Buffer
   environment?: Record<string, string | undefined>
@@ -65,11 +66,26 @@ export interface RuntimeServiceProvider {
   readonly name: string
   readonly kind: string
   version(service: WorkspaceRecipeRuntimeService): string
-  provision(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidence: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService>
+  provision(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidence: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService>
+}
+
+interface RuntimeServiceProvisionContext {
+  signal?: AbortSignal
+  policy?: RuntimePolicy
+  externalServices: WorkspaceRecipeExternalServiceBoundary[]
+  externalServiceWritesApproved: boolean
+}
+
+export interface ProvisionRuntimeServicesOptions {
+  signal?: AbortSignal
+  dependencies?: RuntimeServiceDependencies
+  policy?: RuntimePolicy
+  externalServices?: WorkspaceRecipeExternalServiceBoundary[]
+  externalServiceWritesApproved?: boolean
 }
 
 const defaultDependencies: RuntimeServiceDependencies = {
-  execute: executeProcess,
+  execute: executeRuntimeServiceProcess,
   waitForReady: waitForTcpProtocol,
   randomBytes,
   environment: process.env,
@@ -83,13 +99,19 @@ export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): A
   })
 }
 
-export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies } = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
+export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: ProvisionRuntimeServicesOptions = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
   const dependencies = options.dependencies ?? defaultDependencies
   const provisioned: ManagedRuntimeService[] = []
   const evidence: RuntimeServiceEvidence[] = []
+  const context: RuntimeServiceProvisionContext = {
+    signal: options.signal,
+    policy: options.policy,
+    externalServices: options.externalServices ?? [],
+    externalServiceWritesApproved: options.externalServiceWritesApproved ?? false,
+  }
   try {
     for (const service of services) {
-      const managed = await runtimeServiceProvider(service).provision(service, dependencies, options.signal, evidence)
+      const managed = await runtimeServiceProvider(service).provision(service, dependencies, context, evidence)
       provisioned.push(managed)
     }
   } catch (error) {
@@ -125,13 +147,19 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
 export async function provisionRuntimeServicesForRecipe(
   services: WorkspaceRecipeRuntimeService[],
   guard: <T>(promise: Promise<T>) => Promise<T>,
-  options: { signal?: AbortSignal; dependencies?: RuntimeServiceDependencies; onEvidence?: (evidence: RuntimeServiceEvidence[]) => void } = {},
+  options: ProvisionRuntimeServicesOptions & { onEvidence?: (evidence: RuntimeServiceEvidence[]) => void } = {},
 ): Promise<Awaited<ReturnType<typeof provisionRuntimeServices>>> {
   const controller = new AbortController()
   const abort = () => controller.abort()
   options.signal?.addEventListener("abort", abort, { once: true })
   if (options.signal?.aborted) controller.abort()
-  const provisioning = provisionRuntimeServices(services, { signal: controller.signal, dependencies: options.dependencies })
+  const provisioning = provisionRuntimeServices(services, {
+    signal: controller.signal,
+    dependencies: options.dependencies,
+    policy: options.policy,
+    externalServices: options.externalServices,
+    externalServiceWritesApproved: options.externalServiceWritesApproved,
+  })
   try {
     return await guard(provisioning)
   } catch (error) {
@@ -184,7 +212,8 @@ function runtimeServiceProvider(service: WorkspaceRecipeRuntimeService): Runtime
   throw new Error(`Unsupported managed runtime service kind: ${service.kind}`)
 }
 
-async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  const { signal } = context
   const engine = service.configuration?.engine ?? "mysql"
   const image = mysqlDockerImage(service)
   const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: image, readiness: "pending", lifecycle: "provisioning" }
@@ -240,7 +269,8 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   }
 }
 
-async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  const { signal } = context
   const engine = service.configuration?.engine ?? "mysql"
   const version = `mysql-compatible:${engine}`
   const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "external", version, readiness: "pending", lifecycle: "provisioning", controls: [] }
@@ -249,6 +279,7 @@ async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeServ
   let connection: ReturnType<typeof externalMysqlConnection>
   try {
     connection = externalMysqlConnection(service, dependencies.environment ?? process.env)
+    assertExternalMysqlAuthorization(service, connection.host, connection.port, context)
   } catch {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"
@@ -351,6 +382,32 @@ function externalMysqlConnection(service: WorkspaceRecipeRuntimeService, environ
   return { host, port, username, password }
 }
 
+function assertExternalMysqlAuthorization(service: WorkspaceRecipeRuntimeService, host: string, port: number, context: RuntimeServiceProvisionContext): void {
+  const policy = context.policy
+  if (!policy || policy.network === "deny") throw new Error("External MySQL access is denied by runtime network policy")
+  if (typeof policy.network === "object" && !hostListAllows(policy.network.allowHosts, host, port)) {
+    throw new Error("External MySQL host is not allowed by runtime network policy")
+  }
+
+  const boundaryId = service.configuration?.externalService
+  const boundary = context.externalServices.find((candidate) => candidate.id === boundaryId)
+  if (!boundary || boundary.allowedHosts?.length === 0 || !hostListAllows(boundary.allowedHosts ?? [], host, port)) {
+    throw new Error("External MySQL host is not explicitly allowlisted by its external-service boundary")
+  }
+  if (hostListAllows(boundary.blockedHosts ?? [], host, port)) throw new Error("External MySQL host is blocked by its external-service boundary")
+  if (boundary.writes !== "allowed-with-approval") throw new Error("External MySQL boundary does not permit managed writes")
+  if (policy.approvals !== "on-write" || !context.externalServiceWritesApproved) throw new Error("External MySQL managed writes were not explicitly approved")
+}
+
+function hostListAllows(allowedHosts: readonly string[], host: string, port: number): boolean {
+  const targetHost = host.trim().toLowerCase()
+  const targetWithPort = `${targetHost}:${port}`
+  return allowedHosts.some((candidate) => {
+    const normalized = candidate.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+    return normalized === targetHost || normalized === targetWithPort
+  })
+}
+
 function configuredEnvironmentValue(name: string | undefined, environment: Record<string, string | undefined>, field: string, allowEmpty = false): string {
   if (!name || !/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`External MySQL ${field} must reference a runtime environment variable`)
   const value = environment[name]
@@ -383,8 +440,8 @@ async function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> 
   }
 }
 
-async function provisionRedisDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
-  return await provisionSimpleDockerService(service, dependencies, signal, evidenceList, {
+async function provisionRedisDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  return await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
     image: service.configuration?.image ?? SERVICE_IMAGES.redis,
     ports: [6379],
     runArgs: ["--save", "", "--appendonly", "no"],
@@ -397,8 +454,8 @@ async function provisionRedisDockerService(service: WorkspaceRecipeRuntimeServic
   })
 }
 
-async function provisionSmtpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
-  return await provisionSimpleDockerService(service, dependencies, signal, evidenceList, {
+async function provisionSmtpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  return await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
     image: service.configuration?.image ?? SERVICE_IMAGES.smtp,
     ports: [1025, 8025],
     runArgs: [],
@@ -406,8 +463,8 @@ async function provisionSmtpDockerService(service: WorkspaceRecipeRuntimeService
   })
 }
 
-async function provisionHttpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, signal: AbortSignal | undefined, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
-  return await provisionSimpleDockerService(service, dependencies, signal, evidenceList, {
+async function provisionHttpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
+  return await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
     image: service.configuration?.image ?? SERVICE_IMAGES.http,
     ports: [5678],
     runArgs: ["-listen=:5678", `-status-code=${service.configuration?.responseStatus ?? 200}`, `-text=${service.configuration?.responseBody ?? "ok"}`],
@@ -634,8 +691,13 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<voi
   })
 }
 
-function executeProcess(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string }): Promise<{ stdout: string }> {
+export function executeRuntimeServiceProcess(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout: number; stdin?: string; maxOutputBytes?: number }): Promise<{ stdout: string }> {
   return new Promise((resolve, reject) => {
+    const limit = options.maxOutputBytes ?? DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      reject(new Error("Runtime service process output limit must be a positive integer"))
+      return
+    }
     const child = spawn(command, args, {
       env: options.env,
       signal: options.signal,
@@ -644,18 +706,49 @@ function executeProcess(command: string, args: string[], options: { env?: NodeJS
     })
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk))
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk))
-    child.once("error", reject)
-    child.once("close", (code) => {
-      if (code === 0) {
-        resolve({ stdout: Buffer.concat(stdout).toString("utf8") })
-        return
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let overflow = false
+    let settled = false
+    const collect = (chunks: Buffer[], chunk: Buffer, currentBytes: number): number => {
+      const remaining = Math.max(0, limit - currentBytes)
+      if (remaining > 0) chunks.push(chunk.subarray(0, remaining))
+      if (chunk.length > remaining && !overflow) {
+        overflow = true
+        child.kill("SIGKILL")
       }
-      const error = new Error(`Command failed with exit code ${code ?? "unknown"}`) as Error & { stderr: string }
-      error.stderr = Buffer.concat(stderr).toString("utf8")
+      return currentBytes + Math.min(chunk.length, remaining)
+    }
+    child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = collect(stdout, chunk, stdoutBytes) })
+    child.stderr.on("data", (chunk: Buffer) => { stderrBytes = collect(stderr, chunk, stderrBytes) })
+    child.once("error", (error) => {
+      if (settled) return
+      settled = true
       reject(error)
     })
+    child.once("close", (code) => {
+      if (settled) return
+      settled = true
+      const boundedStdout = Buffer.concat(stdout).toString("utf8")
+      const boundedStderr = Buffer.concat(stderr).toString("utf8")
+      if (overflow) {
+        const error = new Error(`Runtime service process output exceeded ${limit} bytes`) as Error & { code: string; stdout: string; stderr: string }
+        error.code = "runtime-service-output-overflow"
+        error.stdout = boundedStdout
+        error.stderr = boundedStderr
+        reject(error)
+        return
+      }
+      if (code === 0) {
+        resolve({ stdout: boundedStdout })
+        return
+      }
+      const error = new Error(`Command failed with exit code ${code ?? "unknown"}`) as Error & { stdout: string; stderr: string }
+      error.stdout = boundedStdout
+      error.stderr = boundedStderr
+      reject(error)
+    })
+    child.stdin.on("error", () => undefined)
     child.stdin.end(options.stdin)
   })
 }

@@ -139,6 +139,7 @@ export interface WorkspaceRecipeRuntimeService {
   kind: "mysql" | "redis" | "smtp" | "http" | (string & {})
   configuration?: {
     provider?: "docker" | "external"
+    externalService?: string
     engine?: "mysql" | "mariadb"
     rootAuthentication?: "generated-password" | "empty-password"
     foreignKeyTargetPolicy?: "unique-only" | "indexed"
