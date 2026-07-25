@@ -150,6 +150,7 @@ try {
   const connectorResponse = await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })
   assert.equal(connectorResponse.text, generatedPassword, "generated password reaches PHP through the ephemeral run environment")
   assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, generatedPassword)
+  assert.equal(JSON.stringify(bootstrapCalls).includes(generatedPassword), false, "Playground startup options do not serialize the generated password")
   await server[Symbol.asyncDispose]()
   const mounts = bootstrapCalls[0]?.["mount-before-install"] ?? []
   const autoPrependPath = mounts.find((mount) => mount.vfsPath === "/internal/shared/wp-codebox-auto-prepend.php")?.hostPath
