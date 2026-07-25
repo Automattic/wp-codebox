@@ -516,6 +516,7 @@ export interface WorkspaceRecipeDependencyOverlay {
   kind: "composer-package"
   package: string
   source: string
+  reference?: string
   consumer: string
   metadata?: Record<string, unknown>
 }

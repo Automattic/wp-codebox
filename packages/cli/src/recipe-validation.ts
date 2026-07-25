@@ -497,6 +497,9 @@ function validateRecipeDependencyOverlays(overlays: WorkspaceRecipeDependencyOve
     if (!overlay.source || typeof overlay.source !== "string") {
       throw new Error(`Recipe dependency overlays must include source: ${recipePath}`)
     }
+    if (overlay.reference !== undefined && (typeof overlay.reference !== "string" || !/^[a-f0-9]{40,64}$/i.test(overlay.reference))) {
+      throw new Error(`Recipe dependency overlay reference must be a 40-64 character hexadecimal immutable reference when provided: ${recipePath}`)
+    }
     if (!overlay.consumer || typeof overlay.consumer !== "string") {
       throw new Error(`Recipe dependency overlays must include consumer: ${recipePath}`)
     }
@@ -680,6 +683,9 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     if (!isComposerPackageName(overlay.package)) {
       addIssue("invalid-composer-package", `${path}.package`, `Dependency overlay package must be a safe Composer package name: ${overlay.package}`)
       continue
+    }
+    if (overlay.reference !== undefined && (typeof overlay.reference !== "string" || !/^[a-f0-9]{40,64}$/i.test(overlay.reference))) {
+      addIssue("invalid-dependency-overlay-reference", `${path}.reference`, "Dependency overlay reference must be a 40-64 character hexadecimal immutable reference when provided.")
     }
 
     const consumerPlugin = recipeExtraPlugins(recipe).find((plugin) => recipeExtraPluginSlug(plugin) === overlay.consumer)
