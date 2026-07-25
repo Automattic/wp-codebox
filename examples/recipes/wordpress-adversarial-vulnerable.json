@@ -8,8 +8,9 @@
   "inputs": {
     "mounts": [
       {
-        "source": "../../tests/fixtures/wordpress-adversarial/vulnerable-plugin",
-        "target": "/wordpress/wp-content/plugins/wp-codebox-adversarial-vulnerable",
+        "source": "../../tests/fixtures/wordpress-adversarial/vulnerable-plugin/vulnerable-plugin.php",
+        "target": "/wordpress/wp-content/mu-plugins/wp-codebox-adversarial-vulnerable.php",
+        "type": "file",
         "mode": "readonly",
         "metadata": { "kind": "fixture", "disposableOnly": true }
       },
@@ -25,7 +26,7 @@
     "steps": [
       {
         "command": "wordpress.run-php",
-        "args": ["code=require_once ABSPATH . 'wp-admin/includes/plugin.php'; activate_plugin('wp-codebox-adversarial-vulnerable/vulnerable-plugin.php'); switch_theme('wp-codebox-adversarial-vulnerable'); delete_option('wp_codebox_vulnerable_authorization'); delete_option('wp_codebox_vulnerable_partial_state');"]
+        "args": ["code=switch_theme('wp-codebox-adversarial-vulnerable'); foreach (array('wp_codebox_vulnerable_authorization', 'wp_codebox_vulnerable_partial_state', 'wp_codebox_vulnerable_ajax', 'wp_codebox_vulnerable_xmlrpc', 'wp_codebox_vulnerable_injection', 'wp_codebox_vulnerable_race_count', 'wp_codebox_adversarial_http_faults', 'wp_codebox_adversarial_http_fault_counts') as $option) { delete_option($option); }"]
       }
     ]
   },
@@ -86,6 +87,161 @@
       "shrinking": { "enabled": true },
       "replay": { "selection": "findings" },
       "metadata": { "fixtureDefect": "state-corruption", "network": "deny" }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-ajax",
+      "seed": "wordpress-vulnerable-ajax-v1",
+      "corpus": [
+        { "id": "unauthenticated-ajax", "actions": [{ "type": "ajax-save", "input": { "value": "fixture-value" } }], "signals": ["transport:ajax"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "ajax-save",
+          "phases": {
+            "action": [{ "command": "wordpress.browser-actions", "args": ["steps-json=[{\"kind\":\"navigate\",\"url\":\"/\",\"waitFor\":\"load\"},{\"kind\":\"evaluate\",\"expression\":\"const response = await fetch('/wp-admin/admin-ajax.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=wp_codebox_vulnerable_save&value=fixture-value' }); return response.ok\",\"assert\":true}]", "capture=steps,network", "timeout=30s"] }],
+            "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('wp_codebox_vulnerable_ajax', null) !== null) { throw new RuntimeException('ajax-nonce-bypass'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_vulnerable_ajax');"] }]
+          }
+        }
+      ],
+      "mutators": ["scalar"],
+      "oracles": [{ "id": "runtime-status", "severity": "critical", "description": "Unauthenticated AJAX writes without a nonce must fail closed." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 1, "maxActionsPerCase": 2, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "none" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.browser-actions", "command:wordpress.run-php"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": false },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "ajax-nonce-bypass", "transportFidelity": "exact", "network": "deny" }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-xmlrpc",
+      "seed": "wordpress-vulnerable-xmlrpc-v1",
+      "corpus": [
+        { "id": "unauthenticated-xmlrpc", "actions": [{ "type": "xmlrpc-save", "input": {} }], "signals": ["transport:xmlrpc"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "xmlrpc-save",
+          "phases": {
+            "action": [{ "command": "wordpress.browser-actions", "args": ["steps-json=[{\"kind\":\"navigate\",\"url\":\"/\",\"waitFor\":\"load\"},{\"kind\":\"evaluate\",\"expression\":\"const response = await fetch('/xmlrpc.php', { method: 'POST', headers: { 'Content-Type': 'text/xml' }, body: '<?xml version=\\\"1.0\\\"?><methodCall><methodName>wpCodebox.vulnerable</methodName><params><param><value><string>fixture-value</string></value></param></params></methodCall>' }); return response.ok\",\"assert\":true}]", "capture=steps,network", "timeout=30s"] }],
+            "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('wp_codebox_vulnerable_xmlrpc', null) !== null) { throw new RuntimeException('xmlrpc-authorization-bypass'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_vulnerable_xmlrpc');"] }]
+          }
+        }
+      ],
+      "mutators": ["scalar"],
+      "oracles": [{ "id": "runtime-status", "severity": "critical", "description": "Unauthenticated XML-RPC writes must fail closed." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 1, "maxActionsPerCase": 2, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "none" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.browser-actions", "command:wordpress.run-php"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": false },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "xmlrpc-authorization-bypass", "transportFidelity": "exact", "network": "deny" }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-injection",
+      "seed": "wordpress-vulnerable-injection-v1",
+      "corpus": [
+        { "id": "rest-code-injection", "actions": [{ "type": "injection-rest", "input": { "expression": "update_option('wp_codebox_vulnerable_injection', 'executed')" } }], "signals": ["route:injection"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "injection-rest",
+          "phases": {
+            "action": [{ "command": "wordpress.run-php", "args": ["code=$request = new WP_REST_Request('POST', '/wp-codebox-vulnerable/v1/injection'); $request->set_body_params(json_decode(base64_decode('{{action.inputBase64}}'), true)); rest_do_request($request); if (get_option('wp_codebox_vulnerable_injection', null) !== null) { throw new RuntimeException('code-execution-indicator'); }"] }],
+            "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('wp_codebox_vulnerable_injection', null) !== null) { throw new RuntimeException('code-execution-indicator'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_vulnerable_injection');"] }]
+          }
+        }
+      ],
+      "mutators": ["sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "critical", "description": "Mutated REST input must not execute server-side code." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 2, "maxActionsPerCase": 3, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-injection-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.rest-request", "command:wordpress.run-php"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "injection", "network": "deny" }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-external-service",
+      "seed": "wordpress-vulnerable-external-service-v1",
+      "corpus": [
+        { "id": "failure-then-recovery", "actions": [{ "type": "external-service-cycle", "input": {} }], "signals": ["transport:failure", "transport:recovery"] }
+      ],
+      "caseTemplates": [
+        {
+          "id": "external-service-cycle",
+          "phases": {
+            "setup": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_adversarial_http_fault_counts'); update_option('wp_codebox_adversarial_http_faults', array('schema' => 'wp-codebox/transport-fault-model/v1', 'seed' => 'failure-recovery', 'rules' => array(array('id' => 'fixture-cycle', 'sequence' => array(array('timeoutMs' => 10), array('status' => 403, 'body' => '{\"authorized\":false}'))))), false);"] }],
+            "action": [{ "command": "wordpress.run-php", "args": ["code=$request = new WP_REST_Request('POST', '/wp-codebox-vulnerable/v1/external-service'); $failed = rest_do_request($request); $recovered = rest_do_request($request); $failed_data = (array) $failed->get_data(); $recovered_data = (array) $recovered->get_data(); if (!empty($recovered_data['authorized'])) { throw new RuntimeException('external-service-recovery-failed'); } if (!empty($failed_data['authorized'])) { throw new RuntimeException('external-service-fail-open'); }"] }],
+            "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('wp_codebox_adversarial_http_faults'); delete_option('wp_codebox_adversarial_http_fault_counts');"] }]
+          }
+        }
+      ],
+      "mutators": ["sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "high", "description": "Dependency failure must fail closed and the next healthy response must recover." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 1, "maxActionsPerCase": 2, "maxInputBytes": 4096, "maxCaseTimeMs": 15000, "maxWallTimeMs": 120000, "maxArtifactBytes": 10485760 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-external-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.run-php"],
+      "optionalCapabilities": ["transport-faults"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "external-service-fail-open", "network": "deny", "recoveryVerified": true }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-ui-duplicate",
+      "seed": "wordpress-vulnerable-ui-duplicate-v1",
+      "corpus": [
+        { "id": "admin-duplicate-effect", "actions": [{ "type": "browser-journey", "input": [{ "kind": "navigate", "url": "/wp-admin/tools.php?page=wp-codebox-vulnerable", "waitFor": "load" }, { "kind": "click", "selector": ".wp-codebox-vulnerable-save" }, { "kind": "evaluate", "expression": "document.querySelector('.wp-codebox-vulnerable-count').value", "assert": "1" }, { "kind": "capture" }, { "kind": "capture" }, { "kind": "capture" }] }], "signals": ["browser:duplicate-effect"] }
+      ],
+      "caseTemplates": [
+        { "id": "browser-journey", "phases": { "action": [{ "command": "wordpress.browser-actions", "args": ["steps-json={{action.input}}", "auth=wordpress-admin", "auth-user-id=1", "capture=steps,html,screenshot,dom-snapshot", "timeout=30s"] }] } }
+      ],
+      "mutators": ["sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "high", "description": "One UI action must produce at most one effect." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 1, "maxActionsPerCase": 2, "maxInputBytes": 16384, "maxCaseTimeMs": 45000, "maxWallTimeMs": 120000, "maxArtifactBytes": 20971520 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-ui-duplicate-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.browser-actions"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "duplicated-ui-effect", "network": "deny", "browserJourney": true }
+    },
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "wordpress-vulnerable-ui-loading",
+      "seed": "wordpress-vulnerable-ui-loading-v1",
+      "corpus": [
+        { "id": "admin-stuck-loading", "actions": [{ "type": "browser-journey", "input": [{ "kind": "navigate", "url": "/wp-admin/tools.php?page=wp-codebox-vulnerable", "waitFor": "load" }, { "kind": "click", "selector": ".wp-codebox-vulnerable-save" }, { "kind": "evaluate", "expression": "document.querySelector('.spinner').classList.contains('is-active')", "assert": false }, { "kind": "capture" }, { "kind": "capture" }, { "kind": "capture" }] }], "signals": ["browser:stuck-loading"] }
+      ],
+      "caseTemplates": [
+        { "id": "browser-journey", "phases": { "action": [{ "command": "wordpress.browser-actions", "args": ["steps-json={{action.input}}", "auth=wordpress-admin", "auth-user-id=1", "capture=steps,html,screenshot,dom-snapshot", "timeout=30s"] }] } }
+      ],
+      "mutators": ["sequence"],
+      "oracles": [{ "id": "runtime-status", "severity": "high", "description": "Loading state must clear after the UI action completes." }],
+      "concurrency": 1,
+      "budgets": { "maxCases": 1, "maxActionsPerCase": 2, "maxInputBytes": 16384, "maxCaseTimeMs": 45000, "maxWallTimeMs": 120000, "maxArtifactBytes": 20971520 },
+      "resetPolicy": { "mode": "checkpoint-per-case", "checkpointName": "wordpress-vulnerable-ui-loading-baseline" },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "bounded-evidence", "replay", "command:wordpress.browser-actions"],
+      "novelty": { "retainSignals": true },
+      "shrinking": { "enabled": true },
+      "replay": { "selection": "findings" },
+      "metadata": { "fixtureDefect": "stuck-loading-state", "network": "deny", "browserJourney": true }
     }
   ],
   "artifacts": {

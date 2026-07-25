@@ -949,8 +949,15 @@ function recipeAdversarialWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflow
   return (recipe.adversarialCampaigns ?? []).flatMap((campaign) => campaign.caseTemplates.flatMap((template) => phaseNames.flatMap((phase) => (template.phases[phase] ?? []).map((step, index) => ({
     phase: `adversarial:${phase}` as const,
     index,
-    step,
+    step: recipeAdversarialValidationStep(step, campaign, template.id),
   })))))
+}
+
+function recipeAdversarialValidationStep(step: WorkspaceRecipe["workflow"]["steps"][number], campaign: NonNullable<WorkspaceRecipe["adversarialCampaigns"]>[number], templateId: string): WorkspaceRecipe["workflow"]["steps"][number] {
+  const action = campaign.corpus.flatMap((entry) => entry.actions).find((candidate) => candidate.type === templateId)
+  if (!action || !step.args) return step
+  const actionInput = JSON.stringify(action.input ?? null)
+  return { ...step, args: step.args.map((arg) => arg.split("{{action.input}}").join(actionInput)) }
 }
 
 function recipeFuzzWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {

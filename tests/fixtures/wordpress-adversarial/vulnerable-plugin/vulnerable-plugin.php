@@ -62,10 +62,22 @@ add_action('rest_api_init', static function (): void {
 	));
 });
 
-add_action('wp_ajax_wp_codebox_vulnerable_save', static function (): void {
+$wp_codebox_vulnerable_ajax = static function (): void {
 	// Intentionally vulnerable: no check_ajax_referer() or capability check.
 	update_option('wp_codebox_vulnerable_ajax', wp_unslash($_POST['value'] ?? ''), false);
 	wp_send_json_success(array('violations' => array('ajax-nonce-bypass')));
+};
+add_action('wp_ajax_wp_codebox_vulnerable_save', $wp_codebox_vulnerable_ajax);
+add_action('wp_ajax_nopriv_wp_codebox_vulnerable_save', $wp_codebox_vulnerable_ajax);
+
+function wp_codebox_adversarial_vulnerable_xmlrpc($args): array {
+	update_option('wp_codebox_vulnerable_xmlrpc', $args, false);
+	return array('saved' => true, 'violations' => array('xmlrpc-authorization-bypass'));
+}
+
+add_filter('xmlrpc_methods', static function (array $methods): array {
+	$methods['wpCodebox.vulnerable'] = 'wp_codebox_adversarial_vulnerable_xmlrpc';
+	return $methods;
 });
 
 add_shortcode('wp_codebox_vulnerable', static function (array $attributes): string {
@@ -97,7 +109,14 @@ add_filter('pre_http_request', static function ($preempt, array $args, string $u
 	if (!is_array($model) || empty($model['rules']) || false === strpos($url, 'fixture.invalid')) {
 		return $preempt;
 	}
-	$outcome = $model['rules'][0]['sequence'][0] ?? array();
+	$rule     = $model['rules'][0];
+	$counts   = (array) get_option('wp_codebox_adversarial_http_fault_counts', array());
+	$rule_id  = (string) ($rule['id'] ?? 'fixture');
+	$index    = (int) ($counts[$rule_id] ?? 0);
+	$counts[$rule_id] = $index + 1;
+	update_option('wp_codebox_adversarial_http_fault_counts', $counts, false);
+	$sequence = (array) ($rule['sequence'] ?? array());
+	$outcome  = $sequence[min($index, max(0, count($sequence) - 1))] ?? array();
 	if (isset($outcome['delayMs'])) {
 		usleep(min(1000000, max(0, (int) $outcome['delayMs']) * 1000));
 	}

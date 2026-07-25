@@ -61,8 +61,8 @@ export interface WordPressAdversarialAdapter {
 
 export const WORDPRESS_ADVERSARIAL_CAPABILITIES: readonly WordPressAdversarialCapability[] = [
   { surface: "rest", fidelity: "exact", reason: "Dispatched through WP_REST_Request and rest_do_request()." },
-  { surface: "ajax", fidelity: "unsupported", reason: "In-process admin-ajax callbacks may terminate PHP; use browser/server requests when an HTTP runtime is available." },
-  { surface: "xmlrpc", fidelity: "unsupported", reason: "The disposable in-process runner does not provide a faithful XML-RPC HTTP request boundary." },
+  { surface: "ajax", fidelity: "exact", reason: "Dispatched through the runtime HTTP server to wp-admin/admin-ajax.php, preserving HTTP and wp_die() termination semantics." },
+  { surface: "xmlrpc", fidelity: "exact", reason: "Dispatched as text/xml through the runtime HTTP server to xmlrpc.php." },
   { surface: "block", fidelity: "exact", reason: "Parsed, serialized, and rendered with WordPress block APIs." },
   { surface: "shortcode", fidelity: "exact", reason: "Executed through do_shortcode()." },
   { surface: "serialized-value", fidelity: "exact", reason: "Round-tripped through maybe_serialize() and maybe_unserialize()." },
@@ -136,6 +136,17 @@ export function wordpressAdversarialActionSpec(action: WordPressAdversarialActio
     const command = typeof action.input === "string" ? action.input : ""
     if (!command) throw new Error("WordPress adversarial CLI actions require a non-empty string input.")
     return { kind: "command", command: "wordpress.wp-cli", args: [`command=${command}`], operation: `adversarial:${action.surface}`, metadata: actionMetadata(action, capability) }
+  }
+  if (action.surface === "ajax") {
+    requirePostOperation(action)
+    if (!action.target) throw new Error("WordPress adversarial AJAX actions require the target action name.")
+    const body = new URLSearchParams({ ...httpFormValues(action.input), action: action.target }).toString()
+    return { kind: "command", command: "wordpress.browser-actions", args: [`steps-json=${JSON.stringify(httpBrowserSteps("/wp-admin/admin-ajax.php", "application/x-www-form-urlencoded", body))}`], operation: "adversarial:ajax", metadata: actionMetadata(action, capability) }
+  }
+  if (action.surface === "xmlrpc") {
+    requirePostOperation(action)
+    if (typeof action.input !== "string" || action.input.trim() === "") throw new Error("WordPress adversarial XML-RPC actions require a non-empty XML request body.")
+    return { kind: "command", command: "wordpress.browser-actions", args: [`steps-json=${JSON.stringify(httpBrowserSteps("/xmlrpc.php", "text/xml", action.input))}`], operation: "adversarial:xmlrpc", metadata: actionMetadata(action, capability) }
   }
   return {
     kind: "command",
@@ -308,4 +319,20 @@ function metricBucket(value: number): string {
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function httpFormValues(value: unknown): Record<string, string> {
+  const record = recordValue(value)
+  return Object.fromEntries(Object.entries(record ?? {}).map(([name, item]) => [name, typeof item === "string" ? item : JSON.stringify(item)]))
+}
+
+function requirePostOperation(action: WordPressAdversarialAction): void {
+  if (action.operation.trim().toUpperCase() !== "POST") {
+    throw new Error(`WordPress adversarial ${action.surface.toUpperCase()} actions only support POST requests.`)
+  }
+}
+
+function httpBrowserSteps(path: string, contentType: string, body: string): Array<Record<string, unknown>> {
+  const expression = `const response = await fetch(${JSON.stringify(path)}, { method: 'POST', headers: { 'Content-Type': ${JSON.stringify(contentType)} }, body: ${JSON.stringify(body)} }); return response.ok`
+  return [{ kind: "navigate", url: "/", waitFor: "load" }, { kind: "evaluate", expression, assert: true }]
 }

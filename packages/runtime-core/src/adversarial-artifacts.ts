@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto"
-
 import { ArtifactBundleWriter } from "./artifact-layout.js"
-import type { ArtifactManifest } from "./artifact-manifest.js"
+import { calculateArtifactContentDigest, type ArtifactManifest } from "./artifact-manifest.js"
 import type { AdversarialCampaignResult } from "./adversarial-campaign.js"
 
 export const ADVERSARIAL_EVIDENCE_BUNDLE_SCHEMA = "wp-codebox/adversarial-evidence-bundle/v1" as const
@@ -46,11 +44,12 @@ export async function writeAdversarialEvidenceBundle(directory: string, result: 
   const secretScanPath = "evidence/secret-scan.json"
   await writeJson(secretScanPath, { schema: "wp-codebox/adversarial-secret-scan/v1", status: redactions > 0 ? "redacted" : "passed", redactions, scannedFiles: 1 + findingPaths.length + replayPaths.length }, "secret-scan")
 
-  const contentDigest = createHash("sha256").update("wp-codebox/adversarial-evidence-bundle/v1\n").update(JSON.stringify({ campaignId: result.campaignId, seed: result.seed, fingerprints: result.findings.map((finding) => finding.fingerprint).sort() })).digest("hex")
+  const contentDigestInputs = ["result/adversarial-campaign-result.json", ...findingPaths, ...replayPaths, secretScanPath]
+  const contentDigest = await calculateArtifactContentDigest(directory, contentDigestInputs)
   const createdAt = options.createdAt ?? new Date().toISOString()
   const manifest: ArtifactManifest = {
     id: `${result.campaignId}-adversarial-evidence`,
-    contentDigest: { algorithm: "sha256", value: contentDigest, inputs: ["result/adversarial-campaign-result.json", ...findingPaths, ...replayPaths, secretScanPath] },
+    contentDigest: { algorithm: "sha256", value: contentDigest, inputs: contentDigestInputs },
     createdAt,
     runtime: { id: "adversarial-runtime", backend: "declared-adapter", environment: { kind: "runtime", name: "Adversarial campaign" }, createdAt, status: "created" },
     files: [],

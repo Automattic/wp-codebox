@@ -358,6 +358,12 @@ async function minimizeAdversarialCase(campaign: AdversarialCampaign, plan: Adve
     }
     if (!reduced) chunk = Math.floor(chunk / 2)
   }
+  for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
+    for (const candidateInput of shrinkAdversarialValue(actions[actionIndex]?.input)) {
+      const candidateActions = actions.map((action, index) => index === actionIndex ? { ...action, input: candidateInput } : action)
+      if (await preserves({ id: plan.caseId, actions: candidateActions, input: plan.input })) actions = candidateActions
+    }
+  }
   let input = plan.input
   for (const candidateInput of shrinkAdversarialValue(input)) {
     if (await preserves({ id: plan.caseId, actions, input: candidateInput })) input = candidateInput
