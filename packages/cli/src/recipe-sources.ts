@@ -456,7 +456,7 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
 
   const source = resolve(recipeDirectory, overlay.source)
   await validateExistingDirectoryForOverlay(source, overlay.source)
-  const reference = await resolvedGitSourceReference(source)
+  const reference = overlay.reference ?? await resolvedGitSourceReference(source)
   const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-dependency-overlay-"))
   const hydratedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
   // The overlay is mounted at the consumer's vendor path for the package and is

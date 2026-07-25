@@ -817,6 +817,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           kind: { const: "composer-package" },
           package: { type: "string", pattern: "^[a-z0-9_.-]+/[a-z0-9_.-]+$" },
           source: { type: "string" },
+          reference: {
+            type: "string",
+            pattern: "^[a-fA-F0-9]{40,64}$",
+            description: "Optional immutable source reference. When omitted, a clean local Git checkout may supply the reference.",
+          },
           consumer: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
           metadata: { $ref: "#/$defs/metadata" },
         },

@@ -5,14 +5,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { recipeRunDependencyOverlay } from "../packages/cli/src/commands/recipe-runtime-setup.js"
+import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.js"
 import { prepareRecipeDependencyOverlays, prepareRecipeRuntimeOverlays } from "../packages/cli/src/recipe-sources.js"
 import type { PreparedExtraPlugin } from "../packages/cli/src/recipe-sources.js"
+import { assertWorkspaceRecipeJsonSchema } from "../packages/runtime-core/src/recipe-schema.js"
 import type { WorkspaceRecipe } from "../packages/runtime-core/src/runtime-contracts.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-overlay-hydration-"))
 const overlaySource = join(root, "php-ai-client")
 const dependencySource = join(root, "generic-composer-package")
 const nonGitDependencySource = join(root, "non-git-composer-package")
+const nonGitDependencyReference = "0123456789abcdef0123456789abcdef01234567"
 const binDir = join(root, "bin")
 const scoperPath = join(root, "php-scoper.phar")
 const originalPath = process.env.PATH
@@ -149,6 +152,49 @@ const recipe: WorkspaceRecipe = {
   },
 }
 
+assertWorkspaceRecipeJsonSchema({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: { steps: [{ command: "wordpress.run-php", args: ["<?php"] }] },
+  inputs: {
+    dependency_overlays: [{
+      kind: "composer-package",
+      package: "acme/non-git-package",
+      source: nonGitDependencySource,
+      reference: nonGitDependencyReference,
+      consumer: "consumer-plugin",
+    }],
+  },
+})
+assert.throws(() => assertWorkspaceRecipeJsonSchema({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: { steps: [{ command: "wordpress.run-php", args: ["<?php"] }] },
+  inputs: {
+    dependency_overlays: [{
+      kind: "composer-package",
+      package: "acme/non-git-package",
+      source: nonGitDependencySource,
+      reference: "not-an-immutable-reference",
+      consumer: "consumer-plugin",
+    }],
+  },
+}))
+assert.deepEqual((await validateWorkspaceRecipeSemantics({
+  workflow: { steps: [{ command: "wordpress.run-php", args: ["<?php"] }] },
+  inputs: {
+    dependency_overlays: [{
+      kind: "composer-package",
+      package: "acme/non-git-package",
+      source: nonGitDependencySource,
+      reference: "not-an-immutable-reference",
+      consumer: "consumer-plugin",
+    }],
+  },
+}, root)).filter((issue) => issue.path === "$.inputs.dependency_overlays[0].reference"), [{
+  code: "invalid-dependency-overlay-reference",
+  path: "$.inputs.dependency_overlays[0].reference",
+  message: "Dependency overlay reference must be a 40-64 character hexadecimal immutable reference when provided.",
+}])
+
 const overlays = await prepareRecipeRuntimeOverlays(recipe, root)
 const consumers: PreparedExtraPlugin[] = [{
   source: consumerSource,
@@ -171,6 +217,7 @@ const dependencyOverlays = await prepareRecipeDependencyOverlays({
       kind: "composer-package",
       package: "acme/non-git-package",
       source: nonGitDependencySource,
+      reference: nonGitDependencyReference,
       consumer: "consumer-plugin",
     }],
   },
@@ -188,16 +235,17 @@ try {
   assert.equal(dependencyOverlays[0].reference, dependencyReference.trim(), "clean Git source revision survives Composer staging")
   assert.equal(dependencyOverlays[0].metadata.reference, dependencyReference.trim(), "mounted dependency metadata preserves the source revision")
   assert.equal(recipeRunDependencyOverlay(dependencyOverlays[0]).reference, dependencyReference.trim(), "runtime dependency provenance exposes the source revision")
-  assert.equal(dependencyOverlays[1].reference, undefined, "non-Git source has no fabricated revision")
-  assert.equal(dependencyOverlays[1].metadata.reference, undefined, "non-Git source metadata omits the revision")
+  assert.equal(dependencyOverlays[1].reference, nonGitDependencyReference, "declared reference supports non-Git sources")
+  assert.equal(dependencyOverlays[1].metadata.reference, nonGitDependencyReference, "mounted dependency metadata preserves the declared reference")
+  assert.equal(recipeRunDependencyOverlay(dependencyOverlays[1]).reference, nonGitDependencyReference, "runtime dependency provenance exposes the declared reference")
   assert.equal((JSON.parse(await readFile(join(consumerSource, "vendor", "composer", "installed.json"), "utf8")) as { packages: Array<{ source?: unknown }> }).packages[0].source, undefined, "original consumer Composer provenance remains unchanged")
   const runtimeInstalled = JSON.parse(await readFile(join(consumers[0].source, "vendor", "composer", "installed.json"), "utf8")) as { packages: Array<{ name: string, version: string, source?: { reference?: string } }> }
   assert.deepEqual(runtimeInstalled.packages[0], { name: "acme/package", version: "1.0.0+no-version-set", source: { reference: dependencyReference.trim() } }, "runtime Composer dependency provenance includes the immutable source reference")
-  assert.deepEqual(runtimeInstalled.packages[1], { name: "acme/non-git-package", version: "1.0.0+no-version-set" }, "runtime Composer provenance omits unresolved source references")
+  assert.deepEqual(runtimeInstalled.packages[1], { name: "acme/non-git-package", version: "1.0.0+no-version-set", source: { reference: nonGitDependencyReference } }, "runtime Composer provenance uses the declared source reference")
   const { stdout: runtimeInstalledPhp } = await execFile("php", ["-r", "echo json_encode(require $argv[1]);", join(consumers[0].source, "vendor", "composer", "installed.php")])
   const runtimePhpVersions = JSON.parse(runtimeInstalledPhp) as { versions: Record<string, { reference?: string | null }> }
   assert.equal(runtimePhpVersions.versions["acme/package"]?.reference, dependencyReference.trim(), "Composer runtime metadata includes the immutable source reference")
-  assert.equal(runtimePhpVersions.versions["acme/non-git-package"]?.reference, null, "Composer runtime metadata leaves unresolved references unchanged")
+  assert.equal(runtimePhpVersions.versions["acme/non-git-package"]?.reference, nonGitDependencyReference, "Composer runtime metadata includes the declared source reference")
   const runtimePackageRow = runtimePhpVersions.versions["acme/package"]
   assert.deepEqual(runtimePackageRow, {
     pretty_version: "1.0.0+no-version-set",
@@ -205,8 +253,8 @@ try {
   }, "the final PHP-visible package row exposes the clean Git reference")
   assert.deepEqual(runtimePhpVersions.versions["acme/non-git-package"], {
     pretty_version: "1.0.0+no-version-set",
-    reference: null,
-  }, "the final PHP-visible package row leaves an unavailable reference unchanged")
+    reference: nonGitDependencyReference,
+  }, "the final PHP-visible package row exposes the declared reference")
   assert.match(await readFile(join(overlays[0].source, "src", "Client.php"), "utf8"), /WordPress\\AiClientDependencies\\Psr\\Log\\LoggerInterface/)
 } finally {
   await Promise.all([...overlays, ...dependencyOverlays, ...consumers].flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
