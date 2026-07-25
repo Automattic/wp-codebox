@@ -274,7 +274,9 @@ function metadataInputs(value: unknown): Record<string, unknown> | undefined {
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
   const secretEnv = { ...(spec.secretEnv ?? {}) }
-  if (spec.environment.databaseSetup === "external") delete secretEnv.DB_PASSWORD
+  if (spec.environment.databaseSetup === "external") {
+    for (const source of Object.values(spec.secretEnvTargets ?? {})) delete secretEnv[source]
+  }
   return phpEnvAssignments(normalizeRuntimeEnvRecord(secretEnv, { field: "secretEnv" }))
 }
 

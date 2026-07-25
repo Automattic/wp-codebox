@@ -6,7 +6,7 @@ import { executeRuntimeServiceProcess, provisionRuntimeServices, RuntimeServiceP
 import { validateRecipeRuntimePolicy, validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.ts"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.ts"
-import { validateWorkspaceRecipeJsonSchema, type RuntimeCreateSpec, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
+import { resolveRuntimeSecretEnvTargets, validateWorkspaceRecipeJsonSchema, type RuntimeCreateSpec, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
 const adminPassword = "admin-secret-'\\-value"
 const externalService: WorkspaceRecipeRuntimeService = {
@@ -21,11 +21,13 @@ const externalService: WorkspaceRecipeRuntimeService = {
     usernameEnv: "MYSQL_ADMIN_USER",
     passwordEnv: "MYSQL_ADMIN_PASSWORD",
   },
-  outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" },
+  outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "MYSQL_PASSWORD", database: "DB_NAME" },
 }
 const externalServices = [{ id: "database-service", environment: "external" as const, allowedHosts: ["database.internal:3307"], writes: "allowed-with-approval" as const }]
 const policy = { network: { allowHosts: ["database.internal:3307"] }, filesystem: "sandbox" as const, commands: ["wordpress.phpunit"], secrets: "connector-scoped" as const, approvals: "on-write" as const }
 const authorization = { policy, externalServices, externalServiceWritesApproved: true }
+assert.deepEqual(resolveRuntimeSecretEnvTargets({ MYSQL_PASSWORD: "one", CACHE_PASSWORD: "two" }, { DB_PASSWORD: "MYSQL_PASSWORD", CACHE_AUTH: "CACHE_PASSWORD" }), { DB_PASSWORD: "one", CACHE_AUTH: "two" })
+assert.throws(() => resolveRuntimeSecretEnvTargets({ MYSQL_PASSWORD: "one" }, { DB_PASSWORD: "MISSING_PASSWORD" }), /unavailable source/)
 
 assert.equal(validateWorkspaceRecipeJsonSchema({
   schema: "wp-codebox/workspace-recipe/v1",
@@ -111,15 +113,26 @@ const approvalRefusalFake = fakeDependencies()
 await assert.rejects(provisionRuntimeServices([externalService], { dependencies: approvalRefusalFake.dependencies, ...authorization, externalServiceWritesApproved: false }), RuntimeServiceProvisionError)
 assert.equal(approvalRefusalFake.calls.length, 0, "write approval refusal fails before connecting")
 
+const ambiguousTargetsFake = fakeDependencies()
+const secondExternalService: WorkspaceRecipeRuntimeService = { ...externalService, id: "external-db-two", outputs: { password: "SECOND_MYSQL_PASSWORD" } }
+await assert.rejects(provisionRuntimeServices([externalService, secondExternalService], { dependencies: ambiguousTargetsFake.dependencies, ...authorization }), RuntimeServiceProvisionError)
+assert.equal(ambiguousTargetsFake.calls.filter((call) => call.stdin?.startsWith("DROP DATABASE")).length, 2, "ambiguous connector targets release every provisioned database")
+
+const collidingTargetFake = fakeDependencies()
+const collidingTargetService: WorkspaceRecipeRuntimeService = { ...externalService, outputs: { host: "DB_PASSWORD", password: "MYSQL_PASSWORD" } }
+await assert.rejects(provisionRuntimeServices([collidingTargetService], { dependencies: collidingTargetFake.dependencies, ...authorization }), RuntimeServiceProvisionError)
+assert.equal(collidingTargetFake.calls.some((call) => call.stdin?.startsWith("DROP DATABASE")), true, "non-secret target collisions release provisioned resources")
+
 const successFake = fakeDependencies()
 const provisioned = await provisionRuntimeServices([externalService], { dependencies: successFake.dependencies, ...authorization })
 assert.equal(provisioned.env.DB_HOST, "database.internal")
 assert.equal(provisioned.env.DB_PORT, "3307")
 assert.match(provisioned.env.DB_NAME ?? "", /^wp_codebox_[a-f0-9]{24}$/)
 assert.match(provisioned.env.DB_USER ?? "", /^wpcb_[a-f0-9]{24}$/)
-const generatedPassword = provisioned.secretEnv.DB_PASSWORD ?? ""
+const generatedPassword = provisioned.secretEnv.MYSQL_PASSWORD ?? ""
 assert.match(generatedPassword, /^[A-Za-z0-9_-]+$/)
 assert.equal(provisioned.env.DB_PASSWORD, undefined, "password is absent from the non-secret output channel")
+assert.deepEqual(provisioned.secretEnvTargets, { DB_PASSWORD: "MYSQL_PASSWORD" })
 assert.equal(provisioned.evidence[0]?.provider, "external")
 assert.equal(provisioned.evidence[0]?.readiness, "ready")
 const createDatabase = successFake.calls.find((call) => call.stdin?.startsWith("CREATE DATABASE"))
@@ -139,18 +152,22 @@ try {
     bootstrapCalls.push(options)
     return { serverUrl: "http://127.0.0.1:65535", playground: { async run(runOptions) { bootstrapRuns.push(runOptions); return { text: options.phpEnv?.DB_PASSWORD ?? "" } } }, async [Symbol.asyncDispose]() {} }
   } }
+  const secondaryConnectorSecret = "secondary-connector-secret"
   const runtimeSpec: RuntimeCreateSpec = {
     backend: "wordpress-playground",
     environment: { version: "mounted", wordpressInstallMode: "do-not-attempt-installing", databaseSetup: "external", assets: { wordpressDirectory: wordpressRoot }, blueprint: {} },
     policy,
     runtimeEnv: provisioned.env,
-    secretEnv: provisioned.secretEnv,
+    secretEnv: { ...provisioned.secretEnv, CACHE_PASSWORD: secondaryConnectorSecret },
+    secretEnvTargets: { ...provisioned.secretEnvTargets, CACHE_AUTH: "CACHE_PASSWORD" },
     artifactsDirectory: bootstrapRoot,
   }
   const generatedCommandPhp = bootstrapPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');", [])
   const generatedAbilityPhp = bootstrapAbilityPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');")
   assert.equal(generatedCommandPhp.includes(generatedPassword), false, "connector password is absent from generated command PHP")
+  assert.equal(generatedCommandPhp.includes(secondaryConnectorSecret), false, "all mapped connector secrets are absent from generated command PHP")
   assert.equal(generatedAbilityPhp.includes(generatedPassword), false, "connector password is absent from generated ability PHP")
+  assert.equal(generatedAbilityPhp.includes(secondaryConnectorSecret), false, "all mapped connector secrets are absent from generated ability PHP")
   const server = await startPlaygroundCliServer(runtimeSpec, [], { cliModule })
   const connectorResponse = await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })
   await server.playground.run({ code: generatedCommandPhp })
@@ -159,6 +176,7 @@ try {
   assert.equal(bootstrapRuns[0]?.env?.DB_PASSWORD, undefined, "direct runs rely on the isolated PHP runtime environment")
   assert.equal(bootstrapRuns.every((run) => !("code" in run) || !run.code.includes(generatedPassword)), true, "captured PHP source never contains the connector password")
   assert.equal(bootstrapCalls[0]?.phpEnv?.DB_PASSWORD, generatedPassword, "Playground startup receives the generated password through its in-memory PHP environment")
+  assert.equal(bootstrapCalls[0]?.phpEnv?.CACHE_AUTH, secondaryConnectorSecret, "multiple connector targets resolve through the same in-memory channel")
   await server[Symbol.asyncDispose]()
   const mounts = bootstrapCalls[0]?.["mount-before-install"] ?? []
   const autoPrependPath = mounts.find((mount) => mount.vfsPath === "/internal/shared/wp-codebox-auto-prepend.php")?.hostPath
@@ -170,6 +188,7 @@ try {
   assert.equal(autoPrepend.includes(generatedPassword), false, "generated password is not serialized into auto-prepend PHP")
   assert.equal(wpConfig.includes(generatedPassword), false, "generated password is not serialized into wp-config")
   assert.equal(await directoryContains(bootstrapRoot, generatedPassword), false, "generated password is absent from persisted artifact files")
+  assert.equal(await directoryContains(bootstrapRoot, secondaryConnectorSecret), false, "secondary connector secret is absent from persisted artifact files")
   assert.equal(await directoryContains(wordpressRoot, generatedPassword), false, "generated password is absent from persisted WordPress files")
 } finally {
   await rm(bootstrapRoot, { recursive: true, force: true })

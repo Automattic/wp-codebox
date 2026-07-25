@@ -229,6 +229,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       policy: effectivePolicy,
       runtimeEnv,
       secretEnv,
+      secretEnvTargets: managedServices.secretEnvTargets,
       artifactsDirectory: configuredArtifactsDirectory,
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),

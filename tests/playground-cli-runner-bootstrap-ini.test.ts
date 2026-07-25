@@ -60,6 +60,7 @@ try {
     },
     runtimeEnv: { TC_MYSQL_PORT: "33060", DB_HOST: "127.0.0.1", DB_PORT: "33061", DB_USER: "runtime", DB_NAME: "runtime" },
     secretEnv: { DB_PASSWORD: "secret" },
+    secretEnvTargets: { DB_PASSWORD: "DB_PASSWORD" },
     artifactsDirectory,
   }
 
@@ -110,7 +111,7 @@ try {
   assert.doesNotMatch(externalWpConfig, /secret/)
 
   calls.length = 0
-  const passwordlessExternalServer = await startPlaygroundCliServer({ ...spec, secretEnv: {} }, [], { cliModule })
+  const passwordlessExternalServer = await startPlaygroundCliServer({ ...spec, secretEnv: {}, secretEnvTargets: {} }, [], { cliModule })
   assert.equal((await passwordlessExternalServer.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "", "connector secrets do not leak across runtime instances")
   await passwordlessExternalServer[Symbol.asyncDispose]()
   assert.equal(calls[0]?.phpEnv, undefined)

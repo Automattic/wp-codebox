@@ -2,7 +2,7 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
+import { normalizeLiveProgressEvent, previewLease, resolveRuntimeSecretEnvTargets, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
@@ -481,12 +481,9 @@ require_once ABSPATH . 'wp-settings.php';
 }
 
 function connectorSecretEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
-  const password = connectorSecretPassword(spec)
-  return password === undefined ? undefined : { DB_PASSWORD: password }
-}
-
-function connectorSecretPassword(spec: RuntimeCreateSpec): string | undefined {
-  return spec.environment.databaseSetup === "external" ? spec.secretEnv?.DB_PASSWORD : undefined
+  if (spec.environment.databaseSetup !== "external") return undefined
+  const resolved = resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets)
+  return Object.keys(resolved).length > 0 ? resolved : undefined
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
