@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
+import { materializationPhaseResult, namedFileTreeSkipPolicy, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 import { assertPlaygroundResponseOk, errorMessage } from "./playground-command-errors.js"
@@ -79,6 +79,7 @@ const HOST_MOUNT_FILE_BATCH_SIZE = 100
 const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
 const HOST_MOUNT_CHUNKED_WRITE_THRESHOLD = 1024 * 1024
 const HOST_MOUNT_WRITE_CHUNK_SIZE = 256 * 1024
+const READONLY_MOUNT_SKIPPED_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
 
 /**
  * Playground's Node filesystem mount handler is writable. Snapshot readonly
@@ -150,6 +151,9 @@ async function stageReadonlyDirectory(mount: MountSpec, mountIndex: number, sour
       const entryStat = await lstat(path)
       if (!entryStat.isSymbolicLink()) {
         if (entryStat.isDirectory()) {
+          if (READONLY_MOUNT_SKIPPED_DIRECTORIES.has(entry.name)) {
+            continue
+          }
           const target = await realpath(path)
           await visit(target, stagedPath, relativePath, new Set([...ancestors, target]))
         } else {
@@ -172,6 +176,9 @@ async function stageReadonlyDirectory(mount: MountSpec, mountIndex: number, sour
       const targetStat = await stat(target)
       if (!targetStat.isDirectory()) {
         await cp(target, stagedPath)
+        continue
+      }
+      if (READONLY_MOUNT_SKIPPED_DIRECTORIES.has(entry.name)) {
         continue
       }
       if (ancestors.has(target)) {
