@@ -469,10 +469,11 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
   // consumer's autoloader resolves, keeping the single vendor-path mount intact.
   // Never mutate the caller's checkout: stage a copy first when the hydrated
   // source is still the original directory.
-  const preparedSource = await reconcileOverlayAutoloadLayout(hydratedSource, source, stagingRoot, consumer.source, overlay.package)
+  const prepared = await reconcileOverlayAutoloadLayout(hydratedSource, source, stagingRoot, consumer.source, overlay.package)
+  const preparedSource = prepared.source
   if (reference) {
     await preserveComposerDependencyReference(consumer, overlay.package, reference, stagedConsumers)
-    await preserveComposerPackageReference(preparedSource, overlay.package, reference)
+    await preserveComposerPackageReference(prepared.packageRoot, overlay.package, reference)
   }
   const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
   const digest = await directoryContentDigest(preparedSource)
@@ -503,22 +504,21 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
 }
 
 /**
- * Move the overlay's PSR-4 source directories to the paths the consumer's
- * committed autoloader resolves for the same package. The overlay is mounted at
- * the consumer's `vendor/<package>` path and loaded via the consumer's PSR-4
- * map; when the override ships a different source layout than the consumer
- * recorded (e.g. `src/` vs `php-transformer/src/`), the mounted classes must be
- * relocated to the consumer's recorded layout or they are never autoloaded.
+ * Reconcile the overlay with the paths the consumer's committed autoloader
+ * resolves for the same package. A common wrapper prefix relocates the complete
+ * hydrated package so package-local bootstrap state stays coherent; other PSR-4
+ * layout changes retain the existing source-directory relocation.
  */
-async function reconcileOverlayAutoloadLayout(hydratedSource: string, originalSource: string, stagingRoot: string, consumerSource: string, packageName: string): Promise<string> {
+async function reconcileOverlayAutoloadLayout(hydratedSource: string, originalSource: string, stagingRoot: string, consumerSource: string, packageName: string): Promise<{ source: string; packageRoot: string }> {
   const consumerPsr4 = await composerPackagePsr4FromInstalled(join(consumerSource, "vendor", "composer", "installed.json"), packageName)
   const overridePsr4 = await composerPackagePsr4FromInstalled(join(hydratedSource, "vendor", "composer", "installed.json"), packageName)
     ?? await composerPackagePsr4FromComposerJson(join(hydratedSource, "composer.json"))
   if (!consumerPsr4 || !overridePsr4) {
-    return hydratedSource
+    return { source: hydratedSource, packageRoot: hydratedSource }
   }
 
   const moves = new Map<string, string>()
+  const layouts: Array<[string, string]> = []
   for (const [namespace, consumerDir] of Object.entries(consumerPsr4)) {
     const overrideDir = overridePsr4[namespace]
     if (undefined === overrideDir) {
@@ -526,13 +526,26 @@ async function reconcileOverlayAutoloadLayout(hydratedSource: string, originalSo
     }
     const from = normalizeOverlayRelativeDir(overrideDir)
     const to = normalizeOverlayRelativeDir(consumerDir)
-    if ("" === from || "" === to || from === to) {
+    if ("" === from || "" === to) {
+      continue
+    }
+    layouts.push([from, to])
+    if (from === to) {
       continue
     }
     moves.set(from, to)
   }
   if (0 === moves.size) {
-    return hydratedSource
+    return { source: hydratedSource, packageRoot: hydratedSource }
+  }
+
+  const wrapper = commonOverlayWrapperPrefix(layouts)
+  if (wrapper) {
+    const effectiveSource = join(stagingRoot, "reconciled-source")
+    const packageRoot = join(effectiveSource, wrapper)
+    await mkdir(dirname(packageRoot), { recursive: true })
+    await cp(hydratedSource, packageRoot, { recursive: true })
+    return { source: effectiveSource, packageRoot }
   }
 
   // Copy into the overlay staging root before moving directories so the caller's
@@ -553,7 +566,23 @@ async function reconcileOverlayAutoloadLayout(hydratedSource: string, originalSo
     await mkdir(dirname(toPath), { recursive: true })
     await rename(fromPath, toPath)
   }
-  return effectiveSource
+  return { source: effectiveSource, packageRoot: effectiveSource }
+}
+
+function commonOverlayWrapperPrefix(changes: Array<[string, string]>): string | undefined {
+  let wrapper: string | undefined
+  for (const [from, to] of changes) {
+    const suffix = `/${from}`
+    if (!to.endsWith(suffix)) {
+      return undefined
+    }
+    const candidate = to.slice(0, -suffix.length)
+    if (!candidate || normalizeOverlayRelativeDir(candidate) !== candidate || (wrapper && wrapper !== candidate)) {
+      return undefined
+    }
+    wrapper = candidate
+  }
+  return wrapper
 }
 
 /** @return namespace-prefix -> normalized relative source dir, or undefined. */
