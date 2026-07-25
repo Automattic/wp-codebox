@@ -116,6 +116,8 @@ try {
 const rootPackage = JSON.parse(await readFile(resolve(repositoryRoot, "package.json"), "utf8"))
 assert.equal(rootPackage.scripts.postinstall, "node scripts/apply-development-patches.mjs")
 assert.ok(rootPackage.files.includes("scripts/apply-development-patches.mjs"))
+assert.ok(rootPackage.files.includes("patches"))
+assert.equal(rootPackage.dependencies["patch-package"], "^8.0.1")
 
 const lifecycleRoot = await mkdtemp(join(tmpdir(), "wp-codebox-production-lifecycle-"))
 try {

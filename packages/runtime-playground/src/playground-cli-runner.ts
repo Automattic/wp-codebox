@@ -34,6 +34,7 @@ export interface PlaygroundCliModule {
     skipSqliteSetup?: boolean
     "site-url"?: string
     phpIniEntries?: Record<string, string>
+    phpEnv?: Record<string, string>
     phpExtension?: string[]
   }): Promise<PlaygroundCliServer>
 }
@@ -80,7 +81,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
-    const requestWorkerEndpoint = useProgrammaticRunner || connectorSecretPassword(spec) !== undefined ? undefined : {
+    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
       route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
       token: randomBytes(32).toString("base64url"),
       payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
@@ -168,6 +169,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
+          phpEnv: connectorSecretEnvironment(spec),
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
@@ -182,8 +184,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const connectorServer = withConnectorSecretEnvironment(server, spec)
-    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...connectorServer, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy({ ...server, ...(requestWorkerEndpoint ? { requestWorkerEndpoint } : {}) }, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
@@ -479,18 +480,9 @@ require_once ABSPATH . 'wp-settings.php';
 `
 }
 
-function withConnectorSecretEnvironment(server: PlaygroundCliServer, spec: RuntimeCreateSpec): PlaygroundCliServer {
+function connectorSecretEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
   const password = connectorSecretPassword(spec)
-  if (password === undefined) return server
-  return {
-    ...server,
-    playground: {
-      ...server.playground,
-      async run(options) {
-        return await server.playground.run({ ...options, env: { ...(options.env ?? {}), DB_PASSWORD: password } })
-      },
-    },
-  }
+  return password === undefined ? undefined : { DB_PASSWORD: password }
 }
 
 function connectorSecretPassword(spec: RuntimeCreateSpec): string | undefined {
