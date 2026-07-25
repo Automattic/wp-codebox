@@ -261,6 +261,7 @@ async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplora
       descriptors.push(...scopedDescriptors.slice(0, contract.descriptorLimits.maxPerState).map((descriptor) => ({ ...descriptor, frameId: identity.id })))
       const semantic = await frame.evaluate(({ maxElements, maxTextLength }) => {
         const text = (document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, maxTextLength)
+        const semanticId = (id: string | null) => id?.replace(/([_:-](?:[a-z]{0,4})?)[a-f0-9]{8,}$/i, "$1<generated>") || undefined
         const loadingSelectors = "[aria-busy='true'], [role='progressbar'], .loading, .spinner, [data-loading='true']"
         const visible = (element: Element) => {
           const rect = element.getBoundingClientRect()
@@ -271,7 +272,7 @@ async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplora
           const input = element as HTMLInputElement
           return {
             tag: element.tagName.toLowerCase(),
-            id: element.getAttribute("id") || undefined,
+            id: semanticId(element.getAttribute("id")),
             class: element.getAttribute("class") || undefined,
             role: element.getAttribute("role") || undefined,
             ariaHidden: element.getAttribute("aria-hidden") || undefined,
@@ -330,11 +331,18 @@ async function executeAdaptiveAction(page: Page, action: BrowserAdaptiveAction, 
   if (action.family === "reload") { await page.reload({ waitUntil: "domcontentloaded", timeout }); return }
   const frame = frameById(page, action.frameId)
   if (!frame) throw new Error(`Adaptive action frame is no longer available: ${action.frameId}`)
+  let currentSelector: string | undefined
+  if (action.descriptorId) {
+    const current = (await discoverBrowserActionCorpusDescriptors(frame)).descriptors.filter((descriptor) => descriptor.id === action.descriptorId)
+    if (current.length !== 1) throw new Error(`Adaptive descriptor must resolve exactly once, resolved ${current.length}: ${action.descriptorId}`)
+    currentSelector = current[0]?.selector
+  }
   for (const step of action.steps) {
-    if (!step.selector) throw new Error(`Adaptive ${step.kind} action requires a unique selector.`)
-    const locator = frame.locator(step.selector)
+    const selector = currentSelector ?? step.selector
+    if (!selector) throw new Error(`Adaptive ${step.kind} action requires a unique selector.`)
+    const locator = frame.locator(selector)
     const count = await locator.count()
-    if (count !== 1) throw new Error(`Adaptive selector must resolve exactly once, resolved ${count}: ${step.selector}`)
+    if (count !== 1) throw new Error(`Adaptive selector must resolve exactly once, resolved ${count}: ${selector}`)
     if (step.kind === "click") await locator.click({ timeout })
     else if (step.kind === "fill") await locator.fill(String(step.value ?? ""), { timeout })
     else if (step.kind === "select") await locator.selectOption(Array.isArray(step.values) ? step.values : String(step.value ?? ""), { timeout })
@@ -486,7 +494,7 @@ function frameById(page: Page, id: string): Frame | undefined {
 }
 
 function stableDescriptor(descriptor: BrowserActionCorpusDescriptor): Record<string, unknown> {
-  return { id: descriptor.id, frameId: descriptor.frameId, kind: descriptor.kind, selector: descriptor.selector, label: descriptor.label, name: descriptor.name, role: descriptor.role, type: descriptor.type, formId: descriptor.formId, href: descriptor.href, optionValues: descriptor.optionValues }
+  return { id: descriptor.id, frameId: descriptor.frameId, kind: descriptor.kind, label: descriptor.label, name: descriptor.name, role: descriptor.role, type: descriptor.type, href: descriptor.href, optionValues: descriptor.optionValues }
 }
 
 function rejectedTransition(state: BrowserAdaptiveState, action: BrowserAdaptiveAction, destinationUrl: string, code: string, message: string): BrowserAdaptiveTransition {
