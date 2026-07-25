@@ -3,10 +3,12 @@ import assert from "node:assert/strict"
 import {
   SECRET_ENV_PROJECTIONS_ENV,
   defaultRecipeSecretEnvProviders,
+  mergeRecipeSecretEnvSummary,
   parseSecretEnvProjections,
   resolveRecipeSecretEnv,
   type RecipeSecretEnvProvider,
 } from "../packages/cli/src/recipe-secret-env.js"
+import { recipeSecretEnvelope } from "../packages/cli/src/recipe-evidence.js"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.js"
 
 const source = {
@@ -27,6 +29,20 @@ assert.deepEqual(resolved.summary, [
   { name: "MISSING_SECRET", status: "missing" },
 ])
 assert.doesNotMatch(JSON.stringify(resolved.summary), /direct-value-123|projected-value-456/)
+const generatedSummary = mergeRecipeSecretEnvSummary(resolved.summary, ["DB_PASSWORD"])
+assert.deepEqual(recipeSecretEnvelope(generatedSummary), {
+  schema: "wp-codebox/redacted-secret-envelope/v1",
+  provided: true,
+  count: 3,
+  secrets: [
+    { name: "DB_PASSWORD", status: "available", source: "managed-runtime-service" },
+    { name: "DIRECT_SECRET", status: "available", source: "process-env" },
+    { name: "MISSING_SECRET", status: "missing" },
+    { name: "PROJECTED_SECRET", status: "available", source: "env-projection" },
+  ],
+  redaction: "names-only",
+})
+assert.doesNotMatch(JSON.stringify(recipeSecretEnvelope(generatedSummary)), /direct-value-123|projected-value-456/)
 
 const customProvider: RecipeSecretEnvProvider = (name) => name === "DERIVED_SECRET"
   ? { value: `derived:${name.toLowerCase()}`, source: "test-provider" }

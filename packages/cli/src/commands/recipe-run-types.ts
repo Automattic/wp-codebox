@@ -23,6 +23,7 @@ export interface RecipeRunOptions {
   timeoutMs: number
   adversarialReplayPath?: string
   policy?: RuntimePolicy
+  externalServiceWritesApproved: boolean
   json: boolean
   summary: boolean
   dryRun: boolean

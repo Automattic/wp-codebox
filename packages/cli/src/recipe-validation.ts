@@ -536,6 +536,26 @@ export function validateRecipeRuntimePolicy(recipe: WorkspaceRecipe, policy: Run
     }
   }
 
+  const externalMysqlServices = (recipe.inputs?.services ?? []).filter((service) => service.kind === "mysql" && service.configuration?.provider === "external")
+  if (externalMysqlServices.length > 0) {
+    if (policy.network === "deny") {
+      issues.push({ code: "runtime-policy-external-service-network-denied", path: "$.policy.network", message: "External MySQL runtime services require network access to their declared external-service hosts." })
+    }
+    if (policy.approvals !== "on-write") {
+      issues.push({ code: "runtime-policy-external-service-approval-required", path: "$.policy.approvals", message: "External MySQL runtime services require approvals=on-write and explicit write approval at execution time." })
+    }
+    if (typeof policy.network === "object") {
+      for (const service of externalMysqlServices) {
+        const boundary = recipe.inputs?.externalServices?.find((candidate) => candidate.id === service.configuration?.externalService)
+        for (const host of boundary?.allowedHosts ?? []) {
+          if (!policyHostListIncludes(policy.network.allowHosts, host)) {
+            issues.push({ code: "runtime-policy-external-service-host-denied", path: "$.policy.network.allowHosts", message: `Runtime network policy must allow external-service host: ${host}` })
+          }
+        }
+      }
+    }
+  }
+
   return issues
 }
 
@@ -733,17 +753,34 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
-  const environment = new Set<string>([
+  const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
     ...(recipe.inputs?.secretEnv ?? []),
   ])
+  const environment = new Set(exposedEnvironment)
   for (const [index, service] of (recipe.inputs?.services ?? []).entries()) {
     const path = `$.inputs.services[${index}]`
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
     if (!["mysql", "redis", "smtp", "http"].includes(service.kind)) addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    if (service.configuration?.provider === "external") {
+      if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The external provider supports only MySQL-compatible services.")
+      const boundary = recipe.inputs?.externalServices?.find((candidate) => candidate.id === service.configuration?.externalService)
+      if (!boundary) addIssue("missing-runtime-service-external-boundary", `${path}.configuration.externalService`, "External MySQL services must reference an inputs.externalServices boundary.")
+      else {
+        if ((boundary.allowedHosts ?? []).length === 0) addIssue("missing-runtime-service-host-allowlist", `${path}.configuration.externalService`, "External MySQL service boundaries must explicitly allow at least one host.")
+        if (boundary.writes !== "allowed-with-approval") addIssue("runtime-service-writes-not-approved", `${path}.configuration.externalService`, "External MySQL service boundaries must declare writes=allowed-with-approval.")
+      }
+      for (const field of ["hostEnv", "portEnv", "usernameEnv", "passwordEnv"] as const) {
+        const name = service.configuration[field]
+        if (name && exposedEnvironment.has(name)) addIssue("runtime-service-admin-env-exposed", `${path}.configuration.${field}`, `External service administration environment must remain host-only: ${name}`)
+      }
+      for (const field of ["image", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
+        if (service.configuration[field] !== undefined) addIssue("unsupported-external-runtime-service-option", `${path}.configuration.${field}`, `External MySQL services do not support ${field}.`)
+      }
+    }
     const supportedOutputs: Record<string, RegExp> = {
       mysql: /^(host|port|username|password|database)$/,
       redis: /^(host|port|url)$/,
@@ -757,6 +794,15 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
       environment.add(name)
     }
   }
+}
+
+function policyHostListIncludes(policyHosts: readonly string[], boundaryHost: string): boolean {
+  const normalizedBoundary = boundaryHost.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+  const boundaryHasPort = /:\d+$/.test(normalizedBoundary)
+  return policyHosts.some((host) => {
+    const normalized = host.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+    return normalized === normalizedBoundary || (!boundaryHasPort && normalized.replace(/:\d+$/, "") === normalizedBoundary)
+  })
 }
 
 function validateRecipeExternalServiceBoundaries(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {

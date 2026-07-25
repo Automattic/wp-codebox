@@ -11,7 +11,7 @@ import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePrev
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
-import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
+import { mergeRecipeSecretEnvSummary, resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -110,7 +110,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   await artifactPointer.update({ commandStatus: "queued" })
   const issues = [
     ...await validateWorkspaceRecipe(recipe, recipePath),
-    ...validateRecipeRuntimePolicy(recipe, options.policy),
+    ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
   ]
   if (issues.length > 0) {
     const failure = {
@@ -140,7 +140,8 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   }
   const secretEnvResolution = resolveRecipeSecretEnv(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const secretEnv = secretEnvResolution.values
-  const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
+  let secretEnvSummary = secretEnvResolution.summary
+  let effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
   let dependencyOverlays: PreparedDependencyOverlay[] = []
@@ -194,10 +195,22 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     managedServices = await phaseTracker.run("provision_runtime_services", { services: recipe.inputs?.services?.map(({ id, kind }) => ({ id, kind })) ?? [] }, async () => await provisionRuntimeServicesForRecipe(
       recipe.inputs?.services ?? [],
       async (provisioning) => await awaitRecipe("runtime-services.provision", provisioning),
-      { signal: interruption?.signal, onEvidence: (evidence) => { serviceEvidence = evidence } },
+      {
+        signal: interruption?.signal,
+        policy,
+        externalServices: recipe.inputs?.externalServices ?? [],
+        externalServiceWritesApproved: options.externalServiceWritesApproved,
+        onEvidence: (evidence) => { serviceEvidence = evidence },
+      },
     ))
     serviceEvidence = managedServices.evidence
     Object.assign(runtimeEnv, managedServices.env)
+    for (const [name, value] of Object.entries(managedServices.secretEnv)) {
+      delete runtimeEnv[name]
+      secretEnv[name] = value
+    }
+    secretEnvSummary = mergeRecipeSecretEnvSummary(secretEnvSummary, Object.keys(managedServices.secretEnv))
+    if (Object.keys(managedServices.secretEnv).length > 0) effectivePolicy = { ...policy, secrets: "connector-scoped" }
     const runtimeEnvironment = {
       kind: "wordpress" as const,
       name: plan.runtime.name,
@@ -353,7 +366,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
       }
-      const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvResolution.summary)
+      const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvSummary)
       const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(recipeEvidence, agentEvidence)
       markRecipeArtifactsFinalized(interruption, true)
@@ -374,7 +387,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts))
-      evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvResolution.summary)
+      evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvSummary)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
     }
@@ -489,7 +502,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         workspaceMounts,
         stagedFiles,
         policy: effectivePolicy,
-        secretEnv: secretEnvResolution.summary,
+        secretEnv: secretEnvSummary,
         executions,
         interruption,
       }))
@@ -714,7 +727,7 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
     const recipe = await loadWorkspaceRecipe(recipePath)
     const issues = [
       ...await validateWorkspaceRecipe(recipe, recipePath),
-      ...validateRecipeRuntimePolicy(recipe, options.policy),
+      ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
     ]
 
     return {
@@ -765,7 +778,7 @@ function distributionRuntimeEnv(recipe: WorkspaceRecipe): Record<string, string>
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
+  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child", "--approve-external-service-writes"]))
   if (parsed.positionals.length > 0) {
     throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
   }
@@ -776,6 +789,7 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
     previewLeaseRequested: parsed.options.get("--preview-lease") === true,
     previewLeaseChild: parsed.options.get("--preview-lease-child") === true,
+    externalServiceWritesApproved: parsed.options.get("--approve-external-service-writes") === true,
     timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
   }
   for (const [name, value] of parsed.options) {

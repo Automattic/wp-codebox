@@ -1344,13 +1344,7 @@ async function buildRecipeRunAttestation(args: {
         resultRef: artifactVerificationRef,
       }),
     },
-    secretEnvelope: {
-      schema: "wp-codebox/redacted-secret-envelope/v1",
-      provided: args.secretEnv.some((entry) => entry.status === "available"),
-      count: args.secretEnv.filter((entry) => entry.status === "available").length,
-      secrets: [...args.secretEnv].sort((a, b) => a.name.localeCompare(b.name)),
-      redaction: "names-only",
-    },
+    secretEnvelope: recipeSecretEnvelope(args.secretEnv),
     externalServices: {
       schema: "wp-codebox/external-service-boundaries-attestation/v1",
       boundaries: recipeExternalServiceBoundarySummaries(args.recipe),
@@ -1375,6 +1369,22 @@ async function buildRecipeRunAttestation(args: {
         ...(!args.verifier.enabled || args.verifier.strict ? [] : ["artifact-verifier"]),
       ],
     },
+  }
+}
+
+export function recipeSecretEnvelope(secretEnv: readonly RecipeSecretEnvSummaryEntry[]): {
+  schema: "wp-codebox/redacted-secret-envelope/v1"
+  provided: boolean
+  count: number
+  secrets: Array<{ name: string; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
+  redaction: "names-only"
+} {
+  return {
+    schema: "wp-codebox/redacted-secret-envelope/v1",
+    provided: secretEnv.some((entry) => entry.status === "available"),
+    count: secretEnv.filter((entry) => entry.status === "available").length,
+    secrets: [...secretEnv].sort((a, b) => a.name.localeCompare(b.name)),
+    redaction: "names-only",
   }
 }
 
