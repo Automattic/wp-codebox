@@ -66,9 +66,13 @@ try {
   const prefixConfusionSource = join(root, "tracked-symlink-plugin-private")
   const hostSecret = join(root, "host-secret.php")
   await mkdir(join(pluginSource, "includes"), { recursive: true })
+  await mkdir(join(pluginSource, "includes", "node_modules", "nested-package"), { recursive: true })
+  await mkdir(join(pluginSource, "package-a", "target", "debug"), { recursive: true })
   await mkdir(prefixConfusionSource)
   await writeFile(join(pluginSource, "plugin.php"), "<?php /* Plugin Name: Tracked Symlink Fixture */\n")
   await writeFile(join(pluginSource, "includes", "runtime.php"), "<?php return 'runtime';\n")
+  await writeFile(join(pluginSource, "includes", "node_modules", "nested-package", "ignored.js"), "ignored")
+  await writeFile(join(pluginSource, "package-a", "target", "debug", "ignored.bin"), "ignored")
   await writeFile(join(prefixConfusionSource, "secret.php"), "<?php return 'prefix secret';\n")
   await writeFile(hostSecret, "<?php return 'host secret';\n")
   await symlink("includes/runtime.php", join(pluginSource, "runtime-link.php"))
@@ -96,6 +100,9 @@ try {
   const stagedPlugin = staging.mounts[0].source
   assert.match(await readFile(join(stagedPlugin, "plugin.php"), "utf8"), /Plugin Name: Tracked Symlink Fixture/, "the plugin entrypoint remains available")
   assert.equal(await readFile(join(stagedPlugin, "includes", "runtime.php"), "utf8"), "<?php return 'runtime';\n", "nested runtime files remain available")
+  await assert.rejects(access(join(stagedPlugin, ".git")), /ENOENT/, "Git metadata is excluded from the staged mount")
+  await assert.rejects(access(join(stagedPlugin, "includes", "node_modules")), /ENOENT/, "nested JavaScript dependencies are excluded from the staged mount")
+  await assert.rejects(access(join(stagedPlugin, "package-a", "target")), /ENOENT/, "nested build outputs are excluded from the staged mount")
   assert.equal(await readFile(join(stagedPlugin, "runtime-link.php"), "utf8"), "<?php return 'runtime';\n", "a contained symlink is dereferenced into the staged mount")
   assert.equal(await readFile(join(stagedPlugin, "runtime-chain.php"), "utf8"), "<?php return 'runtime';\n", "a contained symlink chain is dereferenced into the staged mount")
   assert.equal(await readFile(join(stagedPlugin, "package-a", "vendor", "package-b", "package.php"), "utf8"), "<?php return 'package-b';\n", "a contained directory symlink is dereferenced into the staged mount")
@@ -122,6 +129,12 @@ try {
   assert.deepEqual(staging.phaseResult.metadata, { mounts: 1, skipped: 7, diagnostics: staging.diagnostics }, "staging evidence includes the skip diagnostics")
   await staging[Symbol.asyncDispose]()
   assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "successful staging cleanup removes its temporary root")
+
+  await assert.rejects(stageReadonlyPlaygroundMounts([
+    { source: pluginSource, target: "/wordpress/wp-content/plugins/tracked-symlink-plugin", mode: "readonly" },
+    { source: join(root, "missing-plugin"), target: "/wordpress/wp-content/plugins/missing-plugin", mode: "readonly" },
+  ]), /ENOENT/)
+  assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "failed staging cleanup removes its partially populated temporary root")
 
   const beforeReadonlyHash = sha256(await readFile(readonlySource))
   const server = await startPlaygroundCliServer(spec, [
