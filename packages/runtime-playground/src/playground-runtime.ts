@@ -1481,7 +1481,10 @@ class PlaygroundRuntime implements Runtime {
       },
       this.runtimeId,
       argv,
-      (scriptPath) => this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath }),
+      async (scriptPath) => {
+        const response = await this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+        return { ...response, text: response.text }
+      },
     )
   }
 
