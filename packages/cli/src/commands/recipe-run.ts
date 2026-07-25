@@ -200,6 +200,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         policy,
         externalServices: recipe.inputs?.externalServices ?? [],
         externalServiceWritesApproved: options.externalServiceWritesApproved,
+        reservedEnvNames: [...Object.keys(runtimeEnv), ...(recipe.inputs?.secretEnv ?? [])],
         onEvidence: (evidence) => { serviceEvidence = evidence },
       },
     ))

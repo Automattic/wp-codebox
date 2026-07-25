@@ -2,7 +2,7 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import { normalizeLiveProgressEvent, previewLease, resolveRuntimeSecretEnvTargets, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
+import { assertRuntimeSecretEnvTargetsAvailable, normalizeLiveProgressEvent, previewLease, resolveRuntimeSecretEnvTargets, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
@@ -45,6 +45,7 @@ export interface PlaygroundCliStartupOptions {
 }
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, distributionEnv(recipeDistribution(spec)?.env))
   const startedAt = Date.now()
   const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
     const event = {

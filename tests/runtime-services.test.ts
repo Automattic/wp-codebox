@@ -88,7 +88,7 @@ const collisions: WorkspaceRecipe = {
 }
 assert.deepEqual(
   (await validateWorkspaceRecipeSemantics(collisions, "recipe.json")).map((issue) => issue.code),
-  ["duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
+  ["runtime-service-secret-target-collision", "duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
 )
 
 const server = createServer((socket) => socket.end(Buffer.from([1, 0, 0, 0, 10])))

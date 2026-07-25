@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, assertRuntimeSecretEnvTargetsAvailable, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserArtifactFileManifest, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact, type BrowserArtifactFiles } from "./browser-artifacts.js"
@@ -348,6 +348,7 @@ class PlaygroundRuntime implements Runtime {
 
   async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
     assertRuntimeCommandAllowed(spec.command, this.spec.policy)
+    assertRuntimeSecretEnvTargetsAvailable(this.spec.secretEnvTargets, spec.environment ?? {})
 
     const startedAt = now()
     const commandId = id("command")

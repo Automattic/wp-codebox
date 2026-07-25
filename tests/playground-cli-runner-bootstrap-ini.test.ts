@@ -64,6 +64,12 @@ try {
     artifactsDirectory,
   }
 
+  await assert.rejects(startPlaygroundCliServer({
+    ...spec,
+    metadata: { recipe: { distribution: { name: "shadow", wordpress: { root: "/wordpress" }, env: { DB_PASSWORD: "shadow" } } } },
+  }, [], { cliModule }), /collides with injected environment/)
+  assert.equal(calls.length, 0, "distribution target shadows fail before Playground startup")
+
   const server = await startPlaygroundCliServer(spec, [], { cliModule })
   assert.equal((await server.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "secret")
   await server[Symbol.asyncDispose]()

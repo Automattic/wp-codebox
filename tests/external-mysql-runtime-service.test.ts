@@ -61,6 +61,24 @@ const exposedAdminIssues = await validateWorkspaceRecipeSemantics({
   workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 1;"] }] },
 }, "recipe.json")
 assert.ok(exposedAdminIssues.some((issue) => issue.code === "runtime-service-admin-env-exposed"), "administrative credentials cannot be projected into the sandbox")
+for (const inputs of [
+  { runtimeEnv: { DB_PASSWORD: "shadow" } },
+  { secretEnv: ["DB_PASSWORD"] },
+] as const) {
+  const collisionIssues = await validateWorkspaceRecipeSemantics({
+    schema: "wp-codebox/workspace-recipe/v1",
+    inputs: { ...inputs, externalServices, services: [externalService] },
+    workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 1;"] }] },
+  }, "recipe.json")
+  assert.ok(collisionIssues.some((issue) => issue.code === "runtime-service-secret-target-collision"))
+}
+const distributionCollisionIssues = await validateWorkspaceRecipeSemantics({
+  schema: "wp-codebox/workspace-recipe/v1",
+  distribution: { name: "fixture", wordpress: { root: "/wordpress" }, env: { DB_PASSWORD: "shadow" } },
+  inputs: { externalServices, services: [externalService] },
+  workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 1;"] }] },
+}, "recipe.json")
+assert.ok(distributionCollisionIssues.some((issue) => issue.code === "runtime-service-secret-target-collision"))
 const policyRecipe = { schema: "wp-codebox/workspace-recipe/v1" as const, inputs: { externalServices, services: [externalService] }, workflow: { steps: [{ command: "wordpress.phpunit", args: ["plugin-slug=example", "database-type=mysql"] }] } }
 assert.ok(validateRecipeRuntimePolicy(policyRecipe, { ...policy, network: "deny" }).some((issue) => issue.code === "runtime-policy-external-service-network-denied"))
 assert.ok(validateRecipeRuntimePolicy(policyRecipe, { ...policy, approvals: "never" }).some((issue) => issue.code === "runtime-policy-external-service-approval-required"))
@@ -116,12 +134,29 @@ assert.equal(approvalRefusalFake.calls.length, 0, "write approval refusal fails 
 const ambiguousTargetsFake = fakeDependencies()
 const secondExternalService: WorkspaceRecipeRuntimeService = { ...externalService, id: "external-db-two", outputs: { password: "SECOND_MYSQL_PASSWORD" } }
 await assert.rejects(provisionRuntimeServices([externalService, secondExternalService], { dependencies: ambiguousTargetsFake.dependencies, ...authorization }), RuntimeServiceProvisionError)
-assert.equal(ambiguousTargetsFake.calls.filter((call) => call.stdin?.startsWith("DROP DATABASE")).length, 2, "ambiguous connector targets release every provisioned database")
+assert.equal(ambiguousTargetsFake.calls.length, 0, "multiple connector targets fail before provisioning")
+const multipleConnectorIssues = await validateWorkspaceRecipeSemantics({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: { externalServices, services: [externalService, secondExternalService] },
+  workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 1;"] }] },
+}, "recipe.json")
+assert.ok(multipleConnectorIssues.some((issue) => issue.code === "ambiguous-runtime-service-secret-target"))
 
 const collidingTargetFake = fakeDependencies()
 const collidingTargetService: WorkspaceRecipeRuntimeService = { ...externalService, outputs: { host: "DB_PASSWORD", password: "MYSQL_PASSWORD" } }
 await assert.rejects(provisionRuntimeServices([collidingTargetService], { dependencies: collidingTargetFake.dependencies, ...authorization }), RuntimeServiceProvisionError)
-assert.equal(collidingTargetFake.calls.some((call) => call.stdin?.startsWith("DROP DATABASE")), true, "non-secret target collisions release provisioned resources")
+assert.equal(collidingTargetFake.calls.length, 0, "managed output target collisions fail before provisioning")
+
+const reservedTargetFake = fakeDependencies()
+await assert.rejects(provisionRuntimeServices([externalService], { dependencies: reservedTargetFake.dependencies, ...authorization, reservedEnvNames: ["DB_PASSWORD"] }), RuntimeServiceProvisionError)
+assert.equal(reservedTargetFake.calls.length, 0, "injected target shadows fail before provisioning")
+
+const lateCollisionService: WorkspaceRecipeRuntimeService = structuredClone(externalService)
+const lateCollisionFake = fakeDependencies((call) => {
+  if (call.stdin?.startsWith("SELECT EXISTS")) lateCollisionService.outputs.host = "DB_PASSWORD"
+})
+await assert.rejects(provisionRuntimeServices([lateCollisionService], { dependencies: lateCollisionFake.dependencies, ...authorization }), RuntimeServiceProvisionError)
+assert.equal(lateCollisionFake.calls.some((call) => call.stdin?.startsWith("DROP DATABASE")), true, "post-allocation target collisions roll back provisioned resources")
 
 const successFake = fakeDependencies()
 const provisioned = await provisionRuntimeServices([externalService], { dependencies: successFake.dependencies, ...authorization })
@@ -162,6 +197,8 @@ try {
     secretEnvTargets: { ...provisioned.secretEnvTargets, CACHE_AUTH: "CACHE_PASSWORD" },
     artifactsDirectory: bootstrapRoot,
   }
+  assert.throws(() => bootstrapPhpCode({ ...runtimeSpec, runtimeEnv: { ...runtimeSpec.runtimeEnv, DB_PASSWORD: "shadow" } }, "echo 1;", []), /collides with injected environment/)
+  assert.throws(() => bootstrapPhpCode(runtimeSpec, "echo 1;", [`runtime-env-json=${JSON.stringify({ DB_PASSWORD: "shadow" })}`]), /collides with injected environment/)
   const generatedCommandPhp = bootstrapPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');", [])
   const generatedAbilityPhp = bootstrapAbilityPhpCode(runtimeSpec, "echo getenv('DB_PASSWORD');")
   assert.equal(generatedCommandPhp.includes(generatedPassword), false, "connector password is absent from generated command PHP")

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
 import { phpCliStreamConstants, phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
-import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeSecretEnvTargetsAvailable, normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string
@@ -9,6 +9,7 @@ interface PhpBootstrapBridge {
 }
 
 export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string): string {
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {})
   return `<?php
 ${phpFatalDiagnosticPhp()}
 define( 'REST_REQUEST', true );
@@ -21,6 +22,8 @@ ${phpBody(code)}`
 }
 
 export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
+  const executionEnvironment = runtimeEnvOverride(args)
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, executionEnvironment)
   const bootstrapMode = argValue(args, "bootstrap")
   if (bootstrapMode === "none") {
     return code
@@ -281,6 +284,11 @@ function secretEnvPhp(spec: RuntimeCreateSpec): string {
 }
 
 function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
+  const executionEnvironment = runtimeEnvOverride(args)
+  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
+}
+
+function runtimeEnvOverride(args: string[]): Record<string, unknown> {
   const override = argValue(args, "runtime-env-json")
   let executionEnvironment: Record<string, unknown> = {}
   if (override) {
@@ -288,5 +296,5 @@ function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("runtime-env-json must be a JSON object")
     executionEnvironment = parsed as Record<string, unknown>
   }
-  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
+  return executionEnvironment
 }
