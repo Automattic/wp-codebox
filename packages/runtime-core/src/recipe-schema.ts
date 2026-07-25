@@ -801,6 +801,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           pluginFile: { type: "string" },
           activate: { type: "boolean" },
           loadAs: { enum: ["plugin", "mu-plugin"] },
+          composer: {
+            enum: ["install"],
+            description: "Explicitly run Composer install in a staged copy of a local plugin when vendor/autoload.php is missing.",
+          },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
           metadata: { $ref: "#/$defs/metadata" },
         },

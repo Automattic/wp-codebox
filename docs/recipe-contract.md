@@ -201,10 +201,13 @@ summary from observed hosts to declared boundary ids where host names match
 
 `inputs.extra_plugins` mounts additional WordPress plugins before workflow steps
 run. Each entry requires `source` or `sourcePath` and may include `sourceSubdir`,
-`mountSlug`, `pluginFile`, `activate`, `loadAs`, and `sha256`. `sourcePath` is
-the source root, `sourceSubdir` is an optional plugin directory below that root,
-`mountSlug` is the WordPress plugin directory, and `pluginFile` is relative to
-the mounted plugin slug.
+`mountSlug`, `pluginFile`, `activate`, `loadAs`, `composer`, and `sha256`.
+`sourcePath` is the source root, `sourceSubdir` is an optional plugin directory
+below that root, `mountSlug` is the WordPress plugin directory, and `pluginFile`
+is relative to the mounted plugin slug. Local plugins are mounted as shipped;
+the presence of `composer.json` does not install dependencies or mutate the
+source. Set `composer` to `install` only when a source-form plugin requires a
+missing `vendor/autoload.php`. WP Codebox then runs Composer in a temporary copy.
 
 ```json
 {
@@ -226,7 +229,8 @@ the mounted plugin slug.
         "sourcePath": "../monorepo",
         "sourceSubdir": "plugins/example-plugin",
         "mountSlug": "example-plugin",
-        "pluginFile": "example-plugin/example-plugin.php"
+        "pluginFile": "example-plugin/example-plugin.php",
+        "composer": "install"
       }
     ]
   }

@@ -229,6 +229,9 @@ function normalizeExtraPlugins(plugins: readonly WorkspaceRecipeExtraPlugin[] = 
     if (plugin.loadAs !== undefined) {
       normalized.loadAs = plugin.loadAs
     }
+    if (plugin.composer !== undefined) {
+      normalized.composer = plugin.composer
+    }
 
     return normalized
   })
