@@ -30,6 +30,7 @@ import {
   restPerformanceObservationInputFromArgs,
   restPerformanceObservationPhpCode,
   phpunitRunCode,
+  phpunitMultisitePreinstallCode,
   pluginStateInputFromArgs,
   pluginStatePhpCode,
   PLUGIN_PHPUNIT_RESULT_FILE,
@@ -53,6 +54,7 @@ import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadin
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
+import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
@@ -910,15 +912,8 @@ export async function runPhpunitCommand({
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
-  const bootstrapMode = argValue(args, "bootstrap-mode")?.trim() || "managed"
+  const { bootstrapMode, databaseType, externalDatabase, multisite } = phpunitExecutionSemantics(args, runtimeSpec)
   const declaredDatabaseType = argValue(args, "database-type")?.trim()
-  if (declaredDatabaseType && declaredDatabaseType !== "sqlite" && declaredDatabaseType !== "mysql") {
-    throw new Error(`wordpress.phpunit does not support database-type=${declaredDatabaseType}; supported backends are sqlite and mysql`)
-  }
-  const externalDatabase = runtimeSpec.environment?.databaseSetup === "external"
-  const databaseType: "sqlite" | "mysql" = declaredDatabaseType === "mysql" || declaredDatabaseType === "sqlite"
-    ? declaredDatabaseType
-    : externalDatabase && runtimeSpec.runtimeEnv?.DB_HOST ? "mysql" : "sqlite"
   if (databaseType === "mysql" && !externalDatabase) {
     throw new Error("wordpress.phpunit requires a managed external database service when database-type=mysql; refusing to substitute SQLite")
   }
@@ -928,6 +923,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const managedMultisitePreinstalled = !explicitCode && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
@@ -946,12 +942,22 @@ export async function runPhpunitCommand({
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
+    dependencyPlugins: jsonArrayArg(args, "dependency-plugins-json").map((plugin) => {
+      if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)) throw new Error("dependency-plugins-json entries must be objects")
+      const metadata = plugin as Record<string, unknown>
+      const path = typeof metadata.path === "string" ? metadata.path : ""
+      const pluginFile = typeof metadata.pluginFile === "string" ? metadata.pluginFile : ""
+      if (!path) throw new Error("dependency-plugins-json entries require path")
+      if (!pluginFile) throw new Error("dependency-plugins-json entries require pluginFile")
+      return { path, pluginFile, activate: metadata.activate !== false, loadAs: metadata.loadAs === "mu-plugin" ? "mu-plugin" as const : "plugin" as const }
+    }),
     bootstrapFiles: jsonArrayArg(args, "bootstrap-files-json").filter((value): value is string => typeof value === "string"),
     preloadFiles: jsonArrayArg(args, "preload-files-json").filter((value): value is string => typeof value === "string"),
     bootstrapMode,
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
-    multisite: booleanArg(args, "multisite"),
+    multisite,
     databaseType,
+    managedMultisitePreinstalled,
     resultFile,
   })
   if (!explicitCode && !pluginSlug) {
@@ -960,6 +966,17 @@ export async function runPhpunitCommand({
   let response: PlaygroundRunResponse
   try {
     const bootstrapArgs = explicitCode ? args : [...args, "bootstrap=runtime-only"]
+    if (managedMultisitePreinstalled) {
+      const preinstallCode = phpunitMultisitePreinstallCode({
+        testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+        env: jsonObjectArg(args, "env-json"),
+        wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
+        databaseType,
+        resultFile,
+      })
+      const preinstallResponse = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, preinstallCode, ["recipe-active-plugins=none", ...bootstrapArgs]) })
+      assertPlaygroundResponseOk("wordpress.phpunit multisite preinstall", preinstallResponse)
+    }
     response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, bootstrapArgs, undefined, resultFile) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)

@@ -52,6 +52,7 @@ try {
     recipe: setupRecipe,
     recipeDirectory: root,
     prepared,
+    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, runtimeEnv: {} },
     runtime: {
       async mount(spec: MountSpec) { mountedInput = spec },
     } as never,

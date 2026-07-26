@@ -296,7 +296,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     })
     interruption?.throwIfInterrupted()
 
-    executions.push(...(await applyRecipeRuntimeSetup({ recipe, recipeDirectory, runtime, prepared: preparedRuntimeSetup, phaseExecutor, interruption })).executions)
+    executions.push(...(await applyRecipeRuntimeSetup({ recipe, recipeDirectory, runtime, runtimeSpec: runtimeCreateSpec, prepared: preparedRuntimeSetup, phaseExecutor, interruption })).executions)
 
     fixtureDatabases = await phaseTracker.run("import_fixture_databases", phaseFixtureDatabaseData(recipe), async () => await awaitRecipe("fixture-databases.import", importRecipeFixtureDatabases(recipe, recipeDirectory, runtime!, executions)))
     const siteSeeds = await awaitRecipe("site-seeds.import", importRecipeSiteSeeds(recipe, recipeDirectory, runtime!, executions))

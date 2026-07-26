@@ -21,11 +21,35 @@ const recipe: WorkspaceRecipe = {
       mode: "readonly",
     }],
   },
-  workflow: { steps: [] },
+  workflow: {
+    before: [{ command: "wordpress.run-php", args: ["code=echo 'preexisting setup';"] }],
+    steps: [{ command: "wordpress.phpunit", args: [
+      "multisite=true",
+      'dependency-plugins-json=[{"path":"/wordpress/wp-content/plugins/fixture-dependency","pluginFile":"fixture-dependency/fixture-dependency.php","activate":true,"loadAs":"plugin"}]',
+    ] }],
+  },
 }
 const prepared: PreparedRecipeRuntimeSetup = {
   workspaceMounts: [],
-  extraPlugins: [],
+  extraPlugins: [{
+    source: "/tmp/host-extra-plugin",
+    slug: "fixture-dependency",
+    target: "/wordpress/wp-content/plugins/fixture-dependency",
+    pluginFile: "fixture-dependency/fixture-dependency.php",
+    activate: true,
+    loadAs: "plugin",
+    cleanupPaths: [],
+    provenance: { kind: "local", original: "/tmp/host-extra-plugin" },
+  }, {
+    source: "/tmp/host-unrelated-plugin",
+    slug: "unrelated-plugin",
+    target: "/wordpress/wp-content/plugins/unrelated-plugin",
+    pluginFile: "unrelated-plugin/unrelated-plugin.php",
+    activate: true,
+    loadAs: "plugin",
+    cleanupPaths: [],
+    provenance: { kind: "local", original: "/tmp/host-unrelated-plugin" },
+  }],
   dependencyOverlays: [],
   overlays: [],
   inputMountBaselinePaths: [],
@@ -57,6 +81,28 @@ const runtime = {
     assert.deepEqual(mounts, [
       {
         type: "directory",
+        source: "/tmp/host-extra-plugin",
+        target: "/wordpress/wp-content/plugins/fixture-dependency",
+        mode: "readonly",
+        metadata: {
+          kind: "extra-plugin",
+          slug: "fixture-dependency",
+          source: { kind: "local", original: "/tmp/host-extra-plugin" },
+        },
+      },
+      {
+        type: "directory",
+        source: "/tmp/host-unrelated-plugin",
+        target: "/wordpress/wp-content/plugins/unrelated-plugin",
+        mode: "readonly",
+        metadata: {
+          kind: "extra-plugin",
+          slug: "unrelated-plugin",
+          source: { kind: "local", original: "/tmp/host-unrelated-plugin" },
+        },
+      },
+      {
+        type: "directory",
         source: inputMountSource,
         target: prepared.inputMountPathMap[0].canonicalTarget,
         mode: "readonly",
@@ -76,7 +122,10 @@ const runtime = {
     ])
   },
   async materializeMounts() { throw new Error("setup should use materializeStagedInputs when available") },
-  async execute(spec) { calls.push(`execute:${spec.command}`); throw new Error("setup should not execute commands in this fixture") },
+  async execute(spec) {
+    calls.push(`execute:${spec.command}:${(spec.args ?? []).join(" ")}`)
+    return { id: "setup", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "", stderr: "", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
+  },
   async observe() { throw new Error("unused") },
   async snapshot() { throw new Error("unused") },
   async collectArtifacts() { throw new Error("unused") },
@@ -96,23 +145,33 @@ const phaseExecutor = {
 }
 
 try {
-  await applyRecipeRuntimeSetup({ recipe, recipeDirectory: process.cwd(), runtime, prepared, phaseExecutor: phaseExecutor as never })
+  await applyRecipeRuntimeSetup({
+    recipe,
+    recipeDirectory: process.cwd(),
+    runtime,
+    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "127.0.0.1" } },
+    prepared,
+    phaseExecutor: phaseExecutor as never,
+  })
 } finally {
   await rm(inputMountSource, { recursive: true, force: true })
 }
 
 const mountIndex = calls.indexOf("mount:/workspace/example/bundles/runtime-agent")
+const extraPluginMountIndex = calls.indexOf("mount:/wordpress/wp-content/plugins/fixture-dependency")
 const inputMountIndex = calls.indexOf(`mount:${prepared.inputMountPathMap[0].canonicalTarget}`)
 const materializeOperationIndex = calls.indexOf("operation:input.materialize")
-const materializeIndex = calls.indexOf(`materialize:${prepared.inputMountPathMap[0].canonicalTarget},/workspace/example/bundles/runtime-agent`)
+const materializeIndex = calls.indexOf(`materialize:/wordpress/wp-content/plugins/fixture-dependency,/wordpress/wp-content/plugins/unrelated-plugin,${prepared.inputMountPathMap[0].canonicalTarget},/workspace/example/bundles/runtime-agent`)
 assert.ok(inputMountIndex >= 0, "input source is mounted")
 assert.match(prepared.inputMountPathMap[0].canonicalTarget, /^\/tmp\/wp-codebox-inputs\/0-public_html-[a-f0-9]{12}$/)
 assert.ok(calls.includes(`metadata:/home/example/public_html->${prepared.inputMountPathMap[0].canonicalTarget}`), "input mount metadata records original and canonical targets")
 assert.ok(mountIndex >= 0, "staged source is mounted")
+assert.ok(extraPluginMountIndex >= 0, "prepared extra plugin is mounted")
 assert.ok(materializeOperationIndex > inputMountIndex, "materialization is scheduled after input mount")
 assert.ok(materializeOperationIndex > mountIndex, "materialization is scheduled after staged mount")
+assert.ok(materializeOperationIndex > extraPluginMountIndex, "materialization is scheduled after extra-plugin mount")
 assert.ok(materializeIndex > materializeOperationIndex, "materialization runs inside the setup phase before commands")
-assert.equal(calls.some((call) => call.startsWith("execute:")), false)
+assert.equal(calls.filter((call) => call.includes("activation-recipe-plugin")).length, 1, "managed MySQL multisite defers only the dependency associated with the qualifying PHPUnit step")
 
 const executedWorkflowSpecs: ExecutionSpec[] = []
 const workflowRuntime = {

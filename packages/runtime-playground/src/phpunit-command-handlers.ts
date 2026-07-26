@@ -16,12 +16,14 @@ export interface PhpunitRunCodeOptions {
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
+  dependencyPlugins?: Array<{ path: string; pluginFile: string; activate: boolean; loadAs: "plugin" | "mu-plugin" }>
   bootstrapFiles: string[]
   preloadFiles?: string[]
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
   databaseType: "sqlite" | "mysql"
+  managedMultisitePreinstalled?: boolean
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
    * to a /tmp path so diagnostics survive read-only plugin mounts and a mid-install
@@ -29,6 +31,8 @@ export interface PhpunitRunCodeOptions {
    */
   resultFile?: string
 }
+
+export type PhpunitMultisitePreinstallCodeOptions = Pick<PhpunitRunCodeOptions, "testsDir" | "env" | "wpConfigDefines" | "databaseType" | "resultFile">
 
 export interface CorePhpunitRunCodeOptions {
   coreRoot: string
@@ -334,6 +338,105 @@ function ${functionName}(array $argv) {
 }`
 }
 
+function managedPhpunitConfigWriterPhp(): string {
+  return `function pg_write_managed_test_config(array $extra_defines, string $table_prefix, string $database_type): string {
+    $config_path = '/tmp/wp-tests-config.php';
+    $config = "<?php\n";
+    pg_append_wp_config_defines($config, $extra_defines);
+    $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
+    if ($database_type === 'mysql') {
+        $db_host = getenv('DB_HOST');
+        if (!is_string($db_host) || $db_host === '') {
+            throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
+        }
+        $db_port = getenv('DB_PORT');
+        if (is_string($db_port) && $db_port !== '') {
+            $db_host .= ':' . $db_port;
+        }
+        foreach (array(
+            'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
+            'DB_USER' => getenv('DB_USER') ?: 'runtime',
+            'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
+            'DB_HOST' => $db_host,
+        ) as $name => $value) {
+            $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
+        }
+    } else {
+        $config .= <<<'CONFIG'
+define('DB_NAME', ':memory:');
+define('DB_USER', 'root');
+define('DB_PASSWORD', '');
+define('DB_HOST', 'localhost');
+CONFIG;
+    }
+    $config .= <<<'CONFIG'
+define('DB_CHARSET', 'utf8');
+define('WP_TESTS_DOMAIN', 'example.org');
+define('WP_TESTS_EMAIL', 'admin@example.org');
+define('WP_TESTS_TITLE', 'Test Blog');
+define('WP_PHP_BINARY', 'php');
+define('ABSPATH', '/wordpress/');
+define('FS_CHMOD_FILE', 0644);
+define('FS_CHMOD_DIR', 0755);
+define('FS_METHOD', 'direct');
+CONFIG;
+    file_put_contents($config_path, $config);
+    return $config_path;
+}`
+}
+
+export function phpunitMultisitePreinstallCode(options: PhpunitMultisitePreinstallCodeOptions): string {
+  const wpConfigDefines = { ...options.wpConfigDefines }
+  for (const name of ["MULTISITE", "SUBDOMAIN_INSTALL", "DOMAIN_CURRENT_SITE", "PATH_CURRENT_SITE", "SITE_ID_CURRENT_SITE", "BLOG_ID_CURRENT_SITE", "WPMU_PLUGIN_DIR"]) {
+    delete wpConfigDefines[name]
+  }
+  wpConfigDefines.WPMU_PLUGIN_DIR = "/tmp/wp-codebox-preinstall-mu-plugins"
+  return `error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+
+$tests_dir = ${JSON.stringify(options.testsDir)};
+$bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
+$wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(wpConfigDefines))}, true);
+$database_type = ${JSON.stringify(options.databaseType)};
+$result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
+$preinstall_complete = false;
+
+@file_put_contents($result_file, '');
+register_shutdown_function(static function () use (&$preinstall_complete, $result_file): void {
+    if ($preinstall_complete) {
+        return;
+    }
+    $failure = error_get_last();
+    if (is_array($failure) && in_array($failure['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR), true)) {
+        @file_put_contents($result_file, 'STAGE_FATAL:preinstall:' . (string) ($failure['message'] ?? '') . ' at ' . (string) ($failure['file'] ?? '') . ':' . (int) ($failure['line'] ?? 0) . "\n", FILE_APPEND);
+    }
+});
+
+${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "error_log('Skipping invalid environment key: ' . var_export($name, true));")}
+${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "error_log('Skipping invalid wp_config_defines key: ' . var_export($name, true));")}
+${managedPhpunitConfigWriterPhp()}
+
+pg_apply_env($bench_env);
+if (!is_dir('/tmp/wp-codebox-preinstall-mu-plugins') && !mkdir('/tmp/wp-codebox-preinstall-mu-plugins', 0700, true) && !is_dir('/tmp/wp-codebox-preinstall-mu-plugins')) {
+    throw new RuntimeException('Could not create isolated multisite preinstall mu-plugin directory.');
+}
+$config_path = pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type);
+if (!defined('WP_TESTS_MULTISITE')) {
+    define('WP_TESTS_MULTISITE', true);
+}
+$argv = array('install.php', $config_path, 'run_ms_tests', 'no_core_tests');
+$_SERVER['argv'] = $argv;
+$_SERVER['argc'] = count($argv);
+try {
+    require $tests_dir . '/includes/install.php';
+    $preinstall_complete = true;
+} catch (Throwable $error) {
+    @file_put_contents($result_file, 'STAGE_FAIL:preinstall:' . get_class($error) . ': ' . $error->getMessage() . ' at ' . $error->getFile() . ':' . $error->getLine() . "\n", FILE_APPEND);
+    throw $error;
+}`
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -357,12 +460,14 @@ $phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitA
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\n"))};
+$dependency_plugins = json_decode(${JSON.stringify(JSON.stringify(options.dependencyPlugins ?? []))}, true);
 $bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
 $preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFiles ?? []))}, true);
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
 $database_type = ${JSON.stringify(options.databaseType)};
+$managed_multisite_preinstalled = ${JSON.stringify(options.managedMultisitePreinstalled ?? false)};
 
 function pg_build_phpunit_argv($raw): array {
     $phpunit_argv = array('phpunit');
@@ -414,6 +519,8 @@ function pg_resolve_selected_test_file($selected_test_file, $test_dir, $runtime_
 ${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));")}
 
 ${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "pg_log('NOTICE: skipping invalid wp_config_defines key: ' . var_export($name, true));")}
+
+${managedPhpunitConfigWriterPhp()}
 
 function pg_diagnostic_context(): string {
     global $current_stage;
@@ -661,48 +768,8 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         $autoload_required = !empty($cfg['autoload_required']);
         $extra_defines = $cfg['extra_defines'] ?? array();
         $table_prefix = isset($cfg['table_prefix']) && is_string($cfg['table_prefix']) && $cfg['table_prefix'] !== '' ? $cfg['table_prefix'] : 'wptests_';
-        $config_path = '/tmp/wp-tests-config.php';
-        $config = "<?php\n";
-        pg_append_wp_config_defines($config, $extra_defines);
-        $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
         $database_type = (string) ($cfg['database_type'] ?? 'sqlite');
-        if ($database_type === 'mysql') {
-            $db_host = getenv('DB_HOST');
-            if (!is_string($db_host) || $db_host === '') {
-                throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
-            }
-            $db_port = getenv('DB_PORT');
-            if (is_string($db_port) && $db_port !== '') {
-                $db_host .= ':' . $db_port;
-            }
-            foreach (array(
-                'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
-                'DB_USER' => getenv('DB_USER') ?: 'runtime',
-                'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
-                'DB_HOST' => $db_host,
-            ) as $name => $value) {
-                $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
-            }
-        } else {
-            $config .= <<<'CONFIG'
-define('DB_NAME', ':memory:');
-define('DB_USER', 'root');
-define('DB_PASSWORD', '');
-define('DB_HOST', 'localhost');
-CONFIG;
-        }
-        $config .= <<<'CONFIG'
-define('DB_CHARSET', 'utf8');
-define('WP_TESTS_DOMAIN', 'example.org');
-define('WP_TESTS_EMAIL', 'admin@example.org');
-define('WP_TESTS_TITLE', 'Test Blog');
-define('WP_PHP_BINARY', 'php');
-define('ABSPATH', '/wordpress/');
-define('FS_CHMOD_FILE', 0644);
-define('FS_CHMOD_DIR', 0755);
-define('FS_METHOD', 'direct');
-CONFIG;
-        file_put_contents($config_path, $config);
+        $config_path = pg_write_managed_test_config($extra_defines, $table_prefix, $database_type);
         if ($harness_autoload !== '' && is_readable($harness_autoload)) {
             pg_preload_wp_cli_namespaced_functions($harness_autoload);
             require_once $harness_autoload;
@@ -967,28 +1034,91 @@ function pg_run_install_stage(array $cfg) {
     }
 }
 
+function pg_run_preinstalled_wordpress_stage(array $cfg): void {
+    global $argv, $pg_stage_output_buffering, $wp_rewrite;
+    pg_stage_begin('install');
+    try {
+        $config_path = $cfg['config_path'];
+        $tests_dir = $cfg['tests_dir'];
+        require_once $config_path;
+        tests_reset__SERVER();
+        $GLOBALS['PHP_SELF'] = '/index.php';
+        $_SERVER['PHP_SELF'] = '/index.php';
+        tests_add_filter('wp_die_handler', '_wp_die_handler_filter_exit');
+        $pg_stage_output_buffering = true;
+        ob_start();
+        require_once ABSPATH . 'wp-settings.php';
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+        $pg_stage_output_buffering = false;
+        if (is_dir($tests_dir . '/data/themedir1')) {
+            register_theme_directory($tests_dir . '/data/themedir1');
+        }
+        pg_log('NOTICE:using canonical preinstalled multisite schema');
+        pg_stage_ok('install');
+    } catch (Throwable $e) {
+        $pg_stage_output_buffering = false;
+        pg_stage_fail('install', $e);
+        exit(1);
+    }
+}
+
 function pg_run_load_deps_stage(array $cfg): array {
     pg_stage_begin('load_deps');
     try {
-        $loaded = array();
-        foreach (explode("\n", (string) ($cfg['dep_mounts'] ?? '')) as $dep_mount) {
-            $dep_mount = trim($dep_mount);
-            if ($dep_mount === '') {
-                continue;
-            }
-            foreach (glob($dep_mount . '/*.php') ?: array() as $dep_file) {
-                if (basename($dep_file) === 'db.php') {
-                    continue;
-                }
-                if (strpos(file_get_contents($dep_file), 'Plugin Name:') !== false) {
-                    require_once $dep_file;
-                    $loaded[] = $dep_file;
-                    break;
+        $result = array('loaded' => array(), 'activate' => array());
+        $plugins = is_array($cfg['plugins'] ?? null) ? $cfg['plugins'] : array();
+        if (empty($plugins)) {
+            foreach (explode("\n", (string) ($cfg['dep_mounts'] ?? '')) as $path) {
+                if (trim($path) !== '') {
+                    $slug = basename(rtrim(str_replace('\\\\', '/', trim($path)), '/'));
+                    $plugins[] = array('path' => $path, 'pluginFile' => $slug . '/' . $slug . '.php', 'activate' => true, 'loadAs' => 'plugin');
                 }
             }
         }
+        foreach ($plugins as $plugin) {
+            if (!is_array($plugin) || !is_string($plugin['path'] ?? null) || !is_string($plugin['pluginFile'] ?? null)) {
+                throw new RuntimeException('managed PHPUnit dependency metadata must contain a plugin path and entrypoint');
+            }
+            $load_as = ($plugin['loadAs'] ?? 'plugin') === 'mu-plugin' ? 'mu-plugin' : 'plugin';
+            $declared_plugin_root = $load_as === 'mu-plugin' ? WPMU_PLUGIN_DIR . '/contained-runtime' : WP_PLUGIN_DIR;
+            $plugin_root = realpath($declared_plugin_root);
+            if ($plugin_root === false || !is_dir($plugin_root)) {
+                throw new RuntimeException('WordPress dependency root is unavailable while loading managed PHPUnit dependencies');
+            }
+            $dep_mount = rtrim(str_replace('\\\\', '/', trim($plugin['path'])), '/');
+            $dep_real = realpath($dep_mount);
+            if ($dep_real === false || !is_dir($dep_real) || dirname($dep_real) !== $plugin_root) {
+                throw new RuntimeException('managed PHPUnit dependency must be a direct child of its declared WordPress plugin root: ' . $dep_mount);
+            }
+            if ($dep_mount !== $declared_plugin_root . '/' . basename($dep_mount)) {
+                throw new RuntimeException('managed PHPUnit dependency path is not canonical: ' . $dep_mount);
+            }
+            $plugin_file = trim(str_replace('\\\\', '/', $plugin['pluginFile']));
+            $slug = basename($dep_mount);
+            if ($plugin_file === '' || str_starts_with($plugin_file, '/') || str_contains($plugin_file, '..') || !str_starts_with($plugin_file, $slug . '/') || !str_ends_with($plugin_file, '.php')) {
+                throw new RuntimeException('managed PHPUnit dependency entrypoint is unsafe or outside its plugin slug: ' . $plugin_file);
+            }
+            $entrypoint = $dep_real . '/' . substr($plugin_file, strlen($slug) + 1);
+            $loaded_file = realpath($entrypoint);
+            if ($loaded_file === false || !is_file($loaded_file) || !is_readable($loaded_file) || strpos($loaded_file, rtrim($dep_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+                throw new RuntimeException('managed PHPUnit dependency entrypoint is not a readable contained file: ' . $plugin_file);
+            }
+            foreach (array($dep_real . '/vendor/autoload_packages.php', $dep_real . '/vendor/autoload.php') as $composer_autoload) {
+                if (is_file($composer_autoload) && is_readable($composer_autoload)) {
+                    require_once $composer_autoload;
+                    break;
+                }
+            }
+            require_once $loaded_file;
+            $result['loaded'][] = $loaded_file;
+            if ($load_as === 'plugin' && !empty($plugin['activate'])) {
+                $result['activate'][] = $loaded_file;
+            }
+        }
         pg_stage_ok('load_deps');
-        return $loaded;
+        return $result;
     } catch (Throwable $e) {
         pg_stage_fail('load_deps', $e);
         exit(1);
@@ -1058,7 +1188,7 @@ function pg_activate_plugin_file(string $plugin_file, bool $network_wide): void 
     pg_log('PLUGIN_ACTIVATE_BEGIN ' . $plugin_basename . ' ' . pg_diagnostic_context());
     do_action('activate_' . $plugin_basename, $network_wide);
     pg_mark_plugin_active($plugin_basename, $network_wide);
-    do_action('activated_plugin', $plugin_basename, false, $network_wide);
+    do_action('activated_plugin', $plugin_basename, $network_wide);
     pg_log('PLUGIN_ACTIVATE_OK ' . $plugin_basename . ' ' . pg_diagnostic_context());
 }
 
@@ -1163,14 +1293,19 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
     $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
 });
 
-pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+if ($managed_multisite_preinstalled) {
+    pg_run_preinstalled_wordpress_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir));
+} else {
+    pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+}
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
-$loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
+$dependency_load = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts, 'plugins' => $dependency_plugins));
+$loaded_dep_files = $dependency_load['loaded'];
 $deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);
 $deferred_dependency_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_dependency_init_callbacks);
-$activation_files = $loaded_dep_files;
+$activation_files = $dependency_load['activate'];
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
 }
@@ -1377,7 +1512,8 @@ try {
     $runner = new PHPUnit\\TextUI\\TestRunner();
     $result = $runner->run($suite, $phpunit_args);
     pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
-    pg_log('TESTS: ' . $result->count() . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
+    $assertions = class_exists('PHPUnit\\Framework\\Assert') && method_exists('PHPUnit\\Framework\\Assert', 'getCount') ? PHPUnit\\Framework\\Assert::getCount() : 0;
+    pg_log('TESTS: ' . $result->count() . ' ASSERTIONS: ' . $assertions . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
     pg_stage_ok('run_tests');
     exit($result->wasSuccessful() ? 0 : 1);
 } catch (Throwable $e) {
