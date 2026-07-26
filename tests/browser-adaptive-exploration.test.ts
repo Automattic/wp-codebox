@@ -9,7 +9,9 @@ import {
   planBrowserAdaptiveStateActions,
 } from "../packages/runtime-core/src/browser-adaptive-exploration.js"
 import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
+import { discoverBrowserActionCorpusDescriptors } from "../packages/runtime-playground/src/browser-action-discovery.js"
 import { exploreAdaptiveBrowserStateMachine } from "../packages/runtime-playground/src/browser-adaptive-explorer.js"
+import { executeBrowserInteractionStep } from "../packages/runtime-playground/src/browser-interactions.js"
 import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { closeHttpServer, listenLocalHttpServer } from "../packages/runtime-playground/src/preview-server.js"
 
@@ -109,6 +111,84 @@ test("adaptive contract normalizes every safety and exploration bound", () => {
     loadingIndicators: 0,
   }, allFamilies)
   assert.deepEqual(new Set(planned.map((action) => action.family)), new Set(["click", "fill", "select", "submit", "keyboard", "back", "reload", "repeat", "double-submit"]))
+})
+
+test("adaptive planner selects actions by HTML input type capability", () => {
+  const fillableTypes = ["text", "search", "tel", "url", "email", "password", "number"]
+  const toggleTypes = ["checkbox", "radio"]
+  const buttonTypes = ["button", "reset"]
+  const submitTypes = ["submit", "image"]
+  const unsupportedTypes = ["color", "date", "datetime-local", "file", "hidden", "month", "range", "time", "week"]
+  const descriptors = [
+    { id: "default", kind: "input" as const, selector: "#default", formId: "form", frameId: "document" },
+    ...[...fillableTypes, ...toggleTypes, ...buttonTypes, ...submitTypes, ...unsupportedTypes].map((type) => ({ id: type, kind: "input" as const, selector: `#${type}`, type, formId: "form", frameId: "document" })),
+    { id: "textarea", kind: "textarea" as const, selector: "#textarea", formId: "form", frameId: "document" },
+    { id: "disabled", kind: "input" as const, selector: "#disabled", type: "text", disabled: true, frameId: "document" },
+    { id: "readonly", kind: "input" as const, selector: "#readonly", type: "text", readonly: true, frameId: "document" },
+  ]
+  const contract = browserAdaptiveExplorationContract({ seed: "input-capabilities", startUrl: "/fixture" })
+  const planned = planBrowserAdaptiveStateActions({
+    digest: "state",
+    url: "/fixture",
+    historyLength: 1,
+    historyStateDigest: "history",
+    descriptorDigest: "descriptors",
+    descriptors,
+    frames: [{ id: "document", url: "/fixture", scope: "document" }],
+    visits: 1,
+    depth: 0,
+    loadingIndicators: 0,
+  }, contract)
+  const familiesFor = (id: string) => planned.filter((action) => action.descriptorId === id).map((action) => action.family)
+
+  for (const type of ["default", ...fillableTypes, "textarea"]) assert.deepEqual(familiesFor(type), ["fill", "keyboard", "submit", "repeat"], type)
+  for (const type of toggleTypes) assert.deepEqual(familiesFor(type), ["click", "repeat"], type)
+  for (const type of buttonTypes) assert.deepEqual(familiesFor(type), ["click", "repeat"], type)
+  for (const type of submitTypes) assert.deepEqual(familiesFor(type), ["click", "repeat", "submit", "double-submit"], type)
+  for (const type of [...unsupportedTypes, "disabled", "readonly"]) assert.deepEqual(familiesFor(type), [], type)
+  assert(planned.filter((action) => action.steps.some((step) => step.kind === "fill")).every((action) => ["default", ...fillableTypes, "textarea"].includes(action.descriptorId ?? "")))
+})
+
+test("planned input actions execute safely in a real browser", async () => {
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  const fixture = `<!doctype html>
+    <style>input,textarea { display:block; width:180px; height:30px; margin:4px; }</style>
+    <form id="form">
+      <input id="checkbox" type="checkbox"><input id="radio" type="radio" name="choice">
+      <input id="text" type="text"><input id="password" type="password"><input id="email" type="email"><input id="search" type="search">
+      <textarea id="textarea"></textarea><input id="submit" type="submit" value="Submit"><input id="range" type="range"><input id="file" type="file">
+    </form>
+    <script>document.querySelector('#form').addEventListener('submit', (event) => event.preventDefault())</script>`
+  try {
+    await page.addInitScript("globalThis.__name = value => value")
+    await page.setContent(fixture)
+    await page.evaluate("globalThis.__name = value => value")
+    const discovery = await discoverBrowserActionCorpusDescriptors(page)
+    const contract = browserAdaptiveExplorationContract({ seed: "browser-input-capabilities", startUrl: page.url() })
+    const actions = planBrowserAdaptiveStateActions({
+      digest: "state",
+      url: page.url(),
+      historyLength: 1,
+      historyStateDigest: "history",
+      descriptorDigest: "descriptors",
+      descriptors: discovery.descriptors,
+      frames: [{ id: "document", url: page.url(), scope: "document" }],
+      visits: 1,
+      depth: 0,
+      loadingIndicators: 0,
+    }, contract).filter((action) => action.descriptorId)
+
+    assert(actions.some((action) => action.descriptorId?.includes("\"type\":\"checkbox\"") && action.steps.every((step) => step.kind === "click")))
+    assert(actions.some((action) => action.descriptorId?.includes("\"type\":\"radio\"") && action.steps.every((step) => step.kind === "click")))
+    assert(!actions.some((action) => action.descriptorId?.includes("\"type\":\"range\"") || action.descriptorId?.includes("\"type\":\"file\"")))
+    for (const action of actions) {
+      await page.setContent(fixture)
+      for (const step of action.steps) await executeBrowserInteractionStep(page, step, page.url(), 2_000, async () => ({ path: "unused", isDefault: false }))
+    }
+  } finally {
+    await browser.close()
+  }
 })
 
 test("rediscovery finds, minimizes, and replays a defect revealed by a dynamic modal", async () => {
