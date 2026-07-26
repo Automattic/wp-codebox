@@ -98,6 +98,90 @@ test("navigation focus reset and below-fold expanded content do not false-positi
   })
 })
 
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`native Tab+Space page scrolling retains link focus without a hidden-focus finding at ${viewport.width}x${viewport.height}`, async () => {
+    await withPage("<!doctype html><a href='#target'>First link</a><div style='height:3000px'></div><div id='target'>Target</div>", async (page) => {
+      await page.setViewportSize(viewport)
+      const collector = createBrowserAccessibilityCollector(page, requiredContract())
+      const keyboard = keyboardAction("Tab", "Space")
+      await collector.beforeAction(keyboard)
+      await page.keyboard.press("Tab")
+      await page.keyboard.press("Space")
+      await page.waitForTimeout(500)
+      const scan = await collector.scan({ phase: "novel-state", action: keyboard })
+      assert(!scan.findings.some((finding) => finding.code === "browser-focused-element-hidden"))
+      const diagnostic = scan.diagnostics.find((item) => item.code === "browser_focus_visibility_native_keyboard_scroll_suppressed")
+      assert(diagnostic)
+      assert.equal(diagnostic.metadata?.actionId, keyboard.id)
+      assert.equal(diagnostic.metadata?.activeElementRetained, true)
+      assert(Number((diagnostic.metadata?.scrollDelta as { y?: number })?.y) > 0)
+
+      if (viewport.width === 1280) {
+        await collector.reset()
+        await page.reload({ waitUntil: "load" })
+        await collector.beforeAction(keyboard)
+        await page.keyboard.press("Tab")
+        await page.keyboard.press("Space")
+        await page.waitForTimeout(500)
+        const replay = await collector.scan({ phase: "replay", action: keyboard, record: false })
+        assert(!replay.findings.some((finding) => finding.code === "browser-focused-element-hidden"))
+        assert(replay.diagnostics.some((item) => item.code === "browser_focus_visibility_native_keyboard_scroll_suppressed"))
+      }
+    })
+  })
+}
+
+test("activation keys, application concealment, script scrolling, and clipped focus are not exempted", async () => {
+  await withPage("<!doctype html><a id='link' href='#target'>Link</a><button id='button'>Button</button><output>0</output><div style='height:3000px'></div><div id='target'>Target</div><script>document.querySelector('a').onclick=()=>document.querySelector('output').value='1'</script>", async (page) => {
+    const collector = createBrowserAccessibilityCollector(page, requiredContract())
+
+    const enter = keyboardAction("Tab", "Enter")
+    await collector.beforeAction(enter)
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Enter")
+    assert.equal(await page.locator("output").textContent(), "1")
+    assert(!((await collector.scan({ phase: "novel-state", action: enter })).diagnostics.some((item) => item.code === "browser_focus_visibility_native_keyboard_scroll_suppressed")))
+
+    await page.goto(`data:text/html;charset=utf-8,${encodeURIComponent("<!doctype html><button>Button</button><output>0</output><div style='height:3000px'></div><script>document.querySelector('button').onclick=()=>document.querySelector('output').value='1'</script>")}`)
+    const buttonSpace = keyboardAction("Tab", "Space")
+    await collector.beforeAction(buttonSpace)
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Space")
+    assert.equal(await page.evaluate(() => scrollY), 0)
+    assert.equal(await page.locator("output").textContent(), "1")
+    assert(!((await collector.scan({ phase: "novel-state", action: buttonSpace })).diagnostics.some((item) => item.code === "browser_focus_visibility_native_keyboard_scroll_suppressed")))
+
+    await page.goto(`data:text/html;charset=utf-8,${encodeURIComponent("<!doctype html><a href='#'>Link</a><div style='height:3000px'></div><script>addEventListener('keyup',event=>{ if(event.key===' ') document.querySelector('a').style.opacity='0' })</script>")}`)
+    const concealed = keyboardAction("Tab", "Space")
+    await collector.beforeAction(concealed)
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Space")
+    await page.waitForTimeout(500)
+    assert((await collector.scan({ phase: "novel-state", action: concealed })).findings.some((finding) => finding.code === "browser-focused-element-hidden"))
+
+    await page.goto(`data:text/html;charset=utf-8,${encodeURIComponent("<!doctype html><main><a href='#'>Link</a></main><div style='height:3000px'></div><script>addEventListener('keyup',event=>{ if(event.key===' ') document.querySelector('main').inert=true })</script>")}`)
+    const inerted = keyboardAction("Tab", "Space")
+    await collector.beforeAction(inerted)
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Space")
+    await page.waitForTimeout(500)
+    const inertedScan = await collector.scan({ phase: "novel-state", action: inerted })
+    assert(inertedScan.findings.some((finding) => finding.code === "browser-focused-element-hidden" || finding.code === "browser-focus-lost"))
+
+    await page.goto(`data:text/html;charset=utf-8,${encodeURIComponent("<!doctype html><a href='#'>Link</a><div style='height:3000px'></div><script>addEventListener('keydown',event=>{ if(event.key===' ') scrollBy(0,300) })</script>")}`)
+    const scripted = keyboardAction("Tab", "Space")
+    await collector.beforeAction(scripted)
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Space")
+    await page.waitForTimeout(500)
+    assert((await collector.scan({ phase: "novel-state", action: scripted })).findings.some((finding) => finding.code === "browser-focused-element-hidden"))
+
+    await page.goto(`data:text/html;charset=utf-8,${encodeURIComponent("<!doctype html><a style='position:absolute;left:-5000px' href='#'>Clipped</a>")}`)
+    await page.locator("a").focus()
+    assert((await collector.scan({ phase: "novel-state", action: keyboardAction("Tab") })).findings.some((finding) => finding.code === "browser-focused-element-hidden"))
+  })
+})
+
 test("controls without nameable content and broken relationships are classified", async () => {
   await withPage("<!doctype html><select><option>Choose</option></select><button aria-controls='missing' aria-expanded='sometimes'>Toggle</button><div role='buton'>Typo</div>", async (page) => {
     const scan = await createBrowserAccessibilityCollector(page, requiredContract()).scan({ phase: "initial" })
@@ -375,6 +459,10 @@ function requiredContract() {
 
 function action(id: string, selector: string): BrowserAdaptiveAction {
   return { id, family: "click", frameId: "document", steps: [{ kind: "click", selector }] }
+}
+
+function keyboardAction(...keys: string[]): BrowserAdaptiveAction {
+  return { id: `keyboard:document:${keys.join(">")}`, family: "keyboard", frameId: "document", steps: keys.map((key) => ({ kind: "press", key })) }
 }
 
 async function withPage<T>(html: string, callback: (page: Page) => Promise<T>): Promise<T> {

@@ -84,7 +84,7 @@ export interface BrowserAccessibilityScan {
   actionId?: string
   findings: BrowserAccessibilityFinding[]
   accessibilityTree?: { status: "captured" | "unsupported" | "inconclusive"; snapshot?: string; reason?: string; truncated?: boolean }
-  diagnostics: Array<{ code: string; message: string }>
+  diagnostics: Array<{ code: string; message: string; metadata?: Record<string, unknown> }>
   artifacts?: { screenshot?: string; domSnapshot?: string }
 }
 
