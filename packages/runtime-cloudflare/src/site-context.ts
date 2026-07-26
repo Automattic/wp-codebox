@@ -4,6 +4,11 @@ export interface SiteContext {
   origin: string
 }
 
+export interface PreviewDomain {
+  suffix: string
+  hostSecret: string
+}
+
 export interface SiteStorageKeys {
   root: string
   markdownCurrent: string
@@ -61,6 +66,41 @@ export function resolveSiteContextFromRequest(request: Request | URL, contexts: 
   return resolveSiteContext(normalizeHostname(request instanceof Request ? new URL(request.url).hostname : request.hostname), contexts)
 }
 
+/**
+ * Dynamic preview names are self-authenticating. This lets the public reader
+ * reject invented and stale generation names without consulting D1.
+ */
+export function previewDomain(suffix: string | undefined, hostSecret: string | undefined): PreviewDomain | undefined {
+  if (suffix === undefined && hostSecret === undefined) return undefined
+  if (typeof suffix !== "string" || typeof hostSecret !== "string" || hostSecret.length < 32) throw new Error("Preview hostname configuration is invalid.")
+  const normalized = normalizeHostname(suffix)
+  if (suffix !== normalized || !isDnsHostname(normalized) || normalized.split(".").length < 2) throw new Error("Preview hostname configuration is invalid.")
+  return { suffix: normalized, hostSecret }
+}
+
+export async function allocatePreviewSiteContext(domain: PreviewDomain, generation = 1): Promise<SiteContext> {
+  const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 24)
+  const signature = await previewSignature(domain, nonce, generation)
+  return previewSiteContext(`s${nonce}-g${generation}-${signature}`, domain)
+}
+
+export async function resolvePreviewSiteContextFromRequest(request: Request | URL, domain: PreviewDomain | undefined): Promise<SiteContext> {
+  if (!domain) throw new Error("Unknown site hostname.")
+  const hostname = normalizeHostname(request instanceof Request ? new URL(request.url).hostname : request.hostname)
+  const suffix = `.${domain.suffix}`
+  if (!hostname.endsWith(suffix)) throw new Error("Unknown site hostname.")
+  const siteId = hostname.slice(0, -suffix.length)
+  if (!siteId || siteId.includes(".")) throw new Error("Unknown site hostname.")
+  return previewSiteContext(siteId, domain)
+}
+
+export async function previewSiteContext(siteId: string, domain: PreviewDomain): Promise<SiteContext> {
+  const match = /^s([a-f0-9]{24})-g([1-9][0-9]*)-([a-f0-9]{16})$/.exec(siteId)
+  if (!match || match[3] !== await previewSignature(domain, match[1], Number(match[2]))) throw new Error("Unknown site hostname.")
+  const hostname = `${siteId}.${domain.suffix}`
+  return { id: siteId, hostname, origin: `https://${hostname}` }
+}
+
 export function siteStorageKeys(site: SiteContext): SiteStorageKeys {
   const prefix = `sites/${site.id}`
   return {
@@ -105,4 +145,14 @@ function normalizeHostname(hostname: string): string {
 
 function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "::1"
+}
+
+function isDnsHostname(value: string): boolean {
+  return value.length <= 253 && value.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+}
+
+async function previewSignature(domain: PreviewDomain, nonce: string, generation: number): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(domain.hostSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`wp-codebox-preview-host/v1:${domain.suffix}:${nonce}:${generation}`)))
+  return Array.from(bytes.slice(0, 8), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }

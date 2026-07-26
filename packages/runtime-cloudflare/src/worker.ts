@@ -16,7 +16,7 @@ import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticA
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
 import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
-import { DEFAULT_SITE_CONTEXT, parseSiteContexts, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
+import { DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
 import { deriveSiteCredential, deriveWordPressAuthConstants, type WordPressAuthConstant } from "./wordpress-auth.js"
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
@@ -208,6 +208,8 @@ echo wp_json_encode(array_merge(array('status' => 'imported'), $record), JSON_UN
 export interface RuntimeEnv {
   WORDPRESS_STATE_BUCKET: R2Bucket
   WORDPRESS_SITE_CONTEXTS?: string
+  WORDPRESS_PREVIEW_DOMAIN?: string
+  WORDPRESS_PREVIEW_HOST_SECRET?: string
   WORDPRESS_ADMIN_PASSWORD?: string
   WORDPRESS_AUTH_SECRET?: string
   WORDPRESS_OPERATOR_TOKEN?: string
@@ -230,7 +232,13 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       }
       let site: SiteContext
       try {
-        site = resolveSiteContextFromRequest(request, parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS))
+        const contexts = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+        try {
+          site = resolveSiteContextFromRequest(request, contexts)
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "Unknown site hostname.") throw error
+          site = await resolvePreviewSiteContextFromRequest(request, previewDomain(env.WORDPRESS_PREVIEW_DOMAIN, env.WORDPRESS_PREVIEW_HOST_SECRET))
+        }
       } catch (error) {
         if (error instanceof Error && error.message === "Unknown site hostname.") return new Response(error.message, { status: 421 })
         throw error
@@ -271,7 +279,9 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       }
     },
     async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-      const sites = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS).sort((left, right) => left.id.localeCompare(right.id))
+       const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+       const registered = env.WORDPRESS_STATE_DATABASE && resolveOperations?.(env) ? await resolveOperations(env)!.activeSites() : []
+       const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))
       const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
       const coordinator = resolveCoordinator(env, site)
       const operations = resolveOperations?.(env)
