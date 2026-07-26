@@ -29,6 +29,14 @@ const EDITOR_VALIDITY_WARNING_SELECTORS = [
   ".components-notice",
 ]
 
+export function editorCommandWordPressUrl(server: PlaygroundCliServer): string {
+  return server.wordpressUrl ?? server.serverUrl
+}
+
+function editorCommandPreviewTopology(args: string[], runtimeSpec: RuntimeCreateSpec, server: PlaygroundCliServer) {
+  return browserPreviewTopology(["preview-mode=local", ...args], runtimeSpec, editorCommandWordPressUrl(server))
+}
+
 export async function runEditorCanvasProbeCommand({
   artifactRoot,
   runtimeSpec,
@@ -551,7 +559,7 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
+  const topology = editorCommandPreviewTopology(args, runtimeSpec, server)
   const { preview, networkPolicy } = topology
   const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)
@@ -842,7 +850,7 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
+  const topology = editorCommandPreviewTopology(args, runtimeSpec, server)
   const { preview, networkPolicy } = topology
   const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)
@@ -1218,11 +1226,14 @@ async function executeEditorBlockMutation(page: import("playwright").Page, step:
     let siblings = blocks
     let block: Block | undefined
     if (typeof input.clientId === "string") {
-      const locate = (items: Block[], parent?: string): boolean => items.some((item) => {
-        if (item.clientId === input.clientId) { block = item; parentClientId = parent; siblings = items; return true }
-        return locate(item.innerBlocks ?? [], item.clientId)
-      })
-      locate(blocks)
+      const pending: Array<{ items: Block[]; parent?: string }> = [{ items: blocks }]
+      while (!block && pending.length > 0) {
+        const current = pending.pop()!
+        for (const item of current.items) {
+          if (item.clientId === input.clientId) { block = item; parentClientId = current.parent; siblings = current.items; break }
+          if (item.innerBlocks?.length) pending.push({ items: item.innerBlocks, parent: item.clientId })
+        }
+      }
     } else {
       const path = input.path ?? [input.index ?? -1]
       for (const position of path) {
@@ -1239,22 +1250,33 @@ async function executeEditorBlockMutation(page: import("playwright").Page, step:
       }
     }
     if (!block?.clientId) throw new Error("wp-codebox-editor-target-not-found: clientId, index, or path did not resolve a block")
-    const requireAction = (name: string): ((...args: unknown[]) => unknown) => {
-      const action = actions[name]
-      if (typeof action !== "function") throw new Error(`wp-codebox-editor-${input.kind}-unsupported: core/block-editor.${name} is unavailable`)
-      return action as (...args: unknown[]) => unknown
+    let actionName: string = input.kind
+    let actionArgs: unknown[] = [block.clientId]
+    if (input.kind === "updateBlockAttributes") actionArgs.push(input.attributes)
+    if (input.kind === "removeBlock") { actionName = "removeBlocks"; actionArgs = [[block.clientId]] }
+    if (input.kind === "duplicateBlock") { actionName = "duplicateBlocks"; actionArgs = [[block.clientId]] }
+    if (input.kind === "moveBlock") { actionName = "moveBlocksToPosition"; actionArgs = [[block.clientId], parentClientId, parentClientId, input.position] }
+    if (input.kind === "replaceBlock" || input.kind === "replaceInnerBlocks") {
+      const createBlock = wp?.blocks?.createBlock
+      if (typeof createBlock !== "function") throw new Error("wp-codebox-editor-create-block-unsupported: wp.blocks.createBlock is unavailable")
+      const specs = input.kind === "replaceBlock" ? [input.block] : input.blocks
+      const created = new Map<object, unknown>()
+      const pending = specs.map((spec) => ({ spec, visited: false }))
+      while (pending.length > 0) {
+        const current = pending.pop()!
+        if (!current.visited) {
+          pending.push({ spec: current.spec, visited: true })
+          for (const child of current.spec.innerBlocks ?? []) pending.push({ spec: child, visited: false })
+          continue
+        }
+        created.set(current.spec, createBlock(current.spec.name, current.spec.attributes ?? {}, (current.spec.innerBlocks ?? []).map((child) => created.get(child))))
+      }
+      actionName = input.kind
+      actionArgs = input.kind === "replaceBlock" ? [block.clientId, created.get(input.block)] : [block.clientId, input.blocks.map((spec) => created.get(spec))]
     }
-    const create = (spec: { name: string; attributes?: Record<string, unknown>; innerBlocks?: unknown[] }): unknown => {
-      if (typeof wp?.blocks?.createBlock !== "function") throw new Error("wp-codebox-editor-create-block-unsupported: wp.blocks.createBlock is unavailable")
-      return wp.blocks.createBlock(spec.name, spec.attributes ?? {}, (spec.innerBlocks ?? []).map((child) => create(child as typeof spec)))
-    }
-    if (input.kind === "selectBlock") return void requireAction("selectBlock")(block.clientId)
-    if (input.kind === "updateBlockAttributes") return void requireAction("updateBlockAttributes")(block.clientId, input.attributes)
-    if (input.kind === "removeBlock") return void requireAction("removeBlocks")([block.clientId])
-    if (input.kind === "duplicateBlock") return void requireAction("duplicateBlocks")([block.clientId])
-    if (input.kind === "moveBlock") return void requireAction("moveBlocksToPosition")([block.clientId], parentClientId, parentClientId, input.position)
-    if (input.kind === "replaceBlock") return void requireAction("replaceBlock")(block.clientId, create(input.block))
-    if (input.kind === "replaceInnerBlocks") return void requireAction("replaceInnerBlocks")(block.clientId, input.blocks.map(create))
+    const action = actions[actionName]
+    if (typeof action !== "function") throw new Error(`wp-codebox-editor-${input.kind}-unsupported: core/block-editor.${actionName} is unavailable`)
+    action(...actionArgs)
   }, step)
 }
 
@@ -1333,7 +1355,7 @@ async function waitForEditorSemanticReadiness(page: import("playwright").Page, t
 }
 
 async function saveEditorPost(page: import("playwright").Page, step: Extract<EditorActionStep, { kind: "savePost" }>, timeoutMs: number): Promise<BrowserEditorSaveSummary> {
-  const save = await page.evaluate(async (input) => {
+  await page.evaluate(async (input) => {
     const win = window as unknown as {
       wp?: {
         blocks?: { createBlock?: (name: string, attributes?: Record<string, unknown>) => unknown }
@@ -1363,31 +1385,19 @@ async function saveEditorPost(page: import("playwright").Page, step: Extract<Edi
       blockEditor.insertBlocks([createBlock("core/paragraph", { content: input.content ?? input.marker })])
     }
     await Promise.resolve(editorDispatch.savePost())
-    const deadline = Date.now() + input.timeoutMs
-    await new Promise<void>((resolve, reject) => {
-      const done = () => {
-        const isSaving = typeof editor.isSavingPost === "function" ? Boolean(editor.isSavingPost()) : false
-        const didSucceed = typeof editor.didPostSaveRequestSucceed === "function" ? Boolean(editor.didPostSaveRequestSucceed()) : undefined
-        const didFail = typeof editor.didPostSaveRequestFail === "function" ? Boolean(editor.didPostSaveRequestFail()) : false
-        if (!isSaving && didSucceed !== false) {
-          cleanup()
-          resolve()
-        } else if (didFail) {
-          cleanup()
-          reject(new Error("wp-codebox-editor-save-failed: core/editor savePost reported a failed request"))
-        } else if (Date.now() > deadline) {
-          cleanup()
-          reject(new Error("wp-codebox-editor-save-timeout: timed out waiting for core/editor savePost to settle"))
-        }
-      }
-      const unsubscribe = typeof wpData?.subscribe === "function" ? wpData.subscribe(done) : undefined
-      const interval = window.setInterval(done, 250)
-      const cleanup = () => {
-        window.clearInterval(interval)
-        if (unsubscribe) unsubscribe()
-      }
-      done()
-    })
+  }, { marker: step.marker, content: step.content })
+  const settled = await page.waitForFunction(() => {
+    const editor = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select?.("core/editor")
+    if (!editor) return false
+    const saving = typeof editor.isSavingPost === "function" ? Boolean(editor.isSavingPost()) : false
+    const failed = typeof editor.didPostSaveRequestFail === "function" ? Boolean(editor.didPostSaveRequestFail()) : false
+    const succeeded = typeof editor.didPostSaveRequestSucceed === "function" ? Boolean(editor.didPostSaveRequestSucceed()) : undefined
+    return !saving && (failed || succeeded !== false) ? { failed } : false
+  }, undefined, { timeout: timeoutMs }).then((handle) => handle.jsonValue() as Promise<{ failed: boolean }>)
+  if (settled.failed) throw new Error("wp-codebox-editor-save-failed: core/editor savePost reported a failed request")
+  const save = await page.evaluate((input) => {
+    const editor = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select?.("core/editor")
+    if (!editor) throw new Error("wp-codebox-editor-readiness-unavailable: core/editor store is unavailable")
     const editedContent = typeof editor.getEditedPostContent === "function" ? String(editor.getEditedPostContent() ?? "") : ""
     return {
       schema: "wp-codebox/editor-save/v1",
@@ -1398,7 +1408,7 @@ async function saveEditorPost(page: import("playwright").Page, step: Extract<Edi
       markerPresent: input.marker ? editedContent.includes(input.marker) : undefined,
       content: editedContent,
     }
-  }, { marker: step.marker, content: step.content, timeoutMs })
+  }, { marker: step.marker })
 
   const { content, ...summary } = save as BrowserEditorSaveSummary & { content?: string }
   return {
@@ -1493,13 +1503,22 @@ export async function captureEditorState(page: import("playwright").Page, target
     const currentPost = typeof editor.getCurrentPost === "function" ? editor.getCurrentPost() as Record<string, unknown> | null : null
     const blocks = typeof blockEditor.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
     const serialize = (window as unknown as { wp?: { blocks?: { serialize?: (items: unknown[]) => string } } }).wp?.blocks?.serialize
-    const toTree = (items: Array<Record<string, unknown>>): NonNullable<EditorStateSnapshot["blocks"]> => items.map((block) => ({
-      name: typeof block.name === "string" ? block.name : "",
-      clientId: typeof block.clientId === "string" ? block.clientId : undefined,
-      attributes: typeof block.attributes === "object" && block.attributes ? block.attributes as Record<string, unknown> : undefined,
-      isValid: typeof block.isValid === "boolean" ? block.isValid : undefined,
-      innerBlocks: Array.isArray(block.innerBlocks) ? toTree(block.innerBlocks as Array<Record<string, unknown>>) : undefined,
-    }))
+    const tree: NonNullable<EditorStateSnapshot["blocks"]> = []
+    const pending: Array<{ items: Array<Record<string, unknown>>; output: NonNullable<EditorStateSnapshot["blocks"]> }> = [{ items: blocks, output: tree }]
+    while (pending.length > 0) {
+      const current = pending.pop()!
+      for (const block of current.items) {
+        const innerBlocks: NonNullable<EditorStateSnapshot["blocks"]> = []
+        current.output.push({
+          name: typeof block.name === "string" ? block.name : "",
+          clientId: typeof block.clientId === "string" ? block.clientId : undefined,
+          attributes: typeof block.attributes === "object" && block.attributes ? block.attributes as Record<string, unknown> : undefined,
+          isValid: typeof block.isValid === "boolean" ? block.isValid : undefined,
+          innerBlocks,
+        })
+        if (Array.isArray(block.innerBlocks)) pending.push({ items: block.innerBlocks as Array<Record<string, unknown>>, output: innerBlocks })
+      }
+    }
     const savedContent = typeof currentPost?.content === "object" && currentPost.content
       ? stringValue((currentPost.content as Record<string, unknown>).raw ?? (currentPost.content as Record<string, unknown>).rendered)
       : undefined
@@ -1511,7 +1530,7 @@ export async function captureEditorState(page: import("playwright").Page, target
         status: typeof currentPost?.status === "string" ? currentPost.status : undefined,
         title: typeof currentPost?.title === "object" && currentPost.title ? (currentPost.title as Record<string, unknown>).raw ?? (currentPost.title as Record<string, unknown>).rendered : undefined,
       },
-      blocks: toTree(blocks),
+      blocks: tree,
       serializedContent: typeof serialize === "function" ? serialize(blocks) : typeof editor.getEditedPostContent === "function" ? String(editor.getEditedPostContent() ?? "") : undefined,
       dirty: typeof editor.isEditedPostDirty === "function" ? Boolean(editor.isEditedPostDirty()) : undefined,
       saving: typeof editor.isSavingPost === "function" ? Boolean(editor.isSavingPost()) : undefined,
@@ -1957,7 +1976,7 @@ export async function runEditorValidateBlocksCommand({
   const content = await editorValidateContentFromArgs(args)
   const provider = editorValidateProviderFromArgs(args)
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
+  const topology = editorCommandPreviewTopology(args, runtimeSpec, server)
   const { preview, networkPolicy } = topology
   const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)

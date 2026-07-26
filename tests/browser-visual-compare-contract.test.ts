@@ -4,11 +4,13 @@ import { join } from "node:path"
 
 import { PNG } from "pngjs"
 import { commandRegistry } from "../packages/runtime-core/src/command-registry.js"
-import { runVisualCompareCommand } from "../packages/runtime-playground/dist/browser-visual-compare.js"
+import { runVisualCompareCommand, visualCompareWordPressUrl } from "../packages/runtime-playground/dist/browser-visual-compare.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
 const visualCompare = commandRegistry.find((definition) => definition.id === "wordpress.visual-compare")
 assert.ok(visualCompare, "wordpress.visual-compare is registered")
+assert.equal(visualCompareWordPressUrl({ serverUrl: "http://preview.test", wordpressUrl: "http://wordpress.test" } as never), "http://wordpress.test")
+assert.equal(visualCompareWordPressUrl({ serverUrl: "http://preview.test" } as never), "http://preview.test")
 
 const acceptedArgs = visualCompare.acceptedArgs
 const maxElements = acceptedArgs.find((arg) => arg.name === "max-explanation-elements")

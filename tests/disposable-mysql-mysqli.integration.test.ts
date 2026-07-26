@@ -149,9 +149,34 @@ require_once ABSPATH . 'wp-settings.php';
     assert.deepEqual(aggregate.entries.map((entry: { inputIndex: number }) => entry.inputIndex), [0, 1])
 
     const multisitePlugin = join(directory, "managed-multisite-fixture")
+    const multisiteDependency = join(directory, "managed-multisite-dependency")
+    const multisiteMuDependency = join(directory, "managed-multisite-mu-dependency")
     const multisiteRecipePath = join(directory, "managed-multisite-recipe.json")
     const multisiteArtifacts = join(directory, "managed-multisite-artifacts")
     await mkdir(join(multisitePlugin, "tests"), { recursive: true })
+    await mkdir(join(multisiteDependency, "vendor"), { recursive: true })
+    await mkdir(multisiteMuDependency, { recursive: true })
+    await writeFile(join(multisiteDependency, "decoy.php"), "<?php\n/** Plugin Name: Managed Multisite Decoy */\nthrow new RuntimeException('dependency entrypoint scan loaded the decoy');\n")
+    await writeFile(join(multisiteDependency, "bootstrap.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\nregister_activation_hook(__FILE__, static function (): void { update_network_option(1, 'wp_codebox_dependency_activated', 1); });\n")
+    await writeFile(join(multisiteDependency, "vendor", "autoload.php"), `<?php
+global $wpdb;
+$network_table = $wpdb->blogs;
+if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($network_table))) !== $network_table) {
+    throw new RuntimeException('Composer autoloader ran before multisite network tables existed');
+}
+get_network_option(1, 'site_name', '');
+file_put_contents('/tmp/wp-codebox-composer-loaded-after-network', 'yes');
+`)
+    await writeFile(join(multisiteMuDependency, "mu-bootstrap.php"), `<?php
+/** Plugin Name: Managed Multisite MU Dependency */
+global $wpdb;
+$network_table = $wpdb->blogs;
+if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($network_table))) !== $network_table) {
+    throw new RuntimeException('MU dependency ran before multisite network tables existed');
+}
+get_network_option(1, 'site_name', '');
+file_put_contents('/tmp/wp-codebox-mu-loaded-after-network', 'yes');
+`)
     await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
 /** Plugin Name: Managed Multisite Fixture */
 add_action('init', static function (): void {
@@ -189,6 +214,25 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
         $this->assertInstanceOf(mysqli::class, $wpdb->dbh);
         $this->assertSame('1', (string) $wpdb->get_var("SELECT JSON_VALID('{\\"valid\\":true}')"));
     }
+
+    public function test_network_schema_seed_and_dependency_are_materialized(): void {
+        global $wpdb;
+        foreach (array($wpdb->blogs, $wpdb->blogmeta, $wpdb->site, $wpdb->sitemeta, $wpdb->registration_log, $wpdb->signups) as $table) {
+            $this->assertSame($table, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))));
+        }
+        $this->assertGreaterThanOrEqual(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = 1"));
+        $this->assertGreaterThan(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->sitemeta} WHERE site_id = 1"));
+        $this->assertTrue(update_network_option(1, 'wp_codebox_network_write', 'round-trip'));
+        $this->assertSame('round-trip', get_network_option(1, 'wp_codebox_network_write'));
+        $dependency = WP_PLUGIN_DIR . '/managed-multisite-dependency/bootstrap.php';
+        $this->assertDirectoryExists(dirname($dependency));
+        $this->assertFileExists($dependency);
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        $this->assertTrue(is_plugin_active_for_network('managed-multisite-dependency/bootstrap.php'));
+        $this->assertSame(1, (int) get_network_option(1, 'wp_codebox_dependency_activated'));
+        $this->assertFileExists('/tmp/wp-codebox-composer-loaded-after-network');
+        $this->assertFileExists('/tmp/wp-codebox-mu-loaded-after-network');
+    }
 }
 `)
     const multisiteRecipe = buildWordPressPhpunitRecipe({
@@ -197,13 +241,22 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
       databaseType: "mysql",
       multisite: true,
       pluginSource: multisitePlugin,
-      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-fixture"],
+      extra_plugins: [
+        { source: multisiteDependency, slug: "managed-multisite-dependency", pluginFile: "managed-multisite-dependency/bootstrap.php", activate: true },
+        { source: multisiteMuDependency, slug: "managed-multisite-mu-dependency", pluginFile: "managed-multisite-mu-dependency/mu-bootstrap.php", activate: true, loadAs: "mu-plugin" },
+      ],
+      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-dependency", "/wordpress/wp-content/plugins/managed-multisite-mu-dependency"],
       mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
     })
     await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)
     const multisiteResult = await runRecipe({ recipePath: multisiteRecipePath, artifactsDirectory: multisiteArtifacts, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
     const multisiteFailure = multisiteResult as typeof multisiteResult & { error?: unknown }
     assert.equal(multisiteResult.success, true, JSON.stringify({ error: multisiteFailure.error, executions: multisiteResult.executions }))
+    const latest = JSON.parse(await readFile(join(multisiteArtifacts, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+    const diagnostic = await readFile(join(multisiteArtifacts, latest.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
+    assert.match(diagnostic, /STAGE_BEGIN:run_tests[\s\S]*RUNNING [1-9][0-9]* TEST FILES/, "managed multisite diagnostics must prove test execution started")
+    const phpunitOutput = multisiteResult.executions.filter((execution) => execution.command === "wordpress.phpunit").map((execution) => execution.stdout).join("\n")
+    assert.match(phpunitOutput, /OK \([1-9][0-9]* tests?, [1-9][0-9]* assertions?\)/, "managed multisite regression must execute nonzero tests and assertions")
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })

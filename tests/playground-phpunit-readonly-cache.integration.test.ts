@@ -37,7 +37,7 @@ try {
     }, {
       source: dependency,
       slug: "activation-dependency",
-      activate: false,
+      activate: true,
     }],
     dependencyMounts: ["/wordpress/wp-content/plugins/readonly-phpunit-fixture", "/wordpress/wp-content/plugins/activation-dependency"],
     mounts: [

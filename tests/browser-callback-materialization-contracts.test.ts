@@ -206,6 +206,8 @@ const proxied = await withPreviewProxy({
   },
 } satisfies PlaygroundCliServer, 0)
 try {
+  assert.equal(proxied.wordpressUrl, targetServerUrl)
+  assert.notEqual(proxied.serverUrl, proxied.wordpressUrl)
   assert.deepEqual(proxied.previewProxyDiagnostics, {
     schema: "wp-codebox/preview-proxy-diagnostics/v1",
     upstreamConcurrency: "serialized",
