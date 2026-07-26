@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { opendir, readFile, realpath, stat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { inventoryTempRuntimeDirectories } from "./temp-runtime-cleanup.js"
 
 type HealthStatus = "ok" | "warning" | "error"
 
@@ -19,6 +20,7 @@ interface DoctorOptions {
   cleanup: boolean
   staleAfterSeconds: number
   archiveRoots: string[]
+  runRegistryRoots: string[]
 }
 
 interface DoctorOutput {
@@ -48,6 +50,7 @@ function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
   let json = false
   let staleAfterSeconds = Number.parseInt(process.env.WP_CODEBOX_STALE_AFTER_SECONDS ?? "3600", 10)
   const archiveRoots = archiveRootsFromEnv()
+  const runRegistryRoots = runRegistryRootsFromEnv()
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -75,6 +78,12 @@ function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
       archiveRoots.push(value)
       continue
     }
+    if (arg === "--run-registry") {
+      const value = args[++index]
+      if (!value) throw new Error("--run-registry requires a directory")
+      runRegistryRoots.push(value)
+      continue
+    }
 
     throw new Error(`Unknown option: ${arg}`)
   }
@@ -84,6 +93,7 @@ function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
     cleanup,
     staleAfterSeconds: Number.isFinite(staleAfterSeconds) ? staleAfterSeconds : 3600,
     archiveRoots,
+    runRegistryRoots,
   }
 }
 
@@ -94,6 +104,7 @@ async function buildDoctorOutput(options: DoctorOptions): Promise<DoctorOutput> 
     await binaryCheck(),
     await sourceCheck(),
     await staleRecipeRunCheck(options),
+    await tempRuntimeCheck(options),
     await archiveCheck(options),
   ]
   const summary = {
@@ -110,6 +121,23 @@ async function buildDoctorOutput(options: DoctorOptions): Promise<DoctorOutput> 
     checks,
     summary,
   }
+}
+
+async function tempRuntimeCheck(options: DoctorOptions): Promise<HealthCheck> {
+  const inventory = await inventoryTempRuntimeDirectories({
+    cleanup: options.cleanup,
+    staleAfterSeconds: options.staleAfterSeconds,
+    runRegistryRoots: unique([...options.runRegistryRoots, resolve("artifacts", "runs")]),
+  })
+  const failures = inventory.entries.filter((row) => row.state === "failed")
+  const removed = inventory.entries.filter((row) => row.state === "removed").length
+  const status: HealthStatus = failures.length > 0 ? "error" : !options.cleanup && inventory.candidateCount > 0 ? "warning" : "ok"
+  const message = options.cleanup
+    ? `removed ${removed}/${inventory.candidateCount} stale owned temp runtime director${inventory.candidateCount === 1 ? "y" : "ies"}`
+    : inventory.candidateCount > 0
+      ? `${inventory.candidateCount} stale owned temp runtime director${inventory.candidateCount === 1 ? "y" : "ies"} found`
+      : `no stale owned temp runtime directories found; retained ${inventory.retainedCount}`
+  return { id: "wp-codebox.temp-runtime", status, message, details: inventory as unknown as Record<string, unknown> }
 }
 
 async function commandToolCheck(id: string, args: string[]): Promise<HealthCheck> {
@@ -228,6 +256,10 @@ function printDoctorOutput(output: DoctorOutput, json: boolean): void {
 
 function archiveRootsFromEnv(): string[] {
   return (process.env.WP_CODEBOX_ARCHIVE_ROOTS ?? "").split(":").map((root) => root.trim()).filter(Boolean)
+}
+
+function runRegistryRootsFromEnv(): string[] {
+  return (process.env.WP_CODEBOX_RUN_REGISTRY_ROOTS ?? "").split(":").map((root) => root.trim()).filter(Boolean)
 }
 
 function defaultArchiveRoots(): string[] {
