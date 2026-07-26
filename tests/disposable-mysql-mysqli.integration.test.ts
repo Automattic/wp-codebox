@@ -254,7 +254,9 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
     assert.equal(multisiteResult.success, true, JSON.stringify({ error: multisiteFailure.error, executions: multisiteResult.executions }))
     const latest = JSON.parse(await readFile(join(multisiteArtifacts, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
     const diagnostic = await readFile(join(multisiteArtifacts, latest.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
-    assert.match(diagnostic, /TESTS: [1-9][0-9]* ASSERTIONS: [1-9][0-9]* FAILURES: 0 ERRORS: 0/, "managed multisite regression must execute nonzero tests and assertions")
+    assert.match(diagnostic, /STAGE_BEGIN:run_tests[\s\S]*RUNNING [1-9][0-9]* TEST FILES/, "managed multisite diagnostics must prove test execution started")
+    const phpunitOutput = multisiteResult.executions.filter((execution) => execution.command === "wordpress.phpunit").map((execution) => execution.stdout).join("\n")
+    assert.match(phpunitOutput, /OK \([1-9][0-9]* tests?, [1-9][0-9]* assertions?\)/, "managed multisite regression must execute nonzero tests and assertions")
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })
