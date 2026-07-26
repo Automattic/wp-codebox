@@ -17,6 +17,10 @@ import { executeBrowserInteractionStep } from "../packages/runtime-playground/sr
 import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { closeHttpServer, listenLocalHttpServer } from "../packages/runtime-playground/src/preview-server.js"
 
+function environmentBoundOracleFingerprint(value: string): string {
+  return browserAdaptiveDigest("oracle", { environmentDigest: browserAdaptiveExplorationContract({}).environmentDigest, value })
+}
+
 const modalFixture = `<!doctype html>
 <style>button,input,select { display:block; width:180px; height:30px; margin:8px; }</style>
 <button id="open-modal">Open dynamic modal</button>
@@ -532,7 +536,7 @@ test("URL-less policy-block console records correlate before promotion and prese
   const message = urlLess.result.transitions[0]?.observations.consoleErrors[0]
   assert(message)
   assert.equal(urlLess.result.transitions[0]?.observations.oracleFingerprints.length, 1)
-  assert.equal(urlLess.result.findings[0]?.fingerprint, browserAdaptiveDigest("oracle", message))
+  assert.equal(urlLess.result.findings[0]?.fingerprint, environmentBoundOracleFingerprint(message))
   assert.equal(urlLess.result.findings[0]?.fingerprint, attributed.result.findings[0]?.fingerprint, "removing console location must not change the historical console fingerprint")
 
   const mixed = await runNetworkOracleFixture("block", "mixed", {}, true)
@@ -544,7 +548,7 @@ test("URL-less policy-block console records correlate before promotion and prese
 
 test("same-URL product errors require a matching failure token before policy correlation", async () => {
   const productMessage = "same-URL product defect"
-  const productFingerprint = browserAdaptiveDigest("oracle", productMessage)
+  const productFingerprint = environmentBoundOracleFingerprint(productMessage)
   const evidence = await runNetworkOracleFixture("block", "blocked", {}, false, true)
   assert.deepEqual(evidence.result.transitions[0]?.observations.oracleFingerprints, [productFingerprint])
   assert.equal(evidence.result.findings[0]?.fingerprint, productFingerprint)
@@ -555,7 +559,7 @@ test("same-URL product errors require a matching failure token before policy cor
   assert(blockMessage)
   assert.equal(fingerprints.length, 2)
   assert(fingerprints.includes(productFingerprint))
-  assert(fingerprints.includes(browserAdaptiveDigest("oracle", blockMessage)))
+  assert(fingerprints.includes(environmentBoundOracleFingerprint(blockMessage)))
   assert.equal(finding.result.transitions[0]?.observations.networkFailureSummary?.policyBlocks, 1)
 })
 
