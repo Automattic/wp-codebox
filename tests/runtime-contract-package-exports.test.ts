@@ -8,6 +8,8 @@ import * as publicFacade from "@automattic/wp-codebox-core/public"
 for (const entrypoint of [core, contracts, publicFacade]) {
   assert.equal(typeof entrypoint.runtimeContractManifest, "function")
   assert.equal(typeof entrypoint.runtimeDescriptor, "function")
+  assert.equal(entrypoint.BROWSER_ACCESSIBILITY_SCHEMA, "wp-codebox/browser-accessibility/v1")
+  assert.equal(typeof entrypoint.browserAccessibilityContract, "function")
   const manifest = entrypoint.runtimeContractManifest()
   const descriptor = entrypoint.runtimeDescriptor()
 
