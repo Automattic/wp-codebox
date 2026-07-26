@@ -17,6 +17,9 @@ export interface BrowserArtifactBase {
   localPreviewOrigin?: string
   requestedPreviewOrigin?: string
   effectivePreviewOrigin?: string
+  canonicalBrowserOrigin?: string
+  localProxyOrigin?: string
+  upstreamRuntimeOrigin?: string
   prePageScript?: BrowserProbeScriptMetadata
   files: BrowserArtifactFiles
   summary: BrowserArtifactSummary
@@ -1043,6 +1046,9 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       localPreviewOrigin: probe.localPreviewOrigin,
       requestedPreviewOrigin: probe.requestedPreviewOrigin,
       effectivePreviewOrigin: probe.effectivePreviewOrigin,
+      canonicalBrowserOrigin: probe.canonicalBrowserOrigin,
+      localProxyOrigin: probe.localProxyOrigin,
+      upstreamRuntimeOrigin: probe.upstreamRuntimeOrigin,
       finalUrl: probe.summary.finalUrl,
       windowLocationOrigin: probe.summary.windowLocationOrigin,
       viewport: probe.summary.viewport,

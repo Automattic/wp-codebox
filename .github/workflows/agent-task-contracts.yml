@@ -23,6 +23,14 @@ on:
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
+      - "tests/browser-canonical-preview-origin.test.ts"
+      - "packages/runtime-playground/src/browser-actions-runner.ts"
+      - "packages/runtime-playground/src/browser-artifacts.ts"
+      - "packages/runtime-playground/src/browser-multi-actor-scenario-runner.ts"
+      - "packages/runtime-playground/src/browser-preview-routing.ts"
+      - "packages/runtime-playground/src/browser-probe-runner.ts"
+      - "packages/runtime-playground/src/editor-command-runners.ts"
+      - "packages/runtime-playground/src/preview-server.ts"
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
       - "packages/runtime-playground/src/playground-cli-runner.ts"
       - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
@@ -56,6 +64,14 @@ on:
       - "tests/redaction.test.ts"
       - "tests/production-boundary-enforcement.test.ts"
       - "tests/runtime-tool-policy.test.ts"
+      - "tests/browser-canonical-preview-origin.test.ts"
+      - "packages/runtime-playground/src/browser-actions-runner.ts"
+      - "packages/runtime-playground/src/browser-artifacts.ts"
+      - "packages/runtime-playground/src/browser-multi-actor-scenario-runner.ts"
+      - "packages/runtime-playground/src/browser-preview-routing.ts"
+      - "packages/runtime-playground/src/browser-probe-runner.ts"
+      - "packages/runtime-playground/src/editor-command-runners.ts"
+      - "packages/runtime-playground/src/preview-server.ts"
       - "packages/runtime-playground/src/phpunit-command-handlers.ts"
       - "packages/runtime-playground/src/playground-cli-runner.ts"
       - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
@@ -84,8 +100,16 @@ jobs:
           php-version: '8.2'
           tools: composer:v2
       - run: npm ci
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm run test:agent-task-contracts
+      - run: npm run test:browser-canonical-preview-origin
       - run: npm run test:bounded-runtime-plan
       - run: npm run test:bounded-recipe-plan
       - run: npm run test:bounded-recipe-plan-integration

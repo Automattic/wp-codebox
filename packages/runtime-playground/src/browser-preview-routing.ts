@@ -17,6 +17,7 @@ export interface BrowserPreviewNetworkPolicy {
   recordExternal: boolean
   stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
   routedRedirectEscapes: Array<{ rawOrigin: string; effectiveOrigin: string; reason: string }>
+  preserveRoutedOrigin: boolean
 }
 
 export interface BrowserPreviewNavigationDecision {
@@ -44,10 +45,20 @@ export interface BrowserPreviewTopology {
   preview: BrowserProbePreviewRouting
   networkPolicy: BrowserPreviewNetworkPolicy
   routedHosts: string[]
-  origins: { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string }
+  origins: BrowserPreviewOrigins
   navigationScope: BrowserPreviewNavigationScope
   resolveUrl(pathOrUrl: string): string
   authCookieUrls(targetUrls: string[]): string[]
+  contextOptions(): { proxy?: { server: string } }
+}
+
+export interface BrowserPreviewOrigins {
+  localPreviewOrigin: string
+  requestedPreviewOrigin?: string
+  effectivePreviewOrigin: string
+  canonicalBrowserOrigin: string
+  localProxyOrigin: string
+  upstreamRuntimeOrigin?: string
 }
 
 export interface BrowserPreviewRouteTracker {
@@ -97,22 +108,26 @@ export function browserPreviewRouting(args: string[], runtimeSpec: RuntimeCreate
   }
 }
 
-export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserPreviewTopology {
-  const preview = browserPreviewRouting(args, runtimeSpec, localPreviewOrigin)
+export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string, upstreamRuntimeOrigin?: string): BrowserPreviewTopology {
   const routedHosts = commaListArg(args, "route-host")
+  const preview = browserPreviewRouting(args, runtimeSpec, localPreviewOrigin)
+  applyCanonicalRoutedPreviewOrigin(preview, runtimeSpec?.preview?.siteUrl, routedHosts)
   const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
 
   return {
     preview,
     networkPolicy,
     routedHosts,
-    origins: browserPreviewOrigins(preview),
+    origins: browserPreviewOrigins(preview, upstreamRuntimeOrigin),
     navigationScope: browserPreviewNavigationScope(preview.effectiveOrigin, networkPolicy),
     resolveUrl(pathOrUrl) {
       return resolveBrowserPreviewUrl(pathOrUrl, preview.effectiveOrigin)
     },
     authCookieUrls(targetUrls) {
       return browserPreviewAuthCookieUrls(localPreviewOrigin, routedHosts, targetUrls)
+    },
+    contextOptions() {
+      return networkPolicy.preserveRoutedOrigin ? { proxy: { server: new URL(localPreviewOrigin).origin } } : {}
     },
   }
 }
@@ -146,12 +161,50 @@ export function browserPreviewNavigationScope(effectivePreviewOrigin: string, po
   }
 }
 
-export function browserPreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
+export function browserPreviewOrigins(preview: BrowserProbePreviewRouting, upstreamRuntimeOrigin?: string): BrowserPreviewOrigins {
   return {
     localPreviewOrigin: preview.localOrigin,
-    requestedPreviewOrigin: preview.publicOrigin,
+    ...(preview.publicOrigin ? { requestedPreviewOrigin: preview.publicOrigin } : {}),
     effectivePreviewOrigin: preview.effectiveOrigin,
+    canonicalBrowserOrigin: new URL(preview.effectiveOrigin).origin,
+    localProxyOrigin: new URL(preview.localOrigin).origin,
+    ...(upstreamRuntimeOrigin ? { upstreamRuntimeOrigin: new URL(upstreamRuntimeOrigin).origin } : {}),
   }
+}
+
+function applyCanonicalRoutedPreviewOrigin(preview: BrowserProbePreviewRouting, siteUrl: string | undefined, routedHosts: string[]): void {
+  if (preview.effectiveMode !== "local" || !siteUrl) {
+    return
+  }
+
+  let canonical: URL
+  try {
+    canonical = new URL(siteUrl)
+  } catch {
+    return
+  }
+  const host = normalizeBrowserPreviewHost(canonical.hostname)
+  if (!routedHosts.map(normalizeBrowserPreviewHost).includes(host)) {
+    return
+  }
+
+  if (canonical.protocol !== "http:") {
+    preview.diagnostics.push({
+      code: "preview-canonical-origin-preservation-inconclusive",
+      severity: "error",
+      message: "The local Playground provider cannot preserve this declared canonical preview protocol.",
+      details: { status: "inconclusive", canonicalOrigin: canonical.origin, supportedProtocols: ["http:"] },
+    })
+    return
+  }
+
+  preview.effectiveOrigin = canonical.toString()
+  preview.diagnostics.push({
+    code: "preview-canonical-routed-origin",
+    severity: "info",
+    message: "The declared routed preview alias is the browser-visible origin.",
+    details: { canonicalOrigin: canonical.origin, localProxyOrigin: new URL(preview.localOrigin).origin },
+  })
 }
 
 export function browserPreviewReadinessError(preview: BrowserProbePreviewRouting): Error | undefined {
@@ -218,6 +271,7 @@ export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[]
     recordExternal: strictBooleanArg(args, "record-external", false),
     stats: new Map(),
     routedRedirectEscapes: [],
+    preserveRoutedOrigin: new URL(preview.effectiveOrigin).origin !== new URL(preview.localOrigin).origin && preview.effectiveMode === "local",
   }
 }
 
@@ -321,28 +375,38 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
     stat.requests += 1
     stat.external = !policy.firstPartyHosts.has(host)
 
-    if (policy.blockHosts.has(host) || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host))) {
+    if (policy.blockHosts.has(host)) {
       stat.blocked += 1
       await route.abort("blockedbyclient")
       return
     }
 
-    if (!policy.routeHosts.has(host)) {
-      await route.continue()
+    if (policy.routeHosts.has(host)) {
+      stat.routed += 1
+      if (policy.preserveRoutedOrigin) {
+        await route.continue()
+        return
+      }
+      const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy, origin)
+      tracker?.pending.add(task)
+      try {
+        await task
+      } catch (error) {
+        tracker?.errors.push(sanitizeBrowserPreviewRouteError(error))
+        await route.abort("failed").catch(() => undefined)
+      } finally {
+        tracker?.pending.delete(task)
+      }
       return
     }
 
-    stat.routed += 1
-    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy, origin)
-    tracker?.pending.add(task)
-    try {
-      await task
-    } catch (error) {
-      tracker?.errors.push(sanitizeBrowserPreviewRouteError(error))
-      await route.abort("failed").catch(() => undefined)
-    } finally {
-      tracker?.pending.delete(task)
+    if (policy.preserveRoutedOrigin || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host)) || (request.resourceType() === "document" && stat.external)) {
+      stat.blocked += 1
+      await route.abort("blockedbyclient")
+      return
     }
+
+    await route.continue()
   })
 }
 

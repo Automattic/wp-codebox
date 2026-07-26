@@ -21,7 +21,8 @@ import {
   trustedBrowserSessionOrigins,
   verifyBrowserCallbackSignature,
 } from "../packages/runtime-core/src/index.js"
-import { browserPreviewAuthCookieUrls, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewAuthCookieUrls, browserPreviewReadinessError, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -104,6 +105,8 @@ assert.deepEqual(topology.origins, {
   localPreviewOrigin: "http://127.0.0.1:9400",
   requestedPreviewOrigin: "https://example.test/site",
   effectivePreviewOrigin: "https://example.test/site",
+  canonicalBrowserOrigin: "https://example.test",
+  localProxyOrigin: "http://127.0.0.1:9400",
 })
 assert.deepEqual(topology.authCookieUrls(["https://example.test/wp-admin/"]), [
   "http://127.0.0.1/",
@@ -135,6 +138,54 @@ assert.deepEqual(topology.navigationScope.resolve("https://cdn.example.test/asse
 })
 assert.equal(topology.navigationScope.resolve("https://outside.example/", "https://example.test/").reason, "host-not-routed-to-preview")
 assert.deepEqual(browserPreviewAuthCookieUrls("http://localhost:9400", ["PUBLIC.example.test"], ["https://public.example.test/wp-admin/"]), ["http://localhost/", "https://public.example.test/"])
+
+const canonicalTopology = browserPreviewTopology(
+  ["route-host=localhost"],
+  { preview: { siteUrl: "http://localhost/events/" } },
+  "http://127.0.0.1:9400",
+  "http://127.0.0.1:9500",
+)
+assert.equal(canonicalTopology.preview.effectiveOrigin, "http://localhost/events/")
+assert.equal(canonicalTopology.resolveUrl("/events/near-me/"), "http://localhost/events/near-me/")
+assert.deepEqual(canonicalTopology.origins, {
+  localPreviewOrigin: "http://127.0.0.1:9400",
+  effectivePreviewOrigin: "http://localhost/events/",
+  canonicalBrowserOrigin: "http://localhost",
+  localProxyOrigin: "http://127.0.0.1:9400",
+  upstreamRuntimeOrigin: "http://127.0.0.1:9500",
+})
+assert.equal(canonicalTopology.preview.diagnostics[0]?.code, "preview-canonical-routed-origin")
+const canonicalReview = browserReviewSummary([{
+  artifactType: "probe",
+  requestedUrl: "http://localhost/events/",
+  url: "http://localhost/events/",
+  preview: canonicalTopology.preview,
+  ...canonicalTopology.origins,
+  files: { summary: "files/browser/summary.json" },
+  summary: { consoleMessages: 0, errors: 0, htmlSnapshot: false, networkEvents: 0, replayability: "diagnostic-only", screenshot: false, viewport: null },
+} satisfies BrowserArtifact])
+assert.deepEqual(canonicalReview?.probes[0] && {
+  canonicalBrowserOrigin: canonicalReview.probes[0].canonicalBrowserOrigin,
+  localProxyOrigin: canonicalReview.probes[0].localProxyOrigin,
+  upstreamRuntimeOrigin: canonicalReview.probes[0].upstreamRuntimeOrigin,
+}, {
+  canonicalBrowserOrigin: "http://localhost",
+  localProxyOrigin: "http://127.0.0.1:9400",
+  upstreamRuntimeOrigin: "http://127.0.0.1:9500",
+})
+const unsupportedCanonicalTopology = browserPreviewTopology(
+  ["route-host=secure.example.test"],
+  { preview: { siteUrl: "https://secure.example.test/" } },
+  "http://127.0.0.1:9400",
+)
+assert.equal(unsupportedCanonicalTopology.preview.effectiveOrigin, "http://127.0.0.1:9400")
+assert.deepEqual(unsupportedCanonicalTopology.preview.diagnostics[0], {
+  code: "preview-canonical-origin-preservation-inconclusive",
+  severity: "error",
+  message: "The local Playground provider cannot preserve this declared canonical preview protocol.",
+  details: { status: "inconclusive", canonicalOrigin: "https://secure.example.test", supportedProtocols: ["http:"] },
+})
+assert.match(browserPreviewReadinessError(unsupportedCanonicalTopology.preview)?.message ?? "", /cannot preserve/)
 
 let activeUpstreamRequests = 0
 let maxActiveUpstreamRequests = 0
