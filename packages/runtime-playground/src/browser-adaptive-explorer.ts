@@ -45,6 +45,11 @@ interface FrontierEntry {
   path: BrowserAdaptiveAction[]
 }
 
+interface AdaptiveNetworkFailureRetention {
+  remainingCount: number
+  remainingBytes: number
+}
+
 export async function exploreAdaptiveBrowserStateMachine({
   page,
   baseUrl,
@@ -79,6 +84,10 @@ export async function exploreAdaptiveBrowserStateMachine({
   let revisits = 0
   let keyboardActions = 0
   let exhausted: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
+  const networkFailureRetention: AdaptiveNetworkFailureRetention = {
+    remainingCount: Math.min(contract.budgets.maxErrors, contract.descriptorLimits.maxDiagnostics),
+    remainingBytes: Math.floor(contract.budgets.maxArtifactBytes / 8),
+  }
 
   const initial = await captureAdaptiveState(page, contract, 0, navigationScope)
   appendDiagnostics(diagnostics, initial.diagnostics, contract.descriptorLimits.maxDiagnostics)
@@ -144,7 +153,7 @@ export async function exploreAdaptiveBrowserStateMachine({
       const newConsoleRecords = consoleErrorRecords(observations.consoleMessages.slice(beforeConsole))
       const newConsoleErrors = newConsoleRecords.map(recordMessage)
       const newPageErrors = errorMessages(observations.errors.slice(beforeErrors))
-      const oracleEvidence = adaptiveOracleEvidence(newConsoleRecords, observations.network.slice(beforeNetwork), newPageErrors, contract, networkPolicy)
+      const oracleEvidence = adaptiveOracleEvidence(newConsoleRecords, observations.network.slice(beforeNetwork), newPageErrors, contract, networkPolicy, networkFailureRetention)
       const fingerprints = [...oracleEvidence.fingerprints]
       const existing = states.get(stabilized.state.digest)
       const newState = !existing
@@ -570,7 +579,7 @@ function consoleErrorRecords(records: object[]): Record<string, unknown>[] {
   return records.map((record) => record as Record<string, unknown>).filter((record) => record.type === "error" || record.level === "error").slice(0, 100)
 }
 
-function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], networkRecords: object[], pageErrors: string[], contract: BrowserAdaptiveExplorationContract, networkPolicy?: BrowserPreviewNetworkPolicy): { fingerprints: string[]; networkFailures: BrowserAdaptiveNetworkFailure[]; networkFailureSummary?: BrowserAdaptiveTransition["observations"]["networkFailureSummary"]; errorCount: number } {
+function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], networkRecords: object[], pageErrors: string[], contract: BrowserAdaptiveExplorationContract, networkPolicy?: BrowserPreviewNetworkPolicy, retention?: AdaptiveNetworkFailureRetention): { fingerprints: string[]; networkFailures: BrowserAdaptiveNetworkFailure[]; networkFailureSummary?: BrowserAdaptiveTransition["observations"]["networkFailureSummary"]; errorCount: number } {
   const failures = networkRecords.map((record) => record as Record<string, unknown>).filter((record) => record.type === "requestfailed")
   const classifiedFailures = failures.map((record): BrowserAdaptiveNetworkFailure & { expectedBlock: boolean } => {
     const url = typeof record.url === "string" ? record.url : ""
@@ -584,7 +593,7 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
     const message = recordMessage(record)
     const locationUrl = objectRecord(record.location).url
     const match = classifiedFailures.findIndex((failure, index) => unmatchedFailures.has(index)
-      && (typeof locationUrl === "string" && locationUrl ? failure.url === locationUrl : failureTokenMatches(message, failure.failure)))
+      && (typeof locationUrl === "string" && locationUrl ? failure.url === locationUrl && failureTokenMatches(message, failure.failure) : failureTokenMatches(message, failure.failure)))
     if (match < 0) return [message]
     unmatchedFailures.delete(match)
     const failure = classifiedFailures[match]!
@@ -592,7 +601,7 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
   })
   const networkMessages = classifiedFailures.filter((failure, index) => unmatchedFailures.has(index) && failure.oracleFinding).map(networkFailureOracleMessage)
   const messages = [...consoleMessages, ...pageErrors, ...networkMessages]
-  const networkFailureSummary = classifiedFailures.length > 0 ? boundedNetworkFailureEvidence(classifiedFailures, contract) : undefined
+  const networkFailureSummary = classifiedFailures.length > 0 ? boundedNetworkFailureEvidence(classifiedFailures, contract, retention) : undefined
   return {
     fingerprints: [...new Set(messages.map((message) => browserAdaptiveDigest("oracle", message)))].sort(),
     networkFailures: networkFailureSummary?.failures ?? [],
@@ -601,14 +610,19 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
   }
 }
 
-function boundedNetworkFailureEvidence(failures: Array<BrowserAdaptiveNetworkFailure & { expectedBlock: boolean }>, contract: BrowserAdaptiveExplorationContract): { failures: BrowserAdaptiveNetworkFailure[]; summary: NonNullable<BrowserAdaptiveTransition["observations"]["networkFailureSummary"]> } {
+function boundedNetworkFailureEvidence(failures: Array<BrowserAdaptiveNetworkFailure & { expectedBlock: boolean }>, contract: BrowserAdaptiveExplorationContract, cumulativeRetention?: AdaptiveNetworkFailureRetention): { failures: BrowserAdaptiveNetworkFailure[]; summary: NonNullable<BrowserAdaptiveTransition["observations"]["networkFailureSummary"]> } {
   const ordered = failures.map(({ expectedBlock: _expectedBlock, ...failure }) => failure).sort((left, right) => stableJson(left).localeCompare(stableJson(right)))
-  const maximum = Math.min(contract.budgets.maxErrors, contract.descriptorLimits.maxDiagnostics)
-  const byteBudget = Math.floor(contract.budgets.maxArtifactBytes / 8)
+  const retention = cumulativeRetention ?? {
+    remainingCount: Math.min(contract.budgets.maxErrors, contract.descriptorLimits.maxDiagnostics),
+    remainingBytes: Math.floor(contract.budgets.maxArtifactBytes / 8),
+  }
   const retained: BrowserAdaptiveNetworkFailure[] = []
-  for (const failure of ordered.slice(0, maximum)) {
-    if (Buffer.byteLength(stableJson([...retained, failure])) > byteBudget) break
+  for (const failure of ordered.slice(0, retention.remainingCount)) {
+    const bytes = Buffer.byteLength(stableJson(failure)) + 1
+    if (bytes > retention.remainingBytes) break
     retained.push(failure)
+    retention.remainingCount -= 1
+    retention.remainingBytes -= bytes
   }
   return {
     failures: retained,

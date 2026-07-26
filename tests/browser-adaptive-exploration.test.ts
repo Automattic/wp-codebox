@@ -529,6 +529,23 @@ test("URL-less policy-block console records correlate before promotion and prese
   assert.equal(mixed.result.transitions[0]?.observations.networkFailureSummary?.oracleFindings, 1)
 })
 
+test("same-URL product errors require a matching failure token before policy correlation", async () => {
+  const productMessage = "same-URL product defect"
+  const productFingerprint = browserAdaptiveDigest("oracle", productMessage)
+  const evidence = await runNetworkOracleFixture("block", "blocked", {}, false, true)
+  assert.deepEqual(evidence.result.transitions[0]?.observations.oracleFingerprints, [productFingerprint])
+  assert.equal(evidence.result.findings[0]?.fingerprint, productFingerprint)
+
+  const finding = await runNetworkOracleFixture("block", "blocked", { oraclePolicy: { policyBlocks: "finding" } }, false, true)
+  const fingerprints = finding.result.transitions[0]?.observations.oracleFingerprints ?? []
+  const blockMessage = finding.result.transitions[0]?.observations.consoleErrors.find((message) => message.includes("ERR_BLOCKED_BY_CLIENT"))
+  assert(blockMessage)
+  assert.equal(fingerprints.length, 2)
+  assert(fingerprints.includes(productFingerprint))
+  assert(fingerprints.includes(browserAdaptiveDigest("oracle", blockMessage)))
+  assert.equal(finding.result.transitions[0]?.observations.networkFailureSummary?.policyBlocks, 1)
+})
+
 test("allow and record policies do not explain unexpected same-origin request failures", async () => {
   for (const mode of ["allow", "record"] as const) {
     const run = await runNetworkOracleFixture(mode, "unexpected")
@@ -562,16 +579,20 @@ test("page exceptions remain findings alongside policy-aware network classificat
 test("policy-block floods retain bounded deterministic evidence without stopping later findings", async () => {
   const [first, second] = await runPolicyBlockFloodFixture()
   for (const result of [first, second]) {
-    const flood = result.transitions.find((transition) => transition.observations.networkFailureSummary?.total === 80)
-    assert(flood)
-    assert.deepEqual(flood.observations.networkFailureSummary, { total: 80, retained: 2, policyBlocks: 80, oracleFindings: 0, truncated: true })
-    assert.equal(flood.observations.networkFailures?.length, 2)
-    assert.deepEqual(flood.observations.oracleFingerprints, [])
+    const floods = result.transitions.filter((transition) => transition.observations.networkFailureSummary?.total === 80)
+    assert.equal(floods.length, 3)
+    assert.equal(floods.reduce((total, transition) => total + (transition.observations.networkFailures?.length ?? 0), 0), 2, "retained failures are bounded across the artifact")
+    assert.deepEqual(floods.map((transition) => transition.observations.networkFailureSummary), [
+      { total: 80, retained: 2, policyBlocks: 80, oracleFindings: 0, truncated: true },
+      { total: 80, retained: 0, policyBlocks: 80, oracleFindings: 0, truncated: true },
+      { total: 80, retained: 0, policyBlocks: 80, oracleFindings: 0, truncated: true },
+    ])
+    assert(floods.every((transition) => transition.observations.oracleFingerprints.length === 0))
     assert.equal(result.status, "findings")
     assert.equal(result.summary.errors, 1, "policy blocks must not consume the product error budget")
     assert.notEqual(result.summary.budgetExhausted, "maxArtifactBytes")
     assert.equal(result.findings.length, 1)
-    assert.equal(result.findings[0]?.originalPath.length, 2)
+    assert.equal(result.findings[0]?.originalPath.length, 4)
     assert.deepEqual(result.findings[0]?.minimizedPath, result.findings[0]?.originalPath)
     assert.deepEqual(result.findings[0]?.replay.actions, result.findings[0]?.minimizedPath)
   }
@@ -699,7 +720,7 @@ async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopolo
   }
 }
 
-async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behavior: "blocked" | "unexpected" | "mixed" | "exception", input: Record<string, unknown> = {}, urlLessConsole = false) {
+async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behavior: "blocked" | "unexpected" | "mixed" | "exception", input: Record<string, unknown> = {}, urlLessConsole = false, sameUrlProductError = false) {
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://preview.invalid").pathname
     if (path === "/failed.png") {
@@ -725,8 +746,12 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
   const consoleMessages: Record<string, unknown>[] = []
   const errors: Record<string, unknown>[] = []
   const network: Record<string, unknown>[] = []
-  attachBrowserCaptureListeners({ captureConsole: !urlLessConsole, captureErrors: true, captureNetwork: true, captureWebSocket: false, consoleMessages, errors, network, page })
-  if (urlLessConsole) page.on("console", (message) => consoleMessages.push({ type: message.type(), text: message.text() }))
+  attachBrowserCaptureListeners({ captureConsole: !urlLessConsole && !sameUrlProductError, captureErrors: true, captureNetwork: true, captureWebSocket: false, consoleMessages, errors, network, page })
+  if (urlLessConsole || sameUrlProductError) page.on("console", (message) => {
+    const location = message.location()
+    if (sameUrlProductError && message.text().includes("ERR_BLOCKED_BY_CLIENT")) consoleMessages.push({ type: "error", text: "same-URL product defect", location })
+    consoleMessages.push({ type: message.type(), text: message.text(), ...(urlLessConsole ? {} : { location }) })
+  })
   await page.addInitScript("globalThis.__name = value => value")
   await page.goto(startUrl, { waitUntil: "load" })
   const contract = browserAdaptiveExplorationContract({
@@ -753,11 +778,16 @@ async function runPolicyBlockFloodFixture() {
     response.setHeader("content-type", "text/html")
     response.end(`<!doctype html><style>button{display:block;width:180px;height:30px}</style><button id="trigger">Load assets</button><script>
       document.querySelector('#trigger').addEventListener('click', () => {
+        const stage = Number(document.querySelector('#trigger').dataset.stage || '0') + 1;
+        document.querySelector('#trigger').dataset.stage = String(stage);
+        document.querySelector('#trigger').textContent = 'Load assets stage ' + String(stage);
         for (let index = 0; index < 80; index += 1) {
           const image = document.createElement('img');
-          image.src = 'http://assets.example.invalid/tile-' + String(index).padStart(3, '0') + '.png';
+          image.src = 'http://assets.example.invalid/tile-' + String(stage) + '-' + String(index).padStart(3, '0') + '.png';
           document.body.append(image);
         }
+        if (stage < 3) return;
+        document.querySelector('#trigger').disabled = true;
         const fail = document.createElement('button');
         fail.id = 'fail';
         fail.textContent = 'Reveal defect';
@@ -784,7 +814,7 @@ async function runPolicyBlockFloodFixture() {
       startUrl,
       failOnFinding: false,
       actionFamilies: ["click"],
-      budgets: { maxActions: 20, maxStates: 6, maxTransitions: 10, maxDurationMs: 20_000, maxArtifactBytes: 40_000, maxErrors: 2 },
+      budgets: { maxActions: 40, maxStates: 8, maxTransitions: 20, maxDurationMs: 30_000, maxArtifactBytes: 40_000, maxErrors: 2 },
       descriptorLimits: { maxPerState: 10, maxDiagnostics: 3, maxTextLength: 500 },
       stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1_500, maxMutationRecords: 100 },
     })
