@@ -1,9 +1,12 @@
-import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { redactError, redactString, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import type { BrowserProbeNetworkPolicySummary, BrowserProbePreviewMode, BrowserProbePreviewRouting } from "./browser-artifacts.js"
 import { argValue, commaListArg, strictBooleanArg } from "./commands.js"
 import type { Page, Route } from "playwright"
 
 const BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS = 5_000
+const BROWSER_PREVIEW_ROUTE_DOCUMENT_FETCH_ATTEMPTS = 3
+const BROWSER_PREVIEW_ROUTE_SUBRESOURCE_FETCH_ATTEMPTS = 2
+const BROWSER_PREVIEW_ROUTE_RETRY_DELAY_MS = 25
 
 export interface BrowserPreviewNetworkPolicy {
   mode: "allow" | "block" | "record"
@@ -258,8 +261,7 @@ export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRou
   }
 
   if (tracker.errors.length > 0) {
-    const error = tracker.errors[0]
-    throw error instanceof Error ? error : new Error(String(error))
+    throw sanitizeBrowserPreviewRouteError(tracker.errors[0])
   }
 }
 
@@ -310,8 +312,8 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
     try {
       await task
     } catch (error) {
-      tracker?.errors.push(error)
-      throw error
+      tracker?.errors.push(sanitizeBrowserPreviewRouteError(error))
+      await route.abort("failed").catch(() => undefined)
     } finally {
       tracker?.pending.delete(task)
     }
@@ -400,25 +402,42 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
     routedUrl.hostname = origin.hostname
     routedUrl.port = origin.port
 
-    let response: Awaited<ReturnType<Route["fetch"]>>
-    try {
-      response = await route.fetch({
-        url: routedUrl.toString(),
-        headers: {
-          ...route.request().headers(),
-          host: currentUrl.host,
-          "x-forwarded-host": currentUrl.host,
-          "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
-          "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
-        },
-        maxRedirects: 0,
-      })
-    } catch (error) {
-      if (!isBrowserPreviewRouteFetchRecoverableError(error)) {
-        throw error
-      }
+    let response: Awaited<ReturnType<Route["fetch"]>> | undefined
+    const resourceType = route.request().resourceType()
+    const maxAttempts = resourceType === "document" ? BROWSER_PREVIEW_ROUTE_DOCUMENT_FETCH_ATTEMPTS : BROWSER_PREVIEW_ROUTE_SUBRESOURCE_FETCH_ATTEMPTS
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        response = await route.fetch({
+          url: routedUrl.toString(),
+          headers: {
+            ...route.request().headers(),
+            host: currentUrl.host,
+            "x-forwarded-host": currentUrl.host,
+            "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
+            "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
+          },
+          maxRedirects: 0,
+        })
+        break
+      } catch (error) {
+        if (!isBrowserPreviewRouteFetchRecoverableError(error)) {
+          throw sanitizeBrowserPreviewRouteError(error)
+        }
 
-      await route.abort("failed").catch(() => undefined)
+        const retryable = isBrowserPreviewRouteFetchTransientTransportError(error)
+        if (retryable && attempt < maxAttempts) {
+          await wait(BROWSER_PREVIEW_ROUTE_RETRY_DELAY_MS * attempt)
+          continue
+        }
+
+        if (resourceType !== "document" || !retryable) {
+          await route.abort("failed").catch(() => undefined)
+          return undefined
+        }
+        throw browserPreviewRouteFetchExhaustedError(route, currentUrl, attempt, error)
+      }
+    }
+    if (!response) {
       return undefined
     }
 
@@ -458,11 +477,29 @@ export function isBrowserPreviewRouteFetchRequestContextDisposedError(error: unk
 }
 
 export function isBrowserPreviewRouteFetchRecoverableError(error: unknown): boolean {
-  return isBrowserPreviewRouteFetchRequestContextDisposedError(error) || isBrowserPreviewRouteFetchContentDecodingError(error)
+  return isBrowserPreviewRouteFetchRequestContextDisposedError(error) || isBrowserPreviewRouteFetchContentDecodingError(error) || isBrowserPreviewRouteFetchTransientTransportError(error)
 }
 
 export function isBrowserPreviewRouteFetchContentDecodingError(error: unknown): boolean {
   return error instanceof Error && /\broute\.fetch:\s*failed to decompress\b/i.test(error.message)
+}
+
+export function isBrowserPreviewRouteFetchTransientTransportError(error: unknown): boolean {
+  return error instanceof Error && /\b(?:ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|UND_ERR_SOCKET|socket (?:hang up|closed|ended)|connection (?:reset|refused|closed)|other side closed)\b/i.test(error.message)
+}
+
+function browserPreviewRouteFetchExhaustedError(route: Route, requestUrl: URL, attempts: number, error: unknown): Error {
+  const method = route.request().method()
+  const resourceType = route.request().resourceType()
+  const classification = isBrowserPreviewRouteFetchTransientTransportError(error) ? "upstream-transport" : "route-fetch"
+  const safeUrl = redactString(requestUrl.toString(), { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+  const exhausted = new Error(`wordpress.browser-probe route-host fetch failed after ${attempts} attempt(s): classification=${classification} method=${method} resourceType=${resourceType} url=${safeUrl}`)
+  exhausted.name = "BrowserPreviewRouteFetchError"
+  return exhausted
+}
+
+function sanitizeBrowserPreviewRouteError(error: unknown): Error {
+  return redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }
 
 function urlProtocol(url: string): string | undefined {

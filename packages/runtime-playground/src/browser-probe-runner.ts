@@ -1,4 +1,4 @@
-import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserGeolocation, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserGeolocation, redactError, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
@@ -440,8 +440,9 @@ export async function runSingleBrowserProbeCommand({
     }
     finalUrl = page.url()
   } catch (error) {
-    pendingError = error instanceof Error ? error : new Error(String(error))
-    if (isBrowserCommandLivenessError(pendingError)) {
+    const livenessError = isBrowserCommandLivenessError(error)
+    pendingError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+    if (livenessError) {
       await page?.close().catch(() => undefined)
       page = null
     }
@@ -456,7 +457,7 @@ export async function runSingleBrowserProbeCommand({
     try {
       await drainBrowserPreviewRouteTracker(routeTracker)
     } catch (error) {
-      const routeError = error instanceof Error ? error : new Error(String(error))
+      const routeError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
       if (!pendingError && runPlan.routeHostDrain === "required") {
         pendingError = routeError
         progress.fail("probe-error", routeError)
@@ -674,7 +675,7 @@ export async function runBoundedBrowserDiagnostic<T>({
     })
     return { ok: true, value }
   } catch (error) {
-    const normalized = error instanceof Error ? error : new Error(String(error))
+    const normalized = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
     onError(normalized)
     return { ok: false, error: normalized }
   }

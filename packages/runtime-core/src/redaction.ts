@@ -96,10 +96,23 @@ export function redactJsonValue(value: unknown, options: RedactJsonOptions = {},
 
 export function redactString(value: string, options: RedactStringOptions = {}): string {
   return value
+    .replace(/(^|\r?\n)([ \t]*([A-Za-z0-9_-]+)[ \t]*:[ \t]*)[^\r\n]*/g, (line, prefix: string, assignment: string, key: string) => (
+      isSensitiveKey(key, options) ? `${prefix}${assignment}${REDACTED_VALUE}` : line
+    ))
     .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => redactUrl(match, options))
     .replace(SECRET_LIKE_VALUE_GLOBAL_PATTERN, REDACTED_VALUE)
     .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, options.redactQueryAssignments ? `$1=${REDACTED_VALUE}` : "$&")
     .replace(/((?:[A-Za-z0-9_-]*)(?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)(?:[A-Za-z0-9_-]*)(?:["'\s:=]+))[^&#\s"'<>]+/gi, `$1${REDACTED_VALUE}`)
+}
+
+export function redactError(error: unknown, options: RedactStringOptions = {}): Error {
+  const source = error instanceof Error ? error : new Error(String(error))
+  const redacted = new Error(redactString(source.message, options))
+  redacted.name = redactString(source.name, options)
+  if (source.stack) {
+    redacted.stack = redactString(source.stack, options)
+  }
+  return redacted
 }
 
 export function redactUrl(value: string, options: RedactStringOptions = {}): string {

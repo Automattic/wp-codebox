@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { redactString, type ArtifactManifest } from "@automattic/wp-codebox-core"
+import { redactError, redactString, type ArtifactManifest } from "@automattic/wp-codebox-core"
 import { isPlainObject as isRecord, now } from "@automattic/wp-codebox-core/internals"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
@@ -636,11 +636,8 @@ export function serializeBrowserConsoleMessage(message: ConsoleMessage): Record<
 }
 
 export function serializeBrowserError(type: BrowserProbeErrorRecord["type"], error: unknown): BrowserProbeErrorRecord {
-  if (error instanceof Error) {
-    return { type, name: error.name, message: error.message, stack: error.stack, timestamp: now() }
-  }
-
-  return { type, name: "Error", message: String(error), timestamp: now() }
+  const sanitized = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+  return { type, name: sanitized.name, message: sanitized.message, stack: sanitized.stack, timestamp: now() }
 }
 
 export function jsonLines(records: unknown[]): string {

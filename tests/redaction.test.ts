@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
-import { containsSecretLikeValue, isRedactedValue, isSensitiveKey, redactJsonValue, redactString, redactUrl, type RedactionPolicyProfileName } from "../packages/runtime-core/src/redaction.js"
+import { containsSecretLikeValue, isRedactedValue, isSensitiveKey, redactError, redactJsonValue, redactString, redactUrl, type RedactionPolicyProfileName } from "../packages/runtime-core/src/redaction.js"
 
 const sensitiveKeyCases: Array<[string, boolean]> = [
   ["token", true],
@@ -48,6 +48,19 @@ assert.equal(
   redactUrl("https://example.com/path?plain=ok&token=abc#frag"),
   "https://example.com/path?plain=ok&token=[redacted]#frag",
 )
+
+const headerSentinels = ["SENTINEL_COOKIE_2094", "SENTINEL_AUTH_2094", "SENTINEL_NONCE_2094", "SENTINEL_TOKEN_2094"]
+const headerLog = `route.fetch: read ECONNRESET\n  cookie: wordpress_logged_in=${headerSentinels[0]}; preference=visible\nAuthorization: Bearer ${headerSentinels[1]}\nx-wp-nonce: ${headerSentinels[2]}\nx-session-token: ${headerSentinels[3]}\naccept: text/html`
+const redactedHeaderLog = redactString(headerLog)
+assert.match(redactedHeaderLog, /cookie: \[redacted\]/i)
+assert.match(redactedHeaderLog, /authorization: \[redacted\]/i)
+assert.match(redactedHeaderLog, /x-wp-nonce: \[redacted\]/i)
+assert.match(redactedHeaderLog, /x-session-token: \[redacted\]/i)
+assert.match(redactedHeaderLog, /accept: text\/html/i)
+for (const sentinel of headerSentinels) assert.doesNotMatch(redactedHeaderLog, new RegExp(sentinel))
+
+const redactedError = redactError(Object.assign(new Error(headerLog), { stack: `Error: ${headerLog}` }))
+for (const sentinel of headerSentinels) assert.doesNotMatch(`${redactedError.message}\n${redactedError.stack}`, new RegExp(sentinel))
 
 const fixture = JSON.parse(await readFile(new URL("./fixtures/redaction-policy-profiles.json", import.meta.url), "utf8")) as {
   profiles: Record<RedactionPolicyProfileName, { redact: string[]; preserve: string[] }>
