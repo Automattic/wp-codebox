@@ -24,6 +24,14 @@ export interface BrowserPreviewNavigationDecision {
   reason: string
 }
 
+export interface BrowserPreviewNetworkDecision {
+  url: string
+  host?: string
+  urlClassification: "same-origin" | "external" | "invalid"
+  policyDecision: "blocked" | "allowed" | "recorded" | "unknown"
+  policyReason: string
+}
+
 export interface BrowserPreviewNavigationScope {
   resolve(href: string, documentUrl: string): BrowserPreviewNavigationDecision
   drainDiagnostics(): Array<{ code: string; message: string; metadata: Record<string, unknown> }>
@@ -230,6 +238,24 @@ export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetwork
     blockedRequests: Object.values(hosts).reduce((total, stat) => total + stat.blocked, 0),
     hosts: policy.recordExternal ? hosts : Object.fromEntries(Object.entries(hosts).filter(([, stat]) => stat.blocked > 0 || stat.routed > 0)),
   }
+}
+
+export function browserPreviewNetworkDecision(url: string, policy: BrowserPreviewNetworkPolicy): BrowserPreviewNetworkDecision {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return { url, urlClassification: "invalid", policyDecision: "unknown", policyReason: "url-invalid" }
+  }
+  const host = normalizeBrowserPreviewHost(parsed.hostname)
+  const external = !policy.firstPartyHosts.has(host)
+  const evidence = { url, host, urlClassification: external ? "external" as const : "same-origin" as const }
+  if (policy.blockHosts.has(host)) return { ...evidence, policyDecision: "blocked", policyReason: "declared-block-host" }
+  if (policy.mode === "block" && external && !policy.allowHosts.has(host)) return { ...evidence, policyDecision: "blocked", policyReason: "external-host-blocked-by-policy" }
+  if (policy.allowHosts.has(host)) return { ...evidence, policyDecision: "allowed", policyReason: "declared-allow-host" }
+  if (!external) return { ...evidence, policyDecision: "allowed", policyReason: "first-party-host" }
+  if (policy.mode === "allow") return { ...evidence, policyDecision: "allowed", policyReason: "network-policy-allow" }
+  return { ...evidence, policyDecision: "recorded", policyReason: "network-policy-record" }
 }
 
 export async function routeBrowserPreviewPageNetwork(page: Page, policy: BrowserPreviewNetworkPolicy, previewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
