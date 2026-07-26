@@ -16,7 +16,7 @@ export interface PhpunitRunCodeOptions {
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
-  dependencyPlugins?: Array<{ path: string; activate: boolean }>
+  dependencyPlugins?: Array<{ path: string; pluginFile: string; activate: boolean; loadAs: "plugin" | "mu-plugin" }>
   bootstrapFiles: string[]
   preloadFiles?: string[]
   bootstrapMode: string
@@ -386,9 +386,10 @@ CONFIG;
 
 export function phpunitMultisitePreinstallCode(options: PhpunitMultisitePreinstallCodeOptions): string {
   const wpConfigDefines = { ...options.wpConfigDefines }
-  for (const name of ["MULTISITE", "SUBDOMAIN_INSTALL", "DOMAIN_CURRENT_SITE", "PATH_CURRENT_SITE", "SITE_ID_CURRENT_SITE", "BLOG_ID_CURRENT_SITE"]) {
+  for (const name of ["MULTISITE", "SUBDOMAIN_INSTALL", "DOMAIN_CURRENT_SITE", "PATH_CURRENT_SITE", "SITE_ID_CURRENT_SITE", "BLOG_ID_CURRENT_SITE", "WPMU_PLUGIN_DIR"]) {
     delete wpConfigDefines[name]
   }
+  wpConfigDefines.WPMU_PLUGIN_DIR = "/tmp/wp-codebox-preinstall-mu-plugins"
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
 ini_set('display_startup_errors', '1');
@@ -416,6 +417,9 @@ ${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "error_log('S
 ${managedPhpunitConfigWriterPhp()}
 
 pg_apply_env($bench_env);
+if (!is_dir('/tmp/wp-codebox-preinstall-mu-plugins') && !mkdir('/tmp/wp-codebox-preinstall-mu-plugins', 0700, true) && !is_dir('/tmp/wp-codebox-preinstall-mu-plugins')) {
+    throw new RuntimeException('Could not create isolated multisite preinstall mu-plugin directory.');
+}
 $config_path = pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type);
 if (!defined('WP_TESTS_MULTISITE')) {
     define('WP_TESTS_MULTISITE', true);
@@ -1036,42 +1040,48 @@ function pg_run_load_deps_stage(array $cfg): array {
         if (empty($plugins)) {
             foreach (explode("\n", (string) ($cfg['dep_mounts'] ?? '')) as $path) {
                 if (trim($path) !== '') {
-                    $plugins[] = array('path' => $path, 'activate' => true);
+                    $slug = basename(rtrim(str_replace('\\\\', '/', trim($path)), '/'));
+                    $plugins[] = array('path' => $path, 'pluginFile' => $slug . '/' . $slug . '.php', 'activate' => true, 'loadAs' => 'plugin');
                 }
             }
         }
-        $plugin_root = realpath(WP_PLUGIN_DIR);
-        if ($plugin_root === false || !is_dir($plugin_root)) {
-            throw new RuntimeException('WordPress plugin directory is unavailable while loading managed PHPUnit dependencies');
-        }
         foreach ($plugins as $plugin) {
-            if (!is_array($plugin) || !is_string($plugin['path'] ?? null)) {
-                throw new RuntimeException('managed PHPUnit dependency metadata must contain a plugin path');
+            if (!is_array($plugin) || !is_string($plugin['path'] ?? null) || !is_string($plugin['pluginFile'] ?? null)) {
+                throw new RuntimeException('managed PHPUnit dependency metadata must contain a plugin path and entrypoint');
+            }
+            $load_as = ($plugin['loadAs'] ?? 'plugin') === 'mu-plugin' ? 'mu-plugin' : 'plugin';
+            $declared_plugin_root = $load_as === 'mu-plugin' ? WPMU_PLUGIN_DIR . '/contained-runtime' : WP_PLUGIN_DIR;
+            $plugin_root = realpath($declared_plugin_root);
+            if ($plugin_root === false || !is_dir($plugin_root)) {
+                throw new RuntimeException('WordPress dependency root is unavailable while loading managed PHPUnit dependencies');
             }
             $dep_mount = rtrim(str_replace('\\\\', '/', trim($plugin['path'])), '/');
             $dep_real = realpath($dep_mount);
             if ($dep_real === false || !is_dir($dep_real) || dirname($dep_real) !== $plugin_root) {
-                throw new RuntimeException('managed PHPUnit dependency must be a direct child directory of WP_PLUGIN_DIR: ' . $dep_mount);
+                throw new RuntimeException('managed PHPUnit dependency must be a direct child of its declared WordPress plugin root: ' . $dep_mount);
             }
-            if ($dep_mount !== WP_PLUGIN_DIR . '/' . basename($dep_mount)) {
+            if ($dep_mount !== $declared_plugin_root . '/' . basename($dep_mount)) {
                 throw new RuntimeException('managed PHPUnit dependency path is not canonical: ' . $dep_mount);
             }
-            $loaded_file = null;
-            foreach (glob($dep_real . '/*.php') ?: array() as $dep_file) {
-                if (basename($dep_file) === 'db.php') {
-                    continue;
-                }
-                if (strpos(file_get_contents($dep_file), 'Plugin Name:') !== false) {
-                    require_once $dep_file;
-                    $loaded_file = $dep_file;
+            $plugin_file = trim(str_replace('\\\\', '/', $plugin['pluginFile']));
+            $slug = basename($dep_mount);
+            if ($plugin_file === '' || str_starts_with($plugin_file, '/') || str_contains($plugin_file, '..') || !str_starts_with($plugin_file, $slug . '/') || !str_ends_with($plugin_file, '.php')) {
+                throw new RuntimeException('managed PHPUnit dependency entrypoint is unsafe or outside its plugin slug: ' . $plugin_file);
+            }
+            $entrypoint = $dep_real . '/' . substr($plugin_file, strlen($slug) + 1);
+            $loaded_file = realpath($entrypoint);
+            if ($loaded_file === false || !is_file($loaded_file) || !is_readable($loaded_file) || strpos($loaded_file, rtrim($dep_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+                throw new RuntimeException('managed PHPUnit dependency entrypoint is not a readable contained file: ' . $plugin_file);
+            }
+            foreach (array($dep_real . '/vendor/autoload_packages.php', $dep_real . '/vendor/autoload.php') as $composer_autoload) {
+                if (is_file($composer_autoload) && is_readable($composer_autoload)) {
+                    require_once $composer_autoload;
                     break;
                 }
             }
-            if ($loaded_file === null) {
-                throw new RuntimeException('managed PHPUnit dependency has no readable plugin entrypoint: ' . $dep_mount);
-            }
+            require_once $loaded_file;
             $result['loaded'][] = $loaded_file;
-            if (!empty($plugin['activate'])) {
+            if ($load_as === 'plugin' && !empty($plugin['activate'])) {
                 $result['activate'][] = $loaded_file;
             }
         }
@@ -1146,7 +1156,7 @@ function pg_activate_plugin_file(string $plugin_file, bool $network_wide): void 
     pg_log('PLUGIN_ACTIVATE_BEGIN ' . $plugin_basename . ' ' . pg_diagnostic_context());
     do_action('activate_' . $plugin_basename, $network_wide);
     pg_mark_plugin_active($plugin_basename, $network_wide);
-    do_action('activated_plugin', $plugin_basename, false, $network_wide);
+    do_action('activated_plugin', $plugin_basename, $network_wide);
     pg_log('PLUGIN_ACTIVATE_OK ' . $plugin_basename . ' ' . pg_diagnostic_context());
 }
 

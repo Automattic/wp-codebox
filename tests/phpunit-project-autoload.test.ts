@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
 import { corePhpunitRunCode, phpunitMultisitePreinstallCode, phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
+import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "../packages/runtime-playground/src/phpunit-command-semantics.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
 import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
@@ -118,6 +119,28 @@ pg_run_deferred_wordpress_hook_callbacks(array(array('priority' => 0, 'callback'
 if ($events !== array('early', 'late')) throw new RuntimeException('deferred init order was not faithful: ' . json_encode($events));
 if (count($wp_filter['init']->callbacks, COUNT_RECURSIVE) < 6) throw new RuntimeException('replayed callbacks were not retained');
 if ($wp_current_filter !== array()) throw new RuntimeException('current filter stack leaked');
+echo "ok\n";
+`)
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
+function assertActivatedPluginHookSignature(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-activated-plugin-hook-"))
+  const scriptPath = join(tempDir, "assert-activated-plugin-hook.php")
+  writeFileSync(scriptPath, `<?php
+function pg_log($message) {}
+function pg_diagnostic_context() { return 'test-context'; }
+function plugin_basename($file) { return 'dependency/dependency.php'; }
+function get_site_option($name, $default = array()) { return $default; }
+function update_site_option($name, $value) { return true; }
+$observed = array();
+function do_action($hook, ...$args) { global $observed; $observed[$hook] = $args; }
+${extractPhpFunction(source, "pg_mark_plugin_active")}
+${extractPhpFunction(source, "pg_activate_plugin_file")}
+pg_activate_plugin_file('/wordpress/wp-content/plugins/dependency/dependency.php', true);
+if (($observed['activated_plugin'] ?? null) !== array('dependency/dependency.php', true)) {
+    throw new RuntimeException('activated_plugin signature mismatch: ' . json_encode($observed['activated_plugin'] ?? null));
+}
 echo "ok\n";
 `)
   assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
@@ -668,6 +691,14 @@ assert.ok(decodedMysqlCode.includes('$database_type = "mysql";'))
 assert.ok(decodedMysqlCode.includes("'DB_HOST' => $db_host"), "managed PHPUnit writes the provisioned MySQL host into wp-tests-config.php")
 assert.ok(decodedMysqlCode.includes("getenv('DB_PASSWORD')"), "managed PHPUnit consumes the provisioned MySQL credentials")
 
+const inferredSemantics = phpunitExecutionSemantics(["multisite=true"], {
+  environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+  runtimeEnv: { DB_HOST: "127.0.0.1" },
+})
+assert.deepEqual(inferredSemantics, { bootstrapMode: "managed", databaseType: "mysql", externalDatabase: true, multisite: true }, "omitted defaults, external DB inference, and boolean true strings use runner semantics")
+assert.equal(requiresManagedMysqlMultisitePreinstall(["multisite=yes"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), true)
+assert.equal(requiresManagedMysqlMultisitePreinstall(["multisite=false"], { environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" }, runtimeEnv: { DB_HOST: "db" } }), false)
+
 const preinstallCode = phpunitMultisitePreinstallCode({
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   env: {},
@@ -681,6 +712,7 @@ assert.ok(preinstallCode.includes("require $tests_dir . '/includes/install.php'"
 assert.ok(preinstallCode.includes("pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type)"), "multisite preinstall uses the managed runner's database config and prefix")
 assert.equal(preinstallCode.includes("define('MULTISITE'"), false, "multisite preinstall must not bootstrap WordPress as an installed network")
 assert.equal(preinstallCode.includes("DOMAIN_CURRENT_SITE"), false, "multisite preinstall must not define current-network constants")
+assert.ok(preinstallCode.includes("/tmp/wp-codebox-preinstall-mu-plugins"), "multisite preinstall isolates generated and declared mu-plugins")
 assert.ok(preinstallCode.includes("@file_put_contents($result_file, '');"), "multisite preinstall clears stale diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinstall records throwable diagnostics")
 assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
@@ -697,12 +729,14 @@ await runPhpunitCommand({
     environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
     runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
     policy: { commands: ["wordpress.phpunit"] },
+    metadata: { recipe: { inputs: { extra_plugins: [{ slug: "preinstall-sensitive", pluginFile: "preinstall-sensitive/bootstrap.php", target: "/wordpress/wp-content/plugins/preinstall-sensitive", activate: true, loadAs: "plugin" }] } } },
   } as never,
   server: { playground: {} } as never,
   spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql", "multisite=1"] },
 })
 assert.equal(mysqlMultisiteInvocations.length, 2, "managed MySQL multisite runs a separate preinstall before PHPUnit")
 assert.ok(mysqlMultisiteInvocations[0].includes("'run_ms_tests'"))
+assert.equal(mysqlMultisiteInvocations[0].includes("preinstall-sensitive/bootstrap.php"), false, "canonical preinstall excludes recipe-active plugin and Composer preloading")
 assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
 
 const failedPreinstallInvocations: string[] = []
@@ -788,6 +822,7 @@ const managedModeCode = phpunitRunCode({
 })
 
 assertDeferredHookReplayUsesWordPressLifecycle(managedModeCode)
+assertActivatedPluginHookSignature(managedModeCode)
 
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
 assert.ok(managedModeCode.includes("define('DB_NAME', ':memory:');"), "default managed PHPUnit remains on SQLite")
@@ -825,9 +860,17 @@ assert.deepEqual(dependencyRecipe.inputs.extra_plugins, [{
   activate: false,
 }])
 assert.ok(dependencyRecipe.workflow.steps[0].args.includes("dependency-mounts=/wordpress/wp-content/plugins/dependency"))
-assert.ok(dependencyRecipe.workflow.steps[0].args.includes('dependency-plugins-json=[{"path":"/wordpress/wp-content/plugins/dependency","activate":false}]'), "dependency activation intent is carried into managed PHPUnit")
+assert.ok(dependencyRecipe.workflow.steps[0].args.includes('dependency-plugins-json=[{"path":"/wordpress/wp-content/plugins/dependency","pluginFile":"dependency/dependency.php","activate":false,"loadAs":"plugin"}]'), "validated dependency entrypoint and activation intent are carried into managed PHPUnit")
 assert.ok(managedModeCode.includes("dirname($dep_real) !== $plugin_root"), "dependency loading rejects paths outside a direct WP_PLUGIN_DIR child")
 assert.ok(managedModeCode.includes("managed PHPUnit dependency path is not canonical"), "dependency loading rejects non-canonical sandbox paths")
+assert.equal(managedModeCode.includes("glob($dep_real"), false, "dependency loading never scans for an arbitrary plugin header")
+
+const explicitMuDependencyRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "demo-plugin",
+  extra_plugins: [{ source: "/workspace/mu-dependency", slug: "mu-dependency", pluginFile: "bootstrap.php", activate: true, loadAs: "mu-plugin" }],
+  dependencyMounts: ["/wordpress/wp-content/plugins/mu-dependency"],
+})
+assert.ok(explicitMuDependencyRecipe.workflow.steps[0].args.includes('dependency-plugins-json=[{"path":"/wordpress/wp-content/mu-plugins/contained-runtime/mu-dependency","pluginFile":"mu-dependency/bootstrap.php","activate":true,"loadAs":"mu-plugin"}]'), "MU dependencies preserve their canonical explicit entrypoint and effective target")
 
 const multisiteRecipe = buildWordPressPhpunitRecipe({
   pluginSlug: "network-plugin",

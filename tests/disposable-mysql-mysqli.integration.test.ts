@@ -150,11 +150,33 @@ require_once ABSPATH . 'wp-settings.php';
 
     const multisitePlugin = join(directory, "managed-multisite-fixture")
     const multisiteDependency = join(directory, "managed-multisite-dependency")
+    const multisiteMuDependency = join(directory, "managed-multisite-mu-dependency")
     const multisiteRecipePath = join(directory, "managed-multisite-recipe.json")
     const multisiteArtifacts = join(directory, "managed-multisite-artifacts")
     await mkdir(join(multisitePlugin, "tests"), { recursive: true })
-    await mkdir(multisiteDependency, { recursive: true })
-    await writeFile(join(multisiteDependency, "managed-multisite-dependency.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\nregister_activation_hook(__FILE__, static function (): void { update_network_option(1, 'wp_codebox_dependency_activated', 1); });\n")
+    await mkdir(join(multisiteDependency, "vendor"), { recursive: true })
+    await mkdir(multisiteMuDependency, { recursive: true })
+    await writeFile(join(multisiteDependency, "decoy.php"), "<?php\n/** Plugin Name: Managed Multisite Decoy */\nthrow new RuntimeException('dependency entrypoint scan loaded the decoy');\n")
+    await writeFile(join(multisiteDependency, "bootstrap.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\nregister_activation_hook(__FILE__, static function (): void { update_network_option(1, 'wp_codebox_dependency_activated', 1); });\n")
+    await writeFile(join(multisiteDependency, "vendor", "autoload.php"), `<?php
+global $wpdb;
+$network_table = $wpdb->blogs;
+if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($network_table))) !== $network_table) {
+    throw new RuntimeException('Composer autoloader ran before multisite network tables existed');
+}
+get_network_option(1, 'site_name', '');
+file_put_contents('/tmp/wp-codebox-composer-loaded-after-network', 'yes');
+`)
+    await writeFile(join(multisiteMuDependency, "mu-bootstrap.php"), `<?php
+/** Plugin Name: Managed Multisite MU Dependency */
+global $wpdb;
+$network_table = $wpdb->blogs;
+if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($network_table))) !== $network_table) {
+    throw new RuntimeException('MU dependency ran before multisite network tables existed');
+}
+get_network_option(1, 'site_name', '');
+file_put_contents('/tmp/wp-codebox-mu-loaded-after-network', 'yes');
+`)
     await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
 /** Plugin Name: Managed Multisite Fixture */
 add_action('init', static function (): void {
@@ -202,12 +224,14 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->sitemeta} WHERE site_id = 1"));
         $this->assertTrue(update_network_option(1, 'wp_codebox_network_write', 'round-trip'));
         $this->assertSame('round-trip', get_network_option(1, 'wp_codebox_network_write'));
-        $dependency = WP_PLUGIN_DIR . '/managed-multisite-dependency/managed-multisite-dependency.php';
+        $dependency = WP_PLUGIN_DIR . '/managed-multisite-dependency/bootstrap.php';
         $this->assertDirectoryExists(dirname($dependency));
         $this->assertFileExists($dependency);
         require_once ABSPATH . 'wp-admin/includes/plugin.php';
-        $this->assertTrue(is_plugin_active_for_network('managed-multisite-dependency/managed-multisite-dependency.php'));
+        $this->assertTrue(is_plugin_active_for_network('managed-multisite-dependency/bootstrap.php'));
         $this->assertSame(1, (int) get_network_option(1, 'wp_codebox_dependency_activated'));
+        $this->assertFileExists('/tmp/wp-codebox-composer-loaded-after-network');
+        $this->assertFileExists('/tmp/wp-codebox-mu-loaded-after-network');
     }
 }
 `)
@@ -217,8 +241,11 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
       databaseType: "mysql",
       multisite: true,
       pluginSource: multisitePlugin,
-      extra_plugins: [{ source: multisiteDependency, slug: "managed-multisite-dependency", activate: true }],
-      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-dependency"],
+      extra_plugins: [
+        { source: multisiteDependency, slug: "managed-multisite-dependency", pluginFile: "managed-multisite-dependency/bootstrap.php", activate: true },
+        { source: multisiteMuDependency, slug: "managed-multisite-mu-dependency", pluginFile: "managed-multisite-mu-dependency/mu-bootstrap.php", activate: true, loadAs: "mu-plugin" },
+      ],
+      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-dependency", "/wordpress/wp-content/plugins/managed-multisite-mu-dependency"],
       mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
     })
     await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)

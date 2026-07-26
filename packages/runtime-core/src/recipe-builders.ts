@@ -4,6 +4,7 @@ export { buildRuntimePackageRunRecipe, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNT
 export { RUNTIME_PACKAGE_DIAGNOSTIC_SCHEMA, RUNTIME_PACKAGE_RESULT_SCHEMA, RUNTIME_PACKAGE_TASK_SCHEMA, normalizeRuntimePackageResult, normalizeRuntimePackageTask, validateRuntimePackageTask, type RuntimePackageDiagnostic, type RuntimePackageResult, type RuntimePackageTask } from "./runtime-package-contracts.js"
 import { normalizeSharedMounts } from "./mount-primitives.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
+import { resolvePluginEntrypointContract } from "./component-contracts.js"
 
 type JsonObject = Record<string, unknown>
 
@@ -76,6 +77,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
   const autoloadFile = options.autoloadFile ?? (options.bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const services = phpunitRuntimeServices(options.databaseType, options.services)
+  const extraPlugins = normalizeExtraPlugins(options.extra_plugins)
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
@@ -90,7 +92,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       ...(options.backendPackage ? { backendPackage: options.backendPackage } : {}),
     },
     inputs: {
-      extra_plugins: normalizeExtraPlugins(options.extra_plugins),
+      extra_plugins: extraPlugins,
       ...(services.length > 0 ? { services } : {}),
       mounts: normalizeRecipeMounts([
         ...(options.pluginSource ? [{ source: options.pluginSource, target: pluginTarget } satisfies WorkspaceRecipeMount] : []),
@@ -116,7 +118,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("phpunit-xml", options.phpunitXml ?? `${pluginTarget}/phpunit.xml.dist`),
           commandArg("phpunit-xml-default", options.phpunitXml === undefined ? "1" : ""),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
-          commandJsonArg("dependency-plugins-json", phpunitDependencyPlugins(options.dependencyMounts ?? [], options.extra_plugins ?? [])),
+          commandJsonArg("dependency-plugins-json", phpunitDependencyPlugins(options.dependencyMounts ?? [], extraPlugins)),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),
           commandJsonArg("preload-files-json", options.preloadFiles ?? []),
           commandJsonArg("phpunit-args-json", options.phpunitArgs ?? []),
@@ -130,12 +132,21 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   }
 }
 
-function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly WorkspaceRecipeExtraPlugin[]): Array<{ path: string; activate: boolean }> {
+function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly WorkspaceRecipeExtraPlugin[]): Array<{ path: string; pluginFile: string; activate: boolean; loadAs: "plugin" | "mu-plugin" }> {
   return mounts.map((path) => {
     const normalized = path.replace(/\/+$/g, "")
     const slug = normalized.slice(normalized.lastIndexOf("/") + 1)
     const plugin = plugins.find((candidate) => candidate.slug === slug || candidate.mountSlug === slug)
-    return { path, activate: plugin?.activate !== false }
+    const loadAs = plugin?.loadAs === "mu-plugin" ? "mu-plugin" : "plugin"
+    const pluginFile = plugin
+      ? resolvePluginEntrypointContract({ source: plugin.source ?? plugin.sourcePath ?? "", slug, pluginFile: plugin.pluginFile, loadAs }).pluginFile
+      : `${slug}/${slug}.php`
+    return {
+      path: loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/contained-runtime/${slug}` : path,
+      pluginFile,
+      activate: plugin?.activate !== false,
+      loadAs,
+    }
   })
 }
 
