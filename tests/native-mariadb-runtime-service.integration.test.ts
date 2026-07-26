@@ -13,7 +13,15 @@ const service = (id: string, prefix = "DB"): WorkspaceRecipeRuntimeService => ({
   outputs: { host: `${prefix}_HOST`, port: `${prefix}_PORT`, username: `${prefix}_USER`, password: `${prefix}_SECRET`, database: `${prefix}_NAME` },
 })
 const rootsBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
-const [first, second] = await Promise.all([provisionRuntimeServices([service("native-one")]), provisionRuntimeServices([service("native-two", "SECOND_DB")])])
+const concurrentProvisioning = await Promise.allSettled([provisionRuntimeServices([service("native-one")]), provisionRuntimeServices([service("native-two", "SECOND_DB")])])
+const successfulPeers = concurrentProvisioning.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof provisionRuntimeServices>>> => result.status === "fulfilled").map((result) => result.value)
+const rejectedPeer = concurrentProvisioning.find((result): result is PromiseRejectedResult => result.status === "rejected")
+if (rejectedPeer) {
+  await Promise.allSettled(successfulPeers.map(async (peer) => await peer.release()))
+  throw rejectedPeer.reason
+}
+const [first, second] = successfulPeers
+assert.ok(first && second)
 try {
   assert.notEqual(first.env.DB_PORT, second.env.SECOND_DB_PORT)
   const password = first.secretEnv.DB_SECRET ?? ""
@@ -63,7 +71,9 @@ try {
     await rm(recipeRoot, { recursive: true, force: true })
   }
 } finally {
-  await Promise.allSettled([first.release(), second.release()])
+  const releases = await Promise.allSettled([first.release(), second.release()])
+  const releaseFailure = releases.find((result): result is PromiseRejectedResult => result.status === "rejected")
+  if (releaseFailure) throw releaseFailure.reason
 }
 const leakedRoots = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !rootsBefore.has(name))
 assert.deepEqual(leakedRoots, [], "real native MariaDB integration recursively removes every private root")
