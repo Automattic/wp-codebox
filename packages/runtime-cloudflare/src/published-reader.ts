@@ -1,5 +1,6 @@
-export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v3" as const
-const PREVIOUS_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2"
+export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v4" as const
+const PREVIOUS_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v3"
+const OLDER_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2"
 const LEGACY_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1"
 export const PUBLISHED_PAGE_SCHEMA = "wp-codebox/wordpress-page/v2" as const
 export const R2_PUBLISHED_CURRENT_KEY = siteStorageKeys(DEFAULT_SITE_CONTEXT).publishedCurrent
@@ -16,6 +17,7 @@ export interface PublishedRoute {
 
 export interface PublishedRevision {
   schema: typeof PUBLISHED_REVISION_SCHEMA
+  state: "building" | "complete"
   revision: string
   canonicalRevision: string
   canonicalVersion: number
@@ -47,9 +49,9 @@ export function validatePublishedRevision(value: unknown, site: SiteContext = DE
   const revision = value as Partial<PublishedRevision>
   const legacy = (value as { schema?: unknown }).schema === LEGACY_PUBLISHED_REVISION_SCHEMA
   const current = revision.schema === PUBLISHED_REVISION_SCHEMA
-  if (![PUBLISHED_REVISION_SCHEMA, PREVIOUS_PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
+  if (![PUBLISHED_REVISION_SCHEMA, PREVIOUS_PUBLISHED_REVISION_SCHEMA, OLDER_PUBLISHED_REVISION_SCHEMA, LEGACY_PUBLISHED_REVISION_SCHEMA].includes(revision.schema as string) || !isRevision(revision.revision) || !isRevision(revision.canonicalRevision)
     || typeof revision.publishedAt !== "string" || !Number.isFinite(Date.parse(revision.publishedAt)) || !Array.isArray(revision.routes)
-    || (current && (typeof revision.canonicalVersion !== "number" || !Number.isSafeInteger(revision.canonicalVersion) || revision.canonicalVersion < 0))
+    || (current && (!["building", "complete"].includes(revision.state as string) || (revision.state === "complete" && revision.routes.length === 0) || typeof revision.canonicalVersion !== "number" || !Number.isSafeInteger(revision.canonicalVersion) || revision.canonicalVersion < 0))
     || (revision.sourceJob !== undefined && (typeof revision.sourceJob !== "string" || !new RegExp(`^${escapeRegExp(siteStorageKeys(site).publicationJobPrefix)}/[0-9]{20}-[a-f0-9-]{36}\\.json$`).test(revision.sourceJob)))
     || revision.routes.length > MAX_PUBLISHED_ROUTES) throw new Error("Published revision is invalid.")
   let previous = ""
@@ -63,7 +65,16 @@ export function validatePublishedRevision(value: unknown, site: SiteContext = DE
     previous = route.route
     normalizedRoutes.push({ route: route.route, objectKey: route.objectKey, canonicalRevision: routeRevision })
   }
-  return { ...revision, schema: PUBLISHED_REVISION_SCHEMA, canonicalVersion: current ? revision.canonicalVersion! : 0, routes: normalizedRoutes } as PublishedRevision
+  // Legacy publications remain readable by the existing mutation Worker. The
+  // isolated public reader uses the strict validator below.
+  return { ...revision, schema: PUBLISHED_REVISION_SCHEMA, state: current ? revision.state! : "complete", canonicalVersion: current ? revision.canonicalVersion! : 0, routes: normalizedRoutes } as PublishedRevision
+}
+
+export function validateCompletePublishedRevision(value: unknown, site: SiteContext = DEFAULT_SITE_CONTEXT): PublishedRevision & { state: "complete" } {
+  if (!value || typeof value !== "object" || (value as Partial<PublishedRevision>).schema !== PUBLISHED_REVISION_SCHEMA || (value as Partial<PublishedRevision>).state !== "complete") {
+    throw new Error("Published revision is not ready for isolated reads.")
+  }
+  return validatePublishedRevision(value, site) as PublishedRevision & { state: "complete" }
 }
 
 export function normalizePublishedRoutes(value: unknown): string[] {

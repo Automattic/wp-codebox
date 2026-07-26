@@ -1,0 +1,10 @@
+// Public immutable publication reader. It intentionally has no PHP-WASM, D1, or Durable Object bindings.
+{
+  "name": "wp-codebox-cloudflare-public-reader",
+  "main": "src/public-reader-worker.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    { "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
+  ]
+}

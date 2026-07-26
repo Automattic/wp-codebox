@@ -734,6 +734,7 @@ async function publishCanonicalWordPressPages(request: Request, env: RuntimeEnv,
     }))
     const publication: PublishedRevision = {
       schema: PUBLISHED_REVISION_SCHEMA,
+      state: "complete",
       revision: crypto.randomUUID(),
       canonicalRevision: lease.pointer.revision,
       canonicalVersion: lease.version,
@@ -769,6 +770,7 @@ async function initializeProvisioningPublication(bucket: R2Bucket, lease: Lease,
   if (!lease.pointer) throw new Error("Provisioning publication requires a committed canonical revision.")
   const publication: PublishedRevision = {
     schema: PUBLISHED_REVISION_SCHEMA,
+    state: "building",
     revision: crypto.randomUUID(),
     canonicalRevision: lease.pointer.revision,
     canonicalVersion: lease.version,
@@ -1027,7 +1029,7 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
     const routes = new Map(current.publication.routes.map((route) => [route.route, route]))
     for (const route of plan.remove) routes.delete(route)
     for (const route of plan.upsert) routes.set(route, { route, objectKey: await publishedPageObjectKey(job.canonical.revision, route, site), canonicalRevision: job.canonical.revision })
-    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, sourceJob: job.key, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
+    const publication: PublishedRevision = { schema: PUBLISHED_REVISION_SCHEMA, state: "complete", revision: crypto.randomUUID(), canonicalRevision: job.canonical.revision, canonicalVersion: job.coordinatorVersion, sourceJob: job.key, publishedAt: new Date().toISOString(), routes: [...routes.values()].sort((left, right) => left.route.localeCompare(right.route)) }
     const serialized = JSON.stringify(publication)
     if (new TextEncoder().encode(serialized).byteLength > MAX_PUBLISHED_REVISION_BYTES) throw new Error("Incremental publication exceeds its size budget.")
     await renewLease()
@@ -2694,7 +2696,6 @@ async function serveWordPressStaticAsset(request: Request, bucket: R2Bucket): Pr
   }
   return response
 }
-
 
 function createPhpRuntime() {
   return loadPHPRuntime(
