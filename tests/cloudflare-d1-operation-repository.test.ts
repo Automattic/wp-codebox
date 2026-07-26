@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository, OperationConflict, shouldRecoverPreparedCommit } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
+import { CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
 
 function database(): D1Database {
   const sqlite = new DatabaseSync(":memory:")
@@ -90,4 +91,20 @@ test("exact prepared-pointer recovery only skips SSI for the matching coordinato
   assert.equal(shouldRecoverPreparedCommit(prepared, pointer), true)
   assert.equal(shouldRecoverPreparedCommit(prepared, { ...pointer, revision: "unrelated", manifestKey: "sites/alpha/markdown/revisions/unrelated.json" }), false)
   assert.equal(shouldRecoverPreparedCommit(null, pointer), false)
+})
+
+test("deletion fences an in-flight claim and a publication callback", async () => {
+  const db = database(); const dynamic = { id: "race-g2-0123456789abcdef", hostname: "race.preview.example", origin: "https://race.preview.example" }
+  const lifecycle = new CloudflareAllocationLifecycle(db, { ttlMs: 60_000, retainMs: 0 }); const active = await lifecycle.create(dynamic, "owner")
+  const repository = new D1OperationRepository(db); const created = await repository.createOrConverge(dynamic, input("race")); const claim = await repository.claimNext(dynamic.id)
+  assert.ok(claim)
+  const fence = await lifecycle.beginDeletion(active.identity, "owner")
+  await assert.rejects(() => repository.renew(dynamic.id, claim.operationId, claim.claimToken), OperationConflict)
+  await assert.rejects(() => repository.prepareCommit(dynamic.id, claim.operationId, claim.claimToken, 1, { ...pointer, manifestKey: `sites/${dynamic.id}/markdown/revisions/revision.json` }, { imported: true }, "job-race"), OperationConflict)
+  await assert.rejects(() => repository.complete(dynamic.id, claim.operationId, claim.claimToken, { imported: true }, "job-race", dynamic.origin), OperationConflict)
+  assert.equal(await repository.claimNext(dynamic.id), null)
+  assert.equal((await repository.get(dynamic.id, created.operation.operationId))?.stage, "allocation-deleted")
+  await repository.reconcilePublication(dynamic.id, "job-race", "promoted", "revision")
+  assert.equal((await repository.get(dynamic.id, created.operation.operationId))?.state, "failed")
+  assert.ok(fence > active.operationFence)
 })

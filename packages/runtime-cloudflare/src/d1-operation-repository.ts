@@ -49,8 +49,9 @@ export class D1OperationRepository {
       return { operation: existing, created: false }
     }
     try {
-      await this.database.prepare(`INSERT INTO wp_codebox_operations (site_id, operation_id, idempotency_key, fingerprint, artifact_key, artifact_sha256, artifact_size, slug, name, site_title, state, stage, progress, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'created', 0, 0, ?, ?)`)
-        .bind(site.id, crypto.randomUUID(), input.idempotencyKey, input.fingerprint, input.artifact.r2Key, input.artifact.sha256, input.artifact.size, input.options.slug, input.options.name, input.options.siteTitle, now, now).run()
+      const created = await this.database.prepare(`INSERT INTO wp_codebox_operations (site_id, operation_id, idempotency_key, fingerprint, artifact_key, artifact_sha256, artifact_size, slug, name, site_title, allocation_fence, state, stage, progress, attempts, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, l.operation_fence, 'queued', 'created', 0, 0, ?, ? FROM (SELECT 1) LEFT JOIN wp_codebox_sites s ON s.site_id = ? LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ?)`)
+        .bind(site.id, crypto.randomUUID(), input.idempotencyKey, input.fingerprint, input.artifact.r2Key, input.artifact.sha256, input.artifact.size, input.options.slug, input.options.name, input.options.siteTitle, now, now, site.id, now).run()
+      if (created.meta.changes !== 1) throw new OperationConflict("The allocation is no longer active.")
     } catch (error) {
       const raced = await this.byKey(site.id, input.idempotencyKey)
       if (raced?.input.fingerprint === input.fingerprint) return { operation: raced, created: false }
@@ -72,18 +73,20 @@ export class D1OperationRepository {
 
   async activeSites(): Promise<SiteContext[]> {
     await ensureSchema(this.database)
-    const rows = await this.database.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE state = 'active' ORDER BY site_id").all<{ site_id: string; hostname: string; origin: string }>()
+    const rows = await this.database.prepare("SELECT s.site_id, s.hostname, s.origin FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.state = 'active' AND (l.site_id IS NULL OR l.state = 'active') ORDER BY s.site_id").all<{ site_id: string; hostname: string; origin: string }>()
     return rows.results.map((row) => ({ id: row.site_id, hostname: row.hostname, origin: row.origin }))
   }
 
   async claimNext(siteId: string, now = Date.now()): Promise<(StaticArtifactOperation & { claimToken: string }) | null> {
     await ensureSchema(this.database)
-    const candidate = await this.database.prepare(`SELECT operation_id FROM wp_codebox_operations WHERE site_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?)) ORDER BY created_at LIMIT 1`).bind(siteId, now, now).first<{ operation_id: string }>()
+    // A dynamic allocation may be fenced between queue deliveries. Configured
+    // static sites have no lifecycle row and retain their existing behavior.
+    const candidate = await this.database.prepare(`SELECT o.operation_id FROM wp_codebox_operations o JOIN wp_codebox_sites s ON s.site_id = o.site_id LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = o.site_id AND l.generation = s.generation WHERE o.site_id = ? AND (l.site_id IS NULL OR l.state = 'active') AND (o.state = 'queued' OR (o.state = 'retryable' AND o.retry_at <= ?) OR (o.state = 'running' AND o.claim_expires_at <= ?)) ORDER BY o.created_at LIMIT 1`).bind(siteId, now, now).first<{ operation_id: string }>()
     if (!candidate) return null
     const token = crypto.randomUUID()
     const expiresAt = now + this.claimMs
     const [update, attempt] = await this.database.batch([
-      this.database.prepare(`UPDATE wp_codebox_operations SET state = 'running', stage = 'claimed', claim_token = ?, claim_expires_at = ?, attempts = attempts + 1, retry_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE site_id = ? AND operation_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?))`).bind(token, expiresAt, now, siteId, candidate.operation_id, now, now),
+      this.database.prepare(`UPDATE wp_codebox_operations SET state = 'running', stage = 'claimed', claim_token = ?, claim_expires_at = ?, attempts = attempts + 1, retry_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE site_id = ? AND operation_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?)) AND EXISTS (SELECT 1 FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.site_id = wp_codebox_operations.site_id AND (l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ? AND l.operation_fence = wp_codebox_operations.allocation_fence)))`).bind(token, expiresAt, now, siteId, candidate.operation_id, now, now, now),
       this.database.prepare(`INSERT INTO wp_codebox_operation_attempts (site_id, operation_id, attempt_number, claim_token, started_at, state, stage) SELECT site_id, operation_id, attempts, ?, ?, 'running', 'claimed' FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at = ?`).bind(token, new Date(now).toISOString(), siteId, candidate.operation_id, token, expiresAt),
     ])
     if (update.meta.changes !== 1) return null
@@ -131,15 +134,16 @@ export class D1OperationRepository {
   }
 
   private async ownedUpdate(siteId: string, operationId: string, token: string, update: string, values: unknown[]): Promise<void> {
-    const result = await this.database.prepare(`${update} WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ?`).bind(...values, siteId, operationId, token, Date.now()).run()
+    const now = Date.now()
+    const result = await this.database.prepare(`${update} WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ? AND ${activeLifecycle}`).bind(...values, siteId, operationId, token, now, now).run()
     if (result.meta.changes !== 1) throw new OperationConflict("Operation claim expired or changed.")
   }
 
   private async terminalBatch(siteId: string, operationId: string, token: string, update: string, values: unknown[], state: string, stage: string, error: { code: string; message: string } | null): Promise<void> {
     const now = Date.now()
     const [attempt, operation] = await this.database.batch([
-      this.database.prepare(`UPDATE wp_codebox_operation_attempts SET completed_at = ?, state = ?, stage = ?, error_code = ?, error_message = ? WHERE site_id = ? AND operation_id = ? AND claim_token = ? AND completed_at IS NULL AND EXISTS (SELECT 1 FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ?)`).bind(new Date(now).toISOString(), state, stage, error?.code ?? null, error?.message ?? null, siteId, operationId, token, siteId, operationId, token, now),
-      this.database.prepare(`${update} WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ?`).bind(...values, siteId, operationId, token, now),
+      this.database.prepare(`UPDATE wp_codebox_operation_attempts SET completed_at = ?, state = ?, stage = ?, error_code = ?, error_message = ? WHERE site_id = ? AND operation_id = ? AND claim_token = ? AND completed_at IS NULL AND EXISTS (SELECT 1 FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ? AND ${activeLifecycle})`).bind(new Date(now).toISOString(), state, stage, error?.code ?? null, error?.message ?? null, siteId, operationId, token, siteId, operationId, token, now, now),
+      this.database.prepare(`${update} WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at > ? AND ${activeLifecycle}`).bind(...values, siteId, operationId, token, now, now),
     ])
     if (attempt.meta.changes !== 1 || operation.meta.changes !== 1) throw new OperationConflict("Operation claim expired or changed.")
   }
@@ -153,7 +157,8 @@ export class D1OperationRepository {
     const completedAt = new Date().toISOString()
     const receipt: OperationReceipt = { ...operation.receipt, publication: outcome === "promoted" ? { status: "promoted", jobKey, revision: revision! } : { status: outcome, jobKey }, terminalCompletedAt: completedAt }
     const failed = outcome !== "promoted"
-    await this.database.prepare(`UPDATE wp_codebox_operations SET state = ?, stage = ?, progress = 100, receipt_json = ?, error_code = ?, error_message = ?, completed_at = ?, updated_at = ? WHERE site_id = ? AND operation_id = ? AND state = 'publication-pending' AND prepared_publication_job = ?`).bind(failed ? "failed" : "succeeded", failed ? `publication-${outcome}` : "published", JSON.stringify(receipt), failed ? `publication_${outcome}` : null, failed ? `Publication ${outcome}.` : null, completedAt, Date.now(), siteId, operation.operationId, jobKey).run()
+    const now = Date.now()
+    await this.database.prepare(`UPDATE wp_codebox_operations SET state = ?, stage = ?, progress = 100, receipt_json = ?, error_code = ?, error_message = ?, completed_at = ?, updated_at = ? WHERE site_id = ? AND operation_id = ? AND state = 'publication-pending' AND prepared_publication_job = ? AND ${activeLifecycle}`).bind(failed ? "failed" : "succeeded", failed ? `publication-${outcome}` : "published", JSON.stringify(receipt), failed ? `publication_${outcome}` : null, failed ? `Publication ${outcome}.` : null, completedAt, now, siteId, operation.operationId, jobKey, now).run()
   }
 
   async pendingPublicationJobs(siteId: string, limit = 16): Promise<string[]> {
@@ -173,6 +178,7 @@ export class D1OperationRepository {
   }
 }
 
+const activeLifecycle = `EXISTS (SELECT 1 FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.site_id = wp_codebox_operations.site_id AND (l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ${"?"} AND l.operation_fence = wp_codebox_operations.allocation_fence)))`
 const operationSelect = `SELECT o.*, s.hostname, s.origin FROM wp_codebox_operations o JOIN wp_codebox_sites s ON s.site_id = o.site_id`
 interface Row { site_id: string; hostname: string; origin: string; operation_id: string; idempotency_key: string; fingerprint: string; artifact_key: string; artifact_sha256: string; artifact_size: number; slug: string; name: string; site_title: string; state: StaticArtifactOperationState; stage: string; progress: number; attempts: number; retry_at: number | null; claim_expires_at: number | null; prepared_version: number | null; prepared_revision: string | null; prepared_manifest_key: string | null; prepared_persisted_at: string | null; prepared_result_json: string | null; prepared_publication_job: string | null; error_code: string | null; error_message: string | null; receipt_json: string | null }
 interface AttemptRow { attempt_number: number; claim_token: string; started_at: string; completed_at: string | null; state: string; stage: string; error_code: string | null; error_message: string | null }
@@ -188,9 +194,13 @@ async function ensureSchema(database: D1Database): Promise<void> {
     const pending = (async () => {
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_sites (site_id TEXT PRIMARY KEY, hostname TEXT NOT NULL, origin TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL CHECK (state IN ('active')), created_at INTEGER NOT NULL, activated_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run()
       try { await database.prepare("ALTER TABLE wp_codebox_sites ADD COLUMN generation INTEGER NOT NULL DEFAULT 1").run() } catch (error) { if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error }
+      // Lifecycle owns this schema; the minimal compatible creation keeps queue
+      // fencing available when the operation repository initializes first.
+      await database.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_site_lifecycles (site_id TEXT NOT NULL, generation INTEGER NOT NULL, principal TEXT NOT NULL, state TEXT NOT NULL, expires_at INTEGER NOT NULL, retain_until INTEGER NOT NULL, mutation_fence INTEGER NOT NULL, operation_fence INTEGER NOT NULL, cleanup_cursor TEXT, deleted_objects INTEGER NOT NULL, receipt_json TEXT, terminal_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (site_id, generation))").run()
       await database.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS wp_codebox_site_hostname ON wp_codebox_sites(hostname)`).run()
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_site_aliases (hostname TEXT PRIMARY KEY, site_id TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (site_id) REFERENCES wp_codebox_sites(site_id))`).run()
-      await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_operations (site_id TEXT NOT NULL, operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, artifact_key TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, artifact_size INTEGER NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, site_title TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('queued','running','retryable','publication-pending','succeeded','failed')), stage TEXT NOT NULL, progress INTEGER NOT NULL CHECK (progress BETWEEN 0 AND 100), attempts INTEGER NOT NULL, retry_at INTEGER, claim_token TEXT, claim_expires_at INTEGER, prepared_version INTEGER, prepared_revision TEXT, prepared_manifest_key TEXT, prepared_persisted_at TEXT, prepared_result_json TEXT, prepared_publication_job TEXT, receipt_json TEXT, error_code TEXT, error_message TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at TEXT, PRIMARY KEY (site_id, operation_id), UNIQUE (site_id, idempotency_key), FOREIGN KEY (site_id) REFERENCES wp_codebox_sites(site_id))`).run()
+      await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_operations (site_id TEXT NOT NULL, operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, artifact_key TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, artifact_size INTEGER NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, site_title TEXT NOT NULL, allocation_fence INTEGER, state TEXT NOT NULL CHECK (state IN ('queued','running','retryable','publication-pending','succeeded','failed')), stage TEXT NOT NULL, progress INTEGER NOT NULL CHECK (progress BETWEEN 0 AND 100), attempts INTEGER NOT NULL, retry_at INTEGER, claim_token TEXT, claim_expires_at INTEGER, prepared_version INTEGER, prepared_revision TEXT, prepared_manifest_key TEXT, prepared_persisted_at TEXT, prepared_result_json TEXT, prepared_publication_job TEXT, receipt_json TEXT, error_code TEXT, error_message TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at TEXT, PRIMARY KEY (site_id, operation_id), UNIQUE (site_id, idempotency_key), FOREIGN KEY (site_id) REFERENCES wp_codebox_sites(site_id))`).run()
+      try { await database.prepare("ALTER TABLE wp_codebox_operations ADD COLUMN allocation_fence INTEGER").run() } catch (error) { if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error }
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_operation_attempts (site_id TEXT NOT NULL, operation_id TEXT NOT NULL, attempt_number INTEGER NOT NULL, claim_token TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, state TEXT NOT NULL, stage TEXT NOT NULL, error_code TEXT, error_message TEXT, PRIMARY KEY (site_id, operation_id, attempt_number), FOREIGN KEY (site_id, operation_id) REFERENCES wp_codebox_operations(site_id, operation_id))`).run()
       await database.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS wp_codebox_one_active_operation ON wp_codebox_operations(site_id) WHERE state IN ('queued','running','retryable')`).run()
       await database.prepare(`CREATE INDEX IF NOT EXISTS wp_codebox_operation_ready ON wp_codebox_operations(site_id, state, retry_at, claim_expires_at, created_at)`).run()

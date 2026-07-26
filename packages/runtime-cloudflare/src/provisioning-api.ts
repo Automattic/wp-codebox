@@ -2,6 +2,7 @@ import { D1OperationRepository, OperationConflict, type StaticArtifactOperation,
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
+import { allocationIdentity, CloudflareAllocationLifecycle, type AllocationLifecycle } from "./allocation-lifecycle.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -29,10 +30,34 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   // This capability endpoint must never fall through to API bearer authentication or WordPress.
   if (parts.length === 4 && parts[3] === "administrator-claim") return method === "POST" ? claimAdministrator(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 3) return method === "GET" ? readSite(request, env, operations, siteId) : methodNotAllowed("GET")
+  if (parts.length === 4 && parts[3] === "lifecycle" && method === "GET") return lifecycleStatus(request, env, siteId)
+  if (parts.length === 5 && parts[3] === "lifecycle" && parts[4] === "renew") return method === "POST" ? renewLifecycle(request, env, siteId) : methodNotAllowed("POST")
+  if (parts.length === 4 && parts[3] === "lifecycle") return method === "DELETE" ? deleteLifecycle(request, env, siteId) : methodNotAllowed("GET, DELETE")
   if (parts.length === 4 && parts[3] === "imports") return method === "POST" ? importSite(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 5 && parts[3] === "operations" && /^[0-9a-f-]{36}$/.test(parts[4])) return method === "GET" ? readOperation(request, env, operations, siteId, parts[4]) : methodNotAllowed("GET")
   return notFound()
 }
+
+async function lifecycleStatus(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:read"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  const lifecycle = await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).get(allocationIdentity(siteId))
+  return lifecycle ? Response.json({ schema: PROVISIONING_API_SCHEMA, lifecycle: lifecycleResource(lifecycle) }) : notFound()
+}
+async function renewLifecycle(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:import"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  try { const lifecycle = await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).renew(allocationIdentity(siteId), token.principal); return Response.json({ schema: PROVISIONING_API_SCHEMA, lifecycle: lifecycleResource(lifecycle) }) } catch { return apiError(409, "lifecycle_conflict", "The allocation lifecycle cannot be renewed.") }
+}
+async function deleteLifecycle(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:import"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  try { await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).beginDeletion(allocationIdentity(siteId), token.principal); return lifecycleStatus(new Request(request.url, { headers: request.headers }), env, siteId) } catch { return apiError(409, "lifecycle_conflict", "The allocation lifecycle cannot be deleted.") }
+}
+function lifecycleResource(lifecycle: AllocationLifecycle) { return { state: lifecycle.state, expiresAt: new Date(lifecycle.expiresAt).toISOString(), retainUntil: new Date(lifecycle.retainUntil).toISOString(), generation: lifecycle.identity.generation, receipt: lifecycle.receipt } }
 
 async function stageArtifact(request: Request, env: ProvisioningEnv, expectedSha256: string): Promise<Response> {
   const token = await authenticate(request, env, "sites:create"); if (token instanceof Response) return token
@@ -121,6 +146,7 @@ async function importSite(request: Request, env: ProvisioningEnv, operations: D1
   const key = idempotencyKey(request); if (key instanceof Response) return key
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE); const allocation = await store.bySite(siteId); const site = await store.context(siteId)
   if (!allocation || !site || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  if (!await allocationActive(env.WORDPRESS_STATE_DATABASE, siteId)) return apiError(409, "allocation_inactive", "The allocation is no longer active.")
   const provision = allocation.operationId ? await operations.get(siteId, allocation.operationId) : null
   if (provision?.state !== "succeeded") return apiError(409, "site_not_ready", "The site is not ready for imports.")
   try {
@@ -145,6 +171,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   const allocation = await store.bySite(site.id)
   if (!allocation) return null
+  if (!await allocationActive(env.WORDPRESS_STATE_DATABASE, site.id)) throw new OperationConflict("The allocation is no longer active.")
   if (!claimConfiguration(env)) throw new AdministratorClaimError()
   const administratorClaim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
   if (allocation.operationId) {
@@ -255,7 +282,7 @@ class AllocationError extends Error { constructor(readonly code: "quota_exceeded
 class AllocationStore {
   constructor(private readonly db: D1Database) {}
   async allocate(token: Token, input: CreateInput, domain: ReturnType<typeof previewDomain>, configured: SiteContext[]): Promise<ProvisioningAllocation> {
-    await this.schema(); const existing = await this.byRequest(token.principal, input.key)
+    await this.schema(); const lifecycle = new CloudflareAllocationLifecycle(this.db); await lifecycle.initialize(); const existing = await this.byRequest(token.principal, input.key)
     if (existing) { if (existing.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return existing }
     if (domain && token.sites) throw new AllocationError("quota_exceeded")
     const attempts = domain ? 8 : configured.length
@@ -264,17 +291,20 @@ class AllocationStore {
       const now = Date.now()
       try {
         const [allocation, reservation] = await this.db.batch([
-          this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites WHERE principal = ?) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
-          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, now, now, now, site.id, token.principal, input.key, input.fingerprint),
+          this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
+          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, generation, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, allocationIdentity(site.id).generation, now, now, now, site.id, token.principal, input.key, input.fingerprint),
         ])
-        if (allocation.meta.changes === 1 && reservation.meta.changes === 1) return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options }
+        if (allocation.meta.changes === 1 && reservation.meta.changes === 1) {
+          await lifecycle.create(site, token.principal, now)
+          return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options }
+        }
       } catch (error) {
         if (!(error instanceof Error) || !/unique|constraint/i.test(error.message)) throw error
       }
       const raced = await this.byRequest(token.principal, input.key)
       if (raced) { if (raced.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return raced }
     }
-    const count = await this.db.prepare("SELECT COUNT(*) AS count FROM wp_codebox_api_sites WHERE principal = ?").bind(token.principal).first<{ count: number }>()
+    const count = await this.db.prepare("SELECT COUNT(*) AS count FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')").bind(token.principal).first<{ count: number }>()
     throw new AllocationError((count?.count ?? 0) >= token.maxSites ? "quota_exceeded" : "capacity_exhausted")
   }
   async context(siteId: string): Promise<SiteContext | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(siteId).first<{ site_id: string; hostname: string; origin: string }>(); return row ? { id: row.site_id, hostname: row.hostname, origin: row.origin } : null }
@@ -308,6 +338,7 @@ class AdministratorClaimStore {
   constructor(private readonly db: D1Database) {}
   async issue(allocation: ProvisioningAllocation, env: ProvisioningEnv): Promise<AdministratorClaimIssued | AdministratorClaimMetadata> {
     await this.schema()
+    if (!await allocationActive(this.db, allocation.siteId)) throw new AdministratorClaimError()
     const token = await claimCapability(env.WORDPRESS_ADMIN_CLAIM_SECRET!, allocation)
     const digest = await shaText(token)
     const credential = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, allocation.siteId, "admin-password")
@@ -326,8 +357,13 @@ class AdministratorClaimStore {
   async metadata(siteId: string): Promise<AdministratorClaimMetadata | null> { const claim = await this.bySite(siteId); if (claim?.state === "pending" && claim.expiresAt <= Date.now()) { await this.expire(siteId); return { state: "expired", expiresAt: claim.expiresAt } } return claim && { state: claim.state, expiresAt: claim.expiresAt } }
   async bySite(siteId: string): Promise<AdministratorClaimRecord | null> { await this.schema(); const row = await this.db.prepare("SELECT capability_digest, credential_digest, expires_at, state FROM wp_codebox_api_admin_claims WHERE site_id = ?").bind(siteId).first<{ capability_digest: string; credential_digest: string; expires_at: number; state: AdministratorClaimMetadata["state"] }>(); return row ? { capabilityDigest: row.capability_digest, credentialDigest: row.credential_digest, expiresAt: row.expires_at, state: row.state } : null }
   async expire(siteId: string): Promise<void> { await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'expired', updated_at = ? WHERE site_id = ? AND state = 'pending' AND expires_at <= ?").bind(Date.now(), siteId, Date.now()).run() }
-  async consume(siteId: string, digest: string): Promise<boolean> { const result = await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'consumed', updated_at = ? WHERE site_id = ? AND state = 'pending' AND capability_digest = ? AND expires_at > ?").bind(Date.now(), siteId, digest, Date.now()).run(); return result.meta.changes === 1 }
+  async consume(siteId: string, digest: string): Promise<boolean> { const now = Date.now(); const result = await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'consumed', updated_at = ? WHERE site_id = ? AND state = 'pending' AND capability_digest = ? AND expires_at > ? AND EXISTS (SELECT 1 FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.site_id = wp_codebox_api_admin_claims.site_id AND (l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ?)))").bind(now, siteId, digest, now, now).run(); return result.meta.changes === 1 }
   private async schema(): Promise<void> { await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_admin_claims (site_id TEXT PRIMARY KEY, capability_digest TEXT NOT NULL, credential_digest TEXT NOT NULL, expires_at INTEGER NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','consumed','expired')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run() }
+}
+async function allocationActive(db: D1Database, siteId: string): Promise<boolean> {
+  const lifecycle = new CloudflareAllocationLifecycle(db)
+  const current = await lifecycle.get(allocationIdentity(siteId))
+  return !current || (current.state === "active" && current.expiresAt > Date.now())
 }
 async function claimCapability(root: string, allocation: ProvisioningAllocation): Promise<string> {
   const encoder = new TextEncoder()
