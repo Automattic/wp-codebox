@@ -22,6 +22,7 @@ import {
   BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+  CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_PUBLIC_RUNTIME_COMMANDS,
   CODEBOX_PUBLIC_RUNTIME_READINESS,
@@ -167,7 +168,7 @@ assert.equal(manifest.capabilities.wordpressRuntime.commands.runWorkload, "run-w
 assert.equal(manifest.capabilities.wordpressRuntime.commands.runFuzzSuite, "run-fuzz-suite")
 assert.equal(manifest.capabilities.wordpressRuntime.capabilities.commands?.includes("wordpress.run-workload"), true)
 assert.equal(manifest.capabilities.wordpressRuntime.runner_modes["runtime-backed"], true)
-assert.deepEqual(manifest.capabilities.runtimeServices, { schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA, capabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] })
+assert.deepEqual(manifest.capabilities.runtimeServices, { schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA, packageCapabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] })
 assert.equal(manifest.readiness.wordpressRuntime.schema, FUZZ_RUNNER_READINESS_SCHEMA)
 assert.equal(manifest.readiness.wordpressRuntime.status, "ready")
 assert.equal(manifest.readiness.wordpressRuntime.mode, "runtime-backed")
@@ -199,9 +200,14 @@ assert.equal(descriptor.readiness.status, "available")
 assert.equal(descriptor.readiness.publicApi, true)
 assert.equal(descriptor.readiness.contractManifest, true)
 assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
+assert.deepEqual(descriptor.packageCapabilities, CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES)
 assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))
 assert.ok(descriptor.capabilities.includes("wordpress-runtime:sandbox-isolation-proof"))
-assert.ok(descriptor.capabilities.includes(NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY))
+assert.equal(descriptor.capabilities.includes(NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY), false)
+assert.deepEqual(descriptor.runtimeServices.nativeMariaDb, { capability: NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY, status: "unknown" })
+const readyDescriptor = runtimeDescriptor({ nativeMariaDb: { status: "ready" } })
+assert.equal(readyDescriptor.capabilities.includes(NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY), true)
+assert.deepEqual(readyDescriptor.runtimeServices.nativeMariaDb, { capability: NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY, status: "ready" })
 assert.deepEqual(descriptor.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 assert.deepEqual(descriptor.contractManifest, manifest)
 

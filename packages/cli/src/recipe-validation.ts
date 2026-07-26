@@ -760,6 +760,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
   const services = recipe.inputs?.services ?? []
+  if (services.filter((service) => service.configuration?.provider === "native").length > 2) addIssue("native-runtime-service-budget-exceeded", "$.inputs.services", "Recipes may declare at most two native runtime services.")
   const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),

@@ -57,11 +57,15 @@ export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "agent-task:fanout",
   "runtime-package:run",
   "runtime-requirements:resolve",
-  NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY,
   "wordpress-runtime:workload",
   "wordpress-runtime:fuzz-suite",
   "wordpress-runtime:sandbox-isolation-proof",
   "contract-manifest:read",
+] as const
+
+export const CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES = [
+  ...CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+  NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY,
 ] as const
 
 export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
@@ -92,7 +96,7 @@ export const CODEBOX_PUBLIC_RUNTIME_COMMANDS = {
 export const CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES = {
   runtimeServices: {
     schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
-    capabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY],
+    packageCapabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY],
   },
   wordpressRuntime: {
     commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS.wordpressRuntime,
@@ -282,7 +286,15 @@ export interface RuntimeDescriptor {
     publicApi: true
     contractManifest: true
   }
-  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
+  capabilities: readonly string[]
+  packageCapabilities: typeof CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES
+  runtimeServices: {
+    nativeMariaDb: {
+      capability: typeof NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY
+      status: "ready" | "unavailable" | "unknown"
+      reason?: string
+    }
+  }
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
   wordpressFuzzRuntimeContract: WordPressFuzzRuntimeContract
   contractManifest: RuntimeContractManifest
@@ -301,7 +313,8 @@ export function runtimeContractManifest(): RuntimeContractManifest {
   }
 }
 
-export function runtimeDescriptor(): RuntimeDescriptor {
+export function runtimeDescriptor(options: { nativeMariaDb?: { status: "ready" | "unavailable" | "unknown"; reason?: string } } = {}): RuntimeDescriptor {
+  const nativeMariaDb = options.nativeMariaDb ?? { status: "unknown" as const }
   return {
     schema: RUNTIME_DESCRIPTOR_SCHEMA,
     version: 1,
@@ -314,7 +327,11 @@ export function runtimeDescriptor(): RuntimeDescriptor {
       publicApi: true,
       contractManifest: true,
     },
-    capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    capabilities: nativeMariaDb.status === "ready" ? [...CODEBOX_PUBLIC_RUNTIME_CAPABILITIES, NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] : CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    packageCapabilities: CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES,
+    runtimeServices: {
+      nativeMariaDb: { capability: NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY, ...nativeMariaDb },
+    },
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
     wordpressFuzzRuntimeContract: wordpressFuzzRuntimeContract(),
     contractManifest: runtimeContractManifest(),

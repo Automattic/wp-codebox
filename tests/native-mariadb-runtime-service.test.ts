@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbUnprivilegedHost, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -26,6 +26,12 @@ assert.throws(() => assertNativeMariaDbFilesystemGeometry(1, 1, 256 * 1024 * 102
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 257 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_097), /geometry/)
 assert.doesNotThrow(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_096))
+assert.doesNotThrow(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tNO\tOutbound\nMEMORY\tYES\tMemory\n"))
+assert.throws(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tYES\tOutbound\n"), /outbound-capable/)
+assert.throws(() => assertNativeMariaDbEngines("InnoDB\tNO\tTransactional\n"), /cannot be proven/)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, id: "one" }, { ...service, id: "two" }, { ...service, id: "three" }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
+const budgetIssues = await validateWorkspaceRecipeSemantics({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, id: "one" }, { ...service, id: "two" }, { ...service, id: "three" }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }, "recipe.json")
+assert.equal(budgetIssues.some((issue) => issue.code === "native-runtime-service-budget-exceeded"), true)
 
 const fixture = await mkdtemp(join(tmpdir(), "wp-codebox-native-provider-fake-"))
 const serverScript = `#!/usr/bin/env node
@@ -52,10 +58,15 @@ fs.writeFileSync(mount + '/.fuse.actual', String(process.pid));
 const timer = setInterval(() => { if (fs.existsSync(mount + '/.unmount')) { clearInterval(timer); process.exit(0); } }, 10);
 process.on('SIGTERM', () => process.exit(0));
 `
+const initializerScript = `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
+fs.writeFileSync(process.env.HOME + '/initializer-args', process.argv.slice(2).join('\\n'));
+`
 try {
   for (const name of ["mariadbd", "mariadb-install-db", "mariadb", "prlimit", "truncate", "mkfs.ext4", "fuse2fs", "fusermount3"]) {
     const path = join(fixture, name)
-    await writeFile(path, name === "mariadbd" ? serverScript : name === "prlimit" ? limiterScript : name === "fuse2fs" ? fuseScript : "#!/usr/bin/env node\nsetInterval(() => {}, 1000)\n")
+    await writeFile(path, name === "mariadbd" ? serverScript : name === "prlimit" ? limiterScript : name === "fuse2fs" ? fuseScript : name === "mariadb-install-db" ? initializerScript : "#!/usr/bin/env node\nsetInterval(() => {}, 1000)\n")
     await chmod(path, 0o700)
   }
 
@@ -82,9 +93,13 @@ try {
         await writeFile(`${socket}.shutdown`, "")
       }
       if (basename(effectiveCommand) === "mariadb" && options.stdin === "SELECT 1;\n") await new Promise((resolve) => setTimeout(resolve, 200))
+      if (options.stdin === "SHOW ENGINES;\n") return { stdout: "InnoDB\tDEFAULT\tTransactional\nFEDERATED\tNO\tOutbound\nMEMORY\tYES\tMemory\n" }
       return { stdout: options.stdin === "SELECT 1;\n" ? "1\n" : "" }
     },
   }
+
+  assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
+  assert.equal(calls.every((call) => call.env?.PATH === "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), true, "native commands ignore the caller PATH")
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
   const provisioned = await provisionRuntimeServices([service], { dependencies })
@@ -98,19 +113,23 @@ try {
   assert.equal(JSON.stringify(provisioned.evidence).includes(password), false)
   assert.equal(provisioned.evidence[0]?.provider, "native")
   assert.equal(provisioned.evidence[0]?.memory?.budgetMiB, 2048)
-  const initialize = calls.find((call) => call.args.some((arg) => arg.endsWith("mariadb-install-db")) && call.args.some((arg) => arg.startsWith("--datadir=")))
-  assert.ok(initialize?.args.includes("--no-defaults"))
-  assert.ok(initialize?.args.some((arg) => arg.startsWith("--datadir=/")))
+  const daemonInvocation = await readFile(join((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !before.has(name)).map((name) => join(tmpdir(), name))[0] ?? "", "storage", "tmp", "daemon-prlimit-args"), "utf8")
+  const daemonArgs = daemonInvocation.trim().split("\n")
+  const datadir = daemonArgs.find((arg) => arg.startsWith("--datadir="))?.slice("--datadir=".length)
+  assert.ok(datadir)
+  const initializerArgs = (await readFile(join(dirname(datadir), "tmp", "initializer-args"), "utf8")).trim().split("\n")
+  assert.ok(initializerArgs.includes("--no-defaults"))
+  assert.ok(initializerArgs.some((arg) => arg === `--datadir=${datadir}`))
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("truncate")) && call.args.includes("268435456")), "the provider creates a fixed 256 MiB backing image")
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("mkfs.ext4")) && call.args.includes("-N") && call.args.includes("4096")), "the provider creates a fixed 4096-inode filesystem")
-  const datadir = initialize?.args.find((arg) => arg.startsWith("--datadir="))?.slice("--datadir=".length)
-  assert.ok(datadir)
-  const daemonArgs = (await readFile(join(dirname(datadir), "daemon-prlimit-args"), "utf8")).trim().split("\n")
   assert.ok(daemonArgs.includes("--as=2147483648"))
   assert.ok(daemonArgs.includes("--cpu=300"))
   assert.ok(daemonArgs.includes("--fsize=134217728"))
   assert.ok(daemonArgs.includes("--nofile=512"))
   assert.ok(daemonArgs.includes("--nproc=512"))
+  assert.ok(daemonArgs.includes(`--plugin-dir=${join(dirname(datadir), "plugins")}`))
+  assert.ok(daemonArgs.includes(`--secure-file-priv=${join(dirname(datadir), "files")}`))
+  assert.ok(daemonArgs.every((arg) => !arg.startsWith("--socket=") || arg.startsWith(`--socket=${dirname(datadir)}/runtime/`)))
   assert.equal(daemonArgs.includes(password), false)
   const createUser = calls.find((call) => call.stdin?.includes("CREATE USER"))
   assert.ok(createUser?.stdin?.includes(password), "the generated credential is delivered only over client stdin")
@@ -119,6 +138,23 @@ try {
   await provisioned.release()
   const after = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !before.has(name))
   assert.deepEqual(after, [], "successful release recursively removes every provider-owned root")
+
+  const descendantInitializerScript = `#!/usr/bin/env node
+const fs = require('node:fs'); const { spawn } = require('node:child_process');
+if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+fs.writeFileSync(process.env.HOME + '/initializer-child-pid', String(child.pid)); child.unref();
+`
+  await writeFile(join(fixture, "mariadb-install-db"), descendantInitializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
+  const descendantProvisioned = await provisionRuntimeServices([{ ...service, id: "initializer-descendant" }], { dependencies })
+  const descendantRoot = (await readdir(tmpdir())).find((name) => name.startsWith("wp-codebox-mariadb-") && !before.has(name))
+  assert.ok(descendantRoot)
+  const descendantPid = Number(await readFile(join(tmpdir(), descendantRoot, "storage", "tmp", "initializer-child-pid"), "utf8"))
+  assert.throws(() => process.kill(descendantPid, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH", "initializer descendants are gone before provisioning continues")
+  await descendantProvisioned.release()
+  await writeFile(join(fixture, "mariadb-install-db"), initializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
 
   const occupied = createServer()
   await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve))
@@ -143,13 +179,6 @@ try {
   assert.notEqual(concurrent[0].env.DB_PORT, concurrent[1].env.DB_PORT)
   await Promise.all(concurrent.map(async (managed) => await managed.release()))
 
-  const cancelled = new AbortController()
-  const cancellingDependencies: RuntimeServiceDependencies = { ...dependencies, async execute(command, args, options) {
-    if (args.some((arg) => arg.endsWith("mariadb-install-db")) && args.some((arg) => arg.startsWith("--datadir="))) cancelled.abort()
-    return await dependencies.execute(command, args, options)
-  } }
-  await assert.rejects(provisionRuntimeServices([service], { dependencies: cancellingDependencies, signal: cancelled.signal }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "interrupted" && error.evidence[0]?.teardown === "completed")
-
   for (const phase of ["preflight", "readiness", "administration", "runtime-account"] as const) {
     const phaseCancellation = new AbortController()
     if (phase === "preflight") phaseCancellation.abort()
@@ -165,11 +194,7 @@ try {
 
   const missing: RuntimeServiceDependencies = { ...dependencies, nativeBinaryDirectories: [join(fixture, "missing")] }
   await assert.rejects(provisionRuntimeServices([service], { dependencies: missing }), RuntimeServiceProvisionError)
-  const badInitialization: RuntimeServiceDependencies = { ...dependencies, async execute(command, args, options) {
-    if (args.some((arg) => arg.endsWith("mariadb-install-db")) && args.some((arg) => arg.startsWith("--datadir="))) throw new Error("bad initialization with private details")
-    return await dependencies.execute(command, args, options)
-  } }
-  await assert.rejects(provisionRuntimeServices([service], { dependencies: badInitialization }), (error: unknown) => error instanceof RuntimeServiceProvisionError && !error.message.includes("private details"))
+  assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, nativeBinaryDirectories: [join(fixture, "missing")] }), { status: "unavailable", reason: "trusted-containment-tools-unavailable" })
 
   const partialConcurrency = await Promise.allSettled([
     provisionRuntimeServices([{ ...service, id: "partial-success" }], { dependencies }),
@@ -180,16 +205,26 @@ try {
   await Promise.allSettled(partialSuccesses.map(async (peer) => await peer.release()))
   assert.equal(partialConcurrency.some((result) => result.status === "rejected"), true)
 
-  const cleanupFailure = await provisionRuntimeServices([service], { dependencies: { ...dependencies, removeNativeRoot: async () => { throw new Error("remove denied") } } })
-  await assert.rejects(cleanupFailure.release(), /teardown failed/)
+  let removalAttempts = 0
+  const cleanupFailure = await provisionRuntimeServices([service], { dependencies: { ...dependencies, removeNativeRoot: async (root) => {
+    removalAttempts += 1
+    if (removalAttempts === 1) throw new Error("remove denied")
+    await rm(root, { recursive: true, force: false })
+  } } })
+  const concurrentCleanup = await Promise.allSettled([cleanupFailure.release(), cleanupFailure.release()])
+  assert.equal(concurrentCleanup.every((result) => result.status === "rejected"), true)
+  assert.equal(removalAttempts, 1, "concurrent cleanup callers share one teardown attempt")
   assert.equal(cleanupFailure.evidence[0]?.teardown, "failed")
-  const leakedRoot = calls.map((call) => call.args.find((arg) => arg.startsWith("--datadir="))?.slice("--datadir=".length)).filter(Boolean).at(-1)
-  if (leakedRoot) await rm(dirname(leakedRoot), { recursive: true, force: true })
+  await cleanupFailure.release()
+  assert.equal(removalAttempts, 2)
+  assert.equal(cleanupFailure.evidence[0]?.teardown, "completed")
+  assert.equal(cleanupFailure.evidence[0]?.lifecycle, "released")
+  assert.equal(cleanupFailure.evidence[0]?.diagnostic, undefined)
 
   let stopRoot: string | undefined
   const stopFailureDependencies: RuntimeServiceDependencies = { ...dependencies, signalNativeProcess: () => false, async execute(command, args, options) {
-    const stopDatadir = args.find((arg) => arg.startsWith("--datadir="))?.slice("--datadir=".length)
-    if (stopDatadir) stopRoot = dirname(stopDatadir)
+    const stopSocket = args.find((arg) => arg.startsWith("--socket="))?.slice("--socket=".length)
+    if (stopSocket) stopRoot = dirname(dirname(dirname(stopSocket)))
     if (options.stdin === "SHUTDOWN;\n") throw new Error("socket shutdown failed")
     return await dependencies.execute(command, args, options)
   } }
@@ -197,8 +232,8 @@ try {
   await assert.rejects(stopFailure.release(), /teardown failed/)
   assert.equal(stopFailure.evidence[0]?.teardown, "failed")
   assert.ok(stopRoot)
-  const actualPid = Number(await readFile(join(stopRoot, "server.pid.actual"), "utf8"))
-  const fusePid = Number(await readFile(join(stopRoot, "data", ".fuse.actual"), "utf8"))
+  const actualPid = Number(await readFile(join(stopRoot, "storage", "runtime", "server.pid.actual"), "utf8"))
+  const fusePid = Number(await readFile(join(stopRoot, "storage", ".fuse.actual"), "utf8"))
   assert.doesNotThrow(() => process.kill(actualPid, 0), "failed stop retains a live owned process instead of clearing its handle")
   process.kill(actualPid, "SIGKILL")
   process.kill(fusePid, "SIGKILL")
@@ -210,10 +245,11 @@ try {
   await writeFile(outside, "must survive")
   const symlinkDependencies: RuntimeServiceDependencies = { ...dependencies, async execute(command, args, options) {
     const result = await dependencies.execute(command, args, options)
-    const datadir = args.find((arg) => arg.startsWith("--datadir="))?.slice("--datadir=".length)
-    if (args.some((arg) => arg.endsWith("mariadb-install-db")) && datadir) {
-      attackedRoot = dirname(datadir)
-      await symlink(outside, join(datadir, "host-path-attack"))
+    const socket = args.find((arg) => arg.startsWith("--socket="))?.slice("--socket=".length)
+    if (options.stdin?.includes("CREATE DATABASE") && socket) {
+      const storageRoot = dirname(dirname(socket))
+      attackedRoot = dirname(storageRoot)
+      await symlink(outside, join(storageRoot, "database", "host-path-attack"))
     }
     return result
   } }

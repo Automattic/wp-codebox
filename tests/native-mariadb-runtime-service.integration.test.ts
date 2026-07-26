@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runRecipe } from "../packages/cli/src/commands/recipe-run.ts"
-import { executeRuntimeServiceProcess, provisionRuntimeServices } from "../packages/cli/src/runtime-services.ts"
+import { executeRuntimeServiceProcess, nativeMariaDbHostReadiness, provisionRuntimeServices } from "../packages/cli/src/runtime-services.ts"
 import type { WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
 const service = (id: string, prefix = "DB"): WorkspaceRecipeRuntimeService => ({
@@ -12,6 +13,10 @@ const service = (id: string, prefix = "DB"): WorkspaceRecipeRuntimeService => ({
   configuration: { provider: "native", engine: "mariadb" },
   outputs: { host: `${prefix}_HOST`, port: `${prefix}_PORT`, username: `${prefix}_USER`, password: `${prefix}_SECRET`, database: `${prefix}_NAME` },
 })
+const readiness = await nativeMariaDbHostReadiness()
+if (readiness.status !== "ready") {
+  console.log(`native MariaDB runtime service integration skipped: ${readiness.reason ?? "host-unavailable"}`)
+} else {
 const rootsBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
 const concurrentProvisioning = await Promise.allSettled([provisionRuntimeServices([service("native-one")]), provisionRuntimeServices([service("native-two", "SECOND_DB")])])
 const successfulPeers = concurrentProvisioning.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof provisionRuntimeServices>>> => result.status === "fulfilled").map((result) => result.value)
@@ -45,6 +50,23 @@ try {
   const contender = await executeRuntimeServiceProcess("mariadb", args, { env: environment, timeout: 10_000, stdin: "SELECT GET_LOCK('wp_codebox_native_lock', 0);\n" })
   assert.equal(contender.stdout.trim(), "0", "independent sessions preserve MariaDB advisory-lock behavior")
   assert.equal((await lockHolder).stdout.trim().split("\n")[0], "1")
+
+  let outboundConnections = 0
+  const sentinel = createServer((socket) => { outboundConnections += 1; socket.destroy() })
+  await new Promise<void>((resolveListen) => sentinel.listen(0, "127.0.0.1", resolveListen))
+  const sentinelAddress = sentinel.address()
+  assert.ok(sentinelAddress && typeof sentinelAddress !== "string")
+  const hostileSql = [
+    "INSTALL SONAME 'ha_federated';",
+    `CREATE TABLE hostile_federated (id INT) ENGINE=FEDERATED CONNECTION='mysql://runtime:${password}@127.0.0.1:${sentinelAddress.port}/runtime/source';`,
+    `CREATE TABLE hostile_connect (id INT) ENGINE=CONNECT TABLE_TYPE=MYSQL CONNECTION='mysql://runtime:${password}@127.0.0.1:${sentinelAddress.port}/runtime/source';`,
+    "CREATE TABLE hostile_spider (id INT) ENGINE=SPIDER;",
+    "CREATE TABLE hostile_s3 (id INT) ENGINE=S3;",
+  ]
+  for (const statement of hostileSql) await assert.rejects(executeRuntimeServiceProcess("mariadb", args, { env: environment, timeout: 5_000, stdin: `${statement}\n` }))
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 100))
+  assert.equal(outboundConnections, 0, "disabled engines and plugin loading cannot contact an external SQL sentinel")
+  await new Promise<void>((resolveClose, rejectClose) => sentinel.close((error) => error ? rejectClose(error) : resolveClose()))
   assert.ok((first.evidence[0]?.memory?.observedRssMiB ?? 0) > 0)
   assert.ok((first.evidence[0]?.memory?.observedRssMiB ?? 129) <= 128, JSON.stringify(first.evidence[0]?.memory))
 
@@ -78,3 +100,4 @@ try {
 const leakedRoots = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !rootsBefore.has(name))
 assert.deepEqual(leakedRoots, [], "real native MariaDB integration recursively removes every private root")
 console.log("native MariaDB runtime service integration passed")
+}

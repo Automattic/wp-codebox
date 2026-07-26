@@ -4,12 +4,13 @@ import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, 
 import { constants as fsConstants } from "node:fs"
 import { createConnection, createServer } from "node:net"
 import { tmpdir } from "node:os"
-import { delimiter, join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import type { RuntimePolicy, WorkspaceRecipeExternalServiceBoundary, WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
 
 const MYSQL_IMAGES = { mysql: "mysql:8.4", mariadb: "mariadb:11.4" } as const
 const SERVICE_IMAGES = { redis: "redis:7.4-alpine", smtp: "axllent/mailpit:v1.27", http: "hashicorp/http-echo:1.0" } as const
 const DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES = 1024 * 1024
+const MAX_NATIVE_RUNTIME_SERVICES = 2
 
 export type RuntimeServiceControlAction = "stop" | "start" | "pause" | "resume" | "restart" | "disconnect" | "reconnect" | "flush" | "read-only" | "read-write" | "latency"
 
@@ -124,6 +125,7 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
     externalServiceWritesApproved: options.externalServiceWritesApproved ?? false,
   }
   try {
+    if (services.filter((service) => service.configuration?.provider === "native").length > MAX_NATIVE_RUNTIME_SERVICES) throw new Error(`Managed runtime services exceed the native service budget of ${MAX_NATIVE_RUNTIME_SERVICES}`)
     validateDeclaredRuntimeServiceSecretTargets(services, options.reservedEnvNames ?? [])
     for (const service of services) {
       const managed = await runtimeServiceProvider(service).provision(service, dependencies, context, evidence)
@@ -336,6 +338,7 @@ interface NativeMariaDbStorage {
 
 interface OwnedNativeProcess {
   child: ChildProcess
+  groupId?: number
   exited: boolean
   exitCode: number | null
   signalCode: NodeJS.Signals | null
@@ -358,23 +361,34 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
   let processState: OwnedNativeProcess | undefined
   let binariesForCleanup: NativeMariaDbBinaries | undefined
   let storage: NativeMariaDbStorage | undefined
+  let adminSocket: string | undefined
   let cleaned = false
+  let cleanupPromise: Promise<void> | undefined
 
-  const cleanup = async (): Promise<void> => {
+  const performCleanup = async (): Promise<void> => {
     if (cleaned || evidence.teardown === "completed") return
     try {
-      if (processState) await stopOwnedNativeMariaDb(processState, root, dependencies, binariesForCleanup?.client)
+      if (processState) await stopOwnedNativeMariaDb(processState, root, dependencies, binariesForCleanup, adminSocket)
       if (storage && binariesForCleanup) await stopNativeMariaDbStorage(storage, binariesForCleanup, dependencies, root)
       if (root) await removeOwnedNativeRoot(root, dependencies)
       cleaned = true
       evidence.lifecycle = "released"
       evidence.teardown = "completed"
+      delete evidence.diagnostic
     } catch (error) {
       evidence.lifecycle = "failed"
       evidence.teardown = "failed"
       evidence.diagnostic = { code: "teardown-failed" }
       throw new Error(`Managed runtime service teardown failed: ${service.id}`, { cause: error })
     }
+  }
+  const cleanup = (): Promise<void> => {
+    if (cleanupPromise) return cleanupPromise
+    cleanupPromise = performCleanup().catch((error) => {
+      cleanupPromise = undefined
+      throw error
+    })
+    return cleanupPromise
   }
 
   try {
@@ -385,18 +399,24 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     binariesForCleanup = binaries
     evidence.version = binaries.version
     root = await createOwnedNativeRoot()
-    const datadir = ownedNativePath(root, "data")
-    const socket = ownedNativePath(root, "server.sock")
-    const pidFile = ownedNativePath(root, "server.pid")
-    const logFile = ownedNativePath(root, "server.log")
-    const temporaryDirectory = ownedNativePath(root, "tmp")
-    await mkdir(datadir, { mode: 0o700 })
-    await mkdir(temporaryDirectory, { mode: 0o700 })
-    const childEnvironment = nativeMariaDbEnvironment(root.path)
+    const storageRoot = ownedNativePath(root, "storage")
+    await mkdir(storageRoot, { mode: 0o700 })
+    const storageEnvironment = nativeMariaDbEnvironment(root.path)
     const userArgument: string[] = []
-    storage = await provisionNativeMariaDbStorage(binaries, root, datadir, dependencies, childEnvironment, signal)
+    storage = await provisionNativeMariaDbStorage(binaries, root, storageRoot, dependencies, storageEnvironment, signal)
+    const datadir = join(storageRoot, "database")
+    const runtimeDirectory = join(storageRoot, "runtime")
+    const temporaryDirectory = join(storageRoot, "tmp")
+    const pluginDirectory = join(storageRoot, "plugins")
+    const secureFileDirectory = join(storageRoot, "files")
+    for (const directory of [datadir, runtimeDirectory, temporaryDirectory, pluginDirectory, secureFileDirectory]) await mkdir(directory, { mode: 0o700 })
+    const socket = join(runtimeDirectory, "server.sock")
+    adminSocket = socket
+    const pidFile = join(runtimeDirectory, "server.pid")
+    const logFile = join(runtimeDirectory, "server.log")
+    const childEnvironment = nativeMariaDbEnvironment(temporaryDirectory)
 
-    await executeNativeLimited(dependencies, binaries, binaries.initialize, [
+    await executeOwnedNativeLimited(dependencies, binaries, binaries.initialize, [
       "--no-defaults",
       `--datadir=${datadir}`,
       "--auth-root-authentication-method=normal",
@@ -422,12 +442,12 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     for (let attempt = 0; attempt < NATIVE_MARIADB_START_ATTEMPTS; attempt += 1) {
       port = await (dependencies.allocateNativePort ?? allocateLoopbackPort)()
       await writeFile(logFile, "", { mode: 0o600 })
-      processState = spawnOwnedNativeMariaDb(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", binaries.server, ...nativeMariaDbDaemonArguments({ datadir, socket, pidFile, logFile, temporaryDirectory, port, userArgument })], childEnvironment)
+      processState = spawnOwnedNativeMariaDb(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", binaries.server, ...nativeMariaDbDaemonArguments({ datadir, socket, pidFile, logFile, temporaryDirectory, pluginDirectory, secureFileDirectory, port, userArgument })], childEnvironment, false, temporaryDirectory)
       try {
         await waitForNativeMariaDbReady(binaries, socket, processState, root, dependencies, signal)
         break
       } catch (error) {
-        await stopOwnedNativeMariaDb(processState, root, dependencies, binaries.client)
+        await stopOwnedNativeMariaDb(processState, root, dependencies, binaries, socket)
         const bindCollision = await nativeMariaDbBindCollision(logFile, processState)
         if (!processState.exited) throw new Error("Native MariaDB process exit was not proven")
         processState = undefined
@@ -450,6 +470,9 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
       "FLUSH PRIVILEGES;",
       "",
     ].join("\n"))
+    const engines = await executeAdminSql("SHOW ENGINES;\n")
+    assertNativeMariaDbEngines(engines.stdout)
+    if ((await readdir(pluginDirectory)).length !== 0) throw new Error("Native MariaDB plugin isolation cannot be proven")
     await waitForNativeMariaDbRuntimeAccount(binaries, port, password, dependencies, childEnvironment, signal)
     throwIfAborted(signal)
 
@@ -483,8 +506,57 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
   }
 }
 
+export function assertNativeMariaDbEngines(output: string): void {
+  const safe = new Set(["aria", "csv", "innodb", "memory", "mrg_myisam", "myisam", "performance_schema", "sequence"])
+  const enabled = new Set<string>()
+  for (const line of output.trim().split(/\r?\n/).filter(Boolean)) {
+    const [engine, support] = line.split(/\t|\s{2,}/).map((value) => value.trim().toLowerCase())
+    if (engine && (support === "yes" || support === "default")) {
+      enabled.add(engine)
+      if (!safe.has(engine)) throw new Error("Native MariaDB exposes an outbound-capable or unknown storage engine")
+    }
+  }
+  if (!enabled.has("innodb")) throw new Error("Native MariaDB engine isolation cannot be proven")
+}
+
 export function assertNativeMariaDbUnprivilegedHost(uid = typeof process.getuid === "function" ? process.getuid() : undefined): void {
   if (uid === undefined || uid === 0) throw new Error("Native MariaDB requires a provably unprivileged host identity")
+}
+
+export async function nativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies = defaultDependencies): Promise<{ status: "ready" | "unavailable"; reason?: string }> {
+  try {
+    assertNativeMariaDbUnprivilegedHost()
+  } catch {
+    return { status: "unavailable", reason: "unprivileged-host-required" }
+  }
+  let binaries: NativeMariaDbBinaries
+  try {
+    binaries = await resolveNativeMariaDbBinaries(dependencies)
+  } catch {
+    return { status: "unavailable", reason: "trusted-containment-tools-unavailable" }
+  }
+  let root: OwnedNativeRoot | undefined
+  let storage: NativeMariaDbStorage | undefined
+  try {
+    root = await createOwnedNativeRoot()
+    const mountpoint = ownedNativePath(root, "storage")
+    await mkdir(mountpoint, { mode: 0o700 })
+    storage = await provisionNativeMariaDbStorage(binaries, root, mountpoint, dependencies, nativeMariaDbEnvironment(root.path))
+    await writeFile(join(mountpoint, ".readiness"), "ready", { mode: 0o600 })
+    await stopNativeMariaDbStorage(storage, binaries, dependencies, root)
+    storage = undefined
+    await removeOwnedNativeRoot(root, dependencies)
+    root = undefined
+    return { status: "ready" }
+  } catch {
+    try {
+      if (storage && root) await stopNativeMariaDbStorage(storage, binaries, dependencies, root)
+      if (root) await removeOwnedNativeRoot(root, dependencies)
+    } catch {
+      return { status: "unavailable", reason: "containment-probe-cleanup-failed" }
+    }
+    return { status: "unavailable", reason: "bounded-filesystem-unavailable" }
+  }
 }
 
 function assertNativeMariaDbConfiguration(service: WorkspaceRecipeRuntimeService): void {
@@ -497,14 +569,15 @@ function assertNativeMariaDbConfiguration(service: WorkspaceRecipeRuntimeService
 
 async function resolveNativeMariaDbBinaries(dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<NativeMariaDbBinaries> {
   const directories = dependencies.nativeBinaryDirectories ?? nativeExecutableDirectories()
-  const server = await findNativeExecutable("mariadbd", directories)
-  const initialize = await findNativeExecutable("mariadb-install-db", directories)
-  const client = await findNativeExecutable("mariadb", directories)
-  const limiter = await findNativeExecutable("prlimit", directories)
-  const truncate = await findNativeExecutable("truncate", directories)
-  const mkfs = await findNativeExecutable("mkfs.ext4", directories)
-  const fuse = await findNativeExecutable("fuse2fs", directories)
-  const unmount = await findNativeExecutable("fusermount3", directories)
+  const requireTrusted = dependencies.nativeBinaryDirectories === undefined
+  const server = await findNativeExecutable("mariadbd", directories, requireTrusted)
+  const initialize = await findNativeExecutable("mariadb-install-db", directories, requireTrusted)
+  const client = await findNativeExecutable("mariadb", directories, requireTrusted)
+  const limiter = await findNativeExecutable("prlimit", directories, requireTrusted)
+  const truncate = await findNativeExecutable("truncate", directories, requireTrusted)
+  const mkfs = await findNativeExecutable("mkfs.ext4", directories, requireTrusted)
+  const fuse = await findNativeExecutable("fuse2fs", directories, requireTrusted)
+  const unmount = await findNativeExecutable("fusermount3", directories, requireTrusted)
   if (!server || !initialize || !client || !limiter || !truncate || !mkfs || !fuse || !unmount) throw new Error("Compatible native MariaDB containment tools are unavailable")
   const environment = nativeMariaDbEnvironment(tmpdir())
   const [serverVersion, initializerHelp, clientVersion, limiterVersionResult] = await Promise.all([
@@ -545,6 +618,58 @@ function nativeMariaDbLimitArguments(fileSizeBytes = NATIVE_MARIADB_FILE_SIZE_BY
 
 async function executeNativeLimited(dependencies: RuntimeServiceDependencies, binaries: NativeMariaDbBinaries, command: string, args: string[], options: Parameters<RuntimeServiceDependencies["execute"]>[2]): Promise<{ stdout: string }> {
   return await dependencies.execute(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", command, ...args], options)
+}
+
+async function executeOwnedNativeLimited(dependencies: RuntimeServiceDependencies, binaries: NativeMariaDbBinaries, command: string, args: string[], options: Parameters<RuntimeServiceDependencies["execute"]>[2]): Promise<{ stdout: string }> {
+  const state = spawnOwnedNativeMariaDb(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", command, ...args], options.env ?? nativeMariaDbEnvironment("/nonexistent"), true, options.env?.TMPDIR)
+  const limit = options.maxOutputBytes ?? NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  let outputBytes = 0
+  let overflow = false
+  const collect = (target: Buffer[], chunk: Buffer): void => {
+    const remaining = Math.max(0, limit - outputBytes)
+    if (remaining > 0) target.push(chunk.subarray(0, remaining))
+    if (chunk.length > remaining) overflow = true
+    outputBytes += Math.min(chunk.length, remaining)
+  }
+  state.child.stdout?.on("data", (chunk: Buffer) => collect(stdout, chunk))
+  state.child.stderr?.on("data", (chunk: Buffer) => collect(stderr, chunk))
+  state.child.stdin?.end(options.stdin)
+  let rejectStop: (error: unknown) => void = () => undefined
+  const stopFailure = new Promise<never>((_resolve, reject) => { rejectStop = reject })
+  let stopPromise: Promise<void> | undefined
+  const requestStop = (): void => {
+    if (!stopPromise) {
+      stopPromise = stopOwnedNativeProcess(state, dependencies)
+      void stopPromise.catch(rejectStop)
+    }
+  }
+  const abort = () => requestStop()
+  options.signal?.addEventListener("abort", abort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; requestStop() }, options.timeout)
+  try {
+    await Promise.race([state.exit, stopFailure])
+    if (stopPromise) await stopPromise
+    if (!await waitForOwnedProcessGroupExit(state, 100)) await stopOwnedNativeProcess(state, dependencies)
+    else nativeOwnedProcesses.delete(state)
+    const boundedStdout = Buffer.concat(stdout).toString("utf8")
+    const boundedStderr = Buffer.concat(stderr).toString("utf8")
+    if (options.signal?.aborted) throw new Error("Managed runtime service provisioning interrupted")
+    if (timedOut) throw new Error("Native MariaDB initialization timed out")
+    if (overflow) throw new Error(`Runtime service process output exceeded ${limit} bytes`)
+    if (state.exitCode !== 0) {
+      const error = new Error(`Command failed with exit code ${state.exitCode ?? "unknown"}`) as Error & { stdout: string; stderr: string }
+      error.stdout = boundedStdout
+      error.stderr = boundedStderr
+      throw error
+    }
+    return { stdout: boundedStdout }
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener("abort", abort)
+  }
 }
 
 async function provisionNativeMariaDbStorage(binaries: NativeMariaDbBinaries, root: OwnedNativeRoot, datadir: string, dependencies: RuntimeServiceDependencies, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<NativeMariaDbStorage> {
@@ -621,12 +746,14 @@ async function unmountNativeMariaDbStorage(datadir: string, binaries: NativeMari
 }
 
 async function stopOwnedNativeProcess(state: OwnedNativeProcess, dependencies: RuntimeServiceDependencies): Promise<void> {
-  if (state.exited) return
-  if (await waitForOwnedProcessExit(state, 5_000)) return
+  if (!await ownedProcessGroupExists(state)) { nativeOwnedProcesses.delete(state); return }
+  if (!state.exited) await waitForOwnedProcessExit(state, 5_000)
+  if (await waitForOwnedProcessGroupExit(state, 100)) { nativeOwnedProcesses.delete(state); return }
   await signalOwnedNativeProcess(state, "SIGTERM", dependencies)
-  if (await waitForOwnedProcessExit(state, 5_000)) return
+  if (await waitForOwnedProcessGroupExit(state, 5_000)) { nativeOwnedProcesses.delete(state); return }
   await signalOwnedNativeProcess(state, "SIGKILL", dependencies)
-  if (!await waitForOwnedProcessExit(state, 5_000)) throw new Error("Owned native containment process did not exit")
+  if (!await waitForOwnedProcessGroupExit(state, 5_000)) throw new Error("Owned native containment process group did not exit")
+  nativeOwnedProcesses.delete(state)
 }
 
 async function nativeMariaDbInitializerHelp(initialize: string, dependencies: RuntimeServiceDependencies, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
@@ -640,23 +767,32 @@ async function nativeMariaDbInitializerHelp(initialize: string, dependencies: Ru
 }
 
 function nativeExecutableDirectories(): string[] {
-  const pathDirectories = (process.env.PATH ?? "").split(delimiter).filter(Boolean)
-  return [...new Set([...pathDirectories, "/usr/local/sbin", "/usr/sbin"])]
+  return ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
 }
 
-async function findNativeExecutable(name: string, directories: readonly string[]): Promise<string | undefined> {
+async function findNativeExecutable(name: string, directories: readonly string[], requireTrusted = false): Promise<string | undefined> {
   for (const directory of directories) {
     const candidate = resolve(directory, name)
     try {
       await access(candidate, fsConstants.X_OK)
       const canonical = await realpath(candidate)
       const metadata = await stat(canonical)
-      if (metadata.isFile()) return canonical
+      if (metadata.isFile() && (!requireTrusted || await nativeExecutableIsTrusted(canonical))) return canonical
     } catch {
       // Missing and incompatible candidates are ignored; all required tools must resolve.
     }
   }
   return undefined
+}
+
+async function nativeExecutableIsTrusted(path: string): Promise<boolean> {
+  let current = path
+  while (true) {
+    const metadata = await stat(current)
+    if (metadata.uid !== 0 || (metadata.mode & 0o022) !== 0) return false
+    if (current === "/") return true
+    current = dirname(current)
+  }
 }
 
 async function createOwnedNativeRoot(): Promise<OwnedNativeRoot> {
@@ -684,7 +820,7 @@ async function assertOwnedNativeRoot(root: OwnedNativeRoot): Promise<void> {
 
 function nativeMariaDbEnvironment(privateTemporaryDirectory: string): NodeJS.ProcessEnv {
   return {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     LANG: "C",
     LC_ALL: "C",
     HOME: privateTemporaryDirectory,
@@ -692,7 +828,7 @@ function nativeMariaDbEnvironment(privateTemporaryDirectory: string): NodeJS.Pro
   }
 }
 
-function nativeMariaDbDaemonArguments(options: { datadir: string; socket: string; pidFile: string; logFile: string; temporaryDirectory: string; port: number; userArgument: string[] }): string[] {
+function nativeMariaDbDaemonArguments(options: { datadir: string; socket: string; pidFile: string; logFile: string; temporaryDirectory: string; pluginDirectory: string; secureFileDirectory: string; port: number; userArgument: string[] }): string[] {
   return [
     "--no-defaults",
     `--datadir=${options.datadir}`,
@@ -700,6 +836,8 @@ function nativeMariaDbDaemonArguments(options: { datadir: string; socket: string
     `--pid-file=${options.pidFile}`,
     `--log-error=${options.logFile}`,
     `--tmpdir=${options.temporaryDirectory}`,
+    `--plugin-dir=${options.pluginDirectory}`,
+    `--secure-file-priv=${options.secureFileDirectory}`,
     "--bind-address=127.0.0.1",
     `--port=${options.port}`,
     "--skip-name-resolve",
@@ -739,16 +877,15 @@ function nativeMariaDbSocketArguments(socket: string): string[] {
   return ["--no-defaults", "--batch", "--skip-column-names", "--protocol=SOCKET", `--socket=${socket}`, "--user=root"]
 }
 
-function spawnOwnedNativeMariaDb(command: string, args: string[], environment: NodeJS.ProcessEnv): OwnedNativeProcess {
-  const child = spawn(command, args, { env: environment, stdio: "ignore", windowsHide: true })
-  const state: OwnedNativeProcess = { child, exited: false, exitCode: null, signalCode: null, exit: Promise.resolve(), identityReady: Promise.resolve() }
+function spawnOwnedNativeMariaDb(command: string, args: string[], environment: NodeJS.ProcessEnv, captureOutput = false, cwd?: string): OwnedNativeProcess {
+  const child = spawn(command, args, { cwd, detached: process.platform !== "win32", env: environment, stdio: captureOutput ? ["pipe", "pipe", "pipe"] : "ignore", windowsHide: true })
+  const state: OwnedNativeProcess = { child, groupId: child.pid, exited: false, exitCode: null, signalCode: null, exit: Promise.resolve(), identityReady: Promise.resolve() }
   nativeOwnedProcesses.add(state)
   state.identityReady = captureOwnedProcessIdentity(state)
   state.exit = new Promise<void>((resolveExit) => {
-    child.once("error", () => { state.exited = true; nativeOwnedProcesses.delete(state); resolveExit() })
+    child.once("error", () => { state.exited = true; resolveExit() })
     child.once("exit", (code, signal) => {
       state.exited = true
-      nativeOwnedProcesses.delete(state)
       state.exitCode = code
       state.signalCode = signal
       resolveExit()
@@ -816,22 +953,16 @@ async function allocateLoopbackPort(): Promise<number> {
   return address.port
 }
 
-async function stopOwnedNativeMariaDb(state: OwnedNativeProcess, root: OwnedNativeRoot | undefined, dependencies: RuntimeServiceDependencies, client?: string): Promise<void> {
-  if (state.exited) return
-  if (root) {
+async function stopOwnedNativeMariaDb(state: OwnedNativeProcess, root: OwnedNativeRoot | undefined, dependencies: RuntimeServiceDependencies, binaries?: NativeMariaDbBinaries, socket?: string): Promise<void> {
+  if (!state.exited && root) {
     try {
       await assertOwnedNativeRoot(root)
-      const limiter = await findNativeExecutable("prlimit", dependencies.nativeBinaryDirectories ?? nativeExecutableDirectories())
-      if (client && limiter) await dependencies.execute(limiter, [...nativeMariaDbLimitArguments(), "--", client, ...nativeMariaDbSocketArguments(ownedNativePath(root, "server.sock"))], { env: nativeMariaDbEnvironment(root.path), timeout: 5_000, stdin: "SHUTDOWN;\n", maxOutputBytes: NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES })
+      if (binaries && socket) await dependencies.execute(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", binaries.client, ...nativeMariaDbSocketArguments(socket)], { env: nativeMariaDbEnvironment(dirname(socket)), timeout: 5_000, stdin: "SHUTDOWN;\n", maxOutputBytes: NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES })
     } catch {
       // The owned child handle remains the authority when socket shutdown fails.
     }
   }
-  if (await waitForOwnedProcessExit(state, 5_000)) return
-  if (!state.exited) await signalOwnedNativeProcess(state, "SIGTERM", dependencies)
-  if (await waitForOwnedProcessExit(state, 5_000)) return
-  if (!state.exited) await signalOwnedNativeProcess(state, "SIGKILL", dependencies)
-  if (!await waitForOwnedProcessExit(state, 5_000)) throw new Error("Owned native MariaDB process did not exit")
+  await stopOwnedNativeProcess(state, dependencies)
 }
 
 async function captureOwnedProcessIdentity(state: OwnedNativeProcess): Promise<void> {
@@ -847,15 +978,18 @@ async function captureOwnedProcessIdentity(state: OwnedNativeProcess): Promise<v
 }
 
 async function signalOwnedNativeProcess(state: OwnedNativeProcess, signal: NodeJS.Signals, dependencies: RuntimeServiceDependencies): Promise<void> {
-  if (state.exited) return
   await state.identityReady
-  if (process.platform === "linux") {
+  if (!state.exited && process.platform === "linux") {
     if (!state.child.pid || !state.identity || await linuxProcessStartIdentity(state.child.pid) !== state.identity) {
       throw new Error("Owned native MariaDB process identity changed")
     }
   }
-  const signaled = dependencies.signalNativeProcess ? dependencies.signalNativeProcess(state.child, signal) : state.child.kill(signal)
-  if (!signaled && !state.exited) throw new Error("Owned native MariaDB process could not be signaled")
+  let signaled: boolean
+  if (dependencies.signalNativeProcess) signaled = dependencies.signalNativeProcess(state.child, signal)
+  else if (process.platform !== "win32" && state.groupId) {
+    try { process.kill(-state.groupId, signal); signaled = true } catch (error) { signaled = (error as NodeJS.ErrnoException).code === "ESRCH" }
+  } else signaled = state.child.kill(signal)
+  if (!signaled && await ownedProcessGroupExists(state)) throw new Error("Owned native MariaDB process group could not be signaled")
 }
 
 async function linuxProcessStartIdentity(pid: number): Promise<string> {
@@ -876,6 +1010,20 @@ async function waitForOwnedProcessExit(state: OwnedNativeProcess, timeoutMs: num
   ])
   if (timer) clearTimeout(timer)
   return state.exited
+}
+
+async function ownedProcessGroupExists(state: OwnedNativeProcess): Promise<boolean> {
+  if (process.platform === "win32" || !state.groupId) return !state.exited
+  try { process.kill(-state.groupId, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH" }
+}
+
+async function waitForOwnedProcessGroupExit(state: OwnedNativeProcess, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!await ownedProcessGroupExists(state)) return true
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 10))
+  }
+  return !await ownedProcessGroupExists(state)
 }
 
 async function ownedProcessRssMiB(state: OwnedNativeProcess): Promise<number | undefined> {

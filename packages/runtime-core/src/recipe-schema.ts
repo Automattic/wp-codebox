@@ -180,6 +180,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             description: "Disposable host services provisioned before runtime creation. Outputs must be explicitly mapped into runtime environment variable names.",
             items: { $ref: "#/$defs/runtimeService" },
+            allOf: [{
+              contains: { type: "object", properties: { configuration: { type: "object", properties: { provider: { const: "native" } }, required: ["provider"] } }, required: ["configuration"] },
+              minContains: 0,
+              maxContains: 2,
+            }],
           },
           externalServices: {
             type: "array",
