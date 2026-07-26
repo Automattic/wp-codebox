@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { createServer } from "node:http"
+import { createServer, type IncomingHttpHeaders } from "node:http"
 import {
   artifactBundleFileManifest,
   browserRunResultEnvelope,
@@ -138,14 +138,39 @@ assert.deepEqual(browserPreviewAuthCookieUrls("http://localhost:9400", ["PUBLIC.
 
 let activeUpstreamRequests = 0
 let maxActiveUpstreamRequests = 0
-const targetServer = createServer(async (_request, response) => {
+let targetServerUrl = ""
+const restRequests: Array<{ method?: string; headers: IncomingHttpHeaders; body: string }> = []
+const targetServer = createServer(async (request, response) => {
   activeUpstreamRequests += 1
   maxActiveUpstreamRequests = Math.max(maxActiveUpstreamRequests, activeUpstreamRequests)
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
   activeUpstreamRequests -= 1
+
+  if (request.url === "/editor") {
+    response.setHeader("content-type", "text/html; charset=utf-8")
+    const escapedOrigin = targetServerUrl.replaceAll("/", "\\/")
+    const splitAt = Math.floor(escapedOrigin.length / 2)
+    response.write(`<script>window.wpApiSettings={"root":"${escapedOrigin.slice(0, splitAt)}`)
+    response.end(`${escapedOrigin.slice(splitAt)}\\/wp-json\\/"}</script>`)
+    return
+  }
+  if (request.url === "/wp-json/wp/v2/pages/5") {
+    let body = ""
+    for await (const chunk of request) body += chunk.toString()
+    restRequests.push({ method: request.method, headers: request.headers, body })
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, { "access-control-allow-headers": "content-type, x-wp-nonce" })
+      response.end()
+      return
+    }
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ updated: true }))
+    return
+  }
+
   response.end("ok")
 })
-const targetServerUrl = await listenLocalHttpServer(targetServer)
+targetServerUrl = await listenLocalHttpServer(targetServer)
 let disposed = false
 const proxied = await withPreviewProxy({
   playground: { async run() { return { text: "" } } },
@@ -165,6 +190,31 @@ try {
   })
   await Promise.all([fetch(proxied.serverUrl), fetch(proxied.serverUrl)])
   assert.equal(maxActiveUpstreamRequests, 1)
+
+  const editorHtml = await fetch(`${proxied.serverUrl}/editor`).then((response) => response.text())
+  const restUrl = editorHtml.match(/root":"([^\"]+)/)?.[1]?.replaceAll("\\/", "/")
+  assert.equal(restUrl, `${proxied.serverUrl}/wp-json/`, "WordPress browser URLs use the preview proxy origin")
+
+  const mutationUrl = new URL("wp/v2/pages/5", restUrl).toString()
+  const preflight = await fetch(mutationUrl, {
+    method: "OPTIONS",
+    headers: {
+      origin: proxied.serverUrl,
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,x-http-method-override,x-wp-nonce",
+    },
+  })
+  assert.equal(preflight.status, 204)
+  assert.equal(restRequests[0]?.headers["access-control-request-headers"], "content-type,x-http-method-override,x-wp-nonce")
+
+  const mutation = await fetch(mutationUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-http-method-override": "PUT", "x-wp-nonce": "nonce" },
+    body: JSON.stringify({ content: "updated" }),
+  }).then((response) => response.json())
+  assert.deepEqual(mutation, { updated: true })
+  assert.equal(restRequests[1]?.headers["x-http-method-override"], "PUT")
+  assert.equal(restRequests[1]?.body, JSON.stringify({ content: "updated" }))
 } finally {
   await proxied[Symbol.asyncDispose]()
   await closeHttpServer(targetServer)

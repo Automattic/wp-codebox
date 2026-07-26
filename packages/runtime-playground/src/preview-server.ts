@@ -1,5 +1,7 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
+import { StringDecoder } from "node:string_decoder"
+import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
 
 export interface PlaygroundServerRunResponse {
@@ -81,13 +83,19 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
 async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
   const routes = createPreviewRouteRegistry()
-  const proxy = previewProxyServer(target, routes)
+  let proxyOrigin: string | undefined
+  const proxy = previewProxyServer(target, routes, () => proxyOrigin)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
 
+  const address = proxy.address()
+  const resolvedPort = address && typeof address === "object" ? address.port : port
+  const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
+  proxyOrigin = `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`
+
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target, routes)
+    const ipv6Proxy = previewProxyServer(target, routes, () => `http://[::1]:${resolvedPort}`)
     try {
       await listenPreviewProxy(ipv6Proxy, port, "::1")
       servers.push(ipv6Proxy)
@@ -99,12 +107,8 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
     }
   }
 
-  const address = proxy.address()
-  const resolvedPort = address && typeof address === "object" ? address.port : port
-  const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
-
   return {
-    serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
+    serverUrl: proxyOrigin,
     previewRoutes: routes,
     diagnostics: {
       schema: "wp-codebox/preview-proxy-diagnostics/v1",
@@ -120,7 +124,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   }
 }
 
-function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): PreviewProxyServer {
+function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, proxyOrigin: () => string | undefined): PreviewProxyServer {
   const upstreamQueue = createPreviewProxyQueue()
 
   return createHttpServer(async (incoming, outgoing) => {
@@ -133,7 +137,7 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): 
       return
     }
 
-    upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
+    upstreamQueue(() => proxyPreviewRequest(target, proxyOrigin(), incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
   })
 }
 
@@ -159,7 +163,7 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
   }
 }
 
-function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
+function proxyPreviewRequest(target: URL, proxyOrigin: string | undefined, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
   return new Promise((resolve) => {
     let settled = false
     let targetResponse: IncomingMessage | undefined
@@ -187,7 +191,27 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       },
       (response) => {
         targetResponse = response
-        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers))
+        if (proxyOrigin && shouldRewriteProxyResponse(response.headers)) {
+          const headers = proxyResponseHeaders(response.headers, target.origin, proxyOrigin)
+          delete headers["content-length"]
+          delete headers.etag
+          outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, headers)
+          const rewrite = previewOriginRewriteStream(target.origin, proxyOrigin)
+          response.on("error", (error) => {
+            outgoing.destroy(error)
+            settle()
+          })
+          rewrite.on("error", (error) => {
+            outgoing.destroy(error)
+            settle()
+          })
+          outgoing.on("finish", settle)
+          outgoing.on("close", settle)
+          response.pipe(rewrite).pipe(outgoing)
+          return
+        }
+
+        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers, target.origin, proxyOrigin))
         response.on("error", (error) => {
           outgoing.destroy(error)
           settle()
@@ -208,6 +232,43 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     outgoing.on("error", abortUpstream)
     outgoing.on("close", abortUpstream)
     incoming.pipe(targetRequest)
+  })
+}
+
+function shouldRewriteProxyResponse(headers: IncomingHttpHeaders): boolean {
+  const contentType = String(headers["content-type"] ?? "").toLowerCase()
+  const contentEncoding = String(headers["content-encoding"] ?? "identity").toLowerCase()
+  return (contentEncoding === "" || contentEncoding === "identity")
+    && (contentType.startsWith("text/") || /(?:^|\/)(?:[^;]+\+)?(?:json|javascript|xml)(?:;|$)/.test(contentType))
+}
+
+function rewritePreviewOrigin(body: string, targetOrigin: string, proxyOrigin: string): string {
+  return body
+    .replaceAll(targetOrigin, proxyOrigin)
+    .replaceAll(targetOrigin.replaceAll("/", "\\/"), proxyOrigin.replaceAll("/", "\\/"))
+}
+
+function previewOriginRewriteStream(targetOrigin: string, proxyOrigin: string): Transform {
+  const decoder = new StringDecoder("utf8")
+  const patterns = [targetOrigin, targetOrigin.replaceAll("/", "\\/")]
+  const retainedCharacters = Math.max(...patterns.map((pattern) => pattern.length)) - 1
+  let pending = ""
+
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      const text = pending + decoder.write(chunk)
+      let splitAt = Math.max(0, text.length - retainedCharacters)
+      for (const pattern of patterns) {
+        for (let index = Math.max(0, splitAt - pattern.length + 1); index < splitAt; index += 1) {
+          if (pattern.startsWith(text.slice(index, splitAt))) splitAt = index
+        }
+      }
+      pending = text.slice(splitAt)
+      callback(null, rewritePreviewOrigin(text.slice(0, splitAt), targetOrigin, proxyOrigin))
+    },
+    flush(callback) {
+      callback(null, rewritePreviewOrigin(pending + decoder.end(), targetOrigin, proxyOrigin))
+    },
   })
 }
 
@@ -277,10 +338,17 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders 
   }
 }
 
-function proxyResponseHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+function proxyResponseHeaders(headers: IncomingHttpHeaders, targetOrigin?: string, proxyOrigin?: string): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
+
+  if (targetOrigin && proxyOrigin) {
+    for (const [name, value] of Object.entries(forwarded)) {
+      if (typeof value === "string") forwarded[name] = rewritePreviewOrigin(value, targetOrigin, proxyOrigin)
+      else if (Array.isArray(value)) forwarded[name] = value.map((item) => rewritePreviewOrigin(item, targetOrigin, proxyOrigin))
+    }
+  }
 
   return forwarded
 }
