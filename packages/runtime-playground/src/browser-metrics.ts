@@ -527,7 +527,7 @@ export async function serializeBrowserFinishedRequest(request: Request, timestam
   if (!response) {
     return {
       type: "response",
-      url: request.url(),
+      url: redactBrowserNetworkUrl(request.url()),
       method: request.method(),
       resourceType: request.resourceType(),
       timestamp,
@@ -545,7 +545,7 @@ export async function serializeBrowserResponse(response: Response, timestamp = n
   const responseTextPreview = await browserDocument5xxResponsePreview(response)
   return {
     type: "response",
-    url: response.url(),
+    url: redactBrowserNetworkUrl(response.url()),
     method: request.method(),
     resourceType: request.resourceType(),
     status: response.status(),
@@ -596,15 +596,20 @@ function redactBrowserResponseText(body: string): string {
 }
 
 export function serializeBrowserRequestFailure(request: Request, timestamp = now()): BrowserProbeNetworkRecord {
+  const failure = request.failure()
   return {
     type: "requestfailed",
-    url: request.url(),
+    url: redactBrowserNetworkUrl(request.url()),
     method: request.method(),
     resourceType: request.resourceType(),
     timing: browserRequestTiming(request),
-    failure: request.failure(),
+    failure: failure ? { errorText: redactString(failure.errorText, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true }) } : null,
     timestamp,
   }
+}
+
+function redactBrowserNetworkUrl(url: string): string {
+  return redactString(url, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }
 
 function browserRequestTiming(request: Request): Record<string, number> {

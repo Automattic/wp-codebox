@@ -287,7 +287,7 @@ export function safeBrowserProbeUrl(value: string | undefined): string | null {
   if (/^data:/i.test(value)) {
     return "data:[redacted]"
   }
-  return value
+  return browserRedirectSafeUrl(value)
 }
 
 export interface BrowserRedirectDiagnosticsArtifact {
@@ -400,7 +400,7 @@ export function browserRedirectSafeUrl(value: string): string {
   }
   const parsed = parseBrowserRedirectUrl(value)
   if (!parsed) {
-    return value
+    return redactString(value, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
   }
   const search = parsed.queryKeys.length > 0
     ? `?${parsed.queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}`

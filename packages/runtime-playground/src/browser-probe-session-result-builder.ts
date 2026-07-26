@@ -86,7 +86,8 @@ export interface BrowserProbeSessionResult {
 }
 
 export class BrowserProbeSessionResultBuilder {
-  compose(input: BrowserProbeSessionResultInput): BrowserProbeSessionResult {
+  compose(rawInput: BrowserProbeSessionResultInput): BrowserProbeSessionResult {
+    const input = sanitizeBrowserProbeSessionResultInput(rawInput)
     const assertionSummary = browserProbeAssertionSummary(input.assertions)
     const finishedAt = now()
     const files = browserProbeArtifactFileMap(input)
@@ -155,6 +156,27 @@ export class BrowserProbeSessionResultBuilder {
         summary: artifact.summary,
       }, null, 2)}\n`,
     }
+  }
+}
+
+function sanitizeBrowserProbeSessionResultInput(input: BrowserProbeSessionResultInput): BrowserProbeSessionResultInput {
+  const safeUrl = (url: string): string => safeBrowserProbeUrl(url) ?? "[unavailable]"
+  return {
+    ...input,
+    requestedUrl: safeUrl(input.requestedUrl),
+    finalUrl: safeUrl(input.finalUrl),
+    network: input.network.map((record) => ({ ...record, url: safeUrl(record.url) })),
+    preview: {
+      ...input.preview,
+      localOrigin: safeUrl(input.preview.localOrigin),
+      effectiveOrigin: safeUrl(input.preview.effectiveOrigin),
+      ...(input.preview.publicOrigin ? { publicOrigin: safeUrl(input.preview.publicOrigin) } : {}),
+    },
+    topologyOrigins: {
+      localPreviewOrigin: safeUrl(input.topologyOrigins.localPreviewOrigin),
+      effectivePreviewOrigin: safeUrl(input.topologyOrigins.effectivePreviewOrigin),
+      ...(input.topologyOrigins.requestedPreviewOrigin ? { requestedPreviewOrigin: safeUrl(input.topologyOrigins.requestedPreviewOrigin) } : {}),
+    },
   }
 }
 

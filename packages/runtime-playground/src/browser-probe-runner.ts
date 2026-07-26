@@ -456,18 +456,9 @@ export async function runSingleBrowserProbeCommand({
   } finally {
     if (abortSignal?.aborted) {
       await closeBrowserBestEffort(browser)
+      await drainBrowserPreviewRouteTracker(routeTracker).catch(() => undefined)
       abortSignal.removeEventListener("abort", abortHandler)
       throw pendingError ?? new Error("Browser command aborted during runtime cleanup")
-    }
-    try {
-      await drainBrowserPreviewRouteTracker(routeTracker)
-    } catch (error) {
-      const routeError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
-      if (!pendingError && runPlan.routeHostDrain === "required") {
-        pendingError = routeError
-        progress.fail("probe-error", routeError)
-      }
-      errors.push(serializeBrowserError("probe-error", error))
     }
     if (page) {
       finalUrl = page.url()
@@ -507,9 +498,20 @@ export async function runSingleBrowserProbeCommand({
       }
     }
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
+    await geolocationPermissionCleanup?.()
     if (!session) {
       await environmentRuntime?.close().catch(() => undefined)
       await browser.close()
+    }
+    try {
+      await drainBrowserPreviewRouteTracker(routeTracker)
+    } catch (error) {
+      const routeError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+      if (!pendingError && runPlan.routeHostDrain === "required") {
+        pendingError = routeError
+        progress.fail("probe-error", routeError)
+      }
+      errors.push(serializeBrowserError("probe-error", error))
     }
     if (captureSelection.console) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
