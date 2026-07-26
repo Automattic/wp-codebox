@@ -283,7 +283,7 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
        if (env.WORDPRESS_STATE_DATABASE) {
          const lifecycle = new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE)
          await lifecycle.expire(controller.scheduledTime, 1)
-         const deleting = (await lifecycle.pendingDeletions(1))[0]
+          const deleting = (await lifecycle.pendingDeletions(1, controller.scheduledTime))[0]
          if (deleting) await lifecycle.reclaim(env.WORDPRESS_STATE_BUCKET, deleting.identity, deleting.operationFence, 100, controller.scheduledTime)
        }
        const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)

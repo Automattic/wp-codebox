@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
+import { allocationIdentity, CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
 import { PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
 import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
 
@@ -18,6 +19,8 @@ class Bucket {
   objects = new Map<string, Uint8Array>(); gets = 0; puts = 0; race?: Uint8Array; dropSuccessfulPut = false
   async get(key: string) { this.gets++; const value = this.objects.get(key); return value ? { size: value.byteLength, etag: hash(value), arrayBuffer: async () => value.slice().buffer } : null }
   async put(key: string, value: string | Uint8Array, options?: { onlyIf?: { etagDoesNotMatch?: string } }) { this.puts++; const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value; if (options?.onlyIf?.etagDoesNotMatch === "*" && this.objects.has(key)) return null; if (this.race && options?.onlyIf) { this.objects.set(key, this.race); this.race = undefined; return null } if (!this.dropSuccessfulPut) this.objects.set(key, bytes.slice()); return { key } }
+  async list(options: { prefix?: string; cursor?: string; limit?: number }) { const keys = [...this.objects.keys()].filter((key) => key.startsWith(options.prefix ?? "")).sort(); const available = options.cursor ? keys.filter((key) => key > options.cursor!) : keys; const page = available.slice(0, options.limit ?? 100); return { objects: page.map((key) => ({ key, size: this.objects.get(key)!.byteLength })), truncated: page.length < available.length, cursor: page.at(-1) ?? "" } }
+  async delete(keys: string[]) { for (const key of keys) this.objects.delete(key) }
 }
 function runtime(db = database(), bucket = new Bucket(), tokens?: unknown, maxSites = 2) {
   bucket.objects.set(`sites/provisioning/import-artifacts/${digest}.json`, artifact)
@@ -79,7 +82,15 @@ test("changed fingerprints conflict without another allocation", async () => { c
 test("create replay honors current site restrictions", async () => { const r = runtime(); await create(r); const records = JSON.parse(r.env.WORDPRESS_API_TOKENS) as Array<Record<string, unknown>>; records[0].sites = ["beta"]; r.env.WORDPRESS_API_TOKENS = JSON.stringify(records); assert.equal((await create(r)).status, 404); assert.equal(count(r.db, "wp_codebox_api_sites"), 1) })
 test("concurrent distinct keys allocate unique contexts", async () => { const r = runtime(); await Promise.all([create(r, "one"), create(r, "two")]); const ids = r.db.sqlite.prepare("SELECT site_id FROM wp_codebox_api_sites ORDER BY site_id").all() as Array<{ site_id: string }>; assert.deepEqual(ids.map((row) => row.site_id), ["alpha", "beta"]) })
 test("maxSites concurrency distinguishes quota from pool exhaustion", async () => { const quota = runtime(database(), new Bucket(), undefined, 1); const responses = await Promise.all([create(quota, "one"), create(quota, "two")]); assert.equal(responses.filter((response) => response.status === 202).length, 1); const rejected = responses.find((response) => response.status !== 202)!; assert.equal((await rejected.json() as { error: { code: string } }).error.code, "quota_exceeded"); assert.equal(count(quota.db, "wp_codebox_api_sites"), 1); const pool = runtime(database(), new Bucket(), undefined, 3); await Promise.all([create(pool, "one"), create(pool, "two")]); const pr = await create(pool, "three"); assert.equal((await pr.json() as { error: { code: string } }).error.code, "capacity_exhausted") })
-test("quota is released only after the lifecycle reaches its tombstone", async () => { const r = dynamicRuntime(database(), new Bucket(), 1); const first = await (await create(r, "one")).json() as { site: { id: string } }; assert.equal((await create(r, "two")).status, 429); r.db.sqlite.prepare("UPDATE wp_codebox_site_lifecycles SET state = 'tombstoned' WHERE site_id = ?").run(first.site.id); assert.equal((await create(r, "two")).status, 202) })
+test("quota is released only after the lifecycle reaches its tombstone", async () => { const r = dynamicRuntime(database(), new Bucket(), 1); const first = await (await create(r, "one")).json() as { site: { id: string } }; assert.equal((await create(r, "two")).status, 429); const lifecycle = new CloudflareAllocationLifecycle(r.db, { ttlMs: 1, retainMs: 0 }); const identity = allocationIdentity(first.site.id); const fence = await lifecycle.beginDeletion(identity, "a"); await lifecycle.reclaim(r.bucket as unknown as Pick<R2Bucket, "list" | "delete">, identity, fence, 100); assert.equal((await create(r, "two")).status, 202) })
+test("owners can inspect, renew, and delete their allocation lifecycle", async () => {
+  const r = dynamicRuntime(); const created = await (await create(r)).json() as { site: { id: string } }; const url = `https://control.invalid/v1/sites/${created.site.id}/lifecycle`
+  const read = await routeProvisioningApi(new Request(url, { headers: { authorization: "Bearer good" } }), r.env, r.operations)
+  assert.equal(read.status, 200); assert.equal((await read.json() as { lifecycle: { state: string } }).lifecycle.state, "active")
+  assert.equal((await routeProvisioningApi(new Request(`${url}/renew`, { method: "POST", headers: { authorization: "Bearer good" } }), r.env, r.operations)).status, 200)
+  const deleted = await routeProvisioningApi(new Request(url, { method: "DELETE", headers: { authorization: "Bearer good" } }), r.env, r.operations)
+  assert.equal(deleted.status, 200); assert.equal((await deleted.json() as { lifecycle: { state: string } }).lifecycle.state, "deleting")
+})
 test("dynamic preview allocation is unique, idempotent, and not limited by configured contexts", async () => {
   const r = dynamicRuntime()
   const responses = await Promise.all(Array.from({ length: 100 }, (_, index) => create(r, `dynamic-${index}`)))

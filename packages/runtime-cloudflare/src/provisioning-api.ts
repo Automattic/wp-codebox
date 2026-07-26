@@ -2,7 +2,7 @@ import { D1OperationRepository, OperationConflict, type StaticArtifactOperation,
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
-import { CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
+import { allocationIdentity, CloudflareAllocationLifecycle, type AllocationLifecycle } from "./allocation-lifecycle.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -30,10 +30,34 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   // This capability endpoint must never fall through to API bearer authentication or WordPress.
   if (parts.length === 4 && parts[3] === "administrator-claim") return method === "POST" ? claimAdministrator(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 3) return method === "GET" ? readSite(request, env, operations, siteId) : methodNotAllowed("GET")
+  if (parts.length === 4 && parts[3] === "lifecycle" && method === "GET") return lifecycleStatus(request, env, siteId)
+  if (parts.length === 5 && parts[3] === "lifecycle" && parts[4] === "renew") return method === "POST" ? renewLifecycle(request, env, siteId) : methodNotAllowed("POST")
+  if (parts.length === 4 && parts[3] === "lifecycle") return method === "DELETE" ? deleteLifecycle(request, env, siteId) : methodNotAllowed("GET, DELETE")
   if (parts.length === 4 && parts[3] === "imports") return method === "POST" ? importSite(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 5 && parts[3] === "operations" && /^[0-9a-f-]{36}$/.test(parts[4])) return method === "GET" ? readOperation(request, env, operations, siteId, parts[4]) : methodNotAllowed("GET")
   return notFound()
 }
+
+async function lifecycleStatus(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:read"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  const lifecycle = await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).get(allocationIdentity(siteId))
+  return lifecycle ? Response.json({ schema: PROVISIONING_API_SCHEMA, lifecycle: lifecycleResource(lifecycle) }) : notFound()
+}
+async function renewLifecycle(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:import"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  try { const lifecycle = await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).renew(allocationIdentity(siteId), token.principal); return Response.json({ schema: PROVISIONING_API_SCHEMA, lifecycle: lifecycleResource(lifecycle) }) } catch { return apiError(409, "lifecycle_conflict", "The allocation lifecycle cannot be renewed.") }
+}
+async function deleteLifecycle(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
+  const token = await authenticate(request, env, "sites:import"); if (token instanceof Response) return token
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  if (!allocation || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  try { await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).beginDeletion(allocationIdentity(siteId), token.principal); return lifecycleStatus(new Request(request.url, { headers: request.headers }), env, siteId) } catch { return apiError(409, "lifecycle_conflict", "The allocation lifecycle cannot be deleted.") }
+}
+function lifecycleResource(lifecycle: AllocationLifecycle) { return { state: lifecycle.state, expiresAt: new Date(lifecycle.expiresAt).toISOString(), retainUntil: new Date(lifecycle.retainUntil).toISOString(), generation: lifecycle.identity.generation, receipt: lifecycle.receipt } }
 
 async function stageArtifact(request: Request, env: ProvisioningEnv, expectedSha256: string): Promise<Response> {
   const token = await authenticate(request, env, "sites:create"); if (token instanceof Response) return token
@@ -266,7 +290,7 @@ class AllocationStore {
       try {
         const [allocation, reservation] = await this.db.batch([
           this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
-          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, now, now, now, site.id, token.principal, input.key, input.fingerprint),
+          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, generation, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, allocationIdentity(site.id).generation, now, now, now, site.id, token.principal, input.key, input.fingerprint),
         ])
         if (allocation.meta.changes === 1 && reservation.meta.changes === 1) {
           await lifecycle.create(site, token.principal, now)

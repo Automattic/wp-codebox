@@ -27,8 +27,9 @@ test("expiration fences mutations, retains quota until terminal reclamation, and
   await assert.rejects(() => lifecycle.assertMutation(active.identity, mutation, now + 10), AllocationLifecycleConflict)
   assert.equal((await lifecycle.get(active.identity))!.state, "deleting")
   bucket.objects.set(`sites/${site().id}/one`, new Uint8Array([1]))
-  const deleting = (await lifecycle.get(active.identity))!; const tombstone = await lifecycle.reclaim(bucket as unknown as Pick<R2Bucket, "list" | "delete">, active.identity, deleting.operationFence, 10, now + 11)
-  assert.equal(tombstone.state, "tombstoned"); assert.equal(tombstone.receipt?.deletedObjects, 1); assert.equal(tombstone.receipt?.completedAt, new Date(now + 11).toISOString())
+  assert.deepEqual(await lifecycle.pendingDeletions(1, now + 29), [], "reads remain available during the declared grace period")
+  const deleting = (await lifecycle.get(active.identity))!; const tombstone = await lifecycle.reclaim(bucket as unknown as Pick<R2Bucket, "list" | "delete">, active.identity, deleting.operationFence, 10, now + 30)
+  assert.equal(tombstone.state, "tombstoned"); assert.equal(tombstone.receipt?.deletedObjects, 1); assert.equal(tombstone.receipt?.completedAt, new Date(now + 30).toISOString())
 })
 
 test("owner authorization, concurrent deletion, and stale generations fail closed", async () => {
@@ -41,7 +42,7 @@ test("owner authorization, concurrent deletion, and stale generations fail close
 })
 
 test("cleanup checkpoints resume after partial R2 failure and tombstone receipts are immutable", async () => {
-  const lifecycle = new CloudflareAllocationLifecycle(database()); const bucket = new Bucket(); const created = await lifecycle.create(site(), "owner", 1_000)
+  const lifecycle = new CloudflareAllocationLifecycle(database(), { ttlMs: 10, retainMs: 0 }); const bucket = new Bucket(); const created = await lifecycle.create(site(), "owner", 1_000)
   for (const key of ["a", "b", "c"]) bucket.objects.set(`sites/${site().id}/${key}`, new Uint8Array([1]))
   const fence = await lifecycle.beginDeletion(created.identity, "owner", 1_001)
   const first = await lifecycle.reclaim(bucket as unknown as Pick<R2Bucket, "list" | "delete">, created.identity, fence, 1, 1_002)

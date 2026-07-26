@@ -72,13 +72,15 @@ export class D1OperationRepository {
 
   async activeSites(): Promise<SiteContext[]> {
     await ensureSchema(this.database)
-    const rows = await this.database.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE state = 'active' ORDER BY site_id").all<{ site_id: string; hostname: string; origin: string }>()
+    const rows = await this.database.prepare("SELECT s.site_id, s.hostname, s.origin FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.state = 'active' AND (l.site_id IS NULL OR l.state = 'active') ORDER BY s.site_id").all<{ site_id: string; hostname: string; origin: string }>()
     return rows.results.map((row) => ({ id: row.site_id, hostname: row.hostname, origin: row.origin }))
   }
 
   async claimNext(siteId: string, now = Date.now()): Promise<(StaticArtifactOperation & { claimToken: string }) | null> {
     await ensureSchema(this.database)
-    const candidate = await this.database.prepare(`SELECT operation_id FROM wp_codebox_operations WHERE site_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?)) ORDER BY created_at LIMIT 1`).bind(siteId, now, now).first<{ operation_id: string }>()
+    // A dynamic allocation may be fenced between queue deliveries. Configured
+    // static sites have no lifecycle row and retain their existing behavior.
+    const candidate = await this.database.prepare(`SELECT o.operation_id FROM wp_codebox_operations o JOIN wp_codebox_sites s ON s.site_id = o.site_id LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = o.site_id AND l.generation = s.generation WHERE o.site_id = ? AND (l.site_id IS NULL OR l.state = 'active') AND (o.state = 'queued' OR (o.state = 'retryable' AND o.retry_at <= ?) OR (o.state = 'running' AND o.claim_expires_at <= ?)) ORDER BY o.created_at LIMIT 1`).bind(siteId, now, now).first<{ operation_id: string }>()
     if (!candidate) return null
     const token = crypto.randomUUID()
     const expiresAt = now + this.claimMs
@@ -188,6 +190,9 @@ async function ensureSchema(database: D1Database): Promise<void> {
     const pending = (async () => {
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_sites (site_id TEXT PRIMARY KEY, hostname TEXT NOT NULL, origin TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL CHECK (state IN ('active')), created_at INTEGER NOT NULL, activated_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run()
       try { await database.prepare("ALTER TABLE wp_codebox_sites ADD COLUMN generation INTEGER NOT NULL DEFAULT 1").run() } catch (error) { if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error }
+      // Lifecycle owns this schema; the minimal compatible creation keeps queue
+      // fencing available when the operation repository initializes first.
+      await database.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_site_lifecycles (site_id TEXT NOT NULL, generation INTEGER NOT NULL, principal TEXT NOT NULL, state TEXT NOT NULL, expires_at INTEGER NOT NULL, retain_until INTEGER NOT NULL, mutation_fence INTEGER NOT NULL, operation_fence INTEGER NOT NULL, cleanup_cursor TEXT, deleted_objects INTEGER NOT NULL, receipt_json TEXT, terminal_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (site_id, generation))").run()
       await database.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS wp_codebox_site_hostname ON wp_codebox_sites(hostname)`).run()
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_site_aliases (hostname TEXT PRIMARY KEY, site_id TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (site_id) REFERENCES wp_codebox_sites(site_id))`).run()
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_operations (site_id TEXT NOT NULL, operation_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, artifact_key TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, artifact_size INTEGER NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, site_title TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('queued','running','retryable','publication-pending','succeeded','failed')), stage TEXT NOT NULL, progress INTEGER NOT NULL CHECK (progress BETWEEN 0 AND 100), attempts INTEGER NOT NULL, retry_at INTEGER, claim_token TEXT, claim_expires_at INTEGER, prepared_version INTEGER, prepared_revision TEXT, prepared_manifest_key TEXT, prepared_persisted_at TEXT, prepared_result_json TEXT, prepared_publication_job TEXT, receipt_json TEXT, error_code TEXT, error_message TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at TEXT, PRIMARY KEY (site_id, operation_id), UNIQUE (site_id, idempotency_key), FOREIGN KEY (site_id) REFERENCES wp_codebox_sites(site_id))`).run()
