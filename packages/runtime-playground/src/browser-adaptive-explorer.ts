@@ -45,6 +45,11 @@ interface FrontierEntry {
   path: BrowserAdaptiveAction[]
 }
 
+interface AdaptiveNetworkFailureRetention {
+  remainingCount: number
+  remainingBytes: number
+}
+
 export async function exploreAdaptiveBrowserStateMachine({
   page,
   baseUrl,
@@ -79,6 +84,10 @@ export async function exploreAdaptiveBrowserStateMachine({
   let revisits = 0
   let keyboardActions = 0
   let exhausted: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
+  const networkFailureRetention: AdaptiveNetworkFailureRetention = {
+    remainingCount: Math.min(contract.budgets.maxErrors, contract.descriptorLimits.maxDiagnostics),
+    remainingBytes: Math.floor(contract.budgets.maxArtifactBytes / 8),
+  }
 
   const initial = await captureAdaptiveState(page, contract, 0, navigationScope)
   appendDiagnostics(diagnostics, initial.diagnostics, contract.descriptorLimits.maxDiagnostics)
@@ -144,7 +153,7 @@ export async function exploreAdaptiveBrowserStateMachine({
       const newConsoleRecords = consoleErrorRecords(observations.consoleMessages.slice(beforeConsole))
       const newConsoleErrors = newConsoleRecords.map(recordMessage)
       const newPageErrors = errorMessages(observations.errors.slice(beforeErrors))
-      const oracleEvidence = adaptiveOracleEvidence(newConsoleRecords, observations.network.slice(beforeNetwork), newPageErrors, contract, networkPolicy)
+      const oracleEvidence = adaptiveOracleEvidence(newConsoleRecords, observations.network.slice(beforeNetwork), newPageErrors, contract, networkPolicy, networkFailureRetention)
       const fingerprints = [...oracleEvidence.fingerprints]
       const existing = states.get(stabilized.state.digest)
       const newState = !existing
@@ -189,6 +198,7 @@ export async function exploreAdaptiveBrowserStateMachine({
           loadingAfter: stabilized.loading,
           oracleFingerprints: fingerprints,
           ...(oracleEvidence.networkFailures.length > 0 ? { networkFailures: oracleEvidence.networkFailures } : {}),
+          ...(oracleEvidence.networkFailureSummary ? { networkFailureSummary: oracleEvidence.networkFailureSummary } : {}),
           ...(accessibilityFingerprints.length > 0 ? { accessibilityFindingFingerprints: accessibilityFingerprints } : {}),
         },
         status: actionError ? "error" : scopeRejection ? "rejected" : newState ? "ok" : "revisited",
@@ -569,34 +579,70 @@ function consoleErrorRecords(records: object[]): Record<string, unknown>[] {
   return records.map((record) => record as Record<string, unknown>).filter((record) => record.type === "error" || record.level === "error").slice(0, 100)
 }
 
-function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], networkRecords: object[], pageErrors: string[], contract: BrowserAdaptiveExplorationContract, networkPolicy?: BrowserPreviewNetworkPolicy): { fingerprints: string[]; networkFailures: BrowserAdaptiveNetworkFailure[]; errorCount: number } {
+function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], networkRecords: object[], pageErrors: string[], contract: BrowserAdaptiveExplorationContract, networkPolicy?: BrowserPreviewNetworkPolicy, retention?: AdaptiveNetworkFailureRetention): { fingerprints: string[]; networkFailures: BrowserAdaptiveNetworkFailure[]; networkFailureSummary?: BrowserAdaptiveTransition["observations"]["networkFailureSummary"]; errorCount: number } {
   const failures = networkRecords.map((record) => record as Record<string, unknown>).filter((record) => record.type === "requestfailed")
-  const networkFailures = failures.map((record): BrowserAdaptiveNetworkFailure => {
+  const classifiedFailures = failures.map((record): BrowserAdaptiveNetworkFailure & { expectedBlock: boolean } => {
     const url = typeof record.url === "string" ? record.url : ""
     const decision = networkPolicy ? browserPreviewNetworkDecision(url, networkPolicy) : { url, urlClassification: "invalid" as const, policyDecision: "unknown" as const, policyReason: "network-policy-unavailable" }
     const failure = networkFailureMessage(record)
     const expectedBlock = decision.policyDecision === "blocked" && /ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(failure)
-    return { ...decision, ...(failure ? { failure } : {}), oracleFinding: !expectedBlock || contract.oraclePolicy.policyBlocks === "finding" }
+    return { ...decision, ...(failure ? { failure } : {}), oracleFinding: !expectedBlock || contract.oraclePolicy.policyBlocks === "finding", expectedBlock }
   })
-  const expectedBlockUrls = networkFailures.filter((failure) => !failure.oracleFinding).map((failure) => failure.url)
-  const findingConsoleRecords = consoleRecords.filter((record) => {
-    if (!/ERR_BLOCKED_BY_CLIENT/i.test(recordMessage(record))) return true
-    const location = objectRecord(record.location)
-    const match = typeof location.url === "string" && location.url
-      ? expectedBlockUrls.indexOf(location.url)
-      : expectedBlockUrls.length > 0 ? 0 : -1
-    if (match < 0) return true
-    expectedBlockUrls.splice(match, 1)
-    return false
+  const unmatchedFailures = new Set(classifiedFailures.map((_failure, index) => index))
+  const consoleMessages = consoleRecords.flatMap((record) => {
+    const message = recordMessage(record)
+    const locationUrl = objectRecord(record.location).url
+    const match = classifiedFailures.findIndex((failure, index) => unmatchedFailures.has(index)
+      && (typeof locationUrl === "string" && locationUrl ? failure.url === locationUrl && failureTokenMatches(message, failure.failure) : failureTokenMatches(message, failure.failure)))
+    if (match < 0) return [message]
+    unmatchedFailures.delete(match)
+    const failure = classifiedFailures[match]!
+    return failure.expectedBlock && contract.oraclePolicy.policyBlocks === "evidence" ? [] : [message]
   })
-  const consoleUrls = new Set(findingConsoleRecords.map((record) => objectRecord(record.location).url).filter((url): url is string => typeof url === "string"))
-  const networkMessages = networkFailures.filter((failure) => failure.oracleFinding && !consoleUrls.has(failure.url)).map((failure) => stableJson({ type: "requestfailed", url: failure.url, failure: failure.failure, urlClassification: failure.urlClassification, policyDecision: failure.policyDecision, policyReason: failure.policyReason }))
-  const messages = [...findingConsoleRecords.map(recordMessage), ...pageErrors, ...networkMessages]
+  const networkMessages = classifiedFailures.filter((failure, index) => unmatchedFailures.has(index) && failure.oracleFinding).map(networkFailureOracleMessage)
+  const messages = [...consoleMessages, ...pageErrors, ...networkMessages]
+  const networkFailureSummary = classifiedFailures.length > 0 ? boundedNetworkFailureEvidence(classifiedFailures, contract, retention) : undefined
   return {
     fingerprints: [...new Set(messages.map((message) => browserAdaptiveDigest("oracle", message)))].sort(),
-    networkFailures,
-    errorCount: findingConsoleRecords.length + pageErrors.length + networkMessages.length,
+    networkFailures: networkFailureSummary?.failures ?? [],
+    networkFailureSummary: networkFailureSummary?.summary,
+    errorCount: consoleMessages.length + pageErrors.length + networkMessages.length,
   }
+}
+
+function boundedNetworkFailureEvidence(failures: Array<BrowserAdaptiveNetworkFailure & { expectedBlock: boolean }>, contract: BrowserAdaptiveExplorationContract, cumulativeRetention?: AdaptiveNetworkFailureRetention): { failures: BrowserAdaptiveNetworkFailure[]; summary: NonNullable<BrowserAdaptiveTransition["observations"]["networkFailureSummary"]> } {
+  const ordered = failures.map(({ expectedBlock: _expectedBlock, ...failure }) => failure).sort((left, right) => stableJson(left).localeCompare(stableJson(right)))
+  const retention = cumulativeRetention ?? {
+    remainingCount: Math.min(contract.budgets.maxErrors, contract.descriptorLimits.maxDiagnostics),
+    remainingBytes: Math.floor(contract.budgets.maxArtifactBytes / 8),
+  }
+  const retained: BrowserAdaptiveNetworkFailure[] = []
+  for (const failure of ordered.slice(0, retention.remainingCount)) {
+    const bytes = Buffer.byteLength(stableJson(failure)) + 1
+    if (bytes > retention.remainingBytes) break
+    retained.push(failure)
+    retention.remainingCount -= 1
+    retention.remainingBytes -= bytes
+  }
+  return {
+    failures: retained,
+    summary: {
+      total: failures.length,
+      retained: retained.length,
+      policyBlocks: failures.filter((failure) => failure.expectedBlock).length,
+      oracleFindings: failures.filter((failure) => failure.oracleFinding).length,
+      truncated: retained.length < failures.length,
+    },
+  }
+}
+
+function failureTokenMatches(message: string, failure: string | undefined): boolean {
+  const token = failure?.match(/ERR_[A-Z0-9_]+/i)?.[0]
+  return Boolean(token && message.toUpperCase().includes(token.toUpperCase()))
+}
+
+function networkFailureOracleMessage(failure: BrowserAdaptiveNetworkFailure): string {
+  return stableJson({ type: "requestfailed", url: failure.url, failure: failure.failure, urlClassification: failure.urlClassification, policyDecision: failure.policyDecision, policyReason: failure.policyReason })
 }
 
 function networkFailureMessage(record: Record<string, unknown>): string {
