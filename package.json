@@ -227,6 +227,7 @@
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
+    "test:runtime-workers": "tsx tests/runtime-workers.test.ts",
     "test:recipe-runtime-backend-normalization": "tsx tests/recipe-runtime-backend-normalization.test.ts",
     "test:recipe-runtime-setup-staged-materialization": "tsx tests/recipe-runtime-setup-staged-materialization.test.ts",
     "test:recipe-run-provenance": "tsx tests/recipe-run-provenance.test.ts",

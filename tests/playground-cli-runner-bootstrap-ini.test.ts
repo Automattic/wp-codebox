@@ -33,6 +33,7 @@ try {
     environment: {
       version: "mounted-wordpress-source",
       phpVersion: "8.4",
+      workers: 1,
       wordpressInstallMode: "do-not-attempt-installing",
       databaseSetup: "external",
       assets: { wordpressDirectory: wordpressDevelopDirectory },
@@ -84,7 +85,7 @@ try {
   assert.equal(calls[0]["mount-before-install"]?.[4]?.vfsPath, "/wordpress/wp-config.php")
   assert.deepEqual(calls[0]["mount-before-install"]?.[5], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
-  assert.equal(calls[0].workers, 6)
+  assert.equal(calls[0].workers, 1)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
   assert.equal(calls[0].phpEnv?.DB_PASSWORD, "secret")
@@ -135,6 +136,7 @@ try {
   await defaultRuntimeIniServer[Symbol.asyncDispose]()
 
   assert.equal(calls.length, 1)
+  assert.equal(calls[0].workers, 1)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.equal(calls[0].skipSqliteSetup, false)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
@@ -146,6 +148,7 @@ try {
       ...defaultRuntimeIniSpec.environment,
       version: "latest",
       wordpressInstallMode: undefined,
+      workers: undefined,
       assets: undefined,
     },
   }
@@ -158,6 +161,7 @@ try {
   assert.equal(calls[0]["mount-before-install"]?.[0]?.vfsPath, "/internal/wp-codebox")
   assert.match(calls[0]["mount-before-install"]?.[1]?.vfsPath ?? "", /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/)
   assert.equal(calls[0].wordpressInstallMode, undefined)
+  assert.equal(calls[0].workers, 6)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(downloadedWordPressSpec), false)
 
   calls.length = 0

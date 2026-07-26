@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type RuntimeWorkerCount, type RuntimeWordPressInstallMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePHPWasmExtensionManifest, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeService, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run" | "runtime-package-run"
@@ -11,6 +11,7 @@ interface WordPressPhpunitBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   phpVersion?: string
+  workers?: RuntimeWorkerCount
   databaseType?: "sqlite" | "mysql"
   wordpressInstallMode?: RuntimeWordPressInstallMode
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
@@ -82,6 +83,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: phpunitOptions.blueprint,
         wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
         phpVersion: stringOrUndefined(phpunitOptions.phpVersion),
+        workers: workerCountOrUndefined(phpunitOptions.workers),
         databaseType: phpunitOptions.databaseType,
         wordpressInstallMode: phpunitOptions.wordpressInstallMode,
         extensions: Array.isArray(phpunitOptions.extensions) ? phpunitOptions.extensions : [],
@@ -180,6 +182,12 @@ function requiredString(value: unknown, name: string): string {
     throw new Error(`Recipe build option ${name} must be a non-empty string`)
   }
   return value
+}
+
+function workerCountOrUndefined(value: unknown): RuntimeWorkerCount | undefined {
+  if (value === undefined || value === "auto") return value
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 64) return value
+  throw new Error("workers must be an integer from 1 to 64 or auto.")
 }
 
 function stringOrUndefined(value: unknown): string | undefined {
