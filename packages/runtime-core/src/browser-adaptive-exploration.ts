@@ -86,6 +86,13 @@ export interface BrowserAdaptiveTransition {
     loadingAfter: number
     oracleFingerprints: string[]
     networkFailures?: BrowserAdaptiveNetworkFailure[]
+    networkFailureSummary?: {
+      total: number
+      retained: number
+      policyBlocks: number
+      oracleFindings: number
+      truncated: boolean
+    }
     accessibilityFindingFingerprints?: string[]
   }
   status: "ok" | "revisited" | "rejected" | "error" | "cancelled"
