@@ -182,12 +182,12 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         hostname: target.hostname,
         port: target.port,
         method: incoming.method,
-        path: incoming.url ?? "/",
+        path: previewProxyRequestPath(incoming.url),
         headers: proxyRequestHeaders(incoming.headers),
       },
       (response) => {
         targetResponse = response
-        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers))
+        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers, incoming, target))
         response.on("error", (error) => {
           outgoing.destroy(error)
           settle()
@@ -209,6 +209,18 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     outgoing.on("close", abortUpstream)
     incoming.pipe(targetRequest)
   })
+}
+
+function previewProxyRequestPath(rawUrl: string | undefined): string {
+  if (!rawUrl) {
+    return "/"
+  }
+  try {
+    const url = new URL(rawUrl)
+    return `${url.pathname}${url.search}`
+  } catch {
+    return rawUrl
+  }
 }
 
 function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
@@ -277,12 +289,32 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders 
   }
 }
 
-function proxyResponseHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+function proxyResponseHeaders(headers: IncomingHttpHeaders, incoming: IncomingMessage, target: URL): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
 
+  if (typeof forwarded.location === "string") {
+    try {
+      const location = new URL(forwarded.location, target)
+      if (location.origin === target.origin && incoming.headers.host) {
+        const protocol = firstHeaderValue(incoming.headers["x-forwarded-proto"]) ?? "http"
+        location.protocol = `${protocol.replace(/:$/, "")}:`
+        const visible = new URL(`${location.protocol}//${incoming.headers.host}`)
+        location.hostname = visible.hostname
+        location.port = visible.port
+        forwarded.location = location.toString()
+      }
+    } catch {
+      // Preserve malformed upstream locations for the browser to diagnose.
+    }
+  }
+
   return forwarded
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value
 }
 
 function writeProxyError(outgoing: ServerResponse, error: Error): void {

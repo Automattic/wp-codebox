@@ -6,7 +6,7 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
 import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget } from "./editor-actions.js"
@@ -57,9 +57,10 @@ export async function runEditorCanvasProbeCommand({
   const blockSelector = argValue(args, "block-selector")?.trim() || EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR
   const timeoutMs = editorCanvasTimeoutMs(args)
   const selectorGroups = editorCanvasSelectorGroups(args, layoutSelector, blockSelector)
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
-  const previewOrigins = browserPreviewOrigins(preview)
-  const targetUrl = resolveBrowserPreviewUrl(urlArg, preview.effectiveOrigin)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
+  const { preview, networkPolicy } = topology
+  const previewOrigins = topology.origins
+  const targetUrl = topology.resolveUrl(urlArg)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-canvas-probe", operation: "editor-canvas-probe" })
   const screenshotPath = artifactSession.absolutePath("editor-canvas-screenshot.png")
   const startedAt = now()
@@ -79,7 +80,11 @@ export async function runEditorCanvasProbeCommand({
       throw previewReadinessError
     }
 
-    const page = await browser.newPage()
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: false,
@@ -520,7 +525,7 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
   const artifactPathPrefix = editorOpenArtifactPathPrefixFromArgs(args)
@@ -545,9 +550,9 @@ export async function runEditorOpenCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
-    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -803,7 +808,7 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-actions", operation: "editor-actions" })
@@ -828,9 +833,9 @@ export async function runEditorActionsCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
-    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -1910,7 +1915,7 @@ export async function runEditorValidateBlocksCommand({
   const content = await editorValidateContentFromArgs(args)
   const provider = editorValidateProviderFromArgs(args)
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-validate-blocks", operation: "editor-validate-blocks" })
@@ -1926,9 +1931,9 @@ export async function runEditorValidateBlocksCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
-    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-validate-blocks", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })

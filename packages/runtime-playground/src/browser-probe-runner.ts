@@ -242,7 +242,7 @@ export async function runSingleBrowserProbeCommand({
   const activeDiagnosticProviders = runPlan.diagnosticProviders ?? diagnosticProviders ?? []
   const captureSelection = browserProbeCaptureSelection(capture, assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(runPlan.url)
@@ -304,6 +304,7 @@ export async function runSingleBrowserProbeCommand({
     const contextPermissions = browserProbeContextPermissions(requestedContext)
     context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || requestedContext.device || requestedContext.geolocation || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || contextPermissions.length > 0
       ? await browser.newContext({
+        ...topology.contextOptions(),
         ...(deviceProfile ?? {}),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
@@ -316,7 +317,7 @@ export async function runSingleBrowserProbeCommand({
       await context.grantPermissions(contextPermissions)
     }
     if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin, routeTracker)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (requestedContext.geolocation?.permission === "denied") geolocationPermissionCleanup = await applyPlaywrightGeolocationPermission(page, "denied")
@@ -343,7 +344,7 @@ export async function runSingleBrowserProbeCommand({
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
     if (!context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.effectiveOrigin, routeTracker)
+      await routeBrowserPreviewPageNetwork(page, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {

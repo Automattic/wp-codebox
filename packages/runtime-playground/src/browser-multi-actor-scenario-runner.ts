@@ -28,7 +28,8 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   // Traces are always retained for replay, even when callers narrow display captures.
   const captures = new Set([...(scenario.captures ?? ["steps", "console", "errors", "network", "screenshot"]), "trace"])
   const artifacts = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-scenario", operation: "browser-multi-actor-scenario" })
-  const topology = browserPreviewTopology([], runtimeSpec, server.serverUrl)
+  const routeHost = runtimeSpec.preview?.siteUrl ? new URL(runtimeSpec.preview.siteUrl).hostname : ""
+  const topology = browserPreviewTopology(routeHost ? [`route-host=${routeHost}`] : [], runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const browser = await launchChromiumBrowser()
   const evidence: Record<string, ActorEvidence> = {}
   let result: BrowserMultiActorScenarioResult | undefined
@@ -43,8 +44,8 @@ export async function runBrowserMultiActorScenarioCommand(input: {
       const session = wordpressUserSessionFromCommandArgs([`session=${actor.userSession}`], runtimeSpec)
       if (!session) throw new Error(`Actor ${actor.name} requires user session ${actor.userSession}`)
       const userId = await actorUserId(actor.name, session.user.userId, session.user, runtimeSpec, runPlaygroundCommand, server)
-      const context = await browser.newContext()
-      await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.preview.effectiveOrigin)
+      const context = await browser.newContext(topology.contextOptions())
+      await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.origins.localProxyOrigin)
       const page = await context.newPage()
       await context.tracing.start({ screenshots: true, snapshots: true })
       await installWordPressAdminAuthCookies({ command: "wordpress.browser-scenario", cookieUrls: topology.authCookieUrls([topology.resolveUrl(scenario.url)]), page, runPlaygroundCommand, runtimeSpec, server, userId })

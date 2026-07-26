@@ -125,7 +125,7 @@ export async function runBrowserActionsCommand({
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, 0)
   const browser = await launchChromiumBrowser()
-  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   let requestedUrl = initialUrl ? topology.resolveUrl(initialUrl) : preview.effectiveOrigin
   let finalUrl = requestedUrl
@@ -145,10 +145,11 @@ export async function runBrowserActionsCommand({
 
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
+      ...topology.contextOptions(),
       ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
     }) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     if (onProgress) {

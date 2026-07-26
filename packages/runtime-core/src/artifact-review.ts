@@ -92,6 +92,9 @@ export interface ArtifactReviewBrowserSummary {
     localPreviewOrigin?: string
     requestedPreviewOrigin?: string
     effectivePreviewOrigin?: string
+    canonicalBrowserOrigin?: string
+    localProxyOrigin?: string
+    upstreamRuntimeOrigin?: string
     finalUrl?: string
     windowLocationOrigin?: string
     viewport?: {
