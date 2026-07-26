@@ -30,6 +30,7 @@ import {
   restPerformanceObservationInputFromArgs,
   restPerformanceObservationPhpCode,
   phpunitRunCode,
+  phpunitMultisitePreinstallCode,
   pluginStateInputFromArgs,
   pluginStatePhpCode,
   PLUGIN_PHPUNIT_RESULT_FILE,
@@ -928,6 +929,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const multisite = booleanArg(args, "multisite")
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
@@ -950,7 +952,7 @@ export async function runPhpunitCommand({
     preloadFiles: jsonArrayArg(args, "preload-files-json").filter((value): value is string => typeof value === "string"),
     bootstrapMode,
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
-    multisite: booleanArg(args, "multisite"),
+    multisite,
     databaseType,
     resultFile,
   })
@@ -960,6 +962,17 @@ export async function runPhpunitCommand({
   let response: PlaygroundRunResponse
   try {
     const bootstrapArgs = explicitCode ? args : [...args, "bootstrap=runtime-only"]
+    if (!explicitCode && bootstrapMode === "managed" && databaseType === "mysql" && multisite) {
+      const preinstallCode = phpunitMultisitePreinstallCode({
+        testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+        env: jsonObjectArg(args, "env-json"),
+        wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
+        databaseType,
+        resultFile,
+      })
+      const preinstallResponse = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, preinstallCode, bootstrapArgs) })
+      assertPlaygroundResponseOk("wordpress.phpunit multisite preinstall", preinstallResponse)
+    }
     response = await runPlaygroundCommand("wordpress.phpunit", server, { code: bootstrapPhpCode(runtimeSpec, code, bootstrapArgs, undefined, resultFile) })
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)

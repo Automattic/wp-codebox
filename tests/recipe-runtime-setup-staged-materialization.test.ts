@@ -25,7 +25,16 @@ const recipe: WorkspaceRecipe = {
 }
 const prepared: PreparedRecipeRuntimeSetup = {
   workspaceMounts: [],
-  extraPlugins: [],
+  extraPlugins: [{
+    source: "/tmp/host-extra-plugin",
+    slug: "fixture-dependency",
+    target: "/wordpress/wp-content/plugins/fixture-dependency",
+    pluginFile: "fixture-dependency/fixture-dependency.php",
+    activate: false,
+    loadAs: "plugin",
+    cleanupPaths: [],
+    provenance: { kind: "local", original: "/tmp/host-extra-plugin" },
+  }],
   dependencyOverlays: [],
   overlays: [],
   inputMountBaselinePaths: [],
@@ -55,6 +64,17 @@ const runtime = {
     assert.equal(this, runtime, "setup calls staged input materializer with runtime binding")
     calls.push(`materialize:${mounts.map((mount) => mount.target).join(",")}`)
     assert.deepEqual(mounts, [
+      {
+        type: "directory",
+        source: "/tmp/host-extra-plugin",
+        target: "/wordpress/wp-content/plugins/fixture-dependency",
+        mode: "readonly",
+        metadata: {
+          kind: "extra-plugin",
+          slug: "fixture-dependency",
+          source: { kind: "local", original: "/tmp/host-extra-plugin" },
+        },
+      },
       {
         type: "directory",
         source: inputMountSource,
@@ -102,15 +122,18 @@ try {
 }
 
 const mountIndex = calls.indexOf("mount:/workspace/example/bundles/runtime-agent")
+const extraPluginMountIndex = calls.indexOf("mount:/wordpress/wp-content/plugins/fixture-dependency")
 const inputMountIndex = calls.indexOf(`mount:${prepared.inputMountPathMap[0].canonicalTarget}`)
 const materializeOperationIndex = calls.indexOf("operation:input.materialize")
-const materializeIndex = calls.indexOf(`materialize:${prepared.inputMountPathMap[0].canonicalTarget},/workspace/example/bundles/runtime-agent`)
+const materializeIndex = calls.indexOf(`materialize:/wordpress/wp-content/plugins/fixture-dependency,${prepared.inputMountPathMap[0].canonicalTarget},/workspace/example/bundles/runtime-agent`)
 assert.ok(inputMountIndex >= 0, "input source is mounted")
 assert.match(prepared.inputMountPathMap[0].canonicalTarget, /^\/tmp\/wp-codebox-inputs\/0-public_html-[a-f0-9]{12}$/)
 assert.ok(calls.includes(`metadata:/home/example/public_html->${prepared.inputMountPathMap[0].canonicalTarget}`), "input mount metadata records original and canonical targets")
 assert.ok(mountIndex >= 0, "staged source is mounted")
+assert.ok(extraPluginMountIndex >= 0, "prepared extra plugin is mounted")
 assert.ok(materializeOperationIndex > inputMountIndex, "materialization is scheduled after input mount")
 assert.ok(materializeOperationIndex > mountIndex, "materialization is scheduled after staged mount")
+assert.ok(materializeOperationIndex > extraPluginMountIndex, "materialization is scheduled after extra-plugin mount")
 assert.ok(materializeIndex > materializeOperationIndex, "materialization runs inside the setup phase before commands")
 assert.equal(calls.some((call) => call.startsWith("execute:")), false)
 
