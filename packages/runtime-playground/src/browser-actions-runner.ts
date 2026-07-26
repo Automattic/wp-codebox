@@ -699,6 +699,8 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     capture.add("screenshot")
     capture.add("dom-snapshot")
   }
+  const argumentEnvironment = await browserEnvironmentFromArgs(args)
+  const adaptiveExplorationPlan = browserAdaptiveExplorationFromArgs(args, argumentEnvironment)
   return {
     initialUrl: argValue(args, "url")?.trim(),
     steps: await browserInteractionStepsFromArgs(args),
@@ -707,12 +709,12 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
-    requestedEnvironment: await browserEnvironmentFromArgs(args),
+    requestedEnvironment: adaptiveExplorationPlan.requestedEnvironment,
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
-    adaptiveExploration: browserAdaptiveExplorationFromArgs(args),
+    adaptiveExploration: adaptiveExplorationPlan.contract,
   }
 }
 
@@ -774,11 +776,23 @@ function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContrac
   return browserActionCorpusContract(parsed)
 }
 
-function browserAdaptiveExplorationFromArgs(args: string[]): BrowserAdaptiveExplorationContract | undefined {
+function browserAdaptiveExplorationFromArgs(args: string[], argumentEnvironment: BrowserEnvironment): { contract?: BrowserAdaptiveExplorationContract; requestedEnvironment: BrowserEnvironment } {
   const raw = argValue(args, "adaptive-exploration-json")
-  if (typeof raw !== "string" || raw.trim().length === 0) return undefined
+  if (typeof raw !== "string" || raw.trim().length === 0) return { requestedEnvironment: argumentEnvironment }
   const parsed = JSON.parse(raw) as Record<string, unknown>
-  return browserAdaptiveExplorationContract(parsed)
+  const contract = browserAdaptiveExplorationContract(parsed)
+  if (Object.prototype.hasOwnProperty.call(parsed, "environment")) {
+    if (browserEnvironmentArgsDeclared(args)) {
+      throw new Error("wordpress.browser-actions adaptive-exploration-json environment cannot be combined with outer browser environment arguments")
+    }
+    return { contract, requestedEnvironment: contract.environment }
+  }
+  return { contract, requestedEnvironment: argumentEnvironment }
+}
+
+function browserEnvironmentArgsDeclared(args: string[]): boolean {
+  const names = new Set(["browser-environment-json", "viewport", "device", "user-agent", "permissions", "locale", "timezone", "device-scale-factor", "is-mobile", "has-touch", "geolocation-latitude", "geolocation-longitude", "geolocation-accuracy", "geolocation-permission"])
+  return args.some((arg) => names.has(arg.slice(0, arg.indexOf("="))))
 }
 
 async function captureBrowserActionDomSnapshot({
@@ -1103,7 +1117,7 @@ function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[])
 
 async function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], url: string, artifactRoot: string, requestedEnvironment: BrowserEnvironment): Promise<BrowserRunPlan> {
   const captures = browserScenarioCaptures(scenario, args)
-  const steps = browserScenarioSteps(scenario, args)
+  const steps = await browserScenarioSteps(scenario, args)
   const assertions = browserScenarioAssertions(scenario)
   const actionSteps = [...steps, ...assertions]
   const requestedViewport = requestedEnvironment.viewport
@@ -1200,8 +1214,8 @@ function browserScenarioActionCaptures(captures: string[]): string[] {
   return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
 
-function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Array<Record<string, unknown>> {
-  const raw = scenario.steps ?? parseInlineJsonArrayArg(args, "steps-json")
+async function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Promise<Array<Record<string, unknown>>> {
+  const raw = scenario.steps ?? await parseJsonArrayArg(args, "steps-json")
   return (raw ?? []).map((step) => normalizeBrowserScenarioStep(step))
 }
 
@@ -1239,12 +1253,11 @@ function normalizeBrowserScenarioAssertion(assertion: Record<string, unknown>): 
   return assertion
 }
 
-function parseInlineJsonArrayArg(args: string[], name: string): Array<Record<string, unknown>> | undefined {
+async function parseJsonArrayArg(args: string[], name: string): Promise<Array<Record<string, unknown>> | undefined> {
   const raw = argValue(args, name)
-  if (!raw || raw.startsWith("@")) {
-    return undefined
-  }
-  const parsed = JSON.parse(raw) as unknown
+  if (!raw) return undefined
+  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  const parsed = JSON.parse(text) as unknown
   if (!Array.isArray(parsed)) {
     throw new Error(`wordpress.browser-scenario ${name} must be a JSON array`)
   }

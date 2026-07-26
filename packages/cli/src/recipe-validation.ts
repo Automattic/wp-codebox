@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
@@ -513,7 +514,7 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
   return validateWorkspaceRecipeSemantics(recipe, recipePath)
 }
 
-export function validateRecipeRuntimePolicy(recipe: WorkspaceRecipe, policy: RuntimePolicy | undefined): RecipeValidationIssue[] {
+export function validateRecipeRuntimePolicy(recipe: WorkspaceRecipe, policy: RuntimePolicy | undefined, recipeDirectory?: string): RecipeValidationIssue[] {
   if (!policy) {
     return []
   }
@@ -528,7 +529,7 @@ export function validateRecipeRuntimePolicy(recipe: WorkspaceRecipe, policy: Run
     })
   }
 
-  const requiredCommands = recipePolicy(recipe).commands
+  const requiredCommands = recipePolicy(recipe, recipeDirectory).commands
   for (const command of requiredCommands) {
     if (!policy.commands.includes(command)) {
       issues.push({
@@ -1051,7 +1052,7 @@ function recipeFuzzWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef
   }))))
 }
 
-export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
+export function recipePolicy(recipe: WorkspaceRecipe, recipeDirectory?: string): RuntimePolicy {
   const pluginRuntimeCommands = [
     ...(recipe.inputs?.pluginRuntime?.setup ?? []),
     ...(recipe.inputs?.pluginRuntime?.healthProbes ?? []).map(pluginRuntimeHealthProbeStep),
@@ -1091,7 +1092,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   // Auto-grant the evaluate capability when a browser-actions step opts into the
   // arbitrary-JS escape hatch by including an evaluate step. Recipe authors opt in
   // by writing the step; direct `run` invocations still control the gate via --policy.
-  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step, recipeDirectory))) {
     commands.push("wordpress.browser-actions.evaluate")
   }
 
@@ -1649,10 +1650,10 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   if (step.command === "wordpress.browser-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
 
-    if (stepsJson && !stepsJson.startsWith("@")) {
+    if (stepsJson) {
       let parsed: unknown
       try {
-        parsed = JSON.parse(stepsJson)
+        parsed = JSON.parse(stepsJson.startsWith("@") ? await readFile(resolve(recipeDirectory, stepsJson.slice(1)), "utf8") : stepsJson)
       } catch (error) {
         addIssue("invalid-steps-json", `${path}.args`, `wordpress.browser-actions steps-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
         parsed = undefined
@@ -1670,9 +1671,9 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   if (step.command === "wordpress.browser-scenario") {
     const scenarioJson = recipeStepArgValue(step.args ?? [], "scenario-json")
 
-    if (scenarioJson && !scenarioJson.startsWith("@")) {
+    if (scenarioJson) {
       try {
-        const parsed = JSON.parse(scenarioJson) as unknown
+        const parsed = JSON.parse(scenarioJson.startsWith("@") ? await readFile(resolve(recipeDirectory, scenarioJson.slice(1)), "utf8") : scenarioJson) as unknown
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           addIssue("invalid-scenario-json", `${path}.args`, "wordpress.browser-scenario scenario-json must be a JSON object.")
         } else {
@@ -1702,10 +1703,10 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     }
 
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
-    if (stepsJson && !stepsJson.startsWith("@")) {
+    if (stepsJson) {
       let parsed: unknown
       try {
-        parsed = JSON.parse(stepsJson)
+        parsed = JSON.parse(stepsJson.startsWith("@") ? await readFile(resolve(recipeDirectory, stepsJson.slice(1)), "utf8") : stepsJson)
       } catch (error) {
         addIssue("invalid-steps-json", `${path}.args`, `wordpress.browser-scenario steps-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -1969,29 +1970,35 @@ function recipeBenchWorkloadsUseWpCli(value: unknown): boolean {
   return record.type === "wp-cli" || recipeBenchWorkloadsUseWpCli(record.run)
 }
 
-function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
+function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory?: string): boolean {
   const scenarioRaw = recipeStepArgValue(step.args ?? [], "scenario-json")
-  if (scenarioRaw && !scenarioRaw.startsWith("@")) {
+  if (scenarioRaw) {
     try {
-      const parsed = parseCommandJson(scenarioRaw, "scenario-json") as { steps?: unknown; assertions?: unknown }
+      const parsed = parseCommandJson(recipeJsonArgForPolicy(scenarioRaw, recipeDirectory), "scenario-json") as { steps?: unknown; assertions?: unknown }
       const steps = normalizeBrowserScenarioStepsForValidation(parsed.steps)
       const assertions = normalizeBrowserScenarioAssertionsForValidation(parsed.assertions)
-      return [...steps, ...assertions].some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")
+      if ([...steps, ...assertions].some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")) return true
     } catch {
-      return false
+      // Semantic validation reports malformed or missing file-backed payloads.
     }
   }
 
   const raw = recipeStepArgValue(step.args ?? [], "steps-json")
-  if (!raw || raw.startsWith("@")) {
+  if (!raw) {
     return false
   }
   try {
-    const parsed = parseCommandJson(raw, "steps-json")
+    const parsed = parseCommandJson(recipeJsonArgForPolicy(raw, recipeDirectory), "steps-json")
     return Array.isArray(parsed) && parsed.some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")
   } catch {
     return false
   }
+}
+
+function recipeJsonArgForPolicy(raw: string, recipeDirectory?: string): string {
+  if (!raw.startsWith("@")) return raw
+  if (!recipeDirectory) return ""
+  return readFileSync(resolve(recipeDirectory, raw.slice(1)), "utf8")
 }
 
 function normalizeBrowserScenarioStepsForValidation(value: unknown): unknown[] {

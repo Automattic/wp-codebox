@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -100,12 +100,15 @@ test("scenario storage state and auth remain available after probe collection", 
   try {
     const storageRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-storage-"))
     try {
-      const storageState = { cookies: [], origins: [{ origin: fixture.server.serverUrl, localStorage: [{ name: "scenario-storage", value: "ready" }] }] }
+      const storageState = {
+        cookies: [{ name: "scenario_storage_cookie", value: "ready", domain: "127.0.0.1", path: "/", expires: -1, httpOnly: false, secure: false, sameSite: "Lax" }],
+        origins: [{ origin: fixture.server.serverUrl, localStorage: [{ name: "scenario-storage", value: "ready" }] }],
+      }
       const stored = await runBrowserScenarioCommand({
         artifactRoot: storageRoot,
         runtimeSpec,
         server: fixture.server,
-        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], steps: [{ kind: "evaluate", expression: "localStorage.getItem('scenario-storage')", assert: "ready" }] })}`, `storage-state=${JSON.stringify(storageState)}`] },
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], steps: [{ kind: "evaluate", expression: "({ storage: localStorage.getItem('scenario-storage'), importedCookie: document.cookie.includes('scenario_storage_cookie=ready'), authCookie: document.cookie.includes('scenario_auth=ready') })", assert: { storage: "ready", importedCookie: true, authCookie: false } }] })}`, `storage-state=${JSON.stringify(storageState)}`] },
       })
       assert.equal(stored.artifact.summary.auth?.mode, "storage-state")
     } finally {
@@ -119,12 +122,28 @@ test("scenario storage state and auth remain available after probe collection", 
         runtimeSpec,
         server: fixture.server,
         runPlaygroundCommand: async () => ({ exitCode: 0, text: JSON.stringify([{ name: "scenario_auth", value: "ready", domain: "127.0.0.1", path: "/", httpOnly: false, secure: false, sameSite: "Lax" }]) }),
-        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], auth: "wordpress-admin", authUserId: 7, steps: [{ kind: "evaluate", expression: "document.cookie.includes('scenario_auth=ready')", assert: true }] })}`] },
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], auth: "wordpress-admin", authUserId: 7, steps: [{ kind: "evaluate", expression: "({ authCookie: document.cookie.includes('scenario_auth=ready'), importedCookie: document.cookie.includes('scenario_storage_cookie=ready'), storage: localStorage.getItem('scenario-storage') })", assert: { authCookie: true, importedCookie: false, storage: null } }] })}`] },
       })
       assert.equal(authenticated.artifact.summary.auth?.mode, "wordpress-admin")
       assert.equal(authenticated.artifact.summary.auth?.userId, 7)
     } finally {
       await rm(authRoot, { recursive: true, force: true })
+    }
+
+    const isolatedStorageRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-storage-isolated-"))
+    try {
+      const storageState = {
+        cookies: [{ name: "scenario_storage_cookie", value: "ready", domain: "127.0.0.1", path: "/", expires: -1, httpOnly: false, secure: false, sameSite: "Lax" }],
+        origins: [{ origin: fixture.server.serverUrl, localStorage: [{ name: "scenario-storage", value: "ready" }] }],
+      }
+      await runBrowserScenarioCommand({
+        artifactRoot: isolatedStorageRoot,
+        runtimeSpec,
+        server: fixture.server,
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], steps: [{ kind: "evaluate", expression: "({ storage: localStorage.getItem('scenario-storage'), importedCookie: document.cookie.includes('scenario_storage_cookie=ready'), authCookie: document.cookie.includes('scenario_auth=ready') })", assert: { storage: "ready", importedCookie: true, authCookie: false } }] })}`, `storage-state=${JSON.stringify(storageState)}`] },
+      })
+    } finally {
+      await rm(isolatedStorageRoot, { recursive: true, force: true })
     }
   } finally {
     await fixture.close()
@@ -208,9 +227,8 @@ test("adaptive actions retain their declared environment through routed preview 
         spec: {
           command: "wordpress.browser-actions",
           args: [
-            `adaptive-exploration-json=${JSON.stringify({ schema: "wp-codebox/browser-adaptive-exploration/v1", startUrl: `http://${routedHost}:${fixture.port}/`, seed: "environment", budgets: { maxStates: 2, maxTransitions: 2, maxDepth: 1, maxDurationMs: 2_000, maxArtifactBytes: 100_000 }, failOnFinding: false })}`,
+            `adaptive-exploration-json=${JSON.stringify({ schema: "wp-codebox/browser-adaptive-exploration/v1", startUrl: `http://${routedHost}:${fixture.port}/`, seed: "environment", environment: { device: "Pixel 5" }, budgets: { maxStates: 2, maxTransitions: 2, maxDepth: 1, maxDurationMs: 2_000, maxArtifactBytes: 100_000 }, failOnFinding: false })}`,
             `route-host=${routedHost}`,
-            "device=Pixel 5",
             "capture=steps",
           ],
         },
@@ -223,11 +241,43 @@ test("adaptive actions retain their declared environment through routed preview 
       const adaptiveArtifact = JSON.parse(await readFile(join(artifactRoot, "files/browser/adaptive-exploration.json"), "utf8"))
       assert.equal(adaptiveArtifact.result.replay.environment.device, "Pixel 5")
       assert.equal(adaptiveArtifact.result.replay.environmentDigest, adaptiveArtifact.contract.environmentDigest)
+
+      await assert.rejects(runBrowserActionsCommand({
+        artifactRoot,
+        runtimeSpec,
+        server: fixture.server,
+        spec: {
+          command: "wordpress.browser-actions",
+          args: [
+            `adaptive-exploration-json=${JSON.stringify({ schema: "wp-codebox/browser-adaptive-exploration/v1", startUrl: "/", environment: { locale: "en-GB" } })}`,
+            "device=Pixel 5",
+          ],
+        },
+      }), /environment cannot be combined with outer browser environment arguments/)
     } finally {
       await rm(artifactRoot, { recursive: true, force: true })
     }
   } finally {
     await fixture.close()
+  }
+})
+
+test("scenario steps-json file payloads execute instead of being dropped", async () => {
+  const fixture = await browserFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-steps-file-"))
+  try {
+    const stepsPath = join(artifactRoot, "steps.json")
+    await writeFile(stepsPath, JSON.stringify([{ kind: "evaluate", expression: "document.title", assert: "" }]))
+    const result = await runBrowserScenarioCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-scenario", args: ["url=/", `steps-json=@${stepsPath}`, "capture=steps"] },
+    })
+    assert.equal(result.artifact.summary.actions, 2)
+  } finally {
+    await fixture.close()
+    await rm(artifactRoot, { recursive: true, force: true })
   }
 })
 
