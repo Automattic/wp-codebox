@@ -32,11 +32,11 @@ entrypoint instead of an ignored build artifact:
 node /path/to/wp-codebox/bin/wp-codebox-source.mjs commands --json
 ```
 
-The source entrypoint runs the compiled CLI when `packages/cli/dist/index.js`
-exists. When `dist/` is absent, it installs dependencies if needed, runs
-`npm run build`, then delegates to the compiled CLI. Parent WordPress runners
-also fail early with a diagnostic if `wp_codebox_bin` points at a missing `.js`
-or `.mjs` file.
+The source entrypoint installs dependencies when needed, runs the incremental
+`npm run build` across the core, Playground, and CLI packages, then delegates to
+the compiled CLI. This prevents ignored `dist/` output from an older checkout
+from being executed as current source. Parent WordPress runners also fail early
+with a diagnostic if `wp_codebox_bin` points at a missing `.js` or `.mjs` file.
 
 ## Smoke
 

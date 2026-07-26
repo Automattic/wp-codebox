@@ -1309,7 +1309,7 @@ Callers can gate success on post-agent verification through `verify_steps`: an a
 
 Each component contract declares `slug`, `path` or `source`, optional explicit `pluginFile`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
 
-The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter. Source-checkout snapshots that do not include generated `dist/` files should point at `bin/wp-codebox-source.mjs`; it builds WP Codebox when needed before delegating to the compiled CLI.
+The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter. Source-checkout snapshots should point at `bin/wp-codebox-source.mjs`; it runs the incremental source build before every invocation so ignored `dist/` output cannot predate the checked-out core, Playground, or CLI source, then delegates to the compiled CLI.
 
 Caller-owned runtime components can provide workspace, file, GitHub, or other tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
 

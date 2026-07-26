@@ -177,6 +177,19 @@ each novel state, and the final state. The contract accepts `ruleTags`,
 `includeScopes`, `excludeScopes`, `impactThreshold`, `cadence`, required or
 optional `rules`, `focus`, and `accessibilityTree` capabilities, plus explicit
 scan, violation, focus-history, tree-size, and keyboard-action budgets.
+Scope selectors are resolved independently in every inspectable frame. A target
+is included when it matches or descends from an `includeScopes` selector (or
+when no include selector is declared), and it is always removed when it matches
+or descends from an `excludeScopes` selector. Excludes therefore override
+overlapping or nested includes. The same rule applies to static, keyboard,
+focus, and dialog findings. Focus may cross a scope boundary and remain in the
+bounded transition history or a finding's expected/actual context, but an
+out-of-scope element is never itself emitted as the finding target.
+
+Invalid scope selectors and include selectors that match no inspectable frame
+make the scan inconclusive instead of producing a silent pass. Frames that
+cannot be inspected produce an explicit diagnostic; findings from inspectable
+same-origin frames retain their stable frame identity.
 
 ```json
 {
