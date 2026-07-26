@@ -1,6 +1,6 @@
 import { D1OperationRepository, OperationConflict, type StaticArtifactOperation, type StaticArtifactOperationInput } from "./d1-operation-repository.js"
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
-import { parseSiteContexts, siteStorageKeys, type SiteContext } from "./site-context.js"
+import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
@@ -16,7 +16,7 @@ export interface ProvisioningAllocation {
   artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"]
 }
 interface CreateInput { key: string; fingerprint: string; artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"] }
-export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
+export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
 
 export async function routeProvisioningApi(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
@@ -73,13 +73,14 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   let allocation: ProvisioningAllocation
   try {
+    const domain = previewDomain(env.WORDPRESS_PREVIEW_DOMAIN, env.WORDPRESS_PREVIEW_HOST_SECRET)
     const active = await env.WORDPRESS_STATE_DATABASE.prepare("SELECT site_id FROM wp_codebox_sites WHERE state = 'active'").all<{ site_id: string }>()
     const occupied = new Set(active.results.map((row) => row.site_id))
-    const candidates = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS).filter((site) => allowed(token, site.id) && !occupied.has(site.id))
-    allocation = await store.allocate(token, input, candidates)
+    const configured = domain ? [] : parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS).filter((site) => allowed(token, site.id) && !occupied.has(site.id))
+    allocation = await store.allocate(token, input, domain, configured)
   } catch (error) { return error instanceof OperationConflict ? apiError(409, "idempotency_conflict", error.message) : allocationError(error) }
   if (!allowed(token, allocation.siteId)) return notFound()
-  const site = context(env, allocation.siteId)
+  const site = await store.context(allocation.siteId)
   if (!site) return notFound()
   try {
     const operation = await resumeProvisioningAllocation(env, site, operations)
@@ -91,7 +92,7 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
 async function readSite(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
   const token = await authenticate(request, env, "sites:read"); if (token instanceof Response) return token
   const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
-  const site = context(env, siteId)
+  const site = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).context(siteId)
   if (!allocation || !site || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
   const claim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).metadata(siteId)
   return siteResource(site, allocation.operationId ? await operations.get(siteId, allocation.operationId) : null, 200, claim)
@@ -118,7 +119,7 @@ async function claimAdministrator(request: Request, env: ProvisioningEnv, operat
 async function importSite(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
   const token = await authenticate(request, env, "sites:import"); if (token instanceof Response) return token
   const key = idempotencyKey(request); if (key instanceof Response) return key
-  const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE); const allocation = await store.bySite(siteId); const site = context(env, siteId)
+  const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE); const allocation = await store.bySite(siteId); const site = await store.context(siteId)
   if (!allocation || !site || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
   const provision = allocation.operationId ? await operations.get(siteId, allocation.operationId) : null
   if (provision?.state !== "succeeded") return apiError(409, "site_not_ready", "The site is not ready for imports.")
@@ -134,7 +135,7 @@ async function importSite(request: Request, env: ProvisioningEnv, operations: D1
 async function readOperation(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string, operationId: string): Promise<Response> {
   const token = await authenticate(request, env, "operations:read"); if (token instanceof Response) return token
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE); const allocation = await store.bySite(siteId)
-  if (!allocation || !context(env, siteId) || allocation.principal !== token.principal || !allowed(token, siteId) || !await store.ownsOperation(token.principal, siteId, operationId)) return notFound()
+  if (!allocation || !await store.context(siteId) || allocation.principal !== token.principal || !allowed(token, siteId) || !await store.ownsOperation(token.principal, siteId, operationId)) return notFound()
   const operation = await operations.get(siteId, operationId)
   return operation ? operationResource(siteId, operation) : notFound()
 }
@@ -242,7 +243,6 @@ function parseTokens(value: string | undefined): Token[] {
 function optionsOf(value: Record<string, unknown>): StaticArtifactOperationInput["options"] { const slug = value.slug; const name = typeof value.name === "string" ? value.name.trim() : ""; const siteTitle = typeof value.siteTitle === "string" ? value.siteTitle.trim() : ""; if (typeof slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 64 || !name || name.length > 120 || !siteTitle || siteTitle.length > 120) throw new StaticArtifactImportError("Provisioning import options are invalid.", 400); return { slug, name, siteTitle } }
 function stagedKey(sha256: string): string { return `sites/provisioning/import-artifacts/${sha256}.json` }
 function destinationKey(site: SiteContext, sha256: string): string { return `${siteStorageKeys(site).staticArtifactPrefix}/${sha256}.json` }
-function context(env: ProvisioningEnv, id: string): SiteContext | undefined { return parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS).find((site) => site.id === id) }
 function allowed(token: Token, siteId: string): boolean { return !token.sites || token.sites.includes(siteId) }
 function validSiteId(value: string): boolean { return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) && value.length <= 63 }
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value) }
@@ -254,10 +254,13 @@ function claimConfiguration(env: ProvisioningEnv): boolean { return typeof env.W
 class AllocationError extends Error { constructor(readonly code: "quota_exceeded" | "capacity_exhausted") { super(code) } }
 class AllocationStore {
   constructor(private readonly db: D1Database) {}
-  async allocate(token: Token, input: CreateInput, sites: SiteContext[]): Promise<ProvisioningAllocation> {
+  async allocate(token: Token, input: CreateInput, domain: ReturnType<typeof previewDomain>, configured: SiteContext[]): Promise<ProvisioningAllocation> {
     await this.schema(); const existing = await this.byRequest(token.principal, input.key)
     if (existing) { if (existing.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return existing }
-    for (const site of sites) {
+    if (domain && token.sites) throw new AllocationError("quota_exceeded")
+    const attempts = domain ? 8 : configured.length
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const site = domain ? await allocatePreviewSiteContext(domain) : configured[attempt]
       const now = Date.now()
       try {
         const [allocation, reservation] = await this.db.batch([
@@ -274,6 +277,7 @@ class AllocationStore {
     const count = await this.db.prepare("SELECT COUNT(*) AS count FROM wp_codebox_api_sites WHERE principal = ?").bind(token.principal).first<{ count: number }>()
     throw new AllocationError((count?.count ?? 0) >= token.maxSites ? "quota_exceeded" : "capacity_exhausted")
   }
+  async context(siteId: string): Promise<SiteContext | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(siteId).first<{ site_id: string; hostname: string; origin: string }>(); return row ? { id: row.site_id, hostname: row.hostname, origin: row.origin } : null }
   async bySite(siteId: string): Promise<ProvisioningAllocation | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id FROM wp_codebox_api_sites WHERE site_id = ?").bind(siteId).first<Record<string, unknown>>(); return row ? allocation(row) : null }
   async bindOperation(value: ProvisioningAllocation, operationId: string): Promise<void> {
     await this.schema()

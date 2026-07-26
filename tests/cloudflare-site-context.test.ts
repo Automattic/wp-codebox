@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { DEFAULT_SITE_CONTEXT, parseSiteContexts, resolveSiteContext, resolveSiteContextFromRequest, siteStorageKeys } from "../packages/runtime-cloudflare/src/site-context.js"
+import { allocatePreviewSiteContext, DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContext, resolveSiteContextFromRequest, siteStorageKeys } from "../packages/runtime-cloudflare/src/site-context.js"
 
 test("site contexts preserve default storage paths and isolate configured sites", () => {
   assert.deepEqual(parseSiteContexts(undefined), [DEFAULT_SITE_CONTEXT])
@@ -40,4 +40,20 @@ test("site context resolution only accepts exact configured hosts", () => {
   for (const hostname of ["alpha.example.test.evil.test", "evil-alpha.example.test", "alpha.example.test:443", "ALPHA.example.test"]) {
     assert.throws(() => resolveSiteContext(hostname, contexts), /Unknown site hostname/)
   }
+})
+
+test("signed wildcard preview hostnames resolve stably without a registry lookup", async () => {
+  const domain = previewDomain("preview.example.test", "preview-host-secret-with-at-least-thirty-two-bytes")!
+  const first = await allocatePreviewSiteContext(domain)
+  const second = await allocatePreviewSiteContext(domain)
+  assert.notEqual(first.id, second.id)
+  assert.notEqual(siteStorageKeys(first).root, siteStorageKeys(second).root)
+  assert.deepEqual(await resolvePreviewSiteContextFromRequest(new Request(`${first.origin}/`), domain), first)
+  for (const hostname of [
+    `unknown.preview.example.test`,
+    `s${"0".repeat(24)}-g1-${"0".repeat(16)}.preview.example.test`,
+    `s${"0".repeat(24)}-g2-${"0".repeat(16)}.preview.example.test`,
+    `${first.id}.preview.example.test.evil.test`,
+    `nested.${first.id}.preview.example.test`,
+  ]) await assert.rejects(() => resolvePreviewSiteContextFromRequest(new Request(`https://${hostname}/`), domain), /Unknown site hostname/)
 })
