@@ -21,7 +21,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { materializePlaygroundMountsFromVfs, materializePlaygroundStagedInputs } from "./mount-materialization.js"
+import { directMountedPlaygroundStagedInputs, materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, runCacheChurnObservationCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -337,8 +337,9 @@ class PlaygroundRuntime implements Runtime {
       return undefined
     }
 
-    const materialization = await materializePlaygroundStagedInputs(await this.bootPlayground(), mounts)
-    this.recordEvent("runtime.staged-inputs.materialized", { ...materialization, source: "host-to-vfs" })
+    await this.bootPlayground()
+    const materialization = directMountedPlaygroundStagedInputs(mounts)
+    this.recordEvent("runtime.staged-inputs.materialized", { ...materialization, source: "direct-nodefs-mount" })
     return materialization
   }
 
