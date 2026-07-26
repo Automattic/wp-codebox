@@ -182,6 +182,7 @@
     "test:browser-artifact-session": "tsx tests/browser-artifact-session.test.ts",
     "test:browser-environment-matrix": "tsx --test tests/browser-environment-matrix.test.ts tests/browser-environment-matrix.browser.test.ts",
     "test:browser-actions-environment": "tsx --test tests/browser-actions-environment.browser.test.ts",
+    "test:browser-recipe-file-payloads-integration": "tsx tests/browser-recipe-file-payloads.integration.test.ts",
     "test:browser-diagnostic-providers": "tsx tests/browser-diagnostic-providers.test.ts",
     "test:browser-capture-html-diagnostics-reliability": "tsx tests/browser-capture-html-diagnostics-reliability.test.ts",
     "test:browser-provider-permissions": "tsx tests/browser-provider-permissions.test.ts",
