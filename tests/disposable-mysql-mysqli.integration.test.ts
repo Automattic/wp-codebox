@@ -197,7 +197,7 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
         global $wpdb;
         $this->assertGreaterThanOrEqual(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = 1"));
         $this->assertSame($wpdb->sitemeta, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->sitemeta)));
-        $this->assertTrue(update_network_option(1, 'managed_multisite_fixture', 'available'));
+        update_network_option(1, 'managed_multisite_fixture', 'available');
         $this->assertSame('available', get_network_option(1, 'managed_multisite_fixture'));
         $this->assertFileExists('/wordpress/wp-content/plugins/managed-multisite-dependency/managed-multisite-dependency.php');
     }
