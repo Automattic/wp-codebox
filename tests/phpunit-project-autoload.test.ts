@@ -704,6 +704,8 @@ await runPhpunitCommand({
 assert.equal(mysqlMultisiteInvocations.length, 2, "managed MySQL multisite runs a separate preinstall before PHPUnit")
 assert.ok(mysqlMultisiteInvocations[0].includes("'run_ms_tests'"))
 assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
+assert.ok(mysqlMultisiteInvocations[1].includes("$preinstalled_multisite = true"), "normal managed PHPUnit preserves the preinstalled network")
+assert.ok(mysqlMultisiteInvocations[1].includes("pg_run_preinstalled_multisite_stage"), "normal managed PHPUnit boots without destructively reinstalling multisite")
 
 const failedPreinstallInvocations: string[] = []
 await assert.rejects(

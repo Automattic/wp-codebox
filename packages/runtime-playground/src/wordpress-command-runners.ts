@@ -953,6 +953,7 @@ export async function runPhpunitCommand({
     bootstrapMode,
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
     multisite,
+    preinstalledMultisite: bootstrapMode === "managed" && databaseType === "mysql" && multisite,
     databaseType,
     resultFile,
   })

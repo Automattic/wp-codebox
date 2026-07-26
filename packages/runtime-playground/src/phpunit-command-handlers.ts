@@ -21,6 +21,7 @@ export interface PhpunitRunCodeOptions {
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
+  preinstalledMultisite?: boolean
   databaseType: "sqlite" | "mysql"
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
@@ -459,6 +460,7 @@ $preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFile
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
+$preinstalled_multisite = ${JSON.stringify(options.preinstalledMultisite ?? false)};
 $database_type = ${JSON.stringify(options.databaseType)};
 
 function pg_build_phpunit_argv($raw): array {
@@ -774,6 +776,37 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         return $config_path;
     } catch (Throwable $e) {
         pg_stage_fail('boot', $e);
+        exit(1);
+    }
+}
+
+function pg_run_preinstalled_multisite_stage(array $cfg): void {
+    pg_stage_begin('install');
+    try {
+        $config_path = (string) ($cfg['config_path'] ?? '');
+        $tests_dir = (string) ($cfg['tests_dir'] ?? '');
+        if ($config_path === '' || !is_readable($config_path)) {
+            throw new RuntimeException('managed multisite config is not readable: ' . $config_path);
+        }
+        if ($tests_dir === '' || !is_readable($tests_dir . '/includes/functions.php')) {
+            throw new RuntimeException('managed multisite test library is not readable: ' . $tests_dir);
+        }
+        if (!defined('WP_INSTALLING')) {
+            define('WP_INSTALLING', true);
+        }
+        if (!defined('DISABLE_WP_CRON')) {
+            define('DISABLE_WP_CRON', true);
+        }
+        require_once $config_path;
+        require_once $tests_dir . '/includes/functions.php';
+        tests_reset__SERVER();
+        $GLOBALS['PHP_SELF'] = '/index.php';
+        $_SERVER['PHP_SELF'] = '/index.php';
+        tests_add_filter('wp_die_handler', '_wp_die_handler_filter_exit');
+        require_once ABSPATH . 'wp-settings.php';
+        pg_stage_ok('install');
+    } catch (Throwable $e) {
+        pg_stage_fail('install', $e);
         exit(1);
     }
 }
@@ -1222,7 +1255,11 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
     $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
 });
 
-pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+if ($preinstalled_multisite) {
+    pg_run_preinstalled_multisite_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir));
+} else {
+    pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+}
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
