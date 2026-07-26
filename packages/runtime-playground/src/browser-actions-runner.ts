@@ -977,10 +977,13 @@ export async function runBrowserScenarioCommand({
       if (unsupported.length > 0) {
         throw new Error(`wordpress.browser-scenario browser environment is unsupported: ${unsupported.join(", ")}`)
       }
+      const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
       const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, {
-        ...(runPlan.actions.storageStateImport ? { contextOptions: { storageState: runPlan.actions.storageStateImport.storageState } } : {}),
+        contextOptions: {
+          ...topology.contextOptions(),
+          ...(runPlan.actions.storageStateImport ? { storageState: runPlan.actions.storageStateImport.storageState } : {}),
+        },
       })
-      const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
       const routeTracker = scenarioRouteTracker = createBrowserPreviewRouteTracker()
       if (browserPreviewNeedsContextRouting(topology.networkPolicy)) await routeBrowserPreviewContextNetwork(runtime.context, topology.networkPolicy, topology.origins.localProxyOrigin, routeTracker)
       scenarioSession = { browser, requested: requestedEnvironment, resolved, routeTracker, runtime }
