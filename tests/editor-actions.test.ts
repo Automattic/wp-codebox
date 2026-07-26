@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
@@ -281,6 +281,8 @@ assert.equal(nestedValidity.warnings[0]?.clientId, "nested-invalid")
 const frontPageTarget = editorOpenTargetFromArgs(["target=front-page"])
 assert.equal(frontPageTarget.kind, "front-page")
 assert.equal(frontPageTarget.url, "")
+assert.equal(editorCommandWordPressUrl({ serverUrl: "http://preview.test", wordpressUrl: "http://wordpress.test" } as never), "http://wordpress.test")
+assert.equal(editorCommandWordPressUrl({ serverUrl: "http://wordpress.test" } as never), "http://wordpress.test")
 
 // resolveEditorOpenTarget asks the running WordPress for page_on_front and rewrites
 // the target to open that exact post in the editor.
