@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserGeolocation } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment } from "@automattic/wp-codebox-core"
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
@@ -207,6 +207,26 @@ export interface BrowserArtifactSummary {
     replay: string
   }
   capabilities?: BrowserProbeCapabilityDiagnostics
+  environment?: {
+    requested: BrowserEnvironment
+    resolved: BrowserEnvironment
+    observed?: {
+      viewport: { width: number; height: number }
+      deviceScaleFactor: number
+      hasTouch: boolean
+      maxTouchPoints: number
+      userAgent: string
+      locale: string
+      timezone?: string
+      online: boolean
+      geolocationPermission?: "granted" | "denied" | "prompt" | "unsupported"
+      geolocation?: { latitude: number; longitude: number; accuracy: number }
+    }
+    provider?: ResolvedBrowserEnvironment["provider"]
+    capabilities: BrowserEnvironmentCapabilityResult[]
+    unsupported: string[]
+    inconclusive: string[]
+  }
   replayability: BrowserProbeReplayability
   screenshot: boolean
   visualCompare?: {

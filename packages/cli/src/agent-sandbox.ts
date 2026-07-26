@@ -117,7 +117,7 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
 
 export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract, options: { inputMountPathMap?: readonly InputMountPathMapping[] } = {}): Promise<ResolvedRecipeExecutionSpec> {
   const originalArgs = step.args ?? []
-  const resolvedStep = { ...step, args: rewriteRecipeExecutionArgs(step.command, originalArgs, options.inputMountPathMap) }
+  const resolvedStep = { ...step, args: rewriteRecipeExecutionArgs(step.command, originalArgs, recipeDirectory, options.inputMountPathMap) }
   const finish = (spec: ExecutionSpec & { args?: string[] }): ResolvedRecipeExecutionSpec => {
     // Commands can generate PHP and serialized payloads after their source args
     // are resolved, so canonicalize the generated execution spec as well.
@@ -186,8 +186,8 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   return finish({ command: resolvedStep.command, args: [...(resolvedStep.args ?? []), ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics)], diagnostics: resolvedStep.diagnostics })
 }
 
-function rewriteRecipeExecutionArgs(command: string, args: readonly string[], inputMountPathMap: readonly InputMountPathMapping[] = []): string[] {
-  const rewritten = rewriteInputMountPathArgs(args, inputMountPathMap)
+function rewriteRecipeExecutionArgs(command: string, args: readonly string[], recipeDirectory: string, inputMountPathMap: readonly InputMountPathMapping[] = []): string[] {
+  const rewritten = rewriteRecipeBrowserPayloadArgs(command, rewriteInputMountPathArgs(args, inputMountPathMap), recipeDirectory)
   if (command === "wordpress.run-workload") {
     return rewriteInputMountPathJsonArgs(rewritten, ["workload-json"], inputMountPathMap)
   }
@@ -195,6 +195,22 @@ function rewriteRecipeExecutionArgs(command: string, args: readonly string[], in
     return rewriteInputMountPathJsonArgs(rewritten, ["input-json", "suite-json"], inputMountPathMap)
   }
   return rewritten
+}
+
+function rewriteRecipeBrowserPayloadArgs(command: string, args: readonly string[], recipeDirectory: string): string[] {
+  const fileBackedArgs = command === "wordpress.browser-actions"
+    ? new Set(["steps-json", "browser-environment-json"])
+    : command === "wordpress.browser-scenario"
+      ? new Set(["scenario-json", "steps-json", "browser-environment-json"])
+      : undefined
+  if (!fileBackedArgs) return [...args]
+  return args.map((arg) => {
+    const separator = arg.indexOf("=")
+    if (separator < 0 || !fileBackedArgs.has(arg.slice(0, separator))) return arg
+    const value = arg.slice(separator + 1)
+    if (!value.startsWith("@")) return arg
+    return `${arg.slice(0, separator + 1)}@${resolve(recipeDirectory, value.slice(1))}`
+  })
 }
 
 async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<ExecutionSpec & { args: string[] }> {

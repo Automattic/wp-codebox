@@ -110,7 +110,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   await artifactPointer.update({ commandStatus: "queued" })
   const issues = [
     ...await validateWorkspaceRecipe(recipe, recipePath),
-    ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
+    ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe, recipeDirectory), recipeDirectory),
   ]
   if (issues.length > 0) {
     const failure = {
@@ -727,7 +727,7 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
     const recipe = await loadWorkspaceRecipe(recipePath)
     const issues = [
       ...await validateWorkspaceRecipe(recipe, recipePath),
-      ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
+      ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe, dirname(recipePath)), dirname(recipePath)),
     ]
 
     return {

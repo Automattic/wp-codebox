@@ -122,6 +122,7 @@ test("real browser contexts apply and isolate granted, denied, and prompt geoloc
       { cell: "granted", requested: "granted", permission: "granted", latitude: 32.7765, longitude: -79.9311, accuracy: 9 },
       { cell: "prompt", requested: "prompt", permission: "prompt" },
     ])
+    assert.deepEqual(report.cells.map((cell) => cell.effective.permissions), [[], ["geolocation"], []])
 
     const cells = matrix.dimensions[0]!.values.slice(1).map((value, index) => ({ id: value.id, index, seed: value.id, selections: { location: value.id }, requested: value.environment, requiredCapabilities: [], optionalCapabilities: [] }))
     const parallel = await Promise.all(cells.map(async (cell) => {

@@ -12,10 +12,13 @@ import {
   type ResolvedBrowserEnvironment,
 } from "@automattic/wp-codebox-core"
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright"
+import type { BrowserArtifactSummary } from "./browser-artifacts.js"
 
 export const PLAYWRIGHT_BROWSER_ENVIRONMENT_CAPABILITIES = [
   "browser.environment.viewport",
   "browser.environment.device",
+  "browser.environment.user-agent",
+  "browser.environment.permissions",
   "browser.environment.device-scale-factor",
   "browser.environment.mobile",
   "browser.environment.touch",
@@ -49,6 +52,7 @@ export interface PlaywrightBrowserEnvironmentOptions {
   channel?: string
   networkProfiles?: Record<string, BrowserEnvironmentNetworkProfile>
   cpuProfiles?: Record<string, BrowserEnvironmentCpuProfile>
+  contextOptions?: BrowserContextOptions
 }
 
 export interface PlaywrightBrowserEnvironmentExecutionInput {
@@ -59,6 +63,19 @@ export interface PlaywrightBrowserEnvironmentExecutionInput {
   resolved: ResolvedBrowserEnvironment
   artifactNamespace: string
   signal: AbortSignal
+}
+
+export interface PlaywrightBrowserEnvironmentRuntime {
+  context: BrowserContext
+  page: Page
+  close(): Promise<void>
+}
+
+export interface PlaywrightBrowserEnvironmentSession {
+  browser: Browser
+  requested: BrowserEnvironment
+  resolved: ResolvedBrowserEnvironment
+  runtime: PlaywrightBrowserEnvironmentRuntime
 }
 
 export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironmentCell, browser: Browser, options: PlaywrightBrowserEnvironmentOptions = {}): Promise<ResolvedBrowserEnvironment> {
@@ -72,6 +89,8 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
 
   if (requested.viewport) exact("browser.environment.viewport")
   if (requested.device) device ? exact("browser.environment.device") : unsupported("browser.environment.device", `Unknown device profile: ${requested.device}`)
+  if (requested.userAgent) exact("browser.environment.user-agent")
+  if (requested.permissions) exact("browser.environment.permissions")
   if (requested.deviceScaleFactor !== undefined) exact("browser.environment.device-scale-factor")
   if (requested.isMobile !== undefined) exact("browser.environment.mobile")
   if (requested.hasTouch !== undefined) exact("browser.environment.touch")
@@ -94,7 +113,11 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
   if (requested.networkProfile) options.networkProfiles?.[requested.networkProfile] ? emulated("browser.environment.network-profile", "Latency and throughput are applied through the browser debugging protocol.") : unsupported("browser.environment.network-profile", `Unknown network profile: ${requested.networkProfile}`)
   if (requested.cpuProfile) options.cpuProfiles?.[requested.cpuProfile] ? emulated("browser.environment.cpu-profile", "CPU slowdown is applied through the browser debugging protocol.") : unsupported("browser.environment.cpu-profile", `Unknown CPU profile: ${requested.cpuProfile}`)
 
-  const effective = mergeDeviceEnvironment(requested, device)
+  const merged = mergeDeviceEnvironment(requested, device)
+  const effectivePermissions = requested.permissions || requested.geolocation
+    ? [...new Set([...(requested.permissions ?? []).filter((permission) => permission !== "geolocation"), ...(requested.geolocation?.permission === "granted" ? ["geolocation"] : [])])]
+    : undefined
+  const effective = { ...merged, ...(effectivePermissions ? { permissions: effectivePermissions } : {}) }
   return {
     effective,
     capabilities: capabilities.sort((left, right) => left.id.localeCompare(right.id)),
@@ -102,17 +125,23 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
   }
 }
 
-export async function createPlaywrightBrowserEnvironmentContext(browser: Browser, resolved: ResolvedBrowserEnvironment, options: PlaywrightBrowserEnvironmentOptions = {}): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
+export function browserEnvironmentCell(requested: BrowserEnvironment): BrowserEnvironmentCell {
+  return { id: "browser-environment", index: 0, seed: "browser-environment", selections: {}, requested, requiredCapabilities: [], optionalCapabilities: [] }
+}
+
+export async function createPlaywrightBrowserEnvironmentContext(browser: Browser, resolved: ResolvedBrowserEnvironment, options: PlaywrightBrowserEnvironmentOptions = {}): Promise<PlaywrightBrowserEnvironmentRuntime> {
   const { devices } = await import("playwright")
   const environment = resolved.effective
   const device = environment.device ? devices[environment.device] : undefined
   const viewport = orientedViewport(environment.viewport ?? device?.viewport ?? undefined, environment.orientation)
   const contextOptions: BrowserContextOptions = {
     ...(device ?? {}),
+    ...(options.contextOptions ?? {}),
     ...(viewport ? { viewport, screen: viewport } : {}),
     ...(environment.deviceScaleFactor !== undefined ? { deviceScaleFactor: environment.deviceScaleFactor } : {}),
     ...(environment.isMobile !== undefined ? { isMobile: environment.isMobile } : {}),
     ...(environment.hasTouch !== undefined ? { hasTouch: environment.hasTouch } : {}),
+    ...(environment.userAgent ? { userAgent: environment.userAgent } : {}),
     ...(environment.locale ? { locale: environment.locale } : {}),
     ...(environment.timezone ? { timezoneId: environment.timezone } : {}),
     ...(environment.colorScheme ? { colorScheme: environment.colorScheme } : {}),
@@ -121,13 +150,55 @@ export async function createPlaywrightBrowserEnvironmentContext(browser: Browser
     ...(environment.contrast ? { contrast: environment.contrast } : {}),
     ...(environment.online !== undefined ? { offline: !environment.online } : {}),
     ...(environment.geolocation ? { geolocation: { latitude: environment.geolocation.latitude, longitude: environment.geolocation.longitude, ...(environment.geolocation.accuracy !== undefined ? { accuracy: environment.geolocation.accuracy } : {}) } } : {}),
-    ...(environment.geolocation?.permission === "granted" ? { permissions: ["geolocation"] } : {}),
+    ...(environment.permissions?.length || environment.geolocation?.permission === "granted" ? { permissions: [...new Set([...(environment.permissions ?? []).filter((permission) => permission !== "geolocation"), ...(environment.geolocation?.permission === "granted" ? ["geolocation"] : [])])] } : {}),
   }
   const context = await browser.newContext(contextOptions)
   const page = await context.newPage()
   const geolocationPermissionCleanup = environment.geolocation?.permission === "denied" ? await applyPlaywrightGeolocationPermission(page, "denied") : undefined
   await applyPlaywrightPageEnvironment(page, environment, options)
   return { context, page, close: async () => { await geolocationPermissionCleanup?.(); await context.close() } }
+}
+
+export async function observePlaywrightBrowserEnvironment(page: Page, requested: BrowserEnvironment, resolved: ResolvedBrowserEnvironment): Promise<NonNullable<BrowserArtifactSummary["environment"]>> {
+  const observed: NonNullable<NonNullable<BrowserArtifactSummary["environment"]>["observed"]> | undefined = await page.evaluate(async () => {
+    let geolocationPermission: "granted" | "denied" | "prompt" | "unsupported" | undefined
+    try {
+      const state = (await navigator.permissions.query({ name: "geolocation" })).state
+      geolocationPermission = state === "granted" || state === "denied" || state === "prompt" ? state : "unsupported"
+    } catch {
+      geolocationPermission = "unsupported"
+    }
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      deviceScaleFactor: devicePixelRatio,
+      hasTouch: navigator.maxTouchPoints > 0,
+      maxTouchPoints: navigator.maxTouchPoints,
+      userAgent: navigator.userAgent,
+      locale: navigator.language,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
+      online: navigator.onLine,
+      ...(geolocationPermission ? { geolocationPermission } : {}),
+    }
+  }).catch(() => undefined)
+  const observedGeolocation = requested.geolocation && observed?.geolocationPermission === "granted"
+    ? await page.evaluate(() => new Promise<{ latitude: number; longitude: number; accuracy: number } | undefined>((resolve) => navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }),
+      () => resolve(undefined),
+      { timeout: 1_000 },
+    ))).catch(() => undefined)
+    : undefined
+  if (observed && observedGeolocation) observed.geolocation = observedGeolocation
+  const unsupported = resolved.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
+  const inconclusive: string[] = []
+  if (requested.device) inconclusive.push("browser.environment.device")
+  if (requested.isMobile !== undefined) inconclusive.push("browser.environment.mobile")
+  if (requested.geolocation && !observed?.geolocation) inconclusive.push("browser.environment.geolocation.coordinates")
+  if (requested.permissions?.some((permission) => permission !== "geolocation")) inconclusive.push("browser.environment.permissions")
+  for (const [key, capability] of [["orientation", "browser.environment.orientation"], ["zoom", "browser.environment.zoom"], ["colorScheme", "browser.environment.color-scheme"], ["reducedMotion", "browser.environment.reduced-motion"], ["forcedColors", "browser.environment.forced-colors"], ["contrast", "browser.environment.contrast"], ["networkProfile", "browser.environment.network-profile"], ["cpuProfile", "browser.environment.cpu-profile"], ["clock", "browser.environment.clock"], ["capabilities", "browser.environment.capability-state"]] as const) {
+    if (requested[key] !== undefined) inconclusive.push(capability)
+  }
+  if (!observed) inconclusive.push("browser.environment.observation")
+  return { requested, resolved: resolved.effective, ...(observed ? { observed } : {}), provider: resolved.provider, capabilities: resolved.capabilities, unsupported, inconclusive }
 }
 
 export async function applyPlaywrightGeolocationPermission(page: Page, state: "denied"): Promise<() => Promise<void>> {

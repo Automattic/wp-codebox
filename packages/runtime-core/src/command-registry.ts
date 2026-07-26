@@ -105,6 +105,22 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
 
 const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
+const browserActionEnvironmentAcceptedArgs: CommandDefinition["acceptedArgs"] = [
+  { name: "browser-environment-json", description: "Optional browser environment object applied when the action context is created. Supports the public BrowserEnvironment fields and @<path> JSON.", format: "JSON object or @path" },
+  { name: "device", description: "Optional built-in Playwright device profile applied when the action context is created.", format: "Playwright device name, e.g. Pixel 5" },
+  { name: "user-agent", description: "Optional browser context user agent override.", format: "string" },
+  { name: "permissions", description: "Comma-separated browser permissions granted when the action context is created.", format: "comma-separated permission names" },
+  { name: "viewport", description: "Optional viewport applied when the action context is created.", format: "<width>x<height>, e.g. 390x844" },
+  { name: "device-scale-factor", description: "Optional positive device scale factor applied when the action context is created.", format: "positive number" },
+  { name: "is-mobile", description: "Whether the action context uses authentic mobile browser emulation.", format: "boolean" },
+  { name: "has-touch", description: "Whether the action context exposes touch input.", format: "boolean" },
+  { name: "locale", description: "Optional browser context locale.", format: "BCP 47 locale, e.g. en-US" },
+  { name: "timezone", description: "Optional browser context timezone.", format: "IANA timezone, e.g. America/New_York" },
+  { name: "geolocation-latitude", description: "Browser context geolocation latitude.", format: "finite number from -90 to 90" },
+  { name: "geolocation-longitude", description: "Browser context geolocation longitude.", format: "finite number from -180 to 180" },
+  { name: "geolocation-accuracy", description: "Optional browser context geolocation accuracy in meters.", format: `finite number from 0 to ${BROWSER_GEOLOCATION_MAX_ACCURACY_METERS}` },
+  { name: "geolocation-permission", description: "Explicit browser context geolocation permission state. default is normalized to prompt.", format: [...BROWSER_GEOLOCATION_PERMISSION_STATES, ...BROWSER_GEOLOCATION_PERMISSION_ALIASES].join("|") },
+]
 const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"] as const
 const wordpressAuthArtifactProperties = {
   auth: { type: "string" },
@@ -144,6 +160,14 @@ const browserActionsValidation: CommandValidationDescriptor = {
     { name: "step-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-actions step-timeout must look like 500ms or 2s." },
     { name: "timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-actions timeout must look like 500ms or 2s." },
     { name: "capture", kind: "comma-list-enum", values: browserActionCaptureValues, code: "invalid-capture", message: "wordpress.browser-actions capture does not support" },
+    { name: "viewport", kind: "viewport", code: "invalid-viewport", message: "wordpress.browser-actions viewport must use <width>x<height>, for example 390x844." },
+    { name: "device-scale-factor", kind: "number", minimum: 0.01, maximum: 100, code: "invalid-device-scale-factor", message: "wordpress.browser-actions device-scale-factor must be a finite positive number." },
+    { name: "is-mobile", kind: "boolean", code: "invalid-is-mobile", message: "wordpress.browser-actions is-mobile must be true or false." },
+    { name: "has-touch", kind: "boolean", code: "invalid-has-touch", message: "wordpress.browser-actions has-touch must be true or false." },
+    { name: "geolocation-latitude", kind: "number", minimum: -90, maximum: 90, code: "invalid-geolocation-latitude", message: "wordpress.browser-actions geolocation-latitude must be a finite number from -90 to 90." },
+    { name: "geolocation-longitude", kind: "number", minimum: -180, maximum: 180, code: "invalid-geolocation-longitude", message: "wordpress.browser-actions geolocation-longitude must be a finite number from -180 to 180." },
+    { name: "geolocation-accuracy", kind: "number", minimum: 0, maximum: BROWSER_GEOLOCATION_MAX_ACCURACY_METERS, code: "invalid-geolocation-accuracy", message: `wordpress.browser-actions geolocation-accuracy must be a finite number from 0 to ${BROWSER_GEOLOCATION_MAX_ACCURACY_METERS}.` },
+    { name: "geolocation-permission", kind: "enum", values: [...BROWSER_GEOLOCATION_PERMISSION_STATES, ...BROWSER_GEOLOCATION_PERMISSION_ALIASES], code: "invalid-geolocation-permission", message: "wordpress.browser-actions geolocation-permission must be granted, denied, prompt, or default." },
   ],
 }
 
@@ -155,6 +179,7 @@ const browserScenarioValidation: CommandValidationDescriptor = {
     { name: "step-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-scenario step-timeout must look like 500ms or 2s." },
     { name: "timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-scenario timeout must look like 500ms or 2s." },
     { name: "capture", kind: "comma-list-enum", values: browserScenarioCaptureValues, code: "invalid-capture", message: "wordpress.browser-scenario capture does not support" },
+    ...browserActionsValidation.argRules!.filter((rule) => ["viewport", "device-scale-factor", "is-mobile", "has-touch", "geolocation-latitude", "geolocation-longitude", "geolocation-accuracy", "geolocation-permission"].includes(rule.name)),
   ],
 }
 
@@ -1190,6 +1215,7 @@ export const commandRegistry = [
       { name: "storage-state", description: "Optional Playwright storageState JSON, or @<path> to JSON, imported into a fresh browser context. Summaries redact cookie/localStorage values and report only schema/kind, counts, hosts, and diagnostics.", format: "JSON object or @path" },
       { name: "capture", description: "Comma-separated artifacts to capture after interactions.", format: "steps,console,errors,html,network,screenshot,dom-snapshot" },
       { name: "max-dom-snapshot-elements", description: "Maximum visible elements captured in each screenshot sidecar DOM/style snapshot; defaults to 160.", format: "positive integer" },
+      ...browserActionEnvironmentAcceptedArgs,
     ],
     outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), optional action-corpus.json or adaptive-exploration.json replay artifacts, named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-actions. The evaluate step additionally requires wordpress.browser-actions.evaluate.",
@@ -1201,7 +1227,7 @@ export const commandRegistry = [
     id: "wordpress.browser-scenario",
     description: "Run a declarative browser evidence scenario by composing browser-probe and browser-actions artifacts behind one normalized scenario summary.",
     acceptedArgs: [
-      { name: "scenario-json", description: "Declarative scenario object with url, profile, captures, observers, steps, assertions, viewport, and timeout settings. Supports inline JSON or @<path>.", format: "JSON object" },
+      { name: "scenario-json", description: "Declarative scenario object with url, profile, environment, captures, observers, steps, assertions, viewport, and timeout settings. Supports inline JSON or @<path>.", format: "JSON object" },
       { name: "url", description: "Preview path or absolute URL to visit when scenario-json is omitted or does not include url.", format: "path or URL" },
       { name: "steps-json", description: "Optional browser interaction steps when scenario-json.steps is omitted.", format: "JSON array" },
       { name: "capture", description: "Comma-separated artifacts to capture.", format: "steps,console,errors,html,network,performance,memory,screenshot,dom-snapshot" },
@@ -1213,8 +1239,10 @@ export const commandRegistry = [
       { name: "auth-user-id", description: "WordPress user ID used with auth=wordpress-admin; defaults to 1.", format: "positive integer" },
       { name: "step-timeout", description: "Per-step timeout applied to action steps.", format: "duration, e.g. 5s or 500ms" },
       { name: "timeout", description: "Total action timeout bounding the interaction run.", format: "duration, e.g. 30s or 1500ms" },
+      { name: "storage-state", description: "Optional Playwright storageState JSON, or @<path> to JSON, shared by scenario probe collection and authored actions.", format: "JSON object or @path" },
+      ...browserActionEnvironmentAcceptedArgs.filter((arg) => !["device", "viewport", "locale"].includes(arg.name)),
     ],
-    outputShape: "JSON scenario summary with requested/effective browser metadata and files/browser/scenario-summary.json, preserving lower-level browser-probe and browser-actions summaries when used.",
+    outputShape: "JSON scenario summary with requested, provider-resolved, and browser-observed environment metadata plus files/browser/scenario-summary.json, preserving lower-level browser-probe and browser-actions summaries when used.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-scenario. Scenarios using evaluate steps additionally require wordpress.browser-actions.evaluate.",
     validation: browserScenarioValidation,
     recipe: true,

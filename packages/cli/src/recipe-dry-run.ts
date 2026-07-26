@@ -275,7 +275,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
 
     const issues = [
       ...await validateWorkspaceRecipe(recipe, recipePath),
-      ...validateRecipeRuntimePolicy(recipe, options.policy),
+      ...validateRecipeRuntimePolicy(recipe, options.policy, recipeDirectory),
     ]
 
     if (issues.length > 0) {
@@ -324,7 +324,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
 }
 
 export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirectory: string, options: RecipePlanOptions, context: RecipePlanContext): Promise<RecipePlan> {
-  const policy = options.policy ?? recipePolicy(recipe)
+  const policy = options.policy ?? recipePolicy(recipe, recipeDirectory)
   const policyValidation = validateRuntimePolicy(policy)
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)

@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -17,13 +17,14 @@ import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProb
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
 import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserProbeWebSocketSummary, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { positiveIntegerArg } from "./command-args.js"
-import { argValue, commaListArg, durationArg, viewportArg } from "./commands.js"
+import { argValue, commaListArg, durationArg, strictBooleanArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import type { Page } from "playwright"
 import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 import { exploreAdaptiveBrowserStateMachine } from "./browser-adaptive-explorer.js"
 import { createBrowserAccessibilityCollector } from "./browser-accessibility-collector.js"
+import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, observePlaywrightBrowserEnvironment, resolvePlaywrightBrowserEnvironment, type PlaywrightBrowserEnvironmentSession } from "./browser-environment-matrix.js"
 
 export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
@@ -42,11 +43,13 @@ export interface BrowserActionsRunPlan {
   totalTimeoutMs: number
   networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
+  requestedEnvironment?: BrowserEnvironment
   authRequest?: { userId: number }
   storageStateImport?: BrowserStorageStateImport
   maxDomSnapshotElements: number
   actionCorpus?: BrowserActionCorpusContract
   adaptiveExploration?: BrowserAdaptiveExplorationContract
+  reusePage?: boolean
 }
 
 interface BrowserRunPlan {
@@ -64,6 +67,7 @@ export async function runBrowserActionsCommand({
   server,
   spec,
   onProgress,
+  session,
 }: {
   artifactRoot: string
   plan?: BrowserActionsRunPlan
@@ -72,6 +76,7 @@ export async function runBrowserActionsCommand({
   server: PlaygroundCliServer
   spec: ExecutionSpec
   onProgress?: (event: BrowserCommandProgressEvent) => void
+  session?: PlaywrightBrowserEnvironmentSession
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? await browserActionsRunPlanFromArgs(args, artifactRoot)
@@ -84,7 +89,7 @@ export async function runBrowserActionsCommand({
     throw new Error("wordpress.browser-actions requires steps-json=<array>, url=<path-or-url>, or adaptive-exploration-json=<object>")
   }
 
-  if (initialUrl && steps[0]?.kind !== "navigate") {
+  if (initialUrl && !runPlan.reusePage && steps[0]?.kind !== "navigate") {
     steps.unshift({ kind: "navigate", url: initialUrl })
   }
 
@@ -106,6 +111,7 @@ export async function runBrowserActionsCommand({
   const totalTimeoutMs = runPlan.totalTimeoutMs
   const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: runPlan.networkSettleTimeoutMs })
   const requestedViewport = runPlan.requestedViewport
+  const requestedEnvironment = browserEnvironment({ ...(requestedViewport ? { viewport: requestedViewport } : {}), ...(runPlan.requestedEnvironment ?? {}) })
   const authRequest = runPlan.authRequest
   const storageStateImport = runPlan.storageStateImport
   if (authRequest && storageStateImport) {
@@ -124,7 +130,7 @@ export async function runBrowserActionsCommand({
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, 0)
-  const browser = await launchChromiumBrowser()
+  const browser = session?.browser ?? await launchChromiumBrowser()
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
   let requestedUrl = initialUrl ? topology.resolveUrl(initialUrl) : preview.effectiveOrigin
@@ -142,20 +148,34 @@ export async function runBrowserActionsCommand({
   let actionCorpusSummary: BrowserArtifact["summary"]["actionCorpus"] | undefined
   let adaptiveExplorationArtifact: BrowserAdaptiveExplorationArtifact | undefined
   let adaptiveExplorationSummary: BrowserArtifact["summary"]["adaptiveExploration"] | undefined
+  let environmentRuntime: Awaited<ReturnType<typeof createPlaywrightBrowserEnvironmentContext>> | undefined
+  let environmentEvidence: BrowserArtifact["summary"]["environment"] | undefined
+  let resolvedEnvironment: Awaited<ReturnType<typeof resolvePlaywrightBrowserEnvironment>> | undefined
+  let activePage: Page | undefined
 
   try {
     const previewReadinessError = browserPreviewReadinessError(preview)
     if (previewReadinessError) {
       throw previewReadinessError
     }
-    const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
-      ...topology.contextOptions(),
-      ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
-    }) : null
-    if (context) {
+    resolvedEnvironment = session?.resolved ?? await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(requestedEnvironment), browser)
+    const unsupportedEnvironment = resolvedEnvironment.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
+    environmentEvidence = { requested: requestedEnvironment, resolved: resolvedEnvironment.effective, provider: resolvedEnvironment.provider, capabilities: resolvedEnvironment.capabilities, unsupported: unsupportedEnvironment, inconclusive: [] }
+    if (unsupportedEnvironment.length > 0) {
+      throw new Error(`wordpress.browser-actions browser environment is unsupported: ${unsupportedEnvironment.join(", ")}`)
+    }
+    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport
+    environmentRuntime = session?.runtime ?? (needsEnvironmentContext ? await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, {
+      contextOptions: {
+        ...topology.contextOptions(),
+        ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
+      },
+    }) : undefined)
+    const context = environmentRuntime?.context ?? null
+    if (context && !session) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
     }
-    const page = context ? await context.newPage() : await browser.newPage()
+    const page = activePage = environmentRuntime?.page ?? await browser.newPage()
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
         const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
@@ -172,9 +192,6 @@ export async function runBrowserActionsCommand({
     }
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: topology.authCookieUrls(browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
-    }
-    if (requestedViewport) {
-      await page.setViewportSize(requestedViewport)
     }
     wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
@@ -234,6 +251,8 @@ export async function runBrowserActionsCommand({
       if (runPlan.adaptiveExploration) {
         const adaptiveContract = {
           ...runPlan.adaptiveExploration,
+          environment: requestedEnvironment,
+          environmentDigest: browserEnvironmentDigest(requestedEnvironment),
           budgets: {
             ...runPlan.adaptiveExploration.budgets,
             maxDurationMs: Math.min(runPlan.adaptiveExploration.budgets.maxDurationMs, livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)),
@@ -419,7 +438,11 @@ export async function runBrowserActionsCommand({
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
-    await browser.close()
+    if (activePage && resolvedEnvironment) environmentEvidence = await observePlaywrightBrowserEnvironment(activePage, requestedEnvironment, resolvedEnvironment).catch(() => environmentEvidence)
+    if (!session) {
+      await environmentRuntime?.close().catch(() => undefined)
+      await browser.close()
+    }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "steps.jsonl", stepRecords)
     }
@@ -510,6 +533,7 @@ export async function runBrowserActionsCommand({
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         auth: authSummary,
+        environment: environmentEvidence,
         viewport,
       },
     }
@@ -541,6 +565,7 @@ export async function runBrowserActionsCommand({
       ...(actionCorpusArtifact ? { actionCorpus: actionCorpusArtifact.plan } : {}),
       ...(adaptiveExplorationArtifact ? { adaptiveExploration: adaptiveExplorationArtifact.result } : {}),
       viewport,
+      environment: environmentEvidence,
       summary: artifact.summary,
     })
   }
@@ -674,6 +699,8 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     capture.add("screenshot")
     capture.add("dom-snapshot")
   }
+  const argumentEnvironment = await browserEnvironmentFromArgs(args)
+  const adaptiveExplorationPlan = browserAdaptiveExplorationFromArgs(args, argumentEnvironment)
   return {
     initialUrl: argValue(args, "url")?.trim(),
     steps: await browserInteractionStepsFromArgs(args),
@@ -682,12 +709,64 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
+    requestedEnvironment: adaptiveExplorationPlan.requestedEnvironment,
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
-    adaptiveExploration: browserAdaptiveExplorationFromArgs(args),
+    adaptiveExploration: adaptiveExplorationPlan.contract,
   }
+}
+
+async function browserEnvironmentFromArgs(args: string[]): Promise<BrowserEnvironment> {
+  const raw = argValue(args, "browser-environment-json")
+  let declared: BrowserEnvironment = {}
+  if (raw) {
+    const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+    declared = JSON.parse(text) as BrowserEnvironment
+  }
+  return browserEnvironmentFromValues(args, declared)
+}
+
+function browserEnvironmentFromValues(args: string[], declared: BrowserEnvironment): BrowserEnvironment {
+  const viewport = viewportArg(args, "viewport")
+  const device = argValue(args, "device")?.trim()
+  const userAgent = argValue(args, "user-agent")?.trim()
+  const permissions = commaListArg(args, "permissions")
+  const locale = argValue(args, "locale")?.trim()
+  const timezone = argValue(args, "timezone")?.trim()
+  const deviceScaleFactorRaw = argValue(args, "device-scale-factor")?.trim()
+  const isMobile = argValue(args, "is-mobile") === undefined ? undefined : strictBooleanArg(args, "is-mobile", false)
+  const hasTouch = argValue(args, "has-touch") === undefined ? undefined : strictBooleanArg(args, "has-touch", false)
+  const geolocation = browserActionGeolocation(args)
+  return browserEnvironment({
+    ...declared,
+    ...(viewport ? { viewport } : {}),
+    ...(device ? { device } : {}),
+    ...(userAgent ? { userAgent } : {}),
+    ...(permissions.length > 0 ? { permissions } : {}),
+    ...(deviceScaleFactorRaw ? { deviceScaleFactor: Number(deviceScaleFactorRaw) } : {}),
+    ...(isMobile !== undefined ? { isMobile } : {}),
+    ...(hasTouch !== undefined ? { hasTouch } : {}),
+    ...(locale ? { locale } : {}),
+    ...(timezone ? { timezone } : {}),
+    ...(geolocation ? { geolocation } : {}),
+  })
+}
+
+function browserActionGeolocation(args: string[]): BrowserEnvironment["geolocation"] {
+  const latitudeRaw = argValue(args, "geolocation-latitude")?.trim()
+  const longitudeRaw = argValue(args, "geolocation-longitude")?.trim()
+  const accuracyRaw = argValue(args, "geolocation-accuracy")?.trim()
+  const permissionRaw = argValue(args, "geolocation-permission")?.trim()
+  if (!latitudeRaw && !longitudeRaw && !accuracyRaw && !permissionRaw) return undefined
+  if (!latitudeRaw || !longitudeRaw) throw new Error("wordpress.browser-actions geolocation requires both geolocation-latitude and geolocation-longitude.")
+  return browserGeolocation({
+    latitude: Number(latitudeRaw),
+    longitude: Number(longitudeRaw),
+    ...(accuracyRaw ? { accuracy: Number(accuracyRaw) } : {}),
+    permission: (permissionRaw ?? "prompt") as BrowserGeolocationPermissionState | "default",
+  })
 }
 
 function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContract | undefined {
@@ -697,11 +776,23 @@ function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContrac
   return browserActionCorpusContract(parsed)
 }
 
-function browserAdaptiveExplorationFromArgs(args: string[]): BrowserAdaptiveExplorationContract | undefined {
+function browserAdaptiveExplorationFromArgs(args: string[], argumentEnvironment: BrowserEnvironment): { contract?: BrowserAdaptiveExplorationContract; requestedEnvironment: BrowserEnvironment } {
   const raw = argValue(args, "adaptive-exploration-json")
-  if (typeof raw !== "string" || raw.trim().length === 0) return undefined
+  if (typeof raw !== "string" || raw.trim().length === 0) return { requestedEnvironment: argumentEnvironment }
   const parsed = JSON.parse(raw) as Record<string, unknown>
-  return browserAdaptiveExplorationContract(parsed)
+  const contract = browserAdaptiveExplorationContract(parsed)
+  if (Object.prototype.hasOwnProperty.call(parsed, "environment")) {
+    if (browserEnvironmentArgsDeclared(args)) {
+      throw new Error("wordpress.browser-actions adaptive-exploration-json environment cannot be combined with outer browser environment arguments")
+    }
+    return { contract, requestedEnvironment: contract.environment }
+  }
+  return { contract, requestedEnvironment: argumentEnvironment }
+}
+
+function browserEnvironmentArgsDeclared(args: string[]): boolean {
+  const names = new Set(["browser-environment-json", "viewport", "device", "user-agent", "permissions", "locale", "timezone", "device-scale-factor", "is-mobile", "has-touch", "geolocation-latitude", "geolocation-longitude", "geolocation-accuracy", "geolocation-permission"])
+  return args.some((arg) => names.has(arg.slice(0, arg.indexOf("="))))
 }
 
 async function captureBrowserActionDomSnapshot({
@@ -826,6 +917,7 @@ interface BrowserScenarioInput {
   assertions?: Array<Record<string, unknown>>
   viewport?: string
   device?: string
+  environment?: BrowserEnvironment
   locale?: string
   auth?: string
   authUserId?: string | number
@@ -856,7 +948,8 @@ export async function runBrowserScenarioCommand({
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const scenario = await browserScenarioFromArgs(args)
-  const multiActorScenario = browserMultiActorScenario(scenario, args)
+  const requestedEnvironment = await browserScenarioEnvironment(scenario, args)
+  const multiActorScenario = browserMultiActorScenario(scenario, args, requestedEnvironment)
   if (multiActorScenario) {
     return runBrowserMultiActorScenarioCommand({ artifactRoot, scenario: multiActorScenario, runtimeSpec, runPlaygroundCommand, server })
   }
@@ -865,34 +958,56 @@ export async function runBrowserScenarioCommand({
     throw new Error("wordpress.browser-scenario requires url=<path-or-url> or scenario-json.url")
   }
 
-  const runPlan = browserScenarioRunPlan(scenario, args, url)
+  const runPlan = await browserScenarioRunPlan(scenario, args, url, artifactRoot, requestedEnvironment)
   const startedAt = now()
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-scenario", operation: "browser-scenario" })
 
   let probeResult: Awaited<ReturnType<typeof runBrowserProbeCommand>> | undefined
   let actionsResult: Awaited<ReturnType<typeof runBrowserActionsCommand>> | undefined
   let pendingError: Error | undefined
+  let scenarioSession: PlaywrightBrowserEnvironmentSession | undefined
+  let scenarioBrowser: Awaited<ReturnType<typeof launchChromiumBrowser>> | undefined
 
-  if (runPlan.probe) {
-    try {
-      probeResult = await runBrowserProbeCommand({ artifactRoot, plan: runPlan.probe, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args } })
-    } catch (error) {
-      if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "probe") {
-        probeResult = { artifact: error.artifact, output: "" }
+  try {
+    if (runPlan.probe && runPlan.actions) {
+      const browser = scenarioBrowser = await launchChromiumBrowser()
+      const resolved = await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(requestedEnvironment), browser)
+      const unsupported = resolved.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
+      if (unsupported.length > 0) {
+        throw new Error(`wordpress.browser-scenario browser environment is unsupported: ${unsupported.join(", ")}`)
       }
-      pendingError = error instanceof Error ? error : new Error(String(error))
+      const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, {
+        ...(runPlan.actions.storageStateImport ? { contextOptions: { storageState: runPlan.actions.storageStateImport.storageState } } : {}),
+      })
+      const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+      if (browserPreviewNeedsContextRouting(topology.networkPolicy)) await routeBrowserPreviewContextNetwork(runtime.context, topology.networkPolicy, topology.preview.effectiveOrigin)
+      scenarioSession = { browser, requested: requestedEnvironment, resolved, runtime }
     }
-  }
 
-  if (!pendingError && runPlan.actions) {
-    try {
-      actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: runPlan.actions, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args } })
-    } catch (error) {
-      if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
-        actionsResult = { artifact: error.artifact, output: "" }
+    if (runPlan.probe) {
+      try {
+        probeResult = await runBrowserProbeCommand({ artifactRoot, plan: runPlan.probe, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args }, session: scenarioSession })
+      } catch (error) {
+        if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "probe") {
+          probeResult = { artifact: error.artifact, output: "" }
+        }
+        pendingError = error instanceof Error ? error : new Error(String(error))
       }
-      pendingError = error instanceof Error ? error : new Error(String(error))
     }
+
+    if (!pendingError && runPlan.actions) {
+      try {
+        actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: { ...runPlan.actions, reusePage: Boolean(scenarioSession) }, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args }, session: scenarioSession })
+      } catch (error) {
+        if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
+          actionsResult = { artifact: error.artifact, output: "" }
+        }
+        pendingError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+  } finally {
+    await scenarioSession?.runtime.close().catch(() => undefined)
+    await scenarioBrowser?.close().catch(() => undefined)
   }
 
   const primaryArtifact = actionsResult?.artifact ?? probeResult?.artifact
@@ -967,18 +1082,19 @@ export async function runBrowserScenarioCommand({
 
 async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioInput> {
   const raw = argValue(args, "scenario-json")
-  if (!raw) {
-    return {}
+  let scenario: BrowserScenarioInput = {}
+  if (raw) {
+    const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+    const parsed = JSON.parse(text) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("wordpress.browser-scenario scenario-json must be a JSON object")
+    }
+    scenario = parsed as BrowserScenarioInput
   }
-  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
-  const parsed = JSON.parse(text) as unknown
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("wordpress.browser-scenario scenario-json must be a JSON object")
-  }
-  return parsed as BrowserScenarioInput
+  return scenario
 }
 
-function browserMultiActorScenario(scenario: BrowserScenarioInput, args: string[]): (BrowserMultiActorScenario & { url: string; captures?: string[]; stepTimeoutMs?: number }) | undefined {
+function browserMultiActorScenario(scenario: BrowserScenarioInput, args: string[], environment: BrowserEnvironment): (BrowserMultiActorScenario & { url: string; captures?: string[]; stepTimeoutMs?: number; environment: BrowserEnvironment; browserArgs: string[] }) | undefined {
   if (!scenario.actors) return undefined
   const url = scenario.url?.trim() || argValue(args, "url")?.trim()
   if (!url) throw new Error("Multi-actor wordpress.browser-scenario requires scenario-json.url or url=<path-or-url>")
@@ -988,7 +1104,9 @@ function browserMultiActorScenario(scenario: BrowserScenarioInput, args: string[
   }
   if (scenario.barriers && (!Array.isArray(scenario.barriers) || !scenario.barriers.every((barrier) => barrier && typeof barrier.name === "string" && Array.isArray(barrier.actors)))) throw new Error("Multi-actor browser scenario barriers must have a name and actor list")
   if (scenario.requestGates && (!Array.isArray(scenario.requestGates) || !scenario.requestGates.every((gate) => gate && typeof gate.name === "string" && typeof gate.actor === "string" && typeof gate.url === "string" && (gate.occurrence === undefined || (Number.isInteger(gate.occurrence) && gate.occurrence > 0))))) throw new Error("Multi-actor browser scenario request gates must have a name, actor, URL, and positive occurrence")
-  return { schema: scenario.schema, seed: scenario.seed, actors: scenario.actors, actions: scenario.actions, ...(scenario.barriers ? { barriers: scenario.barriers } : {}), ...(scenario.requestGates ? { requestGates: scenario.requestGates } : {}), ...(typeof scenario.timeout === "string" ? { timeoutMs: durationStringMs(scenario.timeout) } : {}), url, captures: browserScenarioCaptures(scenario, args), stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS }
+  if (scenario.prePageScript || argValue(args, "pre-page-script") || scenario.observers || scenario.auth || argValue(args, "auth") || argValue(args, "auth-user-id") || argValue(args, "storage-state")) throw new Error("Multi-actor wordpress.browser-scenario does not support pre-page scripts, observers, shared auth, or storage-state; each actor uses its declared user session.")
+  const browserArgs = args.filter((arg) => /^(route-host|allow-host|block-host|record-external|preview-mode|network-policy)=/.test(arg))
+  return { schema: scenario.schema, seed: scenario.seed, actors: scenario.actors, actions: scenario.actions, ...(scenario.barriers ? { barriers: scenario.barriers } : {}), ...(scenario.requestGates ? { requestGates: scenario.requestGates } : {}), ...(typeof scenario.timeout === "string" ? { timeoutMs: durationStringMs(scenario.timeout) } : {}), url, captures: browserScenarioCaptures(scenario, args), stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS, environment, browserArgs }
 }
 
 function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[]): string[] {
@@ -997,17 +1115,16 @@ function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[])
   return captures.length > 0 ? captures : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
 
-function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], url: string): BrowserRunPlan {
+async function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], url: string, artifactRoot: string, requestedEnvironment: BrowserEnvironment): Promise<BrowserRunPlan> {
   const captures = browserScenarioCaptures(scenario, args)
-  const steps = browserScenarioSteps(scenario, args)
+  const steps = await browserScenarioSteps(scenario, args)
   const assertions = browserScenarioAssertions(scenario)
   const actionSteps = [...steps, ...assertions]
-  const requestedViewport = browserScenarioViewport(scenario, args)
-  const device = scenario.device ?? (scenario.profile && scenario.profile !== "desktop-chrome" ? scenario.profile : undefined) ?? argValue(args, "device")
-  const locale = scenario.locale ?? argValue(args, "locale")
+  const requestedViewport = requestedEnvironment.viewport
   const prePageScript = scenario.prePageScript ?? browserScenarioObserverScript(scenario.observers) ?? argValue(args, "pre-page-script")
   const authRequest = browserScenarioAuthRequest(scenario.auth ?? argValue(args, "auth"), scenario.authUserId ?? argValue(args, "auth-user-id"))
   const shouldRunProbe = actionSteps.length === 0 || Boolean(prePageScript) || captures.some((capture) => capture === "performance" || capture === "memory")
+  const shouldRunActions = actionSteps.length > 0 || Object.keys(requestedEnvironment).length > 0
 
   const plan: BrowserRunPlan = {
     profile: scenario.profile ?? "desktop-chrome",
@@ -1020,11 +1137,15 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       capture: new Set(browserScenarioProbeCaptures(captures, actionSteps.length > 0)),
       waitFor: scenario.waitFor ?? argValue(args, "wait-for") ?? "domcontentloaded",
       durationMs: durationStringMs(scenario.duration ?? argValue(args, "duration")),
-      requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
+      requestedViewport,
       requestedContext: {
-        ...(device ? { device } : {}),
-        ...(locale ? { locale } : {}),
-        ...(requestedViewport ? { viewport: parseBrowserViewport(requestedViewport, "viewport") } : {}),
+        ...(requestedEnvironment.device ? { device: requestedEnvironment.device } : {}),
+        ...(requestedEnvironment.locale ? { locale: requestedEnvironment.locale } : {}),
+        ...(requestedEnvironment.timezone ? { timezone: requestedEnvironment.timezone } : {}),
+        ...(requestedEnvironment.geolocation ? { geolocation: requestedEnvironment.geolocation } : {}),
+        ...(requestedEnvironment.viewport ? { viewport: requestedEnvironment.viewport } : {}),
+        ...(requestedEnvironment.userAgent ? { userAgent: requestedEnvironment.userAgent } : {}),
+        ...(requestedEnvironment.permissions ? { permissions: requestedEnvironment.permissions } : {}),
       },
       prePageScript,
       authRequest,
@@ -1034,10 +1155,11 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       wallTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || browserCommandLivenessPolicy().wallTimeoutMs,
       lifecycleSelectors: [],
       assertions: [],
+      storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-scenario", artifactRoot),
     }
   }
 
-  if (actionSteps.length > 0) {
+  if (shouldRunActions) {
     const validation = validateBrowserInteractionScript(actionSteps)
     if (!validation.valid) {
       throw new Error(`wordpress.browser-scenario steps/assertions are invalid: ${validation.issues.map((issue) => `[${issue.index}] ${issue.message}`).join("; ")}`)
@@ -1049,13 +1171,35 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS,
       totalTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
       networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
-      requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
+      requestedViewport,
+      requestedEnvironment,
       authRequest,
+      storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-scenario", artifactRoot),
       maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     }
   }
 
   return plan
+}
+
+async function browserScenarioEnvironment(scenario: BrowserScenarioInput, args: string[]): Promise<BrowserEnvironment> {
+  const argumentEnvironment = await browserEnvironmentFromArgs(args)
+  let profileEnvironment: BrowserEnvironment = {}
+  if (scenario.profile) {
+    const profile = BROWSER_PROBE_PROFILES[scenario.profile as keyof typeof BROWSER_PROBE_PROFILES]
+    if (!profile) throw new Error(`wordpress.browser-scenario unknown profile: ${scenario.profile}. Supported profiles: ${Object.keys(BROWSER_PROBE_PROFILES).join(", ")}`)
+    const profileViewport = profile.args.find((arg) => arg.startsWith("viewport="))?.slice("viewport=".length)
+    const profileDevice = profile.args.find((arg) => arg.startsWith("device="))?.slice("device=".length)
+    profileEnvironment = browserEnvironment({ ...(profileViewport ? { viewport: parseBrowserViewport(profileViewport, "viewport") } : {}), ...(profileDevice ? { device: profileDevice } : {}) })
+  }
+  return browserEnvironment({
+    ...argumentEnvironment,
+    ...profileEnvironment,
+    ...(scenario.environment ?? {}),
+    ...(scenario.device ? { device: scenario.device } : {}),
+    ...(scenario.locale ? { locale: scenario.locale } : {}),
+    ...(scenario.viewport ? { viewport: parseBrowserViewport(scenario.viewport, "viewport") } : {}),
+  })
 }
 
 function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolean): string[] {
@@ -1070,8 +1214,8 @@ function browserScenarioActionCaptures(captures: string[]): string[] {
   return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
 
-function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Array<Record<string, unknown>> {
-  const raw = scenario.steps ?? parseInlineJsonArrayArg(args, "steps-json")
+async function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Promise<Array<Record<string, unknown>>> {
+  const raw = scenario.steps ?? await parseJsonArrayArg(args, "steps-json")
   return (raw ?? []).map((step) => normalizeBrowserScenarioStep(step))
 }
 
@@ -1109,21 +1253,15 @@ function normalizeBrowserScenarioAssertion(assertion: Record<string, unknown>): 
   return assertion
 }
 
-function parseInlineJsonArrayArg(args: string[], name: string): Array<Record<string, unknown>> | undefined {
+async function parseJsonArrayArg(args: string[], name: string): Promise<Array<Record<string, unknown>> | undefined> {
   const raw = argValue(args, name)
-  if (!raw || raw.startsWith("@")) {
-    return undefined
-  }
-  const parsed = JSON.parse(raw) as unknown
+  if (!raw) return undefined
+  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  const parsed = JSON.parse(text) as unknown
   if (!Array.isArray(parsed)) {
     throw new Error(`wordpress.browser-scenario ${name} must be a JSON array`)
   }
   return parsed as Array<Record<string, unknown>>
-}
-
-function browserScenarioViewport(scenario: BrowserScenarioInput, args: string[]): string | undefined {
-  if (scenario.viewport) return scenario.viewport
-  return argValue(args, "viewport")
 }
 
 function parseBrowserViewport(raw: string, name: string): { width: number; height: number } {
