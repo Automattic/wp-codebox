@@ -100,6 +100,13 @@ jobs:
           php-version: '8.2'
           tools: composer:v2
       - run: npm ci
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm run test:agent-task-contracts
       - run: npm run test:browser-canonical-preview-origin
