@@ -760,6 +760,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
   const services = recipe.inputs?.services ?? []
+  if (services.filter((service) => service.configuration?.provider === "native").length > 2) addIssue("native-runtime-service-budget-exceeded", "$.inputs.services", "Recipes may declare at most two native runtime services.")
   const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
@@ -803,6 +804,13 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
       }
       for (const field of ["image", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
         if (service.configuration[field] !== undefined) addIssue("unsupported-external-runtime-service-option", `${path}.configuration.${field}`, `External MySQL services do not support ${field}.`)
+      }
+    }
+    if (service.configuration?.provider === "native") {
+      if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The native provider supports only MySQL-compatible services.")
+      if (service.configuration.engine !== "mariadb") addIssue("unsupported-native-runtime-service-engine", `${path}.configuration.engine`, "The native provider requires engine=mariadb.")
+      for (const field of ["externalService", "hostEnv", "portEnv", "usernameEnv", "passwordEnv", "image", "rootAuthentication", "foreignKeyTargetPolicy", "responseStatus", "responseBody"] as const) {
+        if (service.configuration[field] !== undefined) addIssue("unsupported-native-runtime-service-option", `${path}.configuration.${field}`, `Native MariaDB services do not accept ${field}.`)
       }
     }
     const supportedOutputs: Record<string, RegExp> = {

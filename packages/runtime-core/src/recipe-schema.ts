@@ -180,6 +180,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             description: "Disposable host services provisioned before runtime creation. Outputs must be explicitly mapped into runtime environment variable names.",
             items: { $ref: "#/$defs/runtimeService" },
+            allOf: [{
+              contains: { type: "object", properties: { configuration: { type: "object", properties: { provider: { const: "native" } }, required: ["provider"] } }, required: ["configuration"] },
+              minContains: 0,
+              maxContains: 2,
+            }],
           },
           externalServices: {
             type: "array",
@@ -937,7 +942,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "object",
             additionalProperties: false,
             properties: {
-              provider: { enum: ["docker", "external"] },
+              provider: { enum: ["docker", "external", "native"] },
               externalService: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
               engine: { enum: ["mysql", "mariadb"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
@@ -953,6 +958,9 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             allOf: [{
               if: { properties: { provider: { const: "external" } }, required: ["provider"] },
               then: { required: ["externalService", "hostEnv", "usernameEnv", "passwordEnv"] },
+            }, {
+              if: { properties: { provider: { const: "native" } }, required: ["provider"] },
+              then: { required: ["engine"], properties: { engine: { const: "mariadb" } } },
             }],
           },
           outputs: {

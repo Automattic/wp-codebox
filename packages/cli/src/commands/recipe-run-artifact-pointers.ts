@@ -4,6 +4,7 @@ import type { ArtifactBundle, RecipeRunSummary, RuntimeInfo } from "@automattic/
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import type { RecipeArtifactPointerCommandStatus, RecipeArtifactPointerState, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipePhaseEvidence } from "./recipe-run-types.js"
+import type { RuntimeServiceEvidence } from "../runtime-services.js"
 
 export class RecipeArtifactPointerTracker {
   private command: string | undefined
@@ -15,6 +16,7 @@ export class RecipeArtifactPointerTracker {
   private browserEvidence: RecipeBrowserEvidence[] = []
   private diagnosticArtifacts: RecipeDiagnosticArtifactRef[] = []
   private result: RecipeRunSummary | undefined
+  private managedRuntimeServices: RuntimeServiceEvidence[] = []
 
   constructor(private readonly directory: string | undefined, private readonly runId: string, private readonly recipePath: string, private readonly startedAt: string) {}
 
@@ -32,6 +34,7 @@ export class RecipeArtifactPointerTracker {
     this.browserEvidence = state.browserEvidence ?? this.browserEvidence
     this.diagnosticArtifacts = state.diagnosticArtifacts ?? this.diagnosticArtifacts
     this.result = state.result ?? this.result
+    this.managedRuntimeServices = state.managedRuntimeServices ?? this.managedRuntimeServices
 
     const pointer = stripUndefined({
       schema: "wp-codebox/recipe-run-artifact-pointer/v1",
@@ -47,6 +50,7 @@ export class RecipeArtifactPointerTracker {
       failure: this.failure,
       failurePhase: recipeArtifactPointerFailurePhase(this.failure, this.phases),
       result: this.result,
+      managedRuntimeServices: this.managedRuntimeServices.length > 0 ? this.managedRuntimeServices : undefined,
       browserEvidence: this.browserEvidence.length > 0 ? this.browserEvidence : undefined,
       diagnosticArtifacts: this.diagnosticArtifacts.length > 0 ? this.diagnosticArtifacts : undefined,
       ...await recipeArtifactPointerArtifactState(this.directory, this.runtime, this.artifacts),

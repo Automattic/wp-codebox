@@ -67,6 +67,7 @@ interface RecipeRunCommonOutputFields {
   replayStatus?: RecipeRunOutput["replayStatus"]
   fuzzRun?: RecipeRunOutput["fuzzRun"]
   provenance?: RecipeRunOutput["provenance"]
+  managedRuntimeServices?: RecipeRunOutput["managedRuntimeServices"]
   artifacts?: ArtifactBundle
   interruption?: RecipeRunOutput["interruption"]
 }
@@ -194,7 +195,7 @@ export async function finalizeCompletedRecipeRun(args: FinalizeCompletedRecipeRu
   }) as RecipeRunOutput)
   runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
   output.run = runRecord
-  await args.artifactPointer.update({ commandStatus: args.success ? "completed" : "failed", runtime: args.runtime, artifacts: args.artifacts, failure: args.failure, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, result: output.result })
+  await args.artifactPointer.update({ commandStatus: args.success ? "completed" : "failed", runtime: args.runtime, artifacts: args.artifacts, failure: args.failure, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, managedRuntimeServices: args.output.managedRuntimeServices, result: output.result })
   return output
 }
 
@@ -220,19 +221,19 @@ export async function finalizeRecoveredRecipeFailure(args: FinalizeRecoveredReci
   }) as RecipeRunOutput)
   runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
   output.run = runRecord
-  await args.artifactPointer.update({ commandStatus: "failed", ...(args.runtime ? { runtime: args.runtime } : {}), ...(args.artifacts ? { artifacts: args.artifacts } : {}), failure: args.serializedError, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, diagnosticArtifacts: args.diagnosticArtifacts, result: output.result })
+  await args.artifactPointer.update({ commandStatus: "failed", ...(args.runtime ? { runtime: args.runtime } : {}), ...(args.artifacts ? { artifacts: args.artifacts } : {}), failure: args.serializedError, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, diagnosticArtifacts: args.diagnosticArtifacts, managedRuntimeServices: args.output.managedRuntimeServices, result: output.result })
   return output
 }
 
-export async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecord: RuntimeRunRecord, cleanup: () => Promise<void>): Promise<RunResourceCleanupEvidence> {
+export async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecord: RuntimeRunRecord, cleanup: () => Promise<void>, finalMetadata?: () => Record<string, unknown>): Promise<RunResourceCleanupEvidence> {
   const startedAtMs = Date.now()
   await runRegistry.update(runRecord.runId, { cleanup: { status: "running" } })
   try {
     await cleanup()
-    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "succeeded" } })
+    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "succeeded" }, ...(finalMetadata ? { metadata: finalMetadata() } : {}) })
     return cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs)
   } catch (error) {
-    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "failed", error: serializeError(error) } })
+    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "failed", error: serializeError(error) }, ...(finalMetadata ? { metadata: finalMetadata() } : {}) })
     const cleanupError = serializeRecipeRunError(error)
     throw new RunResourceCleanupError(
       cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs, cleanupError),
