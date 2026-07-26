@@ -2,6 +2,7 @@ import { D1OperationRepository, OperationConflict, type StaticArtifactOperation,
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
+import { CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -255,7 +256,7 @@ class AllocationError extends Error { constructor(readonly code: "quota_exceeded
 class AllocationStore {
   constructor(private readonly db: D1Database) {}
   async allocate(token: Token, input: CreateInput, domain: ReturnType<typeof previewDomain>, configured: SiteContext[]): Promise<ProvisioningAllocation> {
-    await this.schema(); const existing = await this.byRequest(token.principal, input.key)
+    await this.schema(); const lifecycle = new CloudflareAllocationLifecycle(this.db); await lifecycle.initialize(); const existing = await this.byRequest(token.principal, input.key)
     if (existing) { if (existing.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return existing }
     if (domain && token.sites) throw new AllocationError("quota_exceeded")
     const attempts = domain ? 8 : configured.length
@@ -264,17 +265,20 @@ class AllocationStore {
       const now = Date.now()
       try {
         const [allocation, reservation] = await this.db.batch([
-          this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites WHERE principal = ?) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
+          this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
           this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, now, now, now, site.id, token.principal, input.key, input.fingerprint),
         ])
-        if (allocation.meta.changes === 1 && reservation.meta.changes === 1) return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options }
+        if (allocation.meta.changes === 1 && reservation.meta.changes === 1) {
+          await lifecycle.create(site, token.principal, now)
+          return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options }
+        }
       } catch (error) {
         if (!(error instanceof Error) || !/unique|constraint/i.test(error.message)) throw error
       }
       const raced = await this.byRequest(token.principal, input.key)
       if (raced) { if (raced.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return raced }
     }
-    const count = await this.db.prepare("SELECT COUNT(*) AS count FROM wp_codebox_api_sites WHERE principal = ?").bind(token.principal).first<{ count: number }>()
+    const count = await this.db.prepare("SELECT COUNT(*) AS count FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')").bind(token.principal).first<{ count: number }>()
     throw new AllocationError((count?.count ?? 0) >= token.maxSites ? "quota_exceeded" : "capacity_exhausted")
   }
   async context(siteId: string): Promise<SiteContext | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(siteId).first<{ site_id: string; hostname: string; origin: string }>(); return row ? { id: row.site_id, hostname: row.hostname, origin: row.origin } : null }

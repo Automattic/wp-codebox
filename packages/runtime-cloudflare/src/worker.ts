@@ -15,6 +15,7 @@ import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
 import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
+import { CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
@@ -279,6 +280,12 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       }
     },
     async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+       if (env.WORDPRESS_STATE_DATABASE) {
+         const lifecycle = new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE)
+         await lifecycle.expire(controller.scheduledTime, 1)
+         const deleting = (await lifecycle.pendingDeletions(1))[0]
+         if (deleting) await lifecycle.reclaim(env.WORDPRESS_STATE_BUCKET, deleting.identity, deleting.operationFence, 100, controller.scheduledTime)
+       }
        const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
        const registered = env.WORDPRESS_STATE_DATABASE && resolveOperations?.(env) ? await resolveOperations(env)!.activeSites() : []
        const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))

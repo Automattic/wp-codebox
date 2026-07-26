@@ -110,7 +110,7 @@
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:browser-preview-routing": "tsx --test tests/browser-preview-routing.test.ts",
     "test:browser-routed-command-security": "tsx --test tests/browser-routed-command-security.test.ts",
-    "test:cloudflare-runtime": "node --test tests/cloudflare-d1-provisioner.test.mjs && tsx tests/cloudflare-site-context.test.ts && tsx tests/cloudflare-coordinator-site-partitioning.test.ts && tsx tests/cloudflare-d1-operation-repository.test.ts && tsx tests/cloudflare-provisioning-api.test.ts && tsx tests/cloudflare-runtime.test.ts && node ./node_modules/typescript/bin/tsc -p packages/runtime-cloudflare --noEmit",
+    "test:cloudflare-runtime": "node --test tests/cloudflare-d1-provisioner.test.mjs && tsx tests/cloudflare-site-context.test.ts && tsx tests/cloudflare-coordinator-site-partitioning.test.ts && tsx tests/cloudflare-d1-operation-repository.test.ts && tsx tests/cloudflare-allocation-lifecycle.test.ts && tsx tests/cloudflare-provisioning-api.test.ts && tsx tests/cloudflare-runtime.test.ts && node ./node_modules/typescript/bin/tsc -p packages/runtime-cloudflare --noEmit",
     "test:cloudflare-administrator-claim": "tsx tests/cloudflare-provisioning-api.test.ts",
     "test:cloudflare-wordpress-auth": "tsx tests/cloudflare-wordpress-auth.test.ts",
     "test:cloudflare-wordpress-archive-corpus": "tsx tests/cloudflare-wordpress-archive-corpus.test.ts",
