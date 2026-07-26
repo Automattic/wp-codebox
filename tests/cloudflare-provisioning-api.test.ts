@@ -145,3 +145,13 @@ test("consumed claims do not block allocation recovery after credential rotation
 test("administrator claim credential configuration failures do not consume a ready claim", async () => {
   const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); delete r.env.WORDPRESS_ADMIN_PASSWORD; const response = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations); assert.equal(response.status, 401); assert.equal((r.db.sqlite.prepare("SELECT state FROM wp_codebox_api_admin_claims").get() as { state: string }).state, "pending")
 })
+
+test("deletion prevents administrator credential consumption and reclaims its claim record", async () => {
+  const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }
+  const lifecycle = new CloudflareAllocationLifecycle(r.db, { ttlMs: 60_000, retainMs: 0 }); const identity = allocationIdentity(created.site.id); const fence = await lifecycle.beginDeletion(identity, "a")
+  const claim = new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } })
+  assert.equal((await routeProvisioningApi(claim, r.env, r.operations)).status, 401)
+  const bucket = new Bucket(); const final = await lifecycle.reclaim(bucket as unknown as Pick<R2Bucket, "list" | "delete">, identity, fence, 100)
+  assert.equal(final.state, "tombstoned"); assert.ok((final.receipt?.deletedRecords ?? 0) >= 2)
+  assert.equal(count(r.db, "wp_codebox_api_admin_claims"), 0)
+})

@@ -15,7 +15,7 @@ import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
 import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
-import { CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
+import { allocationIdentity, CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { validateUploadManifestFiles, validateUploadMetadata } from "./upload-persistence.js"
@@ -258,6 +258,13 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       if (staticResponse) return staticResponse
       const uploadResponse = await serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)
       if (uploadResponse) return uploadResponse
+      if (env.WORDPRESS_STATE_DATABASE && lifecycleProtectedRoute(route.kind)) {
+        try {
+          await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).assertActive(allocationIdentity(site.id))
+        } catch {
+          return new Response("The allocation is no longer active.", { status: 410 })
+        }
+      }
       if (route.kind === "operator-reset") return resetCanonicalWordPress(request, env, coordinator, site)
       if (route.kind === "operator-restore") return restoreCanonicalWordPress(request, env, coordinator, site)
       if (route.kind === "operator-adopt") return adoptCanonicalWordPress(request, env, coordinator, site, selection.selected)
@@ -280,15 +287,16 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       }
     },
     async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-       if (env.WORDPRESS_STATE_DATABASE) {
-         const lifecycle = new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE)
-         await lifecycle.expire(controller.scheduledTime, 1)
-          const deleting = (await lifecycle.pendingDeletions(1, controller.scheduledTime))[0]
-         if (deleting) await lifecycle.reclaim(env.WORDPRESS_STATE_BUCKET, deleting.identity, deleting.operationFence, 100, controller.scheduledTime)
-       }
-       const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
-       const registered = env.WORDPRESS_STATE_DATABASE && resolveOperations?.(env) ? await resolveOperations(env)!.activeSites() : []
-       const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))
+      if (env.WORDPRESS_STATE_DATABASE) {
+        const lifecycle = new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE)
+        await lifecycle.expire(controller.scheduledTime, 1)
+        const deleting = (await lifecycle.pendingDeletions(1, controller.scheduledTime))[0]
+        if (deleting) await lifecycle.reclaim(env.WORDPRESS_STATE_BUCKET, deleting.identity, deleting.operationFence, 100, controller.scheduledTime)
+      }
+      const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+      const registered = env.WORDPRESS_STATE_DATABASE && resolveOperations?.(env) ? await resolveOperations(env)!.activeSites() : []
+      const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))
+      if (!sites.length) return
       const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
       const coordinator = resolveCoordinator(env, site)
       const operations = resolveOperations?.(env)
@@ -942,6 +950,7 @@ async function reconcilePublicationReceipts(bucket: R2Bucket, site: SiteContext,
 }
 
 async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, renewLease: () => Promise<void>, operations?: D1OperationRepository): Promise<PublicationInvocationEvidence | null> {
+  await assertActiveAllocation(env, site)
   const listed = await env.WORDPRESS_STATE_BUCKET.list({ prefix: `${siteStorageKeys(site).publicationJobPrefix}/`, limit: 16 })
   if (!listed.objects.length) return null
   const state = await coordinator.state()
@@ -1024,6 +1033,7 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
     await renewLease()
     await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publishedRevisionObjectKey(publication.revision, site), serialized)
     await renewLease()
+    await assertActiveAllocation(env, site)
     if (!await promoteIncrementalPublication(env.WORDPRESS_STATE_BUCKET, current, { serialized, invalidatedRoutes: [...new Set([...plan.upsert, ...plan.remove])].sort() }, site)) {
       return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: job.key }
     }
@@ -1047,6 +1057,14 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
       if (!(error instanceof RevisionConflict)) throw error
     }
   }
+}
+
+function lifecycleProtectedRoute(kind: string): boolean {
+  return ["wordpress", "r2-mutate", "operator-reset", "operator-restore", "operator-adopt", "operator-fence", "operator-static-artifact-import", "operator-publish"].includes(kind)
+}
+
+async function assertActiveAllocation(env: RuntimeEnv, site: SiteContext): Promise<void> {
+  if (env.WORDPRESS_STATE_DATABASE) await new CloudflareAllocationLifecycle(env.WORDPRESS_STATE_DATABASE).assertActive(allocationIdentity(site.id))
 }
 
 async function compilePublicationRoutes(runtime: Runtime, routes: string[], origin: string): Promise<CompiledPublicationRoute[]> {

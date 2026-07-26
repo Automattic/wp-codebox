@@ -146,6 +146,7 @@ async function importSite(request: Request, env: ProvisioningEnv, operations: D1
   const key = idempotencyKey(request); if (key instanceof Response) return key
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE); const allocation = await store.bySite(siteId); const site = await store.context(siteId)
   if (!allocation || !site || allocation.principal !== token.principal || !allowed(token, siteId)) return notFound()
+  if (!await allocationActive(env.WORDPRESS_STATE_DATABASE, siteId)) return apiError(409, "allocation_inactive", "The allocation is no longer active.")
   const provision = allocation.operationId ? await operations.get(siteId, allocation.operationId) : null
   if (provision?.state !== "succeeded") return apiError(409, "site_not_ready", "The site is not ready for imports.")
   try {
@@ -170,6 +171,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   const allocation = await store.bySite(site.id)
   if (!allocation) return null
+  if (!await allocationActive(env.WORDPRESS_STATE_DATABASE, site.id)) throw new OperationConflict("The allocation is no longer active.")
   if (!claimConfiguration(env)) throw new AdministratorClaimError()
   const administratorClaim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
   if (allocation.operationId) {
@@ -336,6 +338,7 @@ class AdministratorClaimStore {
   constructor(private readonly db: D1Database) {}
   async issue(allocation: ProvisioningAllocation, env: ProvisioningEnv): Promise<AdministratorClaimIssued | AdministratorClaimMetadata> {
     await this.schema()
+    if (!await allocationActive(this.db, allocation.siteId)) throw new AdministratorClaimError()
     const token = await claimCapability(env.WORDPRESS_ADMIN_CLAIM_SECRET!, allocation)
     const digest = await shaText(token)
     const credential = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, allocation.siteId, "admin-password")
@@ -354,8 +357,13 @@ class AdministratorClaimStore {
   async metadata(siteId: string): Promise<AdministratorClaimMetadata | null> { const claim = await this.bySite(siteId); if (claim?.state === "pending" && claim.expiresAt <= Date.now()) { await this.expire(siteId); return { state: "expired", expiresAt: claim.expiresAt } } return claim && { state: claim.state, expiresAt: claim.expiresAt } }
   async bySite(siteId: string): Promise<AdministratorClaimRecord | null> { await this.schema(); const row = await this.db.prepare("SELECT capability_digest, credential_digest, expires_at, state FROM wp_codebox_api_admin_claims WHERE site_id = ?").bind(siteId).first<{ capability_digest: string; credential_digest: string; expires_at: number; state: AdministratorClaimMetadata["state"] }>(); return row ? { capabilityDigest: row.capability_digest, credentialDigest: row.credential_digest, expiresAt: row.expires_at, state: row.state } : null }
   async expire(siteId: string): Promise<void> { await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'expired', updated_at = ? WHERE site_id = ? AND state = 'pending' AND expires_at <= ?").bind(Date.now(), siteId, Date.now()).run() }
-  async consume(siteId: string, digest: string): Promise<boolean> { const result = await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'consumed', updated_at = ? WHERE site_id = ? AND state = 'pending' AND capability_digest = ? AND expires_at > ?").bind(Date.now(), siteId, digest, Date.now()).run(); return result.meta.changes === 1 }
+  async consume(siteId: string, digest: string): Promise<boolean> { const now = Date.now(); const result = await this.db.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'consumed', updated_at = ? WHERE site_id = ? AND state = 'pending' AND capability_digest = ? AND expires_at > ? AND EXISTS (SELECT 1 FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.site_id = wp_codebox_api_admin_claims.site_id AND (l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ?)))").bind(now, siteId, digest, now, now).run(); return result.meta.changes === 1 }
   private async schema(): Promise<void> { await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_admin_claims (site_id TEXT PRIMARY KEY, capability_digest TEXT NOT NULL, credential_digest TEXT NOT NULL, expires_at INTEGER NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','consumed','expired')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run() }
+}
+async function allocationActive(db: D1Database, siteId: string): Promise<boolean> {
+  const lifecycle = new CloudflareAllocationLifecycle(db)
+  const current = await lifecycle.get(allocationIdentity(siteId))
+  return !current || (current.state === "active" && current.expiresAt > Date.now())
 }
 async function claimCapability(root: string, allocation: ProvisioningAllocation): Promise<string> {
   const encoder = new TextEncoder()
