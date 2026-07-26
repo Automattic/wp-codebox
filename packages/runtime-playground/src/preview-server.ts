@@ -17,6 +17,7 @@ export interface PlaygroundCliServer {
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
+  wordpressUrl?: string
   requestWorkerEndpoint?: { route: string; token: string; payloadDirectory: string }
   previewLease?: PreviewLease
   previewRoutes?: PlaygroundPreviewRouteRegistry
@@ -69,6 +70,7 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   return {
     ...server,
     serverUrl: proxy.serverUrl,
+    wordpressUrl: server.wordpressUrl ?? server.serverUrl,
     previewRoutes: proxy.previewRoutes,
     previewProxyDiagnostics: proxy.diagnostics,
     async [Symbol.asyncDispose]() {

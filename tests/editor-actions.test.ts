@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
@@ -281,6 +281,9 @@ assert.equal(nestedValidity.warnings[0]?.clientId, "nested-invalid")
 const frontPageTarget = editorOpenTargetFromArgs(["target=front-page"])
 assert.equal(frontPageTarget.kind, "front-page")
 assert.equal(frontPageTarget.url, "")
+const editorRuntimeSpec = { wp: "latest", environment: {} } as never
+assert.equal(editorCommandWordPressUrl({ serverUrl: "http://preview.test", wordpressUrl: "http://wordpress.test" } as never), "http://wordpress.test")
+assert.equal(editorCommandWordPressUrl({ serverUrl: "http://wordpress.test" } as never), "http://wordpress.test")
 
 // resolveEditorOpenTarget asks the running WordPress for page_on_front and rewrites
 // the target to open that exact post in the editor.
@@ -291,7 +294,7 @@ const resolved = await resolveEditorOpenTarget(frontPageTarget, {
     resolveCalls.push(command)
     return { ok: true, text: "57\n" } as never
   },
-  runtimeSpec: { wp: "latest" } as never,
+  runtimeSpec: editorRuntimeSpec,
   server: { serverUrl: "http://localhost" } as never,
 })
 assert.equal(resolved.kind, "post")
@@ -314,7 +317,7 @@ const resolvedPostSlug = await resolveEditorOpenTarget(postSlugTarget, {
     postSlugCalls.push(command)
     return { ok: true, text: "91\n" } as never
   },
-  runtimeSpec: { wp: "latest" } as never,
+  runtimeSpec: editorRuntimeSpec,
   server: { serverUrl: "http://localhost" } as never,
 })
 assert.equal(resolvedPostSlug.kind, "post")
@@ -326,7 +329,7 @@ await assert.rejects(
   resolveEditorOpenTarget(postSlugTarget, {
     command: "wordpress.editor-open",
     runPlaygroundCommand: async () => ({ ok: true, text: "0" } as never),
-    runtimeSpec: { wp: "latest" } as never,
+    runtimeSpec: editorRuntimeSpec,
     server: { serverUrl: "http://localhost" } as never,
   }),
   /resolved no editable post/,
@@ -338,7 +341,7 @@ await assert.rejects(
   resolveEditorOpenTarget(frontPageTarget, {
     command: "wordpress.editor-validate-blocks",
     runPlaygroundCommand: async () => ({ ok: true, text: "0" } as never),
-    runtimeSpec: { wp: "latest" } as never,
+    runtimeSpec: editorRuntimeSpec,
     server: { serverUrl: "http://localhost" } as never,
   }),
   /no static front page/,
@@ -351,7 +354,7 @@ const passthrough = await resolveEditorOpenTarget(postTarget, {
   runPlaygroundCommand: async () => {
     throw new Error("resolveEditorOpenTarget should not run PHP for a concrete target")
   },
-  runtimeSpec: { wp: "latest" } as never,
+  runtimeSpec: editorRuntimeSpec,
   server: { serverUrl: "http://localhost" } as never,
 })
 assert.equal(passthrough.url, "/wp-admin/post.php?post=12&action=edit")
