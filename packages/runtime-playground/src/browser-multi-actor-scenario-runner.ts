@@ -6,7 +6,8 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeReplayability } from "./browser-probe.js"
-import { browserPreviewReadinessError, browserPreviewTopology, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserCommandResult } from "./browser-result-sanitization.js"
 import { installWordPressAdminAuthCookies } from "./browser-probe-support.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -33,6 +34,7 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   const browserArgs = routeHost && !scenario.browserArgs.some((arg) => arg.startsWith("route-host=")) ? [...scenario.browserArgs, `route-host=${routeHost}`] : scenario.browserArgs
   const topology = browserPreviewTopology(browserArgs, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const browser = await launchChromiumBrowser()
+  const routeTracker = createBrowserPreviewRouteTracker()
   const evidence: Record<string, ActorEvidence> = {}
   let result: BrowserMultiActorScenarioResult | undefined
   let failure: Error | undefined
@@ -56,7 +58,7 @@ export async function runBrowserMultiActorScenarioCommand(input: {
       const userId = await actorUserId(actor.name, session.user.userId, session.user, runtimeSpec, runPlaygroundCommand, server)
       const environmentRuntime = await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, { contextOptions: topology.contextOptions() })
       const context = environmentRuntime.context
-      await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.origins.localProxyOrigin, routeTracker)
       const page = environmentRuntime.page
       await context.tracing.start({ screenshots: true, snapshots: true })
       await installWordPressAdminAuthCookies({ command: "wordpress.browser-scenario", cookieUrls: topology.authCookieUrls([topology.resolveUrl(scenario.url)]), page, runPlaygroundCommand, runtimeSpec, server, userId })
@@ -73,7 +75,8 @@ export async function runBrowserMultiActorScenarioCommand(input: {
     failure = error instanceof Error ? error : new Error(String(error))
     if (error instanceof BrowserMultiActorScenarioError) result = error.result
   } finally {
-    await browser.close()
+    const routeErrors = await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)
+    failure ??= routeErrors[0]
   }
 
   const replay = result?.replay ?? { schema: "wp-codebox/browser-multi-actor-replay/v1", seed: scenario.seed, scenario, schedule: [] }
@@ -91,7 +94,7 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   const traces = Object.values(evidence).map((actor) => actor.files.trace).filter((path): path is string => Boolean(path))
   const artifact = { artifactType: "scenario" as const, requestedUrl: target, url: target, preview: topology.preview, ...topology.origins, files: { summary: "files/browser/multi-actor-scenario-summary.json", steps: "files/browser/multi-actor-events.json", network: "files/browser/multi-actor-network.json", requestCoverage: "files/browser/multi-actor-request-coverage.json", waterfall: "files/browser/multi-actor-waterfall.json", ...(traces.length > 0 ? { traces } : {}) }, summary: { actions: scenario.actions.length, steps: scenario.actions.length, consoleMessages: Object.values(evidence).reduce((total, actor) => total + actor.console.length, 0), errors: Object.values(evidence).reduce((total, actor) => total + actor.errors.length, 0), finalUrl: target, htmlSnapshot: false, networkEvents: network.length, replayability: browserProbeReplayability(captures), screenshot: captures.has("screenshot"), viewport: null, environment: Object.values(evidence)[0]?.environment, multiActor: { seed: scenario.seed, finalState: result?.finalState ?? "failed", actors: Object.keys(evidence), replay: "files/browser/multi-actor-replay.json" } } } satisfies BrowserArtifact
   if (failure) throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${failure.message}`, artifact)
-  return { artifact, output: `${JSON.stringify({ command: "wordpress.browser-scenario", files: artifact.files, summary: artifact.summary, scenario: summary }, null, 2)}\n` }
+  return browserCommandResult(artifact, { command: "wordpress.browser-scenario", files: artifact.files, summary: artifact.summary, scenario: summary })
 }
 
 export async function navigateBrowserMultiActorPages(

@@ -10,7 +10,7 @@ import { runBrowserActionsCommand, runBrowserScenarioCommand } from "../packages
 import { runBrowserProbeCommand } from "../packages/runtime-playground/src/browser-probe-runner.js"
 import type { BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
-import type { PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
+import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const runtimeSpec: RuntimeCreateSpec = {
   backend: "wordpress-playground",
@@ -92,6 +92,56 @@ test("authored scenarios preserve init-script and page state from probe collecti
   } finally {
     await fixture.close()
     await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
+
+test("shared probe and actions sessions preserve canonical proxy transport and topology evidence", async () => {
+  const canonicalHost = "shared-scenario.invalid"
+  const upstreamRequests: Array<{ host?: string; url?: string }> = []
+  const upstream = createServer((request, response) => {
+    upstreamRequests.push({ host: request.headers.host, url: request.url })
+    response.setHeader("content-type", "text/html")
+    response.end("<!doctype html><title>Shared canonical scenario</title><button>Continue</button>")
+  })
+  const upstreamUrl = await listenLocalHttpServer(upstream)
+  const proxy = await withPreviewProxy({
+    playground: { async run() { return { text: "", exitCode: 0 } } },
+    serverUrl: upstreamUrl,
+    async [Symbol.asyncDispose]() {},
+  } satisfies PlaygroundCliServer, 0)
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-canonical-"))
+  const canonicalUrl = `http://${canonicalHost}/preview/`
+  try {
+    const result = await runBrowserScenarioCommand({
+      artifactRoot,
+      runtimeSpec: { ...runtimeSpec, preview: { siteUrl: canonicalUrl } },
+      server: proxy,
+      spec: {
+        command: "wordpress.browser-scenario",
+        args: [
+          `scenario-json=${JSON.stringify({
+            url: canonicalUrl,
+            captures: ["performance", "steps", "network"],
+            prePageScript: "sessionStorage.setItem('shared-scenario-state', 'probe-preserved')",
+            steps: [{ kind: "evaluate", expression: "({ origin: location.origin, state: sessionStorage.getItem('shared-scenario-state') })", assert: { origin: `http://${canonicalHost}`, state: "probe-preserved" } }],
+          })}`,
+          `route-host=${canonicalHost}`,
+        ],
+      },
+    })
+
+    assert.equal(new URL(result.artifact.canonicalBrowserOrigin!).origin, `http://${canonicalHost}`)
+    assert.equal(new URL(result.artifact.localProxyOrigin!).origin, new URL(proxy.serverUrl).origin)
+    assert.equal(new URL(result.artifact.upstreamRuntimeOrigin!).origin, new URL(upstreamUrl).origin)
+    assert.equal(new URL(result.artifact.summary.finalUrl).hostname, canonicalHost)
+    assert(upstreamRequests.some((request) => request.host === canonicalHost && request.url === "/preview/"), JSON.stringify(upstreamRequests))
+    const output = JSON.parse(result.output)
+    assert.equal(output.scenario.summary.probe.finalUrl, canonicalUrl)
+    assert.equal(output.scenario.summary.actions.finalUrl, canonicalUrl)
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true })
+    await proxy[Symbol.asyncDispose]()
+    await closeHttpServer(upstream)
   }
 })
 

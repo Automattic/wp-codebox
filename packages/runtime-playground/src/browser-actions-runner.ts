@@ -12,7 +12,8 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { executeBrowserObservationAssertion } from "./browser-observation-assertions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserCommandResult } from "./browser-result-sanitization.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
 import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserProbeWebSocketSummary, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
@@ -133,6 +134,7 @@ export async function runBrowserActionsCommand({
   const browser = session?.browser ?? await launchChromiumBrowser()
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
+  const routeTracker = session?.routeTracker ?? createBrowserPreviewRouteTracker()
   let requestedUrl = initialUrl ? topology.resolveUrl(initialUrl) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
@@ -173,7 +175,7 @@ export async function runBrowserActionsCommand({
     }) : undefined)
     const context = environmentRuntime?.context ?? null
     if (context && !session) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
     if (onProgress) {
@@ -437,11 +439,12 @@ export async function runBrowserActionsCommand({
     pendingError = error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
-    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
+    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs).catch((error) => errors.push(serializeBrowserError("probe-error", error)))
     if (activePage && resolvedEnvironment) environmentEvidence = await observePlaywrightBrowserEnvironment(activePage, requestedEnvironment, resolvedEnvironment).catch(() => environmentEvidence)
-    if (!session) {
-      await environmentRuntime?.close().catch(() => undefined)
-      await browser.close()
+    const cleanupBrowser = session ? { close: async () => {} } : { close: async () => { await environmentRuntime?.close(); await browser.close() } }
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, routeTracker)) {
+      errors.push(serializeBrowserError("probe-error", routeError))
+      pendingError ??= routeError
     }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "steps.jsonl", stepRecords)
@@ -580,9 +583,7 @@ export async function runBrowserActionsCommand({
     throw new Error("wordpress.browser-actions did not produce a browser artifact")
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify({
+  return browserCommandResult(artifact, {
       command: "wordpress.browser-actions",
       requestedUrl,
       preview,
@@ -591,8 +592,7 @@ export async function runBrowserActionsCommand({
       files: artifact.files,
       summary: artifact.summary,
       steps: stepRecords,
-    }, null, 2)}\n`,
-  }
+  })
 }
 
 export function browserToolVerifierUnsupportedResult(step: BrowserInteractionStep, index: number, startedAt: string): BrowserToolVerifierResult {
@@ -967,6 +967,7 @@ export async function runBrowserScenarioCommand({
   let pendingError: Error | undefined
   let scenarioSession: PlaywrightBrowserEnvironmentSession | undefined
   let scenarioBrowser: Awaited<ReturnType<typeof launchChromiumBrowser>> | undefined
+  let scenarioRouteTracker: ReturnType<typeof createBrowserPreviewRouteTracker> | undefined
 
   try {
     if (runPlan.probe && runPlan.actions) {
@@ -976,12 +977,16 @@ export async function runBrowserScenarioCommand({
       if (unsupported.length > 0) {
         throw new Error(`wordpress.browser-scenario browser environment is unsupported: ${unsupported.join(", ")}`)
       }
+      const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
       const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, {
-        ...(runPlan.actions.storageStateImport ? { contextOptions: { storageState: runPlan.actions.storageStateImport.storageState } } : {}),
+        contextOptions: {
+          ...topology.contextOptions(),
+          ...(runPlan.actions.storageStateImport ? { storageState: runPlan.actions.storageStateImport.storageState } : {}),
+        },
       })
-      const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
-      if (browserPreviewNeedsContextRouting(topology.networkPolicy)) await routeBrowserPreviewContextNetwork(runtime.context, topology.networkPolicy, topology.preview.effectiveOrigin)
-      scenarioSession = { browser, requested: requestedEnvironment, resolved, runtime }
+      const routeTracker = scenarioRouteTracker = createBrowserPreviewRouteTracker()
+      if (browserPreviewNeedsContextRouting(topology.networkPolicy)) await routeBrowserPreviewContextNetwork(runtime.context, topology.networkPolicy, topology.origins.localProxyOrigin, routeTracker)
+      scenarioSession = { browser, requested: requestedEnvironment, resolved, routeTracker, runtime }
     }
 
     if (runPlan.probe) {
@@ -1006,8 +1011,15 @@ export async function runBrowserScenarioCommand({
       }
     }
   } finally {
-    await scenarioSession?.runtime.close().catch(() => undefined)
-    await scenarioBrowser?.close().catch(() => undefined)
+    if (scenarioSession && scenarioBrowser && scenarioRouteTracker) {
+      const activeSession = scenarioSession
+      const activeBrowser = scenarioBrowser
+      const cleanupBrowser = { close: async () => { await activeSession.runtime.close(); await activeBrowser.close() } }
+      const routeErrors = await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, scenarioRouteTracker)
+      pendingError ??= routeErrors[0]
+    } else {
+      await scenarioBrowser?.close().catch(() => undefined)
+    }
   }
 
   const primaryArtifact = actionsResult?.artifact ?? probeResult?.artifact
@@ -1067,17 +1079,14 @@ export async function runBrowserScenarioCommand({
     throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${pendingError.message}`, artifact)
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify({
+  return browserCommandResult(artifact, {
       command: "wordpress.browser-scenario",
       requestedUrl: artifact.requestedUrl,
       finalUrl,
       files: artifact.files,
       summary: artifact.summary,
       scenario: scenarioSummary,
-    }, null, 2)}\n`,
-  }
+  })
 }
 
 async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioInput> {

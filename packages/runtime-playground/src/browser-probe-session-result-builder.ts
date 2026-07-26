@@ -3,6 +3,7 @@ import type { BrowserPreviewTopology } from "./browser-preview-routing.js"
 import { addBrowserProbeNetworkCount, browserProbeArtifactRefs, browserProbeWebSocketSummary, createBrowserProbeProgressTracker, now, requestHost, safeBrowserProbeUrl, sortBrowserProbeNetworkCounts } from "./browser-probe-support.js"
 import { browserProbeBenchMetrics } from "./browser-metrics.js"
 import { browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeReplayability } from "./browser-probe.js"
+import { sanitizeBrowserResultValue } from "./browser-result-sanitization.js"
 import type { BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserProbeWebSocketReviewSummary, BrowserRedirectDiagnosticsSummary, BrowserStepAssertion, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 
 export interface BrowserProbeCaptureSelection {
@@ -86,7 +87,8 @@ export interface BrowserProbeSessionResult {
 }
 
 export class BrowserProbeSessionResultBuilder {
-  compose(input: BrowserProbeSessionResultInput): BrowserProbeSessionResult {
+  compose(rawInput: BrowserProbeSessionResultInput): BrowserProbeSessionResult {
+    const input = sanitizeBrowserResultValue(rawInput)
     const assertionSummary = browserProbeAssertionSummary(input.assertions)
     const finishedAt = now()
     const files = browserProbeArtifactFileMap(input)

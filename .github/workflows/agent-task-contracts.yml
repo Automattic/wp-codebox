@@ -14,6 +14,9 @@ on:
       - "fixtures/agent-task-runtime-paths-run-29305012941.json"
       - "package-lock.json"
       - "package.json"
+      - "packages/runtime-playground/src/**"
+      - "tests/browser-*.test.ts"
+      - "tests/editor-*.test.ts"
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
       - "tests/runtime-sources-playground-integration.test.ts"
@@ -58,6 +61,9 @@ on:
       - "fixtures/agent-task-runtime-paths-run-29305012941.json"
       - "package-lock.json"
       - "package.json"
+      - "packages/runtime-playground/src/**"
+      - "tests/browser-*.test.ts"
+      - "tests/editor-*.test.ts"
       - "tests/agent-task-*.test.ts"
       - "tests/runtime-sources-materialization.test.ts"
       - "tests/runtime-sources-playground-integration.test.ts"
@@ -129,6 +135,8 @@ jobs:
       - run: npm run test:trusted-apply-artifact-channel
       - run: npm run test:runtime-command-artifact-bounds
       - run: npm run test:redaction
+      - run: npm run test:browser-preview-routing
+      - run: npm run test:browser-routed-command-security
       - run: npm run test:production-boundary-enforcement
       - run: npm run test:runtime-tool-policy
 

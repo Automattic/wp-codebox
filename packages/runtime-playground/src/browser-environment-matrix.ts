@@ -13,6 +13,7 @@ import {
 } from "@automattic/wp-codebox-core"
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright"
 import type { BrowserArtifactSummary } from "./browser-artifacts.js"
+import type { BrowserPreviewRouteTracker } from "./browser-preview-routing.js"
 
 export const PLAYWRIGHT_BROWSER_ENVIRONMENT_CAPABILITIES = [
   "browser.environment.viewport",
@@ -75,6 +76,7 @@ export interface PlaywrightBrowserEnvironmentSession {
   browser: Browser
   requested: BrowserEnvironment
   resolved: ResolvedBrowserEnvironment
+  routeTracker?: BrowserPreviewRouteTracker
   runtime: PlaywrightBrowserEnvironmentRuntime
 }
 
