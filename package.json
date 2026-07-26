@@ -188,6 +188,7 @@
     "test:browser-scenarios": "tsx tests/browser-multi-actor-scenario.test.ts",
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:command-router": "tsx tests/command-router.test.ts",
+    "test:temp-runtime-cleanup": "tsx tests/temp-runtime-cleanup.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
     "smoke:cli-version": "tsx scripts/cli-version-smoke.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",

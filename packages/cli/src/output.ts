@@ -303,8 +303,8 @@ export function printHelp(): void {
   wp-codebox commands [--json]
   wp-codebox runtime descriptor [--json]
   wp-codebox schema recipe [--json]
-  wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--stale-after-seconds <n>]
-  wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
+  wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--run-registry <dir>] [--stale-after-seconds <n>]
+  wp-codebox cleanup [--json] [--archive-root <dir>] [--run-registry <dir>] [--stale-after-seconds <n>]
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe build phpunit|bench|template|generic-ability-runtime-run|runtime-package-run --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--policy <json|file>] [--json]
@@ -437,12 +437,14 @@ Options:
   --json               Emit machine-readable JSON.
 
 Doctor and cleanup:
-  doctor               Report binary/source fingerprint, Node/npm availability, stale recipe-run processes, and corrupt archives.
-  cleanup              Run doctor checks and remove safe stale/corrupt runtime state.
+  doctor               Report binary/source fingerprint, stale processes, owned temp runtimes, and corrupt archives.
+  cleanup              Remove only age-gated, inactive owned temp runtimes and safe corrupt runtime state.
   --fix                Allow mutating cleanup when command is doctor.
   --stale-after-seconds <n>
-                       Age threshold for stale recipe-run processes. Defaults to 3600.
+                       Age threshold for stale recipe-run processes and orphaned temp runtimes. Defaults to 3600.
   --archive-root <dir> Additional archive/cache root to scan for invalid .zip files. Repeatable.
+  --run-registry <dir> Run registry checked for active preview leases and recent run heartbeats. Repeatable.
+                       Defaults to ./artifacts/runs; additional defaults may be set with WP_CODEBOX_RUN_REGISTRY_ROOTS.
 
 Workspace policy:
   --workspace-root <dir>
