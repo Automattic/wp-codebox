@@ -414,6 +414,10 @@ function stringFileRef(value: unknown): string | undefined {
   return undefined
 }
 
+export function visualCompareWordPressUrl(server: PlaygroundCliServer): string {
+  return server.wordpressUrl ?? server.serverUrl
+}
+
 export async function runVisualCompareCommand({
   artifactRoot,
   runtimeSpec,
@@ -496,7 +500,7 @@ async function runVisualComparePairCommand({
   const candidatePath = artifactSession.absolutePath("candidate.png")
   const diffPath = artifactSession.absolutePath("diff.png")
   const startedAt = now()
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const preview = browserPreviewRouting(args, runtimeSpec, visualCompareWordPressUrl(server))
   const sourceTargetUrl = sourceUrl ? resolveBrowserPreviewUrl(sourceUrl, preview.effectiveOrigin) : undefined
   const candidateTargetUrl = candidateUrl ? resolveBrowserPreviewUrl(candidateUrl, preview.effectiveOrigin) : undefined
   let finalSourceUrl = sourceTargetUrl
@@ -844,7 +848,7 @@ function visualCompareMatrixArtifact(
     artifactType: "visual-compare",
     requestedUrl: expectedEntries.map((entry) => entry.name).join(","),
     url: firstArtifact?.url ?? "visual-compare-matrix",
-    preview: firstArtifact?.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
+    preview: firstArtifact?.preview ?? browserPreviewRouting(args, runtimeSpec, visualCompareWordPressUrl(server)),
     files: {
       summary: matrixSummary.files.summary,
       ...(matrixSummary.files.blocksEngineVisualParity ? { blocksEngineVisualParity: matrixSummary.files.blocksEngineVisualParity } : {}),
@@ -1170,7 +1174,7 @@ async function writeVisualCompareMatrixSummary(
       blocksEngineVisualParity: "files/browser/visual-compare/blocks-engine-visual-parity-report.json",
     },
     ...(!matrixComplete ? {
-      preview: entries[0]?.artifact.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
+      preview: entries[0]?.artifact.preview ?? browserPreviewRouting(args, runtimeSpec, visualCompareWordPressUrl(server)),
       limitations: ["visual compare matrix was interrupted or an expected input was missing before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports and structured diagnostics for incomplete entries"],
     } : {}),
   }
