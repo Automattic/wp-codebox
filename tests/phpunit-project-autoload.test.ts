@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.js"
-import { corePhpunitRunCode, phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
+import { corePhpunitRunCode, phpunitMultisitePreinstallCode, phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
@@ -13,6 +13,7 @@ import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
 const phpunitRuntimeSpec = {
+  environment: { kind: "wordpress", name: "test", version: "latest" },
   runtimeEnv: { TC_MYSQL_PORT: "3306" },
 } as never
 
@@ -666,6 +667,73 @@ const decodedMysqlCode = decodedBootstrapWrapper(capturedMysqlCode)
 assert.ok(decodedMysqlCode.includes('$database_type = "mysql";'))
 assert.ok(decodedMysqlCode.includes("'DB_HOST' => $db_host"), "managed PHPUnit writes the provisioned MySQL host into wp-tests-config.php")
 assert.ok(decodedMysqlCode.includes("getenv('DB_PASSWORD')"), "managed PHPUnit consumes the provisioned MySQL credentials")
+
+const preinstallCode = phpunitMultisitePreinstallCode({
+  testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+  env: {},
+  wpConfigDefines: { MULTISITE: true, DOMAIN_CURRENT_SITE: "example.org" },
+  databaseType: "mysql",
+  resultFile: "/tmp/preinstall-result.txt",
+})
+assert.ok(preinstallCode.includes("'run_ms_tests'"), "multisite preinstall selects wp-phpunit's network installer")
+assert.ok(preinstallCode.includes("define('WP_TESTS_MULTISITE', true)"), "multisite preinstall enables wp-phpunit network installation")
+assert.ok(preinstallCode.includes("require $tests_dir . '/includes/install.php'"), "multisite preinstall uses wp-phpunit's installer")
+assert.ok(preinstallCode.includes("pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type)"), "multisite preinstall uses the managed runner's database config and prefix")
+assert.equal(preinstallCode.includes("define('MULTISITE'"), false, "multisite preinstall must not bootstrap WordPress as an installed network")
+assert.equal(preinstallCode.includes("DOMAIN_CURRENT_SITE"), false, "multisite preinstall must not define current-network constants")
+assert.ok(preinstallCode.includes("@file_put_contents($result_file, '');"), "multisite preinstall clears stale diagnostics")
+assert.ok(preinstallCode.includes("STAGE_FAIL:preinstall:"), "multisite preinstall records throwable diagnostics")
+assert.ok(preinstallCode.includes("STAGE_FATAL:preinstall:"), "multisite preinstall records fatal diagnostics")
+
+const mysqlMultisiteInvocations: string[] = []
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-multisite-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    mysqlMultisiteInvocations.push(decodedBootstrapWrapper(input.code))
+    return { text: "ok", exitCode: 0 }
+  },
+  runtimeSpec: {
+    environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+    runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
+    policy: { commands: ["wordpress.phpunit"] },
+  } as never,
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql", "multisite=1"] },
+})
+assert.equal(mysqlMultisiteInvocations.length, 2, "managed MySQL multisite runs a separate preinstall before PHPUnit")
+assert.ok(mysqlMultisiteInvocations[0].includes("'run_ms_tests'"))
+assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
+
+const failedPreinstallInvocations: string[] = []
+await assert.rejects(
+  runPhpunitCommand({
+    artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-multisite-failure-")),
+    mounts: [],
+    runPlaygroundCommand: async (_command, _server, input) => {
+      failedPreinstallInvocations.push(decodedBootstrapWrapper(input.code))
+      return { text: "preinstall failed", exitCode: 1 }
+    },
+    runtimeSpec: {
+      environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+      runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
+      policy: { commands: ["wordpress.phpunit"] },
+    } as never,
+    server: {
+      playground: {
+        readFileAsText: async () => "STAGE_FAIL:preinstall:RuntimeException: network install failed",
+      },
+    } as never,
+    spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql", "multisite=1"] },
+  }),
+  (error: Error) => {
+    assert.match(error.message, /wordpress\.phpunit multisite preinstall failed with exit code 1/)
+    assert.match(error.message, /wordpress\.phpunit structured diagnostics/)
+    assert.match(error.message, /network install failed/)
+    return true
+  },
+)
+assert.equal(failedPreinstallInvocations.length, 1, "failed multisite preinstall prevents the main PHPUnit invocation")
 await assert.rejects(runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-reject-")),
   mounts: [],

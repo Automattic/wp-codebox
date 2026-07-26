@@ -149,9 +149,12 @@ require_once ABSPATH . 'wp-settings.php';
     assert.deepEqual(aggregate.entries.map((entry: { inputIndex: number }) => entry.inputIndex), [0, 1])
 
     const multisitePlugin = join(directory, "managed-multisite-fixture")
+    const multisiteDependency = join(directory, "managed-multisite-dependency")
     const multisiteRecipePath = join(directory, "managed-multisite-recipe.json")
     const multisiteArtifacts = join(directory, "managed-multisite-artifacts")
     await mkdir(join(multisitePlugin, "tests"), { recursive: true })
+    await mkdir(multisiteDependency, { recursive: true })
+    await writeFile(join(multisiteDependency, "managed-multisite-dependency.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\n")
     await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
 /** Plugin Name: Managed Multisite Fixture */
 add_action('init', static function (): void {
@@ -189,6 +192,13 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
         $this->assertInstanceOf(mysqli::class, $wpdb->dbh);
         $this->assertSame('1', (string) $wpdb->get_var("SELECT JSON_VALID('{\\"valid\\":true}')"));
     }
+
+    public function test_network_schema_seed_and_dependency_are_materialized(): void {
+        global $wpdb;
+        $this->assertGreaterThanOrEqual(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = 1"));
+        $this->assertGreaterThan(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->sitemeta} WHERE site_id = 1"));
+        $this->assertFileExists('/wordpress/wp-content/plugins/managed-multisite-dependency/managed-multisite-dependency.php');
+    }
 }
 `)
     const multisiteRecipe = buildWordPressPhpunitRecipe({
@@ -197,7 +207,8 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
       databaseType: "mysql",
       multisite: true,
       pluginSource: multisitePlugin,
-      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-fixture"],
+      extra_plugins: [{ source: multisiteDependency, slug: "managed-multisite-dependency", activate: false }],
+      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-fixture", "/wordpress/wp-content/plugins/managed-multisite-dependency"],
       mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
     })
     await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)

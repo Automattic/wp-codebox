@@ -127,19 +127,20 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
+  const extraPluginMounts: MountSpec[] = extraPlugins.map((plugin) => ({
+    type: "directory",
+    source: plugin.source,
+    target: plugin.target,
+    mode: "readonly",
+    metadata: {
+      kind: "extra-plugin",
+      slug: plugin.slug,
+      source: plugin.provenance,
+    },
+  }))
   await phaseTracker.run("mount_plugins", phasePluginMountData(extraPlugins), async () => {
-    for (const plugin of extraPlugins) {
-      await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime.mount({
-        type: "directory",
-        source: plugin.source,
-        target: plugin.target,
-        mode: "readonly",
-        metadata: {
-          kind: "extra-plugin",
-          slug: plugin.slug,
-          source: plugin.provenance,
-        },
-      }))
+    for (const [index, plugin] of extraPlugins.entries()) {
+      await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime.mount(extraPluginMounts[index]))
       interruption?.throwIfInterrupted()
     }
   })
@@ -190,6 +191,7 @@ export async function applyRecipeRuntimeSetup(args: {
   }
 
   const materializableMounts: MountSpec[] = [
+    ...extraPluginMounts,
     ...inputMounts,
     ...stagedFiles.map((stagedFile) => ({
       type: stagedFile.type,

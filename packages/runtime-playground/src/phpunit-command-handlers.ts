@@ -30,6 +30,8 @@ export interface PhpunitRunCodeOptions {
   resultFile?: string
 }
 
+export type PhpunitMultisitePreinstallCodeOptions = Pick<PhpunitRunCodeOptions, "testsDir" | "env" | "wpConfigDefines" | "databaseType" | "resultFile">
+
 export interface CorePhpunitRunCodeOptions {
   coreRoot: string
   testsDir: string
@@ -334,6 +336,101 @@ function ${functionName}(array $argv) {
 }`
 }
 
+function managedPhpunitConfigWriterPhp(): string {
+  return `function pg_write_managed_test_config(array $extra_defines, string $table_prefix, string $database_type): string {
+    $config_path = '/tmp/wp-tests-config.php';
+    $config = "<?php\n";
+    pg_append_wp_config_defines($config, $extra_defines);
+    $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
+    if ($database_type === 'mysql') {
+        $db_host = getenv('DB_HOST');
+        if (!is_string($db_host) || $db_host === '') {
+            throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
+        }
+        $db_port = getenv('DB_PORT');
+        if (is_string($db_port) && $db_port !== '') {
+            $db_host .= ':' . $db_port;
+        }
+        foreach (array(
+            'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
+            'DB_USER' => getenv('DB_USER') ?: 'runtime',
+            'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
+            'DB_HOST' => $db_host,
+        ) as $name => $value) {
+            $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
+        }
+    } else {
+        $config .= <<<'CONFIG'
+define('DB_NAME', ':memory:');
+define('DB_USER', 'root');
+define('DB_PASSWORD', '');
+define('DB_HOST', 'localhost');
+CONFIG;
+    }
+    $config .= <<<'CONFIG'
+define('DB_CHARSET', 'utf8');
+define('WP_TESTS_DOMAIN', 'example.org');
+define('WP_TESTS_EMAIL', 'admin@example.org');
+define('WP_TESTS_TITLE', 'Test Blog');
+define('WP_PHP_BINARY', 'php');
+define('ABSPATH', '/wordpress/');
+define('FS_CHMOD_FILE', 0644);
+define('FS_CHMOD_DIR', 0755);
+define('FS_METHOD', 'direct');
+CONFIG;
+    file_put_contents($config_path, $config);
+    return $config_path;
+}`
+}
+
+export function phpunitMultisitePreinstallCode(options: PhpunitMultisitePreinstallCodeOptions): string {
+  const wpConfigDefines = { ...options.wpConfigDefines }
+  for (const name of ["MULTISITE", "SUBDOMAIN_INSTALL", "DOMAIN_CURRENT_SITE", "PATH_CURRENT_SITE", "SITE_ID_CURRENT_SITE", "BLOG_ID_CURRENT_SITE"]) {
+    delete wpConfigDefines[name]
+  }
+  return `error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+
+$tests_dir = ${JSON.stringify(options.testsDir)};
+$bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
+$wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(wpConfigDefines))}, true);
+$database_type = ${JSON.stringify(options.databaseType)};
+$result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
+$preinstall_complete = false;
+
+@file_put_contents($result_file, '');
+register_shutdown_function(static function () use (&$preinstall_complete, $result_file): void {
+    if ($preinstall_complete) {
+        return;
+    }
+    $failure = error_get_last();
+    if (is_array($failure) && in_array($failure['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR), true)) {
+        @file_put_contents($result_file, 'STAGE_FATAL:preinstall:' . (string) ($failure['message'] ?? '') . ' at ' . (string) ($failure['file'] ?? '') . ':' . (int) ($failure['line'] ?? 0) . "\n", FILE_APPEND);
+    }
+});
+
+${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "error_log('Skipping invalid environment key: ' . var_export($name, true));")}
+${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "error_log('Skipping invalid wp_config_defines key: ' . var_export($name, true));")}
+${managedPhpunitConfigWriterPhp()}
+
+pg_apply_env($bench_env);
+$config_path = pg_write_managed_test_config($wp_config_defines, 'wptests_', $database_type);
+if (!defined('WP_TESTS_MULTISITE')) {
+    define('WP_TESTS_MULTISITE', true);
+}
+$argv = array('install.php', $config_path, 'run_ms_tests', 'no_core_tests');
+$_SERVER['argv'] = $argv;
+$_SERVER['argc'] = count($argv);
+try {
+    require $tests_dir . '/includes/install.php';
+    $preinstall_complete = true;
+} catch (Throwable $error) {
+    @file_put_contents($result_file, 'STAGE_FAIL:preinstall:' . get_class($error) . ': ' . $error->getMessage() . ' at ' . $error->getFile() . ':' . $error->getLine() . "\n", FILE_APPEND);
+    throw $error;
+}`
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -414,6 +511,8 @@ function pg_resolve_selected_test_file($selected_test_file, $test_dir, $runtime_
 ${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));")}
 
 ${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "pg_log('NOTICE: skipping invalid wp_config_defines key: ' . var_export($name, true));")}
+
+${managedPhpunitConfigWriterPhp()}
 
 function pg_diagnostic_context(): string {
     global $current_stage;
@@ -661,48 +760,8 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         $autoload_required = !empty($cfg['autoload_required']);
         $extra_defines = $cfg['extra_defines'] ?? array();
         $table_prefix = isset($cfg['table_prefix']) && is_string($cfg['table_prefix']) && $cfg['table_prefix'] !== '' ? $cfg['table_prefix'] : 'wptests_';
-        $config_path = '/tmp/wp-tests-config.php';
-        $config = "<?php\n";
-        pg_append_wp_config_defines($config, $extra_defines);
-        $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
         $database_type = (string) ($cfg['database_type'] ?? 'sqlite');
-        if ($database_type === 'mysql') {
-            $db_host = getenv('DB_HOST');
-            if (!is_string($db_host) || $db_host === '') {
-                throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
-            }
-            $db_port = getenv('DB_PORT');
-            if (is_string($db_port) && $db_port !== '') {
-                $db_host .= ':' . $db_port;
-            }
-            foreach (array(
-                'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
-                'DB_USER' => getenv('DB_USER') ?: 'runtime',
-                'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
-                'DB_HOST' => $db_host,
-            ) as $name => $value) {
-                $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
-            }
-        } else {
-            $config .= <<<'CONFIG'
-define('DB_NAME', ':memory:');
-define('DB_USER', 'root');
-define('DB_PASSWORD', '');
-define('DB_HOST', 'localhost');
-CONFIG;
-        }
-        $config .= <<<'CONFIG'
-define('DB_CHARSET', 'utf8');
-define('WP_TESTS_DOMAIN', 'example.org');
-define('WP_TESTS_EMAIL', 'admin@example.org');
-define('WP_TESTS_TITLE', 'Test Blog');
-define('WP_PHP_BINARY', 'php');
-define('ABSPATH', '/wordpress/');
-define('FS_CHMOD_FILE', 0644);
-define('FS_CHMOD_DIR', 0755);
-define('FS_METHOD', 'direct');
-CONFIG;
-        file_put_contents($config_path, $config);
+        $config_path = pg_write_managed_test_config($extra_defines, $table_prefix, $database_type);
         if ($harness_autoload !== '' && is_readable($harness_autoload)) {
             pg_preload_wp_cli_namespaced_functions($harness_autoload);
             require_once $harness_autoload;
