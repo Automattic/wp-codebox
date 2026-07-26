@@ -217,7 +217,11 @@ export async function applyRecipeRuntimeSetup(args: {
     executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(composerAutoloaderInstallCode) }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
   }
 
-  const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
+  const deferPluginActivation = recipe.workflow.steps.some((step) => step.command === "wordpress.phpunit"
+    && step.args?.includes("bootstrap-mode=managed")
+    && step.args?.includes("database-type=mysql")
+    && step.args?.includes("multisite=1"))
+  const activatedPlugins = deferPluginActivation ? [] : extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
   if (activatedPlugins.length > 0) {
     const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
       for (const plugin of activatedPlugins) {

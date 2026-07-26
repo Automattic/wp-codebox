@@ -116,6 +116,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("phpunit-xml", options.phpunitXml ?? `${pluginTarget}/phpunit.xml.dist`),
           commandArg("phpunit-xml-default", options.phpunitXml === undefined ? "1" : ""),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
+          commandJsonArg("dependency-plugins-json", phpunitDependencyPlugins(options.dependencyMounts ?? [], options.extra_plugins ?? [])),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),
           commandJsonArg("preload-files-json", options.preloadFiles ?? []),
           commandJsonArg("phpunit-args-json", options.phpunitArgs ?? []),
@@ -127,6 +128,15 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       }],
     },
   }
+}
+
+function phpunitDependencyPlugins(mounts: readonly string[], plugins: readonly WorkspaceRecipeExtraPlugin[]): Array<{ path: string; activate: boolean }> {
+  return mounts.map((path) => {
+    const normalized = path.replace(/\/+$/g, "")
+    const slug = normalized.slice(normalized.lastIndexOf("/") + 1)
+    const plugin = plugins.find((candidate) => candidate.slug === slug || candidate.mountSlug === slug)
+    return { path, activate: plugin?.activate !== false }
+  })
 }
 
 function phpunitRuntimeServices(databaseType: WordPressPhpunitRecipeOptions["databaseType"], services: WorkspaceRecipeRuntimeService[] = []): WorkspaceRecipeRuntimeService[] {

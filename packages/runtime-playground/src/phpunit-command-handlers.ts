@@ -16,6 +16,7 @@ export interface PhpunitRunCodeOptions {
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
+  dependencyPlugins?: Array<{ path: string; activate: boolean }>
   bootstrapFiles: string[]
   preloadFiles?: string[]
   bootstrapMode: string
@@ -454,6 +455,7 @@ $phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitA
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\n"))};
+$dependency_plugins = json_decode(${JSON.stringify(JSON.stringify(options.dependencyPlugins ?? []))}, true);
 $bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
 $preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFiles ?? []))}, true);
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
@@ -1029,25 +1031,52 @@ function pg_run_install_stage(array $cfg) {
 function pg_run_load_deps_stage(array $cfg): array {
     pg_stage_begin('load_deps');
     try {
-        $loaded = array();
-        foreach (explode("\n", (string) ($cfg['dep_mounts'] ?? '')) as $dep_mount) {
-            $dep_mount = trim($dep_mount);
-            if ($dep_mount === '') {
-                continue;
+        $result = array('loaded' => array(), 'activate' => array());
+        $plugins = is_array($cfg['plugins'] ?? null) ? $cfg['plugins'] : array();
+        if (empty($plugins)) {
+            foreach (explode("\n", (string) ($cfg['dep_mounts'] ?? '')) as $path) {
+                if (trim($path) !== '') {
+                    $plugins[] = array('path' => $path, 'activate' => true);
+                }
             }
-            foreach (glob($dep_mount . '/*.php') ?: array() as $dep_file) {
+        }
+        $plugin_root = realpath(WP_PLUGIN_DIR);
+        if ($plugin_root === false || !is_dir($plugin_root)) {
+            throw new RuntimeException('WordPress plugin directory is unavailable while loading managed PHPUnit dependencies');
+        }
+        foreach ($plugins as $plugin) {
+            if (!is_array($plugin) || !is_string($plugin['path'] ?? null)) {
+                throw new RuntimeException('managed PHPUnit dependency metadata must contain a plugin path');
+            }
+            $dep_mount = rtrim(str_replace('\\\\', '/', trim($plugin['path'])), '/');
+            $dep_real = realpath($dep_mount);
+            if ($dep_real === false || !is_dir($dep_real) || dirname($dep_real) !== $plugin_root) {
+                throw new RuntimeException('managed PHPUnit dependency must be a direct child directory of WP_PLUGIN_DIR: ' . $dep_mount);
+            }
+            if ($dep_mount !== WP_PLUGIN_DIR . '/' . basename($dep_mount)) {
+                throw new RuntimeException('managed PHPUnit dependency path is not canonical: ' . $dep_mount);
+            }
+            $loaded_file = null;
+            foreach (glob($dep_real . '/*.php') ?: array() as $dep_file) {
                 if (basename($dep_file) === 'db.php') {
                     continue;
                 }
                 if (strpos(file_get_contents($dep_file), 'Plugin Name:') !== false) {
                     require_once $dep_file;
-                    $loaded[] = $dep_file;
+                    $loaded_file = $dep_file;
                     break;
                 }
             }
+            if ($loaded_file === null) {
+                throw new RuntimeException('managed PHPUnit dependency has no readable plugin entrypoint: ' . $dep_mount);
+            }
+            $result['loaded'][] = $loaded_file;
+            if (!empty($plugin['activate'])) {
+                $result['activate'][] = $loaded_file;
+            }
         }
         pg_stage_ok('load_deps');
-        return $loaded;
+        return $result;
     } catch (Throwable $e) {
         pg_stage_fail('load_deps', $e);
         exit(1);
@@ -1226,10 +1255,11 @@ pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
-$loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
+$dependency_load = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts, 'plugins' => $dependency_plugins));
+$loaded_dep_files = $dependency_load['loaded'];
 $deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);
 $deferred_dependency_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_dependency_init_callbacks);
-$activation_files = $loaded_dep_files;
+$activation_files = $dependency_load['activate'];
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
 }
@@ -1436,7 +1466,8 @@ try {
     $runner = new PHPUnit\\TextUI\\TestRunner();
     $result = $runner->run($suite, $phpunit_args);
     pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
-    pg_log('TESTS: ' . $result->count() . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
+    $assertions = class_exists('PHPUnit\\Framework\\Assert') && method_exists('PHPUnit\\Framework\\Assert', 'getCount') ? PHPUnit\\Framework\\Assert::getCount() : 0;
+    pg_log('TESTS: ' . $result->count() . ' ASSERTIONS: ' . $assertions . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
     pg_stage_ok('run_tests');
     exit($result->wasSuccessful() ? 0 : 1);
 } catch (Throwable $e) {

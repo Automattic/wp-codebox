@@ -948,6 +948,13 @@ export async function runPhpunitCommand({
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
+    dependencyPlugins: jsonArrayArg(args, "dependency-plugins-json").map((plugin) => {
+      if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)) throw new Error("dependency-plugins-json entries must be objects")
+      const metadata = plugin as Record<string, unknown>
+      const path = typeof metadata.path === "string" ? metadata.path : ""
+      if (!path) throw new Error("dependency-plugins-json entries require path")
+      return { path, activate: metadata.activate !== false }
+    }),
     bootstrapFiles: jsonArrayArg(args, "bootstrap-files-json").filter((value): value is string => typeof value === "string"),
     preloadFiles: jsonArrayArg(args, "preload-files-json").filter((value): value is string => typeof value === "string"),
     bootstrapMode,

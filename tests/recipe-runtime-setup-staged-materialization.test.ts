@@ -21,7 +21,7 @@ const recipe: WorkspaceRecipe = {
       mode: "readonly",
     }],
   },
-  workflow: { steps: [] },
+  workflow: { steps: [{ command: "wordpress.phpunit", args: ["bootstrap-mode=managed", "database-type=mysql", "multisite=1"] }] },
 }
 const prepared: PreparedRecipeRuntimeSetup = {
   workspaceMounts: [],
@@ -30,7 +30,7 @@ const prepared: PreparedRecipeRuntimeSetup = {
     slug: "fixture-dependency",
     target: "/wordpress/wp-content/plugins/fixture-dependency",
     pluginFile: "fixture-dependency/fixture-dependency.php",
-    activate: false,
+    activate: true,
     loadAs: "plugin",
     cleanupPaths: [],
     provenance: { kind: "local", original: "/tmp/host-extra-plugin" },
@@ -96,7 +96,10 @@ const runtime = {
     ])
   },
   async materializeMounts() { throw new Error("setup should use materializeStagedInputs when available") },
-  async execute(spec) { calls.push(`execute:${spec.command}`); throw new Error("setup should not execute commands in this fixture") },
+  async execute(spec) {
+    calls.push(`execute:${spec.command}:${(spec.args ?? []).join(" ")}`)
+    return { id: "setup", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "", stderr: "", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
+  },
   async observe() { throw new Error("unused") },
   async snapshot() { throw new Error("unused") },
   async collectArtifacts() { throw new Error("unused") },
@@ -135,7 +138,7 @@ assert.ok(materializeOperationIndex > inputMountIndex, "materialization is sched
 assert.ok(materializeOperationIndex > mountIndex, "materialization is scheduled after staged mount")
 assert.ok(materializeOperationIndex > extraPluginMountIndex, "materialization is scheduled after extra-plugin mount")
 assert.ok(materializeIndex > materializeOperationIndex, "materialization runs inside the setup phase before commands")
-assert.equal(calls.some((call) => call.startsWith("execute:")), false)
+assert.equal(calls.some((call) => call.includes("activation-recipe-plugin")), false, "managed MySQL multisite defers requested dependency activation until after network installation")
 
 const executedWorkflowSpecs: ExecutionSpec[] = []
 const workflowRuntime = {

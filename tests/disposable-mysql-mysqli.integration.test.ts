@@ -154,7 +154,7 @@ require_once ABSPATH . 'wp-settings.php';
     const multisiteArtifacts = join(directory, "managed-multisite-artifacts")
     await mkdir(join(multisitePlugin, "tests"), { recursive: true })
     await mkdir(multisiteDependency, { recursive: true })
-    await writeFile(join(multisiteDependency, "managed-multisite-dependency.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\n")
+    await writeFile(join(multisiteDependency, "managed-multisite-dependency.php"), "<?php\n/** Plugin Name: Managed Multisite Dependency */\nregister_activation_hook(__FILE__, static function (): void { update_network_option(1, 'wp_codebox_dependency_activated', 1); });\n")
     await writeFile(join(multisitePlugin, "managed-multisite-fixture.php"), `<?php
 /** Plugin Name: Managed Multisite Fixture */
 add_action('init', static function (): void {
@@ -195,9 +195,19 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
 
     public function test_network_schema_seed_and_dependency_are_materialized(): void {
         global $wpdb;
+        foreach (array($wpdb->blogs, $wpdb->blogmeta, $wpdb->site, $wpdb->sitemeta, $wpdb->registration_log, $wpdb->signups) as $table) {
+            $this->assertSame($table, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))));
+        }
         $this->assertGreaterThanOrEqual(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->blogs} WHERE blog_id = 1"));
         $this->assertGreaterThan(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->sitemeta} WHERE site_id = 1"));
-        $this->assertFileExists('/wordpress/wp-content/plugins/managed-multisite-dependency/managed-multisite-dependency.php');
+        $this->assertTrue(update_network_option(1, 'wp_codebox_network_write', 'round-trip'));
+        $this->assertSame('round-trip', get_network_option(1, 'wp_codebox_network_write'));
+        $dependency = WP_PLUGIN_DIR . '/managed-multisite-dependency/managed-multisite-dependency.php';
+        $this->assertDirectoryExists(dirname($dependency));
+        $this->assertFileExists($dependency);
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        $this->assertTrue(is_plugin_active_for_network('managed-multisite-dependency/managed-multisite-dependency.php'));
+        $this->assertSame(1, (int) get_network_option(1, 'wp_codebox_dependency_activated'));
     }
 }
 `)
@@ -207,14 +217,17 @@ final class ManagedMultisiteTest extends WP_UnitTestCase {
       databaseType: "mysql",
       multisite: true,
       pluginSource: multisitePlugin,
-      extra_plugins: [{ source: multisiteDependency, slug: "managed-multisite-dependency", activate: false }],
-      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-fixture", "/wordpress/wp-content/plugins/managed-multisite-dependency"],
+      extra_plugins: [{ source: multisiteDependency, slug: "managed-multisite-dependency", activate: true }],
+      dependencyMounts: ["/wordpress/wp-content/plugins/managed-multisite-dependency"],
       mounts: [{ source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" }],
     })
     await writeFile(multisiteRecipePath, `${JSON.stringify(multisiteRecipe)}\n`)
     const multisiteResult = await runRecipe({ recipePath: multisiteRecipePath, artifactsDirectory: multisiteArtifacts, previewHoldBlocking: false, previewLeaseRequested: false, previewLeaseChild: false, timeoutMs: 300_000, json: true, summary: false, dryRun: false })
     const multisiteFailure = multisiteResult as typeof multisiteResult & { error?: unknown }
     assert.equal(multisiteResult.success, true, JSON.stringify({ error: multisiteFailure.error, executions: multisiteResult.executions }))
+    const latest = JSON.parse(await readFile(join(multisiteArtifacts, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+    const diagnostic = await readFile(join(multisiteArtifacts, latest.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
+    assert.match(diagnostic, /TESTS: [1-9][0-9]* ASSERTIONS: [1-9][0-9]* FAILURES: 0 ERRORS: 0/, "managed multisite regression must execute nonzero tests and assertions")
     console.log("disposable MySQL and MariaDB mysqli E2E passed")
   } finally {
     await rm(directory, { recursive: true, force: true })
