@@ -122,6 +122,7 @@ test("Cloudflare publication contracts are host-independent, immutable, and boun
   assert.equal(objectKey, await publishedPageObjectKey(canonicalRevision, canonicalPublicRoute("https://another-host.example/")))
   const publication = validatePublishedRevision({
     schema: PUBLISHED_REVISION_SCHEMA,
+    state: "complete",
     revision: publicationRevision,
     canonicalRevision,
     canonicalVersion: 7,
@@ -129,12 +130,13 @@ test("Cloudflare publication contracts are host-independent, immutable, and boun
     routes: [{ route: "/", objectKey, canonicalRevision }],
   })
   assert.equal(publication.routes[0].objectKey, objectKey)
-  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v3")
+  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v4")
   assert.equal(publishedRevisionObjectKey(publicationRevision), `sites/default/publications/revisions/${publicationRevision}.json`)
   assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
   assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v1", routes: [{ route: "/", objectKey }] }).routes[0].canonicalRevision, canonicalRevision)
   assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v2", canonicalVersion: undefined }).canonicalVersion, 0)
-  assert.deepEqual(validatePublishedRevision({ ...publication, routes: [] }).routes, [])
+  assert.throws(() => validatePublishedRevision({ ...publication, routes: [] }), /invalid/)
+  assert.deepEqual(validatePublishedRevision({ ...publication, state: "building", routes: [] }).routes, [])
   const sourceJob = `sites/default/publications/jobs/00000000000000000007-${canonicalRevision}.json`
   assert.equal(validatePublishedRevision({ ...publication, sourceJob }).sourceJob, sourceJob)
   assert.throws(() => validatePublishedRevision({ ...publication, sourceJob: "sites/default/publications/jobs/foreign.json" }), /invalid/)
