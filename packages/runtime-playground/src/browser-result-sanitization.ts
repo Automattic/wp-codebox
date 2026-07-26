@@ -25,7 +25,13 @@ export function sanitizeBrowserResultValue<T>(value: T, key = ""): T {
   if (DIAGNOSTIC_KEY_PATTERN.test(key)) {
     return redactString(value, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true }) as T
   }
+  return sanitizePersistedBrowserText(value) as T
+}
+
+function sanitizePersistedBrowserText(value: string): string {
   return value
+    .replace(/(?:https?|wss?):\/\/[^\s"'<>]+|\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*\?[^\s"'<>]+/gi, (url) => sanitizeBrowserResultUrl(url))
+    .replace(/\b((?:access[_-]?token|api[_-]?key|authorization|cookie|nonce|password|secret|session[_-]?token)\s*[=:]\s*)[^\s,;]+/gi, "$1[redacted]")
 }
 
 export function sanitizeBrowserArtifact(artifact: BrowserArtifact): BrowserArtifact {

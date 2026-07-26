@@ -67,6 +67,7 @@ export async function runEditorCanvasProbeCommand({
   const startedAt = now()
   const startedAtMs = Date.now()
   const browser = await launchChromiumBrowser()
+  const routeTracker = createBrowserPreviewRouteTracker()
   const errors: BrowserProbeErrorRecord[] = []
   let artifact: BrowserArtifact | undefined
   let finalUrl = targetUrl
@@ -83,7 +84,7 @@ export async function runEditorCanvasProbeCommand({
 
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     viewport = await browserProbeViewport(page)
@@ -232,9 +233,36 @@ export async function runEditorCanvasProbeCommand({
       })
     }
   } finally {
-    await browser.close()
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+      errors.push(serializeBrowserError("probe-error", routeError))
+      pendingError ??= routeError
+    }
+    if (artifact) {
+      artifact.summary.errors = errors.length
+      await artifactSession.writeJson("summary", "editor-canvas-summary.json", {
+        schema: "wp-codebox/editor-canvas-probe/v1",
+        requestedUrl: targetUrl,
+        preview,
+        ...previewOrigins,
+        finalUrl,
+        ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
+        startedAt,
+        finishedAt: now(),
+        timeoutMs,
+        files: artifact.files,
+        hashes: {
+          ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
+        },
+        viewport,
+        errors,
+        summary: artifact.summary.editorCanvas,
+      })
+    }
   }
 
+  if (!artifact) {
+    throw pendingError ?? new Error("wordpress.editor-canvas-probe did not produce an artifact")
+  }
   if (pendingError) {
     throw new BrowserCommandArtifactError(pendingError.message, artifact)
   }

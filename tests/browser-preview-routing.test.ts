@@ -131,6 +131,15 @@ test("shared browser cleanup drains late registrations even when browser close f
   assertNoSentinels(lifecycleErrors[0]!.message, "cleanup diagnostic")
 })
 
+test("shared browser cleanup bounds a close operation that never settles", async () => {
+  const tracker = createBrowserPreviewRouteTracker()
+  const startedAt = Date.now()
+  const lifecycleErrors = await closeBrowserAndDrainPreviewRoutes({ close: () => new Promise<void>(() => {}) }, tracker, 10)
+  assert(Date.now() - startedAt < 250)
+  assert.equal(lifecycleErrors.length, 1)
+  assert.match(lifecycleErrors[0]!.message, /operation=browser-close-timeout/)
+})
+
 test("the complete route callback contains continue and policy abort failures", async () => {
   const cases = [
     { name: "invalid URL continue", options: { url: "not-a-url", continueErrors: [routeFetchError("continue failed")] }, operation: "continue-invalid-url" },
@@ -151,6 +160,26 @@ test("closed-context failures across the route callback are swallowed during cle
   await assert.doesNotReject(fixture.run())
   await assert.doesNotReject(drainBrowserPreviewRouteTracker(fixture.tracker))
   assert.equal(fixture.tracker.errors.length, 0)
+})
+
+test("unexpected recoverable and redirect abort failures are operation-classified", async () => {
+  const cases = [
+    { outcomes: [routeFetchError("failed to decompress 'gzip' encoding")], operation: "abort-recoverable-fetch" },
+    { outcomes: [routedResponse(302, { location: "https://outside.test/escape" })], operation: "abort-redirect-escape" },
+    { outcomes: Array.from({ length: 10 }, () => routedResponse(302, { location: "http://routed.test/loop" })), operation: "abort-redirect-limit" },
+  ]
+  for (const item of cases) {
+    const fixture = await routedFixture("script", item.outcomes, undefined, { abortErrors: [routeFetchError("abort transport failed")] })
+    await assert.doesNotReject(fixture.run())
+    await assert.rejects(drainBrowserPreviewRouteTracker(fixture.tracker), new RegExp(`operation=${item.operation}`))
+    assertNoSentinels(JSON.stringify(fixture.tracker.errors), item.operation)
+  }
+
+  const closedAbort = await routedFixture("script", [routeFetchError("failed to decompress 'gzip' encoding")], undefined, {
+    abortErrors: [new Error("route.abort: Target page, context or browser has been closed")],
+  })
+  await assert.doesNotReject(closedAbort.run())
+  await assert.doesNotReject(drainBrowserPreviewRouteTracker(closedAbort.tracker))
 })
 
 test("disposed contexts and decompression failures abort without retrying or tracking errors", async () => {

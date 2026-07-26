@@ -296,7 +296,6 @@ export async function runSingleBrowserProbeCommand({
     pendingError = pendingError ?? new Error("Browser command aborted during runtime cleanup")
     void page?.close().catch(() => undefined)
     void context?.close().catch(() => undefined)
-    void browser.close().catch(() => undefined)
   }
   abortSignal?.addEventListener("abort", abortHandler, { once: true })
 
@@ -455,26 +454,38 @@ export async function runSingleBrowserProbeCommand({
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
     if (abortSignal?.aborted) {
-      await closeBrowserBestEffort(browser)
-      await drainBrowserPreviewRouteTracker(routeTracker).catch(() => undefined)
-      abortSignal.removeEventListener("abort", abortHandler)
-      throw pendingError ?? new Error("Browser command aborted during runtime cleanup")
+      pendingError ??= new Error("Browser command aborted during runtime cleanup")
+      progress.fail("probe-error", pendingError)
     }
     if (page) {
-      finalUrl = page.url()
+      try {
+        finalUrl = page.url()
+      } catch (error) {
+        errors.push(serializeBrowserError("probe-error", error))
+      }
       windowLocationOrigin = windowLocationOrigin ?? await page.evaluate(() => window.location.origin).catch(() => undefined)
       if (captureSelection.metrics) {
-        checkpoints.push(await browserProbeCheckpoint(page, "final"))
-        if (capture.has("memory")) {
-          memoryArtifact = browserProbeMemoryArtifact(checkpoints)
-        }
-        if (capture.has("performance")) {
-          performanceArtifact = browserProbePerformanceArtifact(checkpoints, { consoleMessages, errors, network, startedAt })
+        try {
+          checkpoints.push(await browserProbeCheckpoint(page, "final"))
+          if (capture.has("memory")) {
+            memoryArtifact = browserProbeMemoryArtifact(checkpoints)
+          }
+          if (capture.has("performance")) {
+            performanceArtifact = browserProbePerformanceArtifact(checkpoints, { consoleMessages, errors, network, startedAt })
+          }
+        } catch (error) {
+          pendingError ??= redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+          errors.push(serializeBrowserError("probe-error", error))
         }
       }
-      const lifecycle = lifecycleSelectors.length > 0 ? await collectBrowserProbeLifecycle(page) : undefined
-      if (lifecycle) {
-        lifecycleArtifact = browserProbeLifecycleArtifact(lifecycle)
+      try {
+        const lifecycle = lifecycleSelectors.length > 0 ? await collectBrowserProbeLifecycle(page) : undefined
+        if (lifecycle) {
+          lifecycleArtifact = browserProbeLifecycleArtifact(lifecycle)
+        }
+      } catch (error) {
+        pendingError ??= redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+        errors.push(serializeBrowserError("probe-error", error))
       }
 
       if (capture.has("html")) {
@@ -644,16 +655,6 @@ export async function runSingleBrowserProbeCommand({
     artifact,
     output: output ?? "",
   }
-}
-
-async function closeBrowserBestEffort(browser: import("playwright").Browser): Promise<void> {
-  await Promise.race([
-    browser.close().catch(() => undefined),
-    new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 1_000)
-      timeout.unref()
-    }),
-  ])
 }
 
 export type BoundedBrowserDiagnosticResult<T> = { ok: true; value: T } | { ok: false; error: Error }

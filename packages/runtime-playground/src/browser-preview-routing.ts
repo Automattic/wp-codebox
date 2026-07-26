@@ -350,13 +350,25 @@ export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRou
   }
 }
 
-export async function closeBrowserAndDrainPreviewRoutes(browser: Pick<import("playwright").Browser, "close">, tracker: BrowserPreviewRouteTracker): Promise<Error[]> {
+export async function closeBrowserAndDrainPreviewRoutes(browser: Pick<import("playwright").Browser, "close">, tracker: BrowserPreviewRouteTracker, closeTimeoutMs = 1_000): Promise<Error[]> {
   const errors: Error[] = []
+  let closeTimer: ReturnType<typeof setTimeout> | undefined
   try {
-    await browser.close()
-  } catch (error) {
-    errors.push(browserPreviewLifecycleError("browser-close", error))
+    const closeResult = await Promise.race([
+      browser.close().then(() => ({ status: "closed" as const }), (error: unknown) => ({ status: "failed" as const, error })),
+      new Promise<{ status: "timeout" }>((resolve) => {
+        closeTimer = setTimeout(() => resolve({ status: "timeout" }), closeTimeoutMs)
+      }),
+    ])
+    if (closeResult.status === "failed") {
+      errors.push(browserPreviewLifecycleError("browser-close", closeResult.error))
+    } else if (closeResult.status === "timeout") {
+      errors.push(browserPreviewLifecycleError("browser-close-timeout", new Error(`Browser close exceeded ${closeTimeoutMs}ms`)))
+    }
   } finally {
+    if (closeTimer) {
+      clearTimeout(closeTimer)
+    }
     try {
       await drainBrowserPreviewRouteTracker(tracker)
     } catch (error) {
@@ -568,7 +580,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
         }
 
         if (resourceType !== "document" || !retryable) {
-          await route.abort("failed").catch(() => undefined)
+          await abortBrowserPreviewRoute(route, "abort-recoverable-fetch")
           return undefined
         }
         throw browserPreviewRouteFetchExhaustedError(route, currentUrl, attempt, error)
@@ -597,7 +609,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
       stat.external = true
       stat.blocked += 1
       policy.routedRedirectEscapes.push({ rawOrigin: redirectedUrl.origin, effectiveOrigin: origin.origin, reason: "redirect-host-not-routed-to-preview" })
-      await route.abort("blockedbyclient")
+      await abortBrowserPreviewRoute(route, "abort-redirect-escape", "blockedbyclient")
       return undefined
     }
 
@@ -605,7 +617,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
   }
 
   if (route.request().resourceType() !== "document") {
-    await route.abort("failed").catch(() => undefined)
+    await abortBrowserPreviewRoute(route, "abort-redirect-limit")
     return undefined
   }
 
@@ -662,6 +674,20 @@ function browserPreviewLifecycleError(operation: string, error: unknown): Error 
   const diagnostic = new Error(`wordpress.browser-probe route lifecycle failed: operation=${operation} cause=${cause}`)
   diagnostic.name = "BrowserPreviewRouteLifecycleError"
   return diagnostic
+}
+
+async function abortBrowserPreviewRoute(route: Route, operation: string, errorCode: Parameters<Route["abort"]>[0] = "failed"): Promise<void> {
+  try {
+    await route.abort(errorCode)
+  } catch (error) {
+    if (isBrowserPreviewRouteClosedError(error)) {
+      return
+    }
+    const cause = sanitizeBrowserPreviewRouteError(error).message.replace(/[\r\n]+/g, " ")
+    const diagnostic = new Error(`wordpress.browser-probe route operation failed: operation=${operation} cause=${cause}`)
+    diagnostic.name = "BrowserPreviewRouteOperationError"
+    throw diagnostic
+  }
 }
 
 function browserPreviewRouteFetchExhaustedError(route: Route, requestUrl: URL, attempts: number, error: unknown): Error {
