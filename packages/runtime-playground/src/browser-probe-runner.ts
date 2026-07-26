@@ -248,7 +248,7 @@ export async function runSingleBrowserProbeCommand({
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
-  const routeTracker = createBrowserPreviewRouteTracker()
+  const routeTracker = session?.routeTracker ?? createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(runPlan.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, browserFilesDirectory, { source: command, operation: "browser-probe" })
 
@@ -513,17 +513,8 @@ export async function runSingleBrowserProbeCommand({
     } catch (error) {
       errors.push(serializeBrowserError("probe-error", error))
     }
-    try {
-      await geolocationPermissionCleanup?.()
-    } catch (error) {
-      const cleanupError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
-      if (!pendingError) {
-        pendingError = cleanupError
-        progress.fail("probe-error", cleanupError)
-      }
-      errors.push(serializeBrowserError("probe-error", error))
-    }
-    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+    const cleanupBrowser = session ? { close: async () => {} } : { close: async () => { await environmentRuntime?.close(); await browser.close() } }
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, routeTracker)) {
       const browserCloseFailed = routeError.message.includes("operation=browser-close")
       if (!pendingError && (browserCloseFailed || runPlan.routeHostDrain === "required")) {
         pendingError = routeError
