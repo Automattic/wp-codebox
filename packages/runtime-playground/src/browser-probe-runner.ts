@@ -1,4 +1,4 @@
-import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserGeolocation, redactError, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserEnvironment, browserGeolocation, redactError, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
@@ -13,7 +13,7 @@ import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { BrowserProbeSessionResultBuilder, browserProbeCaptureSelection } from "./browser-probe-session-result-builder.js"
-import { applyPlaywrightGeolocationPermission } from "./browser-environment-matrix.js"
+import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, resolvePlaywrightBrowserEnvironment, type PlaywrightBrowserEnvironmentRuntime, type PlaywrightBrowserEnvironmentSession } from "./browser-environment-matrix.js"
 
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "geolocation-accuracy", "geolocation-latitude", "geolocation-longitude", "geolocation-permission", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 
@@ -98,6 +98,7 @@ export async function runBrowserProbeCommand({
   spec,
   onProgress,
   diagnosticProviders,
+  session,
 }: {
   abortSignal?: AbortSignal
   artifactRoot: string
@@ -109,9 +110,10 @@ export async function runBrowserProbeCommand({
   spec: ExecutionSpec
   onProgress?: (event: BrowserCommandProgressEvent) => void
   diagnosticProviders?: BrowserProbeDiagnosticProvider[]
+  session?: PlaywrightBrowserEnvironmentSession
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   if (plan) {
-    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress, diagnosticProviders })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress, diagnosticProviders, session })
   }
 
   const profileIds = browserProbeProfileIds(spec.args ?? [])
@@ -189,6 +191,7 @@ export async function runSingleBrowserProbeCommand({
   profileId,
   onProgress,
   diagnosticProviders,
+  session,
 }: {
   abortSignal?: AbortSignal
   artifactRoot: string
@@ -202,6 +205,7 @@ export async function runSingleBrowserProbeCommand({
   profileId?: string
   onProgress?: (event: BrowserCommandProgressEvent) => void
   diagnosticProviders?: BrowserProbeDiagnosticProvider[]
+  session?: PlaywrightBrowserEnvironmentSession
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? await browserProbeRunPlanFromArgs(args, profileId, artifactRoot)
@@ -266,7 +270,7 @@ export async function runSingleBrowserProbeCommand({
   if (requestedContext.device && !deviceProfile) {
     throw new Error(`wordpress.browser-probe unknown Playwright device profile: ${requestedContext.device}`)
   }
-  const browser = await launchChromiumBrowser()
+  const browser = session?.browser ?? await launchChromiumBrowser()
   const browserMetadata = chromiumBrowserMetadata(browser)
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
@@ -282,7 +286,7 @@ export async function runSingleBrowserProbeCommand({
   let contextDetails: BrowserProbeContextDetails | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let capabilityDiagnostics: BrowserProbeCapabilityDiagnostics | undefined
-  let geolocationPermissionCleanup: (() => Promise<void>) | undefined
+  let environmentRuntime: PlaywrightBrowserEnvironmentRuntime | undefined
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
@@ -302,25 +306,28 @@ export async function runSingleBrowserProbeCommand({
       throw pendingError
     }
     const contextPermissions = browserProbeContextPermissions(requestedContext)
-    context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || requestedContext.device || requestedContext.geolocation || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || contextPermissions.length > 0
-      ? await browser.newContext({
-        ...topology.contextOptions(),
-        ...(deviceProfile ?? {}),
-        ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
+    if (session) {
+      environmentRuntime = session.runtime
+    } else {
+      const environment = browserEnvironment({
+        ...(requestedContext.device ? { device: requestedContext.device } : {}),
+        ...(requestedViewport ? { viewport: requestedViewport } : {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
-        ...(requestedContext.timezone ? { timezoneId: requestedContext.timezone } : {}),
+        ...(requestedContext.timezone ? { timezone: requestedContext.timezone } : {}),
         ...(requestedContext.userAgent ? { userAgent: requestedContext.userAgent } : {}),
-        ...(requestedContext.geolocation ? { geolocation: { latitude: requestedContext.geolocation.latitude, longitude: requestedContext.geolocation.longitude, ...(requestedContext.geolocation.accuracy !== undefined ? { accuracy: requestedContext.geolocation.accuracy } : {}) } } : {}),
+        ...(contextPermissions.length > 0 ? { permissions: contextPermissions } : {}),
+        ...(requestedContext.geolocation ? { geolocation: requestedContext.geolocation } : {}),
       })
-      : null
-    if (context && contextPermissions.length > 0) {
-      await context.grantPermissions(contextPermissions)
+      const resolved = await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(environment), browser)
+      const unsupported = resolved.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
+      if (unsupported.length > 0) throw new Error(`${command} browser environment is unsupported: ${unsupported.join(", ")}`)
+      environmentRuntime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, { contextOptions: { ...topology.contextOptions(), ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}) } })
     }
-    if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
+    context = environmentRuntime.context
+    if (context && browserPreviewNeedsContextRouting(networkPolicy) && !session) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
-    page = context ? await context.newPage() : await browser.newPage()
-    if (requestedContext.geolocation?.permission === "denied") geolocationPermissionCleanup = await applyPlaywrightGeolocationPermission(page, "denied")
+    page = environmentRuntime.page
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
         const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
@@ -336,9 +343,6 @@ export async function runSingleBrowserProbeCommand({
     }
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
-    }
-    if (requestedViewport) {
-      await page.setViewportSize(requestedViewport)
     }
     if (throttleProfile) {
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
@@ -503,8 +507,10 @@ export async function runSingleBrowserProbeCommand({
       }
     }
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
-    await geolocationPermissionCleanup?.()
-    await browser.close()
+    if (!session) {
+      await environmentRuntime?.close().catch(() => undefined)
+      await browser.close()
+    }
     if (captureSelection.console) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
     }

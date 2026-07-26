@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import type { BrowserActionCorpusDescriptor, BrowserInteractionStep, BrowserRandomWalkContext } from "./browser-interaction.js"
 import { browserAccessibilityContract, type BrowserAccessibilityContract, type BrowserAccessibilityEvidence } from "./browser-accessibility.js"
 import { isPlainObject, stableJson, stripUndefined } from "./object-utils.js"
+import { browserEnvironment, browserEnvironmentDigest, type BrowserEnvironment } from "./browser-environment-matrix.js"
 
 export const BROWSER_ADAPTIVE_EXPLORATION_SCHEMA = "wp-codebox/browser-adaptive-exploration/v1" as const
 export const BROWSER_ADAPTIVE_EXPLORATION_ARTIFACT_SCHEMA = "wp-codebox/browser-adaptive-exploration-artifact/v1" as const
@@ -36,6 +37,8 @@ export interface BrowserAdaptiveExplorationContract {
   failOnFinding: boolean
   accessibility?: BrowserAccessibilityContract
   metadata?: Record<string, unknown>
+  environment: BrowserEnvironment
+  environmentDigest: string
 }
 
 export interface BrowserAdaptiveFrameIdentity {
@@ -123,6 +126,8 @@ export interface BrowserAdaptiveFinding {
     expectedStateDigest?: string
     actions: BrowserAdaptiveAction[]
     resetPolicy: BrowserAdaptiveExplorationContract["resetPolicy"]
+    environment: BrowserEnvironment
+    environmentDigest: string
   }
 }
 
@@ -145,7 +150,7 @@ export interface BrowserAdaptiveExplorationResult {
     findings: number
     budgetExhausted?: keyof BrowserAdaptiveExplorationContract["budgets"] | "maxKeyboardActions" | "cancelled" | "frontier"
   }
-  replay: { schema: typeof BROWSER_ADAPTIVE_EXPLORATION_SCHEMA; seed: string; startUrl: string; contract: BrowserAdaptiveExplorationContract }
+  replay: { schema: typeof BROWSER_ADAPTIVE_EXPLORATION_SCHEMA; seed: string; startUrl: string; environment: BrowserEnvironment; environmentDigest: string; contract: BrowserAdaptiveExplorationContract }
 }
 
 export interface BrowserAdaptiveExplorationArtifact {
@@ -169,6 +174,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
     : []
   const actionFamilies = [...new Set(families.filter((value): value is BrowserAdaptiveActionFamily => (BROWSER_ADAPTIVE_ACTION_FAMILIES as readonly unknown[]).includes(value)))]
   const startUrl = string(input.startUrl ?? input.start_url) ?? (context === "admin" ? "/wp-admin/" : context === "editor" ? "/wp-admin/post-new.php" : "/")
+  const environment = browserEnvironment(isPlainObject(input.environment) ? input.environment as BrowserEnvironment : {})
   return stripUndefined({
     schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA,
     context,
@@ -203,6 +209,8 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
     failOnFinding: input.failOnFinding !== false && input.fail_on_finding !== false,
     accessibility,
     metadata: isPlainObject(input.metadata) ? input.metadata : undefined,
+    environment,
+    environmentDigest: browserEnvironmentDigest(environment),
   })
 }
 

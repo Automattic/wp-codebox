@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import { createServer } from "node:http"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, type BrowserMultiActorScenario } from "../packages/runtime-core/src/browser-multi-actor-scenario-contracts.js"
+import type { RuntimeCreateSpec } from "../packages/runtime-core/src/runtime-contracts.js"
 import { BrowserMultiActorScenarioError, runBrowserMultiActorScenario, type BrowserMultiActorClient } from "../packages/runtime-playground/src/browser-multi-actor-scenario.js"
-import { navigateBrowserMultiActorPages } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
+import { navigateBrowserMultiActorPages, runBrowserMultiActorScenarioCommand } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
+import type { PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const navigationStarted: string[] = []
 let releaseNavigation!: () => void
@@ -95,4 +101,55 @@ await assert.rejects(
   runBrowserMultiActorScenario({ ...scenario, requestGates: [{ ...scenario.requestGates![0]!, occurrence: 0 }] }, clients),
   /positive occurrence/,
 )
+
+const environmentServer = createServer((_request, response) => response.end("<!doctype html><meta name=viewport content='width=device-width'><main>actors</main>"))
+await new Promise<void>((resolve) => environmentServer.listen(0, "127.0.0.1", resolve))
+const environmentAddress = environmentServer.address()
+assert(environmentAddress && typeof environmentAddress === "object")
+const environmentArtifacts = await mkdtemp(join(tmpdir(), "wp-codebox-multi-actor-environment-"))
+const environmentRuntimeSpec = {
+  backend: "wordpress-playground",
+  environment: {},
+  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.browser-scenario"], secrets: "none", approvals: "never" },
+  metadata: { recipe: { inputs: { fixtureUsers: [{ name: "author", userId: 11, role: "author" }, { name: "reviewer", userId: 12, role: "editor" }], userSessions: [{ name: "author-session", user: "author" }, { name: "reviewer-session", user: "reviewer" }] } } },
+} as RuntimeCreateSpec
+const environmentCliServer = {
+  serverUrl: `http://127.0.0.1:${environmentAddress.port}`,
+  playground: { async run() { return { text: "", exitCode: 0 } } },
+  async [Symbol.asyncDispose]() {},
+} satisfies PlaygroundCliServer
+try {
+  const result = await runBrowserMultiActorScenarioCommand({
+    artifactRoot: environmentArtifacts,
+    runtimeSpec: environmentRuntimeSpec,
+    server: environmentCliServer,
+    runPlaygroundCommand: async (_command, _server, _options) => ({ exitCode: 0, text: JSON.stringify([{ name: "actor_auth", value: "ready", domain: "127.0.0.1", path: "/", httpOnly: false, sameSite: "Lax" }]) }),
+    scenario: {
+      schema: BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA,
+      seed: "actor-environments",
+      url: "/",
+      environment: { device: "Pixel 5", geolocation: { latitude: 32.7765, longitude: -79.9311, permission: "granted" } },
+      browserArgs: [],
+      actors: [{ name: "author", userSession: "author-session" }, { name: "reviewer", userSession: "reviewer-session" }],
+      actions: [
+        { id: "author-environment", actor: "author", step: { kind: "evaluate", expression: "const prior = localStorage.getItem('actor'); localStorage.setItem('actor', 'author'); return { prior, actor: localStorage.getItem('actor'), touch: navigator.maxTouchPoints > 0, permission: (await navigator.permissions.query({ name: 'geolocation' })).state }", assert: { prior: null, actor: "author", touch: true, permission: "granted" } } },
+        { id: "reviewer-environment", actor: "reviewer", step: { kind: "evaluate", expression: "const prior = localStorage.getItem('actor'); localStorage.setItem('actor', 'reviewer'); return { prior, actor: localStorage.getItem('actor'), touch: navigator.maxTouchPoints > 0, permission: (await navigator.permissions.query({ name: 'geolocation' })).state }", assert: { prior: null, actor: "reviewer", touch: true, permission: "granted" } } },
+      ],
+    },
+  })
+  const output = JSON.parse(result.output)
+  assert.equal(output.scenario.actors.author.environment.observed.hasTouch, true)
+  assert.equal(output.scenario.actors.reviewer.environment.observed.hasTouch, true)
+  assert.notStrictEqual(output.scenario.actors.author.environment, output.scenario.actors.reviewer.environment)
+
+  await assert.rejects(runBrowserMultiActorScenarioCommand({
+    artifactRoot: environmentArtifacts,
+    runtimeSpec: environmentRuntimeSpec,
+    server: environmentCliServer,
+    scenario: { schema: BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, seed: "unsupported", url: "/", environment: { device: "Unknown Device" }, browserArgs: [], actors: [], actions: [] },
+  }), /browser environment is unsupported: browser.environment.device/)
+} finally {
+  environmentServer.close()
+  await rm(environmentArtifacts, { recursive: true, force: true })
+}
 console.log("multi-actor browser scenarios ok")

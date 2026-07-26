@@ -13,6 +13,8 @@ export type BrowserEnvironmentCellStatus = "passed" | "findings" | "error" | "ti
 export interface BrowserEnvironment {
   viewport?: { width: number; height: number }
   device?: string
+  userAgent?: string
+  permissions?: string[]
   deviceScaleFactor?: number
   isMobile?: boolean
   hasTouch?: boolean
@@ -158,6 +160,10 @@ export interface BrowserEnvironmentMatrixRunnerOptions {
 export function browserEnvironment(input: BrowserEnvironment): BrowserEnvironment {
   validateEnvironment(input)
   return canonicalEnvironment(input)
+}
+
+export function browserEnvironmentDigest(input: BrowserEnvironment): string {
+  return createHash("sha256").update("wp-codebox/browser-environment/v1\n").update(stableJson(browserEnvironment(input))).digest("hex")
 }
 
 export function browserEnvironmentMatrix(input: Omit<BrowserEnvironmentMatrix, "schema" | "limits" | "failOnFinding"> & { limits?: Partial<BrowserEnvironmentMatrixLimits>; failOnFinding?: boolean }): BrowserEnvironmentMatrix {
@@ -325,15 +331,26 @@ function normalizeLimits(input: Partial<BrowserEnvironmentMatrixLimits> | undefi
 
 function validateEnvironment(environment: BrowserEnvironment): void {
   if (!environment || typeof environment !== "object" || Array.isArray(environment)) throw new Error("Browser environment values must be objects.")
-  const supportedKeys = new Set(["viewport", "device", "deviceScaleFactor", "isMobile", "hasTouch", "orientation", "zoom", "colorScheme", "reducedMotion", "forcedColors", "contrast", "locale", "timezone", "networkProfile", "cpuProfile", "online", "clock", "geolocation", "capabilities"])
+  const supportedKeys = new Set(["viewport", "device", "userAgent", "permissions", "deviceScaleFactor", "isMobile", "hasTouch", "orientation", "zoom", "colorScheme", "reducedMotion", "forcedColors", "contrast", "locale", "timezone", "networkProfile", "cpuProfile", "online", "clock", "geolocation", "capabilities"])
   const unsupportedKeys = Object.keys(environment).filter((key) => !supportedKeys.has(key))
   if (unsupportedKeys.length > 0) throw new Error(`Browser environment contains unsupported controls: ${unsupportedKeys.sort().join(", ")}.`)
   if (environment.viewport && (!positiveInteger(environment.viewport.width) || !positiveInteger(environment.viewport.height))) throw new Error("Browser environment viewport width and height must be positive integers.")
+  for (const key of ["device", "locale", "timezone", "networkProfile", "cpuProfile"] as const) {
+    if (environment[key] !== undefined && (typeof environment[key] !== "string" || environment[key].length === 0)) throw new Error(`Browser environment ${key} must be a non-empty string.`)
+  }
+  if (environment.userAgent !== undefined && (typeof environment.userAgent !== "string" || environment.userAgent.length === 0)) throw new Error("Browser environment userAgent must be a non-empty string.")
+  if (environment.permissions !== undefined && (!Array.isArray(environment.permissions) || environment.permissions.some((permission) => typeof permission !== "string" || permission.length === 0))) throw new Error("Browser environment permissions must be non-empty strings.")
   if (environment.isMobile !== undefined && typeof environment.isMobile !== "boolean") throw new Error("Browser environment isMobile must be boolean.")
   if (environment.hasTouch !== undefined && typeof environment.hasTouch !== "boolean") throw new Error("Browser environment hasTouch must be boolean.")
   if (environment.deviceScaleFactor !== undefined && (!Number.isFinite(environment.deviceScaleFactor) || environment.deviceScaleFactor <= 0)) throw new Error("Browser environment deviceScaleFactor must be positive.")
   if (environment.online !== undefined && typeof environment.online !== "boolean") throw new Error("Browser environment online must be boolean.")
+  if (environment.orientation !== undefined && environment.orientation !== "portrait" && environment.orientation !== "landscape") throw new Error("Browser environment orientation must be portrait or landscape.")
+  if (environment.colorScheme !== undefined && !["light", "dark", "no-preference"].includes(environment.colorScheme)) throw new Error("Browser environment colorScheme is unsupported.")
+  if (environment.reducedMotion !== undefined && !["reduce", "no-preference"].includes(environment.reducedMotion)) throw new Error("Browser environment reducedMotion is unsupported.")
+  if (environment.forcedColors !== undefined && !["active", "none"].includes(environment.forcedColors)) throw new Error("Browser environment forcedColors is unsupported.")
+  if (environment.contrast !== undefined && !["more", "no-preference"].includes(environment.contrast)) throw new Error("Browser environment contrast is unsupported.")
   if (environment.zoom !== undefined && (!Number.isFinite(environment.zoom) || environment.zoom < 0.25 || environment.zoom > 5)) throw new Error("Browser environment zoom must be between 0.25 and 5.")
+  if (environment.clock !== undefined && (!environment.clock || typeof environment.clock !== "object" || (environment.clock.mode !== "realtime" && environment.clock.mode !== "fixed"))) throw new Error("Browser environment clock mode must be realtime or fixed.")
   if (environment.clock?.mode === "fixed" && (!environment.clock.at || !Number.isFinite(Date.parse(environment.clock.at)))) throw new Error("Fixed browser environment clocks require an ISO-compatible at value.")
 }
 

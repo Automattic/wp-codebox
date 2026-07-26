@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -7,6 +7,7 @@ import test from "node:test"
 
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 import { runBrowserActionsCommand, runBrowserScenarioCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
+import { runBrowserProbeCommand } from "../packages/runtime-playground/src/browser-probe-runner.js"
 import type { BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import type { PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
@@ -14,8 +15,27 @@ import type { PlaygroundCliServer } from "../packages/runtime-playground/src/pre
 const runtimeSpec: RuntimeCreateSpec = {
   backend: "wordpress-playground",
   environment: {},
-  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.browser-actions", "wordpress.browser-actions.evaluate", "wordpress.browser-scenario"], secrets: "none", approvals: "never" },
+  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.browser-actions", "wordpress.browser-actions.evaluate", "wordpress.browser-probe", "wordpress.browser-scenario"], secrets: "none", approvals: "never" },
 }
+
+test("standalone probes use the shared environment context adapter", async () => {
+  const fixture = await browserFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-probe-environment-"))
+  try {
+    const result = await runBrowserProbeCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: { command: "wordpress.browser-probe", args: ["url=/", "device=Pixel 5", "geolocation-latitude=32.7765", "geolocation-longitude=-79.9311", "geolocation-permission=granted", "script=return { touch: navigator.maxTouchPoints > 0, permission: (await navigator.permissions.query({ name: 'geolocation' })).state }", "capture=console"] },
+    })
+    assert.deepEqual(result.artifact.summary.scriptResult, { touch: true, permission: "granted" })
+    assert.equal(result.artifact.summary.viewport?.hasTouch, true)
+    assert.equal(result.artifact.summary.context?.requested.device, "Pixel 5")
+  } finally {
+    await fixture.close()
+    await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
 
 test("browser actions preserve granted, denied, and prompt environments without leaking between runs", async () => {
   const fixture = await browserFixture()
@@ -26,17 +46,19 @@ test("browser actions preserve granted, denied, and prompt environments without 
     assert.equal(granted.summary.viewport?.hasTouch, true)
 
     const denied = await runEnvironment(fixture, "denied", `({ permission: (await navigator.permissions.query({ name: "geolocation" })).state, result: await new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => resolve(0), ({ code }) => resolve(code), { timeout: 500 })) })`, { permission: "denied", result: 1 })
-    assert.equal(denied.summary.environment?.effective.geolocation?.permission, "denied")
+    assert.equal(denied.summary.environment?.resolved.geolocation?.permission, "denied")
+    assert.equal(denied.summary.environment?.observed?.geolocationPermission, "denied")
 
     const prompt = await runEnvironment(fixture, "prompt", `(await navigator.permissions.query({ name: "geolocation" })).state`, "prompt")
-    assert.equal(prompt.summary.environment?.effective.geolocation?.permission, "prompt")
+    assert.equal(prompt.summary.environment?.resolved.geolocation?.permission, "prompt")
+    assert.equal(prompt.summary.environment?.observed?.geolocationPermission, "prompt")
     assert.deepEqual(prompt.summary.environment?.unsupported, [])
   } finally {
     await fixture.close()
   }
 })
 
-test("authored scenarios carry one declared environment into their action journey", async () => {
+test("authored scenarios preserve init-script and page state from probe collection into actions", async () => {
   const fixture = await browserFixture()
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-environment-"))
   try {
@@ -49,16 +71,102 @@ test("authored scenarios carry one declared environment into their action journe
         args: [`scenario-json=${JSON.stringify({
           url: "/",
           profile: "mobile-chrome",
-          environment: { geolocation: { latitude: 51.5072, longitude: -0.1276, permission: "granted" } },
-          steps: [{ kind: "evaluate", expression: `({ permission: (await navigator.permissions.query({ name: "geolocation" })).state, touch: navigator.maxTouchPoints > 0 })`, assert: { permission: "granted", touch: true } }],
+          environment: { userAgent: "Scenario Continuity Agent", permissions: ["notifications"], geolocation: { latitude: 51.5072, longitude: -0.1276, permission: "granted" } },
+          captures: ["performance", "steps"],
+          prePageScript: "globalThis.__scenarioInit = { token: 'probe-owned' }; sessionStorage.setItem('scenario-state', 'preserved')",
+          steps: [{ kind: "evaluate", expression: `({ permission: (await navigator.permissions.query({ name: "geolocation" })).state, notifications: (await navigator.permissions.query({ name: "notifications" })).state, touch: navigator.maxTouchPoints > 0, userAgent: navigator.userAgent, init: globalThis.__scenarioInit?.token, state: sessionStorage.getItem('scenario-state') })`, assert: { permission: "granted", notifications: "granted", touch: true, userAgent: "Scenario Continuity Agent", init: "probe-owned", state: "preserved" } }],
         })}`],
       },
     })
     assert.equal(result.artifact.artifactType, "scenario")
     assert.equal(result.artifact.summary.environment?.requested.geolocation?.latitude, 51.5072)
     assert.equal(result.artifact.summary.environment?.requested.device, "Pixel 5")
-    assert.equal(result.artifact.summary.environment?.effective.isMobile, true)
-    assert.equal(result.artifact.summary.environment?.effective.hasTouch, true)
+    assert.equal(result.artifact.summary.environment?.resolved.isMobile, true)
+    assert.equal(result.artifact.summary.environment?.resolved.hasTouch, true)
+    assert.equal(result.artifact.summary.environment?.observed?.hasTouch, true)
+    assert(result.artifact.summary.environment?.inconclusive.includes("browser.environment.device"))
+    assert.equal(Object.prototype.hasOwnProperty.call(result.artifact.summary.environment ?? {}, "effective"), false)
+    const output = JSON.parse(result.output)
+    assert(output.scenario.files.probeSummary)
+    assert(output.scenario.files.actionSummary)
+  } finally {
+    await fixture.close()
+    await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
+
+test("scenario storage state and auth remain available after probe collection", async () => {
+  const fixture = await browserFixture()
+  try {
+    const storageRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-storage-"))
+    try {
+      const storageState = { cookies: [], origins: [{ origin: fixture.server.serverUrl, localStorage: [{ name: "scenario-storage", value: "ready" }] }] }
+      const stored = await runBrowserScenarioCommand({
+        artifactRoot: storageRoot,
+        runtimeSpec,
+        server: fixture.server,
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], steps: [{ kind: "evaluate", expression: "localStorage.getItem('scenario-storage')", assert: "ready" }] })}`, `storage-state=${JSON.stringify(storageState)}`] },
+      })
+      assert.equal(stored.artifact.summary.auth?.mode, "storage-state")
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+
+    const authRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-auth-"))
+    try {
+      const authenticated = await runBrowserScenarioCommand({
+        artifactRoot: authRoot,
+        runtimeSpec,
+        server: fixture.server,
+        runPlaygroundCommand: async () => ({ exitCode: 0, text: JSON.stringify([{ name: "scenario_auth", value: "ready", domain: "127.0.0.1", path: "/", httpOnly: false, secure: false, sameSite: "Lax" }]) }),
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", captures: ["performance", "steps"], auth: "wordpress-admin", authUserId: 7, steps: [{ kind: "evaluate", expression: "document.cookie.includes('scenario_auth=ready')", assert: true }] })}`] },
+      })
+      assert.equal(authenticated.artifact.summary.auth?.mode, "wordpress-admin")
+      assert.equal(authenticated.artifact.summary.auth?.userId, 7)
+    } finally {
+      await rm(authRoot, { recursive: true, force: true })
+    }
+  } finally {
+    await fixture.close()
+  }
+})
+
+test("scenario declarations override command arguments and reject unknown profiles", async () => {
+  const fixture = await browserFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-precedence-"))
+  try {
+    const result = await runBrowserScenarioCommand({
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: {
+        command: "wordpress.browser-scenario",
+        args: [
+          `scenario-json=${JSON.stringify({ url: "/", profile: "mobile-chrome", viewport: "800x600", environment: { geolocation: { latitude: 51.5072, longitude: -0.1276, permission: "granted" } }, steps: [{ kind: "evaluate", expression: "({ width: innerWidth, height: innerHeight, permission: (await navigator.permissions.query({ name: 'geolocation' })).state })", assert: { width: 800, height: 600, permission: "granted" } }] })}`,
+          "viewport=320x640",
+          "device=Desktop Chrome",
+          "geolocation-latitude=32.7765",
+          "geolocation-longitude=-79.9311",
+          "geolocation-permission=denied",
+        ],
+      },
+    })
+    assert.deepEqual(result.artifact.summary.environment?.requested.viewport, { width: 800, height: 600 })
+    assert.equal(result.artifact.summary.environment?.requested.device, "Pixel 5")
+    assert.equal(result.artifact.summary.environment?.requested.geolocation?.latitude, 51.5072)
+    assert.equal(result.artifact.summary.environment?.observed?.geolocationPermission, "granted")
+
+    const unknownProfileRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-profile-"))
+    try {
+      await assert.rejects(runBrowserScenarioCommand({
+        artifactRoot: unknownProfileRoot,
+        runtimeSpec,
+        server: fixture.server,
+        spec: { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", profile: "unknown-mobile" })}`] },
+      }), /unknown profile: unknown-mobile/)
+    } finally {
+      await rm(unknownProfileRoot, { recursive: true, force: true })
+    }
   } finally {
     await fixture.close()
     await rm(artifactRoot, { recursive: true, force: true })
@@ -107,11 +215,14 @@ test("adaptive actions retain their declared environment through routed preview 
           ],
         },
       })
-      assert.equal(new URL(result.artifact.summary.finalUrl).hostname, routedHost)
+      assert.equal(new URL(result.artifact.requestedUrl).hostname, routedHost)
       assert.equal(result.artifact.summary.viewport?.isMobile, true)
       assert.equal(result.artifact.summary.viewport?.hasTouch, true)
-      assert.equal(result.artifact.summary.environment?.effective.device, "Pixel 5")
+      assert.equal(result.artifact.summary.environment?.resolved.device, "Pixel 5")
       assert.equal(result.artifact.summary.adaptiveExploration?.schema, "wp-codebox/browser-adaptive-exploration/v1")
+      const adaptiveArtifact = JSON.parse(await readFile(join(artifactRoot, "files/browser/adaptive-exploration.json"), "utf8"))
+      assert.equal(adaptiveArtifact.result.replay.environment.device, "Pixel 5")
+      assert.equal(adaptiveArtifact.result.replay.environmentDigest, adaptiveArtifact.contract.environmentDigest)
     } finally {
       await rm(artifactRoot, { recursive: true, force: true })
     }
@@ -130,13 +241,14 @@ async function runEnvironment(fixture: Awaited<ReturnType<typeof browserFixture>
       spec: {
         command: "wordpress.browser-actions",
         args: [
-          "url=/",
+          `url=http://localhost:${fixture.port}/`,
           `steps-json=${JSON.stringify([{ kind: "evaluate", expression, assert: expected }])}`,
           "device=Pixel 5",
           "geolocation-latitude=32.7765",
           "geolocation-longitude=-79.9311",
           "geolocation-accuracy=9",
           `geolocation-permission=${permission}`,
+          "route-host=localhost",
           "capture=steps",
         ],
       },

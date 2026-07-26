@@ -209,10 +209,23 @@ export interface BrowserArtifactSummary {
   capabilities?: BrowserProbeCapabilityDiagnostics
   environment?: {
     requested: BrowserEnvironment
-    effective: BrowserEnvironment
+    resolved: BrowserEnvironment
+    observed?: {
+      viewport: { width: number; height: number }
+      deviceScaleFactor: number
+      hasTouch: boolean
+      maxTouchPoints: number
+      userAgent: string
+      locale: string
+      timezone?: string
+      online: boolean
+      geolocationPermission?: "granted" | "denied" | "prompt" | "unsupported"
+      geolocation?: { latitude: number; longitude: number; accuracy: number }
+    }
     provider?: ResolvedBrowserEnvironment["provider"]
     capabilities: BrowserEnvironmentCapabilityResult[]
     unsupported: string[]
+    inconclusive: string[]
   }
   replayability: BrowserProbeReplayability
   screenshot: boolean

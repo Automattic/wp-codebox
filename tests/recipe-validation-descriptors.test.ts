@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.js"
@@ -52,6 +53,9 @@ await withTempDir("wp-codebox-recipe-geolocation-validation-", async (recipeDire
       { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-longitude=-79.9311", "geolocation-accuracy=8", "geolocation-permission=default"] },
       { command: "wordpress.browser-actions", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-permission=granted", "is-mobile=maybe", "has-touch=true"] },
       { command: "wordpress.browser-scenario", args: ["url=/", "browser-environment-json={\"isMobile\":\"yes\"}"] },
+      { command: "wordpress.browser-actions", args: ["url=/", "browser-environment-json={}", "steps-json={"] },
+      { command: "wordpress.browser-scenario", args: ["url=/", "browser-environment-json={}", "steps-json={"] },
+      { command: "wordpress.browser-scenario", args: [`scenario-json=${JSON.stringify({ url: "/", profile: "unknown-mobile" })}`] },
     ] },
   }
   const issues = await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json"))
@@ -60,6 +64,26 @@ await withTempDir("wp-codebox-recipe-geolocation-validation-", async (recipeDire
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[2].args"), [])
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[3].args").map(({ code }) => code), ["invalid-is-mobile", "incomplete-geolocation", "incomplete-geolocation"])
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[4].args").map(({ code }) => code), ["invalid-browser-environment"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[5].args").map(({ code }) => code), ["invalid-steps-json"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[6].args").map(({ code }) => code), ["invalid-steps-json"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[7].args").map(({ code }) => code), ["invalid-profile"])
+})
+
+await withTempDir("wp-codebox-recipe-browser-environment-file-", async (recipeDirectory) => {
+  await writeFile(join(recipeDirectory, "valid-environment.json"), JSON.stringify({ isMobile: true, hasTouch: true }))
+  await writeFile(join(recipeDirectory, "invalid-environment.json"), "{")
+  const recipe: WorkspaceRecipe = {
+    schema: "wp-codebox/workspace-recipe/v1",
+    workflow: { steps: [
+      { command: "wordpress.browser-actions", args: ["url=/", "browser-environment-json=@valid-environment.json"] },
+      { command: "wordpress.browser-actions", args: ["url=/", "browser-environment-json=@invalid-environment.json"] },
+      { command: "wordpress.browser-scenario", args: ["url=/", "browser-environment-json=@missing-environment.json"] },
+    ] },
+  }
+  const issues = await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json"))
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[0].args"), [])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[1].args").map(({ code }) => code), ["invalid-browser-environment"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[2].args").map(({ code }) => code), ["invalid-browser-environment"])
 })
 
 console.log("recipe validation descriptors ok")

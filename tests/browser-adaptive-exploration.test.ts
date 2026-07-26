@@ -317,6 +317,19 @@ test("rediscovery finds, minimizes, and replays a defect revealed by a dynamic m
   assert.deepEqual(finding.replay.actions, finding.minimizedPath)
   assert.equal(finding.replay.expectedFingerprint, finding.fingerprint)
   assert.equal(finding.replay.expectedStateDigest, finding.stateDigest)
+  assert.deepEqual(finding.replay.environment, {})
+  assert.equal(finding.replay.environmentDigest, run.contract.environmentDigest)
+
+  const mobile = await runFixture(modalFixture, {
+    seed: "modal-seed",
+    environment: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, geolocation: { latitude: 32.7765, longitude: -79.9311, permission: "granted" } },
+    budgets: { maxActions: 80, maxStates: 24, maxTransitions: 80, maxDurationMs: 30_000, maxArtifactBytes: 2_000_000, maxErrors: 10 },
+    actionFamilies: ["click", "fill", "submit", "repeat", "double-submit"],
+  })
+  assert.notEqual(mobile.result.states[0]?.digest, run.result.states[0]?.digest)
+  assert.notEqual(mobile.result.findings[0]?.fingerprint, finding.fingerprint)
+  assert.deepEqual(mobile.result.replay.environment, mobile.contract.environment)
+  assert.equal(mobile.result.findings[0]?.replay.environmentDigest, mobile.contract.environmentDigest)
 })
 
 test("bounded stabilization captures delayed conditional fields and route state", async () => {

@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -582,7 +582,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       continue
     }
 
-    await validateRecipeStepArgs(step, path, addIssue)
+    await validateRecipeStepArgs(step, path, addIssue, recipeDirectory)
   }
 
   for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {
@@ -693,7 +693,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     validateAbsoluteSandboxPath(`${pluginTarget(overlay.consumer, loadAs)}/vendor/${composerPackageVendorPath(overlay.package)}`, `${path}.target`, addIssue)
   }
 
-  await validateRecipePluginRuntime(recipe.inputs?.pluginRuntime, addIssue)
+  await validateRecipePluginRuntime(recipe.inputs?.pluginRuntime, addIssue, recipeDirectory)
 
   for (const [index, fixture] of (recipe.inputs?.fixtureDatabases ?? []).entries()) {
     const path = `$.inputs.fixtureDatabases[${index}]`
@@ -711,7 +711,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("unsupported-command", `${path}.command`, `Unsupported recipe probe command: ${probe.step.command}`)
       continue
     }
-    await validateRecipeStepArgs(probe.step, path, addIssue)
+    await validateRecipeStepArgs(probe.step, path, addIssue, recipeDirectory)
   }
 
   for (const [index, name] of (recipe.inputs?.secretEnv ?? []).entries()) {
@@ -1318,7 +1318,7 @@ export function recipeWpCliCommandFromArgs(args: string[]): string {
   return recipeStepArgValue(args, "command")?.trim() ?? args.join(" ").trim()
 }
 
-async function validateRecipePluginRuntime(pluginRuntime: WorkspaceRecipePluginRuntime | undefined, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+async function validateRecipePluginRuntime(pluginRuntime: WorkspaceRecipePluginRuntime | undefined, addIssue: (code: string, path: string, message: string) => void, recipeDirectory: string): Promise<void> {
   if (!pluginRuntime) {
     return
   }
@@ -1366,7 +1366,7 @@ async function validateRecipePluginRuntime(pluginRuntime: WorkspaceRecipePluginR
       addIssue("unsupported-plugin-runtime-setup-command", `${path}.command`, `Unsupported plugin runtime setup command: ${step.command}`)
       continue
     }
-    await validateRecipeStepArgs(step, path, addIssue)
+    await validateRecipeStepArgs(step, path, addIssue, recipeDirectory)
   }
 
   for (const [index, probe] of (pluginRuntime.healthProbes ?? []).entries()) {
@@ -1501,7 +1501,7 @@ export function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeS
   return [scope.ids, scope.slugs, scope.names].some((values) => Array.isArray(values) && values.length > 0)
 }
 
-async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void, recipeDirectory: string): Promise<void> {
   validateRecipeStepDescriptorArgs(step, path, addIssue)
 
   if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit" || step.command === "wordpress.core-phpunit") {
@@ -1563,14 +1563,17 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       addIssue("incomplete-geolocation", `${path}.args`, `${step.command} geolocation-permission requires geolocation-latitude and geolocation-longitude.`)
     }
     const environmentJson = recipeStepArgValue(step.args ?? [], "browser-environment-json")
-    if (environmentJson && !environmentJson.startsWith("@")) {
+    if (environmentJson) {
       try {
-        browserEnvironment(JSON.parse(environmentJson))
+        const rawEnvironment = environmentJson.startsWith("@") ? await readFile(resolve(recipeDirectory, environmentJson.slice(1)), "utf8") : environmentJson
+        browserEnvironment(JSON.parse(rawEnvironment))
       } catch (error) {
         addIssue("invalid-browser-environment", `${path}.args`, `${step.command} browser-environment-json is invalid: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
-    if (step.command !== "wordpress.browser-probe") return
+  }
+
+  if (step.command === "wordpress.browser-probe") {
     for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
       const rawNormalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
       const frameSeparator = rawNormalized.startsWith("frame:") || rawNormalized.startsWith("frame-url:") ? rawNormalized.indexOf("|") : -1
@@ -1673,6 +1676,18 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           addIssue("invalid-scenario-json", `${path}.args`, "wordpress.browser-scenario scenario-json must be a JSON object.")
         } else {
+          const profile = (parsed as { profile?: unknown }).profile
+          if (profile !== undefined && (typeof profile !== "string" || !(BROWSER_PROBE_CHROMIUM_PROFILE_IDS as readonly string[]).includes(profile))) {
+            addIssue("invalid-profile", `${path}.args`, `wordpress.browser-scenario profile is unsupported: ${String(profile)}`)
+          }
+          const environment = (parsed as { environment?: unknown }).environment
+          if (environment !== undefined) {
+            try {
+              browserEnvironment(environment as Parameters<typeof browserEnvironment>[0])
+            } catch (error) {
+              addIssue("invalid-browser-environment", `${path}.args`, `wordpress.browser-scenario environment is invalid: ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }
           const steps = (parsed as { steps?: unknown }).steps
           if (steps !== undefined) {
             const result = validateBrowserInteractionScript(normalizeBrowserScenarioStepsForValidation(steps))

@@ -161,7 +161,7 @@ export async function exploreAdaptiveBrowserStateMachine({
       const accessibilityScan = accessibilityCollector && contract.accessibility?.cadence.includes("novel-state") && (newState || action.family === "keyboard") && !actionError
         ? await accessibilityCollector.scan({ phase: "novel-state", stateDigest: stabilized.state.digest, transitionId, action })
         : undefined
-      const accessibilityFingerprints = accessibilityScan?.findings.map((finding) => finding.fingerprint) ?? []
+      const accessibilityFingerprints = accessibilityScan?.findings.map((finding) => adaptiveOracleFingerprint(finding.fingerprint, contract)) ?? []
       if (accessibilityScan && accessibilityScan.findings.length > 0 && onAccessibilityFindingEvidence) accessibilityScan.artifacts = await onAccessibilityFindingEvidence(accessibilityScan)
       fingerprints.push(...accessibilityFingerprints)
       fingerprints.sort()
@@ -229,6 +229,8 @@ export async function exploreAdaptiveBrowserStateMachine({
             expectedStateDigest: destination.digest,
             actions: path,
             resetPolicy: contract.resetPolicy,
+            environment: contract.environment,
+            environmentDigest: contract.environmentDigest,
           },
         }
         if (artifactBytes(states, transitions, diagnostics, [finding]) + (accessibilityCollector ? Buffer.byteLength(stableJson(accessibilityCollector.evidence())) : 0) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) {
@@ -276,7 +278,7 @@ export async function exploreAdaptiveBrowserStateMachine({
     ...(accessibilityCollector ? { accessibility: accessibilityCollector.evidence() } : {}),
     diagnostics: diagnostics.slice(0, contract.descriptorLimits.maxDiagnostics),
     summary: { actions, states: states.size, transitions: transitions.length, revisits, errors, findings: findings.length, ...(exhausted ? { budgetExhausted: exhausted } : {}) },
-    replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, contract },
+    replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, environment: contract.environment, environmentDigest: contract.environmentDigest, contract },
   }
 }
 
@@ -359,7 +361,7 @@ async function captureAdaptiveState(page: Page, contract: BrowserAdaptiveExplora
   }
   if (descriptors.length > boundedDescriptors.length) diagnostics.push({ code: "browser_adaptive_descriptors_truncated", message: "Actionable descriptors were truncated at the per-state bound.", metadata: { discovered: descriptors.length, retained: boundedDescriptors.length } })
   const descriptorDigest = browserAdaptiveDigest("descriptors", boundedDescriptors.map(stableDescriptor))
-  const digest = browserAdaptiveDigest("state", { frames: semanticFrames.map(({ historyLength: _historyLength, ...frame }) => frame), descriptorDigest })
+  const digest = browserAdaptiveDigest("state", { environmentDigest: contract.environmentDigest, frames: semanticFrames.map(({ historyLength: _historyLength, ...frame }) => frame), descriptorDigest })
   const mainSemantic = semanticFrames.find((frame) => frame.id === "document")
   return {
     state: {
@@ -527,7 +529,7 @@ async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: Br
       const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal, navigationScope, accessibilityCollector)
       executed += replay.executed
       keyboardExecuted += replay.keyboardExecuted
-      const fingerprints = adaptiveOracleEvidence(consoleErrorRecords(observations.consoleMessages.slice(beforeConsole)), observations.network.slice(beforeNetwork), errorMessages(observations.errors.slice(beforeErrors)), contract, networkPolicy).fingerprints.concat(replay.finalAccessibilityFingerprints)
+      const fingerprints = adaptiveOracleEvidence(consoleErrorRecords(observations.consoleMessages.slice(beforeConsole)), observations.network.slice(beforeNetwork), errorMessages(observations.errors.slice(beforeErrors)), contract, networkPolicy).fingerprints.concat(replay.finalAccessibilityFingerprints.map((fingerprint) => adaptiveOracleFingerprint(fingerprint, contract)))
       if (replay.state && fingerprints.includes(finding.fingerprint) && (!finding.stateDigest || replay.state.digest === finding.stateDigest)) {
         current = candidate
         reduced = true
@@ -603,7 +605,7 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
   const messages = [...consoleMessages, ...pageErrors, ...networkMessages]
   const networkFailureSummary = classifiedFailures.length > 0 ? boundedNetworkFailureEvidence(classifiedFailures, contract, retention) : undefined
   return {
-    fingerprints: [...new Set(messages.map((message) => browserAdaptiveDigest("oracle", message)))].sort(),
+    fingerprints: [...new Set(messages.map((message) => adaptiveOracleFingerprint(message, contract)))].sort(),
     networkFailures: networkFailureSummary?.failures ?? [],
     networkFailureSummary: networkFailureSummary?.summary,
     errorCount: consoleMessages.length + pageErrors.length + networkMessages.length,
@@ -683,13 +685,17 @@ function accessibilityRequirementsUnavailable(evidence: ReturnType<BrowserAccess
 
 function adaptiveAccessibilityFindings(items: BrowserA11yFinding[], contract: BrowserAdaptiveExplorationContract, path: BrowserAdaptiveAction[], transitionId: string): BrowserAdaptiveFinding[] {
   return items.map((item) => ({
-    fingerprint: item.fingerprint,
+    fingerprint: adaptiveOracleFingerprint(item.fingerprint, contract),
     stateDigest: item.stateDigest,
     transitionId,
     originalPath: path,
     minimizedPath: path,
-    replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, expectedFingerprint: item.fingerprint, expectedStateDigest: item.stateDigest, actions: path, resetPolicy: contract.resetPolicy },
+    replay: { schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, seed: contract.seed, startUrl: contract.startUrl, expectedFingerprint: adaptiveOracleFingerprint(item.fingerprint, contract), expectedStateDigest: item.stateDigest, actions: path, resetPolicy: contract.resetPolicy, environment: contract.environment, environmentDigest: contract.environmentDigest },
   }))
+}
+
+function adaptiveOracleFingerprint(value: string, contract: BrowserAdaptiveExplorationContract): string {
+  return browserAdaptiveDigest("oracle", { environmentDigest: contract.environmentDigest, value })
 }
 
 function appendDiagnostics(target: BrowserAdaptiveExplorationResult["diagnostics"], incoming: BrowserAdaptiveExplorationResult["diagnostics"], maximum: number): void {
