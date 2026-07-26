@@ -240,6 +240,7 @@ export async function runBrowserActionsCommand({
           contract: adaptiveContract,
           observations: { consoleMessages, errors, network },
           navigationScope: topology.navigationScope,
+          networkPolicy: topology.networkPolicy,
           signal: spec.signal,
           accessibilityCollector: adaptiveContract.accessibility ? createBrowserAccessibilityCollector(page, adaptiveContract.accessibility) : undefined,
           onAccessibilityFindingEvidence: adaptiveContract.accessibility ? async (scan) => {

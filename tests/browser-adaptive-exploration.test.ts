@@ -11,6 +11,7 @@ import {
 import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
 import { discoverBrowserActionCorpusDescriptors } from "../packages/runtime-playground/src/browser-action-discovery.js"
 import { exploreAdaptiveBrowserStateMachine } from "../packages/runtime-playground/src/browser-adaptive-explorer.js"
+import { attachBrowserCaptureListeners } from "../packages/runtime-playground/src/browser-capture-session.js"
 import { executeBrowserInteractionStep } from "../packages/runtime-playground/src/browser-interactions.js"
 import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { closeHttpServer, listenLocalHttpServer } from "../packages/runtime-playground/src/preview-server.js"
@@ -91,6 +92,7 @@ test("adaptive contract normalizes every safety and exploration bound", () => {
   assert.equal(contract.revisitPolicy.maxStateVisits, 1)
   assert.equal(contract.descriptorLimits.maxTextLength, 64)
   assert.equal(contract.stabilization.pollIntervalMs, 10)
+  assert.deepEqual(contract.oraclePolicy, { policyBlocks: "evidence" })
 
   const allFamilies = browserAdaptiveExplorationContract({ seed: "families", startUrl: "/fixture" })
   const planned = planBrowserAdaptiveStateActions({
@@ -473,6 +475,67 @@ test("adaptive exploration follows routed canonical multisite links and rejects 
   }
 })
 
+test("declared network-policy blocks remain structured evidence without becoming findings", async () => {
+  const run = await runNetworkOracleFixture("block", "blocked")
+  const transition = run.result.transitions[0]
+  assert.equal(run.result.findings.length, 0)
+  assert.equal(run.result.summary.errors, 0)
+  assert(transition?.observations.consoleErrors.some((message) => message.includes("ERR_BLOCKED_BY_CLIENT")), "raw browser console evidence remains available")
+  assert.deepEqual(transition?.observations.networkFailures, [{
+    url: "http://assets.example.invalid/tile.png",
+    host: "assets.example.invalid",
+    urlClassification: "external",
+    policyDecision: "blocked",
+    policyReason: "external-host-blocked-by-policy",
+    failure: "net::ERR_BLOCKED_BY_CLIENT.Inspector",
+    oracleFinding: false,
+  }])
+  assert.deepEqual(transition?.observations.oracleFingerprints, [])
+})
+
+test("callers can opt policy blocks back into deterministic findings and replay", async () => {
+  const input = { oraclePolicy: { policyBlocks: "finding" } }
+  const first = await runNetworkOracleFixture("block", "blocked", input)
+  const second = await runNetworkOracleFixture("block", "blocked", input)
+  const finding = first.result.findings[0]
+  assert(finding)
+  assert.equal(first.result.transitions[0]?.observations.networkFailures?.[0]?.oracleFinding, true)
+  assert.equal(finding.fingerprint, second.result.findings[0]?.fingerprint)
+  assert.deepEqual(finding.minimizedPath, finding.originalPath)
+  assert.deepEqual(finding.replay.actions, finding.minimizedPath)
+  assert.equal(finding.replay.expectedFingerprint, finding.fingerprint)
+})
+
+test("allow and record policies do not explain unexpected same-origin request failures", async () => {
+  for (const mode of ["allow", "record"] as const) {
+    const run = await runNetworkOracleFixture(mode, "unexpected")
+    const failure = run.result.transitions[0]?.observations.networkFailures?.[0]
+    assert.equal(run.result.findings.length, 1, mode)
+    assert.equal(failure?.urlClassification, "same-origin", mode)
+    assert.equal(failure?.policyDecision, "allowed", mode)
+    assert.equal(failure?.policyReason, "first-party-host", mode)
+    assert.equal(failure?.oracleFinding, true, mode)
+  }
+})
+
+test("mixed expected and unexpected network errors only promote the product failure", async () => {
+  const run = await runNetworkOracleFixture("block", "mixed")
+  const failures = run.result.transitions[0]?.observations.networkFailures ?? []
+  assert.equal(run.result.findings.length, 1)
+  assert.equal(failures.length, 2)
+  assert(failures.some((failure) => failure.policyDecision === "blocked" && failure.policyReason === "external-host-blocked-by-policy" && !failure.oracleFinding))
+  assert(failures.some((failure) => failure.urlClassification === "same-origin" && failure.policyDecision === "allowed" && failure.oracleFinding))
+  assert.equal(run.result.transitions[0]?.observations.oracleFingerprints.length, 1)
+})
+
+test("page exceptions remain findings alongside policy-aware network classification", async () => {
+  const run = await runNetworkOracleFixture("block", "exception")
+  assert.equal(run.result.findings.length, 1)
+  assert(run.result.transitions[0]?.observations.pageErrors.includes("fixture page exception"))
+  assert.equal(run.result.transitions[0]?.observations.networkFailures, undefined)
+  assert.deepEqual(run.result.findings[0]?.replay.actions, run.result.findings[0]?.minimizedPath)
+})
+
 test("loops, budgets, cancellation, frames, and partial evidence remain bounded", async () => {
   const loopFixture = `<!doctype html><style>button,input,a,iframe { display:block;width:100px;height:30px }</style><button id="toggle">Toggle</button><form id="first"><input name="query"></form><form id="second"><input name="query"></form><a id="external" href="https://example.test/outside">External</a><iframe id="same" srcdoc="<style>button{width:100px;height:30px}</style><button id='framed'>Framed</button>"></iframe><script>toggle.onclick=()=>document.body.classList.toggle('on')</script>`
   const bounded = await runFixture(loopFixture, {
@@ -585,6 +648,54 @@ async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopolo
     return await exploreAdaptiveBrowserStateMachine({ page, baseUrl: effectiveOrigin, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope })
   } finally {
     await browser.close()
+  }
+}
+
+async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behavior: "blocked" | "unexpected" | "mixed" | "exception", input: Record<string, unknown> = {}) {
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://preview.invalid").pathname
+    if (path === "/failed.png") {
+      request.socket.destroy()
+      return
+    }
+    response.setHeader("content-type", "text/html")
+    response.end(`<!doctype html><style>button{display:block;width:180px;height:30px}</style><button id="trigger">Trigger</button><script>
+      document.querySelector('#trigger').addEventListener('click', () => {
+        const load = (src) => { const image = document.createElement('img'); image.src = src; document.body.append(image); };
+        ${behavior === "blocked" || behavior === "mixed" ? "load('http://assets.example.invalid/tile.png');" : ""}
+        ${behavior === "unexpected" || behavior === "mixed" ? "load('/failed.png');" : ""}
+        ${behavior === "exception" ? "setTimeout(() => { throw new Error('fixture page exception'); }, 0);" : ""}
+      });
+    </script>`)
+  })
+  const startUrl = await listenLocalHttpServer(server)
+  const topology = browserPreviewTopology([`network-policy=${mode}`], undefined, startUrl)
+  const browser = await chromium.launch({ headless: true })
+  const context = await browser.newContext()
+  await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, startUrl)
+  const page = await context.newPage()
+  const consoleMessages: Record<string, unknown>[] = []
+  const errors: Record<string, unknown>[] = []
+  const network: Record<string, unknown>[] = []
+  attachBrowserCaptureListeners({ captureConsole: true, captureErrors: true, captureNetwork: true, captureWebSocket: false, consoleMessages, errors, network, page })
+  await page.addInitScript("globalThis.__name = value => value")
+  await page.goto(startUrl, { waitUntil: "load" })
+  const contract = browserAdaptiveExplorationContract({
+    seed: `network-oracle-${mode}-${behavior}`,
+    startUrl,
+    failOnFinding: false,
+    resetPolicy: { mode: "none" },
+    actionFamilies: ["click"],
+    budgets: { maxActions: 1, maxStates: 2, maxTransitions: 1, maxDurationMs: 10_000 },
+    stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1_500, maxMutationRecords: 20 },
+    ...input,
+  })
+  try {
+    const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope, networkPolicy: topology.networkPolicy })
+    return { result, contract }
+  } finally {
+    await browser.close()
+    await closeHttpServer(server)
   }
 }
 

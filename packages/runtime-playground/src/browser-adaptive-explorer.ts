@@ -9,6 +9,7 @@ import {
   type BrowserAdaptiveExplorationResult,
   type BrowserAdaptiveFinding,
   type BrowserAdaptiveFrameIdentity,
+  type BrowserAdaptiveNetworkFailure,
   type BrowserAdaptiveState,
   type BrowserAdaptiveTransition,
   type BrowserAccessibilityCollector,
@@ -18,7 +19,7 @@ import { stableJson } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
 
 import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
-import type { BrowserPreviewNavigationScope } from "./browser-preview-routing.js"
+import { browserPreviewNetworkDecision, type BrowserPreviewNavigationScope, type BrowserPreviewNetworkPolicy } from "./browser-preview-routing.js"
 
 interface AdaptiveObservationSources {
   consoleMessages: object[]
@@ -52,6 +53,7 @@ export async function exploreAdaptiveBrowserStateMachine({
   signal,
   now = Date.now,
   navigationScope,
+  networkPolicy,
   accessibilityCollector,
   onAccessibilityFindingEvidence,
 }: {
@@ -62,6 +64,7 @@ export async function exploreAdaptiveBrowserStateMachine({
   signal?: AbortSignal
   now?: () => number
   navigationScope?: BrowserPreviewNavigationScope
+  networkPolicy?: BrowserPreviewNetworkPolicy
   accessibilityCollector?: BrowserAccessibilityCollector
   onAccessibilityFindingEvidence?: (scan: Awaited<ReturnType<BrowserAccessibilityCollector["scan"]>>) => Promise<{ screenshot?: string; domSnapshot?: string }>
 }): Promise<BrowserAdaptiveExplorationResult> {
@@ -138,9 +141,11 @@ export async function exploreAdaptiveBrowserStateMachine({
       const stabilized = await stabilizeAdaptiveState(page, contract, source.path.length + 1, now, navigationScope)
       appendDiagnostics(diagnostics, stabilized.diagnostics, contract.descriptorLimits.maxDiagnostics)
       const scopeRejection = stabilized.diagnostics.find((diagnostic) => diagnostic.code === "browser_adaptive_redirect_scope_escape_rejected")
-      const newConsoleErrors = consoleErrorMessages(observations.consoleMessages.slice(beforeConsole))
+      const newConsoleRecords = consoleErrorRecords(observations.consoleMessages.slice(beforeConsole))
+      const newConsoleErrors = newConsoleRecords.map(recordMessage)
       const newPageErrors = errorMessages(observations.errors.slice(beforeErrors))
-      const fingerprints = [...new Set([...newConsoleErrors, ...newPageErrors].map((message) => browserAdaptiveDigest("oracle", message)))].sort()
+      const oracleEvidence = adaptiveOracleEvidence(newConsoleRecords, observations.network.slice(beforeNetwork), newPageErrors, contract, networkPolicy)
+      const fingerprints = [...oracleEvidence.fingerprints]
       const existing = states.get(stabilized.state.digest)
       const newState = !existing
       const transitionId = `transition-${transitions.length}`
@@ -183,12 +188,13 @@ export async function exploreAdaptiveBrowserStateMachine({
           loadingBefore: source.state.loadingIndicators,
           loadingAfter: stabilized.loading,
           oracleFingerprints: fingerprints,
+          ...(oracleEvidence.networkFailures.length > 0 ? { networkFailures: oracleEvidence.networkFailures } : {}),
           ...(accessibilityFingerprints.length > 0 ? { accessibilityFindingFingerprints: accessibilityFingerprints } : {}),
         },
         status: actionError ? "error" : scopeRejection ? "rejected" : newState ? "ok" : "revisited",
         ...(actionError ? { diagnostic: { code: "browser_adaptive_action_error", message: actionError } } : scopeRejection ? { diagnostic: { code: scopeRejection.code, message: scopeRejection.message } } : {}),
       }
-      errors += newConsoleErrors.length + newPageErrors.length + (actionError ? 1 : 0)
+      errors += oracleEvidence.errorCount + (actionError ? 1 : 0)
       if (artifactBytes(states, [...transitions, transition], diagnostics, findings) + (accessibilityCollector ? Buffer.byteLength(stableJson(accessibilityCollector.evidence())) : 0) > adaptiveJsonArtifactBudget(contract, accessibilityCollector)) {
         if (replayableDestination && newState) states.delete(stabilized.state.digest)
         exhausted = "maxArtifactBytes"
@@ -231,7 +237,7 @@ export async function exploreAdaptiveBrowserStateMachine({
 
   if (findings.length > 0 && !signal?.aborted) {
     for (const finding of findings) {
-      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), Math.max(0, (contract.accessibility?.budgets.maxKeyboardActions ?? Number.POSITIVE_INFINITY) - keyboardActions), started + contract.budgets.maxDurationMs, signal, now, navigationScope, accessibilityCollector)
+      const minimized = await minimizeAdaptiveFinding(page, baseUrl, contract, finding, observations, Math.max(0, contract.budgets.maxActions - actions), Math.max(0, (contract.accessibility?.budgets.maxKeyboardActions ?? Number.POSITIVE_INFINITY) - keyboardActions), started + contract.budgets.maxDurationMs, signal, now, navigationScope, networkPolicy, accessibilityCollector)
       actions += minimized.executed
       keyboardActions += minimized.keyboardExecuted
       finding.minimizedPath = minimized.path
@@ -491,7 +497,7 @@ async function restoreAdaptivePath(page: Page, baseUrl: string, contract: Browse
   }
 }
 
-async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, maximumKeyboardActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now, navigationScope?: BrowserPreviewNavigationScope, accessibilityCollector?: BrowserAccessibilityCollector): Promise<{ path: BrowserAdaptiveAction[]; executed: number; keyboardExecuted: number; exhausted?: "maxActions" | "maxKeyboardActions" | "maxDurationMs" | "cancelled" }> {
+async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: BrowserAdaptiveExplorationContract, finding: BrowserAdaptiveFinding, observations: AdaptiveObservationSources, maximumActions: number, maximumKeyboardActions: number, deadline: number, signal?: AbortSignal, now: () => number = Date.now, navigationScope?: BrowserPreviewNavigationScope, networkPolicy?: BrowserPreviewNetworkPolicy, accessibilityCollector?: BrowserAccessibilityCollector): Promise<{ path: BrowserAdaptiveAction[]; executed: number; keyboardExecuted: number; exhausted?: "maxActions" | "maxKeyboardActions" | "maxDurationMs" | "cancelled" }> {
   let current = [...finding.originalPath]
   let chunk = Math.max(1, Math.floor(current.length / 2))
   let executed = 0
@@ -507,10 +513,11 @@ async function minimizeAdaptiveFinding(page: Page, baseUrl: string, contract: Br
       if (keyboardExecuted + countKeyboardActions(candidate) > maximumKeyboardActions) { exhausted = "maxKeyboardActions"; break }
       const beforeConsole = observations.consoleMessages.length
       const beforeErrors = observations.errors.length
+      const beforeNetwork = observations.network.length
       const replay = await restoreAdaptivePath(page, baseUrl, contract, candidate, signal, navigationScope, accessibilityCollector)
       executed += replay.executed
       keyboardExecuted += replay.keyboardExecuted
-      const fingerprints = [...consoleErrorMessages(observations.consoleMessages.slice(beforeConsole)), ...errorMessages(observations.errors.slice(beforeErrors))].map((message) => browserAdaptiveDigest("oracle", message)).concat(replay.finalAccessibilityFingerprints)
+      const fingerprints = adaptiveOracleEvidence(consoleErrorRecords(observations.consoleMessages.slice(beforeConsole)), observations.network.slice(beforeNetwork), errorMessages(observations.errors.slice(beforeErrors)), contract, networkPolicy).fingerprints.concat(replay.finalAccessibilityFingerprints)
       if (replay.state && fingerprints.includes(finding.fingerprint) && (!finding.stateDigest || replay.state.digest === finding.stateDigest)) {
         current = candidate
         reduced = true
@@ -558,8 +565,47 @@ function rejectedTransition(state: BrowserAdaptiveState, action: BrowserAdaptive
   return { id: `transition-rejected-${browserAdaptiveDigest("action", `${state.digest}:${action.id}`).slice(0, 12)}`, sourceDigest: state.digest, action, sourceUrl: state.url, destinationUrl, history: { before: state.historyLength, after: state.historyLength, beforeStateDigest: state.historyStateDigest, afterStateDigest: state.historyStateDigest }, timing: { durationMs: 0, stabilizationMs: 0, polls: 0 }, novelty: { newState: false, newDescriptors: 0, mutationRecords: 0, mutationEvidenceTruncated: false }, observations: { networkEvents: 0, consoleErrors: [], pageErrors: [], loadingBefore: 0, loadingAfter: 0, oracleFingerprints: [] }, status: "rejected", diagnostic: { code, message } }
 }
 
-function consoleErrorMessages(records: object[]): string[] {
-  return records.map((record) => record as Record<string, unknown>).filter((record) => record.type === "error" || record.level === "error").map(recordMessage).filter(Boolean).slice(0, 100)
+function consoleErrorRecords(records: object[]): Record<string, unknown>[] {
+  return records.map((record) => record as Record<string, unknown>).filter((record) => record.type === "error" || record.level === "error").slice(0, 100)
+}
+
+function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], networkRecords: object[], pageErrors: string[], contract: BrowserAdaptiveExplorationContract, networkPolicy?: BrowserPreviewNetworkPolicy): { fingerprints: string[]; networkFailures: BrowserAdaptiveNetworkFailure[]; errorCount: number } {
+  const failures = networkRecords.map((record) => record as Record<string, unknown>).filter((record) => record.type === "requestfailed")
+  const networkFailures = failures.map((record): BrowserAdaptiveNetworkFailure => {
+    const url = typeof record.url === "string" ? record.url : ""
+    const decision = networkPolicy ? browserPreviewNetworkDecision(url, networkPolicy) : { url, urlClassification: "invalid" as const, policyDecision: "unknown" as const, policyReason: "network-policy-unavailable" }
+    const failure = networkFailureMessage(record)
+    const expectedBlock = decision.policyDecision === "blocked" && /ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(failure)
+    return { ...decision, ...(failure ? { failure } : {}), oracleFinding: !expectedBlock || contract.oraclePolicy.policyBlocks === "finding" }
+  })
+  const expectedBlockUrls = networkFailures.filter((failure) => !failure.oracleFinding).map((failure) => failure.url)
+  const findingConsoleRecords = consoleRecords.filter((record) => {
+    if (!/ERR_BLOCKED_BY_CLIENT/i.test(recordMessage(record))) return true
+    const location = objectRecord(record.location)
+    const match = typeof location.url === "string" && location.url
+      ? expectedBlockUrls.indexOf(location.url)
+      : expectedBlockUrls.length > 0 ? 0 : -1
+    if (match < 0) return true
+    expectedBlockUrls.splice(match, 1)
+    return false
+  })
+  const consoleUrls = new Set(findingConsoleRecords.map((record) => objectRecord(record.location).url).filter((url): url is string => typeof url === "string"))
+  const networkMessages = networkFailures.filter((failure) => failure.oracleFinding && !consoleUrls.has(failure.url)).map((failure) => stableJson({ type: "requestfailed", url: failure.url, failure: failure.failure, urlClassification: failure.urlClassification, policyDecision: failure.policyDecision, policyReason: failure.policyReason }))
+  const messages = [...findingConsoleRecords.map(recordMessage), ...pageErrors, ...networkMessages]
+  return {
+    fingerprints: [...new Set(messages.map((message) => browserAdaptiveDigest("oracle", message)))].sort(),
+    networkFailures,
+    errorCount: findingConsoleRecords.length + pageErrors.length + networkMessages.length,
+  }
+}
+
+function networkFailureMessage(record: Record<string, unknown>): string {
+  const failure = objectRecord(record.failure)
+  return typeof failure.errorText === "string" ? failure.errorText : typeof record.failure === "string" ? record.failure : ""
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function errorMessages(records: object[]): string[] {

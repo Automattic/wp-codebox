@@ -32,6 +32,7 @@ export interface BrowserAdaptiveExplorationContract {
   revisitPolicy: { maxStateVisits: number; maxActionVisits: number }
   descriptorLimits: { maxPerState: number; maxDiagnostics: number; maxTextLength: number }
   stabilization: { pollIntervalMs: number; quietWindowMs: number; maxWaitMs: number; maxMutationRecords: number }
+  oraclePolicy: { policyBlocks: "evidence" | "finding" }
   failOnFinding: boolean
   accessibility?: BrowserAccessibilityContract
   metadata?: Record<string, unknown>
@@ -84,10 +85,21 @@ export interface BrowserAdaptiveTransition {
     loadingBefore: number
     loadingAfter: number
     oracleFingerprints: string[]
+    networkFailures?: BrowserAdaptiveNetworkFailure[]
     accessibilityFindingFingerprints?: string[]
   }
   status: "ok" | "revisited" | "rejected" | "error" | "cancelled"
   diagnostic?: { code: string; message: string }
+}
+
+export interface BrowserAdaptiveNetworkFailure {
+  url: string
+  host?: string
+  urlClassification: "same-origin" | "external" | "invalid"
+  policyDecision: "blocked" | "allowed" | "recorded" | "unknown"
+  policyReason: string
+  failure?: string
+  oracleFinding: boolean
 }
 
 export interface BrowserAdaptiveFinding {
@@ -142,6 +154,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
   const revisit = object(input.revisitPolicy ?? input.revisit_policy)
   const descriptors = object(input.descriptorLimits ?? input.descriptor_limits)
   const stabilization = object(input.stabilization)
+  const oraclePolicy = object(input.oraclePolicy ?? input.oracle_policy)
   const reset = object(input.resetPolicy ?? input.reset_policy)
   const accessibility = browserAccessibilityContract(input.accessibility)
   const families = Array.isArray(input.actionFamilies ?? input.action_families)
@@ -179,6 +192,7 @@ export function browserAdaptiveExplorationContract(input: Record<string, unknown
       maxWaitMs: integer(stabilization.maxWaitMs ?? stabilization.max_wait_ms, 3_000, 50, 60_000),
       maxMutationRecords: integer(stabilization.maxMutationRecords ?? stabilization.max_mutation_records, 100, 1, 5_000),
     },
+    oraclePolicy: { policyBlocks: (oraclePolicy.policyBlocks ?? oraclePolicy.policy_blocks) === "finding" ? "finding" as const : "evidence" as const },
     failOnFinding: input.failOnFinding !== false && input.fail_on_finding !== false,
     accessibility,
     metadata: isPlainObject(input.metadata) ? input.metadata : undefined,
