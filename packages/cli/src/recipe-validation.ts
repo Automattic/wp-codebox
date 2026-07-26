@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -1548,20 +1548,29 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     return
   }
 
-  if (step.command === "wordpress.browser-probe") {
+  if (["wordpress.browser-probe", "wordpress.browser-actions", "wordpress.browser-scenario"].includes(step.command)) {
     const latitude = recipeStepArgValue(step.args ?? [], "geolocation-latitude")
     const longitude = recipeStepArgValue(step.args ?? [], "geolocation-longitude")
     const accuracy = recipeStepArgValue(step.args ?? [], "geolocation-accuracy")
     const permission = recipeStepArgValue(step.args ?? [], "geolocation-permission")
     if (Boolean(latitude) !== Boolean(longitude)) {
-      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation requires both geolocation-latitude and geolocation-longitude.")
+      addIssue("incomplete-geolocation", `${path}.args`, `${step.command} geolocation requires both geolocation-latitude and geolocation-longitude.`)
     }
     if (accuracy && (!latitude || !longitude)) {
-      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation-accuracy requires geolocation-latitude and geolocation-longitude.")
+      addIssue("incomplete-geolocation", `${path}.args`, `${step.command} geolocation-accuracy requires geolocation-latitude and geolocation-longitude.`)
     }
     if (permission && (!latitude || !longitude)) {
-      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation-permission requires geolocation-latitude and geolocation-longitude.")
+      addIssue("incomplete-geolocation", `${path}.args`, `${step.command} geolocation-permission requires geolocation-latitude and geolocation-longitude.`)
     }
+    const environmentJson = recipeStepArgValue(step.args ?? [], "browser-environment-json")
+    if (environmentJson && !environmentJson.startsWith("@")) {
+      try {
+        browserEnvironment(JSON.parse(environmentJson))
+      } catch (error) {
+        addIssue("invalid-browser-environment", `${path}.args`, `${step.command} browser-environment-json is invalid: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    if (step.command !== "wordpress.browser-probe") return
     for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
       const rawNormalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
       const frameSeparator = rawNormalized.startsWith("frame:") || rawNormalized.startsWith("frame-url:") ? rawNormalized.indexOf("|") : -1

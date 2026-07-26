@@ -50,12 +50,16 @@ await withTempDir("wp-codebox-recipe-geolocation-validation-", async (recipeDire
       { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=NaN", "geolocation-longitude=181", "geolocation-accuracy=-1", "geolocation-permission=maybe"] },
       { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-permission=granted"] },
       { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-longitude=-79.9311", "geolocation-accuracy=8", "geolocation-permission=default"] },
+      { command: "wordpress.browser-actions", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-permission=granted", "is-mobile=maybe", "has-touch=true"] },
+      { command: "wordpress.browser-scenario", args: ["url=/", "browser-environment-json={\"isMobile\":\"yes\"}"] },
     ] },
   }
   const issues = await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json"))
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[0].args").map(({ code }) => code), ["invalid-geolocation-latitude", "invalid-geolocation-longitude", "invalid-geolocation-accuracy", "invalid-geolocation-permission"])
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[1].args").map(({ code }) => code), ["incomplete-geolocation", "incomplete-geolocation"])
   assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[2].args"), [])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[3].args").map(({ code }) => code), ["invalid-is-mobile", "incomplete-geolocation", "incomplete-geolocation"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[4].args").map(({ code }) => code), ["invalid-browser-environment"])
 })
 
 console.log("recipe validation descriptors ok")

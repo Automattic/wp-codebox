@@ -49,6 +49,7 @@ export interface PlaywrightBrowserEnvironmentOptions {
   channel?: string
   networkProfiles?: Record<string, BrowserEnvironmentNetworkProfile>
   cpuProfiles?: Record<string, BrowserEnvironmentCpuProfile>
+  contextOptions?: BrowserContextOptions
 }
 
 export interface PlaywrightBrowserEnvironmentExecutionInput {
@@ -102,6 +103,10 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
   }
 }
 
+export function browserEnvironmentCell(requested: BrowserEnvironment): BrowserEnvironmentCell {
+  return { id: "browser-environment", index: 0, seed: "browser-environment", selections: {}, requested, requiredCapabilities: [], optionalCapabilities: [] }
+}
+
 export async function createPlaywrightBrowserEnvironmentContext(browser: Browser, resolved: ResolvedBrowserEnvironment, options: PlaywrightBrowserEnvironmentOptions = {}): Promise<{ context: BrowserContext; page: Page; close(): Promise<void> }> {
   const { devices } = await import("playwright")
   const environment = resolved.effective
@@ -109,6 +114,7 @@ export async function createPlaywrightBrowserEnvironmentContext(browser: Browser
   const viewport = orientedViewport(environment.viewport ?? device?.viewport ?? undefined, environment.orientation)
   const contextOptions: BrowserContextOptions = {
     ...(device ?? {}),
+    ...(options.contextOptions ?? {}),
     ...(viewport ? { viewport, screen: viewport } : {}),
     ...(environment.deviceScaleFactor !== undefined ? { deviceScaleFactor: environment.deviceScaleFactor } : {}),
     ...(environment.isMobile !== undefined ? { isMobile: environment.isMobile } : {}),

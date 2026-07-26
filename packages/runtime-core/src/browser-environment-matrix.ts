@@ -155,6 +155,11 @@ export interface BrowserEnvironmentMatrixRunnerOptions {
   replayCommand?: (matrix: BrowserEnvironmentMatrix, cell: BrowserEnvironmentCell) => string
 }
 
+export function browserEnvironment(input: BrowserEnvironment): BrowserEnvironment {
+  validateEnvironment(input)
+  return canonicalEnvironment(input)
+}
+
 export function browserEnvironmentMatrix(input: Omit<BrowserEnvironmentMatrix, "schema" | "limits" | "failOnFinding"> & { limits?: Partial<BrowserEnvironmentMatrixLimits>; failOnFinding?: boolean }): BrowserEnvironmentMatrix {
   if (!safeId(input.id) || !input.seed) throw new Error("Browser environment matrices require a safe non-empty id and seed.")
   if (!Array.isArray(input.dimensions) || input.dimensions.length === 0) throw new Error("Browser environment matrices require at least one dimension.")
@@ -320,8 +325,14 @@ function normalizeLimits(input: Partial<BrowserEnvironmentMatrixLimits> | undefi
 
 function validateEnvironment(environment: BrowserEnvironment): void {
   if (!environment || typeof environment !== "object" || Array.isArray(environment)) throw new Error("Browser environment values must be objects.")
+  const supportedKeys = new Set(["viewport", "device", "deviceScaleFactor", "isMobile", "hasTouch", "orientation", "zoom", "colorScheme", "reducedMotion", "forcedColors", "contrast", "locale", "timezone", "networkProfile", "cpuProfile", "online", "clock", "geolocation", "capabilities"])
+  const unsupportedKeys = Object.keys(environment).filter((key) => !supportedKeys.has(key))
+  if (unsupportedKeys.length > 0) throw new Error(`Browser environment contains unsupported controls: ${unsupportedKeys.sort().join(", ")}.`)
   if (environment.viewport && (!positiveInteger(environment.viewport.width) || !positiveInteger(environment.viewport.height))) throw new Error("Browser environment viewport width and height must be positive integers.")
+  if (environment.isMobile !== undefined && typeof environment.isMobile !== "boolean") throw new Error("Browser environment isMobile must be boolean.")
+  if (environment.hasTouch !== undefined && typeof environment.hasTouch !== "boolean") throw new Error("Browser environment hasTouch must be boolean.")
   if (environment.deviceScaleFactor !== undefined && (!Number.isFinite(environment.deviceScaleFactor) || environment.deviceScaleFactor <= 0)) throw new Error("Browser environment deviceScaleFactor must be positive.")
+  if (environment.online !== undefined && typeof environment.online !== "boolean") throw new Error("Browser environment online must be boolean.")
   if (environment.zoom !== undefined && (!Number.isFinite(environment.zoom) || environment.zoom < 0.25 || environment.zoom > 5)) throw new Error("Browser environment zoom must be between 0.25 and 5.")
   if (environment.clock?.mode === "fixed" && (!environment.clock.at || !Number.isFinite(Date.parse(environment.clock.at)))) throw new Error("Fixed browser environment clocks require an ISO-compatible at value.")
 }
