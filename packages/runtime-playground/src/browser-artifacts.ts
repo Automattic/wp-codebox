@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserGeolocation } from "@automattic/wp-codebox-core"
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
@@ -353,6 +353,8 @@ export interface BrowserProbeReviewSummary {
     throttle: string | null
     waitFor: string
     durationMs: number
+    context?: BrowserProbeContextDetails
+    capabilities?: BrowserProbeCapabilityDiagnostics
   }
   timings: {
     startedAt: string
@@ -461,6 +463,21 @@ export interface BrowserProbeCapabilityDiagnostics {
     available: boolean
   }
   permissions: Record<string, BrowserProbePermissionState>
+  geolocation?: {
+    requested: BrowserGeolocation
+    effective: {
+      latitude: number
+      longitude: number
+      accuracy?: number
+      permission: BrowserProbePermissionState["state"]
+    }
+    support: {
+      coordinates: "supported" | "unsupported"
+      permission: "supported" | "unsupported"
+      unavailable: "unsupported"
+      reason: string
+    }
+  }
 }
 
 export interface BrowserProbePermissionState {
@@ -508,6 +525,7 @@ export interface BrowserProbeContextDetails {
     device?: string
     locale?: string
     permissions?: string[]
+    geolocation?: BrowserGeolocation
     profile?: string
     throttle?: string
     timezone?: string
@@ -522,6 +540,7 @@ export interface BrowserProbeContextDetails {
     device?: string
     locale?: string
     permissions?: string[]
+    geolocation?: BrowserGeolocation
     profile?: string
     throttle?: string
     timezone?: string

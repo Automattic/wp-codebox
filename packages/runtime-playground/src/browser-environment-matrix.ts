@@ -31,6 +31,7 @@ export const PLAYWRIGHT_BROWSER_ENVIRONMENT_CAPABILITIES = [
   "browser.environment.cpu-profile",
   "browser.environment.online-state",
   "browser.environment.clock",
+  "browser.environment.geolocation",
   "browser.environment.capability-state",
 ] as const
 
@@ -83,6 +84,11 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
   if (requested.timezone) exact("browser.environment.timezone")
   if (requested.online !== undefined) exact("browser.environment.online-state")
   if (requested.clock) exact("browser.environment.clock")
+  if (requested.geolocation) {
+    requested.geolocation.permission !== "denied" || browser.browserType().name() === "chromium"
+      ? exact("browser.environment.geolocation")
+      : unsupported("browser.environment.geolocation", "This provider cannot express an explicit denied geolocation permission without Chromium browser permission controls.")
+  }
   if (requested.capabilities) exact("browser.environment.capability-state")
   if (requested.zoom !== undefined) emulated("browser.environment.zoom", "Applied as page scale through the browser debugging protocol; OS-level zoom and browser chrome are outside the page context.")
   if (requested.networkProfile) options.networkProfiles?.[requested.networkProfile] ? emulated("browser.environment.network-profile", "Latency and throughput are applied through the browser debugging protocol.") : unsupported("browser.environment.network-profile", `Unknown network profile: ${requested.networkProfile}`)
@@ -114,11 +120,22 @@ export async function createPlaywrightBrowserEnvironmentContext(browser: Browser
     ...(environment.forcedColors ? { forcedColors: environment.forcedColors } : {}),
     ...(environment.contrast ? { contrast: environment.contrast } : {}),
     ...(environment.online !== undefined ? { offline: !environment.online } : {}),
+    ...(environment.geolocation ? { geolocation: { latitude: environment.geolocation.latitude, longitude: environment.geolocation.longitude, ...(environment.geolocation.accuracy !== undefined ? { accuracy: environment.geolocation.accuracy } : {}) } } : {}),
+    ...(environment.geolocation?.permission === "granted" ? { permissions: ["geolocation"] } : {}),
   }
   const context = await browser.newContext(contextOptions)
   const page = await context.newPage()
+  const geolocationPermissionCleanup = environment.geolocation?.permission === "denied" ? await applyPlaywrightGeolocationPermission(page, "denied") : undefined
   await applyPlaywrightPageEnvironment(page, environment, options)
-  return { context, page, close: () => context.close() }
+  return { context, page, close: async () => { await geolocationPermissionCleanup?.(); await context.close() } }
+}
+
+export async function applyPlaywrightGeolocationPermission(page: Page, state: "denied"): Promise<() => Promise<void>> {
+  if (page.context().browser()?.browserType().name() !== "chromium") throw new Error("Explicit denied geolocation permission is unsupported by this browser provider.")
+  const session = await page.context().newCDPSession(page)
+  const { targetInfo } = await session.send("Target.getTargetInfo")
+  await session.send("Browser.setPermission", { permission: { name: "geolocation" }, setting: state, browserContextId: targetInfo.browserContextId })
+  return () => session.detach().catch(() => undefined)
 }
 
 export async function applyPlaywrightPageEnvironment(page: Page, environment: BrowserEnvironment, options: PlaywrightBrowserEnvironmentOptions = {}): Promise<void> {

@@ -43,4 +43,19 @@ await withTempDir("wp-codebox-recipe-validation-descriptors-", async (recipeDire
   ])
 })
 
+await withTempDir("wp-codebox-recipe-geolocation-validation-", async (recipeDirectory) => {
+  const recipe: WorkspaceRecipe = {
+    schema: "wp-codebox/workspace-recipe/v1",
+    workflow: { steps: [
+      { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=NaN", "geolocation-longitude=181", "geolocation-accuracy=-1", "geolocation-permission=maybe"] },
+      { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-permission=granted"] },
+      { command: "wordpress.browser-probe", args: ["url=/", "geolocation-latitude=32.7765", "geolocation-longitude=-79.9311", "geolocation-accuracy=8", "geolocation-permission=default"] },
+    ] },
+  }
+  const issues = await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json"))
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[0].args").map(({ code }) => code), ["invalid-geolocation-latitude", "invalid-geolocation-longitude", "invalid-geolocation-accuracy", "invalid-geolocation-permission"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[1].args").map(({ code }) => code), ["incomplete-geolocation", "incomplete-geolocation"])
+  assert.deepEqual(issues.filter(({ path }) => path === "$.workflow.steps[2].args"), [])
+})
+
 console.log("recipe validation descriptors ok")

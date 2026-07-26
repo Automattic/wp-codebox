@@ -1549,6 +1549,19 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   }
 
   if (step.command === "wordpress.browser-probe") {
+    const latitude = recipeStepArgValue(step.args ?? [], "geolocation-latitude")
+    const longitude = recipeStepArgValue(step.args ?? [], "geolocation-longitude")
+    const accuracy = recipeStepArgValue(step.args ?? [], "geolocation-accuracy")
+    const permission = recipeStepArgValue(step.args ?? [], "geolocation-permission")
+    if (Boolean(latitude) !== Boolean(longitude)) {
+      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation requires both geolocation-latitude and geolocation-longitude.")
+    }
+    if (accuracy && (!latitude || !longitude)) {
+      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation-accuracy requires geolocation-latitude and geolocation-longitude.")
+    }
+    if (permission && (!latitude || !longitude)) {
+      addIssue("incomplete-geolocation", `${path}.args`, "wordpress.browser-probe geolocation-permission requires geolocation-latitude and geolocation-longitude.")
+    }
     for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
       const rawNormalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
       const frameSeparator = rawNormalized.startsWith("frame:") || rawNormalized.startsWith("frame-url:") ? rawNormalized.indexOf("|") : -1
@@ -1769,6 +1782,14 @@ function validateRecipeStepDescriptorArgRule(args: string[], rule: CommandArgVal
 
   if (rule.kind === "viewport") {
     if (!/^\d+x\d+$/i.test(raw)) {
+      addIssue(rule.code, issuePath, rule.message)
+    }
+    return
+  }
+
+  if (rule.kind === "number") {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value < rule.minimum || value > rule.maximum) {
       addIssue(rule.code, issuePath, rule.message)
     }
     return

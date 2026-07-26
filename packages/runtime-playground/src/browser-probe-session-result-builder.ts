@@ -95,6 +95,8 @@ export class BrowserProbeSessionResultBuilder {
       capture: input.capture,
       checkpoints: input.checkpoints,
       consoleMessages: input.consoleMessages,
+      context: input.context,
+      capabilities: input.capabilities,
       durationMs: input.durationMs,
       errors: input.errors,
       files: browserProbeArtifactRefs(input.browserFilesDirectory, input.capture, {
@@ -273,6 +275,8 @@ function browserProbeReviewSummary(input: {
   capture: Set<string>
   checkpoints: BrowserProbeCheckpointRecord[]
   consoleMessages: Record<string, unknown>[]
+  context?: BrowserProbeContextDetails
+  capabilities?: BrowserProbeCapabilityDiagnostics
   durationMs: number
   errors: BrowserProbeErrorRecord[]
   files: Record<string, BrowserProbeArtifactRef>
@@ -325,6 +329,8 @@ function browserProbeReviewSummary(input: {
       throttle: input.throttle,
       waitFor: input.waitFor,
       durationMs: input.durationMs,
+      context: input.context,
+      capabilities: input.capabilities,
     },
     timings: {
       startedAt: input.startedAt,

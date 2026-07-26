@@ -1,4 +1,4 @@
-import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserGeolocation, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
@@ -13,8 +13,9 @@ import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { BrowserProbeSessionResultBuilder, browserProbeCaptureSelection } from "./browser-probe-session-result-builder.js"
+import { applyPlaywrightGeolocationPermission } from "./browser-environment-matrix.js"
 
-const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
+const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "geolocation-accuracy", "geolocation-latitude", "geolocation-longitude", "geolocation-permission", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 
 export interface BrowserProbeRunPlan {
   url: string
@@ -281,6 +282,7 @@ export async function runSingleBrowserProbeCommand({
   let contextDetails: BrowserProbeContextDetails | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let capabilityDiagnostics: BrowserProbeCapabilityDiagnostics | undefined
+  let geolocationPermissionCleanup: (() => Promise<void>) | undefined
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
@@ -299,22 +301,25 @@ export async function runSingleBrowserProbeCommand({
       abortHandler()
       throw pendingError
     }
-    context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
+    const contextPermissions = browserProbeContextPermissions(requestedContext)
+    context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || requestedContext.device || requestedContext.geolocation || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || contextPermissions.length > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
         ...(requestedContext.timezone ? { timezoneId: requestedContext.timezone } : {}),
         ...(requestedContext.userAgent ? { userAgent: requestedContext.userAgent } : {}),
+        ...(requestedContext.geolocation ? { geolocation: { latitude: requestedContext.geolocation.latitude, longitude: requestedContext.geolocation.longitude, ...(requestedContext.geolocation.accuracy !== undefined ? { accuracy: requestedContext.geolocation.accuracy } : {}) } } : {}),
       })
       : null
-    if (context && requestedContext.permissions && requestedContext.permissions.length > 0) {
-      await context.grantPermissions(requestedContext.permissions)
+    if (context && contextPermissions.length > 0) {
+      await context.grantPermissions(contextPermissions)
     }
     if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin, routeTracker)
     }
     page = context ? await context.newPage() : await browser.newPage()
+    if (requestedContext.geolocation?.permission === "denied") geolocationPermissionCleanup = await applyPlaywrightGeolocationPermission(page, "denied")
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
         const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
@@ -363,8 +368,8 @@ export async function runSingleBrowserProbeCommand({
       }
     }
     viewport = await browserProbeViewport(page)
-    contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
-    capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
+    capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport, requestedContext.geolocation)
+    contextDetails = await browserProbeContextDetails(page, requestedContext, viewport, contextPermissions, capabilityDiagnostics)
     attachBrowserCaptureListeners({
       captureConsole: captureSelection.console,
       captureErrors: captureSelection.errors,
@@ -496,6 +501,7 @@ export async function runSingleBrowserProbeCommand({
       }
     }
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
+    await geolocationPermissionCleanup?.()
     await browser.close()
     if (captureSelection.console) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
@@ -787,11 +793,13 @@ function browserProbeContextRequest(args: string[], viewport: { width: number; h
   const permissions = commaListArg(args, "permissions")
   const timezone = argValue(args, "timezone")?.trim()
   const userAgent = argValue(args, "user-agent")?.trim()
+  const geolocation = browserProbeGeolocation(args)
   return {
     ...(browser ? { browser } : {}),
     ...(device ? { device } : {}),
     ...(locale ? { locale } : {}),
     ...(permissions.length > 0 ? { permissions } : {}),
+    ...(geolocation ? { geolocation } : {}),
     ...(profileId ? { profile: profileId } : {}),
     ...(throttleProfileId ? { throttle: throttleProfileId } : {}),
     ...(timezone ? { timezone } : {}),
@@ -800,7 +808,29 @@ function browserProbeContextRequest(args: string[], viewport: { width: number; h
   }
 }
 
-async function browserProbeContextDetails(page: import("playwright").Page, requested: BrowserProbeContextDetails["requested"], viewport: BrowserProbeViewport | null): Promise<BrowserProbeContextDetails> {
+function browserProbeGeolocation(args: string[]): BrowserProbeContextDetails["requested"]["geolocation"] {
+  const latitudeRaw = argValue(args, "geolocation-latitude")?.trim()
+  const longitudeRaw = argValue(args, "geolocation-longitude")?.trim()
+  const accuracyRaw = argValue(args, "geolocation-accuracy")?.trim()
+  const permissionRaw = argValue(args, "geolocation-permission")?.trim()
+  if (!latitudeRaw && !longitudeRaw && !accuracyRaw && !permissionRaw) return undefined
+  if (!latitudeRaw || !longitudeRaw) throw new Error("wordpress.browser-probe geolocation requires both geolocation-latitude and geolocation-longitude.")
+  return browserGeolocation({
+    latitude: Number(latitudeRaw),
+    longitude: Number(longitudeRaw),
+    ...(accuracyRaw ? { accuracy: Number(accuracyRaw) } : {}),
+    permission: (permissionRaw ?? "prompt") as BrowserGeolocationPermissionState | "default",
+  })
+}
+
+function browserProbeContextPermissions(requested: BrowserProbeContextDetails["requested"]): string[] {
+  const permissions = requested.permissions ?? []
+  if (!requested.geolocation) return permissions
+  const withoutGeolocation = permissions.filter((permission) => permission !== "geolocation")
+  return requested.geolocation.permission === "granted" ? [...new Set([...withoutGeolocation, "geolocation"])] : withoutGeolocation
+}
+
+async function browserProbeContextDetails(page: import("playwright").Page, requested: BrowserProbeContextDetails["requested"], viewport: BrowserProbeViewport | null, permissions: string[], capabilities: BrowserProbeCapabilityDiagnostics): Promise<BrowserProbeContextDetails> {
   const effective = await page.evaluate(() => ({
     locale: navigator.language || undefined,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
@@ -812,7 +842,8 @@ async function browserProbeContextDetails(page: import("playwright").Page, reque
       ...(requested.browser ? { browser: requested.browser } : {}),
       ...(requested.device ? { device: requested.device } : {}),
       ...(effective.locale ? { locale: effective.locale } : {}),
-      ...(requested.permissions ? { permissions: requested.permissions } : {}),
+      ...(requested.permissions || permissions.length > 0 ? { permissions } : {}),
+      ...(requested.geolocation ? { geolocation: { ...requested.geolocation, permission: capabilities.geolocation?.effective.permission === "granted" || capabilities.geolocation?.effective.permission === "denied" || capabilities.geolocation?.effective.permission === "prompt" ? capabilities.geolocation.effective.permission : requested.geolocation.permission } } : {}),
       ...(requested.profile ? { profile: requested.profile } : {}),
       ...(requested.throttle ? { throttle: requested.throttle } : {}),
       ...(effective.timezone ? { timezone: effective.timezone } : {}),
@@ -822,7 +853,7 @@ async function browserProbeContextDetails(page: import("playwright").Page, reque
   }
 }
 
-async function browserProbeCapabilityDiagnostics(page: import("playwright").Page, viewport: BrowserProbeViewport | null): Promise<BrowserProbeCapabilityDiagnostics> {
+async function browserProbeCapabilityDiagnostics(page: import("playwright").Page, viewport: BrowserProbeViewport | null, requestedGeolocation: BrowserProbeContextDetails["requested"]["geolocation"]): Promise<BrowserProbeCapabilityDiagnostics> {
   const fallback: BrowserProbeCapabilityDiagnostics = {
     secureContext: false,
     userAgent: viewport?.userAgent ?? "",
@@ -830,9 +861,14 @@ async function browserProbeCapabilityDiagnostics(page: import("playwright").Page
     maxTouchPoints: 0,
     paymentRequest: { available: false },
     permissions: {},
+    ...(requestedGeolocation ? { geolocation: {
+      requested: requestedGeolocation,
+      effective: { latitude: requestedGeolocation.latitude, longitude: requestedGeolocation.longitude, ...(requestedGeolocation.accuracy !== undefined ? { accuracy: requestedGeolocation.accuracy } : {}), permission: "unsupported" },
+      support: { coordinates: "unsupported", permission: "unsupported", unavailable: "unsupported", reason: "Browser capability diagnostics were unavailable." },
+    } } : {}),
   }
 
-  return page.evaluate(async (probeViewport) => {
+  return page.evaluate(async ({ probeViewport, requestedGeolocation }) => {
     const resolvedOptions = Intl.DateTimeFormat().resolvedOptions()
     const permissionNames = ["clipboard-read", "clipboard-write", "geolocation", "notifications", "payment-handler"]
     const permissions: BrowserProbeCapabilityDiagnostics["permissions"] = {}
@@ -858,6 +894,7 @@ async function browserProbeCapabilityDiagnostics(page: import("playwright").Page
       }
     }
 
+    const geolocationPermission = permissions.geolocation?.state ?? "unsupported"
     return {
       secureContext: Boolean(window.isSecureContext),
       userAgent: navigator.userAgent || "",
@@ -875,8 +912,13 @@ async function browserProbeCapabilityDiagnostics(page: import("playwright").Page
       maxTouchPoints: typeof navigator.maxTouchPoints === "number" ? navigator.maxTouchPoints : 0,
       paymentRequest: { available: typeof (window as typeof window & { PaymentRequest?: unknown }).PaymentRequest === "function" },
       permissions,
+      ...(requestedGeolocation ? { geolocation: {
+        requested: requestedGeolocation,
+        effective: { latitude: requestedGeolocation.latitude, longitude: requestedGeolocation.longitude, ...(requestedGeolocation.accuracy !== undefined ? { accuracy: requestedGeolocation.accuracy } : {}), permission: geolocationPermission },
+        support: { coordinates: "supported" as const, permission: geolocationPermission === "unsupported" ? "unsupported" as const : "supported" as const, unavailable: "unsupported" as const, reason: "This provider supports browser-context coordinates and permission state, but cannot deterministically emulate unavailable position or timeout without page-level mocking." },
+      } } : {}),
     }
-  }, viewport).catch(() => fallback)
+  }, { probeViewport: viewport, requestedGeolocation }).catch(() => fallback)
 }
 
 function browserProbeCapabilityViewport(viewport: BrowserProbeViewport): BrowserProbeCapabilityDiagnostics["viewport"] {

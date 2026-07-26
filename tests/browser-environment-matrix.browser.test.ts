@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -7,7 +8,7 @@ import test from "node:test"
 import { chromium } from "playwright"
 
 import { browserEnvironmentMatrix } from "../packages/runtime-core/src/browser-environment-matrix.js"
-import { runPlaywrightBrowserEnvironmentMatrix } from "../packages/runtime-playground/src/browser-environment-matrix.js"
+import { createPlaywrightBrowserEnvironmentContext, resolvePlaywrightBrowserEnvironment, runPlaywrightBrowserEnvironmentMatrix } from "../packages/runtime-playground/src/browser-environment-matrix.js"
 
 test("real browser matrix applies viewport, media, locale, timezone, touch, zoom, and throttling", async () => {
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-matrix-"))
@@ -78,6 +79,84 @@ test("real browser matrix refuses a colliding run artifact namespace", async () 
     await assert.rejects(run(), (error: NodeJS.ErrnoException) => error.code === "EEXIST")
   } finally {
     await browser.close()
+    await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
+
+test("real browser contexts apply and isolate granted, denied, and prompt geolocation", async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-geolocation-"))
+  const browser = await chromium.launch({ headless: true })
+  const server = createServer((_request, response) => response.end("geolocation"))
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert(address && typeof address === "object")
+  const url = `http://127.0.0.1:${address.port}`
+  const observed: Array<{ cell: string; requested: string; permission: string; latitude?: number; longitude?: number; accuracy?: number; error?: number }> = []
+  try {
+    const matrix = browserEnvironmentMatrix({
+      id: "geolocation",
+      seed: "geolocation-seed",
+      dimensions: [{ id: "location", values: [
+        { id: "denied", environment: { geolocation: { latitude: 40.7128, longitude: -74.006, permission: "denied" } }, requiredCapabilities: ["browser.environment.geolocation"] },
+        { id: "granted", environment: { geolocation: { latitude: 32.7765, longitude: -79.9311, accuracy: 9, permission: "granted" } }, requiredCapabilities: ["browser.environment.geolocation"] },
+        { id: "prompt", environment: { geolocation: { latitude: 51.5072, longitude: -0.1276, permission: "prompt" } }, requiredCapabilities: ["browser.environment.geolocation"] },
+      ] }],
+      limits: { maxCells: 3, maxDurationMs: 30_000, maxCellDurationMs: 10_000, maxArtifactBytes: 1_048_576 },
+    })
+    const report = await runPlaywrightBrowserEnvironmentMatrix({ matrix, runId: "states", artifactRoot, browser, execute: async ({ page, cell, resolved }) => {
+      await page.goto(url)
+      observed.push(await page.evaluate(async ({ cell, requested }) => {
+        const permission = (await navigator.permissions.query({ name: "geolocation" })).state
+        if (permission === "prompt") return { cell, requested, permission }
+        return await new Promise((resolve) => navigator.geolocation.getCurrentPosition(
+          ({ coords }) => resolve({ cell, requested, permission, latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }),
+          ({ code }) => resolve({ cell, requested, permission, error: code }),
+          { timeout: 1_000 },
+        ))
+      }, { cell: cell.selections.location!, requested: resolved.effective.geolocation!.permission }))
+      return { status: "passed" }
+    } })
+    assert.equal(report.status, "passed")
+    assert.deepEqual(observed, [
+      { cell: "denied", requested: "denied", permission: "denied", error: 1 },
+      { cell: "granted", requested: "granted", permission: "granted", latitude: 32.7765, longitude: -79.9311, accuracy: 9 },
+      { cell: "prompt", requested: "prompt", permission: "prompt" },
+    ])
+
+    const cells = matrix.dimensions[0]!.values.slice(1).map((value, index) => ({ id: value.id, index, seed: value.id, selections: { location: value.id }, requested: value.environment, requiredCapabilities: [], optionalCapabilities: [] }))
+    const parallel = await Promise.all(cells.map(async (cell) => {
+      const resolved = await resolvePlaywrightBrowserEnvironment(cell, browser)
+      const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved)
+      try {
+        await runtime.page.goto(url)
+        return await runtime.page.evaluate(async () => ({ permission: (await navigator.permissions.query({ name: "geolocation" })).state, result: await new Promise((resolve) => navigator.geolocation.getCurrentPosition(({ coords }) => resolve([coords.latitude, coords.longitude]), ({ code }) => resolve(code), { timeout: 500 })) }))
+      } finally {
+        await runtime.close()
+      }
+    }))
+    assert.deepEqual(parallel, [
+      { permission: "granted", result: [32.7765, -79.9311] },
+      { permission: "prompt", result: 1 },
+    ])
+  } finally {
+    await browser.close()
+    server.close()
+    await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
+
+test("unsupported denied permission is reported by provider capability resolution", async () => {
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-geolocation-unsupported-"))
+  const matrix = browserEnvironmentMatrix({ id: "unsupported-geolocation", seed: "seed", dimensions: [{ id: "location", values: [{ id: "denied", environment: { geolocation: { latitude: 0, longitude: 0, permission: "denied" } } }] }] })
+  const [cell] = (await import("../packages/runtime-core/src/browser-environment-matrix.js")).expandBrowserEnvironmentMatrix(matrix)
+  const provider = { browserType: () => ({ name: () => "firefox" }), version: () => "fixture" } as unknown as import("playwright").Browser
+  const resolved = await resolvePlaywrightBrowserEnvironment(cell!, provider)
+  assert.deepEqual(resolved.capabilities.find(({ id }) => id === "browser.environment.geolocation"), { id: "browser.environment.geolocation", fidelity: "unsupported", reason: "This provider cannot express an explicit denied geolocation permission without Chromium browser permission controls." })
+  try {
+    const report = await runPlaywrightBrowserEnvironmentMatrix({ matrix, runId: "unsupported", artifactRoot, browser: provider, execute: async () => { throw new Error("unsupported cells must not execute") } })
+    assert.equal(report.cells[0]?.status, "error")
+    assert.deepEqual(report.cells[0]?.unsupported, ["browser.environment.geolocation"])
+  } finally {
     await rm(artifactRoot, { recursive: true, force: true })
   }
 })
