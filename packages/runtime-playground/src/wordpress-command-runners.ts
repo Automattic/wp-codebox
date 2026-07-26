@@ -923,6 +923,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
+  const managedMultisitePreinstalled = !explicitCode && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
@@ -956,6 +957,7 @@ export async function runPhpunitCommand({
     projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
     multisite,
     databaseType,
+    managedMultisitePreinstalled,
     resultFile,
   })
   if (!explicitCode && !pluginSlug) {
@@ -964,7 +966,7 @@ export async function runPhpunitCommand({
   let response: PlaygroundRunResponse
   try {
     const bootstrapArgs = explicitCode ? args : [...args, "bootstrap=runtime-only"]
-    if (!explicitCode && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)) {
+    if (managedMultisitePreinstalled) {
       const preinstallCode = phpunitMultisitePreinstallCode({
         testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
         env: jsonObjectArg(args, "env-json"),

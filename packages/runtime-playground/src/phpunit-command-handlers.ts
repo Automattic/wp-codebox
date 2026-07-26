@@ -23,6 +23,7 @@ export interface PhpunitRunCodeOptions {
   projectBootstrap: string
   multisite: boolean
   databaseType: "sqlite" | "mysql"
+  managedMultisitePreinstalled?: boolean
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
    * to a /tmp path so diagnostics survive read-only plugin mounts and a mid-install
@@ -466,6 +467,7 @@ $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
 $database_type = ${JSON.stringify(options.databaseType)};
+$managed_multisite_preinstalled = ${JSON.stringify(options.managedMultisitePreinstalled ?? false)};
 
 function pg_build_phpunit_argv($raw): array {
     $phpunit_argv = array('phpunit');
@@ -1032,6 +1034,36 @@ function pg_run_install_stage(array $cfg) {
     }
 }
 
+function pg_run_preinstalled_wordpress_stage(array $cfg): void {
+    global $argv, $pg_stage_output_buffering, $wp_rewrite;
+    pg_stage_begin('install');
+    try {
+        $config_path = $cfg['config_path'];
+        $tests_dir = $cfg['tests_dir'];
+        require_once $config_path;
+        tests_reset__SERVER();
+        $GLOBALS['PHP_SELF'] = '/index.php';
+        $_SERVER['PHP_SELF'] = '/index.php';
+        tests_add_filter('wp_die_handler', '_wp_die_handler_filter_exit');
+        $pg_stage_output_buffering = true;
+        ob_start();
+        require_once ABSPATH . 'wp-settings.php';
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+        $pg_stage_output_buffering = false;
+        if (is_dir($tests_dir . '/data/themedir1')) {
+            register_theme_directory($tests_dir . '/data/themedir1');
+        }
+        pg_log('NOTICE:using canonical preinstalled multisite schema');
+        pg_stage_ok('install');
+    } catch (Throwable $e) {
+        $pg_stage_output_buffering = false;
+        pg_stage_fail('install', $e);
+        exit(1);
+    }
+}
+
 function pg_run_load_deps_stage(array $cfg): array {
     pg_stage_begin('load_deps');
     try {
@@ -1261,7 +1293,11 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
     $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
 });
 
-pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+if ($managed_multisite_preinstalled) {
+    pg_run_preinstalled_wordpress_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir));
+} else {
+    pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
+}
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');

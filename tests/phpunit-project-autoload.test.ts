@@ -738,6 +738,8 @@ assert.equal(mysqlMultisiteInvocations.length, 2, "managed MySQL multisite runs 
 assert.ok(mysqlMultisiteInvocations[0].includes("'run_ms_tests'"))
 assert.equal(mysqlMultisiteInvocations[0].includes("preinstall-sensitive/bootstrap.php"), false, "canonical preinstall excludes recipe-active plugin and Composer preloading")
 assert.ok(mysqlMultisiteInvocations[1].includes("$phpunit_argv = pg_build_phpunit_argv"), "normal managed PHPUnit behavior follows preinstall")
+assert.ok(mysqlMultisiteInvocations[1].includes("$managed_multisite_preinstalled = true"), "main managed invocation receives the canonical preinstall result")
+assert.ok(mysqlMultisiteInvocations[1].includes("pg_run_preinstalled_wordpress_stage"), "main managed invocation boots the canonical schema without reinstalling it")
 
 const failedPreinstallInvocations: string[] = []
 await assert.rejects(
