@@ -204,7 +204,8 @@ export function planBrowserAdaptiveStateActions(state: BrowserAdaptiveState, con
   const addClicks = (descriptor: BrowserActionCorpusDescriptor, submit: boolean) => {
     const selector = descriptor.selector
     add("click", descriptor, [{ kind: "click", selector }])
-    add("repeat", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
+    const navigates = descriptor.kind === "link" && Boolean(descriptor.href)
+    if (!navigates) add("repeat", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])
     if (submit && descriptor.formId) {
       add("submit", descriptor, [{ kind: "click", selector }])
       add("double-submit", descriptor, [{ kind: "click", selector }, { kind: "click", selector }])

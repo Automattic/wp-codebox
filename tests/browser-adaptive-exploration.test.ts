@@ -103,7 +103,7 @@ test("adaptive contract normalizes every safety and exploration bound", () => {
       { id: "input", kind: "input", selector: "#field", type: "text", formId: "form", frameId: "document" },
       { id: "select", kind: "select", selector: "#choice", optionValues: ["one"], formId: "form", frameId: "document" },
       { id: "submit", kind: "button", selector: "#submit", type: "submit", formId: "form", frameId: "document" },
-      { id: "link", kind: "link", selector: "#link", frameId: "document" },
+      { id: "link", kind: "link", selector: "#link", href: "https://example.test/next", frameId: "document" },
     ],
     frames: [{ id: "document", url: "/fixture", scope: "document" }],
     visits: 1,
@@ -111,6 +111,39 @@ test("adaptive contract normalizes every safety and exploration bound", () => {
     loadingIndicators: 0,
   }, allFamilies)
   assert.deepEqual(new Set(planned.map((action) => action.family)), new Set(["click", "fill", "select", "submit", "keyboard", "back", "reload", "repeat", "double-submit"]))
+})
+
+test("adaptive planner repeats in-place controls but not navigation anchors", () => {
+  const contract = browserAdaptiveExplorationContract({ seed: "navigation-semantics", startUrl: "https://example.test/start" })
+  const descriptors = [
+    { id: "internal", kind: "link" as const, selector: "#internal", href: "https://example.test/next", frameId: "document" },
+    { id: "external", kind: "link" as const, selector: "#external", href: "https://outside.example/next", frameId: "document" },
+    { id: "hash", kind: "link" as const, selector: "#hash", href: "https://example.test/start#tab", role: "tab", frameId: "document" },
+    { id: "download", kind: "link" as const, selector: "#download", href: "https://example.test/report.pdf", frameId: "document" },
+    { id: "anchor-button", kind: "link" as const, selector: "#anchor-button", role: "button", frameId: "document" },
+    { id: "button", kind: "button" as const, selector: "#button", type: "button", frameId: "document" },
+    { id: "submit", kind: "button" as const, selector: "#submit", type: "submit", formId: "form", frameId: "document" },
+  ]
+  const state = {
+    digest: "state",
+    url: "https://example.test/start",
+    historyLength: 1,
+    historyStateDigest: "history",
+    descriptorDigest: "descriptors",
+    descriptors,
+    frames: [{ id: "document", url: "https://example.test/start", scope: "document" as const }],
+    visits: 1,
+    depth: 0,
+    loadingIndicators: 0,
+  }
+  const planned = planBrowserAdaptiveStateActions(state, contract)
+  const familiesFor = (id: string) => planned.filter((action) => action.descriptorId === id).map((action) => action.family)
+
+  for (const id of ["internal", "external", "hash", "download"]) assert.deepEqual(familiesFor(id), ["click"], id)
+  assert.deepEqual(familiesFor("anchor-button"), ["click", "repeat"])
+  assert.deepEqual(familiesFor("button"), ["click", "repeat"])
+  assert.deepEqual(familiesFor("submit"), ["click", "repeat", "submit", "double-submit"])
+  assert.deepEqual(planBrowserAdaptiveStateActions(state, contract), planned, "semantic filtering preserves deterministic action identity and order")
 })
 
 test("adaptive planner selects actions by HTML input type capability", () => {
@@ -188,6 +221,80 @@ test("planned input actions execute safely in a real browser", async () => {
     }
   } finally {
     await browser.close()
+  }
+})
+
+test("real-browser descriptors keep navigation single-click and in-place controls repeatable", async () => {
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript("globalThis.__name = value => value")
+    await page.setContent(`<!doctype html>
+      <style>a,button { display:block; width:180px; height:30px; margin:4px; }</style>
+      <a id="internal" href="/next">Internal</a>
+      <a id="external" href="https://outside.example/next">External</a>
+      <a id="hash" href="#tab" role="tab">Hash tab</a>
+      <a id="download" href="/report.pdf" download>Download</a>
+      <button id="button" type="button">Increment</button>
+      <form id="form"><button id="submit" type="submit">Submit</button></form>
+      <output id="count">0</output>
+      <script>
+        document.querySelector('#button').addEventListener('click', () => { document.querySelector('#count').textContent = String(Number(document.querySelector('#count').textContent) + 1) });
+        document.querySelector('#form').addEventListener('submit', (event) => event.preventDefault());
+      </script>`)
+    await page.evaluate("globalThis.__name = value => value")
+    const discovery = await discoverBrowserActionCorpusDescriptors(page)
+    const contract = browserAdaptiveExplorationContract({ seed: "browser-navigation-semantics", startUrl: page.url() })
+    const planned = planBrowserAdaptiveStateActions({
+      digest: "state",
+      url: page.url(),
+      historyLength: 1,
+      historyStateDigest: "history",
+      descriptorDigest: "descriptors",
+      descriptors: discovery.descriptors,
+      frames: [{ id: "document", url: page.url(), scope: "document" }],
+      visits: 1,
+      depth: 0,
+      loadingIndicators: 0,
+    }, contract)
+    const actionFor = (selector: string, family: string) => planned.find((action) => action.steps[0]?.selector === selector && action.family === family)
+
+    for (const selector of ["#internal", "#external", "#hash", "#download"]) {
+      assert(actionFor(selector, "click"), `${selector} remains single-clickable`)
+      assert(!actionFor(selector, "repeat"), `${selector} must not receive a repeat action`)
+    }
+    const repeat = actionFor("#button", "repeat")
+    assert(repeat)
+    for (const step of repeat.steps) await executeBrowserInteractionStep(page, step, page.url(), 2_000, async () => ({ path: "unused", isDefault: false }))
+    assert.equal(await page.locator("#count").textContent(), "2")
+    assert.equal(actionFor("#submit", "double-submit")?.steps.length, 2, "double-submit remains unchanged")
+  } finally {
+    await browser.close()
+  }
+})
+
+test("repeat-only exploration never schedules a detached navigation target", async () => {
+  let destinationRequests = 0
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://preview.invalid").pathname
+    response.setHeader("content-type", "text/html")
+    if (path === "/destination") destinationRequests += 1
+    response.end(path === "/" ? "<!doctype html><style>a{display:block;width:180px;height:30px}</style><a id='privacy' href='/destination'>Privacy Policy</a>" : "<!doctype html><h1>Destination</h1>")
+  })
+  const startUrl = await listenLocalHttpServer(server)
+  try {
+    const run = await runUrlFixture(startUrl, {
+      seed: "detached-navigation-repeat",
+      failOnFinding: false,
+      actionFamilies: ["repeat"],
+      budgets: { maxActions: 4, maxStates: 4, maxTransitions: 4, maxDurationMs: 10_000 },
+    })
+    const privacy = run.result.states[0]?.descriptors.find((descriptor) => descriptor.selector === "#privacy")
+    assert(privacy?.href.endsWith("/destination"))
+    assert.equal(run.result.transitions.length, 0)
+    assert.equal(destinationRequests, 0, "repeat planning must not issue a first or detached second navigation click")
+  } finally {
+    await closeHttpServer(server)
   }
 })
 
