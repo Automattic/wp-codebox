@@ -119,6 +119,13 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             pattern: "^[0-9]+\\.[0-9]+$",
             description: "PHP runtime version passed to WordPress Playground, for example 8.3 or 8.4.",
           },
+          workers: {
+            anyOf: [
+              { type: "integer", minimum: 1, maximum: 64 },
+              { const: "auto" },
+            ],
+            description: "Runtime request worker count. Omit to use the backend default.",
+          },
           wordpressInstallMode: {
             enum: enumValues(options.runtimeWordPressInstallModes, defaultRuntimeWordPressInstallModes),
             description: "Controls how Playground prepares a mounted WordPress directory. Use do-not-attempt-installing for custom distributions that own their own boot/readiness probes.",

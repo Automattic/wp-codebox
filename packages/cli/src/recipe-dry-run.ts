@@ -54,6 +54,7 @@ export interface RecipePlan {
     name: string
     wp: string
     phpVersion?: string
+    workers?: number | "auto"
     wordpressInstallMode?: RuntimeWordPressInstallMode
     assets?: RuntimeAssetSpec
     blueprint: unknown
@@ -442,6 +443,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
       ...(recipe.runtime?.phpVersion ? { phpVersion: recipe.runtime.phpVersion } : {}),
+      ...(recipe.runtime?.workers !== undefined ? { workers: recipe.runtime.workers } : {}),
       ...(recipe.runtime?.wordpressInstallMode ? { wordpressInstallMode: recipe.runtime.wordpressInstallMode } : {}),
       ...(recipe.runtime?.assets ? { assets: recipe.runtime.assets } : {}),
       ...(recipe.runtime?.extensions ? { extensions: recipe.runtime.extensions } : {}),

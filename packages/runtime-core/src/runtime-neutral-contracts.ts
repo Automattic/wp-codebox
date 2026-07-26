@@ -47,6 +47,7 @@ export interface BackendNeutralEnvironmentSpec {
 
 export type RuntimeWordPressInstallModeContract = "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
 export type RuntimeWordPressDatabaseSetupContract = "runtime-managed" | "external"
+export type RuntimeWorkerCount = number | "auto"
 
 export interface RuntimeWordPressAssetSpec extends BackendNeutralRuntimeAssetSpec {
   wordpressDirectory?: string
@@ -61,6 +62,7 @@ export interface RuntimePHPWasmExtensionManifest {
 export interface RuntimeWordPressEnvironmentSpec extends BackendNeutralEnvironmentSpec {
   blueprint?: unknown
   phpVersion?: string
+  workers?: RuntimeWorkerCount
   assets?: RuntimeWordPressAssetSpec
   wordpressInstallMode?: RuntimeWordPressInstallModeContract
   databaseSetup?: RuntimeWordPressDatabaseSetupContract
@@ -115,11 +117,21 @@ export function normalizeRuntimeWordPressEnvironmentSpec(input: unknown): Runtim
     ...neutral,
     blueprint: value.blueprint,
     phpVersion: optionalString(value.phpVersion, "environment.phpVersion"),
+    workers: normalizeRuntimeWorkerCount(value.workers),
     assets: normalizeRuntimeWordPressAssetSpec(value.assets),
     wordpressInstallMode: optionalString(value.wordpressInstallMode, "environment.wordpressInstallMode") as RuntimeWordPressInstallModeContract | undefined,
     databaseSetup: optionalString(value.databaseSetup, "environment.databaseSetup") as RuntimeWordPressDatabaseSetupContract | undefined,
     extensions: normalizeRuntimePHPWasmExtensionManifests(value.extensions),
   })
+}
+
+function normalizeRuntimeWorkerCount(value: unknown): RuntimeWorkerCount | undefined {
+  if (value === undefined) return undefined
+  if (value === "auto") return value
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 64) {
+    throw new Error("environment.workers must be an integer from 1 to 64 or auto.")
+  }
+  return value
 }
 
 function normalizeRuntimePHPWasmExtensionManifests(input: unknown): RuntimePHPWasmExtensionManifest[] | undefined {

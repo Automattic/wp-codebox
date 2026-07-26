@@ -150,7 +150,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           quiet: true,
           verbosity: "quiet",
           skipBrowser: true,
-          workers: 6,
+          workers: spec.environment.workers ?? 6,
           mount: [
             ...postinstallMounts.map((mount) => ({
               hostPath: mount.source,
