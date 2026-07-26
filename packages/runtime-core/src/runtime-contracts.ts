@@ -31,6 +31,8 @@ export interface RuntimeCreateSpec {
   artifactsDirectory?: string
   runtimeEnv?: Record<string, string>
   secretEnv?: Record<string, string>
+  /** Maps an environment target to the secretEnv name that supplies its value. */
+  secretEnvTargets?: Record<string, string>
   metadata?: Record<string, unknown>
   preview?: RuntimePreviewSpec
   onBrowserStartupProgress?: BrowserStartupProgressListener
@@ -136,11 +138,20 @@ export interface WorkspaceRecipeExternalServiceBoundary {
 /** A short-lived host resource provisioned before the sandbox runtime starts. */
 export interface WorkspaceRecipeRuntimeService {
   id: string
-  kind: "mysql" | (string & {})
+  kind: "mysql" | "redis" | "smtp" | "http" | (string & {})
   configuration?: {
+    provider?: "docker" | "external" | "native"
+    externalService?: string
     engine?: "mysql" | "mariadb"
     rootAuthentication?: "generated-password" | "empty-password"
     foreignKeyTargetPolicy?: "unique-only" | "indexed"
+    hostEnv?: string
+    portEnv?: string
+    usernameEnv?: string
+    passwordEnv?: string
+    image?: string
+    responseStatus?: number
+    responseBody?: string
   }
   /** Explicit map from a provider output (for example `port`) to one or more runtime env names. */
   outputs: Record<string, string | string[]>
@@ -317,6 +328,50 @@ export interface WorkspaceRecipeFuzzRun {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeAdversarialCaseTemplate {
+  id: string
+  phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>>
+}
+
+export interface WorkspaceRecipeAdversarialCampaign {
+  schema: "wp-codebox/adversarial-recipe-campaign/v1"
+  id: string
+  seed: string
+  corpus: Array<{
+    id: string
+    actions: Array<{ type: string; input?: unknown; metadata?: Record<string, unknown> }>
+    input?: unknown
+    signals?: string[]
+    metadata?: Record<string, unknown>
+  }>
+  caseTemplates: WorkspaceRecipeAdversarialCaseTemplate[]
+  mutators: Array<"scalar" | "structured" | "binary" | "sequence">
+  oracles: Array<{
+    id: "runtime-status"
+    severity: "low" | "medium" | "high" | "critical"
+    description?: string
+    metadata?: Record<string, unknown>
+  }>
+  matrix?: Array<{ name: string; values: string[] }>
+  concurrency?: number
+  budgets?: Partial<{
+    maxCases: number
+    maxActionsPerCase: number
+    maxInputBytes: number
+    maxCaseTimeMs: number
+    maxWallTimeMs: number
+    maxArtifactBytes: number
+  }>
+  faultSchedule?: import("./transport-faults.js").TransportFaultModel
+  resetPolicy?: import("./fuzz-suite-contracts.js").FuzzSuiteResetPolicy
+  requiredCapabilities?: string[]
+  optionalCapabilities?: string[]
+  novelty?: { retainSignals?: boolean }
+  shrinking?: { enabled?: boolean }
+  replay?: { selection?: "findings" | "all" }
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeFixtureDatabaseReset {
   strategy?: "none" | "truncate-tables"
   tables?: string[]
@@ -434,6 +489,7 @@ export interface WorkspaceRecipeExtraPlugin {
   activate?: boolean
   sha256?: string
   loadAs?: "plugin" | "mu-plugin"
+  composer?: "install"
   metadata?: Record<string, unknown>
 }
 
@@ -460,6 +516,7 @@ export interface WorkspaceRecipeDependencyOverlay {
   kind: "composer-package"
   package: string
   source: string
+  reference?: string
   consumer: string
   metadata?: Record<string, unknown>
 }
@@ -628,6 +685,7 @@ export interface WorkspaceRecipe {
     after?: WorkspaceRecipeStep[]
   }
   fuzzRun?: WorkspaceRecipeFuzzRun
+  adversarialCampaigns?: WorkspaceRecipeAdversarialCampaign[]
   artifacts?: {
     directory?: string
     verify?: boolean | WorkspaceRecipeArtifactVerifier

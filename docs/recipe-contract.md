@@ -86,6 +86,7 @@ top-level fields:
 - `inputs`
 - `workflow`
 - `fuzzRun`
+- `adversarialCampaigns`
 - `artifacts`
 - `probes`
 - `metadata`
@@ -123,6 +124,37 @@ imports.
 Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
 artifact contracts. WP Codebox materializes declared repositories as sandbox
 workspace mounts; callers own the policy that decides which artifacts to pass.
+
+## Adversarial Campaigns
+
+`adversarialCampaigns` additively declares deterministic corpus campaigns without
+changing authored `fuzzRun.cases`. Each corpus action selects a registered
+`caseTemplates` id. Generated plans interpolate `{{case.id}}`, `{{case.input}}`,
+`{{action.input}}`, `{{action.inputBase64}}`, `{{matrix}}`, and
+`{{matrix.<name>}}` into template arguments, then execute the resulting phases
+through the existing runtime-backed fuzz suite, checkpoint, episode, command
+policy, and artifact lifecycle.
+
+The built-in mutator registry contains `scalar`, `structured`, `binary`, and
+`sequence`; the initial neutral oracle registry contains `runtime-status`.
+Required capabilities fail recipe validation before services or runtimes start.
+Optional capabilities are reported with explicit availability in run evidence.
+Concurrency above one requires an `isolated-workers` capability and therefore
+fails closed until the selected recipe runtime provides isolated workers.
+
+Run and replay through stable CLI routes:
+
+```bash
+wp-codebox adversarial run --recipe examples/recipes/adversarial-stateful.json --json
+wp-codebox adversarial replay --recipe recipe.json --replay files/adversarial/<campaign>/replay/<fingerprint>.json --json
+```
+
+Every campaign writes a bounded nested bundle under
+`files/adversarial/<campaign>/`, including the result, fingerprint-addressed
+findings, minimized replay envelopes, a manifest, and secret-scan evidence. The
+parent artifact manifest retains all nested files. Interruption returns bounded
+partial campaign evidence before the recipe runner performs its normal runtime
+and service teardown.
 
 ## External Service Boundaries
 
@@ -169,10 +201,13 @@ summary from observed hosts to declared boundary ids where host names match
 
 `inputs.extra_plugins` mounts additional WordPress plugins before workflow steps
 run. Each entry requires `source` or `sourcePath` and may include `sourceSubdir`,
-`mountSlug`, `pluginFile`, `activate`, `loadAs`, and `sha256`. `sourcePath` is
-the source root, `sourceSubdir` is an optional plugin directory below that root,
-`mountSlug` is the WordPress plugin directory, and `pluginFile` is relative to
-the mounted plugin slug.
+`mountSlug`, `pluginFile`, `activate`, `loadAs`, `composer`, and `sha256`.
+`sourcePath` is the source root, `sourceSubdir` is an optional plugin directory
+below that root, `mountSlug` is the WordPress plugin directory, and `pluginFile`
+is relative to the mounted plugin slug. Local plugins are mounted as shipped;
+the presence of `composer.json` does not install dependencies or mutate the
+source. Set `composer` to `install` only when a source-form plugin requires a
+missing `vendor/autoload.php`. WP Codebox then runs Composer in a temporary copy.
 
 ```json
 {
@@ -194,7 +229,8 @@ the mounted plugin slug.
         "sourcePath": "../monorepo",
         "sourceSubdir": "plugins/example-plugin",
         "mountSlug": "example-plugin",
-        "pluginFile": "example-plugin/example-plugin.php"
+        "pluginFile": "example-plugin/example-plugin.php",
+        "composer": "install"
       }
     ]
   }
@@ -204,7 +240,9 @@ the mounted plugin slug.
 Supported `loadAs` values:
 
 - `plugin`: mount below `/wordpress/wp-content/plugins/<slug>` and activate when
-  `activate` is not `false`.
+  `activate` is not `false`. Composer autoloaders are preloaded only for these
+  active plugin inputs; an inactive plugin is mounted without executing its
+  `vendor/autoload.php`.
 - `mu-plugin`: mount below
   `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and load through
   WP Codebox's generated MU-plugin loader. Use this for sandbox runtime
@@ -757,7 +795,7 @@ The runtime provides:
 - `WP_TESTS_DIR` pointing at the configured WordPress tests library.
 - `WP_TESTS_CONFIG_FILE_PATH` and `WP_PHPUNIT__TESTS_CONFIG` pointing at the
   generated `wp-tests-config.php`.
-- An isolated SQLite test database via `DB_NAME=':memory:'`.
+- An isolated SQLite test database via `DB_NAME=':memory:'` by default.
 - A plugin working directory via `cwd=<sandbox path>`, matching the practical
   role of `wp-env run --env-cwd`.
 - Structured diagnostics in the recipe artifact bundle, including the raw test
@@ -772,6 +810,13 @@ created test tables and before test discovery and execution. Any dependency
 `plugins_loaded` callbacks registered during that load are invoked once after
 dependency activation.
 
+Set `databaseType` to `mysql` when managed PHPUnit tests require MySQL semantics.
+The builder provisions a disposable MySQL service, maps its canonical `DB_*`
+outputs into the runtime, and writes those values into `wp-tests-config.php`.
+An explicit MySQL declaration fails before tests if the runtime cannot provide
+that service; WP Codebox never substitutes SQLite for it. Omitting
+`databaseType` preserves the default SQLite behavior.
+
 Use `recipe build phpunit` when generating recipes for plugin CI or offloaded lab
 runners:
 
@@ -779,6 +824,7 @@ runners:
 {
   "pluginSlug": "woocommerce",
   "pluginSource": "../woocommerce/plugins/woocommerce",
+  "databaseType": "mysql",
   "services": [
     {
       "id": "mysql",

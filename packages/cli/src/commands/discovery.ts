@@ -2,6 +2,7 @@ import { createWorkspaceRecipeJsonSchema, runtimeDescriptor, type RuntimeDescrip
 import { commandRegistry, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput, printRuntimeDescriptorHumanOutput } from "../output.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../runtime-backends.js"
+import { nativeMariaDbHostReadiness } from "../runtime-services.js"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -40,7 +41,7 @@ export async function runRecipeSchemaCommand(args: string[]): Promise<number> {
 
 export async function runRuntimeDescriptorCommand(args: string[]): Promise<number> {
   const json = parseDiscoveryJsonOption(args)
-  const output = runtimeDescriptorOutput()
+  const output = await runtimeDescriptorOutput()
   if (!json) {
     printRuntimeDescriptorHumanOutput(output)
     return 0
@@ -109,6 +110,6 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
   }
 }
 
-function runtimeDescriptorOutput(): RuntimeDescriptor {
-  return runtimeDescriptor()
+async function runtimeDescriptorOutput(): Promise<RuntimeDescriptor> {
+  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness() })
 }

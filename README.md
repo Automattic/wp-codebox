@@ -1,5 +1,9 @@
 # WP Codebox
 
+Adversarial campaign, transport fault, service disruption, browser oracle, and
+sealed replay contracts are documented in
+[`docs/adversarial-runtime.md`](docs/adversarial-runtime.md).
+
 **WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely - every sandbox is a disposable contained WordPress runtime that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.
 
 WordPress has historically lacked a clean scratch space for code execution. Modern dev workflows assume one - Node has `npm install` per project, Python has venvs, containers have ephemeral filesystems. WP Codebox provides that primitive as a usable runtime contract: real WordPress, fully ephemeral, no host filesystem access except via declared mounts. Any product - WordPress or not - can offer code execution against a real WordPress instance without risking the caller.
@@ -721,7 +725,7 @@ Supported runtime commands today:
 - `wordpress.server-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` through the live preview HTTP server without a browser. Its performance observation is marked `source=server-http` and `kind=server-page-load`.
 - `wordpress.browser-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` in Playwright by wrapping `wordpress.browser-probe`.
 - `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
-- `wordpress.browser-actions`: boot the live preview, drive it with an ordered interaction script (`steps-json`), assert browser behavior, and capture replay/audit evidence under `files/browser/`.
+- `wordpress.browser-actions`: boot the live preview, drive it with an ordered interaction script (`steps-json`) or bounded adaptive exploration, optionally classify accessibility/keyboard/focus failures, and capture replay/audit evidence under `files/browser/`.
 
 `wordpress.run-php` loads `/wordpress/wp-load.php` by default. Use `--arg bootstrap=none` for raw PHP.
 
@@ -1305,7 +1309,7 @@ Callers can gate success on post-agent verification through `verify_steps`: an a
 
 Each component contract declares `slug`, `path` or `source`, optional explicit `pluginFile`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
 
-The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter. Source-checkout snapshots that do not include generated `dist/` files should point at `bin/wp-codebox-source.mjs`; it builds WP Codebox when needed before delegating to the compiled CLI.
+The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter. Source-checkout snapshots should point at `bin/wp-codebox-source.mjs`; it runs the incremental source build before every invocation so ignored `dist/` output cannot predate the checked-out core, Playground, or CLI source, then delegates to the compiled CLI.
 
 Caller-owned runtime components can provide workspace, file, GitHub, or other tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
 

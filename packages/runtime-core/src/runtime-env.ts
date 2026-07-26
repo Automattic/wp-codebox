@@ -63,6 +63,24 @@ export function resolveSecretEnvNames(names: readonly string[], options: Resolve
   return secretEnv
 }
 
+export function resolveRuntimeSecretEnvTargets(secretEnv: Record<string, string>, targets: Record<string, string> = {}): Record<string, string> {
+  const resolved: Record<string, string> = {}
+  for (const [target, source] of Object.entries(targets)) {
+    assertRuntimeEnvName(target, "secret env target")
+    assertRuntimeEnvName(source, "secret env source")
+    if (!(source in secretEnv)) throw new Error(`Secret env target ${target} references unavailable source: ${source}`)
+    resolved[target] = secretEnv[source] as string
+  }
+  return resolved
+}
+
+export function assertRuntimeSecretEnvTargetsAvailable(targets: Record<string, string> = {}, ...environmentSources: Array<Record<string, unknown>>): void {
+  for (const target of Object.keys(targets)) {
+    assertRuntimeEnvName(target, "secret env target")
+    if (environmentSources.some((source) => target in source)) throw new Error(`Secret env target collides with injected environment: ${target}`)
+  }
+}
+
 export function registerRuntimeSecretRedactions(secretEnv: Record<string, string>, registrar: RuntimeEnvRedactionRegistrar): void {
   for (const [name, value] of Object.entries(secretEnv)) {
     registrar.registerSecretName(name)

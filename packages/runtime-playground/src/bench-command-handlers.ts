@@ -1195,16 +1195,15 @@ function wp_codebox_bench_defer_new_wordpress_hook_callbacks(string $hook_name, 
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $deferred;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach ($callbacks as $callback_id => $callback) {
             if (isset($before[$priority . ':' . $callback_id])) {
                 continue;
             }
-            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
-            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
-        }
-        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
-            unset($wp_filter[$hook_name]->callbacks[$priority]);
+            if (isset($callback['function']) && remove_action($hook_name, $callback['function'], (int) $priority)) {
+                $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
+            }
         }
     }
     usort($deferred, static function (array $left, array $right): int {

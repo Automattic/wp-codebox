@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { materializationPhaseResult, namedFileTreeSkipPolicy, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 import { assertPlaygroundResponseOk, errorMessage } from "./playground-command-errors.js"
@@ -36,12 +36,21 @@ export type StagedInputMaterializationResult = MountMaterializationResult
 
 export interface ReadonlyMountStaging {
   mounts: MountSpec[]
+  diagnostics: MaterializationDiagnostic[]
+  phaseResult: MaterializationPhaseResult
   [Symbol.asyncDispose](): Promise<void>
 }
 
 interface HostMountFilePayload {
   target: string
-  contentsBase64: string
+  source: string
+  size: number
+}
+
+interface HostMountFileVerificationPayload {
+  target: string
+  contentsBase64?: string
+  sha256?: string
 }
 
 interface HostMountDirectoryMaterializationResponse {
@@ -60,8 +69,17 @@ interface HostMountFileMaterializationResponse {
   skipped?: number
 }
 
+interface HostMountFileVerificationResponse {
+  schema?: string
+  repaired?: number
+  skipped?: number
+}
+
 const HOST_MOUNT_FILE_BATCH_SIZE = 100
 const HOST_MOUNT_DIRECTORY_BATCH_SIZE = 500
+const HOST_MOUNT_CHUNKED_WRITE_THRESHOLD = 1024 * 1024
+const HOST_MOUNT_WRITE_CHUNK_SIZE = 256 * 1024
+const READONLY_MOUNT_SKIPPED_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
 
 /**
  * Playground's Node filesystem mount handler is writable. Snapshot readonly
@@ -72,6 +90,8 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
   if (readonlyMounts.length === 0) {
     return {
       mounts,
+      diagnostics: [],
+      phaseResult: readonlyMountStagingPhaseResult(0, []),
       async [Symbol.asyncDispose]() {},
     }
   }
@@ -80,26 +100,18 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
   try {
     const stagedMountResults = await Promise.allSettled(mounts.map(async (mount, index) => {
       if (mount.mode !== "readonly") {
-        return mount
+        return { mount, diagnostics: [] }
       }
       const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
-      await stat(mount.source)
-      await cp(mount.source, source, {
-        recursive: mount.type !== "file",
-        dereference: true,
-        filter: async (candidate) => {
-          const entry = await lstat(candidate)
-          if (!entry.isSymbolicLink()) return true
-          try {
-            await stat(candidate)
-            return true
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-            throw error
-          }
-        },
-      })
-      return { ...mount, source }
+      const sourceRoot = await realpath(mount.source)
+      const diagnostics: MaterializationDiagnostic[] = []
+      if (mount.type === "file") {
+        await cp(mount.source, source, { dereference: true })
+      } else {
+        await stageReadonlyDirectory(mount, index, sourceRoot, source, diagnostics)
+      }
+      diagnostics.sort((left, right) => String(left.metadata?.path) < String(right.metadata?.path) ? -1 : String(left.metadata?.path) > String(right.metadata?.path) ? 1 : 0)
+      return { mount: { ...mount, source }, diagnostics }
     }))
     const failedMount = stagedMountResults.find((result) => result.status === "rejected")
     if (failedMount?.status === "rejected") {
@@ -109,10 +121,13 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       if (result.status !== "fulfilled") {
         throw result.reason
       }
-      return result.value
+      return result.value.mount
     })
+    const diagnostics = stagedMountResults.flatMap((result) => result.status === "fulfilled" ? result.value.diagnostics : [])
     return {
       mounts: stagedMounts,
+      diagnostics,
+      phaseResult: readonlyMountStagingPhaseResult(readonlyMounts.length, diagnostics),
       async [Symbol.asyncDispose]() {
         await rm(root, { recursive: true, force: true })
       },
@@ -121,6 +136,88 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
     await rm(root, { recursive: true, force: true })
     throw error
   }
+}
+
+async function stageReadonlyDirectory(mount: MountSpec, mountIndex: number, sourceRoot: string, destination: string, diagnostics: MaterializationDiagnostic[]): Promise<void> {
+  const visit = async (directory: string, stagedDirectory: string, relativeDirectory: string, ancestors: ReadonlySet<string>): Promise<void> => {
+    await mkdir(stagedDirectory, { recursive: true })
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      const stagedPath = join(stagedDirectory, entry.name)
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+      const entryStat = await lstat(path)
+      if (!entryStat.isSymbolicLink()) {
+        if (entryStat.isDirectory()) {
+          if (READONLY_MOUNT_SKIPPED_DIRECTORIES.has(entry.name)) {
+            continue
+          }
+          const target = await realpath(path)
+          await visit(target, stagedPath, relativePath, new Set([...ancestors, target]))
+        } else {
+          await cp(path, stagedPath)
+        }
+        continue
+      }
+
+      let target: string
+      try {
+        target = await realpath(path)
+      } catch {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "dangling-target")
+        continue
+      }
+      if (!pathIsWithinRoot(sourceRoot, target)) {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "source-escape")
+        continue
+      }
+      const targetStat = await stat(target)
+      if (!targetStat.isDirectory()) {
+        await cp(target, stagedPath)
+        continue
+      }
+      if (READONLY_MOUNT_SKIPPED_DIRECTORIES.has(entry.name)) {
+        continue
+      }
+      if (ancestors.has(target)) {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "directory-cycle")
+        continue
+      }
+      await visit(target, stagedPath, relativePath, new Set([...ancestors, target]))
+    }
+  }
+
+  await visit(sourceRoot, destination, "", new Set([sourceRoot]))
+}
+
+function pathIsWithinRoot(root: string, path: string): boolean {
+  const relativePath = relative(root, path)
+  return relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
+}
+
+function addReadonlySymlinkDiagnostic(diagnostics: MaterializationDiagnostic[], mount: MountSpec, mountIndex: number, path: string, reason: "dangling-target" | "source-escape" | "directory-cycle"): void {
+  diagnostics.push({
+    code: "readonly-mount-symlink-skipped",
+    message: `Skipped ${reason} symlink in readonly mount: ${path}`,
+    severity: "warning",
+    phase: "playground-readonly-mount-staging",
+    metadata: {
+      mountIndex,
+      mountTarget: mount.target,
+      path,
+      reason,
+    },
+  })
+}
+
+function readonlyMountStagingPhaseResult(mounts: number, diagnostics: MaterializationDiagnostic[]): MaterializationPhaseResult {
+  return materializationPhaseResult({
+    phase: "playground-readonly-mount-staging",
+    status: mounts > 0 ? "completed" : "skipped",
+    metadata: { mounts, skipped: diagnostics.length, diagnostics },
+  })
 }
 
 function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
@@ -214,7 +311,8 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   let created = 0
   let skipped = 0
   const directoryBatch: string[] = []
-  const fileBatch: HostMountFilePayload[] = []
+  const fileBatch: Array<HostMountFilePayload & { contentsBase64: string }> = []
+  const verificationBatch: HostMountFileVerificationPayload[] = []
 
   const flushDirectories = async () => {
     if (directoryBatch.length === 0) {
@@ -239,23 +337,40 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
     created += result.created
     skipped += result.skipped
   }
-  const writeFilePayload = async (payload: HostMountFilePayload) => {
-    if (!server.playground.writeFile) {
-      fileBatch.push(payload)
-      if (fileBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
-        await flushFileBatch()
-      }
+  const flushVerificationBatch = async () => {
+    if (verificationBatch.length === 0) {
       return
     }
+    const result = await verifyHostMountFilesWithPhp(server, verificationBatch.splice(0, verificationBatch.length))
+    skipped += result.skipped
+  }
+  const writeFilePayload = async (payload: HostMountFilePayload) => {
     const target = payload.target.trim()
     if (!target || target.includes("\0")) {
       skipped++
       return
     }
-    const contents = Buffer.from(payload.contentsBase64, "base64")
+    if (payload.size > HOST_MOUNT_CHUNKED_WRITE_THRESHOLD) {
+      const verification = await materializeHostMountFileInChunks(server, { ...payload, target })
+      materialized++
+      verificationBatch.push(verification)
+      if (verificationBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushVerificationBatch()
+      }
+      return
+    }
+    const contents = await readFile(payload.source)
+    const contentsBase64 = contents.toString("base64")
+    if (!server.playground.writeFile) {
+      fileBatch.push({ ...payload, contentsBase64 })
+      if (fileBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushFileBatch()
+      }
+      return
+    }
     const text = contents.toString("utf8")
     if (!Buffer.from(text, "utf8").equals(contents)) {
-      fileBatch.push(payload)
+      fileBatch.push({ ...payload, contentsBase64 })
       if (fileBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
         await flushFileBatch()
       }
@@ -264,8 +379,12 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
     try {
       await server.playground.writeFile(target, text)
       materialized++
+      verificationBatch.push({ target, contentsBase64 })
+      if (verificationBatch.length >= HOST_MOUNT_FILE_BATCH_SIZE) {
+        await flushVerificationBatch()
+      }
     } catch {
-      const fallback = await materializeHostMountFilesWithPhp(server, [payload], [])
+      const fallback = await materializeHostMountFilesWithPhp(server, [{ ...payload, contentsBase64 }], [])
       materialized += fallback.materialized
       created += fallback.created
       skipped += fallback.skipped
@@ -286,6 +405,7 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   }
   await flushDirectories()
   await flushFileBatch()
+  await flushVerificationBatch()
   return { materialized, created, skipped }
 }
 
@@ -329,7 +449,7 @@ async function* hostMountEntriesForVfs(mount: MountSpec): AsyncGenerator<HostMou
     if (parent && parent !== ".") {
       yield { type: "directory", target: parent }
     }
-    yield { type: "file", file: { target: mount.target, contentsBase64: (await readFile(mount.source)).toString("base64") } }
+    yield { type: "file", file: { target: mount.target, source: mount.source, size: sourceStat.size } }
     return
   }
   if (!sourceStat.isDirectory()) {
@@ -365,18 +485,79 @@ async function* hostMountEntriesForVfs(mount: MountSpec): AsyncGenerator<HostMou
       if (!entry.isFile()) {
         continue
       }
-      yield { type: "file", file: { target: `${target}/${relativePath}`, contentsBase64: (await readFile(absolutePath)).toString("base64") } }
+      const fileStat = await stat(absolutePath)
+      yield { type: "file", file: { target: `${target}/${relativePath}`, source: absolutePath, size: fileStat.size } }
     }
   }
 }
 
-async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[], directories: string[]): Promise<{ materialized: number; created: number; skipped: number }> {
+async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: Array<HostMountFilePayload & { contentsBase64: string }>, directories: string[]): Promise<{ materialized: number; created: number; skipped: number }> {
   const response = await server.playground.run({ code: hostMountWritePhp(files, directories) })
   assertPlaygroundResponseOk("playground-staged-input-write", response)
   const parsed = parseMaterializationJson<HostMountFileMaterializationResponse>(response.text, "wp-codebox/host-mount-materialization/v1", "playground-staged-input-write")
   return {
     materialized: parsed.materialized ?? 0,
     created: parsed.created ?? 0,
+    skipped: parsed.skipped ?? 0,
+  }
+}
+
+async function materializeHostMountFileInChunks(server: PlaygroundCliServer, file: HostMountFilePayload): Promise<HostMountFileVerificationPayload> {
+  const hash = createHash("sha256")
+  const snapshotDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-staged-file-"))
+  const snapshot = join(snapshotDirectory, basename(file.source) || "staged-file")
+  try {
+    await cp(file.source, snapshot)
+    const handle = await open(snapshot, "r")
+    try {
+      const truncateResponse = await server.playground.run({ code: hostMountChunkWritePhp(file.target) })
+      assertPlaygroundResponseOk("playground-staged-input-chunked-write", truncateResponse)
+      assertChunkWriteResult(truncateResponse.text, file.target, 0)
+
+      const buffer = Buffer.allocUnsafe(HOST_MOUNT_WRITE_CHUNK_SIZE)
+      let position = 0
+      let chunk = 0
+      while (position < file.size) {
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, file.size - position), position)
+        if (bytesRead === 0) {
+          throw new Error(`playground-staged-input-chunked-write could not read ${boundedTarget(file.target)} after ${position} byte(s)`)
+        }
+        const contents = buffer.subarray(0, bytesRead)
+        hash.update(contents)
+        const response = await server.playground.run({ code: hostMountChunkWritePhp(file.target, contents.toString("base64")) })
+        assertPlaygroundResponseOk("playground-staged-input-chunked-write", response)
+        assertChunkWriteResult(response.text, file.target, ++chunk)
+        position += bytesRead
+      }
+    } finally {
+      await handle.close()
+    }
+  } finally {
+    await rm(snapshotDirectory, { recursive: true, force: true })
+  }
+  return { target: file.target, sha256: hash.digest("hex") }
+}
+
+function assertChunkWriteResult(text: string, target: string, chunk: number): void {
+  const parsed = parseMaterializationJson<HostMountFileMaterializationResponse>(text, "wp-codebox/host-mount-chunk-materialization/v1", "playground-staged-input-chunked-write")
+  if ((parsed.skipped ?? 0) > 0 || (chunk > 0 && (parsed.materialized ?? 0) !== 1)) {
+    throw new Error(`playground-staged-input-chunked-write could not write ${boundedTarget(target)} at chunk ${chunk}`)
+  }
+}
+
+function boundedTarget(target: string): string {
+  return target.length <= 200 ? target : `${target.slice(0, 197)}...`
+}
+
+async function verifyHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFileVerificationPayload[]): Promise<{ repaired: number; skipped: number }> {
+  const response = await server.playground.run({ code: hostMountVerifyPhp(files) })
+  assertPlaygroundResponseOk("playground-staged-input-verify", response)
+  const parsed = parseMaterializationJson<HostMountFileVerificationResponse>(response.text, "wp-codebox/host-mount-verification/v1", "playground-staged-input-verify")
+  if ((parsed.skipped ?? 0) > 0) {
+    throw new Error(`playground-staged-input-verify could not preserve ${parsed.skipped} staged input file(s)`)
+  }
+  return {
+    repaired: parsed.repaired ?? 0,
     skipped: parsed.skipped ?? 0,
   }
 }
@@ -490,7 +671,7 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
   return files
 }
 
-function hostMountWritePhp(files: HostMountFilePayload[], directories: string[]): string {
+function hostMountWritePhp(files: Array<HostMountFilePayload & { contentsBase64: string }>, directories: string[]): string {
   const payload = JSON.stringify(JSON.stringify({ files, directories }))
   return `<?php
 $payload = json_decode(${payload}, true);
@@ -509,6 +690,7 @@ foreach (($payload['directories'] ?? array()) as $directory) {
     }
     $skipped++;
 }
+
 foreach (($payload['files'] ?? array()) as $file) {
     $target = (string) ($file['target'] ?? '');
     $contents = (string) ($file['contentsBase64'] ?? '');
@@ -529,6 +711,73 @@ foreach (($payload['files'] ?? array()) as $file) {
     $materialized++;
 }
 echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function hostMountVerifyPhp(files: HostMountFileVerificationPayload[]): string {
+  const payload = JSON.stringify(JSON.stringify({ files }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$repaired = 0;
+$skipped = 0;
+foreach (($payload['files'] ?? array()) as $file) {
+    $target = (string) ($file['target'] ?? '');
+    $expected_hash = (string) ($file['sha256'] ?? '');
+    $contents = base64_decode((string) ($file['contentsBase64'] ?? ''), true);
+    if ('' === $target || str_contains($target, "\0") || ('' === $expected_hash && false === $contents)) {
+        $skipped++;
+        continue;
+    }
+    $target_hash = is_file($target) ? hash_file('sha256', $target) : false;
+    if (is_string($target_hash) && hash_equals('' === $expected_hash ? hash('sha256', $contents) : $expected_hash, $target_hash)) {
+        continue;
+    }
+    if ('' !== $expected_hash) {
+        $skipped++;
+        continue;
+    }
+    $directory = dirname($target);
+    if ((!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) || false === file_put_contents($target, $contents)) {
+        $skipped++;
+        continue;
+    }
+    $repaired_hash = hash_file('sha256', $target);
+    if (!is_string($repaired_hash) || !hash_equals(hash('sha256', $contents), $repaired_hash)) {
+        $skipped++;
+        continue;
+    }
+    $repaired++;
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-verification/v1', 'repaired' => $repaired, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function hostMountChunkWritePhp(target: string, contentsBase64?: string): string {
+  const payload = JSON.stringify(JSON.stringify({ target, contentsBase64 }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$target = (string) ($payload['target'] ?? '');
+$contents_base64 = $payload['contentsBase64'] ?? null;
+$materialized = 0;
+$skipped = 0;
+if ('' === $target || str_contains($target, "\0")) {
+    $skipped++;
+} elseif (null === $contents_base64) {
+    $handle = fopen($target, 'wb');
+    if (false === $handle) {
+        $skipped++;
+    } else {
+        fclose($handle);
+    }
+} else {
+    $contents = base64_decode((string) $contents_base64, true);
+    if (false === $contents || strlen($contents) !== file_put_contents($target, $contents, FILE_APPEND)) {
+        $skipped++;
+    } else {
+        $materialized++;
+    }
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-chunk-materialization/v1', 'materialized' => $materialized, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
 `
 }
 

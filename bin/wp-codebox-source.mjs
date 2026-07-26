@@ -35,18 +35,21 @@ function run(command, args, options = {}) {
   }
 
   if (result.status !== 0) {
+    if (options.failureContext) {
+      console.error(`WP Codebox source entrypoint failed to ${options.failureContext} (exit ${result.status ?? 1}).`)
+    }
     process.exit(result.status ?? 1)
   }
 }
 
-if (!existsSync(distEntrypoint)) {
+const distIsAbsent = !existsSync(distEntrypoint)
+if (distIsAbsent) {
   console.error("WP Codebox CLI dist entrypoint is absent; bootstrapping the source checkout before running the CLI.")
-
-  if (!existsSync(nodeModules)) {
-    run("npm", [existsSync(packageLock) ? "ci" : "install"])
-  }
-
-  run("npm", ["run", "build"])
 }
 
+if (!existsSync(nodeModules)) {
+  run("npm", [existsSync(packageLock) ? "ci" : "install"], { failureContext: "install source checkout dependencies" })
+}
+
+run("npm", ["run", "build"], { failureContext: "build the source checkout" })
 run(process.execPath, [distEntrypoint, ...process.argv.slice(2)], { cwd: callerCwd, delegate: true })

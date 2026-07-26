@@ -4,6 +4,7 @@
  * subpath instead.
  */
 export * from "./benchmark-substrate.js"
+export * from "./bounded-execution-results.js"
 export * from "./fanout-aggregation.js"
 export * from "./fanout-execution.js"
 export * from "./object-utils.js"

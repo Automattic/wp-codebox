@@ -1,0 +1,31 @@
+// ChatGPT Sites profile: D1 coordinates revisions; R2 stores canonical and published artifacts.
+{
+  "name": "wp-codebox-cloudflare-runtime",
+  "main": "src/worker-d1.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 300000 },
+	"triggers": { "crons": ["* * * * *"] },
+	"r2_buckets": [
+		{ "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
+	],
+	"d1_databases": [
+		{
+			"binding": "WORDPRESS_STATE_DATABASE",
+			"database_name": "wp-codebox-runtime-state",
+			"database_id": "00000000-0000-0000-0000-000000000000"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "WORDPRESS_STATE", "class_name": "WordPressStateCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["WordPressStateCoordinator"] }
+	],
+	"rules": [
+		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
+		{ "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip", "**/*-canonical-seed.zip"], "fallthrough": false }
+	]
+}

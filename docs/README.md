@@ -41,6 +41,9 @@ unless this index says otherwise.
 - [Generic runtime primitives](./generic-runtime-primitives.md) documents the
   caller-neutral artifact storage, trusted browser origin, materialization, and
   target-context envelopes shared by runtime integrations.
+- [Browser environment matrices](./browser-environment-matrices.md) documents
+  deterministic hostile-environment expansion, capability fidelity, bounds,
+  isolated cell artifacts, and replay evidence.
 - [Runtime profile contract](./runtime-profile-contract.md) documents
   `wp-codebox/runtime-profile/v1`, the Codebox-owned profile request/result lane
   for capabilities, components, readiness, diagnostics, and provenance.

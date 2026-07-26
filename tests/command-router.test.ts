@@ -21,6 +21,11 @@ const router = {
     return 5
   },
   fuzzReadiness: async () => 0,
+  adversarialRun: async () => 0,
+  adversarialReplay: async (args: string[]) => {
+    calls.push(`adversarialReplay:${args.join(" ")}`)
+    return 9
+  },
   recipeValidate: async () => 0,
   recipeBuild: async () => 0,
   workspacePolicyCheck: async () => 0,
@@ -68,5 +73,9 @@ const fuzzDescriptorExitCode = await routeCliCommand(["fuzz", "descriptor", "--j
 
 assert.equal(fuzzDescriptorExitCode, 5)
 assert.deepEqual(calls, ["agentTaskRun:--input-file task.json --json", "runtimeDescriptor:--json", "fuzzDescriptor:--json"])
+
+const adversarialReplayExitCode = await routeCliCommand(["adversarial", "replay", "--recipe", "recipe.json", "--replay", "replay.json", "--json"], router)
+assert.equal(adversarialReplayExitCode, 9)
+assert.equal(calls.at(-1), "adversarialReplay:--recipe recipe.json --replay replay.json --json")
 
 console.log("command-router contract passed")

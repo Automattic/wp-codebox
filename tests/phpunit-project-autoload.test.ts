@@ -65,6 +65,63 @@ function phpString(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
 }
 
+function assertDeferredHookReplayUsesWordPressLifecycle(source: string): void {
+  const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-deferred-hook-"))
+  const scriptPath = join(tempDir, "assert-deferred-hook.php")
+  writeFileSync(scriptPath, `<?php
+class WP_Hook {
+    public array $callbacks = array();
+    public function add_filter($hook, $callback, $priority, $accepted_args): void {
+        $id = is_string($callback) ? $callback : spl_object_hash($callback);
+        $this->callbacks[$priority][$id] = array('function' => $callback, 'accepted_args' => $accepted_args);
+    }
+    public function do_action($args): void {
+        $completed = array();
+        while (true) {
+            ksort($this->callbacks);
+            $next = null;
+            foreach ($this->callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $id => $callback) {
+                    $key = $priority . ':' . $id;
+                    if (!isset($completed[$key])) {
+                        $next = array($key, $callback);
+                        break 2;
+                    }
+                }
+            }
+            if ($next === null) return;
+            $completed[$next[0]] = true;
+            call_user_func_array($next[1]['function'], array_slice($args, 0, $next[1]['accepted_args']));
+        }
+    }
+}
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1): bool {
+    global $wp_filter;
+    if (!isset($wp_filter[$hook])) $wp_filter[$hook] = new WP_Hook();
+    $wp_filter[$hook]->add_filter($hook, $callback, $priority, $accepted_args);
+    return true;
+}
+function add_action($hook, $callback, $priority = 10, $accepted_args = 1): bool {
+    return add_filter($hook, $callback, $priority, $accepted_args);
+}
+${extractPhpFunction(source, "pg_run_deferred_wordpress_hook_callbacks")}
+$events = array();
+$wp_current_filter = array();
+$wp_filter = array('init' => new WP_Hook());
+add_action('init', function() use (&$events) { $events[] = 'core-must-not-replay'; }, 5, 0);
+$early = function() use (&$events) {
+    $events[] = 'early';
+    add_action('init', function() use (&$events) { $events[] = 'late'; }, 15, 0);
+};
+pg_run_deferred_wordpress_hook_callbacks(array(array('priority' => 0, 'callback' => array('function' => $early, 'accepted_args' => 0))), array(), 'init');
+if ($events !== array('early', 'late')) throw new RuntimeException('deferred init order was not faithful: ' . json_encode($events));
+if (count($wp_filter['init']->callbacks, COUNT_RECURSIVE) < 6) throw new RuntimeException('replayed callbacks were not retained');
+if ($wp_current_filter !== array()) throw new RuntimeException('current filter stack leaked');
+echo "ok\n";
+`)
+  assert.equal(execFileSync("php", [scriptPath], { encoding: "utf8" }), "ok\n")
+}
+
 function assertPhpunitConfigurationAndDiscoveryFailures(source: string, functionName: string, discoveryFunctionName: string, logFunctionName: string, supportsImplicitFallback: boolean): void {
   const tempDir = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-config-"))
   const malformedXml = join(tempDir, "phpunit.xml.dist")
@@ -212,8 +269,7 @@ pg_run_project_bootstrap_stage(array('project_bootstrap' => '', 'phpunit_xml' =>
 
 function decodedBootstrapWrapper(source: string): string {
   const encoded = source.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
-  assert.ok(encoded, "PHPUnit payload must execute inside the bootstrap diagnostic wrapper")
-  return Buffer.from(encoded, "base64").toString("utf8")
+  return encoded ? Buffer.from(encoded, "base64").toString("utf8") : source
 }
 
 function assertSelectedTestFileResolution(source: string): void {
@@ -489,6 +545,7 @@ const projectModeCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   multisite: false,
+  databaseType: "sqlite",
 })
 
 const implicitProjectConfigCode = phpunitRunCode({
@@ -509,6 +566,7 @@ const implicitProjectConfigCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "",
   multisite: false,
+  databaseType: "sqlite",
 })
 assertConfiglessPluginUsesManagedDiscovery(implicitProjectConfigCode)
 
@@ -576,6 +634,7 @@ const canonicalHarnessProjectModeCode = phpunitRunCode({
   bootstrapMode: "project",
   projectBootstrap: "tests/legacy/bootstrap.php",
   multisite: false,
+  databaseType: "sqlite",
 })
 assert.ok(canonicalHarnessProjectModeCode.includes('$autoload_file_role = "harness";'))
 assert.ok(canonicalHarnessProjectModeCode.includes('$harness_autoload_file = $legacy_project_autoload_file !== \'\' ? \'/wp-codebox-vendor/autoload.php\' : $autoload_file;'))
@@ -618,7 +677,7 @@ const decodedCanonicalHarnessCode = decodedBootstrapWrapper(capturedCanonicalHar
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file = "/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php";'))
 assert.ok(decodedCanonicalHarnessCode.includes('$autoload_file_role = "harness";'))
 assert.ok(decodedCanonicalHarnessCode.includes('putenv("TC_MYSQL_PORT=3306");'), "runtime service environment is passed to the PHP executed by wordpress.phpunit")
-assert.ok(!decodedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), "project bootstrap mode does not load the managed WordPress runtime first")
+assert.ok(!decodedCanonicalHarnessCode.includes("require_once '/wordpress/wp-load.php';"), "PHPUnit must own WordPress bootstrap so managed multisite constants are established first")
 
 let capturedExplicitCode = ""
 await runPhpunitCommand({
@@ -639,6 +698,35 @@ const decodedExplicitCode = decodedBootstrapWrapper(capturedExplicitCode)
 assert.equal((decodedExplicitCode.match(/declare\(strict_types=1\);/g) ?? []).length, 1, "explicit PHP is normalized once at the runtime bootstrap boundary")
 assert.ok(decodedExplicitCode.includes("echo getenv('TC_MYSQL_PORT');"), "explicit PHPUnit code receives the same runtime bootstrap")
 assert.ok(decodedExplicitCode.indexOf('putenv("TC_MYSQL_PORT=3306");') < decodedExplicitCode.lastIndexOf("TC_MYSQL_PORT"), "explicit env-json handling remains after runtime environment bootstrap")
+
+let capturedMysqlCode = ""
+await runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-artifacts-")),
+  mounts: [],
+  runPlaygroundCommand: async (_command, _server, input) => {
+    capturedMysqlCode = input.code
+    return { text: "OK (1 test, 1 assertion)", exitCode: 0 }
+  },
+  runtimeSpec: {
+    environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+    runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
+    policy: { commands: ["wordpress.phpunit"] },
+  } as never,
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
+})
+const decodedMysqlCode = decodedBootstrapWrapper(capturedMysqlCode)
+assert.ok(decodedMysqlCode.includes('$database_type = "mysql";'))
+assert.ok(decodedMysqlCode.includes("'DB_HOST' => $db_host"), "managed PHPUnit writes the provisioned MySQL host into wp-tests-config.php")
+assert.ok(decodedMysqlCode.includes("getenv('DB_PASSWORD')"), "managed PHPUnit consumes the provisioned MySQL credentials")
+await assert.rejects(runPhpunitCommand({
+  artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-reject-")),
+  mounts: [],
+  runPlaygroundCommand: async () => { throw new Error("workload must not execute") },
+  runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+  server: { playground: {} } as never,
+  spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
+}), /requires a managed external database service.*refusing to substitute SQLite/)
 
 const coreModeCode = corePhpunitRunCode({
   coreRoot: "/wordpress",
@@ -681,11 +769,16 @@ const managedModeCode = phpunitRunCode({
   bootstrapMode: "managed",
   projectBootstrap: "",
   multisite: false,
+  databaseType: "sqlite",
 })
 
+assertDeferredHookReplayUsesWordPressLifecycle(managedModeCode)
+
 assert.ok(managedModeCode.includes("configured PHPUnit harness autoload file is not readable"))
+assert.ok(managedModeCode.includes("define('DB_NAME', ':memory:');"), "default managed PHPUnit remains on SQLite")
 assert.ok(managedModeCode.includes("'cacheResult' => false"))
 assert.ok(managedModeCode.includes("global $argv, $pg_stage_output_buffering, $wp_rewrite;"), "managed WordPress installation must expose the rewrite global required by multisite setup")
+assert.ok(managedModeCode.includes("foreach ($multisite_defines as $name => $value)"), "managed multisite must establish network constants before the WordPress test installer runs")
 assert.ok(managedModeCode.includes('$dep_mounts = "/wordpress/wp-content/plugins/demo-plugin\\n/wordpress/wp-content/plugins/dependency";'), "dependency mounts must be newline-delimited for the generated PHP runner")
 const installStageIndex = managedModeCode.indexOf("pg_run_install_stage(array(")
 const dependencyLoadStageIndex = managedModeCode.indexOf("$loaded_dep_files = pg_run_load_deps_stage", installStageIndex)
@@ -729,6 +822,14 @@ assert.deepEqual((multisiteRecipe.runtime.blueprint as { steps: unknown[] }).ste
 ], "multisite PHPUnit recipes must boot Playground as multisite before running tests")
 assert.equal(multisiteRecipe.runtime.preview?.siteUrl, "http://localhost", "multisite PHPUnit recipes need a canonical site URL without the dynamic Playground port")
 assert.ok(multisiteRecipe.workflow.steps[0].args.includes("multisite=1"))
+
+const externalMysqlMultisiteRecipe = buildWordPressPhpunitRecipe({
+  pluginSlug: "network-plugin",
+  databaseType: "mysql",
+  multisite: true,
+})
+assert.deepEqual((externalMysqlMultisiteRecipe.runtime.blueprint as { steps: unknown[] }).steps, [], "external MySQL must boot single-site until the managed PHPUnit installer creates network tables")
+assert.ok(externalMysqlMultisiteRecipe.workflow.steps[0].args.includes("multisite=1"), "managed PHPUnit still receives the declared multisite contract")
 
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")

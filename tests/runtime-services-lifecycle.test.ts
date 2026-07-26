@@ -13,12 +13,20 @@ try {
 
   const succeeded = await registry.create({ runId: "service-success", status: "running", metadata: {} })
   const succeededEvidence: RuntimeServiceEvidence[] = [{ id: "mysql", kind: "mysql", provider: "test", version: "test", readiness: "ready", lifecycle: "provisioned" }]
+  const succeededUpdates: Array<{ cleanup?: string; lifecycle?: string }> = []
+  const originalUpdate = registry.update.bind(registry)
+  registry.update = async (runId, update) => {
+    succeededUpdates.push({ cleanup: update.cleanup?.status, lifecycle: (update.metadata?.managedRuntimeServices as RuntimeServiceEvidence[] | undefined)?.[0]?.lifecycle })
+    return await originalUpdate(runId, update)
+  }
   const cleanup = await runManagedServiceCleanup(registry, succeeded, succeededEvidence, false, async () => {
     succeededEvidence[0]!.lifecycle = "released"
     succeededEvidence[0]!.teardown = "completed"
   })
   assert.equal(cleanup.state, "completed")
   assert.deepEqual((await registry.read(succeeded.runId)).metadata.managedRuntimeServices, succeededEvidence)
+  assert.equal(succeededUpdates.some((update) => update.lifecycle === "provisioned"), false, "final service evidence is never persisted before teardown")
+  assert.ok(succeededUpdates.some((update) => update.cleanup === "succeeded" && update.lifecycle === "released"), "cleanup completion and final service evidence share one registry update")
 
   const failed = await registry.create({ runId: "service-failure", status: "running", metadata: {} })
   const failedEvidence: RuntimeServiceEvidence[] = [{ id: "mysql", kind: "mysql", provider: "test", version: "test", readiness: "ready", lifecycle: "provisioned" }]
@@ -30,6 +38,7 @@ try {
   })
   assert.equal(preserved.state, "failed", "a primary recipe failure keeps structured cleanup evidence")
   assert.deepEqual((await registry.read(failed.runId)).metadata.managedRuntimeServices, failedEvidence)
+  assert.ok(succeededUpdates.some((update) => update.cleanup === "failed" && update.lifecycle === "failed"), "cleanup failure and final service evidence share one registry update")
 
   const terminal = await registry.create({ runId: "service-terminal-cleanup-failure", status: "running", metadata: {} })
   await assert.rejects(

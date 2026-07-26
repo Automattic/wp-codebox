@@ -20,6 +20,10 @@ const sentinel = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 try {
   await cp("tests/fixtures/phpunit-playground-harness", harness, { recursive: true })
   await execFileAsync("composer", ["install", "--no-interaction", "--prefer-dist"], { cwd: harness, timeout: 300_000, maxBuffer: 2 * 1024 * 1024 })
+  const autoloadReal = await readFile(join(harness, "vendor", "composer", "autoload_real.php"), "utf8")
+  const staticClass = autoloadReal.match(/ComposerStaticInit[\da-f]+/i)?.[0]
+  assert.ok(staticClass, "fixture uses Composer's optimized static autoloader")
+  assert.match(await readFile(join(harness, "vendor", "composer", "autoload_static.php"), "utf8"), new RegExp(`class ${staticClass}`), "generated Composer autoload files define the same static initializer")
   await writeFixture()
   const sourceDigest = await digestTree(plugin)
 
@@ -53,6 +57,7 @@ try {
   await assert.rejects(readFile(join(plugin, ".phpunit.result.cache")), /ENOENT/, "PHPUnit must not create a host-source result cache")
   const runtime = JSON.parse(await readFile(join(artifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
   const diagnostic = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
+  assert.match(diagnostic, /^DISCOVERY: .* found=1$/m, "actual PHPUnit runner must discover the fixture test file")
   assert.match(diagnostic, /^STAGE_BEGIN:run_tests/m, "actual PHPUnit runner must reach its test stage")
 } finally {
   await rm(root, { recursive: true, force: true })
@@ -61,10 +66,10 @@ try {
 async function writeFixture(): Promise<void> {
   await mkdir(join(plugin, "tests"), { recursive: true })
   await mkdir(dependency, { recursive: true })
-  await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\n")
+  await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\nadd_action('init', static function (): void { update_option('wp_codebox_parent_init_ran', 1); add_action('init', static function (): void { update_option('wp_codebox_nested_init_ran', 1); }, 15); }, 0);\n")
   await writeFile(join(plugin, "phpunit.xml.dist"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<phpunit><testsuites><testsuite name=\"readonly-cache\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
   await writeFile(join(plugin, "source-sentinel.bin"), sentinel)
-  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ConcreteTestHelper extends WP_UnitTestCase { public function fixture(): string { return \'fixture\'; } }\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_multisite_runtime_is_active(): void { $this->assertTrue(is_multisite()); } public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } public function test_dependency_activation_runs_after_install(): void { $this->assertGreaterThanOrEqual(1, get_option(\'wp_codebox_dependency_activation_users\')); } public function test_dependency_plugins_loaded_runs_once(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_dependency_plugins_loaded_count\')); } public function test_wp_cli_namespaced_stdout_is_available(): void { $this->assertTrue(eval(\'namespace cli; return is_resource(STDOUT);\')); } }\n")
+  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ConcreteTestHelper extends WP_UnitTestCase { public function fixture(): string { return \'fixture\'; } }\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_multisite_runtime_is_active(): void { $this->assertTrue(is_multisite()); } public function test_nested_init_callbacks_run_in_priority_order(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_parent_init_ran\')); $this->assertSame(1, (int) get_option(\'wp_codebox_nested_init_ran\')); } public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } public function test_dependency_activation_runs_after_install(): void { $this->assertGreaterThanOrEqual(1, get_option(\'wp_codebox_dependency_activation_users\')); } public function test_dependency_plugins_loaded_runs_once(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_dependency_plugins_loaded_count\')); } public function test_wp_cli_namespaced_stdout_is_available(): void { $this->assertTrue(eval(\'namespace cli; return is_resource(STDOUT);\')); } }\n")
   await writeFile(join(dependency, "activation-dependency.php"), "<?php\n/**\n * Plugin Name: Activation Dependency\n */\nadd_action('plugins_loaded', static function (): void { update_option('wp_codebox_dependency_plugins_loaded_count', (int) get_option('wp_codebox_dependency_plugins_loaded_count', 0) + 1); });\nregister_activation_hook(__FILE__, static function (): void { update_option('wp_codebox_dependency_activation_users', count(get_users(array('number' => 1)))); });\n")
 }
 

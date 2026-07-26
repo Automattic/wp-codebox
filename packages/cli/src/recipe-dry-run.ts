@@ -376,6 +376,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
         overlayKind: overlay.kind,
         package: overlay.package,
         source: overlay.source,
+        ...(overlay.reference ? { reference: overlay.reference } : {}),
         consumer: overlay.consumer,
         target,
         ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),

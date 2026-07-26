@@ -54,6 +54,15 @@ export function resolveRecipeSecretEnv(names: readonly string[], options: Resolv
   return { values, summary }
 }
 
+export function mergeRecipeSecretEnvSummary(summary: readonly RecipeSecretEnvSummaryEntry[], generatedNames: readonly string[]): RecipeSecretEnvSummaryEntry[] {
+  const entries = new Map(summary.map((entry) => [entry.name, { ...entry }]))
+  for (const name of generatedNames) {
+    assertRuntimeEnvName(name, "managed runtime service secret env")
+    entries.set(name, { name, status: "available", source: "managed-runtime-service" })
+  }
+  return [...entries.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
 export function defaultRecipeSecretEnvProviders(source: Record<string, string | undefined> = process.env): RecipeSecretEnvProvider[] {
   return [
     directProcessEnvSecretProvider,

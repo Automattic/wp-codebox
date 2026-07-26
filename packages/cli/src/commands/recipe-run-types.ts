@@ -4,6 +4,8 @@ import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStat
 import type { RecipeExternalServiceBoundaryHostCorrelation } from "../recipe-external-services.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
+import type { RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
+import type { RuntimeServiceEvidence } from "../runtime-services.js"
 
 export interface RecipeRunOptions {
   recipePath: string
@@ -20,7 +22,9 @@ export interface RecipeRunOptions {
   previewLeaseId?: string
   previewLeaseFile?: string
   timeoutMs: number
+  adversarialReplayPath?: string
   policy?: RuntimePolicy
+  externalServiceWritesApproved: boolean
   json: boolean
   summary: boolean
   dryRun: boolean
@@ -78,7 +82,9 @@ export interface RecipeRunOutput {
   completionOutcome?: SandboxCompletionOutcome
   replayStatus?: RecipeReplayStatusSummary
   fuzzRun?: RecipeFuzzRunResult
+  adversarialCampaigns?: RecipeAdversarialCampaignOutput[]
   provenance?: RecipeRunProvenance
+  managedRuntimeServices?: RuntimeServiceEvidence[]
   result?: RecipeRunSummary
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
@@ -259,6 +265,7 @@ export interface RecipeArtifactPointerState {
   browserEvidence?: RecipeBrowserEvidence[]
   diagnosticArtifacts?: RecipeDiagnosticArtifactRef[]
   result?: RecipeRunSummary
+  managedRuntimeServices?: RuntimeServiceEvidence[]
 }
 
 export interface RecipeEffectiveRecipeArtifact {
@@ -276,7 +283,7 @@ export interface RecipeDiagnosticArtifactRef {
   sha256?: string
 }
 
-export type RecipePhaseName = "provision_runtime_services" | "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "apply_distribution" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
+export type RecipePhaseName = "provision_runtime_services" | "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "apply_distribution" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_adversarial_campaigns" | "run_probes" | "collect_artifacts"
 
 export interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"

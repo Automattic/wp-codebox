@@ -2,8 +2,8 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import { normalizeLiveProgressEvent, previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
-import { randomInt } from "node:crypto"
+import { assertRuntimeSecretEnvTargetsAvailable, normalizeLiveProgressEvent, previewLease, resolveRuntimeSecretEnvTargets, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
+import { randomBytes, randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
 import { mkdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises"
@@ -34,6 +34,7 @@ export interface PlaygroundCliModule {
     skipSqliteSetup?: boolean
     "site-url"?: string
     phpIniEntries?: Record<string, string>
+    phpEnv?: Record<string, string>
     phpExtension?: string[]
   }): Promise<PlaygroundCliServer>
 }
@@ -44,6 +45,7 @@ export interface PlaygroundCliStartupOptions {
 }
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, distributionEnv(recipeDistribution(spec)?.env))
   const startedAt = Date.now()
   const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
     const event = {
@@ -82,6 +84,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
     usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
+    emitProgress("preview:materializing-mounts", "complete", "Prepared mounted inputs", {
+      materialization: readonlyMountStaging.phaseResult,
+    })
     const stagedMounts = readonlyMountStaging.mounts
     const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
     const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
@@ -160,6 +165,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
+          phpEnv: connectorSecretEnvironment(spec),
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
@@ -435,13 +441,12 @@ function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
   const values = {
     DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
     DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
-    DB_PASSWORD: spec.runtimeEnv?.DB_PASSWORD ?? "",
     DB_HOST: port ? `${host}:${port}` : host,
   }
   return `<?php
 define('DB_NAME', ${phpLiteral(values.DB_NAME)});
 define('DB_USER', ${phpLiteral(values.DB_USER)});
-define('DB_PASSWORD', ${phpLiteral(values.DB_PASSWORD)});
+define('DB_PASSWORD', (string) getenv('DB_PASSWORD'));
 define('DB_HOST', ${phpLiteral(values.DB_HOST)});
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');
@@ -449,6 +454,12 @@ $table_prefix = 'wp_';
 if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
 `
+}
+
+function connectorSecretEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  if (spec.environment.databaseSetup !== "external") return undefined
+  const resolved = resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets)
+  return Object.keys(resolved).length > 0 ? resolved : undefined
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {

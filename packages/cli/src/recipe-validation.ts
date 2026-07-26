@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -12,7 +12,7 @@ export interface RecipeValidationIssue {
   message: string
 }
 
-export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after" | `fuzz:${WorkspaceRecipeFuzzCasePhase}`
+export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after" | `fuzz:${WorkspaceRecipeFuzzCasePhase}` | `adversarial:${WorkspaceRecipeFuzzCasePhase}`
 
 export interface RecipeWorkflowStepRef {
   phase: Exclude<RecipeWorkflowPhase, "setup">
@@ -225,6 +225,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateFixtureDatabases(recipe.inputs?.fixtureDatabases, recipePath)
   validateRecipeProbes(recipe.probes, recipePath)
   validateRecipeFuzzRun(recipe.fuzzRun, recipePath)
+  validateRecipeAdversarialCampaigns(recipe, recipePath)
   validateDeclaredArtifacts(recipe.artifacts?.paths, recipePath)
 
   const siteSeeds = recipe.inputs?.siteSeeds ?? []
@@ -496,6 +497,9 @@ function validateRecipeDependencyOverlays(overlays: WorkspaceRecipeDependencyOve
     if (!overlay.source || typeof overlay.source !== "string") {
       throw new Error(`Recipe dependency overlays must include source: ${recipePath}`)
     }
+    if (overlay.reference !== undefined && (typeof overlay.reference !== "string" || !/^[a-f0-9]{40,64}$/i.test(overlay.reference))) {
+      throw new Error(`Recipe dependency overlay reference must be a 40-64 character hexadecimal immutable reference when provided: ${recipePath}`)
+    }
     if (!overlay.consumer || typeof overlay.consumer !== "string") {
       throw new Error(`Recipe dependency overlays must include consumer: ${recipePath}`)
     }
@@ -535,6 +539,26 @@ export function validateRecipeRuntimePolicy(recipe: WorkspaceRecipe, policy: Run
     }
   }
 
+  const externalMysqlServices = (recipe.inputs?.services ?? []).filter((service) => service.kind === "mysql" && service.configuration?.provider === "external")
+  if (externalMysqlServices.length > 0) {
+    if (policy.network === "deny") {
+      issues.push({ code: "runtime-policy-external-service-network-denied", path: "$.policy.network", message: "External MySQL runtime services require network access to their declared external-service hosts." })
+    }
+    if (policy.approvals !== "on-write") {
+      issues.push({ code: "runtime-policy-external-service-approval-required", path: "$.policy.approvals", message: "External MySQL runtime services require approvals=on-write and explicit write approval at execution time." })
+    }
+    if (typeof policy.network === "object") {
+      for (const service of externalMysqlServices) {
+        const boundary = recipe.inputs?.externalServices?.find((candidate) => candidate.id === service.configuration?.externalService)
+        for (const host of boundary?.allowedHosts ?? []) {
+          if (!policyHostListIncludes(policy.network.allowHosts, host)) {
+            issues.push({ code: "runtime-policy-external-service-host-denied", path: "$.policy.network.allowHosts", message: `Runtime network policy must allow external-service host: ${host}` })
+          }
+        }
+      }
+    }
+  }
+
   return issues
 }
 
@@ -551,7 +575,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     await validateExistingBackendPackageSource(resolve(recipeDirectory, recipe.runtime.backendPackage.source), "$.runtime.backendPackage.source", addIssue)
   }
 
-  for (const { phase, index, step } of recipeWorkflowSteps(recipe)) {
+  for (const { phase, index, step } of recipeDeclaredWorkflowSteps(recipe)) {
     const path = `$.workflow.${phase}[${index}]`
     if (!supportedRecipeCommands.has(step.command) && !hostRecipeCommandPattern.test(step.command)) {
       addIssue("unsupported-command", `${path}.command`, `Unsupported recipe command: ${step.command}`)
@@ -660,6 +684,9 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-composer-package", `${path}.package`, `Dependency overlay package must be a safe Composer package name: ${overlay.package}`)
       continue
     }
+    if (overlay.reference !== undefined && (typeof overlay.reference !== "string" || !/^[a-f0-9]{40,64}$/i.test(overlay.reference))) {
+      addIssue("invalid-dependency-overlay-reference", `${path}.reference`, "Dependency overlay reference must be a 40-64 character hexadecimal immutable reference when provided.")
+    }
 
     const consumerPlugin = recipeExtraPlugins(recipe).find((plugin) => recipeExtraPluginSlug(plugin) === overlay.consumer)
     const loadAs = consumerPlugin?.loadAs ?? "plugin"
@@ -732,26 +759,91 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
 function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
   const ids = new Set<string>()
-  const environment = new Set<string>([
+  const services = recipe.inputs?.services ?? []
+  if (services.filter((service) => service.configuration?.provider === "native").length > 2) addIssue("native-runtime-service-budget-exceeded", "$.inputs.services", "Recipes may declare at most two native runtime services.")
+  const exposedEnvironment = new Set<string>([
     ...Object.keys(recipe.distribution?.env ?? {}),
     ...Object.keys(recipe.inputs?.runtimeEnv ?? {}),
     ...(recipe.inputs?.secretEnv ?? []),
   ])
-  for (const [index, service] of (recipe.inputs?.services ?? []).entries()) {
+  const environment = new Set(exposedEnvironment)
+  const outputOwners = new Map<string, Array<{ serviceIndex: number; output: string }>>()
+  for (const [serviceIndex, service] of services.entries()) {
+    for (const [output, names] of Object.entries(service.outputs)) {
+      for (const name of runtimeServiceOutputNames(names)) {
+        const owners = outputOwners.get(name) ?? []
+        owners.push({ serviceIndex, output })
+        outputOwners.set(name, owners)
+      }
+    }
+  }
+  const connectorTargets = new Set<string>()
+  for (const [index, service] of services.entries()) {
     const path = `$.inputs.services[${index}]`
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(service.id)) addIssue("invalid-runtime-service-id", `${path}.id`, "Runtime service ids must be stable identifiers.")
     if (ids.has(service.id)) addIssue("duplicate-runtime-service-id", `${path}.id`, `Runtime service ids must be unique: ${service.id}`)
     ids.add(service.id)
-    if (service.kind !== "mysql") addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    if (!["mysql", "redis", "smtp", "http"].includes(service.kind)) addIssue("unsupported-runtime-service-kind", `${path}.kind`, `Unsupported managed runtime service kind: ${service.kind}`)
+    const passwordTargets = runtimeServiceOutputNames(service.outputs.password)
+    if (service.kind === "mysql" && passwordTargets.length > 0) {
+      const target = "DB_PASSWORD"
+      if (exposedEnvironment.has(target)) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target is already injected by recipe environment: ${target}`)
+      const conflictingOutput = (outputOwners.get(target) ?? []).some((owner) => !(owner.serviceIndex === index && owner.output === "password" && passwordTargets.includes(target)))
+      if (conflictingOutput) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target collides with a managed output: ${target}`)
+      if (connectorTargets.has(target)) addIssue("ambiguous-runtime-service-secret-target", `${path}.outputs.password`, `Multiple managed connectors target the same runtime environment name: ${target}`)
+      connectorTargets.add(target)
+    }
+    if (service.configuration?.provider === "external") {
+      if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The external provider supports only MySQL-compatible services.")
+      const boundary = recipe.inputs?.externalServices?.find((candidate) => candidate.id === service.configuration?.externalService)
+      if (!boundary) addIssue("missing-runtime-service-external-boundary", `${path}.configuration.externalService`, "External MySQL services must reference an inputs.externalServices boundary.")
+      else {
+        if ((boundary.allowedHosts ?? []).length === 0) addIssue("missing-runtime-service-host-allowlist", `${path}.configuration.externalService`, "External MySQL service boundaries must explicitly allow at least one host.")
+        if (boundary.writes !== "allowed-with-approval") addIssue("runtime-service-writes-not-approved", `${path}.configuration.externalService`, "External MySQL service boundaries must declare writes=allowed-with-approval.")
+      }
+      for (const field of ["hostEnv", "portEnv", "usernameEnv", "passwordEnv"] as const) {
+        const name = service.configuration[field]
+        if (name && exposedEnvironment.has(name)) addIssue("runtime-service-admin-env-exposed", `${path}.configuration.${field}`, `External service administration environment must remain host-only: ${name}`)
+      }
+      for (const field of ["image", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
+        if (service.configuration[field] !== undefined) addIssue("unsupported-external-runtime-service-option", `${path}.configuration.${field}`, `External MySQL services do not support ${field}.`)
+      }
+    }
+    if (service.configuration?.provider === "native") {
+      if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The native provider supports only MySQL-compatible services.")
+      if (service.configuration.engine !== "mariadb") addIssue("unsupported-native-runtime-service-engine", `${path}.configuration.engine`, "The native provider requires engine=mariadb.")
+      for (const field of ["externalService", "hostEnv", "portEnv", "usernameEnv", "passwordEnv", "image", "rootAuthentication", "foreignKeyTargetPolicy", "responseStatus", "responseBody"] as const) {
+        if (service.configuration[field] !== undefined) addIssue("unsupported-native-runtime-service-option", `${path}.configuration.${field}`, `Native MariaDB services do not accept ${field}.`)
+      }
+    }
+    const supportedOutputs: Record<string, RegExp> = {
+      mysql: /^(host|port|username|password|database)$/,
+      redis: /^(host|port|url)$/,
+      smtp: /^(host|port|httpPort|url)$/,
+      http: /^(host|port|url)$/,
+    }
     for (const [output, names] of Object.entries(service.outputs)) {
-      if (!/^(host|port|username|password|database)$/.test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
-      for (const name of Array.isArray(names) ? names : [names]) {
+      if (!(supportedOutputs[service.kind] ?? /^$/).test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
+      for (const name of runtimeServiceOutputNames(names)) {
         if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
         if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
         environment.add(name)
       }
     }
   }
+}
+
+function runtimeServiceOutputNames(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value]
+}
+
+function policyHostListIncludes(policyHosts: readonly string[], boundaryHost: string): boolean {
+  const normalizedBoundary = boundaryHost.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+  const boundaryHasPort = /:\d+$/.test(normalizedBoundary)
+  return policyHosts.some((host) => {
+    const normalized = host.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+    return normalized === normalizedBoundary || (!boundaryHasPort && normalized.replace(/:\d+$/, "") === normalizedBoundary)
+  })
 }
 
 function validateRecipeExternalServiceBoundaries(recipe: WorkspaceRecipe, addIssue: (code: string, path: string, message: string) => void): void {
@@ -935,6 +1027,26 @@ export function recipeWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStep
   ]
 }
 
+export function recipeDeclaredWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
+  return [...recipeWorkflowSteps(recipe), ...recipeAdversarialWorkflowSteps(recipe)]
+}
+
+function recipeAdversarialWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
+  const phaseNames: WorkspaceRecipeFuzzCasePhase[] = ["setup", "action", "assert", "teardown"]
+  return (recipe.adversarialCampaigns ?? []).flatMap((campaign) => campaign.caseTemplates.flatMap((template) => phaseNames.flatMap((phase) => (template.phases[phase] ?? []).map((step, index) => ({
+    phase: `adversarial:${phase}` as const,
+    index,
+    step: recipeAdversarialValidationStep(step, campaign, template.id),
+  })))))
+}
+
+function recipeAdversarialValidationStep(step: WorkspaceRecipe["workflow"]["steps"][number], campaign: NonNullable<WorkspaceRecipe["adversarialCampaigns"]>[number], templateId: string): WorkspaceRecipe["workflow"]["steps"][number] {
+  const action = campaign.corpus.flatMap((entry) => entry.actions).find((candidate) => candidate.type === templateId)
+  if (!action || !step.args) return step
+  const actionInput = JSON.stringify(action.input ?? null)
+  return { ...step, args: step.args.map((arg) => arg.split("{{action.input}}").join(actionInput)) }
+}
+
 function recipeFuzzWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
   const phaseNames: WorkspaceRecipeFuzzCasePhase[] = ["setup", "action", "assert", "teardown"]
   return (recipe.fuzzRun?.cases ?? []).flatMap((fuzzCase, fuzzCaseIndex) => phaseNames.flatMap((fuzzPhase) => (fuzzCase.phases[fuzzPhase] ?? []).map((step, fuzzStepIndex) => ({
@@ -961,16 +1073,16 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     return []
   })
   const commands = [
-    ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(recipeDeclaredWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(boundedRuntimePlanCommands(recipe), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
   ]
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench")) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench")) {
     commands.unshift("wordpress.run-php")
   }
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
     commands.unshift("wordpress.wp-cli")
   }
   if (recipeExtraPlugins(recipe).length > 0) {
@@ -988,7 +1100,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   // Auto-grant the evaluate capability when a browser-actions step opts into the
   // arbitrary-JS escape hatch by including an evaluate step. Recipe authors opt in
   // by writing the step; direct `run` invocations still control the gate via --policy.
-  if (recipeWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
+  if (recipeDeclaredWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
     commands.push("wordpress.browser-actions.evaluate")
   }
 
@@ -1114,6 +1226,49 @@ function validateRecipeFuzzRun(fuzzRun: WorkspaceRecipe["fuzzRun"] | undefined, 
           throw new Error(`Recipe fuzzRun ${phase}[${stepIndex}] args must be arrays at ${casePath}: ${recipePath}`)
         }
       }
+    }
+  }
+}
+
+export function recipeAdversarialCapabilities(recipe: WorkspaceRecipe): string[] {
+  return [...new Set([
+    "adversarial-campaign",
+    "artifact-export",
+    "bounded-evidence",
+    "replay",
+    ...RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities,
+    ...listCliRecipeCommandIds().map((command) => `command:${command}`),
+  ])]
+}
+
+function validateRecipeAdversarialCampaigns(recipe: WorkspaceRecipe, recipePath: string): void {
+  const campaigns = recipe.adversarialCampaigns
+  if (campaigns === undefined) return
+  if (!Array.isArray(campaigns) || campaigns.length === 0) throw new Error(`Recipe adversarialCampaigns must be a non-empty array: ${recipePath}`)
+  const campaignIds = new Set<string>()
+  const available = new Set(recipeAdversarialCapabilities(recipe))
+  for (const [campaignIndex, campaign] of campaigns.entries()) {
+    const campaignPath = `$.adversarialCampaigns[${campaignIndex}]`
+    if (!campaign || typeof campaign !== "object" || Array.isArray(campaign)) throw new Error(`Recipe adversarial campaigns must be objects at ${campaignPath}: ${recipePath}`)
+    if (!campaign.id || typeof campaign.id !== "string") throw new Error(`Recipe adversarial campaign requires id at ${campaignPath}: ${recipePath}`)
+    if (!Array.isArray(campaign.caseTemplates) || campaign.caseTemplates.length === 0) throw new Error(`Recipe adversarial campaign requires caseTemplates at ${campaignPath}: ${recipePath}`)
+    if (!Array.isArray(campaign.corpus) || campaign.corpus.length === 0) throw new Error(`Recipe adversarial campaign requires corpus at ${campaignPath}: ${recipePath}`)
+    if (campaignIds.has(campaign.id)) throw new Error(`Recipe adversarial campaign ids must be unique: ${campaign.id}: ${recipePath}`)
+    campaignIds.add(campaign.id)
+    const templateIds = new Set(campaign.caseTemplates.map((template) => template.id))
+    if (templateIds.size !== campaign.caseTemplates.length) throw new Error(`Recipe adversarial case template ids must be unique at ${campaignPath}: ${recipePath}`)
+    for (const entry of campaign.corpus) {
+      for (const action of entry.actions) {
+        if (!templateIds.has(action.type)) throw new Error(`Recipe adversarial corpus action references unknown case template ${action.type} at ${campaignPath}: ${recipePath}`)
+      }
+    }
+    const missing = (campaign.requiredCapabilities ?? []).filter((capability) => !available.has(capability))
+    if (missing.length > 0) throw new Error(`Recipe adversarial campaign ${campaign.id} requires unavailable capabilities: ${missing.join(", ")}: ${recipePath}`)
+    if (campaign.faultSchedule && !(campaign.requiredCapabilities ?? []).includes("transport-faults")) {
+      throw new Error(`Recipe adversarial campaign ${campaign.id} faultSchedule requires the transport-faults capability: ${recipePath}`)
+    }
+    if ((campaign.concurrency ?? 1) > 1 && !(campaign.requiredCapabilities ?? []).includes("isolated-workers")) {
+      throw new Error(`Recipe adversarial campaign ${campaign.id} concurrency above 1 requires isolated-workers capability: ${recipePath}`)
     }
   }
 }

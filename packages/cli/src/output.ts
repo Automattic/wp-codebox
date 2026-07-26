@@ -328,6 +328,8 @@ export function printHelp(): void {
   wp-codebox preview-lease release (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
   wp-codebox run-fuzz-suite --input-file <path> [--format=json] [--dry-run] [--runner-mode=simple|runtime-backed]
+  wp-codebox adversarial run --recipe <path> [recipe-run options]
+  wp-codebox adversarial replay --recipe <path> --replay <path> [recipe-run options]
   wp-codebox fuzz-minimize-case --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-wordpress-workload --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
@@ -429,6 +431,8 @@ Options:
                          wp-codebox/preview-lease/v1 envelope for public/local URL, expiry, alignment, and handoff metadata.
   --timeout <duration>  Maximum live recipe-run duration before emitting a structured timeout failure. Defaults to 25m.
   --policy <json|file> Runtime policy JSON or path to a JSON file. For recipe-run and recipe validate, this overrides the recipe-derived runtime policy and must include every command required by the recipe setup, probes, and workflow.
+  --approve-external-service-writes
+                       Explicitly approve short-lived managed writes to declared external-service boundaries when policy.approvals is on-write.
   --dry-run            Validate recipe-run and emit a resolved JSON plan without booting Playground or writing temp workspaces.
   --json               Emit machine-readable JSON.
 

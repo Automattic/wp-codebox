@@ -133,6 +133,7 @@ writeFileSync(recipePath, `${JSON.stringify({
         sourceSubpath: "plugins/woocommerce",
         slug: "composer-autoload-smoke",
         pluginFile: "composer-autoload-smoke/composer-autoload-smoke.php",
+        composer: "install",
       },
     ],
   },

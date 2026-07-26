@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises"
-import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserActionCorpusDescriptor, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { readFile, writeFile } from "node:fs/promises"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -21,6 +21,11 @@ import { argValue, commaListArg, durationArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import type { Page } from "playwright"
+import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
+import { exploreAdaptiveBrowserStateMachine } from "./browser-adaptive-explorer.js"
+import { createBrowserAccessibilityCollector } from "./browser-accessibility-collector.js"
+
+export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -41,6 +46,7 @@ export interface BrowserActionsRunPlan {
   storageStateImport?: BrowserStorageStateImport
   maxDomSnapshotElements: number
   actionCorpus?: BrowserActionCorpusContract
+  adaptiveExploration?: BrowserAdaptiveExplorationContract
 }
 
 interface BrowserRunPlan {
@@ -70,9 +76,12 @@ export async function runBrowserActionsCommand({
   const args = spec.args ?? []
   const runPlan = plan ?? await browserActionsRunPlanFromArgs(args, artifactRoot)
   const steps = [...runPlan.steps]
-  const initialUrl = runPlan.initialUrl
+  if (runPlan.adaptiveExploration && (runPlan.initialUrl || runPlan.actionCorpus || steps.length > 0)) {
+    throw new Error("wordpress.browser-actions adaptive-exploration-json is a standalone additive mode and cannot be combined with url, steps-json, or action-corpus-json")
+  }
+  const initialUrl = runPlan.initialUrl ?? runPlan.adaptiveExploration?.startUrl
   if (steps.length === 0 && !initialUrl) {
-    throw new Error("wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>")
+    throw new Error("wordpress.browser-actions requires steps-json=<array>, url=<path-or-url>, or adaptive-exploration-json=<object>")
   }
 
   if (initialUrl && steps[0]?.kind !== "navigate") {
@@ -131,6 +140,8 @@ export async function runBrowserActionsCommand({
   let wordpressDiagnosticsReady = false
   let actionCorpusArtifact: BrowserActionCorpusArtifact | undefined
   let actionCorpusSummary: BrowserArtifact["summary"]["actionCorpus"] | undefined
+  let adaptiveExplorationArtifact: BrowserAdaptiveExplorationArtifact | undefined
+  let adaptiveExplorationSummary: BrowserArtifact["summary"]["adaptiveExploration"] | undefined
 
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
@@ -163,8 +174,8 @@ export async function runBrowserActionsCommand({
     wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
-      captureConsole: capture.has("console"),
-      captureErrors: capture.has("errors"),
+      captureConsole: capture.has("console") || Boolean(runPlan.adaptiveExploration),
+      captureErrors: capture.has("errors") || Boolean(runPlan.adaptiveExploration),
       captureNetwork: true,
       captureWebSocket: capture.has("websocket"),
       consoleMessages,
@@ -175,9 +186,10 @@ export async function runBrowserActionsCommand({
       webSockets,
     })
 
-    if (runPlan.actionCorpus) {
-      if (!steps.some((step) => step.kind === "navigate") && runPlan.actionCorpus.startUrl) {
-        steps.unshift({ kind: "navigate", url: runPlan.actionCorpus.startUrl, waitFor: "domcontentloaded" })
+    if (runPlan.actionCorpus || runPlan.adaptiveExploration) {
+      const generatedStartUrl = runPlan.actionCorpus?.startUrl ?? runPlan.adaptiveExploration?.startUrl
+      if (!steps.some((step) => step.kind === "navigate") && generatedStartUrl) {
+        steps.unshift({ kind: "navigate", url: generatedStartUrl, waitFor: "domcontentloaded" })
       }
       if (steps[0]?.kind === "navigate") {
         const navigateStep = steps.shift()!
@@ -198,23 +210,90 @@ export async function runBrowserActionsCommand({
           throw error
         }
       }
-      const descriptors = await discoverBrowserActionCorpusDescriptors(page)
-      actionCorpusArtifact = browserActionCorpusArtifact(runPlan.actionCorpus, descriptors, now())
-      await artifactSession.writeJson("actionCorpus", "action-corpus.json", actionCorpusArtifact)
-      const corpusSteps = actionCorpusArtifact.plan.steps
-      steps.unshift(...corpusSteps)
-      actionCorpusSummary = {
-        schema: BROWSER_ACTION_CORPUS_SCHEMA,
-        seed: actionCorpusArtifact.contract.seed,
-        descriptorsDiscovered: actionCorpusArtifact.plan.observations.descriptorsDiscovered,
-        descriptorsSelected: actionCorpusArtifact.plan.observations.descriptorsSelected,
-        stepsPlanned: actionCorpusArtifact.plan.observations.stepsPlanned,
-        artifact: "files/browser/action-corpus.json",
+      if (runPlan.actionCorpus) {
+        const discovery = await discoverBrowserActionCorpusDescriptors(page)
+        actionCorpusArtifact = browserActionCorpusArtifact(runPlan.actionCorpus, discovery.descriptors, now())
+        actionCorpusArtifact.plan.diagnostics.push(...discovery.diagnostics)
+        await artifactSession.writeJson("actionCorpus", "action-corpus.json", actionCorpusArtifact)
+        const corpusSteps = actionCorpusArtifact.plan.steps
+        steps.unshift(...corpusSteps)
+        actionCorpusSummary = {
+          schema: BROWSER_ACTION_CORPUS_SCHEMA,
+          seed: actionCorpusArtifact.contract.seed,
+          descriptorsDiscovered: actionCorpusArtifact.plan.observations.descriptorsDiscovered,
+          descriptorsSelected: actionCorpusArtifact.plan.observations.descriptorsSelected,
+          stepsPlanned: actionCorpusArtifact.plan.observations.stepsPlanned,
+          artifact: "files/browser/action-corpus.json",
+        }
+      }
+      if (runPlan.adaptiveExploration) {
+        const adaptiveContract = {
+          ...runPlan.adaptiveExploration,
+          budgets: {
+            ...runPlan.adaptiveExploration.budgets,
+            maxDurationMs: Math.min(runPlan.adaptiveExploration.budgets.maxDurationMs, livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)),
+          },
+        }
+        const result = await exploreAdaptiveBrowserStateMachine({
+          page,
+          baseUrl: preview.effectiveOrigin,
+          contract: adaptiveContract,
+          observations: { consoleMessages, errors, network },
+          navigationScope: topology.navigationScope,
+          signal: spec.signal,
+          accessibilityCollector: adaptiveContract.accessibility ? createBrowserAccessibilityCollector(page, adaptiveContract.accessibility) : undefined,
+          onAccessibilityFindingEvidence: adaptiveContract.accessibility ? async (scan) => {
+            const basename = `accessibility-${String(scan.index).padStart(3, "0")}`
+            const screenshotRef = `files/browser/${basename}.png`
+            const fileBudget = Math.max(256, Math.floor(adaptiveContract.budgets.maxArtifactBytes / 4))
+            const screenshot = await page.screenshot({ fullPage: true })
+            if (screenshot.byteLength > fileBudget) {
+              scan.diagnostics.push({ code: "browser_accessibility_screenshot_budget_exhausted", message: "The correlated screenshot exceeded its accessibility evidence byte bound and was omitted." })
+              return {}
+            }
+            await artifactSession.writeGenerated("screenshot", `${basename}.png`, (path) => writeFile(path, screenshot))
+            try {
+              const snapshot = await captureBrowserActionDomSnapshot({
+                artifactSession,
+                finalUrl: page.url(),
+                maxElements: Math.min(maxDomSnapshotElements, adaptiveContract.descriptorLimits.maxPerState),
+                page,
+                screenshotRef,
+                snapshotRef: `files/browser/${basename}-dom.json`,
+                selectors: [...new Set(scan.findings.map((finding) => finding.target.locator).filter((locator) => locator !== "body" && locator !== "document"))],
+                viewport,
+                maxArtifactBytes: fileBudget,
+              })
+              domSnapshots.push(snapshot)
+              return { screenshot: screenshotRef, domSnapshot: snapshot.snapshot }
+            } catch {
+              scan.diagnostics.push({ code: "browser_accessibility_dom_budget_exhausted", message: "The correlated DOM snapshot exceeded its accessibility evidence byte bound and was omitted." })
+              return { screenshot: screenshotRef }
+            }
+          } : undefined,
+        })
+        adaptiveExplorationArtifact = { schema: "wp-codebox/browser-adaptive-exploration-artifact/v1", contract: adaptiveContract, result, capturedAt: now() }
+        boundAdaptiveExplorationArtifact(adaptiveExplorationArtifact, Math.max(512, Math.floor(adaptiveContract.budgets.maxArtifactBytes / 2)))
+        await artifactSession.writeJson("adaptiveExploration", "adaptive-exploration.json", adaptiveExplorationArtifact)
+        adaptiveExplorationSummary = {
+          schema: BROWSER_ADAPTIVE_EXPLORATION_SCHEMA,
+          seed: result.seed,
+          status: result.status,
+          states: result.summary.states,
+          transitions: result.summary.transitions,
+          findings: result.summary.findings,
+          artifact: "files/browser/adaptive-exploration.json",
+        }
+        finalUrl = page.url()
+        if (result.findings.length > 0 && adaptiveContract.failOnFinding) {
+          pendingError = new Error(`Adaptive browser exploration found ${result.findings.length} reproducible oracle failure(s).`)
+        }
       }
     }
 
     const stepIndexOffset = stepRecords.length
     for (const [loopIndex, step] of steps.entries()) {
+      if (pendingError) break
       const index = loopIndex + stepIndexOffset
       const recordStartedAt = now()
       const recordStartedAtMs = Date.now()
@@ -396,6 +475,7 @@ export async function runBrowserActionsCommand({
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
         ...(actionCorpusArtifact ? { actionCorpus: "files/browser/action-corpus.json" } : {}),
+        ...(adaptiveExplorationArtifact ? { adaptiveExploration: "files/browser/adaptive-exploration.json" } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
@@ -412,6 +492,7 @@ export async function runBrowserActionsCommand({
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         ...(verifierResults.length > 0 ? { verifierResults } : {}),
         ...(actionCorpusSummary ? { actionCorpus: actionCorpusSummary } : {}),
+        ...(adaptiveExplorationSummary ? { adaptiveExploration: adaptiveExplorationSummary } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
         ...(capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(webSockets) } : {}),
@@ -449,6 +530,7 @@ export async function runBrowserActionsCommand({
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       ...(verifierResults.length > 0 ? { verifierResults } : {}),
       ...(actionCorpusArtifact ? { actionCorpus: actionCorpusArtifact.plan } : {}),
+      ...(adaptiveExplorationArtifact ? { adaptiveExploration: adaptiveExplorationArtifact.result } : {}),
       viewport,
       summary: artifact.summary,
     })
@@ -595,6 +677,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
+    adaptiveExploration: browserAdaptiveExplorationFromArgs(args),
   }
 }
 
@@ -605,68 +688,11 @@ function browserActionCorpusFromArgs(args: string[]): BrowserActionCorpusContrac
   return browserActionCorpusContract(parsed)
 }
 
-async function discoverBrowserActionCorpusDescriptors(page: Page): Promise<BrowserActionCorpusDescriptor[]> {
-  return await page.evaluate(() => {
-    const descriptors: BrowserActionCorpusDescriptor[] = []
-    const cssEscape = (value: string) => {
-      const escapeFn = (globalThis as typeof globalThis & { CSS?: { escape?: (raw: string) => string } }).CSS?.escape
-      return escapeFn ? escapeFn(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&")
-    }
-    const text = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim().slice(0, 120)
-    const selectorFor = (element: Element) => {
-      const id = element.getAttribute("id")
-      if (id) return `#${cssEscape(id)}`
-      const name = element.getAttribute("name")
-      if (name) return `${element.tagName.toLowerCase()}[name="${cssEscape(name)}"]`
-      const aria = element.getAttribute("aria-label")
-      if (aria) return `${element.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`
-      const type = element.getAttribute("type")
-      return `${element.tagName.toLowerCase()}${type ? `[type="${cssEscape(type)}"]` : ""}:nth-of-type(${Array.from(element.parentElement?.children || []).filter((child) => child.tagName === element.tagName).indexOf(element) + 1})`
-    }
-    const labelFor = (element: Element) => {
-      const labelledBy = element.getAttribute("aria-labelledby")
-      if (labelledBy) {
-        const labelled = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent).filter(Boolean).join(" ")
-        if (text(labelled)) return text(labelled)
-      }
-      const aria = text(element.getAttribute("aria-label"))
-      if (aria) return aria
-      const id = element.getAttribute("id")
-      const label = id ? document.querySelector(`label[for="${cssEscape(id)}"]`) : null
-      if (label && text(label.textContent)) return text(label.textContent)
-      return text(element.textContent)
-    }
-    const descriptorId = (kind: string, element: Element) => `${kind}:${selectorFor(element)}:${element.getAttribute("name") || ""}:${labelFor(element)}`
-    const visible = (element: Element) => {
-      const htmlElement = element as HTMLElement
-      const style = window.getComputedStyle(htmlElement)
-      const rect = htmlElement.getBoundingClientRect()
-      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
-    }
-    document.querySelectorAll("a[href], button, input, textarea, select").forEach((element) => {
-      if (!visible(element)) return
-      const tag = element.tagName.toLowerCase()
-      const input = element as HTMLInputElement
-      const kind = tag === "a" ? "link" : tag === "button" ? "button" : tag === "textarea" ? "textarea" : tag === "select" ? "select" : "input"
-      const selector = selectorFor(element)
-      const descriptor: BrowserActionCorpusDescriptor = {
-        id: descriptorId(kind, element),
-        kind,
-        selector,
-        label: labelFor(element),
-        name: element.getAttribute("name") || undefined,
-        role: element.getAttribute("role") || undefined,
-        type: input.type || element.getAttribute("type") || undefined,
-        formId: (element as HTMLInputElement).form?.id || undefined,
-        href: tag === "a" ? (element as HTMLAnchorElement).href : undefined,
-        disabled: Boolean((element as HTMLButtonElement).disabled),
-        readonly: Boolean(input.readOnly),
-        optionValues: tag === "select" ? Array.from((element as HTMLSelectElement).options).map((option) => option.value).filter(Boolean) : undefined,
-      }
-      descriptors.push(descriptor)
-    })
-    return descriptors
-  })
+function browserAdaptiveExplorationFromArgs(args: string[]): BrowserAdaptiveExplorationContract | undefined {
+  const raw = argValue(args, "adaptive-exploration-json")
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  return browserAdaptiveExplorationContract(parsed)
 }
 
 async function captureBrowserActionDomSnapshot({
@@ -677,6 +703,8 @@ async function captureBrowserActionDomSnapshot({
   screenshotRef,
   snapshotRef,
   step,
+  selectors = [],
+  maxArtifactBytes,
   viewport,
 }: {
   artifactSession: BrowserArtifactSession
@@ -686,12 +714,14 @@ async function captureBrowserActionDomSnapshot({
   screenshotRef: string
   snapshotRef?: string
   step?: { index: number; name?: string; kind: string }
+  selectors?: string[]
+  maxArtifactBytes?: number
   viewport: BrowserProbeViewport | null
 }): Promise<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> {
   const sanitizedName = step?.name ? sanitizeScreenshotName(step.name) : undefined
   const relativeSnapshotRef = snapshotRef ?? `files/browser/dom-snapshot-${sanitizedName || `step-${step?.index ?? 0}`}.json`
   const snapshotFileName = relativeSnapshotRef.replace(/^files\/browser\//, "")
-  const snapshot = await captureBrowserDomSnapshot(page, maxElements)
+  const snapshot = await captureBrowserDomSnapshot(page, maxElements, selectors)
   const artifact: BrowserDomSnapshotArtifact = {
     schema: "wp-codebox/browser-dom-snapshot/v1",
     command: "wordpress.browser-actions",
@@ -708,6 +738,15 @@ async function captureBrowserActionDomSnapshot({
     },
     snapshot,
   }
+  if (maxArtifactBytes) {
+    while (artifact.snapshot.capturedElements.length > 0 && Buffer.byteLength(JSON.stringify(artifact)) > maxArtifactBytes) {
+      artifact.snapshot.capturedElements.pop()
+      artifact.snapshot.truncated = true
+      artifact.summary.capturedElements = artifact.snapshot.capturedElements.length
+      artifact.summary.truncated = true
+    }
+    if (Buffer.byteLength(JSON.stringify(artifact)) > maxArtifactBytes) throw new Error("Accessibility DOM evidence exceeded its byte bound.")
+  }
   await artifactSession.writeJson("domSnapshots", snapshotFileName, artifact)
   return {
     screenshot: screenshotRef,
@@ -717,6 +756,55 @@ async function captureBrowserActionDomSnapshot({
     capturedElements: snapshot.capturedElements.length,
     truncated: snapshot.truncated,
   }
+}
+
+export function boundAdaptiveExplorationArtifact(artifact: BrowserAdaptiveExplorationArtifact, maxBytes: number): void {
+  const size = () => Buffer.byteLength(JSON.stringify(artifact, null, 2)) + 1
+  if (size() <= maxBytes) return
+  const evidence = artifact.result.accessibility
+  if (evidence) {
+    evidence.summary.truncated = true
+    for (const scan of evidence.scans) {
+      if (scan.accessibilityTree?.snapshot) {
+        delete scan.accessibilityTree.snapshot
+        scan.accessibilityTree.truncated = true
+        scan.accessibilityTree.reason = "artifact_byte_budget"
+      }
+    }
+    while (size() > maxBytes && evidence.focusHistory.length > 0) evidence.focusHistory.pop()
+    while (size() > maxBytes) {
+      const index = lastMatchingIndex(evidence.scans, (scan) => scan.findings.length === 0)
+      if (index < 0) break
+      evidence.scans.splice(index, 1)
+    }
+  }
+  const retainedTransitions = new Set(artifact.result.findings.map((finding) => finding.transitionId))
+  while (size() > maxBytes) {
+    const index = lastMatchingIndex(artifact.result.transitions, (transition) => !retainedTransitions.has(transition.id))
+    if (index < 0) break
+    artifact.result.transitions.splice(index, 1)
+    pruneUnreferencedAdaptiveStates(artifact)
+  }
+  while (size() > maxBytes && artifact.result.diagnostics.length > 0) artifact.result.diagnostics.pop()
+  artifact.result.summary.states = artifact.result.states.length
+  artifact.result.summary.transitions = artifact.result.transitions.length
+  artifact.result.status = "incomplete"
+  artifact.result.summary.budgetExhausted = "maxArtifactBytes"
+  if (size() > maxBytes) throw new Error(`Adaptive browser exploration evidence cannot fit maxArtifactBytes=${artifact.contract.budgets.maxArtifactBytes}.`)
+}
+
+function pruneUnreferencedAdaptiveStates(artifact: BrowserAdaptiveExplorationArtifact): void {
+  const retained = new Set<string>([
+    artifact.result.states[0]?.digest ?? "",
+    ...artifact.result.findings.flatMap((finding) => finding.stateDigest ? [finding.stateDigest] : []),
+    ...artifact.result.transitions.flatMap((transition) => [transition.sourceDigest, transition.destinationDigest].filter((value): value is string => Boolean(value))),
+  ])
+  artifact.result.states = artifact.result.states.filter((state) => retained.has(state.digest))
+}
+
+function lastMatchingIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) if (predicate(items[index] as T)) return index
+  return -1
 }
 
 interface BrowserScenarioInput {

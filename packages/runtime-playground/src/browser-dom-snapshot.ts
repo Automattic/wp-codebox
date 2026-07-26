@@ -51,7 +51,7 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
       .map((element) => elementSnapshot(element, styleProperties, attributeNames))
       .filter((element): element is BrowserDomElementSnapshot => Boolean(element))
     const capturedByPath = new Map(visibleElements.slice(0, maxElements).map((element) => [element.path, element]))
-    const selectorSnapshots = selectorInputs.map((selector) => selectorSnapshot(selector, capturedByPath, styleProperties, attributeNames))
+    const selectorSnapshots = selectorInputs.map((selector) => selectorSnapshot(selector, capturedByPath, styleProperties, attributeNames, maxElements))
 
     return {
       url: window.location.href,
@@ -62,10 +62,10 @@ export async function captureBrowserDomSnapshot(page: Page, maxElements: number,
       truncated: visibleElements.length > maxElements,
     }
 
-    function selectorSnapshot(selector: string, captured: Map<string, BrowserDomElementSnapshot>, styles: string[], attributes: string[]): BrowserDomSelectorSnapshot {
+    function selectorSnapshot(selector: string, captured: Map<string, BrowserDomElementSnapshot>, styles: string[], attributes: string[], maximum: number): BrowserDomSelectorSnapshot {
       try {
         const matches = Array.from(document.querySelectorAll(selector))
-        const snapshots = matches.map((element) => elementSnapshot(element, styles, attributes)).filter((element): element is BrowserDomElementSnapshot => Boolean(element))
+        const snapshots = matches.map((element) => elementSnapshot(element, styles, attributes)).filter((element): element is BrowserDomElementSnapshot => Boolean(element)).slice(0, Math.max(0, maximum - captured.size))
         for (const snapshot of snapshots) {
           captured.set(snapshot.path, snapshot)
         }

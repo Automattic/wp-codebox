@@ -23,6 +23,7 @@ interface ProgrammaticPHP {
   onMessage(listener: (data: string) => Promise<string | void> | string | void): () => Promise<void>
   readFileAsText(path: string): string
   run(options: { code: string } | { scriptPath: string }): Promise<ProgrammaticPHPResponse>
+  unlink(path: string): void
   writeFile(path: string, contents: string): void
 }
 
@@ -91,6 +92,9 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
       run: (runOptions) => runPhp(primaryPhp, runOptions),
       onMessage: (listener) => primaryPhp.onMessage(listener),
       readFileAsText: (path) => primaryPhp.readFileAsText(path),
+      unlink(path) {
+        primaryPhp.unlink(path)
+      },
       async writeFile(path, contents) {
         primaryPhp.writeFile(path, contents)
       },

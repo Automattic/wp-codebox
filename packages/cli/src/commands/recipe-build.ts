@@ -11,6 +11,7 @@ interface WordPressPhpunitBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   phpVersion?: string
+  databaseType?: "sqlite" | "mysql"
   wordpressInstallMode?: RuntimeWordPressInstallMode
   extensions?: WorkspaceRecipePHPWasmExtensionManifest[]
   backendPackage?: WorkspaceRecipeRuntimeBackendPackage
@@ -82,6 +83,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: phpunitOptions.blueprint,
         wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
         phpVersion: stringOrUndefined(phpunitOptions.phpVersion),
+        databaseType: phpunitOptions.databaseType,
         wordpressInstallMode: phpunitOptions.wordpressInstallMode,
         extensions: Array.isArray(phpunitOptions.extensions) ? phpunitOptions.extensions : [],
         backendPackage: phpunitOptions.backendPackage,

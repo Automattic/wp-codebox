@@ -1,0 +1,62 @@
+diff --git a/node_modules/@wp-playground/cli/run-cli-DKYOp4UU.js b/node_modules/@wp-playground/cli/run-cli-DKYOp4UU.js
+index e22c476..ed7c114 100644
+--- a/node_modules/@wp-playground/cli/run-cli-DKYOp4UU.js
++++ b/node_modules/@wp-playground/cli/run-cli-DKYOp4UU.js
+@@ -536,6 +536,7 @@ class Yt {
+       mountsBeforeWpInstall: this.args["mount-before-install"] || [],
+       mountsAfterWpInstall: this.args.mount || [],
+       processId: t.processId,
++      environmentVariables: this.args.phpEnv,
+       followSymlinks: this.args.followSymlinks === !0,
+       trace: this.args.experimentalTrace === !0,
+       extensions: Ve(
+@@ -777,6 +778,7 @@ class er {
+       mountsBeforeWpInstall: this.args["mount-before-install"] || [],
+       mountsAfterWpInstall: this.args.mount || [],
+       processId: t.processId,
++      environmentVariables: this.args.phpEnv,
+       followSymlinks: this.args.followSymlinks === !0,
+       trace: this.args.experimentalTrace === !0,
+       extensions: Ve(this.args),
+diff --git a/node_modules/@wp-playground/cli/worker-thread-v1.js b/node_modules/@wp-playground/cli/worker-thread-v1.js
+index 93b7099..a8ecae8 100644
+--- a/node_modules/@wp-playground/cli/worker-thread-v1.js
++++ b/node_modules/@wp-playground/cli/worker-thread-v1.js
+@@ -125,6 +125,7 @@ function V(r, e) {
+     {
+       fileLockManager: e,
+       emscriptenOptions: {
++        ENV: r.environmentVariables,
+         processId: r.processId,
+         trace: r.trace ? x : void 0,
+         nativeInternalDirPath: r.nativeInternalDirPath
+@@ -157,6 +158,8 @@ async function C(r, e) {
+ }
+ process.on("unhandledRejection", (r) => {
+   S.error("Unhandled rejection:", r);
++  if (r?.name === "RuntimeError" && String(r.stack).includes("php.wasm"))
++    throw r;
+ });
+ const i = new _(), [c, p] = y(
+   new F(new f()),
+diff --git a/node_modules/@wp-playground/cli/worker-thread-v2.js b/node_modules/@wp-playground/cli/worker-thread-v2.js
+index fb79a59..5197c68 100644
+--- a/node_modules/@wp-playground/cli/worker-thread-v2.js
++++ b/node_modules/@wp-playground/cli/worker-thread-v2.js
+@@ -136,6 +136,7 @@ function V(r, e) {
+     {
+       fileLockManager: e,
+       emscriptenOptions: {
++        ENV: r.environmentVariables,
+         processId: r.processId,
+         trace: r.trace ? C : void 0,
+         nativeInternalDirPath: r.nativeInternalDirPath
+@@ -168,6 +169,8 @@ async function j(r, e) {
+ }
+ process.on("unhandledRejection", (r) => {
+   E.error("Unhandled rejection:", r);
++  if (r?.name === "RuntimeError" && String(r.stack).includes("php.wasm"))
++    throw r;
+ });
+ const i = new m(), [h, u] = k(
+   new L(new b()),

@@ -20,12 +20,13 @@ const artifactPath = resolve(repoRoot, "dist", artifactName)
 const recursiveRmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }
 
 try {
-  await execFileAsync("npm", ["run", "build"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
+  await execFileAsync("npm", ["run", "build:release"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 
   await mkdir(packageRoot, { recursive: true })
 
   await copyIfPresent("README.md")
   await copyIfPresent("LICENSE")
+  await cp(resolve(repoRoot, "patches"), join(packageRoot, "patches"), { recursive: true })
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
   await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
 
@@ -41,6 +42,11 @@ try {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
+    cwd: packageRoot,
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  await materializeWorkspacePackages(packageRoot)
   await bundleNodeRuntime(packageRoot, platformName, archName)
 
   const binDir = join(packageRoot, "bin")
@@ -51,7 +57,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="\${WP_CODEBOX_NODE_BIN:-}"
 if [ -z "\${NODE_BIN}" ]; then
-	if [ -x "\${SCRIPT_DIR}/../vendor/node/bin/node" ]; then
+	if [ -x "\${SCRIPT_DIR}/../vendor/node/bin/node" ] && "\${SCRIPT_DIR}/../vendor/node/bin/node" --version >/dev/null 2>&1; then
 		NODE_BIN="\${SCRIPT_DIR}/../vendor/node/bin/node"
 	elif command -v node >/dev/null 2>&1; then
 		NODE_BIN="$(command -v node)"
@@ -98,6 +104,22 @@ async function copyIfPresent(relativePath: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error
     }
+  }
+}
+
+async function materializeWorkspacePackages(root: string): Promise<void> {
+  const automatticModules = join(root, "node_modules", "@automattic")
+  await mkdir(automatticModules, { recursive: true })
+
+  const packages = new Map([
+    ["runtime-core", "wp-codebox-core"],
+    ["runtime-playground", "wp-codebox-playground"],
+    ["cli", "wp-codebox-cli"],
+  ])
+  for (const [sourceName, packageName] of packages) {
+    const target = join(automatticModules, packageName)
+    await rm(target, recursiveRmOptions)
+    await cp(join(root, "packages", sourceName), target, { recursive: true, dereference: true })
   }
 }
 

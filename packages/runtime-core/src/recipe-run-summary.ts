@@ -110,6 +110,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
       artifact_directory: stringValue(objectValue(result.artifacts).directory) || stringValue(result.artifacts),
       recipe_path: stringValue(result.recipePath),
       package_provenance: objectOrUndefined(objectValue(result.provenance).packages),
+      managed_runtime_services: result.managedRuntimeServices === undefined ? undefined : arrayObjects(result.managedRuntimeServices),
     }),
   }) as RecipeRunSummary
 }

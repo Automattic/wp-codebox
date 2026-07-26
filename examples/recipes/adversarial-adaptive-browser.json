@@ -1,0 +1,77 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress"
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.run-php",
+        "args": ["code=update_option( 'wp_codebox_adaptive_fixture', 0 );"]
+      }
+    ]
+  },
+  "adversarialCampaigns": [
+    {
+      "schema": "wp-codebox/adversarial-recipe-campaign/v1",
+      "id": "adaptive-browser",
+      "seed": "adaptive-browser-v1",
+      "corpus": [
+        {
+          "id": "adaptive-homepage",
+          "actions": [
+            {
+              "type": "explore-browser"
+            }
+          ]
+        }
+      ],
+      "caseTemplates": [
+        {
+          "id": "explore-browser",
+          "phases": {
+            "action": [
+              {
+                "command": "wordpress.browser-actions",
+                "args": [
+                  "adaptive-exploration-json={\"schema\":\"wp-codebox/browser-adaptive-exploration/v1\",\"seed\":\"adaptive-browser-v1\",\"startUrl\":\"/\",\"budgets\":{\"maxActions\":24,\"maxStates\":16,\"maxTransitions\":32,\"maxDurationMs\":60000,\"maxArtifactBytes\":2097152,\"maxErrors\":10},\"actionFamilies\":[\"click\",\"fill\",\"select\",\"submit\",\"keyboard\",\"back\",\"reload\",\"repeat\",\"double-submit\"],\"resetPolicy\":{\"mode\":\"start-url\"},\"accessibility\":{\"ruleTags\":[\"accessible-name\",\"keyboard-reachable\",\"focus-visible\",\"dialog-focus\",\"aria-state\"],\"impactThreshold\":\"serious\",\"cadence\":[\"initial\",\"novel-state\",\"final\"],\"capabilities\":{\"rules\":\"required\",\"focus\":\"required\",\"accessibilityTree\":\"optional\"},\"budgets\":{\"maxScans\":24,\"maxViolationsPerScan\":25,\"maxFocusTransitions\":100,\"maxTreeChars\":20000,\"maxKeyboardActions\":8}}}",
+                  "capture=steps,console,errors,network"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "mutators": ["sequence"],
+      "oracles": [
+        {
+          "id": "runtime-status",
+          "severity": "high"
+        }
+      ],
+      "concurrency": 1,
+      "budgets": {
+        "maxCases": 4,
+        "maxActionsPerCase": 4,
+        "maxInputBytes": 65536,
+        "maxCaseTimeMs": 90000,
+        "maxWallTimeMs": 360000,
+        "maxArtifactBytes": 10485760
+      },
+      "resetPolicy": {
+        "mode": "checkpoint-per-case",
+        "checkpointName": "adaptive-browser-baseline"
+      },
+      "requiredCapabilities": ["adversarial-campaign", "artifact-export", "command:wordpress.browser-actions"],
+      "novelty": {
+        "retainSignals": true
+      },
+      "shrinking": {
+        "enabled": true
+      },
+      "replay": {
+        "selection": "findings"
+      }
+    }
+  ]
+}

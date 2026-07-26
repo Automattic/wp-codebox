@@ -279,7 +279,7 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
     const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, resolved.source)
+    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, plugin.composer, resolved.source)
     await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), sourceRef)
     plugins.push({
       source: prepared.source,
@@ -300,9 +300,13 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   return plugins
 }
 
-async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, copyRoot = prepared.source): Promise<PreparedExternalSource> {
-  if (prepared.provenance.kind !== "local") {
+async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, strategy: WorkspaceRecipeExtraPlugin["composer"], copyRoot = prepared.source): Promise<PreparedExternalSource> {
+  if (strategy !== "install") {
     return prepared
+  }
+
+  if (prepared.provenance.kind !== "local") {
+    throw new Error(`Recipe extra plugin Composer preparation only supports local sources: ${sourceRef}`)
   }
 
   try {
@@ -317,7 +321,6 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   try {
     const autoload = await stat(join(prepared.source, "vendor", "autoload.php"))
     if (autoload.isFile()) {
-      await writeComposerInstalledPackageAutoloader(prepared.source)
       return prepared
     }
   } catch {
@@ -401,6 +404,7 @@ if (is_file($wp_codebox_composer_package_classmap)) {
 
   await writeFile(packageAutoloader, `<?php
 defined( 'ABSPATH' ) || exit;
+require_once __DIR__ . '/autoload.php';
 ${classmapLoader}
 `)
 }
@@ -452,12 +456,24 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
 
   const source = resolve(recipeDirectory, overlay.source)
   await validateExistingDirectoryForOverlay(source, overlay.source)
-  const reference = await resolvedGitSourceReference(source)
+  const reference = overlay.reference ?? await resolvedGitSourceReference(source)
   const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-dependency-overlay-"))
-  const preparedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
+  const hydratedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
+  // The overlay is mounted at the consumer's vendor path for the package and is
+  // autoloaded through the consumer's committed PSR-4 map, not the override's
+  // own. When the consumer records the package under a different PSR-4 source
+  // layout than the override ships (e.g. a repo that publishes `src/` but is
+  // consumed as `php-transformer/src/`), the mounted class files would sit where
+  // the consumer autoloader never looks and the override is silently ignored.
+  // Reconcile the staged source so each namespace's classes land at the path the
+  // consumer's autoloader resolves, keeping the single vendor-path mount intact.
+  // Never mutate the caller's checkout: stage a copy first when the hydrated
+  // source is still the original directory.
+  const prepared = await reconcileOverlayAutoloadLayout(hydratedSource, source, stagingRoot, consumer.source, overlay.package)
+  const preparedSource = prepared.source
   if (reference) {
     await preserveComposerDependencyReference(consumer, overlay.package, reference, stagedConsumers)
-    await preserveComposerPackageReference(preparedSource, overlay.package, reference)
+    await preserveComposerPackageReference(prepared.packageRoot, overlay.package, reference)
   }
   const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
   const digest = await directoryContentDigest(preparedSource)
@@ -484,6 +500,136 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
       digest: { sha256: digest },
       ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
     },
+  }
+}
+
+/**
+ * Reconcile the overlay with the paths the consumer's committed autoloader
+ * resolves for the same package. A common wrapper prefix relocates the complete
+ * hydrated package so package-local bootstrap state stays coherent; other PSR-4
+ * layout changes retain the existing source-directory relocation.
+ */
+async function reconcileOverlayAutoloadLayout(hydratedSource: string, originalSource: string, stagingRoot: string, consumerSource: string, packageName: string): Promise<{ source: string; packageRoot: string }> {
+  const consumerPsr4 = await composerPackagePsr4FromInstalled(join(consumerSource, "vendor", "composer", "installed.json"), packageName)
+  const overridePsr4 = await composerPackagePsr4FromInstalled(join(hydratedSource, "vendor", "composer", "installed.json"), packageName)
+    ?? await composerPackagePsr4FromComposerJson(join(hydratedSource, "composer.json"))
+  if (!consumerPsr4 || !overridePsr4) {
+    return { source: hydratedSource, packageRoot: hydratedSource }
+  }
+
+  const moves = new Map<string, string>()
+  const layouts: Array<[string, string]> = []
+  for (const [namespace, consumerDir] of Object.entries(consumerPsr4)) {
+    const overrideDir = overridePsr4[namespace]
+    if (undefined === overrideDir) {
+      continue
+    }
+    const from = normalizeOverlayRelativeDir(overrideDir)
+    const to = normalizeOverlayRelativeDir(consumerDir)
+    if ("" === from || "" === to) {
+      continue
+    }
+    layouts.push([from, to])
+    if (from === to) {
+      continue
+    }
+    moves.set(from, to)
+  }
+  if (0 === moves.size) {
+    return { source: hydratedSource, packageRoot: hydratedSource }
+  }
+
+  const wrapper = commonOverlayWrapperPrefix(layouts)
+  if (wrapper) {
+    const effectiveSource = join(stagingRoot, "reconciled-source")
+    const packageRoot = join(effectiveSource, wrapper)
+    await mkdir(dirname(packageRoot), { recursive: true })
+    await cp(hydratedSource, packageRoot, { recursive: true })
+    return { source: effectiveSource, packageRoot }
+  }
+
+  // Copy into the overlay staging root before moving directories so the caller's
+  // checkout is never restructured in place (the hydrated source may still be
+  // the original when it already carried a vendor/ directory).
+  let effectiveSource = hydratedSource
+  if (effectiveSource === originalSource) {
+    effectiveSource = join(stagingRoot, "reconciled-source")
+    await cp(originalSource, effectiveSource, { recursive: true })
+  }
+
+  for (const [from, to] of moves) {
+    const fromPath = join(effectiveSource, from)
+    const toPath = join(effectiveSource, to)
+    if (fromPath === toPath || !await pathIsDirectory(fromPath) || await pathExists(toPath)) {
+      continue
+    }
+    await mkdir(dirname(toPath), { recursive: true })
+    await rename(fromPath, toPath)
+  }
+  return { source: effectiveSource, packageRoot: effectiveSource }
+}
+
+function commonOverlayWrapperPrefix(changes: Array<[string, string]>): string | undefined {
+  let wrapper: string | undefined
+  for (const [from, to] of changes) {
+    const suffix = `/${from}`
+    if (!to.endsWith(suffix)) {
+      return undefined
+    }
+    const candidate = to.slice(0, -suffix.length)
+    if (!candidate || normalizeOverlayRelativeDir(candidate) !== candidate || (wrapper && wrapper !== candidate)) {
+      return undefined
+    }
+    wrapper = candidate
+  }
+  return wrapper
+}
+
+/** @return namespace-prefix -> normalized relative source dir, or undefined. */
+async function composerPackagePsr4FromInstalled(installedPath: string, packageName: string): Promise<Record<string, string> | undefined> {
+  try {
+    const pkg = composerInstalledPackageRecords(JSON.parse(await readFile(installedPath, "utf8"))).find((candidate) => candidate.name === packageName)
+    return pkg ? psr4SingleDirMap((pkg as ComposerInstalledPackage).autoload?.["psr-4"]) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function composerPackagePsr4FromComposerJson(composerPath: string): Promise<Record<string, string> | undefined> {
+  try {
+    const composer = JSON.parse(await readFile(composerPath, "utf8")) as { autoload?: { "psr-4"?: Record<string, string | string[]> } }
+    return psr4SingleDirMap(composer.autoload?.["psr-4"])
+  } catch {
+    return undefined
+  }
+}
+
+/** Keep only single-directory PSR-4 mappings; multi-dir prefixes are ambiguous to relocate. */
+function psr4SingleDirMap(psr4: Record<string, string | string[]> | undefined): Record<string, string> | undefined {
+  if (!psr4) {
+    return undefined
+  }
+  const map: Record<string, string> = {}
+  for (const [namespace, dirs] of Object.entries(psr4)) {
+    const list = Array.isArray(dirs) ? dirs : [dirs]
+    if (1 === list.length && "string" === typeof list[0]) {
+      map[namespace] = list[0]
+    }
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeOverlayRelativeDir(dir: string): string {
+  const normalized = dir.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "")
+  return normalized.includes("..") ? "" : normalized
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -1683,7 +1829,7 @@ echo wp_json_encode(array('command' => 'install-mu-plugins', 'plugins' => $plugi
 
 export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtraPlugin[]): string | null {
   const plugins = extraPlugins
-    .filter((plugin) => plugin.loadAs === "plugin")
+    .filter((plugin) => plugin.loadAs === "plugin" && plugin.activate)
     .map((plugin) => plugin.pluginFile)
 
   if (plugins.length === 0) {
@@ -1691,6 +1837,7 @@ export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtra
   }
 
   return `$plugins = ${JSON.stringify(plugins)};
+$autoloaders = array();
 if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
     throw new RuntimeException('Could not create mu-plugins directory.');
 }
@@ -1715,16 +1862,20 @@ foreach ($plugins as $plugin) {
     }
     $package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
     if (is_file($package_autoload)) {
-        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload_packages.php';";
+        $autoload_path = $plugin_dir . '/vendor/autoload_packages.php';
+        $autoloaders[] = $autoload_path;
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $autoload_path) . "';";
         continue;
     }
     $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
     if (is_file($autoload)) {
-        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
+        $autoload_path = $plugin_dir . '/vendor/autoload.php';
+        $autoloaders[] = $autoload_path;
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $autoload_path) . "';";
     }
 }
 if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {
     throw new RuntimeException('Could not write WP Codebox Composer autoloader loader.');
 }
-echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'autoloaders' => $autoloaders, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }

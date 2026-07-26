@@ -81,7 +81,7 @@ export async function collectPlaygroundArtifacts({
     pluginCheckManifestFiles: () => pluginCheckManifestFiles(artifactRoot, pluginChecks),
     themeCheckManifestFiles: () => themeCheckManifestFiles(artifactRoot, themeChecks),
     formatRuntimeLog: () => formatRuntimeLog(events),
-    formatCommandsLog: () => formatCommandsLog(commands),
+    formatCommandsLog: (artifactCommands) => formatCommandsLog(artifactCommands),
     recordArtifactsCollected,
   }).build(artifactSpec)
 }

@@ -21,6 +21,7 @@ export interface PhpunitRunCodeOptions {
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
+  databaseType: "sqlite" | "mysql"
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
    * to a /tmp path so diagnostics survive read-only plugin mounts and a mid-install
@@ -421,6 +422,7 @@ $preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFile
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
+$database_type = ${JSON.stringify(options.databaseType)};
 
 function pg_build_phpunit_argv($raw): array {
     $phpunit_argv = array('phpunit');
@@ -562,14 +564,13 @@ function pg_remove_new_wordpress_hook_callbacks(string $hook_name, array $before
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach (array_keys($callbacks) as $callback_id) {
             if (!isset($before[$priority . ':' . $callback_id])) {
-                unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
+                $callback = $callbacks[$callback_id];
+                if (isset($callback['function'])) remove_action($hook_name, $callback['function'], (int) $priority);
             }
-        }
-        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
-            unset($wp_filter[$hook_name]->callbacks[$priority]);
         }
     }
 }
@@ -580,16 +581,15 @@ function pg_defer_new_wordpress_hook_callbacks(string $hook_name, array $before)
     if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
         return $deferred;
     }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+    $callbacks_by_priority = $wp_filter[$hook_name]->callbacks;
+    foreach ($callbacks_by_priority as $priority => $callbacks) {
         foreach ($callbacks as $callback_id => $callback) {
             if (isset($before[$priority . ':' . $callback_id])) {
                 continue;
             }
-            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
-            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
-        }
-        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
-            unset($wp_filter[$hook_name]->callbacks[$priority]);
+            if (isset($callback['function']) && remove_action($hook_name, $callback['function'], (int) $priority)) {
+                $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
+            }
         }
     }
     usort($deferred, static function (array $left, array $right): int { return $left['priority'] <=> $right['priority']; });
@@ -597,16 +597,34 @@ function pg_defer_new_wordpress_hook_callbacks(string $hook_name, array $before)
 }
 
 function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args = array(), ?string $hook_name = null): void {
-    global $wp_current_filter;
+    global $wp_filter, $wp_current_filter;
     $pushed_hook = false;
+    $original_hook = null;
+    $replay_hook = null;
     if (is_string($hook_name) && $hook_name !== '') {
         if (!is_array($wp_current_filter)) {
             $wp_current_filter = array();
         }
         $wp_current_filter[] = $hook_name;
         $pushed_hook = true;
+        $original_hook = $wp_filter[$hook_name] ?? null;
+        $replay_hook = new WP_Hook();
+        $wp_filter[$hook_name] = $replay_hook;
+        foreach ($deferred as $entry) {
+            $callback = $entry['callback'] ?? null;
+            if (!is_array($callback) || !isset($callback['function'])) {
+                continue;
+            }
+            $priority = isset($entry['priority']) ? (int) $entry['priority'] : 10;
+            $accepted_args = isset($callback['accepted_args']) ? (int) $callback['accepted_args'] : count($args);
+            add_filter($hook_name, $callback['function'], $priority, $accepted_args);
+        }
     }
     try {
+        if ($replay_hook instanceof WP_Hook) {
+            $replay_hook->do_action($args);
+            return;
+        }
         foreach ($deferred as $entry) {
             $callback = $entry['callback'] ?? null;
             if (!is_array($callback) || !isset($callback['function'])) {
@@ -616,6 +634,21 @@ function pg_run_deferred_wordpress_hook_callbacks(array $deferred, array $args =
             call_user_func_array($callback['function'], array_slice($args, 0, $accepted_args));
         }
     } finally {
+        if ($replay_hook instanceof WP_Hook && is_string($hook_name)) {
+            $retained_callbacks = $replay_hook->callbacks;
+            if ($original_hook instanceof WP_Hook) {
+                $wp_filter[$hook_name] = $original_hook;
+            } else {
+                unset($wp_filter[$hook_name]);
+            }
+            foreach ($retained_callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $callback) {
+                    if (isset($callback['function'])) {
+                        add_filter($hook_name, $callback['function'], (int) $priority, (int) ($callback['accepted_args'] ?? 0));
+                    }
+                }
+            }
+        }
         if ($pushed_hook) {
             array_pop($wp_current_filter);
         }
@@ -692,11 +725,33 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         $config = "<?php\n";
         pg_append_wp_config_defines($config, $extra_defines);
         $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
-        $config .= <<<'CONFIG'
+        $database_type = (string) ($cfg['database_type'] ?? 'sqlite');
+        if ($database_type === 'mysql') {
+            $db_host = getenv('DB_HOST');
+            if (!is_string($db_host) || $db_host === '') {
+                throw new RuntimeException('Managed PHPUnit requires DB_HOST when database-type=mysql; declare a MySQL runtime service with canonical DB_* outputs.');
+            }
+            $db_port = getenv('DB_PORT');
+            if (is_string($db_port) && $db_port !== '') {
+                $db_host .= ':' . $db_port;
+            }
+            foreach (array(
+                'DB_NAME' => getenv('DB_NAME') ?: 'runtime',
+                'DB_USER' => getenv('DB_USER') ?: 'runtime',
+                'DB_PASSWORD' => getenv('DB_PASSWORD') ?: '',
+                'DB_HOST' => $db_host,
+            ) as $name => $value) {
+                $config .= 'define(' . var_export($name, true) . ', ' . var_export($value, true) . ");\n";
+            }
+        } else {
+            $config .= <<<'CONFIG'
 define('DB_NAME', ':memory:');
 define('DB_USER', 'root');
 define('DB_PASSWORD', '');
 define('DB_HOST', 'localhost');
+CONFIG;
+        }
+        $config .= <<<'CONFIG'
 define('DB_CHARSET', 'utf8');
 define('WP_TESTS_DOMAIN', 'example.org');
 define('WP_TESTS_EMAIL', 'admin@example.org');
@@ -1126,7 +1181,7 @@ if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
 }
 if ($multisite) {
-    $wp_config_defines += array(
+    $multisite_defines = array(
         'WP_TESTS_MULTISITE' => true,
         'MULTISITE' => true,
         'SUBDOMAIN_INSTALL' => false,
@@ -1135,6 +1190,12 @@ if ($multisite) {
         'SITE_ID_CURRENT_SITE' => 1,
         'BLOG_ID_CURRENT_SITE' => 1,
     );
+    $wp_config_defines += $multisite_defines;
+    foreach ($multisite_defines as $name => $value) {
+        if (!defined($name)) {
+            define($name, $value);
+        }
+    }
     putenv('WP_MULTISITE=1');
     $_ENV['WP_MULTISITE'] = '1';
 }
@@ -1145,7 +1206,7 @@ if ($autoload_file_role === '' && $bootstrap_mode === 'project' && $project_auto
 }
 $harness_autoload_file = $legacy_project_autoload_file !== '' ? '/wp-codebox-vendor/autoload.php' : $autoload_file;
 
-$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== ''));
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== '', 'database_type' => $database_type));
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
     pg_skip_project_bootstrap_shell_install();
@@ -1173,8 +1234,10 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path
 pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $pre_dependency_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
+$pre_dependency_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
 $loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
 $deferred_dependency_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_dependency_plugins_loaded_callbacks);
+$deferred_dependency_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_dependency_init_callbacks);
 $activation_files = $loaded_dep_files;
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
@@ -1186,7 +1249,7 @@ $reopened_ability_categories_init = pg_reopen_wordpress_action('wp_abilities_api
 $reopened_ability_init = pg_reopen_wordpress_action('wp_abilities_api_init');
 pg_run_deferred_wordpress_hook_callbacks($deferred_install_plugins_loaded_callbacks, array(), 'plugins_loaded');
 pg_run_deferred_wordpress_hook_callbacks($deferred_dependency_plugins_loaded_callbacks, array(), 'plugins_loaded');
-$deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
+$deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, $deferred_dependency_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
 usort($deferred_install_init_callbacks, static function (array $left, array $right): int {
     return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
 });

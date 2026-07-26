@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, assertRuntimeSecretEnvTargetsAvailable, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, resolveRuntimeSecretEnvTargets, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserArtifactFileManifest, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact, type BrowserArtifactFiles } from "./browser-artifacts.js"
@@ -14,10 +14,10 @@ import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runB
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
-import { argValue, cleanWpCliOutput, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { argValue, cleanWpCliOutput, runWithTemporaryWpCliScript, shellArgv, wordpressBlockExerciseInputFromArgs, wordpressBlockExercisePhpCode, wordpressCrudOperationFromArgs, wordpressCrudOperationPhpCode, wordpressDbOperationFromArgs, wordpressDbOperationPhpCode, wpCliCommandFromArgs } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
-import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, terminalizeOnPhpWasmRuntimeRejection, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
@@ -347,6 +347,7 @@ class PlaygroundRuntime implements Runtime {
 
   async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
     assertRuntimeCommandAllowed(spec.command, this.spec.policy)
+    assertRuntimeSecretEnvTargetsAvailable(this.spec.secretEnvTargets, spec.environment ?? {})
 
     const startedAt = now()
     const commandId = id("command")
@@ -364,7 +365,12 @@ class PlaygroundRuntime implements Runtime {
     this.activeExecutionAbortControllers.add(abortController)
     try {
       const executionSpec = executionSpecWithEnvironment(spec)
-      const output = await this.executionSignals.run(abortController.signal, async () => await this.isolatedProcessExecutions.run(Boolean(spec.processIdentity), async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController)))
+      const output = await this.executionSignals.run(abortController.signal, async () => {
+        const executeCommand = async () => await this.isolatedProcessExecutions.run(Boolean(spec.processIdentity), async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
+        return spec.command === "wordpress.phpunit"
+          ? await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
+          : await executeCommand()
+      })
       const finishedAt = now()
       const envelope = typeof output === "string"
         ? runtimeCommandResultEnvelopeFromOutput({
@@ -1051,13 +1057,7 @@ class PlaygroundRuntime implements Runtime {
       throw new Error("wordpress.wp-cli requires a non-empty command")
     }
 
-    if (!server.playground.writeFile) {
-      throw new Error("wordpress.wp-cli requires a Playground backend with writeFile support")
-    }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    const response = await this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    const response = await this.runWpCliCommand(server, argv)
     assertPlaygroundResponseOk("wordpress.wp-cli", response)
 
     return cleanWpCliOutput(response.text)
@@ -1468,13 +1468,21 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async runWpCliCommand(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
-    if (!server.playground.writeFile) {
-      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
+    if (!server.playground.writeFile || !server.playground.unlink) {
+      throw new Error("WP-CLI commands require a Playground backend with writeFile and unlink support")
     }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    return runWithTemporaryWpCliScript(
+      {
+        writeFile: (path, contents) => server.playground.writeFile!(path, contents),
+        unlink: (path) => server.playground.unlink!(path),
+      },
+      this.runtimeId,
+      argv,
+      async (scriptPath) => {
+        const response = await this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+        return { ...response, text: response.text }
+      },
+    )
   }
 
   private async createRuntimeWpCliBridge(server: PlaygroundCliServer): Promise<RuntimeWpCliBridge> {
@@ -1755,13 +1763,7 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async runWpCliArgv(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
-    if (!server.playground.writeFile) {
-      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
-    }
-
-    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
-    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
-    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+    return this.runWpCliCommand(server, argv)
   }
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
@@ -1770,7 +1772,10 @@ class PlaygroundRuntime implements Runtime {
         if (!server.playground.runInFreshProcess) {
           throw new Error("The Playground runtime does not support clean PHP process execution.")
         }
-        return await abortable(server.playground.runInFreshProcess(options), this.executionSignals.getStore())
+        return await abortable(server.playground.runInFreshProcess({
+          ...options,
+          env: resolveRuntimeSecretEnvTargets(this.spec.secretEnv ?? {}, this.spec.secretEnvTargets),
+        }), this.executionSignals.getStore())
       }
       return await abortable(server.playground.run(options), this.executionSignals.getStore())
     } catch (error) {

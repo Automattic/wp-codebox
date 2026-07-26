@@ -11,16 +11,22 @@ import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.ts"
 
 const service = { id: "test-db", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", password: "DB_PASSWORD" } } as const
+const fanoutService = { ...service, outputs: { ...service.outputs, port: ["DB_PORT", "TC_MYSQL_PORT"] } }
 const plan = runtimeServicePlan([service])
 assert.deepEqual(plan, [{ id: "test-db", kind: "mysql", provider: "docker", version: "mysql:8.4", bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }])
 assert.equal(parseLoopbackPort("127.0.0.1:44001\n"), 44001)
 assert.throws(() => parseLoopbackPort("0.0.0.0:3306"), /loopback/)
+const auxiliaryServices = [
+  { id: "cache", kind: "redis", outputs: { host: "REDIS_HOST", port: "REDIS_PORT", url: "REDIS_URL" } },
+  { id: "mail", kind: "smtp", outputs: { host: "SMTP_HOST", port: "SMTP_PORT", httpPort: "SMTP_HTTP_PORT" } },
+  { id: "upstream", kind: "http", configuration: { responseStatus: 503, responseBody: "unavailable" }, outputs: { url: "FIXTURE_URL" } },
+] satisfies WorkspaceRecipe["inputs"] extends { services?: infer T } ? NonNullable<T> : never
+assert.deepEqual(runtimeServicePlan(auxiliaryServices).map(({ kind, version }) => [kind, version]), [["redis", "redis:7.4-alpine"], ["smtp", "axllent/mailpit:v1.27"], ["http", "hashicorp/http-echo:1.0"]])
 
 const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(valid.valid, true)
-const aliasedPortService = { ...service, outputs: { ...service.outputs, port: ["DB_PORT", "TC_MYSQL_PORT"] } }
-assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [aliasedPortService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
-assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: [] } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: auxiliaryServices }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [fanoutService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
 const emptyRootService = { ...service, configuration: { rootAuthentication: "empty-password" as const } }
@@ -32,6 +38,12 @@ assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-r
 assert.equal(runtimeServicePlan([mariaDbService])[0]?.version, "mariadb:11.4")
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, configuration: { foreignKeyTargetPolicy: "anything" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: [emptyRootService] }).inputs?.services, [emptyRootService])
+const mysqlPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mysql" })
+assert.deepEqual(mysqlPhpunitRecipe.inputs?.services, [{ id: "wordpress-database", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" } }])
+assert.ok(mysqlPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mysql"))
+const sqlitePhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example" })
+assert.equal(sqlitePhpunitRecipe.inputs?.services, undefined)
+assert.equal(sqlitePhpunitRecipe.workflow.steps[0].args?.some((arg) => arg.startsWith("database-type=")), false)
 assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "example", wordpressInstallMode: "do-not-attempt-installing" }).runtime?.wordpressInstallMode, "do-not-attempt-installing")
 assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", pluginRuntime: { php: { memoryLimit: "2G" } } }).inputs?.pluginRuntime, { php: { memoryLimit: "2G" } })
 const builderDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-builder-"))
@@ -41,6 +53,7 @@ try {
   await writeFile(optionsPath, JSON.stringify({
     pluginSlug: "example",
     phpVersion: "8.3",
+    databaseType: "mysql",
     extensions: [{ manifest: "./sodium/manifest.json" }],
     backendPackage: { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" },
     testRoot: "/home/example/bin/tests/core",
@@ -51,6 +64,8 @@ try {
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("test-root=/home/example/bin/tests/core"))
   assert.ok(builtRecipe.workflow.steps[0].args?.includes("phpunit-xml=/home/example/bin/tests/core/phpunit.xml"))
   assert.equal(builtRecipe.runtime?.phpVersion, "8.3")
+  assert.equal(builtRecipe.inputs?.services?.[0]?.kind, "mysql")
+  assert.ok(builtRecipe.workflow.steps[0].args?.includes("database-type=mysql"))
   assert.deepEqual(builtRecipe.runtime?.extensions, [{ manifest: "./sodium/manifest.json" }])
   assert.deepEqual(builtRecipe.runtime?.backendPackage, { kind: "playground", source: "./playground-cli", package: "@wp-playground/cli" })
 
@@ -76,7 +91,7 @@ const collisions: WorkspaceRecipe = {
 }
 assert.deepEqual(
   (await validateWorkspaceRecipeSemantics(collisions, "recipe.json")).map((issue) => issue.code),
-  ["duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
+  ["runtime-service-secret-target-collision", "duplicate-runtime-service-env", "duplicate-runtime-service-env", "duplicate-runtime-service-env"],
 )
 
 const server = createServer((socket) => socket.end(Buffer.from([1, 0, 0, 0, 10])))
@@ -105,27 +120,30 @@ const dependencies: RuntimeServiceDependencies = {
   async waitForReady() {},
 }
 const provisioned = await provisionRuntimeServices([service], { dependencies })
+const fanoutProvisioned = await provisionRuntimeServices([fanoutService], { dependencies })
+const provisionedPassword = Buffer.alloc(24, 7).toString("base64url")
 assert.equal(provisioned.env.DB_PORT, "41001")
-assert.equal(provisioned.env.DB_PASSWORD, Buffer.alloc(24, 7).toString("base64url"))
-const aliasedPort = await provisionRuntimeServices([aliasedPortService], { dependencies })
-assert.equal(aliasedPort.env.DB_PORT, "41001")
-assert.equal(aliasedPort.env.TC_MYSQL_PORT, "41001")
-await aliasedPort.release()
+assert.equal(fanoutProvisioned.env.DB_PORT, "41001")
+assert.equal(fanoutProvisioned.env.TC_MYSQL_PORT, "41001")
+assert.equal(provisioned.env.DB_PASSWORD, undefined, "password is excluded from the non-secret output channel")
+assert.equal(provisioned.secretEnv.DB_PASSWORD, provisionedPassword)
+assert.deepEqual(provisioned.secretEnvTargets, { DB_PASSWORD: "DB_PASSWORD" })
 const runCall = calls.find((call) => call.args[0] === "run")
 assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
 assert.ok(runCall?.args.includes("127.0.0.1::3306"), "Docker publishes MySQL on a loopback ephemeral port")
 assert.deepEqual(runCall?.args.slice(runCall.args.indexOf("--tmpfs"), runCall.args.indexOf("--tmpfs") + 2), ["--tmpfs", "/var/lib/mysql"])
 assert.equal(runCall?.args.includes("--volume") || runCall?.args.includes("--mount"), false, "Docker uses no persistent volume")
-assert.equal(runCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "credentials never enter Docker argv")
+assert.equal(runCall?.args.some((arg) => arg.includes(provisionedPassword)), false, "credentials never enter Docker argv")
 const readinessCall = calls.find((call) => call.args[0] === "exec")
 assert.ok(readinessCall?.args.includes("mysql"), "MySQL readiness authenticates against the initialized database")
-assert.equal(readinessCall?.args.some((arg) => arg.includes(provisioned.env.DB_PASSWORD)), false, "readiness credentials never enter Docker argv")
-assert.equal(readinessCall?.env?.MYSQL_PWD, provisioned.env.DB_PASSWORD, "readiness credentials use the child environment")
-assert.equal(JSON.stringify(provisioned.evidence).includes(provisioned.env.DB_PASSWORD), false, "credentials never enter evidence")
+assert.equal(readinessCall?.args.some((arg) => arg.includes(provisionedPassword)), false, "readiness credentials never enter Docker argv")
+assert.equal(readinessCall?.env?.MYSQL_PWD, provisionedPassword, "readiness credentials use the child environment")
+assert.equal(JSON.stringify(provisioned.evidence).includes(provisionedPassword), false, "credentials never enter evidence")
 assert.equal(runCall?.env?.DOCKER_HOST, process.env.DOCKER_HOST, "Docker provider context is preserved")
 assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()
 await provisioned.release()
+await fanoutProvisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 2, "each service is released exactly once")
 
 const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
@@ -156,6 +174,30 @@ const indexedForeignKey = await provisionRuntimeServices([indexedForeignKeyServi
 const indexedForeignKeyRun = indexedForeignKeyCalls.find((call) => call.args[0] === "run")
 assert.deepEqual(indexedForeignKeyRun?.args.slice(-2), ["mysql:8.4", "--restrict-fk-on-non-standard-key=OFF"], "indexed foreign-key targets opt into the MySQL compatibility mode")
 await indexedForeignKey.release()
+
+const auxiliaryCalls: string[][] = []
+const auxiliaryDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    auxiliaryCalls.push(args)
+    return await dependencies.execute(command, args, options)
+  },
+}
+const auxiliary = await provisionRuntimeServices(auxiliaryServices, { dependencies: auxiliaryDependencies })
+assert.equal(auxiliary.env.REDIS_URL, "redis://127.0.0.1:41001")
+assert.equal(auxiliary.env.FIXTURE_URL, "http://127.0.0.1:41001")
+assert.equal((await auxiliary.control("cache", "pause")).status, "applied")
+assert.equal((await auxiliary.control("cache", "resume")).status, "applied")
+assert.equal((await auxiliary.control("cache", "stop")).status, "applied")
+assert.equal((await auxiliary.control("cache", "start")).status, "applied")
+assert.equal((await auxiliary.control("cache", "flush")).status, "applied")
+assert.equal((await auxiliary.control("mail", "restart")).status, "applied")
+assert.equal((await auxiliary.control("upstream", "latency", { milliseconds: 50 })).status, "unsupported")
+assert.ok(auxiliaryCalls.some((args) => args.includes("redis:7.4-alpine")))
+assert.ok(auxiliaryCalls.some((args) => args.includes("axllent/mailpit:v1.27")))
+assert.ok(auxiliaryCalls.some((args) => args.includes("hashicorp/http-echo:1.0")))
+assert.equal(auxiliary.evidence.find((item) => item.id === "cache")?.controls?.length, 5)
+await auxiliary.release()
 
 const mariaDbCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const mariaDbDependencies: RuntimeServiceDependencies = {

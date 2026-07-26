@@ -160,6 +160,8 @@ export interface BrowserActionCorpusDescriptor {
   optionValues?: string[]
   disabled?: boolean
   readonly?: boolean
+  /** Adaptive exploration frame identity. Omitted for the main document and one-shot corpus discovery. */
+  frameId?: string
 }
 
 export interface BrowserActionCorpusContract {

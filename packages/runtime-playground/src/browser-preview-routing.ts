@@ -13,6 +13,20 @@ export interface BrowserPreviewNetworkPolicy {
   firstPartyHosts: Set<string>
   recordExternal: boolean
   stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
+  routedRedirectEscapes: Array<{ rawOrigin: string; effectiveOrigin: string; reason: string }>
+}
+
+export interface BrowserPreviewNavigationDecision {
+  allowed: boolean
+  rawOrigin?: string
+  effectiveOrigin?: string
+  routeDecision: "relative" | "effective-preview" | "routed-preview" | "external" | "invalid"
+  reason: string
+}
+
+export interface BrowserPreviewNavigationScope {
+  resolve(href: string, documentUrl: string): BrowserPreviewNavigationDecision
+  drainDiagnostics(): Array<{ code: string; message: string; metadata: Record<string, unknown> }>
 }
 
 export interface BrowserPreviewTopology {
@@ -20,6 +34,7 @@ export interface BrowserPreviewTopology {
   networkPolicy: BrowserPreviewNetworkPolicy
   routedHosts: string[]
   origins: { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string }
+  navigationScope: BrowserPreviewNavigationScope
   resolveUrl(pathOrUrl: string): string
   authCookieUrls(targetUrls: string[]): string[]
 }
@@ -81,11 +96,41 @@ export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreat
     networkPolicy,
     routedHosts,
     origins: browserPreviewOrigins(preview),
+    navigationScope: browserPreviewNavigationScope(preview.effectiveOrigin, networkPolicy),
     resolveUrl(pathOrUrl) {
       return resolveBrowserPreviewUrl(pathOrUrl, preview.effectiveOrigin)
     },
     authCookieUrls(targetUrls) {
       return browserPreviewAuthCookieUrls(localPreviewOrigin, routedHosts, targetUrls)
+    },
+  }
+}
+
+export function browserPreviewNavigationScope(effectivePreviewOrigin: string, policy: BrowserPreviewNetworkPolicy): BrowserPreviewNavigationScope {
+  const effectiveOrigin = new URL(effectivePreviewOrigin).origin
+  return {
+    resolve(href, documentUrl) {
+      let resolved: URL
+      try {
+        resolved = new URL(href, documentUrl)
+      } catch {
+        return { allowed: false, routeDecision: "invalid", reason: "href-invalid" }
+      }
+      const rawOrigin = resolved.origin
+      if (rawOrigin === effectiveOrigin) {
+        return { allowed: true, rawOrigin, effectiveOrigin, routeDecision: absoluteHrefOrigin(href) ? "effective-preview" : "relative", reason: "effective-preview-origin" }
+      }
+      if (policy.routeHosts.has(normalizeBrowserPreviewHost(resolved.hostname))) {
+        return { allowed: true, rawOrigin, effectiveOrigin, routeDecision: "routed-preview", reason: "declared-route-host" }
+      }
+      return { allowed: false, rawOrigin, effectiveOrigin: rawOrigin, routeDecision: "external", reason: policy.allowHosts.has(normalizeBrowserPreviewHost(resolved.hostname)) ? "network-host-allowed-but-not-routed" : "host-not-routed-to-preview" }
+    },
+    drainDiagnostics() {
+      return policy.routedRedirectEscapes.splice(0).map((escape) => ({
+        code: "browser_adaptive_redirect_scope_escape_rejected",
+        message: "A routed preview redirect leaving the declared navigation scope was stopped.",
+        metadata: { rawHrefOrigin: escape.rawOrigin, effectiveOrigin: escape.effectiveOrigin, routeDecision: "external", reason: escape.reason },
+      }))
     },
   }
 }
@@ -161,6 +206,7 @@ export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[]
     firstPartyHosts,
     recordExternal: strictBooleanArg(args, "record-external", false),
     stats: new Map(),
+    routedRedirectEscapes: [],
   }
 }
 
@@ -259,7 +305,7 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
     }
 
     stat.routed += 1
-    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy.routeHosts, origin)
+    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy, origin)
     tracker?.pending.add(task)
     try {
       await task
@@ -272,8 +318,8 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
   })
 }
 
-async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<void> {
-  const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, routedHosts, localOrigin)
+async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, localOrigin: URL): Promise<void> {
+  const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, policy, localOrigin)
   if (!response) {
     return
   }
@@ -334,11 +380,19 @@ function normalizeBrowserPreviewHost(host: string): string {
   return host.trim().toLowerCase().replace(/:\d+$/, "")
 }
 
+function absoluteHrefOrigin(href: string): string | undefined {
+  try {
+    return new URL(href).origin
+  } catch {
+    return undefined
+  }
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, origin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
+async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, origin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
   let currentUrl = requestUrl
   for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
     const routedUrl = new URL(currentUrl.toString())
@@ -374,8 +428,18 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
     }
 
     const redirectedUrl = new URL(location, currentUrl)
-    if (!routedHosts.has(redirectedUrl.hostname.toLowerCase())) {
+    if (redirectedUrl.origin === origin.origin) {
       return response
+    }
+    const redirectedHost = normalizeBrowserPreviewHost(redirectedUrl.hostname)
+    if (!policy.routeHosts.has(redirectedHost)) {
+      const stat = browserPreviewNetworkPolicyHostStat(policy, redirectedHost)
+      stat.requests += 1
+      stat.external = true
+      stat.blocked += 1
+      policy.routedRedirectEscapes.push({ rawOrigin: redirectedUrl.origin, effectiveOrigin: origin.origin, reason: "redirect-host-not-routed-to-preview" })
+      await route.abort("blockedbyclient")
+      return undefined
     }
 
     currentUrl = redirectedUrl

@@ -33,6 +33,10 @@ import { BROWSER_CONTAINED_SITE_APPLY_PLAN_SCHEMA, BROWSER_CONTAINED_SITE_APPLY_
 import { SANDBOX_ISOLATION_PROOF_SCHEMA } from "./sandbox-isolation-proof-contracts.js"
 import { CACHE_CHURN_OBSERVATION_SCHEMA } from "./cache-churn-observation.js"
 import { QUERY_OBSERVATION_SCHEMA } from "./query-observation-contracts.js"
+import { ADVERSARIAL_CAMPAIGN_RESULT_SCHEMA, ADVERSARIAL_CAMPAIGN_SCHEMA, ADVERSARIAL_FINDING_SCHEMA, ADVERSARIAL_REPLAY_SCHEMA, DIFFERENTIAL_RESULT_SCHEMA } from "./adversarial-campaign.js"
+import { ADVERSARIAL_BROWSER_ORACLE_RESULT_SCHEMA, ADVERSARIAL_BROWSER_PLAN_SCHEMA, CLOCK_CONTROL_CAPABILITIES_SCHEMA } from "./adversarial-browser.js"
+import { ADVERSARIAL_EVIDENCE_BUNDLE_SCHEMA } from "./adversarial-artifacts.js"
+import { TRANSPORT_FAULT_CAPABILITIES_SCHEMA, TRANSPORT_FAULT_EVIDENCE_SCHEMA, TRANSPORT_FAULT_MODEL_SCHEMA } from "./transport-faults.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/v1" as const
@@ -44,6 +48,8 @@ export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-
 export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
 export const CODEBOX_RESOLVE_RUNTIME_REQUIREMENTS_ABILITY = "wp-codebox/resolve-runtime-requirements" as const
 export const RUNTIME_DESCRIPTOR_SCHEMA = "wp-codebox/runtime-descriptor/v1" as const
+export const RUNTIME_SERVICE_CAPABILITIES_SCHEMA = "wp-codebox/runtime-service-capabilities/v1" as const
+export const NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY = "runtime-service:mysql:native:mariadb" as const
 
 export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "agent-task:run",
@@ -55,6 +61,11 @@ export const CODEBOX_PUBLIC_RUNTIME_CAPABILITIES = [
   "wordpress-runtime:fuzz-suite",
   "wordpress-runtime:sandbox-isolation-proof",
   "contract-manifest:read",
+] as const
+
+export const CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES = [
+  ...CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+  NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY,
 ] as const
 
 export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
@@ -83,6 +94,10 @@ export const CODEBOX_PUBLIC_RUNTIME_COMMANDS = {
 } as const
 
 export const CODEBOX_PUBLIC_RUNTIME_WORDPRESS_CAPABILITIES = {
+  runtimeServices: {
+    schema: RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
+    packageCapabilities: [NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY],
+  },
   wordpressRuntime: {
     commands: CODEBOX_PUBLIC_RUNTIME_COMMANDS.wordpressRuntime,
     capabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
@@ -97,6 +112,20 @@ export const CODEBOX_PUBLIC_RUNTIME_READINESS = {
 } as const
 
 export const RUNTIME_CONTRACT_SCHEMAS = {
+  adversarial: {
+    campaign: ADVERSARIAL_CAMPAIGN_SCHEMA,
+    campaignResult: ADVERSARIAL_CAMPAIGN_RESULT_SCHEMA,
+    finding: ADVERSARIAL_FINDING_SCHEMA,
+    replay: ADVERSARIAL_REPLAY_SCHEMA,
+    evidenceBundle: ADVERSARIAL_EVIDENCE_BUNDLE_SCHEMA,
+    transportFaultModel: TRANSPORT_FAULT_MODEL_SCHEMA,
+    transportFaultCapabilities: TRANSPORT_FAULT_CAPABILITIES_SCHEMA,
+    transportFaultEvidence: TRANSPORT_FAULT_EVIDENCE_SCHEMA,
+    browserPlan: ADVERSARIAL_BROWSER_PLAN_SCHEMA,
+    browserOracleResult: ADVERSARIAL_BROWSER_ORACLE_RESULT_SCHEMA,
+    clockControlCapabilities: CLOCK_CONTROL_CAPABILITIES_SCHEMA,
+    differentialResult: DIFFERENTIAL_RESULT_SCHEMA,
+  },
   agentTask: {
     runRequest: AGENT_TASK_RUN_REQUEST_SCHEMA,
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
@@ -111,6 +140,9 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     browserSessionProductDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
     browserPreviewBootConfig: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
     runtimeAccess: RUNTIME_ACCESS_SCHEMA,
+  },
+  runtimeService: {
+    capabilities: RUNTIME_SERVICE_CAPABILITIES_SCHEMA,
   },
   browserSession: {
     productDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
@@ -254,7 +286,15 @@ export interface RuntimeDescriptor {
     publicApi: true
     contractManifest: true
   }
-  capabilities: typeof CODEBOX_PUBLIC_RUNTIME_CAPABILITIES
+  capabilities: readonly string[]
+  packageCapabilities: typeof CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES
+  runtimeServices: {
+    nativeMariaDb: {
+      capability: typeof NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY
+      status: "ready" | "unavailable" | "unknown"
+      reason?: string
+    }
+  }
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
   wordpressFuzzRuntimeContract: WordPressFuzzRuntimeContract
   contractManifest: RuntimeContractManifest
@@ -273,7 +313,8 @@ export function runtimeContractManifest(): RuntimeContractManifest {
   }
 }
 
-export function runtimeDescriptor(): RuntimeDescriptor {
+export function runtimeDescriptor(options: { nativeMariaDb?: { status: "ready" | "unavailable" | "unknown"; reason?: string } } = {}): RuntimeDescriptor {
+  const nativeMariaDb = options.nativeMariaDb ?? { status: "unknown" as const }
   return {
     schema: RUNTIME_DESCRIPTOR_SCHEMA,
     version: 1,
@@ -286,7 +327,11 @@ export function runtimeDescriptor(): RuntimeDescriptor {
       publicApi: true,
       contractManifest: true,
     },
-    capabilities: CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    capabilities: nativeMariaDb.status === "ready" ? [...CODEBOX_PUBLIC_RUNTIME_CAPABILITIES, NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] : CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
+    packageCapabilities: CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES,
+    runtimeServices: {
+      nativeMariaDb: { capability: NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY, ...nativeMariaDb },
+    },
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
     wordpressFuzzRuntimeContract: wordpressFuzzRuntimeContract(),
     contractManifest: runtimeContractManifest(),

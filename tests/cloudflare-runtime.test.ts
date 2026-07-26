@@ -1,11 +1,77 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import test from "node:test"
-import { decodeZip } from "@php-wasm/stream-compression"
+import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
+import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
+import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
+import { selectOperatorCoordinator } from "../packages/runtime-cloudflare/src/operator-coordinator.js"
+import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
 import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
 import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
+import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
+import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
+import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "../packages/runtime-cloudflare/src/upload-persistence.js"
+import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
+import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
+import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
+import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_ARCHIVE_MAX_BYTES, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
+import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../packages/runtime-cloudflare/src/wp-content-persistence.js"
+
+const execFileAsync = promisify(execFile)
+
+test("Cloudflare static artifact imports require bounded content-addressed R2 input", async () => {
+  const artifact = { schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "<h1>Verified</h1>" }] }
+  const bytes = new TextEncoder().encode(JSON.stringify(artifact))
+  const sha256 = createHash("sha256").update(bytes).digest("hex")
+  const key = `sites/default/import-artifacts/${sha256}.json`
+  const bucket = { get: async (candidate: string) => candidate === key ? { size: bytes.byteLength, arrayBuffer: async () => Uint8Array.from(bytes).buffer } : null }
+  const body = { schema: STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA, idempotencyKey: "test-import-1", artifact: { r2Key: key, sha256, size: bytes.byteLength }, import: { slug: "verified-site", name: "Verified Site", siteTitle: "Verified Site" } }
+  const imported = await readStaticArtifactImport(new Request("https://worker.example/", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), bucket as never)
+  assert.equal(imported.artifactReference.sha256, sha256)
+  assert.equal(imported.options.slug, "verified-site")
+  await assert.rejects(() => readStaticArtifactImport(new Request("https://worker.example/", { method: "POST", body: JSON.stringify({ ...body, artifact: { ...body.artifact, r2Key: "sites/default/markdown/current.json" } }) }), bucket as never), /reference is invalid/)
+  const traversal = { ...artifact, files: [{ path: "website/../escape.html", content: "bad" }] }
+  const traversalBytes = new TextEncoder().encode(JSON.stringify(traversal))
+  const traversalSha = createHash("sha256").update(traversalBytes).digest("hex")
+  const traversalKey = `sites/default/import-artifacts/${traversalSha}.json`
+  const traversalBucket = { get: async () => ({ size: traversalBytes.byteLength, arrayBuffer: async () => Uint8Array.from(traversalBytes).buffer }) }
+  await assert.rejects(() => readStaticArtifactImport(new Request("https://worker.example/", { method: "POST", body: JSON.stringify({ ...body, artifact: { r2Key: traversalKey, sha256: traversalSha, size: traversalBytes.byteLength } }) }), traversalBucket as never), /invalid file path/)
+  await assert.rejects(() => readStaticArtifactImport(new Request("https://worker.example/", { method: "POST", body: "x".repeat(16 * 1024 + 1) }), bucket as never), /request exceeds its byte budget/)
+})
+
+test("Cloudflare upload manifests reject unbounded or non-canonical R2 files", () => {
+  const sha256 = "a".repeat(64)
+  const valid = [{ path: "2026/07/photo.png", size: 128, sha256, objectKey: `${R2_UPLOAD_OBJECT_PREFIX}/${sha256}` }]
+  assert.doesNotThrow(() => validateUploadManifestFiles(valid))
+  assert.doesNotThrow(() => validateUploadManifestFiles([]))
+  assert.throws(() => validateUploadMetadata([{ path: "../secret", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "2026\\secret", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "same.png", size: 1 }, { path: "same.png", size: 1 }]), /invalid file/)
+  assert.throws(() => validateUploadMetadata([{ path: "large.png", size: MAX_UPLOAD_FILE_BYTES + 1 }]), /invalid file/)
+  assert.throws(() => validateUploadManifestFiles([{ ...valid[0], objectKey: "runtime/wordpress/archive.zip" }]), /invalid file/)
+  assert.throws(() => validateUploadManifestFiles([{ ...valid[0], sha256: "not-a-digest" }]), /invalid file/)
+})
+
+test("Cloudflare wp-content manifests allow bounded user code and reject runtime-owned files", () => {
+  const sha256 = "a".repeat(64)
+  const valid = [{ path: "plugins/example/example.php", size: 128, sha256, objectKey: `${R2_WP_CONTENT_OBJECT_PREFIX}/${sha256}` }]
+  assert.doesNotThrow(() => validateWpContentManifestFiles(valid))
+  assert.doesNotThrow(() => validateWpContentMetadata([{ path: "themes/example/style.css", size: 0 }, { path: "languages/example.mo", size: 1 }, { path: "mu-plugins/example.php", size: 1 }]))
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/../secret.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/markdown-database-integration/owned.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/sqlite-database-integration/owned.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php/child.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "themes/example/large.css", size: MAX_WP_CONTENT_FILE_BYTES + 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentManifestFiles([{ ...valid[0], objectKey: "sites/default/uploads/objects/foreign" }]), /invalid file/)
+  assert.doesNotThrow(() => validateWpContentDeletedPaths(["themes/example/style.css"]))
+  assert.throws(() => validateWpContentDeletedPaths(["themes/z/style.css", "themes/a/style.css"]), /non-deterministic/)
+})
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {
   const health = {
@@ -32,7 +98,78 @@ test("Cloudflare routing reserves phases while the phase-less route serves WordP
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=health")), { kind: "health" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-state")), { kind: "r2-state" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-reset")), { kind: "operator-reset" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-restore")), { kind: "operator-restore" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-adopt")), { kind: "operator-adopt" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-status")), { kind: "operator-fence", action: "status" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-acquire")), { kind: "operator-fence", action: "acquire" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-renew")), { kind: "operator-fence", action: "renew" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-fence-release")), { kind: "operator-fence", action: "release" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-static-artifact-import")), { kind: "operator-static-artifact-import" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-static-artifact-operation&operationId=operation-id")), { kind: "operator-static-artifact-operation", operationId: "operation-id" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=operator-publish")), { kind: "operator-publish" })
   assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
+})
+
+test("Cloudflare publication contracts are host-independent, immutable, and bounded", async () => {
+  const canonicalRevision = "11111111-1111-4111-8111-111111111111"
+  const publicationRevision = "22222222-2222-4222-8222-222222222222"
+  assert.equal(canonicalPublicRoute("/news/?z=2&a=1"), "/news/?a=1&z=2")
+  assert.deepEqual(normalizePublishedRoutes(["/news/?z=2&a=1", "/"]), ["/", "/news/?a=1&z=2"])
+  assert.throws(() => normalizePublishedRoutes(["/", "/"]), /unique/)
+  assert.throws(() => normalizePublishedRoutes(["https://foreign.example/"]), /invalid/)
+  const objectKey = await publishedPageObjectKey(canonicalRevision, "/")
+  assert.equal(objectKey, await publishedPageObjectKey(canonicalRevision, canonicalPublicRoute("https://another-host.example/")))
+  const publication = validatePublishedRevision({
+    schema: PUBLISHED_REVISION_SCHEMA,
+    revision: publicationRevision,
+    canonicalRevision,
+    canonicalVersion: 7,
+    publishedAt: "2026-07-22T00:00:00.000Z",
+    routes: [{ route: "/", objectKey, canonicalRevision }],
+  })
+  assert.equal(publication.routes[0].objectKey, objectKey)
+  assert.equal(PUBLISHED_REVISION_SCHEMA, "wp-codebox/published-revision/v3")
+  assert.equal(publishedRevisionObjectKey(publicationRevision), `sites/default/publications/revisions/${publicationRevision}.json`)
+  assert.equal(R2_PUBLISHED_CURRENT_KEY, "sites/default/publications/current.json")
+  assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v1", routes: [{ route: "/", objectKey }] }).routes[0].canonicalRevision, canonicalRevision)
+  assert.equal(validatePublishedRevision({ ...publication, schema: "wp-codebox/published-revision/v2", canonicalVersion: undefined }).canonicalVersion, 0)
+  assert.deepEqual(validatePublishedRevision({ ...publication, routes: [] }).routes, [])
+  const sourceJob = `sites/default/publications/jobs/00000000000000000007-${canonicalRevision}.json`
+  assert.equal(validatePublishedRevision({ ...publication, sourceJob }).sourceJob, sourceJob)
+  assert.throws(() => validatePublishedRevision({ ...publication, sourceJob: "sites/default/publications/jobs/foreign.json" }), /invalid/)
+  assert.throws(() => normalizePublishedRoutes([]), /bounded routes array/)
+  assert.throws(() => validatePublishedRevision({ ...publication, routes: [{ route: "/", objectKey: "sites/default/pages/foreign.json" }] }), /route is invalid/)
+})
+
+test("Cloudflare serves only safe browser assets from the WordPress archive", () => {
+  assert.equal(wordpressStaticArchivePath("/wp-includes/js/jquery/jquery.min.js"), "wordpress/wp-includes/js/jquery/jquery.min.js")
+  assert.equal(wordpressStaticArchivePath("/wp-admin/css/common.min.css"), "wordpress/wp-admin/css/common.min.css")
+  assert.equal(wordpressStaticArchivePath("/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2"), "wordpress/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2")
+  assert.equal(wordpressStaticArchivePath("/wp-content/themes/twentytwentyfive/style.css"), "wordpress/wp-content/themes/twentytwentyfive/style.css")
+  assert.equal(wordpressStaticArchivePath("/wp-admin/admin-ajax.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/version.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-content/plugins/example/app.js"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/%2e%2e/wp-config.php"), null)
+  assert.equal(wordpressStaticArchivePath("/wp-includes/..%2fwp-config.php"), null)
+  assert.equal(wordpressStaticContentType("wordpress/wp-includes/js/jquery/jquery.min.js"), "text/javascript; charset=utf-8")
+  assert.equal(wordpressStaticContentType("wordpress/wp-content/themes/example/assets/font.woff2"), "font/woff2")
+  assert.equal(wordpressStaticContentType("wordpress/wp-admin/images/logo.png"), "image/png")
+})
+
+test("WordPress boot corpus retains server metadata and core block registration assets", () => {
+  const paths = new Set<string>()
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/version.php", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/paragraph/block.json", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/list/style.min.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/blocks/navigation/view.min.js", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-content/themes/twentytwentyfive/style.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-admin/css/view-transitions.min.css", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-includes/js/wp-emoji-loader.min.js", paths))
+  assert.ok(isWordPressRuntimeFile("wordpress/wp-admin/images/dashboard-background.svg", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-includes/js/jquery/jquery.min.js", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-admin/css/common.min.css", paths))
+  assert.ok(!isWordPressRuntimeFile("wordpress/wp-content/themes/twentytwentyfive/assets/fonts/manrope.woff2", paths))
 })
 
 test("Cloudflare translates Fetch requests and PHP responses without losing browser data", async () => {
@@ -63,25 +200,71 @@ test("Cloudflare translates Fetch requests and PHP responses without losing brow
   assert.deepEqual(responseHeaders.getSetCookie?.() ?? [response.headers.get("set-cookie")], ["first=1; Path=/", "second=2; Path=/"])
 })
 
-test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", async () => {
-  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as { limits?: { cpu_ms?: number } }
-  assert.equal(config.limits?.cpu_ms, 300_000)
+test("Cloudflare mutation persistence bounds retained JS bytes to one changed file", () => {
+  const MiB = 1024 * 1024
+  const shape = {
+    responseBytes: 256 * 1024,
+    markdownBytes: 2 * MiB,
+    uploadBytes: 64 * MiB,
+    wpContentBytes: 64 * MiB,
+    largestChangedFileBytes: 16 * MiB,
+  }
+  const evidence = mutationRetentionContract(shape)
+
+  assert.equal(MUTATION_DIAGNOSTIC_SCHEMA, "wp-codebox/cloudflare-mutation-phase/v1")
+  assert.equal(evidence.wholeTreePeakBytes, 146 * MiB + 256 * 1024)
+  assert.equal(evidence.incrementalPeakBytes, 16 * MiB + 256 * 1024)
+  assert.equal(mutationRetentionContract({ ...shape, responseBytes: 32 * MiB }).incrementalPeakBytes, 64 * MiB)
 })
 
-test("Cloudflare runtime packages the disposable WordPress install seed", async () => {
-  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as {
+test("Cloudflare runtime declares bounded CPU and scheduled execution", async () => {
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { main?: string; limits?: { cpu_ms?: number }; triggers?: { crons?: string[] } }
+  const d1Config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.d1.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
+    main?: string
+    limits?: { cpu_ms?: number }
+    triggers?: { crons?: string[] }
+    d1_databases?: Array<{ binding?: string; database_name?: string }>
+    durable_objects?: unknown
+    migrations?: unknown
+  }
+  assert.equal(config.main, "src/worker-do.ts")
+  assert.equal(config.limits?.cpu_ms, 300_000)
+  assert.deepEqual(config.triggers?.crons, ["* * * * *"])
+  assert.equal(d1Config.main, "src/worker-d1.ts")
+  assert.equal(d1Config.limits?.cpu_ms, 300_000)
+  assert.deepEqual(d1Config.triggers?.crons, ["* * * * *"])
+  assert.deepEqual(d1Config.d1_databases?.map(({ binding, database_name }) => ({ binding, database_name })), [{ binding: "WORDPRESS_STATE_DATABASE", database_name: "wp-codebox-runtime-state" }])
+  assert.deepEqual((d1Config.durable_objects as { bindings?: Array<{ name?: string; class_name?: string }> } | undefined)?.bindings, [{ name: "WORDPRESS_STATE", class_name: "WordPressStateCoordinator" }])
+  assert.deepEqual(d1Config.migrations, [{ tag: "v1", new_sqlite_classes: ["WordPressStateCoordinator"] }])
+})
+
+test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
+  assert.equal(leaseRetryDelayMs(90, 100_000), 90_000)
+  assert.equal(leaseRetryDelayMs(90, 12_345), 12_345)
+  assert.equal(leaseRetryDelayMs(undefined, 100_000), 1_000)
+  assert.equal(leaseRetryDelayMs(Number.NaN, 500), 500)
+})
+
+test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     rules?: Array<{ type?: string; globs?: string[] }>
     r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
     durable_objects?: { bindings?: Array<{ name?: string; class_name?: string }> }
     migrations?: Array<{ new_sqlite_classes?: string[] }>
   }
-  const seed = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
   const markdownIndex = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-primary-bootstrap-index.sqlite", import.meta.url))
   const markdownRuntime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
+  const canonicalSeed = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const sqliteInput = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
+  const canonicalManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { markdownDatabaseIntegrationRevision: string; wordpressInstallSeedSha256: string; archiveSha256: string; files: Array<{ path: string }> }
 
-  assert.equal(seed.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
+  assert.equal(canonicalSeed.subarray(0, 4).toString("hex"), "504b0304")
+  assert.equal(canonicalManifest.markdownDatabaseIntegrationRevision, "bf6d434d1673fdd86d777501f7eaec292d32ad1f")
+  assert.equal(canonicalManifest.wordpressInstallSeedSha256, createHash("sha256").update(sqliteInput).digest("hex"))
+  assert.equal(canonicalManifest.archiveSha256, createHash("sha256").update(canonicalSeed).digest("hex"))
+  assert.ok(canonicalManifest.files.some((file) => file.path.endsWith(".md")))
   assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*.sqlite")))
   assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*-runtime.zip")))
   assert.deepEqual(config.r2_buckets, [{ binding: "WORDPRESS_STATE_BUCKET", bucket_name: "wp-codebox-runtime-chubes" }])
@@ -90,16 +273,23 @@ test("Cloudflare runtime packages the disposable WordPress install seed", async 
 })
 
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
-  const revision = "94b9f875ffb8402d5e8eb726893a12324e20f45c"
+  const revision = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
+  const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
   const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
   const names: string[] = []
-  for await (const entry of decodeZip(new Blob([runtime]).stream())) names.push(entry.name)
+  let writeEngine = ""
+  for await (const entry of decodeZip(new Blob([runtime]).stream())) {
+    names.push(entry.name)
+    if (entry.name === "inc/class-wp-markdown-write-engine.php") writeEngine = await entry.text()
+  }
 
   assert.match(generator, new RegExp(`const revision = "${revision}"`))
+  assert.match(generator, new RegExp(`const jsonMachineRevision = "${jsonMachineRevision}"`))
   assert.match(worker, new RegExp(`MARKDOWN_DATABASE_INTEGRATION_REVISION = "${revision}"`))
-  assert.deepEqual(names.sort(), [
+  assert.match(writeEngine, /! \$this->is_auto_draft\( \(int\) \$id \)/)
+  for (const name of [
     "db.php",
     "inc/class-wp-markdown-db.php",
     "inc/class-wp-markdown-driver.php",
@@ -109,17 +299,503 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
     "inc/class-wp-markdown-search.php",
     "inc/class-wp-markdown-storage.php",
     "inc/class-wp-markdown-write-engine.php",
-  ])
+    "vendor/autoload.php",
+    "vendor/halaxa/json-machine/src/Items.php",
+    "vendor/halaxa/json-machine/src/JsonDecoder/ExtJsonDecoder.php",
+    "vendor/halaxa/json-machine/src/functions.php",
+  ]) assert.ok(names.includes(name), `Runtime bundle includes ${name}`)
 })
 
-test("serialized Cloudflare mutations use the public MDI runtime and its flush paths", async () => {
+test("Cloudflare canonical runtime patches the unique init call with runtime persistence policies", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const patcher = worker.slice(worker.indexOf("function patchCanonicalRuntimePoliciesAtInit"), worker.indexOf("\nfunction collectRuntimeFiles"))
+
+  assert.ok(patcher.startsWith("function patchCanonicalRuntimePoliciesAtInit"), "The canonical runtime policy patcher is present.")
+  assert.match(patcher, /const settingsPath = "\/wordpress\/wp-settings\.php"/)
+  assert.match(patcher, /php\.readFileAsBuffer\(settingsPath\)/)
+  assert.match(patcher, /firstNeedle === -1 \|\| firstNeedle !== settings\.lastIndexOf\(needle\)/)
+  assert.match(patcher, /throw new Error\("WordPress canonical runtime policy patch needle was not uniquely found\."\)/)
+  assert.match(patcher, /defined\( 'DISABLE_WP_CRON' \) && DISABLE_WP_CRON/)
+  assert.match(patcher, /remove_action\( 'init', 'wp_cron' \)/)
+  assert.match(patcher, /remove_action\( 'init', 'wp_schedule_delete_old_privacy_export_files' \)/)
+  assert.match(patcher, /remove_action\( 'init', 'wp_schedule_update_checks' \)/)
+  assert.match(patcher, /markdown_database_integration_ephemeral_option_names/)
+  assert.match(patcher, /array_diff\( \$names, array\( 'cron' \) \)/)
+  assert.match(patcher, /add_filter\( 'pre_update_option_rewrite_rules'/)
+  assert.match(patcher, /return \$old_value/)
+  assert.equal((patcher.match(/do_action\( 'init' \);/g) ?? []).length, 1)
+  assert.match(patcher, /php\.writeFile\(settingsPath/)
+  assert.match(patcher, /function patchCanonicalThemeJsonCustomCss/)
+  assert.match(patcher, /if \( array\( 'custom-css' \) === \$types \)/)
+  assert.match(patcher, /return \(string\) _wp_array_get\( \$this->theme_json, array\( 'styles', 'css' \), '' \)/)
+  assert.doesNotMatch(patcher, /mu-plugins|add_action\(|WP_Site_Health|wp_schedule_site_health_cron|\$GLOBALS\['wp_filter'\]/)
+  assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
+  assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],\n  wpContentFiles\?: RuntimeFile\[\],/)
+  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted, includeStaticSiteImporter\), pointer/)
+  assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true\)/)
+  assert.match(worker, /canonicalBootstrapPasswordCode/)
+  assert.match(worker, /canonicalBootstrapUrlCode/)
+  assert.match(worker, /canonicalBootstrapFlushCode/)
+})
+test("Cloudflare runtime injects composable coordinators without moving PHP out of the Worker core", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
+  const d1Coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/d1-revision-coordinator.ts", import.meta.url), "utf8")
+  const contract = await readFile(new URL("../packages/runtime-cloudflare/src/revision-coordinator.ts", import.meta.url), "utf8")
+  const durableObjectEntry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-do.ts", import.meta.url), "utf8")
+  const d1Entry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-d1.ts", import.meta.url), "utf8")
+  const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("async function serveWordPressStaticAsset"))
+  const coordinatedRequest = worker.slice(worker.indexOf("async function runCoordinatedWordPressRequest"), worker.indexOf("async function matchWordPressPageCache"))
+  const scheduledCron = worker.slice(worker.indexOf("async function runScheduledWordPressCron"), worker.indexOf("async function runNextCronEvent"))
+  const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+
+  assert.match(worker, /return await runCoordinatedWordPressRequest\(request, env, coordinator, site, route\.kind\)/)
+  assert.match(d1Entry, /export \{ WordPressStateCoordinator \}/)
+  assert.match(worker, /const cachedRuntimes = new Map/)
+  assert.match(worker, /cachedRuntimes\.get\(site\.id\)/)
+  assert.match(worker, /promise\.catch\(\(\) =>/)
+  assert.match(coordinatedRequest, /await discardRuntime\(runtime, site\)\n      runtime = undefined[\s\S]*initializeProvisioningPublication[\s\S]*const publicationJob/)
+  assert.match(worker, /if \(runtime\) await discardRuntime\(runtime, site\)/)
+  assert.doesNotMatch(worker, /runtime\.pointer = next/)
+  assert.match(worker, /await abortLease\(coordinator, request\.url, lease\)/)
+  assert.match(worker, /const LEASE_ACQUISITION_TIMEOUT_MS = 100_000/)
+  assert.match(worker, /const revision = await readCanonicalRevision\(bucket, pointer, site\)/)
+  assert.match(worker, /validateMarkdownManifestFiles\(manifest\.files, site\)/)
+  assert.match(worker, /bootWordPressRuntime\("do-not-attempt-installing", true, true, undefined, revision\.markdown/)
+  const noPointerBoot = worker.slice(worker.indexOf("async function bootstrapCanonicalRuntime"), worker.indexOf("async function persistRuntime"))
+  assert.match(noPointerBoot, /packagedCanonicalMarkdownSeed\(\)/)
+  assert.match(noPointerBoot, /canonicalBootstrapPasswordCode\(passwordFile\)/)
+  assert.match(noPointerBoot, /canonicalBootstrapUrlCode\(origin\)/)
+  assert.match(noPointerBoot, /canonicalBootstrapFlushCode\(\)/)
+  assert.match(noPointerBoot, /await commitLease\(coordinator, requestUrl, lease, pointer\)/)
+  assert.doesNotMatch(noPointerBoot, /wordpressInstallSeed|databaseSeed|bootstrap_existing_cache/)
+  assert.doesNotMatch(coordinator, /@php-wasm|PHPRequestHandler|bootWordPressRuntime|new PHP\(/)
+  assert.doesNotMatch(d1Coordinator, /@php-wasm|PHPRequestHandler|bootWordPressRuntime|new PHP\(|DurableObject/)
+  assert.doesNotMatch(d1Coordinator, /R2Bucket|WORDPRESS_STATE_BUCKET|MARKDOWN_ROOT|WP_Markdown|wp_posts/)
+  assert.match(d1Coordinator, /lease_token IS NULL OR lease_expires_at <= \?/)
+  assert.match(d1Coordinator, /lease_token = \? AND lease_expires_at > \? AND version = \? AND lease_version = \?/)
+  assert.match(d1Coordinator, /lease_base_revision IS NULL AND \? IS NULL/)
+  assert.match(d1Coordinator, /wp_codebox_commits/)
+  assert.match(contract, /interface RevisionCoordinator/)
+  assert.match(contract, /acquire\(ttlMs\?: number\): Promise<RevisionLease>/)
+  assert.match(contract, /committed\(version: number\): Promise<MarkdownPointer \| null>/)
+  assert.match(durableObjectEntry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\(site\.id\), site\.id\)/)
+  assert.match(d1Entry, /new D1RevisionCoordinator\(env\.WORDPRESS_STATE_DATABASE, site\.id\)/)
+  assert.match(d1Entry, /new DurableObjectRevisionCoordinator\(env\.WORDPRESS_STATE\.getByName\(site\.id\), site\.id\)/)
+  assert.match(coordinator, /token: crypto\.randomUUID\(\)/)
+  assert.match(coordinator, /record\.version\+\+/)
+  assert.match(coordinator, /lease\.expiresAt <= Date\.now\(\)/)
+  assert.match(worker, /cookieStore: false/)
+  assert.match(worker, /maxPhpInstances: 1/)
+  assert.match(worker, /WORDPRESS_AUTH_SECRET/)
+  assert.match(worker, /Canonical restore requires an empty current pointer/)
+  assert.match(worker, /readMarkdownManifest\(env\.WORDPRESS_STATE_BUCKET, pointer, site\)/)
+  assert.match(worker, /siteStorageKeys\(site\)\.markdownRevisionPrefix/)
+  assert.match(worker, /canonicalWordPressAuthConstants\(env, site\)/)
+  assert.match(worker, /authConstants/)
+  assert.match(worker, /const wpContentResponse = await serveWordPressWpContent\(request, env\.WORDPRESS_STATE_BUCKET, coordinator, site\)/)
+  assert.match(worker, /const publishedResponse = await servePublishedWordPressPage\(request, env\.WORDPRESS_STATE_BUCKET, site\)/)
+  assert.ok(worker.indexOf("resolveSiteContextFromRequest") < worker.indexOf("servePublishedWordPressPage(request, env.WORDPRESS_STATE_BUCKET, site)"))
+  assert.match(worker, /const staticResponse = await serveWordPressStaticAsset\(request, env\.WORDPRESS_STATE_BUCKET\)/)
+  assert.ok(worker.indexOf("const wpContentResponse = await serveWordPressWpContent(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)") < worker.indexOf("const staticResponse = await serveWordPressStaticAsset(request, env.WORDPRESS_STATE_BUCKET)"))
+  assert.ok(worker.indexOf("const route = routeWorkerRequest(request)") < worker.indexOf("selectOperatorCoordinator("))
+  assert.match(worker, /CONCATENATE_SCRIPTS: false/)
+  assert.match(worker, /SCRIPT_DEBUG: false/)
+  assert.doesNotMatch(worker, /decodeRemoteZip|WORDPRESS_ARCHIVE_URL/)
+  assert.doesNotMatch(worker, /SQLITE_INTEGRATION_ARCHIVE_URL|fetchArchive\(/)
+  assert.match(worker, /readRuntimeArchiveArtifact\(bucket, manifest\)/)
+  assert.match(worker, /phase === "full"[\s\S]*await packagedCanonicalMarkdownSeed\(\)[\s\S]*bootMode: "canonical-mdi"/)
+  assert.doesNotMatch(worker, /phase === "full" \|\| phase === "streamed-wordpress"/)
+  assert.match(worker, /bucket\.get\(wordpressStaticArtifact\.key, \{ range: \{ offset: file\.offset, length: file\.size \} \}\)/)
+  assert.match(worker, /await sha256Hex\(bytes\) !== file\.sha256/)
+  assert.match(worker, /request\.method === "HEAD" \? null : bytes/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-range"/)
+  assert.match(worker, /cache\.match\(cacheRequest\)/)
+  assert.match(worker, /cache\.put\(cacheRequest, response\.clone\(\)\)/)
+  assert.match(worker, /const state = await coordinator\.state\(\)/)
+  assert.ok(worker.indexOf("const state = await coordinator.state()") < worker.indexOf("let lease = await acquireLease"))
+  assert.match(worker, /matchWordPressPageCache\(request, lease\.pointer, env\.WORDPRESS_STATE_BUCKET, site\)/)
+  assert.match(worker, /cacheWordPressPage\(request, lease\.pointer, response, env\.WORDPRESS_STATE_BUCKET, site\)/)
+  assert.match(worker, /__wp_codebox_revision/)
+  assert.match(worker, /siteStorageKeys\(site\)\.publishedCurrent/)
+  assert.match(worker, /publishedPageObjectKey\(pointer\.revision, canonicalPublicRoute\(request\), site\)/)
+  assert.match(worker, /PUBLISHED_PAGE_SCHEMA/)
+  assert.match(worker, /"x-wp-codebox-page-cache"/)
+  assert.match(worker, /"x-wp-codebox-page-cache-source"/)
+  assert.match(worker, /"public, max-age=60, s-maxage=31536000"/)
+  assert.match(worker, /"public, max-age=60, s-maxage=60"/)
+  assert.match(worker, /publishCanonicalWordPressPages\(request, env, coordinator, site\)/)
+  assert.match(worker, /PUBLICATION_CHANGES_PATH/)
+  assert.match(worker, /add_action\( 'save_post'/)
+  assert.match(worker, /add_action\( 'set_object_terms'/)
+  assert.match(worker, /add_action\( 'wp_update_nav_menu'/)
+  assert.match(worker, /add_action\( 'updated_option'/)
+  assert.match(worker, /function wp_codebox_publication_reconcile_front_page/)
+  assert.match(worker, /array_diff\( \$changes\['upsert'\], array\( \$new_route \) \)/)
+  assert.match(worker, /'page_on_front' === \$option && 'page' === get_option\( 'show_on_front' \)/)
+  assert.match(worker, /'show_on_front' === \$option/)
+  assert.match(worker, /PHP_INT_MAX, 3/)
+  assert.match(worker, /staged\.serialized, \{ onlyIf: \{ etagMatches: current\.etag \}/)
+  assert.match(worker, /PUBLICATION_JOB_SCHEMA/)
+  assert.match(worker, /publicationClaimPrefix/)
+  assert.match(worker, /publicationReceiptPrefix/)
+  assert.match(worker, /async function drainNextPublicationJob/)
+  assert.match(worker, /coordinator\.committed\(candidate\.coordinatorVersion\)/)
+  assert.match(worker, /\.list\(\{ prefix: `\$\{siteStorageKeys\(site\)\.publicationJobPrefix\}\/`, limit: 16 \}\)/)
+  assert.match(worker, /canonicalVersion: job\.coordinatorVersion/)
+  assert.match(worker, /sourceJob: job\.key/)
+  assert.match(worker, /readWordPressPageSnapshot\(env\.WORDPRESS_STATE_BUCKET, objectKey, job\.canonical\.revision, route\)/)
+  assert.match(worker, /if \(!await readWordPressPageSnapshot\(env\.WORDPRESS_STATE_BUCKET, objectKey, job\.canonical\.revision, route\)\) throw error/)
+  const publicationDrain = worker.slice(worker.indexOf("async function drainNextPublicationJob"), worker.indexOf("async function compilePublicationRoutes"))
+  assert.match(publicationDrain, /const recoveredPromotion = current\?\.publication\.canonicalVersion === job\.coordinatorVersion[\s\S]*current\.publication\.canonicalRevision === job\.canonical\.revision[\s\S]*current\.publication\.sourceJob === job\.key/)
+  assert.match(publicationDrain, /if \(recoveredPromotion\)[\s\S]*status: "promoted"[\s\S]*operations\?\.reconcilePublication\(site\.id, job\.key, "promoted", current\.publication\.revision\)/)
+  assert.match(publicationDrain, /bootRuntime\(env\.WORDPRESS_STATE_BUCKET, job\.canonical, site\.origin/)
+  assert.match(publicationDrain, /compilePublicationRoutes\(runtime, \[route\], site\.origin\)/)
+  assert.doesNotMatch(worker, /runtimeSiteOrigin|require '\/wordpress\/wp-load\.php'; echo get_option\('home'\)/)
+  assert.match(worker, /await enqueuePublicationJob\(env\.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges, site\)/)
+  assert.ok(coordinatedRequest.indexOf("enqueuePublicationJob") < coordinatedRequest.indexOf("commitLease"))
+  assert.doesNotMatch(coordinatedRequest, /compilePublicationRoutes\(runtime/)
+  assert.doesNotMatch(coordinatedRequest, /stageIncrementalPublication/)
+  assert.match(worker, /const upsert = changes\.all \? \[\.\.\.new Set\(\[\.\.\.existing, \.\.\.changes\.upsert\]\)\]\.sort\(\) : changes\.upsert/)
+  assert.doesNotMatch(worker, /fallbackAll|hasCanonicalChanges/)
+  assert.match(scheduledCron, /await enqueuePublicationJob\(env\.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, event\.publicationChanges, site\)/)
+  assert.doesNotMatch(scheduledCron, /compilePublicationRoutes\(runtime/)
+  assert.match(worker, /https:\/\/wp-codebox-publication\.invalid/)
+  assert.match(worker, /onlyIf: \{ etagDoesNotMatch: "\*" \}/)
+  assert.match(worker, /Immutable R2 object conflicts with existing content/)
+  assert.match(worker, /serveWordPressUpload\(request, env\.WORDPRESS_STATE_BUCKET, coordinator, site\)/)
+  assert.ok(worker.indexOf("serveWordPressUpload(request, env.WORDPRESS_STATE_BUCKET, coordinator, site)") < worker.indexOf("runCoordinatedWordPressRequest(request, env, coordinator, site, route.kind)"))
+  assert.match(worker, /siteStorageKeys\(site\)\.uploadObjectPrefix/)
+  assert.match(worker, /collectUploadFiles\(runtime\.php\)/)
+  assert.match(worker, /hash_file\('sha256', \$path\)/)
+  assert.match(worker, /persistRuntimeObjects\(bucket, runtime\.php, UPLOADS_ROOT/)
+  assert.match(worker, /materializeRuntimeFiles\(php, UPLOADS_ROOT, uploadFiles\)/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-upload"/)
+  assert.match(worker, /collectWpContentFiles\(runtime\.php\)/)
+  assert.match(worker, /wordpressWpContentBaselineHashes\.get\(file\.path\) !== file\.sha256/)
+  const sha256 = worker.slice(worker.indexOf("async function sha256Hex"), worker.indexOf("async function materializeMarkdownDatabaseIntegration"))
+  assert.doesNotMatch(sha256, /Uint8Array\.from\(bytes\)\.buffer/)
+  assert.match(worker, /persistWpContentObjects\(bucket, wpContent/)
+  assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\], site\)/)
+  assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
+  assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
+  assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
+  assert.match(worker, /const publication = operation \? null : await drainNextPublicationJob\(env, coordinator, site, operations\)/)
+  assert.match(worker, /const fence = await coordinator\.fenceStatus\(\)/)
+  assert.match(worker, /const operationFirst = siteCycle % 2 === 0/)
+  assert.match(worker, /: await runScheduledWordPressCron\(env, coordinator, site, controller\.scheduledTime\)/)
+  assert.match(worker, /pathname === "\/wp-cron\.php"/)
+  assert.match(worker, /MAX_CRON_EVENTS_PER_INVOCATION = 5/)
+  assert.match(worker, /while \(evidence\.events\.length < MAX_CRON_EVENTS_PER_INVOCATION/)
+  assert.match(worker, /wp_reschedule_event\(\(int\) \$timestamp, \$schedule, \$hook, \$args, true\)/)
+  assert.match(worker, /wp_unschedule_event\(\(int\) \$timestamp, \$hook, \$args, true\)/)
+  assert.match(worker, /await commitLease\(coordinator, requestUrl, lease, next\)/)
+  assert.match(worker, /"x-wp-codebox-static": "r2-wp-content"/)
+  assert.match(worker, /url\.pathname\.startsWith\("\/wp-admin\/"\).*url\.searchParams\.get\("action"\)/)
+  assert.match(worker, /if \(!file\) return null/)
+  assert.equal((worker.match(/validateUploadManifestFiles\(manifest\??\.uploads \?\? \[\], site\)/g) ?? []).length, 3)
+  assert.match(materializer, /materializeWordPressRuntimeArtifact\(php, bucket, wordpressRuntimeArtifactManifest/)
+  assert.doesNotMatch(materializer, /decodeRemoteZip\(WORDPRESS_ARCHIVE_URL/)
+  assert.match(corpus, /path\.endsWith\("\.map"\)/)
+  assert.match(corpus, /SERVER_READ_EXTENSION/)
+  assert.match(corpus, /path\.endsWith\("\/style\.css"\)/)
+  assert.match(corpus, /CORE_BLOCK_REGISTRATION_ASSET/)
+  assert.match(corpus, /STATIC_ARCHIVE_ROOTS/)
+})
+
+test("WordPress runtime artifacts are content-addressed and reject unavailable or corrupt R2 objects", async () => {
+  const source = new TextEncoder().encode("<?php $wp_version = '6.8.1';")
+  const archive = new Uint8Array(await new Response(encodeZip([new File([source], "wordpress/wp-includes/version.php", { lastModified: 0 })])).arrayBuffer())
+  const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+  const manifest: WordPressRuntimeArtifactManifest = {
+    schema: WORDPRESS_RUNTIME_ARTIFACT_SCHEMA,
+    key: wordpressRuntimeArtifactKey(sha256(archive)),
+    archive: { sha256: sha256(archive), size: archive.byteLength },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-6.8.1.zip", version: "6.8.1" },
+    files: [{ path: "wordpress/wp-includes/version.php", size: source.byteLength, sha256: sha256(source) }],
+  }
+  const writes = new Map<string, Uint8Array>()
+  const phpRuns: string[] = []
+  const php = {
+    writeFile: (path: string, bytes: Uint8Array) => writes.set(path, bytes),
+    run: async ({ code }: { code: string }) => {
+      phpRuns.push(code)
+      return { text: JSON.stringify({ materializedFiles: 1, materializedBytes: source.byteLength }) }
+    },
+  }
+  let arrayBufferReads = 0
+  const bucket = (bytes: Uint8Array | null) => ({ get: async () => bytes === null ? null : {
+    size: bytes.byteLength,
+    // R2 supplies both helpers. Reading body would fail this production-shaped mock.
+    body: new ReadableStream({ pull: (controller) => controller.error(new Error("R2 body stream should not be read directly.")) }),
+    arrayBuffer: async () => {
+      arrayBufferReads++
+      return new Blob([bytes]).arrayBuffer()
+    },
+  } })
+
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(null) as never, manifest), /unavailable/)
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(new Uint8Array([...archive, 0])) as never, manifest), /size does not match/)
+  const oversized = { get: async () => ({ size: 33 * 1024 * 1024, body: new ReadableStream(), arrayBuffer: async () => { throw new Error("oversized archive must not be read") } }) }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, oversized as never, manifest), /exceeds its size budget/)
+  const hashCorruptManifest = { ...manifest, key: wordpressRuntimeArtifactKey("a".repeat(64)), archive: { ...manifest.archive, sha256: "a".repeat(64) } }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, bucket(archive) as never, hashCorruptManifest), /archive hash does not match/)
+  assert.equal(writes.size, 0, "hash-corrupt archives fail before extraction")
+  const malformed = new Uint8Array([0, 1, 2, 3])
+  const malformedManifest = { ...manifest, key: wordpressRuntimeArtifactKey(sha256(malformed)), archive: { sha256: sha256(malformed), size: malformed.byteLength } }
+  const malformedWrites: Uint8Array[] = []
+  await assert.rejects(materializeWordPressRuntimeArtifact({
+    writeFile: (_path, bytes) => malformedWrites.push(bytes),
+    run: async () => { throw new Error("WordPress runtime artifact ZIP could not be opened (ZipArchive status 19).") },
+  }, bucket(malformed) as never, malformedManifest), /ZIP could not be opened/)
+  assert.equal(malformedWrites.length, 1, "a hash-valid malformed archive is rejected by PHP after its single archive write")
+  const evidence = await materializeWordPressRuntimeArtifact(php, bucket(archive) as never, manifest)
+  assert.equal(arrayBufferReads, 3, "valid, hash-corrupt, and malformed archives use R2 arrayBuffer()")
+  assert.deepEqual(evidence, { materializedFiles: 1, materializedBytes: source.byteLength })
+  assert.equal(writes.size, 1, "the verified archive crosses the JS/WASM boundary once")
+  assert.deepEqual(writes.get("/tmp/wp-codebox-wordpress-runtime.zip"), archive)
+  assert.equal(phpRuns.length, 1)
+  assert.match(phpRuns[0], /extension_loaded\('zip'\)/)
+  assert.match(phpRuns[0], /\$zip->numFiles !== count\(\$expected\)/)
+  assert.match(phpRuns[0], /\$zip->extractTo\('\/', array_keys\(\$expected\)\)/)
+  assert.match(phpRuns[0], /missing required file after extraction/)
+  assert.match(phpRuns[0], /finally \{\n    @unlink\(\$archive_path\)/)
+})
+
+test("WordPress runtime artifact validation rejects path traversal and invalid budgets", async () => {
+  const manifest: WordPressRuntimeArtifactManifest = {
+    schema: WORDPRESS_RUNTIME_ARTIFACT_SCHEMA,
+    key: wordpressRuntimeArtifactKey("a".repeat(64)),
+    archive: { sha256: "a".repeat(64), size: 1 },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-6.8.1.zip" },
+    files: [{ path: "wordpress/../wp-includes/version.php", size: 9 * 1024 * 1024, sha256: "b".repeat(64) }],
+  }
+  let writes = 0
+  const php = { writeFile: () => { writes++ }, run: async () => ({ text: "" }) }
+  await assert.rejects(materializeWordPressRuntimeArtifact(php, { get: async () => null } as never, manifest), /invalid file path/)
+  assert.equal(writes, 0, "unsafe manifests are rejected before any archive write")
+})
+
+test("WordPress static artifacts require complete, ordered, content-addressed ranges", () => {
+  const sha256 = "a".repeat(64)
+  const manifest: WordPressStaticArtifactManifest = {
+    schema: WORDPRESS_STATIC_ARTIFACT_SCHEMA,
+    key: wordpressStaticArtifactKey(sha256),
+    blob: { sha256, size: 3 },
+    source: { url: "https://downloads.wordpress.org/release/wordpress-7.0.2.zip", version: "7.0.2" },
+    files: [{ path: "wordpress/wp-includes/js/a.js", offset: 0, size: 3, sha256: "b".repeat(64) }],
+  }
+  assert.doesNotThrow(() => validateWordPressStaticArtifactManifest(manifest))
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, files: [{ ...manifest.files[0], path: "wordpress/../secret.js" }] }), /invalid file/)
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, files: [{ ...manifest.files[0], offset: 1 }] }), /invalid file/)
+  assert.throws(() => validateWordPressStaticArtifactManifest({ ...manifest, blob: { ...manifest.blob, size: 4 } }), /do not cover/)
+})
+
+test("runtime archive dependencies are content-addressed and verified from R2", async () => {
+  const bytes = new TextEncoder().encode("immutable archive")
+  const sha256 = createHash("sha256").update(bytes).digest("hex")
+  const manifest: RuntimeArchiveArtifactManifest = {
+    schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
+    name: "sqlite-database-integration",
+    key: runtimeArchiveArtifactKey("sqlite-database-integration", sha256),
+    archive: { sha256, size: bytes.byteLength },
+    source: { url: "https://example.com/sqlite.zip", version: "1.0.0" },
+  }
+  const bucket = { get: async () => ({ size: bytes.byteLength, arrayBuffer: async () => bytes.buffer }) } as never
+  assert.deepEqual(await readRuntimeArchiveArtifact(bucket, manifest), bytes)
+  await assert.rejects(readRuntimeArchiveArtifact({ get: async () => null } as never, manifest), /unavailable/)
+  await assert.rejects(readRuntimeArchiveArtifact({ get: async () => ({ size: bytes.byteLength, arrayBuffer: async () => new Uint8Array(bytes.byteLength).buffer }) } as never, manifest), /hash does not match/)
+  assert.throws(() => runtimeArchiveArtifactKey("../sqlite", sha256), /name is invalid/)
+})
+
+test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
+  const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+  const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
+  const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
+  const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
+  const sqliteManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  const staticSiteImporterManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/static-site-importer-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  assert.match(generator, /const response = await fetch\(sourceUrl\)/)
+  assert.match(generator, /decodeZip\(response\.body\)/)
+  assert.doesNotMatch(generator, /decodeRemoteZip/)
+  assert.match(generator, /encodeZip\(selected\)/)
+  assert.match(generator, /lastModified: 0/)
+  assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
+  assert.match(generator, /artifacts\/cloudflare-wordpress-static-corpus\.bin/)
+  assert.match(generator, /artifacts\/cloudflare-sqlite-database-integration\.zip/)
+  assert.match(generator, /artifacts\/cloudflare-static-site-importer\.zip/)
+  assert.match(generator, /8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29/)
+  assert.doesNotMatch(artifact, /decodeZip/)
+  assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
+  assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
+  assert.ok(manifest.files.length > 0)
+  assert.doesNotThrow(() => validateWordPressStaticArtifactManifest(staticManifest))
+  assert.ok(staticManifest.files.length > 0)
+  assert.equal(sqliteManifest.key, runtimeArchiveArtifactKey(sqliteManifest.name, sqliteManifest.archive.sha256))
+  assert.equal(RUNTIME_ARCHIVE_MAX_BYTES, 16 * 1024 * 1024)
+  assert.doesNotThrow(() => validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest))
+  assert.equal(staticSiteImporterManifest.source.url, "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip")
+  assert.equal(staticSiteImporterManifest.source.identity, "08b9dd650f3c3161c5b350796a5db6ef083516ae")
+})
+
+test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {
+  const values = new Map<string, unknown>()
+  const objects = new Map<string, string>()
+  const state = {
+    id: { toString: () => "test-do" },
+    storage: {
+      get: async <T>(key: string) => values.get(key) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, value) },
+      delete: async (key: string) => { values.delete(key) },
+      transaction: async (callback: (transaction: { put: (key: string, value: unknown) => Promise<void> }) => Promise<void>) => callback({ put: async (key, value) => { values.set(key, value) } }),
+    },
+  }
+  const bucket = {
+    get: async (key: string) => objects.has(key) ? { json: async <T>() => JSON.parse(objects.get(key)!) as T } : null,
+    put: async (key: string, value: string) => { objects.set(key, value) },
+    delete: async (key: string) => { objects.delete(key) },
+  }
+  const coordinator = new WordPressStateCoordinator(state as never, { WORDPRESS_STATE_BUCKET: bucket as never, COORDINATOR_LEASE_MS: 50 })
+  const call = async (action: string, body: Record<string, unknown> = {}) => coordinator.fetch(new Request(`https://worker.example/?__wp_codebox_coordinator=${action}`, { method: action === "state" ? "GET" : "POST", headers: { "content-type": "application/json" }, body: action === "state" ? undefined : JSON.stringify(body) }))
+
+  const adoptedPointer = { revision: "adopted", manifestKey: "sites/default/markdown/revisions/adopted.json", persistedAt: "2026-01-01T00:00:00.000Z" }
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 200)
+  assert.deepEqual(await (await call("committed", { version: 31 })).json(), adoptedPointer)
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 200)
+  assert.equal((await call("adopt", { pointer: { ...adoptedPointer, revision: "divergent" }, version: 31 })).status, 409)
+  const forwardPointer = { ...adoptedPointer, revision: "forward", manifestKey: "sites/default/markdown/revisions/forward.json" }
+  assert.equal((await call("adopt", { pointer: forwardPointer, version: 32 })).status, 200)
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 409)
+  const adoptedLease = await (await call("begin")).json() as { token: string }
+  assert.equal((await call("adopt", { pointer: adoptedPointer, version: 31 })).status, 409)
+  assert.equal((await call("abort", { token: adoptedLease.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "receipt-collision" }, version: 32 })).status, 409)
+
+  const fence = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string; expiresAt: number }
+  assert.ok(fence.expiresAt > Date.now())
+  assert.deepEqual(await (await call("fence-status")).json(), { active: true, expiresAt: fence.expiresAt })
+  assert.equal((await call("begin")).status, 409)
+  assert.equal((await call("reset")).status, 409)
+  const renewed = await (await call("fence-renew", { token: fence.token, ttlMs: 60_000 })).json() as { token: string; expiresAt: number }
+  assert.equal(renewed.token, fence.token)
+  assert.ok(renewed.expiresAt > fence.expiresAt)
+  assert.equal((await call("fence-release", { token: "wrong" })).status, 409)
+  assert.equal((await call("fence-release", { token: fence.token })).status, 200)
+  assert.deepEqual(await (await call("fence-status")).json(), { active: false })
+
+  const adoptionFence = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string }
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "fenced", manifestKey: "sites/default/markdown/revisions/fenced.json" }, version: 33 })).status, 409)
+  assert.equal((await call("adopt", { pointer: { ...forwardPointer, revision: "fenced", manifestKey: "sites/default/markdown/revisions/fenced.json" }, version: 33, fenceToken: adoptionFence.token })).status, 200)
+  assert.equal((await call("fence-release", { token: adoptionFence.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
+
+  const first = await (await call("begin")).json() as { token: string; pointer: null; version: number }
+  assert.equal(first.pointer, null)
+  const renewedLease = await (await call("renew", { token: first.token, ttlMs: 100 })).json() as { token: string; expiresAt: number }
+  assert.equal(renewedLease.token, first.token)
+  assert.ok(renewedLease.expiresAt > Date.now())
+  assert.equal((await call("begin")).status, 409)
+  assert.equal((await call("fence-acquire", { ttlMs: 30_000 })).status, 409)
+  assert.equal((await call("reset")).status, 409)
+  const pointer = { revision: "one", manifestKey: "sites/default/markdown/revisions/one.json", persistedAt: "2026-01-01T00:00:00.000Z" }
+  const commit = await call("commit", { token: first.token, baseRevision: null, version: first.version, pointer })
+  assert.equal(commit.status, 200, await commit.text())
+  assert.equal(JSON.parse(objects.get("sites/default/markdown/current.json")!).revision, "one")
+  const second = await (await call("begin")).json() as { token: string; pointer: { revision: string } }
+  assert.equal(second.pointer.revision, "one")
+  assert.equal((await call("abort", { token: second.token })).status, 200)
+  const stale = await (await call("begin")).json() as { token: string }
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const recovered = await (await call("begin")).json() as { token: string }
+  assert.notEqual(recovered.token, stale.token)
+  assert.equal((await call("release", { token: recovered.token })).status, 200)
+  assert.equal((await call("reset")).status, 200)
+  const resetState = await (await call("state")).json() as { pointer: null; version: number }
+  assert.equal(resetState.pointer, null)
+  assert.equal(resetState.version, 0)
+  const expiring = await (await call("begin", { ttlMs: 5 })).json() as { token: string }
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const cutover = await (await call("fence-acquire", { ttlMs: 30_000 })).json() as { token: string }
+  assert.equal((await call("renew", { token: expiring.token, ttlMs: 50 })).status, 409)
+  assert.equal((await call("fence-release", { token: cutover.token })).status, 200)
+})
+
+test("Cloudflare selects a dormant coordinator only for explicit operator cutover routes", () => {
+  const selected: string[] = []
+  const active = { id: "active" } as never
+  const dormant = { id: "durable-object" } as never
+  const resolve = (selector: string) => selector === "durable-object" ? (selected.push(selector), dormant) : undefined
+
+  assert.deepEqual(selectOperatorCoordinator(active, { kind: "r2-state" }, "durable-object", resolve), { coordinator: active, selected: false })
+  assert.deepEqual(selected, [])
+  assert.deepEqual(selectOperatorCoordinator(active, { kind: "operator-fence", action: "status" }, "durable-object", resolve), { coordinator: dormant, selected: true })
+  assert.deepEqual(selected, ["durable-object"])
+  assert.equal(selectOperatorCoordinator(active, { kind: "operator-adopt" }, "unknown", resolve), null)
+  assert.equal(selectOperatorCoordinator(active, { kind: "operator-reset" }, "durable-object", resolve), null)
+})
+
+test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {
   const source = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const mutation = source.slice(source.indexOf("const SERIALIZED_MARKDOWN_MUTATION_CODE"), source.indexOf("let bootPromise"))
+  const mutation = source.slice(source.indexOf("const SERIALIZED_MARKDOWN_MUTATION_CODE"), source.indexOf("export interface RuntimeEnv"))
 
   assert.match(mutation, /WP_Markdown_Primary_Storage_Runtime::bootstrap/)
   assert.match(mutation, /new WP_SQLite_Connection\(\['pdo' => \$GLOBALS\['@pdo'\], 'path' => FQDB\]\)/)
   assert.match(mutation, /\$runtime->get_driver\(\)/)
   assert.match(mutation, /\$runtime->flush\(\)/)
-  assert.doesNotMatch(mutation, /\$wpdb->dbh|\{\$\{prefix\}|WP_Markdown_Storage|write_post|file_put_contents|wp_codebox_mdi_revision\.json/)
+  assert.doesNotMatch(mutation, /write_post|file_put_contents|wp_codebox_mdi_revision\.json/)
   assert.match(source, /validateMarkdownChanges\(mutation\.canonicalChanges\)/)
+  assert.match(source, /flush_canonical_writes\(\)/)
+  assert.match(source, /packagedCanonicalMarkdownSeed/)
+  assert.match(source, /update_option\('siteurl'/)
+  assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
+})
+
+test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {
+  const generator = new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url)
+  const archive = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url)
+  const before = createHash("sha256").update(await readFile(archive)).digest("hex")
+  await execFileAsync("php", [generator.pathname], { cwd: new URL("..", import.meta.url).pathname })
+  const after = createHash("sha256").update(await readFile(archive)).digest("hex")
+  assert.equal(after, before)
+  const source = await readFile(generator, "utf8")
+  assert.match(source, /bootstrap_existing_cache/)
+  assert.match(source, /SELECT ID FROM wp_posts ORDER BY ID/)
+  assert.match(source, /MDI_REVISION/)
+})
+
+test("canonical MDI seed owns the Cloudflare front page and its architecture explanation", async () => {
+  const generator = await readFile(new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url), "utf8")
+  const archive = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const files = new Map<string, string>()
+  for await (const entry of decodeZip(new Blob([archive]).stream())) files.set(entry.name, await entry.text())
+  const frontPage = files.get("page/cloudflare-wordpress-runtime.md") ?? ""
+
+  assert.match(generator, /UPDATE wp_posts SET post_title = \?, post_name = \?, post_excerpt = \?, post_content = \?, post_status = \? WHERE ID = 2 AND post_type = \?/)
+  assert.match(generator, /'show_on_front' => 'page', 'page_on_front' => '2'/)
+  assert.match(generator, /'blogname' => 'Cloudflare WordPress Runtime'/)
+  assert.ok(files.has("_options/show_on_front.json"))
+  assert.ok(files.has("_options/page_on_front.json"))
+  assert.match(files.get("_options/show_on_front.json") ?? "", /"page"/)
+  assert.match(files.get("_options/page_on_front.json") ?? "", /"2"/)
+  assert.match(frontPage, /title: Cloudflare WordPress Runtime/)
+  for (const claim of [
+    "real WordPress site running PHP as WebAssembly",
+    "Follow a request",
+    "content-addressed WordPress server corpus",
+    "reconstructs disposable SQLite query state",
+    "Warm reads reuse that pointer-scoped runtime",
+    "The durability boundary",
+    "canonical Markdown and JSON",
+    "Immutable objects and revision manifests live in R2",
+    "Log in to WordPress",
+    "block editor",
+    "Render the published page publicly",
+    "One site namespace",
+    "Dynamic requests are serialized",
+    "Cold isolates pay reconstruction cost",
+    "Static browser assets are cached independently",
+  ]) assert.match(frontPage, new RegExp(claim))
+  assert.match(frontPage, /<!-- wp:columns -->/)
+  assert.match(frontPage, /<!-- wp:list -->/)
 })

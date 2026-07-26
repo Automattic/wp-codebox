@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
 import { phpCliStreamConstants, phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
-import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeSecretEnvTargetsAvailable, normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string
@@ -9,6 +9,7 @@ interface PhpBootstrapBridge {
 }
 
 export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string): string {
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {})
   return `<?php
 ${phpFatalDiagnosticPhp()}
 define( 'REST_REQUEST', true );
@@ -22,14 +23,15 @@ ${phpBody(code)}`
 
 export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
   const command = splitLeadingStrictTypesDeclare(code)
-  if (argValue(args, "bootstrap") === "none") {
+  const executionEnvironment = runtimeEnvOverride(args)
+  assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, executionEnvironment)
+  const bootstrapMode = argValue(args, "bootstrap")
+  if (bootstrapMode === "none") {
     return `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${command.body}`
   }
-
-  const wordpressBootstrap = argValue(args, "bootstrap-mode") === "project" ? "" : "require_once '/wordpress/wp-load.php';"
 
   const bootstrapped = `<?php
 ${command.strictTypesDeclare ? `${command.strictTypesDeclare}\n` : ""}${phpFatalDiagnosticPhp()}
@@ -40,15 +42,15 @@ ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
-${wordpressBootstrap}
+${bootstrapMode === "runtime-only" || argValue(args, "bootstrap-mode") === "project" ? "" : "require_once '/wordpress/wp-load.php';"}
 ${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
-${recipeActivePluginBootstrapPhp(spec, args)}
+${bootstrapMode === "runtime-only" ? "" : recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${command.body}`
 
-  return failureDiagnosticFile ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
+  return failureDiagnosticFile && bootstrapMode !== "runtime-only" ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
 }
 
 function phpFailureDiagnosticWrapperPhp(code: string, path: string): string {
@@ -276,10 +278,19 @@ function metadataInputs(value: unknown): Record<string, unknown> | undefined {
 }
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.secretEnv ?? {}, { field: "secretEnv" }))
+  const secretEnv = { ...(spec.secretEnv ?? {}) }
+  if (spec.environment?.databaseSetup === "external") {
+    for (const source of Object.values(spec.secretEnvTargets ?? {})) delete secretEnv[source]
+  }
+  return phpEnvAssignments(normalizeRuntimeEnvRecord(secretEnv, { field: "secretEnv" }))
 }
 
 function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
+  const executionEnvironment = runtimeEnvOverride(args)
+  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
+}
+
+function runtimeEnvOverride(args: string[]): Record<string, unknown> {
   const override = argValue(args, "runtime-env-json")
   let executionEnvironment: Record<string, unknown> = {}
   if (override) {
@@ -287,5 +298,5 @@ function runtimeEnvPhp(spec: RuntimeCreateSpec, args: string[] = []): string {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("runtime-env-json must be a JSON object")
     executionEnvironment = parsed as Record<string, unknown>
   }
-  return phpEnvAssignments(normalizeRuntimeEnvRecord({ ...(spec.runtimeEnv ?? {}), ...executionEnvironment }, { field: "runtimeEnv" }))
+  return executionEnvironment
 }

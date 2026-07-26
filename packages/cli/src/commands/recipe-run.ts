@@ -11,7 +11,7 @@ import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePrev
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { recipeExternalServiceBoundarySummaries } from "../recipe-external-services.js"
-import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
+import { mergeRecipeSecretEnvSummary, resolveRecipeSecretEnv } from "../recipe-secret-env.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateRecipeRuntimePolicy, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -31,6 +31,7 @@ import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
@@ -109,7 +110,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   await artifactPointer.update({ commandStatus: "queued" })
   const issues = [
     ...await validateWorkspaceRecipe(recipe, recipePath),
-    ...validateRecipeRuntimePolicy(recipe, options.policy),
+    ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
   ]
   if (issues.length > 0) {
     const failure = {
@@ -139,7 +140,8 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   }
   const secretEnvResolution = resolveRecipeSecretEnv(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const secretEnv = secretEnvResolution.values
-  const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
+  let secretEnvSummary = secretEnvResolution.summary
+  let effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
   let dependencyOverlays: PreparedDependencyOverlay[] = []
@@ -155,6 +157,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
   let distributionStartupProbes: RecipeRunDistributionStartupProbe[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
+  let adversarialCampaigns: RecipeAdversarialCampaignOutput[] = []
   let stepFailures: RecipeStepFailure[] = []
   let advisoryFailures: RecipeAdvisoryFailure[] = []
   let browserEvidence: RecipeBrowserEvidence[] = []
@@ -192,10 +195,23 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     managedServices = await phaseTracker.run("provision_runtime_services", { services: recipe.inputs?.services?.map(({ id, kind }) => ({ id, kind })) ?? [] }, async () => await provisionRuntimeServicesForRecipe(
       recipe.inputs?.services ?? [],
       async (provisioning) => await awaitRecipe("runtime-services.provision", provisioning),
-      { signal: interruption?.signal, onEvidence: (evidence) => { serviceEvidence = evidence } },
+      {
+        signal: interruption?.signal,
+        policy,
+        externalServices: recipe.inputs?.externalServices ?? [],
+        externalServiceWritesApproved: options.externalServiceWritesApproved,
+        reservedEnvNames: [...Object.keys(runtimeEnv), ...(recipe.inputs?.secretEnv ?? [])],
+        onEvidence: (evidence) => { serviceEvidence = evidence },
+      },
     ))
     serviceEvidence = managedServices.evidence
     Object.assign(runtimeEnv, managedServices.env)
+    for (const [name, value] of Object.entries(managedServices.secretEnv)) {
+      delete runtimeEnv[name]
+      secretEnv[name] = value
+    }
+    secretEnvSummary = mergeRecipeSecretEnvSummary(secretEnvSummary, Object.keys(managedServices.secretEnv))
+    if (Object.keys(managedServices.secretEnv).length > 0) effectivePolicy = { ...policy, secrets: "connector-scoped" }
     const runtimeEnvironment = {
       kind: "wordpress" as const,
       name: plan.runtime.name,
@@ -214,6 +230,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       policy: effectivePolicy,
       runtimeEnv,
       secretEnv,
+      secretEnvTargets: managedServices.secretEnvTargets,
       artifactsDirectory: configuredArtifactsDirectory,
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),
@@ -315,6 +332,21 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       }
     })
 
+    adversarialCampaigns = await phaseTracker.run("run_adversarial_campaigns", { campaigns: recipe.adversarialCampaigns?.map(({ id, seed }) => ({ id, seed })) ?? [] }, async () => runRecipeAdversarialCampaigns({
+      recipe,
+      recipePath,
+      recipeDirectory,
+      runtime: runtime!,
+      sandboxWorkspace,
+      artifactRoot: configuredArtifactsDirectory,
+      runOptions: options,
+      inputMountPathMap,
+      signal: interruption?.signal,
+      executions,
+      provenance: recipeRunProvenance(recipe, recipePath) as unknown as Record<string, unknown>,
+    }))
+    interruption?.throwIfInterrupted()
+
     probes = await phaseTracker.run("run_probes", phaseProbeData(recipe), async () => await awaitRecipe("recipe-probes.run", runRecipeProbes(recipe, recipeDirectory, runtime!, executions)))
     const probeFailure = recipeProbeFailure(probes)
     if (probeFailure) {
@@ -327,7 +359,8 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
-      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
+      await writeRecipeAdversarialEvidence(artifacts, adversarialCampaigns, Object.values(secretEnv))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -335,7 +368,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
       }
-      const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvResolution.summary)
+      const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvSummary)
       const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(recipeEvidence, agentEvidence)
       markRecipeArtifactsFinalized(interruption, true)
@@ -347,16 +380,16 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const agentFailure = recipeAgentResultFailure(evidence.agentResult)
     const verifyFailure = recipeVerifyStepFailure(executions)
-    const recipeFailure = strictFailure ?? agentFailure ?? verifyFailure
+    const recipeFailure = strictFailure ?? agentFailure ?? recipeAdversarialCampaignFailure(adversarialCampaigns) ?? verifyFailure
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
-      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts))
-      evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvResolution.summary)
+      evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvSummary)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
     }
@@ -412,7 +445,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
       })
     }
 
@@ -431,7 +464,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
     })
   } catch (error) {
     const failedServiceEvidence = runtimeServiceEvidenceFromError(error)
@@ -471,12 +504,13 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         workspaceMounts,
         stagedFiles,
         policy: effectivePolicy,
-        secretEnv: secretEnvResolution.summary,
+        secretEnv: secretEnvSummary,
         executions,
         interruption,
       }))
       if (artifacts) {
         const collectedArtifacts = artifacts
+        await writeRecipeAdversarialEvidence(artifacts, adversarialCampaigns, Object.values(secretEnv)).catch(() => undefined)
         browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
@@ -555,8 +589,10 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
         ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
         ...(fuzzRunResult ? { fuzzRun: fuzzRunResult } : {}),
+        ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}),
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
         provenance: recipeRunProvenance(recipe, recipePath, diagnosticArtifacts),
+        managedRuntimeServices: serviceEvidence,
       },
     })
   } finally {
@@ -576,16 +612,12 @@ export async function runManagedServiceCleanup(
   cleanup: () => Promise<void>,
 ): Promise<RunResourceCleanupEvidence> {
   try {
-    return await runRecipeCleanup(runRegistry, runRecord, cleanup)
+    return await runRecipeCleanup(runRegistry, runRecord, cleanup, () => ({ managedRuntimeServices: serviceEvidence }))
   } catch (error) {
     if (preservePrimaryFailure && error instanceof RunResourceCleanupError) {
       return error.evidence
     }
     throw error
-  } finally {
-    await runRegistry.update(runRecord.runId, {
-      metadata: { managedRuntimeServices: serviceEvidence },
-    })
   }
 }
 
@@ -694,7 +726,7 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
     const recipe = await loadWorkspaceRecipe(recipePath)
     const issues = [
       ...await validateWorkspaceRecipe(recipe, recipePath),
-      ...validateRecipeRuntimePolicy(recipe, options.policy),
+      ...validateRecipeRuntimePolicy(recipe, options.policy ?? recipePolicy(recipe)),
     ]
 
     return {
@@ -745,7 +777,7 @@ function distributionRuntimeEnv(recipe: WorkspaceRecipe): Record<string, string>
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
+  const parsed = parseCommandOptions(args, new Set(["--json", "--summary", "--summary-only", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child", "--approve-external-service-writes"]))
   if (parsed.positionals.length > 0) {
     throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
   }
@@ -756,6 +788,7 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
     previewLeaseRequested: parsed.options.get("--preview-lease") === true,
     previewLeaseChild: parsed.options.get("--preview-lease-child") === true,
+    externalServiceWritesApproved: parsed.options.get("--approve-external-service-writes") === true,
     timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
   }
   for (const [name, value] of parsed.options) {
@@ -798,6 +831,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--policy":
         options.policy = parseRecipePolicy(value)
+        break
+      case "--adversarial-replay":
+        options.adversarialReplayPath = value
         break
       default:
         throw new Error(`Unknown option: ${name}`)

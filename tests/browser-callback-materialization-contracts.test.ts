@@ -112,6 +112,28 @@ assert.deepEqual(topology.authCookieUrls(["https://example.test/wp-admin/"]), [
 ])
 assert.equal(topology.networkPolicy.mode, "block")
 assert.deepEqual([...topology.networkPolicy.routeHosts].sort(), ["example.test", "static.example.test"])
+assert.deepEqual(topology.navigationScope.resolve("/beta/", "https://example.test/alpha/"), {
+  allowed: true,
+  rawOrigin: "https://example.test",
+  effectiveOrigin: "https://example.test",
+  routeDecision: "relative",
+  reason: "effective-preview-origin",
+})
+assert.deepEqual(topology.navigationScope.resolve("http://static.example.test:8080/alpha/", "https://example.test/"), {
+  allowed: true,
+  rawOrigin: "http://static.example.test:8080",
+  effectiveOrigin: "https://example.test",
+  routeDecision: "routed-preview",
+  reason: "declared-route-host",
+})
+assert.deepEqual(topology.navigationScope.resolve("https://cdn.example.test/asset", "https://example.test/"), {
+  allowed: false,
+  rawOrigin: "https://cdn.example.test",
+  effectiveOrigin: "https://cdn.example.test",
+  routeDecision: "external",
+  reason: "network-host-allowed-but-not-routed",
+})
+assert.equal(topology.navigationScope.resolve("https://outside.example/", "https://example.test/").reason, "host-not-routed-to-preview")
 assert.deepEqual(browserPreviewAuthCookieUrls("http://localhost:9400", ["PUBLIC.example.test"], ["https://public.example.test/wp-admin/"]), ["http://localhost/", "https://public.example.test/"])
 
 let activeUpstreamRequests = 0
