@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import { stableJson, stripUndefined } from "./object-utils.js"
+import { browserGeolocation, type BrowserGeolocation } from "./browser-probe-contract.js"
 
 export const BROWSER_ENVIRONMENT_MATRIX_SCHEMA = "wp-codebox/browser-environment-matrix/v1" as const
 export const BROWSER_ENVIRONMENT_MATRIX_REPORT_SCHEMA = "wp-codebox/browser-environment-matrix-report/v1" as const
@@ -27,6 +28,7 @@ export interface BrowserEnvironment {
   cpuProfile?: string
   online?: boolean
   clock?: { mode: "realtime" | "fixed"; at?: string }
+  geolocation?: BrowserGeolocation
   capabilities?: Record<string, boolean | string | number>
 }
 
@@ -301,7 +303,7 @@ function normalizeDimension(dimension: BrowserEnvironmentDimension): BrowserEnvi
   const values = dimension.values.map((value) => {
     if (!safeId(value.id)) throw new Error(`Invalid browser environment value id in ${dimension.id}: ${value.id}`)
     validateEnvironment(value.environment)
-    return { id: value.id, environment: canonicalEnvironment(value.environment), requiredCapabilities: uniqueSorted(value.requiredCapabilities ?? []), optionalCapabilities: uniqueSorted(value.optionalCapabilities ?? []) }
+    return { id: value.id, environment: canonicalEnvironment(value.environment), requiredCapabilities: uniqueSorted([...(value.requiredCapabilities ?? []), ...(value.environment.geolocation ? ["browser.environment.geolocation"] : [])]), optionalCapabilities: uniqueSorted(value.optionalCapabilities ?? []) }
   }).sort((left, right) => left.id.localeCompare(right.id) || stableJson(left.environment).localeCompare(stableJson(right.environment)))
   if (new Set(values.map(({ id }) => id)).size !== values.length) throw new Error(`Browser environment value ids must be unique in ${dimension.id}.`)
   return { id: dimension.id, values }
@@ -325,7 +327,7 @@ function validateEnvironment(environment: BrowserEnvironment): void {
 }
 
 function canonicalEnvironment(environment: BrowserEnvironment): BrowserEnvironment {
-  return JSON.parse(stableJson(JSON.parse(JSON.stringify(environment)))) as BrowserEnvironment
+  return JSON.parse(stableJson(JSON.parse(JSON.stringify({ ...environment, ...(environment.geolocation ? { geolocation: browserGeolocation(environment.geolocation) } : {}) })))) as BrowserEnvironment
 }
 
 function mergeEnvironment(left: BrowserEnvironment, right: BrowserEnvironment): BrowserEnvironment {

@@ -9,6 +9,7 @@ import {
   type BrowserEnvironmentMatrix,
   type ResolvedBrowserEnvironment,
 } from "../packages/runtime-core/src/browser-environment-matrix.js"
+import { browserGeolocation } from "../packages/runtime-core/src/browser-probe-contract.js"
 
 const limits = { maxCells: 16, maxDurationMs: 16_000, maxCellDurationMs: 1_000, maxArtifactBytes: 1024 }
 
@@ -57,6 +58,31 @@ test("environment dimensions merge independent capability state", () => {
     { id: "second", values: [{ id: "second", environment: { capabilities: { beta: "enabled" } } }] },
   ]))
   assert.deepEqual(cell?.requested.capabilities, { alpha: true, beta: "enabled" })
+})
+
+test("geolocation is canonical, validated, and included in cell and replay identity", async () => {
+  assert.deepEqual(browserGeolocation({ latitude: 32.7765, longitude: -79.9311, accuracy: 12, permission: "default" }), { latitude: 32.7765, longitude: -79.9311, accuracy: 12, permission: "prompt" })
+  for (const geolocation of [
+    { latitude: -91, longitude: 0, permission: "prompt" as const },
+    { latitude: 0, longitude: 181, permission: "prompt" as const },
+    { latitude: Number.NaN, longitude: 0, permission: "prompt" as const },
+    { latitude: 0, longitude: Number.POSITIVE_INFINITY, permission: "prompt" as const },
+    { latitude: 0, longitude: 0, accuracy: -1, permission: "prompt" as const },
+    { latitude: 0, longitude: 0, accuracy: 1_000_001, permission: "prompt" as const },
+  ]) assert.throws(() => browserGeolocation(geolocation), /Browser geolocation/)
+
+  const matrix = fixtureMatrix([{ id: "location", values: [
+    { id: "first", environment: { geolocation: { latitude: 32.7765, longitude: -79.9311, accuracy: 12, permission: "granted" } } },
+    { id: "second", environment: { geolocation: { latitude: 40.7128, longitude: -74.006, permission: "denied" } } },
+  ] }])
+  const cells = expandBrowserEnvironmentMatrix(matrix)
+  assert.notEqual(cells[0]?.id, cells[1]?.id)
+  assert.notEqual(cells[0]?.seed, cells[1]?.seed)
+  const repeated = expandBrowserEnvironmentMatrix(matrix)
+  assert.deepEqual(cells, repeated)
+  const report = await runBrowserEnvironmentMatrix(matrix, { runId: "geolocation", resolve: resolveAll, execute: async () => ({ status: "passed" }) })
+  assert.deepEqual(report.cells.map(({ requested }) => requested.geolocation), cells.map(({ requested }) => requested.geolocation))
+  assert.deepEqual(report.cells.map(({ replay }) => replay.requested.geolocation), cells.map(({ requested }) => requested.geolocation))
 })
 
 test("matrix cells use isolated run and cell artifact namespaces", async () => {
@@ -151,5 +177,6 @@ function resolveAll(cell: { requested: BrowserEnvironmentMatrix["dimensions"][nu
     { id: "browser.environment.viewport", fidelity: "exact" },
     { id: "browser.environment.reduced-motion", fidelity: "exact" },
     { id: "browser.environment.color-scheme", fidelity: "exact" },
+    { id: "browser.environment.geolocation", fidelity: "exact" },
   ] }
 }

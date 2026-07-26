@@ -1,4 +1,4 @@
-import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { BROWSER_GEOLOCATION_MAX_ACCURACY_METERS, BROWSER_GEOLOCATION_PERMISSION_ALIASES, BROWSER_GEOLOCATION_PERMISSION_STATES, BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
 import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA } from "./wordpress-page-load-contracts.js"
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
@@ -67,6 +67,7 @@ export type CommandArgValidationDescriptor =
   | { name: string; kind: "duration"; code: string; message: string }
   | { name: string; kind: "positive-integer"; code: string; message: string }
   | { name: string; kind: "viewport"; code: string; message: string }
+  | { name: string; kind: "number"; minimum: number; maximum: number; code: string; message: string }
   | { name: string; kind: "enum"; values: readonly string[]; prefixes?: readonly string[]; code: string; message: string }
   | { name: string; kind: "comma-list-enum"; values: readonly string[]; code: string; message: string }
 
@@ -127,6 +128,10 @@ const browserProbeValidation: CommandValidationDescriptor = {
     { name: "throttle", kind: "enum", values: ["none", ...BROWSER_PROBE_THROTTLE_PROFILE_IDS], code: "invalid-throttle", message: "wordpress.browser-probe throttle is unsupported" },
     { name: "browser", kind: "enum", values: BROWSER_PROBE_BROWSER_VALUES, code: "invalid-browser", message: `wordpress.browser-probe browser must be ${BROWSER_PROBE_BROWSER_VALUES.join(" or ")}.` },
     { name: "viewport", kind: "viewport", code: "invalid-viewport", message: "wordpress.browser-probe viewport must use <width>x<height>, for example 390x844." },
+    { name: "geolocation-latitude", kind: "number", minimum: -90, maximum: 90, code: "invalid-geolocation-latitude", message: "wordpress.browser-probe geolocation-latitude must be a finite number from -90 to 90." },
+    { name: "geolocation-longitude", kind: "number", minimum: -180, maximum: 180, code: "invalid-geolocation-longitude", message: "wordpress.browser-probe geolocation-longitude must be a finite number from -180 to 180." },
+    { name: "geolocation-accuracy", kind: "number", minimum: 0, maximum: BROWSER_GEOLOCATION_MAX_ACCURACY_METERS, code: "invalid-geolocation-accuracy", message: `wordpress.browser-probe geolocation-accuracy must be a finite number from 0 to ${BROWSER_GEOLOCATION_MAX_ACCURACY_METERS}.` },
+    { name: "geolocation-permission", kind: "enum", values: [...BROWSER_GEOLOCATION_PERMISSION_STATES, ...BROWSER_GEOLOCATION_PERMISSION_ALIASES], code: "invalid-geolocation-permission", message: "wordpress.browser-probe geolocation-permission must be granted, denied, prompt, or default." },
     { name: "capture", kind: "comma-list-enum", values: BROWSER_PROBE_CAPTURE_VALUES, code: "invalid-capture", message: "wordpress.browser-probe capture does not support" },
   ],
 }

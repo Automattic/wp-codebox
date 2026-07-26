@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   assert(browserProbe.acceptedArgs === BROWSER_PROBE_ACCEPTED_ARGS, "browser probe registry must use the shared accepted args definition")
 
   const acceptedArgNames = new Set(browserProbe.acceptedArgs.map((arg) => arg.name))
-  for (const name of ["browser", "profile", "profiles", "viewport", "throttle", "timezone", "user-agent", "permissions", "timeout", "stall-timeout", "observe"]) {
+  for (const name of ["browser", "profile", "profiles", "viewport", "throttle", "timezone", "user-agent", "permissions", "geolocation-latitude", "geolocation-longitude", "geolocation-accuracy", "geolocation-permission", "timeout", "stall-timeout", "observe"]) {
     assert(acceptedArgNames.has(name), `browser probe registry is missing arg: ${name}`)
   }
 
@@ -49,6 +49,7 @@ async function main(): Promise<void> {
   assert((await validationIssueCodes([`profiles=${BROWSER_PROBE_CHROMIUM_PROFILE_IDS.join(",")}`])).length === 0, "recipe validation must accept shared Chromium profile matrix values")
   assert((await validationIssueCodes([`throttle=${BROWSER_PROBE_THROTTLE_PROFILE_IDS[0]}`])).length === 0, "recipe validation must accept shared throttle profile value")
   assert((await validationIssueCodes([`capture=${BROWSER_PROBE_CAPTURE_VALUES.join(",")}`])).length === 0, "recipe validation must accept shared capture values")
+  assert((await validationIssueCodes(["geolocation-latitude=32.7765", "geolocation-longitude=-79.9311", "geolocation-accuracy=8", "geolocation-permission=default"])).length === 0, "recipe validation must accept canonical geolocation controls and the default alias")
 
   assert((await validationIssueCodes(["browser=webkit"])).includes("invalid-browser"), "recipe validation must reject non-runnable WebKit browser value")
   assert((await validationIssueCodes(["profile=desktop-webkit"])).includes("invalid-profile"), "recipe validation must reject non-runnable WebKit profile")

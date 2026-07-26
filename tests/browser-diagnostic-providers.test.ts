@@ -41,6 +41,21 @@ assert.equal(genericResult.artifact.summary.wordpressDiagnostics, undefined)
 assert.equal(genericResult.review.wordpressDiagnostics, undefined)
 assert.doesNotMatch(genericResult.output, /wordpressDiagnostics/)
 
+const geolocation = { latitude: 32.7765, longitude: -79.9311, accuracy: 8, permission: "granted" as const }
+const geolocationCapabilities = {
+  secureContext: true,
+  userAgent: "fixture",
+  viewport: null,
+  maxTouchPoints: 0,
+  paymentRequest: { available: false },
+  permissions: { geolocation: { state: "granted" as const } },
+  geolocation: { requested: geolocation, effective: geolocation, support: { coordinates: "supported" as const, permission: "supported" as const, unavailable: "unsupported" as const, reason: "fixture" } },
+}
+const geolocationResult = new BrowserProbeSessionResultBuilder().compose({ ...baseInput(), context: { requested: { geolocation }, effective: { geolocation, viewport: null } }, capabilities: geolocationCapabilities })
+assert.deepEqual(geolocationResult.review.profile.context?.requested.geolocation, geolocation)
+assert.deepEqual(geolocationResult.review.profile.capabilities?.geolocation, geolocationCapabilities.geolocation)
+assert.deepEqual((geolocationResult.summary.context as { requested: { geolocation: unknown } }).requested.geolocation, geolocation)
+
 const wordpressSummary: BrowserWordPressDiagnosticsSummary = {
   status: "captured",
   artifact: "files/browser/wordpress-diagnostics.json",
