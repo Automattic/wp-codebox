@@ -21,7 +21,7 @@ import {
   trustedBrowserSessionOrigins,
   verifyBrowserCallbackSignature,
 } from "../packages/runtime-core/src/index.js"
-import { browserPreviewAuthCookieUrls, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewAuthCookieUrls, browserPreviewReadinessError, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
@@ -185,6 +185,7 @@ assert.deepEqual(unsupportedCanonicalTopology.preview.diagnostics[0], {
   message: "The local Playground provider cannot preserve this declared canonical preview protocol.",
   details: { status: "inconclusive", canonicalOrigin: "https://secure.example.test", supportedProtocols: ["http:"] },
 })
+assert.match(browserPreviewReadinessError(unsupportedCanonicalTopology.preview)?.message ?? "", /cannot preserve/)
 
 let activeUpstreamRequests = 0
 let maxActiveUpstreamRequests = 0

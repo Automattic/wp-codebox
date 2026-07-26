@@ -12,7 +12,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { executeBrowserObservationAssertion } from "./browser-observation-assertions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
 import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserProbeWebSocketArtifact, browserProbeWebSocketSummary, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
@@ -144,6 +144,10 @@ export async function runBrowserActionsCommand({
   let adaptiveExplorationSummary: BrowserArtifact["summary"]["adaptiveExploration"] | undefined
 
   try {
+    const previewReadinessError = browserPreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
     const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
       ...topology.contextOptions(),
       ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
@@ -410,6 +414,9 @@ export async function runBrowserActionsCommand({
         }
       }
     }
+  } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()

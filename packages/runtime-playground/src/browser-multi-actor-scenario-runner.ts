@@ -6,7 +6,7 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeReplayability } from "./browser-probe.js"
-import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewReadinessError, browserPreviewTopology, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { installWordPressAdminAuthCookies } from "./browser-probe-support.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -36,6 +36,10 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   let failure: Error | undefined
 
   try {
+    const previewReadinessError = browserPreviewReadinessError(topology.preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
     const clientEntries: Array<[string, BrowserMultiActorClient]> = []
     const actorPages: Array<{ actor: string; page: Pick<Page, "goto"> }> = []
     // Playground PHP commands share one runtime endpoint, so provision identities

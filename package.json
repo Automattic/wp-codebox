@@ -178,7 +178,7 @@
     "test:native-agent-task-interruption": "node tests/execute-native-agent-task-interruption.test.mjs",
     "test:native-agent-task-playground-e2e": "tsx tests/execute-native-agent-task-playground-e2e.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
-    "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
+    "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:browser-canonical-preview-origin && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
     "test:browser-artifact-session": "tsx tests/browser-artifact-session.test.ts",
     "test:browser-environment-matrix": "tsx --test tests/browser-environment-matrix.test.ts tests/browser-environment-matrix.browser.test.ts",
     "test:browser-diagnostic-providers": "tsx tests/browser-diagnostic-providers.test.ts",

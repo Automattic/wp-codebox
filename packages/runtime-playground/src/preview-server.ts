@@ -161,6 +161,7 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
 
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
   return new Promise((resolve) => {
+    const requestTarget = previewProxyRequestTarget(incoming)
     let settled = false
     let targetResponse: IncomingMessage | undefined
     const settle = () => {
@@ -182,12 +183,12 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         hostname: target.hostname,
         port: target.port,
         method: incoming.method,
-        path: previewProxyRequestPath(incoming.url),
-        headers: proxyRequestHeaders(incoming.headers),
+        path: requestTarget.path,
+        headers: proxyRequestHeaders(incoming.headers, requestTarget),
       },
       (response) => {
         targetResponse = response
-        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers, incoming, target))
+        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers, requestTarget, target))
         response.on("error", (error) => {
           outgoing.destroy(error)
           settle()
@@ -211,16 +212,31 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
   })
 }
 
-function previewProxyRequestPath(rawUrl: string | undefined): string {
-  if (!rawUrl) {
-    return "/"
-  }
+interface PreviewProxyRequestTarget {
+  host: string
+  path: string
+  port: string
+  protocol: "http:" | "https:"
+}
+
+function previewProxyRequestTarget(incoming: IncomingMessage): PreviewProxyRequestTarget {
+  const rawUrl = incoming.url ?? "/"
   try {
     const url = new URL(rawUrl)
-    return `${url.pathname}${url.search}`
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return {
+        host: url.host,
+        path: `${url.pathname}${url.search}`,
+        port: url.port || (url.protocol === "https:" ? "443" : "80"),
+        protocol: url.protocol,
+      }
+    }
   } catch {
-    return rawUrl
+    // Origin-form requests use the proxy listener's HTTP authority.
   }
+  const host = incoming.headers.host ?? "localhost"
+  const authority = new URL(`http://${host}`)
+  return { host: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:" }
 }
 
 function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
@@ -279,17 +295,26 @@ function formatPreviewHost(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
-function proxyRequestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
+  delete forwarded.forwarded
+  delete forwarded["x-forwarded-for"]
+  delete forwarded["x-forwarded-host"]
+  delete forwarded["x-forwarded-port"]
+  delete forwarded["x-forwarded-proto"]
 
   return {
     ...forwarded,
+    host: requestTarget.host,
+    "x-forwarded-host": requestTarget.host,
+    "x-forwarded-port": requestTarget.port,
+    "x-forwarded-proto": requestTarget.protocol.slice(0, -1),
   }
 }
 
-function proxyResponseHeaders(headers: IncomingHttpHeaders, incoming: IncomingMessage, target: URL): IncomingHttpHeaders {
+function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
@@ -297,10 +322,9 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, incoming: IncomingMe
   if (typeof forwarded.location === "string") {
     try {
       const location = new URL(forwarded.location, target)
-      if (location.origin === target.origin && incoming.headers.host) {
-        const protocol = firstHeaderValue(incoming.headers["x-forwarded-proto"]) ?? "http"
-        location.protocol = `${protocol.replace(/:$/, "")}:`
-        const visible = new URL(`${location.protocol}//${incoming.headers.host}`)
+      if (location.origin === target.origin) {
+        location.protocol = requestTarget.protocol
+        const visible = new URL(`${requestTarget.protocol}//${requestTarget.host}`)
         location.hostname = visible.hostname
         location.port = visible.port
         forwarded.location = location.toString()
@@ -311,10 +335,6 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, incoming: IncomingMe
   }
 
   return forwarded
-}
-
-function firstHeaderValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value
 }
 
 function writeProxyError(outgoing: ServerResponse, error: Error): void {

@@ -1,15 +1,23 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { launchChromiumBrowser } from "../packages/runtime-playground/src/browser-capture-session.js"
-import { browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewNetworkPolicySummary, browserPreviewTopology, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
-const requests: Array<{ host?: string; method?: string; url?: string; body: string }> = []
+const requests: Array<{ host?: string; method?: string; url?: string; body: string; forwardedHost?: string; forwardedPort?: string; forwardedProto?: string }> = []
 const upstream = createServer((request, response) => {
   let body = ""
   request.on("data", (chunk) => { body += chunk.toString() })
   request.on("end", () => {
-    requests.push({ host: request.headers.host, method: request.method, url: request.url, body })
+    requests.push({
+      host: request.headers.host,
+      method: request.method,
+      url: request.url,
+      body,
+      forwardedHost: request.headers["x-forwarded-host"] as string | undefined,
+      forwardedPort: request.headers["x-forwarded-port"] as string | undefined,
+      forwardedProto: request.headers["x-forwarded-proto"] as string | undefined,
+    })
     if (request.url === "/events/redirect/") {
       response.writeHead(302, { location: "http://localhost/events/final/" })
       response.end()
@@ -21,7 +29,7 @@ const upstream = createServer((request, response) => {
       return
     }
     if (request.url === "/events/external-redirect/") {
-      response.writeHead(302, { location: "https://undeclared.example/escape/" })
+      response.writeHead(302, { location: "http://undeclared.example/escape/" })
       response.end()
       return
     }
@@ -52,12 +60,20 @@ const topology = browserPreviewTopology(
 const browser = await launchChromiumBrowser()
 
 try {
-  const context = await browser.newContext(topology.contextOptions())
+  const context = await browser.newContext({
+    ...topology.contextOptions(),
+    extraHTTPHeaders: {
+      "x-forwarded-host": "spoofed.example",
+      "x-forwarded-port": "443",
+      "x-forwarded-proto": "https",
+    },
+  })
   await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, topology.origins.localProxyOrigin)
   const page = await context.newPage()
 
   await page.goto(topology.resolveUrl("/events/"), { waitUntil: "load" })
   assert.equal(new URL(page.url()).origin, "http://localhost")
+  assert(requests.some((request) => request.url === "/events/" && request.host === "localhost" && request.forwardedHost === "localhost" && request.forwardedPort === "80" && request.forwardedProto === "http"))
   assert.deepEqual(await page.evaluate(() => {
     history.pushState({}, "", "http://localhost/events/pushed/")
     history.replaceState({}, "", "http://localhost/events/replaced/")
@@ -87,8 +103,11 @@ try {
   await Promise.all([page.waitForURL("http://localhost/events/subsite/"), page.click("#subsite")])
   assert.equal(page.url(), "http://localhost/events/subsite/")
 
-  await assert.rejects(page.goto("https://undeclared.example/escape/"))
+  await assert.rejects(page.goto("http://undeclared.example/escape/"))
   await assert.rejects(page.goto("http://localhost/events/external-redirect/"))
+  const policyEvidence = browserPreviewNetworkPolicySummary(topology.networkPolicy)
+  assert((policyEvidence.hosts["undeclared.example"]?.blocked ?? 0) >= 1, JSON.stringify(policyEvidence))
+  assert(policyEvidence.blockedRequests >= 1)
 
   assert.deepEqual(topology.origins, {
     localPreviewOrigin: proxy.serverUrl,

@@ -550,6 +550,10 @@ export async function runEditorOpenCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
+    const previewReadinessError = browserPreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
@@ -626,6 +630,9 @@ export async function runEditorOpenCommand({
       })
       screenshotSha256 = await fileSha256(screenshotPath)
     }
+  } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await browser.close()
     if (capture.has("steps")) {
@@ -833,6 +840,10 @@ export async function runEditorActionsCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
+    const previewReadinessError = browserPreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
@@ -938,6 +949,9 @@ export async function runEditorActionsCommand({
       await artifactSession.writeGenerated("screenshot", "editor-action-screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
       screenshotSha256 = await fileSha256(screenshotPath)
     }
+  } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await browser.close()
     if (capture.has("steps")) {
@@ -1931,6 +1945,10 @@ export async function runEditorValidateBlocksCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
+    const previewReadinessError = browserPreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
