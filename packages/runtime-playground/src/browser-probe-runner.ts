@@ -6,7 +6,7 @@ import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumB
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, serializeBrowserError } from "./browser-metrics.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, strictBooleanArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -497,21 +497,28 @@ export async function runSingleBrowserProbeCommand({
         }
       }
     }
-    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
-    await geolocationPermissionCleanup?.()
-    if (!session) {
-      await environmentRuntime?.close().catch(() => undefined)
-      await browser.close()
+    try {
+      await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
+    } catch (error) {
+      errors.push(serializeBrowserError("probe-error", error))
     }
     try {
-      await drainBrowserPreviewRouteTracker(routeTracker)
+      await geolocationPermissionCleanup?.()
     } catch (error) {
-      const routeError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
-      if (!pendingError && runPlan.routeHostDrain === "required") {
+      const cleanupError = redactError(error, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+      if (!pendingError) {
+        pendingError = cleanupError
+        progress.fail("probe-error", cleanupError)
+      }
+      errors.push(serializeBrowserError("probe-error", error))
+    }
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+      const browserCloseFailed = routeError.message.includes("operation=browser-close")
+      if (!pendingError && (browserCloseFailed || runPlan.routeHostDrain === "required")) {
         pendingError = routeError
         progress.fail("probe-error", routeError)
       }
-      errors.push(serializeBrowserError("probe-error", error))
+      errors.push(serializeBrowserError("probe-error", routeError))
     }
     if (captureSelection.console) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)

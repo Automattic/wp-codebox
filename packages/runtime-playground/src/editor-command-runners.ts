@@ -6,7 +6,8 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
 import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget } from "./editor-actions.js"
@@ -238,16 +239,13 @@ export async function runEditorCanvasProbeCommand({
     throw new BrowserCommandArtifactError(pendingError.message, artifact)
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify({
+  return browserCommandResult(artifact, {
       command: "wordpress.editor-canvas-probe",
       requestedUrl: targetUrl,
       finalUrl: artifact.summary.finalUrl,
       files: artifact.files,
       summary: artifact.summary.editorCanvas,
-    }, null, 2)}\n`,
-  }
+  })
 }
 
 interface EditorCanvasSelectorGroupInput {
@@ -527,6 +525,7 @@ export async function runEditorOpenCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
+  const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)
   const artifactPathPrefix = editorOpenArtifactPathPrefixFromArgs(args)
   const artifactSession = new BrowserArtifactSession(artifactRoot, artifactPathPrefix, { source: "wordpress.editor-open", operation: "editor-open" })
@@ -556,7 +555,7 @@ export async function runEditorOpenCommand({
     }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -634,7 +633,10 @@ export async function runEditorOpenCommand({
     pendingError = error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
-    await browser.close()
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+      errors.push(serializeBrowserError("probe-error", routeError))
+      pendingError ??= routeError
+    }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "editor-steps.jsonl", stepRecords)
     }
@@ -702,9 +704,7 @@ export async function runEditorOpenCommand({
     throw editorOpenArtifactError(stepRecords.length, pendingError, artifact)
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify({
+  return browserCommandResult(artifact, {
       command: "wordpress.editor-open",
       target,
       requestedUrl: targetUrl,
@@ -714,8 +714,7 @@ export async function runEditorOpenCommand({
       files: artifact.files,
       summary: artifact.summary,
       steps: stepRecords,
-    }, null, 2)}\n`,
-  }
+  })
 }
 
 export function editorOpenArtifactPathPrefixFromArgs(args: string[]): string {
@@ -817,6 +816,7 @@ export async function runEditorActionsCommand({
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
+  const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-actions", operation: "editor-actions" })
 
@@ -846,7 +846,7 @@ export async function runEditorActionsCommand({
     }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -953,7 +953,10 @@ export async function runEditorActionsCommand({
     pendingError = error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
-    await browser.close()
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+      errors.push(serializeBrowserError("probe-error", routeError))
+      pendingError ??= routeError
+    }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "editor-action-steps.jsonl", stepRecords)
     }
@@ -1035,9 +1038,7 @@ export async function runEditorActionsCommand({
     throw new BrowserCommandArtifactError(`wordpress.editor-actions failed after ${stepRecords.length} step(s): ${pendingError.message}`, artifact)
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify({
+  return browserCommandResult(artifact, {
       command: "wordpress.editor-actions",
       target,
       actions: actionSteps.length,
@@ -1048,8 +1049,7 @@ export async function runEditorActionsCommand({
       files: artifact.files,
       summary: artifact.summary,
       steps: stepRecords,
-    }, null, 2)}\n`,
-  }
+  })
 }
 
 interface EditorActionStepResult {
@@ -1931,6 +1931,7 @@ export async function runEditorValidateBlocksCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl, server.previewProxyDiagnostics?.targetOrigin)
   const { preview, networkPolicy } = topology
+  const routeTracker = createBrowserPreviewRouteTracker()
   const targetUrl = topology.resolveUrl(target.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-validate-blocks", operation: "editor-validate-blocks" })
 
@@ -1951,7 +1952,7 @@ export async function runEditorValidateBlocksCommand({
     }
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext(topology.contextOptions()) : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-validate-blocks", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -1976,7 +1977,10 @@ export async function runEditorValidateBlocksCommand({
     pendingError = error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
-    await browser.close()
+    for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
+      errors.push(serializeBrowserError("probe-error", routeError))
+      pendingError ??= routeError
+    }
 
     const summary: BrowserEditorValidateBlocksSummary | undefined = validation
       ? {
@@ -2065,10 +2069,7 @@ export async function runEditorValidateBlocksCommand({
     throw new BrowserCommandArtifactError("wordpress.editor-validate-blocks failed: block validation did not complete", artifact)
   }
 
-  return {
-    artifact,
-    output: `${JSON.stringify(validation.result, null, 2)}\n`,
-  }
+  return browserCommandResult(artifact, validation.result)
 }
 
 async function waitForEditorBlocksRuntime(page: import("playwright").Page, timeoutMs: number): Promise<void> {

@@ -48,6 +48,7 @@ export const smokeGroups = {
       npmScript("test:browser-runtime-file-ops"),
       npmScript("test:browser-provider-bridge-inheritance"),
       npmScript("test:browser-preview-routing"),
+      npmScript("test:browser-routed-command-security"),
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),

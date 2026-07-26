@@ -3,6 +3,7 @@ import type { BrowserPreviewTopology } from "./browser-preview-routing.js"
 import { addBrowserProbeNetworkCount, browserProbeArtifactRefs, browserProbeWebSocketSummary, createBrowserProbeProgressTracker, now, requestHost, safeBrowserProbeUrl, sortBrowserProbeNetworkCounts } from "./browser-probe-support.js"
 import { browserProbeBenchMetrics } from "./browser-metrics.js"
 import { browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeReplayability } from "./browser-probe.js"
+import { sanitizeBrowserResultValue } from "./browser-result-sanitization.js"
 import type { BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserProbeWebSocketReviewSummary, BrowserRedirectDiagnosticsSummary, BrowserStepAssertion, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 
 export interface BrowserProbeCaptureSelection {
@@ -87,7 +88,7 @@ export interface BrowserProbeSessionResult {
 
 export class BrowserProbeSessionResultBuilder {
   compose(rawInput: BrowserProbeSessionResultInput): BrowserProbeSessionResult {
-    const input = sanitizeBrowserProbeSessionResultInput(rawInput)
+    const input = sanitizeBrowserResultValue(rawInput)
     const assertionSummary = browserProbeAssertionSummary(input.assertions)
     const finishedAt = now()
     const files = browserProbeArtifactFileMap(input)
@@ -156,27 +157,6 @@ export class BrowserProbeSessionResultBuilder {
         summary: artifact.summary,
       }, null, 2)}\n`,
     }
-  }
-}
-
-function sanitizeBrowserProbeSessionResultInput(input: BrowserProbeSessionResultInput): BrowserProbeSessionResultInput {
-  const safeUrl = (url: string): string => safeBrowserProbeUrl(url) ?? "[unavailable]"
-  return {
-    ...input,
-    requestedUrl: safeUrl(input.requestedUrl),
-    finalUrl: safeUrl(input.finalUrl),
-    network: input.network.map((record) => ({ ...record, url: safeUrl(record.url) })),
-    preview: {
-      ...input.preview,
-      localOrigin: safeUrl(input.preview.localOrigin),
-      effectiveOrigin: safeUrl(input.preview.effectiveOrigin),
-      ...(input.preview.publicOrigin ? { publicOrigin: safeUrl(input.preview.publicOrigin) } : {}),
-    },
-    topologyOrigins: {
-      localPreviewOrigin: safeUrl(input.topologyOrigins.localPreviewOrigin),
-      effectivePreviewOrigin: safeUrl(input.topologyOrigins.effectivePreviewOrigin),
-      ...(input.topologyOrigins.requestedPreviewOrigin ? { requestedPreviewOrigin: safeUrl(input.topologyOrigins.requestedPreviewOrigin) } : {}),
-    },
   }
 }
 

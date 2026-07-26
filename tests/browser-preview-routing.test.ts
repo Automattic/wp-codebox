@@ -7,7 +7,7 @@ import type { BrowserContext, Request, Response, Route } from "playwright"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
 import { serializeBrowserError, serializeBrowserRequestFailure, serializeBrowserResponse } from "../packages/runtime-playground/src/browser-metrics.js"
-import { browserPreviewNetworkPolicy, browserPreviewRouting, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewNetworkPolicy, browserPreviewRouting, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { BrowserProbeSessionResultBuilder, type BrowserProbeSessionResultInput } from "../packages/runtime-playground/src/browser-probe-session-result-builder.js"
 import { createBrowserProbeProgressTracker } from "../packages/runtime-playground/src/browser-probe-support.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -107,6 +107,28 @@ test("drain observes a routed request registered while another request is settli
   resolveSecond(routedResponse())
   await Promise.all([secondRun, drain])
   assert.equal(tracker.pending.size, 0)
+})
+
+test("shared browser cleanup drains late registrations even when browser close fails", async () => {
+  const tracker = createBrowserPreviewRouteTracker()
+  let release!: () => void
+  const task = new Promise<void>((resolve) => { release = resolve })
+  const browser = {
+    async close() {
+      tracker.registrations += 1
+      tracker.pending.add(task)
+      setTimeout(() => {
+        tracker.pending.delete(task)
+        release()
+      }, 5)
+      throw routeFetchError("browser close failed")
+    },
+  }
+  const lifecycleErrors = await closeBrowserAndDrainPreviewRoutes(browser, tracker)
+  assert.equal(tracker.pending.size, 0)
+  assert.equal(lifecycleErrors.length, 1)
+  assert.match(lifecycleErrors[0]!.message, /operation=browser-close/)
+  assertNoSentinels(lifecycleErrors[0]!.message, "cleanup diagnostic")
 })
 
 test("the complete route callback contains continue and policy abort failures", async () => {

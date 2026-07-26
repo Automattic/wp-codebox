@@ -350,6 +350,22 @@ export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRou
   }
 }
 
+export async function closeBrowserAndDrainPreviewRoutes(browser: Pick<import("playwright").Browser, "close">, tracker: BrowserPreviewRouteTracker): Promise<Error[]> {
+  const errors: Error[] = []
+  try {
+    await browser.close()
+  } catch (error) {
+    errors.push(browserPreviewLifecycleError("browser-close", error))
+  } finally {
+    try {
+      await drainBrowserPreviewRouteTracker(tracker)
+    } catch (error) {
+      errors.push(browserPreviewLifecycleError("route-drain", error))
+    }
+  }
+  return errors
+}
+
 function browserPreviewMode(args: string[], publicOrigin: string | undefined): BrowserProbePreviewMode {
   const raw = argValue(args, "preview-mode")?.trim() || (publicOrigin ? "public" : "local")
   if (raw === "local" || raw === "public" || raw === "secure") {
@@ -639,6 +655,13 @@ function browserPreviewRouteRequestSummary(route: Route): { method: string; reso
   } catch {
     return { method: "unknown", resourceType: "unknown", url: "[unavailable]" }
   }
+}
+
+function browserPreviewLifecycleError(operation: string, error: unknown): Error {
+  const cause = sanitizeBrowserPreviewRouteError(error).message.replace(/[\r\n]+/g, " ")
+  const diagnostic = new Error(`wordpress.browser-probe route lifecycle failed: operation=${operation} cause=${cause}`)
+  diagnostic.name = "BrowserPreviewRouteLifecycleError"
+  return diagnostic
 }
 
 function browserPreviewRouteFetchExhaustedError(route: Route, requestUrl: URL, attempts: number, error: unknown): Error {
