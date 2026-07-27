@@ -1,4 +1,4 @@
-import { playgroundBlueprint } from "./blueprint.js"
+import { playgroundRuntimeBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
@@ -14,6 +14,7 @@ import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheDiagnostic, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
+import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -171,7 +172,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           phpEnv: connectorSecretEnvironment(spec),
-          "site-url": spec.preview?.siteUrl,
+          "site-url": playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
       } finally {
@@ -523,7 +524,7 @@ function distributionEnv(values: Record<string, unknown> | undefined): Record<st
 }
 
 function playgroundCliBlueprint(spec: RuntimeCreateSpec): unknown {
-  const blueprint = playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl)
+  const blueprint = playgroundRuntimeBlueprint(spec)
   if (blueprint !== spec.environment.blueprint) {
     return blueprint
   }

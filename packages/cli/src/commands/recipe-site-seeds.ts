@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 import { assertFixtureImportDeterministicIdsSupported, fixtureImportDeterministicIdPlan, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
-import { siteSeedScopesAreBounded } from "../recipe-dry-run.js"
+import { siteSeedScopesAreBounded, type RecipeSiteSeedTopologyEvidence } from "../recipe-dry-run.js"
 import type { RecipeExecutionResult, RecipeRunSiteSeed } from "./recipe-run-types.js"
 
 export async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunSiteSeed[]> {
@@ -10,9 +10,11 @@ export async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirec
 
   for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
     const base = recipeSiteSeedRunBase(siteSeed, recipeDirectory, index)
+    const topology = siteSeed.bootstrap?.multisite?.enabled ? await siteSeedTopologyEvidence(siteSeed, runtime, executions, index) : undefined
     if (siteSeed.type !== "fixture") {
       results.push({
         ...base,
+        ...(topology ? { topology } : {}),
         action: "skipped",
         reason: "parent-site export is not implemented in this first executable site seed slice",
       })
@@ -33,6 +35,7 @@ export async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirec
       const imported = parseSiteSeedImportResult(execution.stdout)
       results.push({
         ...base,
+        ...(topology ? { topology } : {}),
         action: "imported",
         counts: {
           ...bounded.counts,
@@ -59,6 +62,7 @@ export async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirec
     const imported = parseSiteSeedImportResult(execution.stdout)
     results.push({
       ...base,
+      ...(topology ? { topology } : {}),
       action: "imported",
       counts: imported.counts,
       ...(imported.warnings.length > 0 ? { warnings: imported.warnings } : {}),
@@ -71,6 +75,59 @@ export async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirec
   }
 
   return results
+}
+
+async function siteSeedTopologyEvidence(siteSeed: WorkspaceRecipeSiteSeed, runtime: Runtime, executions: RecipeExecutionResult[], index: number): Promise<RecipeSiteSeedTopologyEvidence> {
+  const runtimeInfo = await runtime.info()
+  if (runtimeInfo.backend !== "wordpress-playground") {
+    throw new Error(`Runtime backend ${runtimeInfo.backend} cannot execute siteSeed mapped-domain multisite bootstrap; select wordpress or wordpress-playground.`)
+  }
+  const requested = siteSeed.bootstrap!
+  const execution = await runtime.execute({ command: "wordpress.run-php", args: [`code=${siteSeedTopologyEvidenceCode()}`] })
+  executions.push(withRecipeExecutionPhase(execution, "setup", index))
+  if (execution.exitCode !== 0) throw new Error(`Site seed mapped-domain multisite evidence failed: ${execution.stderr || execution.stdout}`)
+  const parsed = JSON.parse(execution.stdout.trim() || "{}") as { multisite?: unknown; install?: unknown; dynamicHost?: unknown; network?: unknown; sites?: unknown }
+  if (parsed.multisite !== true || parsed.dynamicHost !== true || (parsed.install !== "subdomain" && parsed.install !== "subdirectory") || !parsed.network || typeof parsed.network !== "object" || !Array.isArray(parsed.sites)) {
+    throw new Error("Site seed mapped-domain multisite bootstrap did not return valid effective topology evidence.")
+  }
+  const sites = parsed.sites.filter((site): site is { id: number; domain: string; path: string; primary: boolean } => Boolean(site) && typeof site === "object" && typeof (site as { id?: unknown }).id === "number" && typeof (site as { domain?: unknown }).domain === "string" && typeof (site as { path?: unknown }).path === "string")
+  const expected = (requested.multisite?.sites ?? []).map((site) => `${site.domain.toLowerCase()}${site.path ?? "/"}`).sort()
+  const effective = sites.map((site) => `${site.domain.toLowerCase()}${site.path}`).sort()
+  for (const identity of expected) {
+    if (!effective.includes(identity)) throw new Error(`Site seed mapped-domain multisite bootstrap did not materialize declared site: ${identity}`)
+  }
+  const routeHosts = [...new Set((requested.multisite?.sites ?? []).map((site) => site.domain.toLowerCase()))].sort()
+  return {
+    schema: "wp-codebox/site-seed-topology/v1",
+    backend: runtimeInfo.backend,
+    requested,
+    effective: {
+      multisite: true,
+      install: parsed.install,
+      network: parsed.network as { id: number; domain: string; path: string },
+      sites,
+    },
+    browser: { routeHosts, hostIdentity: "preserved", externalNetworkAccess: "unchanged" },
+    auth: { anonymous: "exact", authenticated: "per-host-materialized", crossDomainCookieParity: "not-claimed" },
+  }
+}
+
+function siteSeedTopologyEvidenceCode(): string {
+  return `
+$network = get_network();
+$main_site_id = get_main_site_id($network ? (int) $network->id : null);
+$config = file_get_contents(ABSPATH . 'wp-config.php');
+$sites = array();
+foreach (get_sites(array('network_id' => $network ? (int) $network->id : null, 'number' => 0, 'orderby' => 'id', 'order' => 'ASC')) as $site) {
+    $sites[] = array('id' => (int) $site->blog_id, 'domain' => (string) $site->domain, 'path' => (string) $site->path, 'primary' => (int) $site->blog_id === (int) $main_site_id);
+}
+echo wp_json_encode(array(
+    'multisite' => is_multisite(),
+    'dynamicHost' => is_string($config) && str_contains($config, 'WP_CODEBOX_DYNAMIC_MULTISITE_HOST'),
+    'install' => is_subdomain_install() ? 'subdomain' : 'subdirectory',
+    'network' => array('id' => $network ? (int) $network->id : 0, 'domain' => $network ? (string) $network->domain : '', 'path' => $network ? (string) $network->path : ''),
+    'sites' => $sites,
+));`
 }
 
 function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: "setup", recipeStepIndex: number): RecipeExecutionResult {

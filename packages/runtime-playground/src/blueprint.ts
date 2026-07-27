@@ -1,4 +1,5 @@
 import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { playgroundSiteSeedMultisiteBlueprintSteps, playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 export function normalizeBlueprint(blueprint: unknown): { extraLibraries?: unknown; landingPage?: unknown; preferredVersions?: unknown; steps: unknown[] } {
   if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {
@@ -45,6 +46,22 @@ export function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpe
       }] : []),
       ...steps,
     ],
+  }
+}
+
+export function playgroundRuntimeBlueprint(spec: RuntimeCreateSpec): unknown {
+  const siteUrl = playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl
+  const base = playgroundBlueprint(spec.environment.blueprint, spec.policy, siteUrl)
+  const multisiteSteps = playgroundSiteSeedMultisiteBlueprintSteps(spec)
+  if (multisiteSteps.length === 0) return base
+
+  const normalized = !base || typeof base !== "object" || Array.isArray(base) ? {} : base as Record<string, unknown>
+  const steps = Array.isArray(normalized.steps) ? normalized.steps : []
+  const defineSiteUrlIndex = steps.findIndex((step) => Boolean(step) && typeof step === "object" && !Array.isArray(step) && (step as { step?: unknown }).step === "defineSiteUrl")
+  const insertAt = defineSiteUrlIndex < 0 ? 0 : defineSiteUrlIndex + 1
+  return {
+    ...normalized,
+    steps: [...steps.slice(0, insertAt), ...multisiteSteps, ...steps.slice(insertAt)],
   }
 }
 

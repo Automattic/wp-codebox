@@ -539,10 +539,21 @@ Recipes may also attach reusable bootstrap declarations to a site seed:
 }
 ```
 
-These are generic declarations for orchestrators and future runtime setup
-support. The current built-in fixture importer treats multisite/domain bootstrap
-as declared metadata and blocks executable fixture imports that require runtime
-setup not yet provided by WP Codebox.
+The Playground backend executes these declarations before fixture import. It
+creates the declared WordPress sites in deterministic order, uses the declared
+primary domain for the network main site, and automatically routes those
+first-party hosts through the local preview without adding them to the external
+network allowlist. Runtime site-seed evidence records the requested and effective
+network/site identities under `topology`.
+
+Mapped-domain browser evidence is exact for anonymous requests: page navigation,
+redirects, subresources, and root-relative REST requests retain the browser's
+original `Host` identity. Fixture-user browser authentication is materialized per
+declared host. Evidence reports that behavior as `per-host-materialized` and does
+not claim production cross-domain cookie parity. Backends without executable
+topology support fail recipe validation with an unsupported-capability diagnostic.
+Existing recipes without an enabled site-seed multisite declaration keep their
+current path-based behavior.
 
 ## Fixture Users And User Sessions
 

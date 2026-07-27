@@ -734,7 +734,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
   }
 
   for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
-    await validateRecipeSiteSeed(siteSeed, recipeDirectory, `$.inputs.siteSeeds[${index}]`, addIssue)
+    await validateRecipeSiteSeed(siteSeed, recipeDirectory, `$.inputs.siteSeeds[${index}]`, normalizeRuntimeBackendKind(recipe.runtime?.backend), addIssue)
   }
 
   for (const [index, stagedFile] of (recipe.inputs?.stagedFiles ?? []).entries()) {
@@ -1397,7 +1397,7 @@ async function validateRecipePluginRuntime(pluginRuntime: WorkspaceRecipePluginR
   }
 }
 
-async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeDirectory: string, path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeDirectory: string, path: string, backend: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
   if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(siteSeed.name)) {
     addIssue("invalid-site-seed-name", `${path}.name`, `Site seed names must be stable identifiers: ${siteSeed.name}`)
   }
@@ -1427,7 +1427,7 @@ async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeD
     }
   }
 
-  validateSiteSeedBootstrap(siteSeed, path, addIssue)
+  validateSiteSeedBootstrap(siteSeed, path, backend, addIssue)
 
   if (siteSeed.type === "parent_site" && siteSeed.source) {
     addIssue("invalid-site-seed-source", `${path}.source`, "Parent-site seed declarations must not name a source file until explicit parent export support lands.")
@@ -1452,27 +1452,46 @@ async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeD
   }
 }
 
-function validateSiteSeedBootstrap(siteSeed: WorkspaceRecipeSiteSeed, path: string, addIssue: (code: string, path: string, message: string) => void): void {
+function validateSiteSeedBootstrap(siteSeed: WorkspaceRecipeSiteSeed, path: string, backend: string, addIssue: (code: string, path: string, message: string) => void): void {
   const bootstrap = siteSeed.bootstrap
   if (!bootstrap) {
     return
   }
 
-  if (bootstrap.multisite?.enabled && siteSeed.type === "fixture") {
-    addIssue("unsupported-site-seed-multisite-bootstrap", `${path}.bootstrap.multisite`, "Multisite bootstrap is a reusable declaration only until the runtime exposes a platform setup primitive.")
+  if (bootstrap.multisite?.enabled && backend !== "wordpress-playground") {
+    addIssue("unsupported-site-seed-multisite-bootstrap", `${path}.bootstrap.multisite`, `Runtime backend ${backend} does not provide executable siteSeed mapped-domain multisite bootstrap. Select wordpress or wordpress-playground.`)
   }
 
+  const identities = new Set<string>()
   for (const [index, site] of (bootstrap.multisite?.sites ?? []).entries()) {
-    if (!site.domain || typeof site.domain !== "string") {
-      addIssue("invalid-site-seed-bootstrap-domain", `${path}.bootstrap.multisite.sites[${index}].domain`, "Bootstrap sites require a domain.")
-    }
+    validateSiteSeedBootstrapIdentity(site, `${path}.bootstrap.multisite.sites[${index}]`, addIssue)
+    const identity = `${String(site.domain).toLowerCase()}${normalizedBootstrapPath(site.path)}`
+    if (identities.has(identity)) addIssue("duplicate-site-seed-bootstrap-site", `${path}.bootstrap.multisite.sites[${index}]`, `Bootstrap site identities must be unique: ${identity}`)
+    identities.add(identity)
   }
 
+  let primaryDomains = 0
   for (const [index, domain] of (bootstrap.domains ?? []).entries()) {
-    if (!domain.domain || typeof domain.domain !== "string") {
-      addIssue("invalid-site-seed-bootstrap-domain", `${path}.bootstrap.domains[${index}].domain`, "Bootstrap domains require a domain.")
-    }
+    validateSiteSeedBootstrapIdentity(domain, `${path}.bootstrap.domains[${index}]`, addIssue)
+    if (domain.primary) primaryDomains += 1
+    const identity = `${String(domain.domain).toLowerCase()}${normalizedBootstrapPath(domain.path)}`
+    if (bootstrap.multisite?.enabled && !identities.has(identity)) addIssue("unmatched-site-seed-bootstrap-domain", `${path}.bootstrap.domains[${index}]`, `Bootstrap domains must match a declared multisite site identity: ${identity}`)
   }
+  if (bootstrap.multisite?.enabled && (bootstrap.multisite.sites?.length ?? 0) === 0) addIssue("missing-site-seed-bootstrap-sites", `${path}.bootstrap.multisite.sites`, "Executable multisite bootstrap requires at least one declared site.")
+  if (primaryDomains > 1) addIssue("ambiguous-site-seed-bootstrap-primary", `${path}.bootstrap.domains`, "Executable multisite bootstrap supports at most one primary domain.")
+}
+
+function validateSiteSeedBootstrapIdentity(identity: { domain: string; path?: string }, path: string, addIssue: (code: string, path: string, message: string) => void): void {
+  if (!identity.domain || typeof identity.domain !== "string" || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(identity.domain)) {
+    addIssue("invalid-site-seed-bootstrap-domain", `${path}.domain`, "Bootstrap domains must be hostnames without a scheme, path, wildcard, or port.")
+  }
+  if (identity.path !== undefined && (!identity.path.startsWith("/") || !identity.path.endsWith("/") || identity.path.includes("//") || identity.path.includes("?") || identity.path.includes("#"))) {
+    addIssue("invalid-site-seed-bootstrap-path", `${path}.path`, "Bootstrap paths must be canonical absolute directory paths ending in /.")
+  }
+}
+
+function normalizedBootstrapPath(path: string | undefined): string {
+  return path?.endsWith("/") ? path : `${path ?? ""}/`
 }
 
 function validateSiteSeedScopeBounds(scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>, path: string, scopeName: string, seedType: WorkspaceRecipeSiteSeed["type"], addIssue: (code: string, path: string, message: string) => void): void {
