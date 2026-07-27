@@ -1323,8 +1323,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
         retained.retain(responseBodyBytes)
         response = toFetchResponse(request, phpResponse)
       }
-      await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site))
-      runtime = undefined
+      const retainCommittedRuntime = route !== "static-artifact-import"
+      if (!retainCommittedRuntime) {
+        await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site))
+        runtime = undefined
+      }
       if (phpResponse) retained.release(responseBodyBytes)
       if (route === "static-artifact-import" && !currentPublication) currentPublication = await trace.measure("publication.current.initialize", () => initializeProvisioningPublication(env.WORDPRESS_STATE_BUCKET, activeLease, site))
       const publicationJob = await trace.measure("publication.enqueue", () => enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, activeLease, next, currentPublication, publicationChanges!, site))
@@ -1336,6 +1339,15 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
         await heartbeat?.("committing", 90)
       }
       const committed = await trace.measure("coordinator.commit", () => commitLease(coordinator, request.url, activeLease, next))
+      finalized = true
+      if (retainCommittedRuntime) {
+        const stateMatched = samePointer(committed.pointer, next)
+        if (!runtime || !stateMatched) throw new Error("Committed runtime pointer does not match its persisted canonical state.")
+        const committedRuntime = { ...runtime, pointer: committed.pointer }
+        const sameRuntime = committedRuntime.php === runtime.php && committedRuntime.requestHandler === runtime.requestHandler
+        await trace.measure("runtime.cache.promote", async () => cacheRuntime(committed.pointer, committedRuntime, site), { stateMatched, sameRuntime })
+        runtime = undefined
+      }
       await onCommitted?.(committed)
       // A pre-commit R2 job is inert; only the observable coordinator receipt may wake it.
       if (publicationJob && env.WORDPRESS_STATE_DATABASE) {
