@@ -19,6 +19,7 @@ import { stableJson } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
 
 import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
+import { redactBrowserNetworkUrl } from "./browser-metrics.js"
 import { browserPreviewNetworkDecision, type BrowserPreviewNavigationScope, type BrowserPreviewNetworkPolicy } from "./browser-preview-routing.js"
 
 interface AdaptiveObservationSources {
@@ -595,7 +596,7 @@ function adaptiveOracleEvidence(consoleRecords: Record<string, unknown>[], netwo
     const message = recordMessage(record)
     const locationUrl = objectRecord(record.location).url
     const match = classifiedFailures.findIndex((failure, index) => unmatchedFailures.has(index)
-      && (typeof locationUrl === "string" && locationUrl ? failure.url === locationUrl && failureTokenMatches(message, failure.failure) : failureTokenMatches(message, failure.failure)))
+      && (typeof locationUrl === "string" && locationUrl ? networkUrlsMatch(failure.url, locationUrl) && failureTokenMatches(message, failure.failure) : failureTokenMatches(message, failure.failure)))
     if (match < 0) return [message]
     unmatchedFailures.delete(match)
     const failure = classifiedFailures[match]!
@@ -641,6 +642,10 @@ function boundedNetworkFailureEvidence(failures: Array<BrowserAdaptiveNetworkFai
 function failureTokenMatches(message: string, failure: string | undefined): boolean {
   const token = failure?.match(/ERR_[A-Z0-9_]+/i)?.[0]
   return Boolean(token && message.toUpperCase().includes(token.toUpperCase()))
+}
+
+function networkUrlsMatch(networkUrl: string, consoleUrl: string): boolean {
+  return redactBrowserNetworkUrl(networkUrl) === redactBrowserNetworkUrl(consoleUrl)
 }
 
 function networkFailureOracleMessage(failure: BrowserAdaptiveNetworkFailure): string {

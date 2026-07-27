@@ -500,7 +500,7 @@ test("declared network-policy blocks remain structured evidence without becoming
   assert.equal(run.result.summary.errors, 0)
   assert(transition?.observations.consoleErrors.some((message) => message.includes("ERR_BLOCKED_BY_CLIENT")), "raw browser console evidence remains available")
   assert.deepEqual(transition?.observations.networkFailures, [{
-    url: "http://assets.example.invalid/tile.png",
+    url: "http://assets.example.invalid/tile.png?cache=[redacted]",
     host: "assets.example.invalid",
     urlClassification: "external",
     policyDecision: "blocked",
@@ -561,6 +561,21 @@ test("same-URL product errors require a matching failure token before policy cor
   assert(fingerprints.includes(productFingerprint))
   assert(fingerprints.includes(environmentBoundOracleFingerprint(blockMessage)))
   assert.equal(finding.result.transitions[0]?.observations.networkFailureSummary?.policyBlocks, 1)
+})
+
+test("redacted policy-block URLs correlate without hiding independent console errors across browser contexts", async () => {
+  for (const environment of ["desktop", "mobile"] as const) {
+    const evidence = await runNetworkOracleFixture("block", "blocked", {}, false, false, environment)
+    assert.equal(evidence.result.findings.length, 0, environment)
+    assert.deepEqual(evidence.result.transitions[0]?.observations.oracleFingerprints, [], environment)
+    assert.equal(evidence.result.transitions[0]?.observations.networkFailureSummary?.policyBlocks, 1, environment)
+
+    const independent = await runNetworkOracleFixture("block", "blocked", {}, false, true, environment)
+    const productFingerprint = browserAdaptiveDigest("oracle", { environmentDigest: independent.contract.environmentDigest, value: "same-URL product defect" })
+    assert.deepEqual(independent.result.transitions[0]?.observations.oracleFingerprints, [productFingerprint], environment)
+    assert.equal(independent.result.findings[0]?.fingerprint, productFingerprint, environment)
+    assert.equal(independent.result.transitions[0]?.observations.networkFailureSummary?.oracleFindings, 0, environment)
+  }
 })
 
 test("allow and record policies do not explain unexpected same-origin request failures", async () => {
@@ -737,7 +752,7 @@ async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopolo
   }
 }
 
-async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behavior: "blocked" | "unexpected" | "mixed" | "exception", input: Record<string, unknown> = {}, urlLessConsole = false, sameUrlProductError = false) {
+async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behavior: "blocked" | "unexpected" | "mixed" | "exception", input: Record<string, unknown> = {}, urlLessConsole = false, sameUrlProductError = false, environment: "desktop" | "mobile" = "desktop") {
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://preview.invalid").pathname
     if (path === "/failed.png") {
@@ -748,7 +763,7 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
     response.end(`<!doctype html><style>button{display:block;width:180px;height:30px}</style><button id="trigger">Trigger</button><script>
       document.querySelector('#trigger').addEventListener('click', () => {
         const load = (src) => { const image = document.createElement('img'); image.src = src; document.body.append(image); };
-        ${behavior === "blocked" || behavior === "mixed" ? "load('http://assets.example.invalid/tile.png');" : ""}
+        ${behavior === "blocked" || behavior === "mixed" ? "load('http://assets.example.invalid/tile.png?cache=fixture-secret');" : ""}
         ${behavior === "unexpected" || behavior === "mixed" ? "load('/failed.png');" : ""}
         ${behavior === "exception" ? "setTimeout(() => { throw new Error('fixture page exception'); }, 0);" : ""}
       });
@@ -757,7 +772,8 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
   const startUrl = await listenLocalHttpServer(server)
   const topology = browserPreviewTopology([`network-policy=${mode}`], undefined, startUrl)
   const browser = await chromium.launch({ headless: true })
-  const context = await browser.newContext()
+  const browserEnvironment = environment === "mobile" ? { hasTouch: true, isMobile: true, viewport: { height: 844, width: 390 } } : undefined
+  const context = await browser.newContext(browserEnvironment)
   await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, startUrl)
   const page = await context.newPage()
   const consoleMessages: Record<string, unknown>[] = []
@@ -779,6 +795,7 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
     actionFamilies: ["click"],
     budgets: { maxActions: 1, maxStates: 2, maxTransitions: 1, maxDurationMs: 10_000 },
     stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1_500, maxMutationRecords: 20 },
+    ...(browserEnvironment ? { environment: browserEnvironment } : {}),
     ...input,
   })
   try {

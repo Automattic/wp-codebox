@@ -608,7 +608,7 @@ export function serializeBrowserRequestFailure(request: Request, timestamp = now
   }
 }
 
-function redactBrowserNetworkUrl(url: string): string {
+export function redactBrowserNetworkUrl(url: string): string {
   return redactString(url, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }
 
