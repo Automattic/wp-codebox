@@ -1,6 +1,10 @@
 const SCOPES = new Set(["sites:create", "sites:read", "sites:import", "operations:read"])
 const DEFAULT_AUDIT_LIMIT = 10_000
 const UNKNOWN_AUDIT_BUCKET_MS = 5 * 60_000
+export const PRINCIPAL_CREDENTIAL_SCHEMA = Object.freeze([
+  "CREATE TABLE IF NOT EXISTS wp_codebox_principal_credentials (credential_id TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, scopes TEXT NOT NULL, expires_at INTEGER NOT NULL, max_sites INTEGER NOT NULL, sites TEXT, revoked_at INTEGER, created_at INTEGER NOT NULL, PRIMARY KEY (credential_id, version))",
+  "CREATE TABLE IF NOT EXISTS wp_codebox_principal_credential_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('registered','revoked','authenticated','denied')), principal TEXT, credential_id TEXT, version TEXT, reason TEXT NOT NULL CHECK (reason IN ('ok','unknown','expired','revoked','scope','site')), dedupe_key TEXT UNIQUE)",
+])
 
 export interface PrincipalCredentialPolicy {
   principal: string
@@ -39,12 +43,11 @@ export class D1PrincipalCredentialRepository {
   }
 
   async initialize(): Promise<void> {
-    await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_principal_credentials (credential_id TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, scopes TEXT NOT NULL, expires_at INTEGER NOT NULL, max_sites INTEGER NOT NULL, sites TEXT, revoked_at INTEGER, created_at INTEGER NOT NULL, PRIMARY KEY (credential_id, version))").run()
-    await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_principal_credential_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('registered','revoked','authenticated','denied')), principal TEXT, credential_id TEXT, version TEXT, reason TEXT NOT NULL CHECK (reason IN ('ok','unknown','expired','revoked','scope','site')), dedupe_key TEXT UNIQUE)").run()
+    for (const statement of PRINCIPAL_CREDENTIAL_SCHEMA) await this.db.prepare(statement).run()
   }
 
   async register(input: PrincipalCredentialVersion): Promise<void> {
-    validate(input)
+    validatePrincipalCredentialVersion(input)
     await this.initialize()
     const expiresAt = Date.parse(input.expiresAt)
     const scopes = JSON.stringify(input.scopes)
@@ -137,7 +140,7 @@ export class D1PrincipalCredentialRepository {
   private trimAuditStatement(): D1PreparedStatement { return this.db.prepare("DELETE FROM wp_codebox_principal_credential_audit WHERE id IN (SELECT id FROM wp_codebox_principal_credential_audit ORDER BY id DESC LIMIT -1 OFFSET ?)").bind(this.auditLimit) }
 }
 
-function validate(input: PrincipalCredentialVersion): void {
+export function validatePrincipalCredentialVersion(input: PrincipalCredentialVersion): void {
   if (!identifier(input.credentialId) || !identifier(input.version) || !principalId(input.principal) || !/^[a-f0-9]{64}$/.test(input.digest) || !validPolicy(input)) throw new Error("Credential policy is invalid.")
 }
 function validPolicy(value: PrincipalCredentialPolicy): boolean {

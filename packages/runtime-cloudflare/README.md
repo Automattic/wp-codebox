@@ -60,6 +60,12 @@ The import transaction boots a dedicated runtime with the pinned Static Site Imp
 
 SSI is extracted only for import requests, so normal browser, mutation, publication, and cron boots retain their existing memory and latency profile. The pinned normal plugin archive bundles Blocks Engine and supports website artifacts without the optional Figma zstd extension; compressed `.fig` import is outside this runtime contract.
 
+## Principal Credential Operations
+
+`npm run operator:cloudflare-principal-credential -- issue` registers a durable principal credential in D1. Supply the bearer as exact stdin bytes and the non-secret identity and policy through `--config`, `--account-id`, `--credential-id`, `--version`, `--principal`, `--scopes`, `--expires-at`, and `--max-sites`; optional `--sites` restricts the credential to canonical site IDs. The API token defaults to `CLOUDFLARE_API_TOKEN`, or an explicit safe environment name can be selected with `--api-token-env`. The operator hashes at its stdin boundary, executes one parameterized D1 API batch transaction, and emits only redacted identity and policy evidence. It never places the bearer or digest in arguments, environments, output, or persistent artifacts. Exact issue replay converges, while version-policy conflicts and digest reuse fail closed.
+
+Rotation uses explicit overlap: issue the new version, move callers to it, then run `npm run operator:cloudflare-principal-credential -- revoke` with the old `--credential-id` and `--version`. Revocation accepts no stdin and converges as `revoked` or `unchanged`. An authorized caller control plane can bind a private input directly to the issue command's stdin; Worker-bound secrets remain a separate deployment contract. `--local` and `--persist-to` are reserved for isolated verification. Remote mutation remains a separately authorized operator step.
+
 ## Verification
 
 1. Run `npm run generate:cloudflare-canonical-mdi-seed` and `npm run generate:cloudflare-wordpress-runtime-corpus` to regenerate deterministic runtime artifacts and manifests.
