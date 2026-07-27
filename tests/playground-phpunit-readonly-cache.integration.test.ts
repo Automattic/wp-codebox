@@ -15,6 +15,7 @@ const dependency = join(root, "dependency")
 const harness = join(root, "harness")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
+const failingArtifactsPath = join(root, "failing-artifacts")
 const sentinel = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 
 try {
@@ -59,8 +60,41 @@ try {
   const diagnostic = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
   assert.match(diagnostic, /^DISCOVERY: .* found=1$/m, "actual PHPUnit runner must discover the fixture test file")
   assert.match(diagnostic, /^STAGE_BEGIN:run_tests/m, "actual PHPUnit runner must reach its test stage")
+  const passingEvidence = await readTestResults(artifactsPath, runtime.paths?.runtimeDirectory)
+  const completedResult = await readFile(join(artifactsPath, runtime.paths?.runtimeDirectory ?? "", "files/phpunit/.wp-codebox-result.txt"), "utf8").catch((error) => String(error))
+  assert.match(completedResult, /"status":"passed","total":6/)
+  assert.equal(passingEvidence.status, "passed")
+  assert.deepEqual(passingEvidence.summary, { total: 6, passed: 6, failed: 0, skipped: 0, unknown: 0 })
+
+  await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_passes(): void { $this->assertTrue(true); } public function test_fails(): void { $this->assertTrue(false); } public function test_errors(): void { throw new RuntimeException('fixture error'); } public function test_skips(): void { $this->markTestSkipped('fixture skipped'); } }\n")
+  const failedOutput = await runFailedRecipe()
+  assert.equal(failedOutput.success, false)
+  assert.match(failedOutput.error?.message ?? "", /failureClassification=runtime-command-failure/)
+  assert.doesNotMatch(failedOutput.error?.message ?? "", /crashed before producing a structured response/)
+  const failedRuntime = JSON.parse(await readFile(join(failingArtifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+  const failingEvidence = await readTestResults(failingArtifactsPath, failedRuntime.paths?.runtimeDirectory)
+  assert.equal(failingEvidence.status, "failed")
+  assert.deepEqual(failingEvidence.summary, { total: 4, passed: 1, failed: 2, skipped: 1, unknown: 0 })
+  assert(failingEvidence.rawLogReferences.some((reference) => reference.path === "files/phpunit/.pg-test-result.txt"))
 } finally {
   await rm(root, { recursive: true, force: true })
+}
+
+async function runFailedRecipe(): Promise<{ success?: boolean, error?: { message?: string } }> {
+  try {
+    const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", failingArtifactsPath, "--json"], {
+      cwd: process.cwd(), timeout: 300_000, maxBuffer: 2 * 1024 * 1024,
+    })
+    return JSON.parse(result.stdout)
+  } catch (error) {
+    assert(error && typeof error === "object" && "stdout" in error && typeof error.stdout === "string")
+    return JSON.parse(error.stdout)
+  }
+}
+
+async function readTestResults(artifactPath: string, runtimeDirectory?: string): Promise<{ status: string, summary: { total: number, passed: number, failed: number, skipped: number, unknown: number }, rawLogReferences: Array<{ path: string }> }> {
+  assert.ok(runtimeDirectory, "recipe must retain a runtime artifact directory")
+  return JSON.parse(await readFile(join(artifactPath, runtimeDirectory, "files/test-results.json"), "utf8"))
 }
 
 async function writeFixture(): Promise<void> {

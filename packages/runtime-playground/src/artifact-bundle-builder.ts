@@ -55,11 +55,11 @@ import {
   buildWorkspacePatchArtifact,
   buildBlueprintAfter,
   buildBlueprintAfterNotes,
-  buildTestResults,
   serializeCapturedMountFiles,
   type CapturedMountFiles,
   type MountDiffsResult,
 } from "./artifacts.js"
+import { buildPhpunitTestResults, readCapturedPhpunitCompletedResults } from "./phpunit-test-results.js"
 import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
 import { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations } from "./replayable-wordpress-site-bundle.js"
 import { runtimeSnapshotPayload, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
@@ -179,7 +179,8 @@ export class ArtifactBundleBuilder {
     diagnostics.summary.notice = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "notice").length
     diagnostics.summary.info = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "info").length
     diagnostics.status = diagnostics.summary.total > 0 ? "reported" : "clean"
-    const testResults = buildTestResults()
+    const phpunitCompletedResults = await readCapturedPhpunitCompletedResults(source.artifactRoot)
+    const testResults = buildPhpunitTestResults(source.commands, phpunitCompletedResults)
     const workspacePatch = buildWorkspacePatchArtifact({
       createdAt,
       provenance,
@@ -263,6 +264,7 @@ export class ArtifactBundleBuilder {
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
       ...commandArtifactManifestFiles(source.artifactRoot, source.commands),
+      ...phpunitCompletedResults.map(({ path }) => artifactManifestFile(join(source.artifactRoot, path), "test-results", "text/plain")),
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
       ...runtimeSnapshotFiles,
@@ -392,7 +394,7 @@ export class ArtifactBundleBuilder {
     await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, redactedPatch)
     await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, artifactJson(diagnostics))
-    await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, artifactJson(testResults))
+    await writeFile(testResultsPath, artifactJson(testResults))
     await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, artifactJson(previewEvidence))
     await writeFile(previewSessionEvidencePath, previewSessionEvidenceJson)
     const redaction = redactor.summary()
