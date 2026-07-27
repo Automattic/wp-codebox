@@ -89,6 +89,7 @@
     "build:release": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
     "cloudflare:dry-run": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
     "cloudflare:dry-run:d1": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.d1.jsonc",
+    "cloudflare:dry-run:control": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.control.jsonc",
     "cloudflare:dry-run:public-reader": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.public-reader.jsonc",
     "cloudflare:local-gate": "node scripts/cloudflare-local-gate.mjs",
     "cloudflare:local-gate:d1": "node scripts/cloudflare-local-gate.mjs --coordinator=d1",
