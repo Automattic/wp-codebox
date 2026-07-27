@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
 import { allocationIdentity, CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
-import { PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
+import { administratorPasswordForSite, PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
 import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
 import { D1PrincipalCredentialRepository } from "../packages/runtime-cloudflare/src/principal-credential-repository.js"
 
@@ -41,6 +41,7 @@ function createRequest(key = "create-1", change: Partial<{ sha256: string; size:
 function stageRequest(body: Uint8Array = artifact, sha256 = digest, token = "good") { return new Request(`https://control.invalid/v1/artifacts/${sha256}`, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body }) }
 async function create(runtime: ReturnType<typeof runtime>, key = "create-1") { return routeProvisioningApi(createRequest(key), runtime.env, runtime.operations) }
 function count(db: Db, table: string) { const exists = db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table); return exists ? Number((db.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count) : 0 }
+function bindings(activeVersion: string, versions = [{ version: "v1", claimSecret: "claim-root-secret-with-at-least-thirty-two-bytes", password: "admin-root-secret" }, { version: "v2", claimSecret: "rotated-claim-root-secret-with-at-least-thirty-two-bytes", password: "rotated-admin-root" }]) { return JSON.stringify({ activeVersion, versions }) }
 
 test("auth failures, malformed config, expiry, and scope stop before body and R2 reads", async () => {
   for (const config of [undefined, [], [{ id: "a", principal: "a", digest: hash("good"), scopes: ["sites:create"], expiresAt: "2000-01-01T00:00:00.000Z", maxSites: 1 }], [{ id: "a", principal: "a", digest: hash("good"), scopes: ["sites:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]]) {
@@ -140,13 +141,58 @@ test("route, method, Allow, and /v1 precedence behavior is explicit", async () =
 test("administrator claims validate roots before allocation and persist only a digest", async () => {
   for (const key of ["WORDPRESS_ADMIN_CLAIM_SECRET", "WORDPRESS_ADMIN_PASSWORD"] as const) { const r = runtime(); delete r.env[key]; assert.equal((await create(r)).status, 503); assert.equal(count(r.db, "wp_codebox_api_sites"), 0) }
   const r = runtime(); const body = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }; assert.match(body.site.administratorClaim.token, /^[a-f0-9]{64}$/)
-  const stored = JSON.stringify(r.db.sqlite.prepare("SELECT * FROM wp_codebox_api_admin_claims").all()); assert.doesNotMatch(stored, new RegExp(body.site.administratorClaim.token)); assert.doesNotMatch(stored, /claim-root-secret|admin-root-secret/)
+  const stored = JSON.stringify({ claims: r.db.sqlite.prepare("SELECT * FROM wp_codebox_api_admin_claims").all(), roots: r.db.sqlite.prepare("SELECT * FROM wp_codebox_api_admin_roots").all() }); assert.doesNotMatch(stored, new RegExp(body.site.administratorClaim.token)); assert.doesNotMatch(stored, /claim-root-secret|admin-root-secret/); assert.doesNotMatch(stored, new RegExp(hash("admin-root-secret")), "a low-entropy legacy password root is not stored as a directly testable digest"); assert.match(stored, /root_version/)
+})
+test("allocation and administrator root evidence commit atomically", async () => {
+  const r = runtime(); r.db.sqlite.exec("CREATE TABLE wp_codebox_api_admin_roots (site_id TEXT PRIMARY KEY, root_version TEXT NOT NULL, claim_root_digest TEXT NOT NULL, password_root_digest TEXT NOT NULL, created_at INTEGER NOT NULL); CREATE TRIGGER fail_root_evidence BEFORE INSERT ON wp_codebox_api_admin_roots BEGIN SELECT RAISE(ABORT, 'root evidence unavailable'); END")
+  await assert.rejects(() => create(r), /root evidence unavailable/)
+  assert.equal(count(r.db, "wp_codebox_api_sites"), 0); assert.equal(count(r.db, "wp_codebox_sites"), 0); assert.equal(count(r.db, "wp_codebox_api_admin_roots"), 0)
+})
+test("legacy claim and root-evidence backfill commits atomically", async () => {
+  const r = runtime(); await create(r); r.db.sqlite.prepare("DELETE FROM wp_codebox_api_admin_claims").run(); r.db.sqlite.prepare("DELETE FROM wp_codebox_api_admin_roots").run(); r.db.sqlite.exec("CREATE TRIGGER fail_root_backfill BEFORE INSERT ON wp_codebox_api_admin_roots BEGIN SELECT RAISE(ABORT, 'root backfill unavailable'); END")
+  await assert.rejects(() => create(r), /root backfill unavailable/)
+  assert.equal(count(r.db, "wp_codebox_api_admin_claims"), 0); assert.equal(count(r.db, "wp_codebox_api_admin_roots"), 0)
+})
+test("versioned root configuration is bounded and legacy adaptation preserves derivation bytes", async () => {
+  const legacy = runtime(); const versioned = runtime(); versioned.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v1", [{ version: "v1", claimSecret: legacy.env.WORDPRESS_ADMIN_CLAIM_SECRET, password: legacy.env.WORDPRESS_ADMIN_PASSWORD }]); delete versioned.env.WORDPRESS_ADMIN_CLAIM_SECRET; delete versioned.env.WORDPRESS_ADMIN_PASSWORD
+  const legacyClaim = await (await create(legacy)).json() as { site: { administratorClaim: { token: string } } }; const versionedClaim = await (await create(versioned)).json() as { site: { administratorClaim: { token: string } } }
+  assert.equal(versionedClaim.site.administratorClaim.token, legacyClaim.site.administratorClaim.token)
+  for (const value of ["not-json", JSON.stringify({ activeVersion: "v1", versions: [] }), bindings("v1", Array.from({ length: 9 }, (_, index) => ({ version: `v${index}`, claimSecret: "claim-root-secret-with-at-least-thirty-two-bytes", password: "p" }))), "x".repeat(16 * 1024 + 1)]) { const r = runtime(); r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = value; delete r.env.WORDPRESS_ADMIN_CLAIM_SECRET; delete r.env.WORDPRESS_ADMIN_PASSWORD; assert.equal((await create(r)).status, 503); assert.equal(count(r.db, "wp_codebox_api_sites"), 0); assert.equal(r.bucket.gets, 0) }
+  const mixed = runtime(); mixed.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v1"); assert.equal((await create(mixed)).status, 503); assert.equal(mixed.bucket.gets, 0)
+  const longLegacy = runtime(); longLegacy.env.WORDPRESS_ADMIN_PASSWORD = "x".repeat(4097); assert.equal((await create(longLegacy)).status, 202)
+})
+test("active root changes preserve pinned claims and canonical bootstrap resolution", async () => {
+  const r = runtime(); r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v1"); delete r.env.WORDPRESS_ADMIN_CLAIM_SECRET; delete r.env.WORDPRESS_ADMIN_PASSWORD
+  const first = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }
+  r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v2")
+  const replay = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }
+  assert.equal(replay.site.administratorClaim.token, first.site.administratorClaim.token)
+  assert.equal(await administratorPasswordForSite(r.env, first.site.id), await (await import("../packages/runtime-cloudflare/src/wordpress-auth.js")).deriveSiteCredential("admin-root-secret", first.site.id, "admin-password"))
+  r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(first.site.id)
+  const redeemed = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${first.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${first.site.administratorClaim.token}` } }), r.env, r.operations)
+  assert.equal(redeemed.status, 200)
+  const second = await (await create(r, "create-2")).json() as { site: { id: string } }
+  assert.equal((r.db.sqlite.prepare("SELECT root_version FROM wp_codebox_api_admin_roots WHERE site_id = ?").get(second.site.id) as { root_version: string }).root_version, "v2")
+})
+test("retiring a pinned root fails closed without consuming its pending claim", async () => {
+  const r = runtime(); r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v1"); delete r.env.WORDPRESS_ADMIN_CLAIM_SECRET; delete r.env.WORDPRESS_ADMIN_PASSWORD
+  const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id)
+  r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v2", [{ version: "v2", claimSecret: "rotated-claim-root-secret-with-at-least-thirty-two-bytes", password: "rotated-admin-root" }])
+  await assert.rejects(() => administratorPasswordForSite(r.env, created.site.id), /pinned administrator root is unavailable/)
+  const request = (token: string) => new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${token}` } })
+  const valid = await routeProvisioningApi(request(created.site.administratorClaim.token), r.env, r.operations); const invalid = await routeProvisioningApi(request("invalid-capability"), r.env, r.operations)
+  assert.equal(valid.status, 401); assert.equal(await valid.text(), await invalid.text(), "retirement does not disclose whether the capability matched"); assert.equal((r.db.sqlite.prepare("SELECT state FROM wp_codebox_api_admin_claims").get() as { state: string }).state, "pending")
 })
 test("administrator claim create replay exposes its capability only while pending", async () => {
   const r = runtime(); const first = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }; const replay = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }; assert.equal(replay.site.administratorClaim.token, first.site.administratorClaim.token); assert.equal((await routeProvisioningApi(createRequest("create-1", { title: "Changed" }), r.env, r.operations)).status, 409)
 })
-test("administrator claim root rotation retains the pending digest without reconstructing its token", async () => {
-  const r = runtime(); const first = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.env.WORDPRESS_ADMIN_CLAIM_SECRET = "rotated-claim-root-secret-with-at-least-thirty-two-bytes"; const replay = await (await create(r)).text(); assert.doesNotMatch(replay, new RegExp(first.site.administratorClaim.token)); assert.doesNotMatch(replay, /"token"/); r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(first.site.id); const redeemed = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${first.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${first.site.administratorClaim.token}` } }), r.env, r.operations); assert.equal(redeemed.status, 200)
+test("legacy root changes retire the adapted version without reconstructing its token", async () => {
+  const r = runtime(); const first = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.env.WORDPRESS_ADMIN_CLAIM_SECRET = "rotated-claim-root-secret-with-at-least-thirty-two-bytes"; const replay = await (await create(r)).text(); assert.doesNotMatch(replay, new RegExp(first.site.administratorClaim.token)); assert.doesNotMatch(replay, /"token"/); r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(first.site.id); const redeemed = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${first.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${first.site.administratorClaim.token}` } }), r.env, r.operations); assert.equal(redeemed.status, 401)
+})
+test("legacy allocations pin evidence only after the configured roots reproduce their existing claim", async () => {
+  const r = runtime(); await create(r); r.db.sqlite.prepare("DELETE FROM wp_codebox_api_admin_roots").run(); const original = r.env.WORDPRESS_ADMIN_PASSWORD; r.env.WORDPRESS_ADMIN_PASSWORD = "mismatched-root"
+  assert.equal((await create(r)).status, 409); assert.equal(count(r.db, "wp_codebox_api_admin_roots"), 0)
+  r.env.WORDPRESS_ADMIN_PASSWORD = original; assert.equal((await create(r)).status, 202); assert.equal(count(r.db, "wp_codebox_api_admin_roots"), 1)
 })
 test("administrator credential root rotation cannot consume a mismatched claim", async () => {
   const r = runtime(); const originalRoot = r.env.WORDPRESS_ADMIN_PASSWORD; const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); r.env.WORDPRESS_ADMIN_PASSWORD = "rotated-admin-root"; const request = () => new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }); assert.equal((await routeProvisioningApi(request(), r.env, r.operations)).status, 401); assert.equal((r.db.sqlite.prepare("SELECT state FROM wp_codebox_api_admin_claims").get() as { state: string }).state, "pending"); r.env.WORDPRESS_ADMIN_PASSWORD = originalRoot; assert.equal((await routeProvisioningApi(request(), r.env, r.operations)).status, 200)
@@ -167,6 +213,13 @@ test("administrator claim consumes once after publication and returns the persis
   const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; operation: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); const url = `https://control.invalid/v1/sites/${created.site.id}/administrator-claim`; const responses = await Promise.all([1, 2].map(() => routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations))); assert.equal(responses.filter((response) => response.status === 200).length, 1); const success = responses.find((response) => response.status === 200)!; assert.deepEqual(await success.json(), { schema: "wp-codebox/provisioning-api/v1", credential: { username: "admin", password: await (await import("../packages/runtime-cloudflare/src/wordpress-auth.js")).deriveSiteCredential(r.env.WORDPRESS_ADMIN_PASSWORD, created.site.id, "admin-password") } }); assert.equal(responses.find((response) => response.status !== 200)!.status, 401)
   const replay = await (await create(r)).text(); assert.doesNotMatch(replay, new RegExp(created.site.administratorClaim.token)); const read = await (await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${created.site.id}`, { headers: { authorization: "Bearer good" } }), r.env, r.operations)).text(); assert.doesNotMatch(read, new RegExp(created.site.administratorClaim.token))
 })
+test("completed create replay remains idempotent after its root version is retired", async () => {
+  const r = runtime(); r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v1"); delete r.env.WORDPRESS_ADMIN_CLAIM_SECRET; delete r.env.WORDPRESS_ADMIN_PASSWORD
+  const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id)
+  assert.equal((await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations)).status, 200)
+  r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v2", [{ version: "v2", claimSecret: "rotated-claim-root-secret-with-at-least-thirty-two-bytes", password: "rotated-admin-root" }])
+  const replay = await create(r); const text = await replay.text(); assert.equal(replay.status, 202); assert.doesNotMatch(text, /"token"/)
+})
 test("consumed claims do not block allocation recovery after credential rotation", async () => {
   const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); const claim = new Request(`https://control.invalid/v1/sites/${created.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }); assert.equal((await routeProvisioningApi(claim, r.env, r.operations)).status, 200); r.env.WORDPRESS_ADMIN_PASSWORD = "rotated-admin-root"; const operation = await resumeProvisioningAllocation(r.env, { id: created.site.id, hostname: `${created.site.id}.example`, origin: `https://${created.site.id}.example` }, r.operations); assert.equal(operation?.state, "succeeded")
 })
@@ -182,4 +235,6 @@ test("deletion prevents administrator credential consumption and reclaims its cl
   const bucket = new Bucket(); const final = await lifecycle.reclaim(bucket as unknown as Pick<R2Bucket, "list" | "delete">, identity, fence, 100)
   assert.equal(final.state, "tombstoned"); assert.ok((final.receipt?.deletedRecords ?? 0) >= 2)
   assert.equal(count(r.db, "wp_codebox_api_admin_claims"), 0)
+  assert.equal(count(r.db, "wp_codebox_api_admin_roots"), 0)
+  assert.equal(count(r.db, "wp_codebox_api_sites"), 1, "lifecycle cleanup preserves allocation ownership and idempotency evidence")
 })

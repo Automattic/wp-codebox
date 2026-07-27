@@ -759,7 +759,13 @@ test("serialized Cloudflare mutations use MDI flush paths and complete canonical
   assert.match(source, /flush_canonical_writes\(\)/)
   assert.match(source, /packagedCanonicalMarkdownSeed/)
   assert.match(source, /update_option\('siteurl'/)
-  assert.match(source, /WORDPRESS_ADMIN_PASSWORD is required/)
+  assert.match(source, /Administrator credential roots are required/)
+})
+
+test("canonical reset preflights its pinned administrator root before mutation", async () => {
+  const source = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const reset = source.slice(source.indexOf("async function resetCanonicalWordPress"), source.indexOf("async function restoreCanonicalWordPress"))
+  assert.ok(reset.indexOf("administratorPasswordForSite") < reset.indexOf("coordinator.reset()"))
 })
 
 test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {

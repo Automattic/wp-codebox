@@ -5,6 +5,7 @@ import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStora
 import { deriveSiteCredential } from "./wordpress-auth.js"
 import { allocationIdentity, CloudflareAllocationLifecycle, type AllocationLifecycle } from "./allocation-lifecycle.js"
 import { D1PrincipalCredentialRepository, type AuthenticatedPrincipal } from "./principal-credential-repository.js"
+import { parseAdministratorSecretBindings, pinAdministratorSecretBinding, resolvePinnedAdministratorSecretBinding, type AdministratorRootPin, type AdministratorSecretBinding } from "./administrator-secret-bindings.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -17,9 +18,10 @@ interface Token { id: string; principal: string; digest: string; scopes: string[
 export interface ProvisioningAllocation {
   siteId: string; principal: string; key: string; fingerprint: string; operationId: string | null
   artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"]
+  administratorRoot: AdministratorRootPin | null
 }
 interface CreateInput { key: string; fingerprint: string; artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"] }
-export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue; WORDPRESS_QUEUE_POLICY?: string; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
+export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue; WORDPRESS_QUEUE_POLICY?: string; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_SECRET_BINDINGS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
 
 export async function routeProvisioningApi(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
@@ -98,10 +100,11 @@ async function stageArtifact(request: Request, env: ProvisioningEnv, expectedSha
 
 async function create(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const token = await authenticate(request, env, "sites:create"); if (token instanceof Response) return token
+  let root: AdministratorRootPin
+  try { root = await pinAdministratorSecretBinding(parseAdministratorSecretBindings(env).active) } catch { return apiError(503, "administrator_claim_unavailable", "Administrator claims are unavailable.") }
   const key = idempotencyKey(request); if (key instanceof Response) return key
   let input: CreateInput
   try { input = await readCreate(request, env.WORDPRESS_STATE_BUCKET, key) } catch (error) { return importError(error) }
-  if (!claimConfiguration(env)) return apiError(503, "administrator_claim_unavailable", "Administrator claims are unavailable.")
   await operations.initialize()
   const store = new AllocationStore(env.WORDPRESS_STATE_DATABASE)
   let allocation: ProvisioningAllocation
@@ -110,7 +113,7 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
     const active = await env.WORDPRESS_STATE_DATABASE.prepare("SELECT site_id FROM wp_codebox_sites WHERE state = 'active'").all<{ site_id: string }>()
     const occupied = new Set(active.results.map((row) => row.site_id))
     const configured = domain ? [] : parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS).filter((site) => allowed(token, site.id) && !occupied.has(site.id))
-    allocation = await store.allocate(token, input, domain, configured)
+    allocation = await store.allocate(token, input, domain, configured, root)
   } catch (error) { return error instanceof OperationConflict ? apiError(409, "idempotency_conflict", error.message) : allocationError(error) }
   if (!allowed(token, allocation.siteId)) return notFound()
   const site = await store.context(allocation.siteId)
@@ -135,18 +138,20 @@ async function readSite(request: Request, env: ProvisioningEnv, operations: D1Op
 
 async function claimAdministrator(request: Request, env: ProvisioningEnv, operations: D1OperationRepository, siteId: string): Promise<Response> {
   const capability = request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/)?.[1]
-  if (!capability || !claimConfiguration(env)) return claimUnavailable()
+  if (!capability) return claimUnavailable()
   const store = new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE)
   const claim = await store.bySite(siteId)
   if (!claim || claim.state !== "pending") return claimUnavailable()
   if (claim.expiresAt <= Date.now()) { await store.expire(siteId); return claimUnavailable() }
+  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
+  let binding: AdministratorSecretBinding
+  try { const resolved = await administratorBinding(env, allocation?.administratorRoot ?? null); if (!resolved) return claimUnavailable(); binding = resolved } catch { return claimUnavailable() }
   const digest = await shaText(capability)
   if (!await equal(digest, claim.capabilityDigest)) return claimUnavailable()
-  const allocation = await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId)
   const operation = allocation?.operationId ? await operations.get(siteId, allocation.operationId) : null
   if (operation?.state !== "succeeded") return apiError(409, "administrator_claim_not_ready", "The administrator credential is not ready.")
   let password: string
-  try { password = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, siteId, "admin-password") } catch { return claimUnavailable() }
+  try { password = await deriveSiteCredential(binding.password, siteId, "admin-password") } catch { return claimUnavailable() }
   if (!await equal(await shaText(password), claim.credentialDigest)) return claimUnavailable()
   return (await store.consume(siteId, digest)) ? Response.json({ schema: PROVISIONING_API_SCHEMA, credential: { username: "admin", password } }) : claimUnavailable()
 }
@@ -185,8 +190,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const allocation = await store.bySite(site.id)
   if (!allocation) return null
   if (!await allocationActive(env.WORDPRESS_STATE_DATABASE, site.id)) throw new OperationConflict("The allocation is no longer active.")
-  if (!claimConfiguration(env)) throw new AdministratorClaimError()
-  const administratorClaim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
+  try { parseAdministratorSecretBindings(env) } catch { throw new AdministratorClaimError() }
   if (allocation.operationId) {
     const existing = await operations.get(site.id, allocation.operationId)
     if (existing) {
@@ -194,6 +198,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
       if (["publication-pending", "succeeded", "failed"].includes(existing.state)) return existing
     }
   }
+  const administratorClaim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
   if (administratorClaim.state !== "pending") throw new AdministratorClaimError()
   const input = await verifiedAllocationInput(env.WORDPRESS_STATE_BUCKET, site, allocation)
   await putVerifiedArtifact(env.WORDPRESS_STATE_BUCKET, site, input)
@@ -301,12 +306,18 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 async function sha(bytes: Uint8Array): Promise<string> { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)), (byte) => byte.toString(16).padStart(2, "0")).join("") }
 async function shaText(value: string): Promise<string> { return sha(new TextEncoder().encode(value)) }
 async function equal(left: string, right: string): Promise<boolean> { if (left.length !== right.length) return false; let result = 0; for (let i = 0; i < left.length; i++) result |= left.charCodeAt(i) ^ right.charCodeAt(i); return result === 0 }
-function claimConfiguration(env: ProvisioningEnv): boolean { return typeof env.WORDPRESS_ADMIN_CLAIM_SECRET === "string" && env.WORDPRESS_ADMIN_CLAIM_SECRET.length >= 32 && typeof env.WORDPRESS_ADMIN_PASSWORD === "string" && env.WORDPRESS_ADMIN_PASSWORD.length > 0 }
+export async function administratorPasswordForSite(env: Pick<ProvisioningEnv, "WORDPRESS_ADMIN_SECRET_BINDINGS" | "WORDPRESS_ADMIN_CLAIM_SECRET" | "WORDPRESS_ADMIN_PASSWORD"> & { WORDPRESS_STATE_DATABASE?: D1Database }, siteId: string): Promise<string> {
+  const allocation = env.WORDPRESS_STATE_DATABASE ? await new AllocationStore(env.WORDPRESS_STATE_DATABASE).bySite(siteId) : null
+  const binding = await administratorBinding(env, allocation?.administratorRoot ?? null)
+  if (!binding) throw new Error("The pinned administrator root is unavailable.")
+  return deriveSiteCredential(binding.password, siteId, "admin-password")
+}
+async function administratorBinding(env: Pick<ProvisioningEnv, "WORDPRESS_ADMIN_SECRET_BINDINGS" | "WORDPRESS_ADMIN_CLAIM_SECRET" | "WORDPRESS_ADMIN_PASSWORD">, root: AdministratorRootPin | null): Promise<AdministratorSecretBinding | null> { return resolvePinnedAdministratorSecretBinding(parseAdministratorSecretBindings(env), root) }
 
 class AllocationError extends Error { constructor(readonly code: "quota_exceeded" | "capacity_exhausted") { super(code) } }
 class AllocationStore {
   constructor(private readonly db: D1Database) {}
-  async allocate(token: Token, input: CreateInput, domain: ReturnType<typeof previewDomain>, configured: SiteContext[]): Promise<ProvisioningAllocation> {
+  async allocate(token: Token, input: CreateInput, domain: ReturnType<typeof previewDomain>, configured: SiteContext[], administratorRoot: AdministratorRootPin): Promise<ProvisioningAllocation> {
     await this.schema(); const lifecycle = new CloudflareAllocationLifecycle(this.db); await lifecycle.initialize(); const existing = await this.byRequest(token.principal, input.key)
     if (existing) { if (existing.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input."); return existing }
     if (domain && token.sites) throw new AllocationError("quota_exceeded")
@@ -315,13 +326,14 @@ class AllocationStore {
       const site = domain ? await allocatePreviewSiteContext(domain) : configured[attempt]
       const now = Date.now()
       try {
-        const [allocation, reservation] = await this.db.batch([
+        const [allocation, root, reservation] = await this.db.batch([
           this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_sites (site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ? WHERE (SELECT COUNT(*) FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = a.site_id WHERE a.principal = ? AND (l.site_id IS NULL OR l.state != 'tombstoned')) < ? AND NOT EXISTS (SELECT 1 FROM wp_codebox_sites WHERE site_id = ?)").bind(site.id, token.principal, input.key, input.fingerprint, input.artifactSha256, input.artifactSize, input.options.slug, input.options.name, input.options.siteTitle, now, token.principal, token.maxSites, site.id),
-          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, generation, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?)").bind(site.id, site.hostname, site.origin, allocationIdentity(site.id).generation, now, now, now, site.id, token.principal, input.key, input.fingerprint),
+          this.db.prepare("INSERT INTO wp_codebox_api_admin_roots (site_id, root_version, claim_root_digest, password_root_digest, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1").bind(site.id, administratorRoot.version, administratorRoot.claimSecretDigest, administratorRoot.passwordDigest, now),
+          this.db.prepare("INSERT INTO wp_codebox_sites (site_id, hostname, origin, generation, state, created_at, activated_at, updated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_sites WHERE site_id = ? AND principal = ? AND idempotency_key = ? AND fingerprint = ?) AND EXISTS (SELECT 1 FROM wp_codebox_api_admin_roots WHERE site_id = ?)").bind(site.id, site.hostname, site.origin, allocationIdentity(site.id).generation, now, now, now, site.id, token.principal, input.key, input.fingerprint, site.id),
         ])
-        if (allocation.meta.changes === 1 && reservation.meta.changes === 1) {
+        if (allocation.meta.changes === 1 && root.meta.changes === 1 && reservation.meta.changes === 1) {
           await lifecycle.create(site, token.principal, now)
-          return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options }
+          return { siteId: site.id, principal: token.principal, key: input.key, fingerprint: input.fingerprint, operationId: null, artifactSha256: input.artifactSha256, artifactSize: input.artifactSize, options: input.options, administratorRoot }
         }
       } catch (error) {
         if (!(error instanceof Error) || !/unique|constraint/i.test(error.message)) throw error
@@ -333,7 +345,7 @@ class AllocationStore {
     throw new AllocationError((count?.count ?? 0) >= token.maxSites ? "quota_exceeded" : "capacity_exhausted")
   }
   async context(siteId: string): Promise<SiteContext | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, hostname, origin FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(siteId).first<{ site_id: string; hostname: string; origin: string }>(); return row ? { id: row.site_id, hostname: row.hostname, origin: row.origin } : null }
-  async bySite(siteId: string): Promise<ProvisioningAllocation | null> { await this.schema(); const row = await this.db.prepare("SELECT site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id FROM wp_codebox_api_sites WHERE site_id = ?").bind(siteId).first<Record<string, unknown>>(); return row ? allocation(row) : null }
+  async bySite(siteId: string): Promise<ProvisioningAllocation | null> { await this.schema(); const row = await this.db.prepare("SELECT a.site_id, a.principal, a.idempotency_key, a.fingerprint, a.artifact_sha256, a.artifact_size, a.slug, a.name, a.site_title, a.operation_id, r.root_version, r.claim_root_digest, r.password_root_digest FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_api_admin_roots r ON r.site_id = a.site_id WHERE a.site_id = ?").bind(siteId).first<Record<string, unknown>>(); return row ? allocation(row) : null }
   async bindOperation(value: ProvisioningAllocation, operationId: string): Promise<void> {
     await this.schema()
     await this.db.prepare("UPDATE wp_codebox_api_sites SET operation_id = ? WHERE site_id = ? AND (operation_id IS NULL OR operation_id = ?)").bind(operationId, value.siteId, operationId).run()
@@ -347,13 +359,15 @@ class AllocationStore {
     if (linked?.operation_id !== operationId) throw new OperationConflict("The API idempotency key is already bound to another operation.")
   }
   async ownsOperation(principal: string, siteId: string, operationId: string): Promise<boolean> { await this.schema(); return !!await this.db.prepare("SELECT operation_id FROM wp_codebox_api_operation_links WHERE principal = ? AND site_id = ? AND operation_id = ?").bind(principal, siteId, operationId).first() }
-  private async byRequest(principal: string, key: string): Promise<ProvisioningAllocation | null> { const row = await this.db.prepare("SELECT site_id, principal, idempotency_key, fingerprint, artifact_sha256, artifact_size, slug, name, site_title, operation_id FROM wp_codebox_api_sites WHERE principal = ? AND idempotency_key = ?").bind(principal, key).first<Record<string, unknown>>(); return row ? allocation(row) : null }
+  async initialize(): Promise<void> { await this.schema() }
+  private async byRequest(principal: string, key: string): Promise<ProvisioningAllocation | null> { const row = await this.db.prepare("SELECT a.site_id, a.principal, a.idempotency_key, a.fingerprint, a.artifact_sha256, a.artifact_size, a.slug, a.name, a.site_title, a.operation_id, r.root_version, r.claim_root_digest, r.password_root_digest FROM wp_codebox_api_sites a LEFT JOIN wp_codebox_api_admin_roots r ON r.site_id = a.site_id WHERE a.principal = ? AND a.idempotency_key = ?").bind(principal, key).first<Record<string, unknown>>(); return row ? allocation(row) : null }
   private async schema(): Promise<void> {
     await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_sites (site_id TEXT PRIMARY KEY, principal TEXT NOT NULL, idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, artifact_size INTEGER NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, site_title TEXT NOT NULL, operation_id TEXT, created_at INTEGER NOT NULL, UNIQUE(principal, idempotency_key))").run()
+    await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_admin_roots (site_id TEXT PRIMARY KEY, root_version TEXT NOT NULL, claim_root_digest TEXT NOT NULL, password_root_digest TEXT NOT NULL, created_at INTEGER NOT NULL)").run()
     await this.db.prepare("CREATE TABLE IF NOT EXISTS wp_codebox_api_operation_links (principal TEXT NOT NULL, site_id TEXT NOT NULL, operation_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('provision','import')), idempotency_key TEXT NOT NULL, PRIMARY KEY (principal, site_id, operation_id), UNIQUE(principal, site_id, kind, idempotency_key))").run()
   }
 }
-function allocation(row: Record<string, unknown>): ProvisioningAllocation { return { siteId: row.site_id as string, principal: row.principal as string, key: row.idempotency_key as string, fingerprint: row.fingerprint as string, operationId: row.operation_id as string | null, artifactSha256: row.artifact_sha256 as string, artifactSize: row.artifact_size as number, options: { slug: row.slug as string, name: row.name as string, siteTitle: row.site_title as string } } }
+function allocation(row: Record<string, unknown>): ProvisioningAllocation { const version = row.root_version; const claimSecretDigest = row.claim_root_digest; const passwordDigest = row.password_root_digest; return { siteId: row.site_id as string, principal: row.principal as string, key: row.idempotency_key as string, fingerprint: row.fingerprint as string, operationId: row.operation_id as string | null, artifactSha256: row.artifact_sha256 as string, artifactSize: row.artifact_size as number, options: { slug: row.slug as string, name: row.name as string, siteTitle: row.site_title as string }, administratorRoot: typeof version === "string" && typeof claimSecretDigest === "string" && typeof passwordDigest === "string" ? { version, claimSecretDigest, passwordDigest } : null } }
 
 interface AdministratorClaimMetadata { state: "pending" | "consumed" | "expired"; expiresAt: number }
 interface AdministratorClaimIssued extends AdministratorClaimMetadata { token: string }
@@ -364,18 +378,29 @@ class AdministratorClaimStore {
   async issue(allocation: ProvisioningAllocation, env: ProvisioningEnv): Promise<AdministratorClaimIssued | AdministratorClaimMetadata> {
     await this.schema()
     if (!await allocationActive(this.db, allocation.siteId)) throw new AdministratorClaimError()
-    const token = await claimCapability(env.WORDPRESS_ADMIN_CLAIM_SECRET!, allocation)
+    const existing = await this.bySite(allocation.siteId)
+    if (existing?.state === "pending" && existing.expiresAt <= Date.now()) { await this.expire(allocation.siteId); return { state: "expired", expiresAt: existing.expiresAt } }
+    if (existing && existing.state !== "pending") return { state: existing.state, expiresAt: existing.expiresAt }
+    const binding = await administratorBinding(env, allocation.administratorRoot)
+    if (!binding) throw new AdministratorClaimError()
+    const root = allocation.administratorRoot ?? await pinAdministratorSecretBinding(binding)
+    const token = await claimCapability(binding.claimSecret, allocation)
     const digest = await shaText(token)
-    const credential = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD!, allocation.siteId, "admin-password")
+    const credential = await deriveSiteCredential(binding.password, allocation.siteId, "admin-password")
     const credentialDigest = await shaText(credential)
+    if (existing && (!await equal(digest, existing.capabilityDigest) || !await equal(credentialDigest, existing.credentialDigest))) throw new AdministratorClaimError()
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000
-    await this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_admin_claims (site_id, capability_digest, credential_digest, expires_at, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)").bind(allocation.siteId, digest, credentialDigest, expiresAt, Date.now(), Date.now()).run()
+    const allocations = new AllocationStore(this.db); await allocations.initialize()
+    const now = Date.now()
+    await this.db.batch([
+      this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_admin_roots (site_id, root_version, claim_root_digest, password_root_digest, created_at) VALUES (?, ?, ?, ?, ?)").bind(allocation.siteId, root.version, root.claimSecretDigest, root.passwordDigest, now),
+      this.db.prepare("INSERT OR IGNORE INTO wp_codebox_api_admin_claims (site_id, capability_digest, credential_digest, expires_at, state, created_at, updated_at) SELECT ?, ?, ?, ?, 'pending', ?, ? WHERE EXISTS (SELECT 1 FROM wp_codebox_api_admin_roots WHERE site_id = ? AND root_version = ? AND claim_root_digest = ? AND password_root_digest = ?)").bind(allocation.siteId, digest, credentialDigest, expiresAt, now, now, allocation.siteId, root.version, root.claimSecretDigest, root.passwordDigest),
+    ])
     const claim = await this.bySite(allocation.siteId)
-    if (!claim) throw new Error("Administrator claim was not persisted.")
-    if (claim.state === "pending" && claim.expiresAt <= Date.now()) {
-      await this.expire(allocation.siteId)
-      return { state: "expired", expiresAt: claim.expiresAt }
-    }
+    const pinned = await allocations.bySite(allocation.siteId)
+    if (!claim || !pinned?.administratorRoot) throw new Error("Administrator claim and root evidence were not persisted.")
+    if (!await equal(digest, claim.capabilityDigest) || !await equal(credentialDigest, claim.credentialDigest)) throw new AdministratorClaimError()
+    if (pinned.administratorRoot.version !== root.version || !await equal(pinned.administratorRoot.claimSecretDigest, root.claimSecretDigest) || !await equal(pinned.administratorRoot.passwordDigest, root.passwordDigest)) throw new AdministratorClaimError()
     if (claim.state === "pending" && !await equal(credentialDigest, claim.credentialDigest)) throw new AdministratorClaimError()
     return claim.state === "pending" && await equal(digest, claim.capabilityDigest) ? { state: claim.state, expiresAt: claim.expiresAt, token } : { state: claim.state, expiresAt: claim.expiresAt }
   }
