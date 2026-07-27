@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
@@ -152,6 +153,12 @@ await assert.rejects(provisionRuntimeServices([service], { dependencies: missing
   })
   return true
 })
+const missingProviderChild = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  import { executeRuntimeServiceProcess } from "./packages/cli/src/runtime-services.ts";
+  await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", [], { timeout: 300_000 }).catch(() => undefined);
+`], { cwd: process.cwd(), encoding: "utf8", timeout: 5_000 })
+assert.equal(missingProviderChild.error, undefined, `spawn ENOENT child exits without retaining its process timeout: ${missingProviderChild.error?.message ?? ""}`)
+assert.equal(missingProviderChild.status, 0, missingProviderChild.stderr)
 
 const failedStartDependencies: RuntimeServiceDependencies = {
   ...dependencies,
@@ -167,6 +174,27 @@ const failedReadinessDependencies: RuntimeServiceDependencies = {
   async waitForReady() { throw new Error("provider readiness failed") },
 }
 await assert.rejects(provisionRuntimeServices([service], { dependencies: failedReadinessDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "readiness-failed")
+
+const unavailableDuringReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "exec") return await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options)
+    return dependencies.execute(command, args, options)
+  },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: unavailableDuringReadinessDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "provider-unavailable")
+
+let ordinaryReadinessAttempts = 0
+const retryingReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "exec" && ordinaryReadinessAttempts++ === 0) throw new Error("provider readiness command failed")
+    return dependencies.execute(command, args, options)
+  },
+}
+const retriedReadiness = await provisionRuntimeServices([service], { dependencies: retryingReadinessDependencies })
+assert.equal(ordinaryReadinessAttempts, 2, "ordinary Docker readiness failures remain retryable")
+await retriedReadiness.release()
 
 const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const emptyRootDependencies: RuntimeServiceDependencies = {

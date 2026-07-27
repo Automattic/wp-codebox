@@ -1414,6 +1414,7 @@ async function waitForMysqlDatabase(container: string, engine: keyof typeof MYSQ
       return
     } catch (error) {
       if (signal?.aborted) throw error
+      if (providerUnavailableDiagnostic(error, "docker")) throw error
       await abortableDelay(100, signal)
     }
   }
@@ -1559,9 +1560,10 @@ export function executeRuntimeServiceProcess(command: string, args: string[], op
     const child = spawn(command, args, {
       env: options.env,
       signal: options.signal,
-      timeout: options.timeout,
       stdio: ["pipe", "pipe", "pipe"],
     })
+    const timeout = setTimeout(() => child.kill(), options.timeout)
+    timeout.unref()
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     let stdoutBytes = 0
@@ -1582,11 +1584,13 @@ export function executeRuntimeServiceProcess(command: string, args: string[], op
     child.once("error", (error) => {
       if (settled) return
       settled = true
+      clearTimeout(timeout)
       reject(error)
     })
     child.once("close", (code) => {
       if (settled) return
       settled = true
+      clearTimeout(timeout)
       const boundedStdout = Buffer.concat(stdout).toString("utf8")
       const boundedStderr = Buffer.concat(stderr).toString("utf8")
       if (overflow) {
