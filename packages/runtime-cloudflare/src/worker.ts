@@ -230,6 +230,49 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
   resolveOperatorCoordinator?: (env: Env, site: SiteContext, selector: string) => RevisionCoordinator | undefined,
   resolveOperations?: (env: Env) => D1OperationRepository | undefined,
 ) {
+  const handleQueue = async (batch: { messages: QueueDelivery[] }, env: Env): Promise<void> => {
+    const operations = resolveOperations?.(env)
+    if (!operations) { for (const message of batch.messages) message.ack(); return }
+    await dispatchQueueBatch(batch.messages, parseRuntimeQueueMessage, async (siteId, messages) => {
+      const selected = await operations.selectLaneDispatch(siteId, messages.map(({ value }) => value))
+      return selected ? messages.find(({ value }) => value.kind === selected.kind && value.identity === selected.identity) ?? null : null
+    }, async ({ raw, value }: ParsedQueueDelivery) => {
+      const siteId = value.siteId
+      const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+      const registered = await operations.activeSites()
+      const site = [...configured, ...registered].find((candidate) => candidate.id === siteId)
+      try {
+        if (!site || !await operations.matchesGeneration(value.siteId, value.generation)) return "ack"
+        if (!await operations.processingDispatch(value)) return "ack"
+        const coordinator = resolveCoordinator(env, site)
+        const principal = await operations.dispatchPrincipal(value)
+        if (!principal) return "ack"
+        const result = value.kind === "operation" ? await runStaticArtifactOperation(env, coordinator, site, operations, value.identity, principal) : await drainPublicationJob(env, coordinator, site, operations, value.identity)
+        if (result?.status === "rendered") {
+          await operations.continueDispatch(value)
+          try {
+            if (!env.WORDPRESS_RUNTIME_QUEUE) throw new Error("Runtime queue binding is unavailable.")
+            await env.WORDPRESS_RUNTIME_QUEUE.send(value)
+            await operations.deliveredDispatch(value)
+          } catch (error) {
+            await operations.failedDispatch(value, error)
+            console.error("Runtime queue continuation is backpressured.", error)
+          }
+          return "ack"
+        }
+        if (result && (result.status === "retryable" || result.status === "pending")) {
+          await operations.retryDispatch(value, new Error(`Dispatch ${result.status}.`))
+          return { retryAfterSeconds: 30 }
+        }
+        await operations.completeDispatch(value)
+        return "ack"
+      } catch (error) {
+        if (raw.attempts >= 3) { await operations.deadDispatch(value, raw.attempts, error); return "retry" }
+        await operations.retryDispatch(value, error)
+        return { retryAfterSeconds: 30 }
+      }
+    })
+  }
   return {
     async fetch(request: Request, env: Env): Promise<Response> {
       // The versioned control API is host-independent and must never boot WordPress.
@@ -278,6 +321,19 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       if (route.kind === "operator-fence") return operateCanonicalMutationFence(request, env, coordinator, site, route.action)
       if (route.kind === "operator-static-artifact-import") return importCanonicalStaticArtifact(request, env, coordinator, site, resolveOperations?.(env))
       if (route.kind === "operator-static-artifact-operation") return readStaticArtifactOperation(request, env, site, route.operationId, resolveOperations?.(env))
+      if (route.kind === "operator-runtime-dispatch") {
+        if (request.method !== "POST") return new Response("Runtime dispatch requires POST.", { status: 405 })
+        if (!await isAuthorizedOperator(request, env, site)) return new Response("Runtime dispatch authorization failed.", { status: 401 })
+        let message: RuntimeQueueMessage | null
+        try { message = parseRuntimeQueueMessage(await request.json()) } catch { message = null }
+        if (!message || message.siteId !== site.id) return new Response("Runtime dispatch message is invalid.", { status: 400 })
+        const attempts = Number(request.headers.get("x-wp-codebox-dispatch-attempts") ?? "1")
+        if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 4) return new Response("Runtime dispatch attempts are invalid.", { status: 400 })
+        let outcome: "pending" | "ack" | "retry" = "pending"
+        let delaySeconds: number | undefined
+        await handleQueue({ messages: [{ body: message, attempts, ack() { outcome = "ack" }, retry(options) { outcome = "retry"; delaySeconds = options?.delaySeconds } }] }, env)
+        return Response.json({ schema: "wp-codebox/runtime-dispatch-result/v1", outcome, ...(delaySeconds === undefined ? {} : { delaySeconds }) })
+      }
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator, site)
       if (route.kind === "probe") {
         const trace = new CloudflarePhaseTrace()
@@ -328,37 +384,7 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
         console.log(JSON.stringify({ siteId: site.id, ...await runScheduledWordPressCron(env, resolveCoordinator(env, site), site, controller.scheduledTime) }))
       }
     },
-    async queue(batch: { messages: QueueDelivery[] }, env: Env): Promise<void> {
-      const operations = resolveOperations?.(env)
-      if (!operations) { for (const message of batch.messages) message.ack(); return }
-      await dispatchQueueBatch(batch.messages, parseRuntimeQueueMessage, async (siteId, messages) => {
-        const selected = await operations.selectLaneDispatch(siteId, messages.map(({ value }) => value))
-        return selected ? messages.find(({ value }) => value.kind === selected.kind && value.identity === selected.identity) ?? null : null
-      }, async ({ raw, value }: ParsedQueueDelivery) => {
-        const siteId = value.siteId
-        const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
-        const registered = await operations.activeSites()
-        const site = [...configured, ...registered].find((candidate) => candidate.id === siteId)
-        try {
-          if (!site || !await operations.matchesGeneration(value.siteId, value.generation)) return "ack"
-          if (!await operations.processingDispatch(value)) return "ack"
-          const coordinator = resolveCoordinator(env, site)
-          const principal = await operations.dispatchPrincipal(value)
-          if (!principal) return "ack"
-          const result = value.kind === "operation" ? await runStaticArtifactOperation(env, coordinator, site, operations, value.identity, principal) : await drainPublicationJob(env, coordinator, site, operations, value.identity)
-          if (result && (result.status === "retryable" || result.status === "pending" || result.status === "rendered")) {
-            await operations.retryDispatch(value, new Error(`Dispatch ${result.status}.`))
-            return result.status === "rendered" ? "retry" : { retryAfterSeconds: 30 }
-          }
-          await operations.completeDispatch(value)
-          return "ack"
-        } catch (error) {
-          if (raw.attempts >= 3) { await operations.deadDispatch(value, raw.attempts, error); return "retry" }
-          await operations.retryDispatch(value, error)
-          return { retryAfterSeconds: 30 }
-        }
-      })
-    },
+    queue: handleQueue,
   }
 }
 

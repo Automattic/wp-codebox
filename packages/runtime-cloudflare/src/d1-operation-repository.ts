@@ -39,12 +39,8 @@ export class D1OperationRepository {
   async initialize(): Promise<void> { await ensureSchema(this.database) }
 
   async createOrConverge(site: SiteContext, input: StaticArtifactOperationInput): Promise<{ operation: StaticArtifactOperation; created: boolean }> {
-    await ensureSchema(this.database)
+    await this.registerSite(site)
     const now = Date.now()
-    await this.database.prepare(`INSERT OR IGNORE INTO wp_codebox_sites (site_id, hostname, origin, state, created_at, activated_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?)`).bind(site.id, site.hostname, site.origin, now, now, now).run()
-    const registered = await this.database.prepare(`SELECT hostname, origin, state FROM wp_codebox_sites WHERE site_id = ?`).bind(site.id).first<{ hostname: string; origin: string; state: string }>()
-    if (!registered) throw new Error("D1 site registration was not observable.")
-    if (registered && (registered.hostname !== site.hostname || registered.origin !== site.origin || registered.state !== "active")) throw new OperationConflict("The configured site identity conflicts with its registered D1 site.")
     const existing = await this.byKey(site.id, input.idempotencyKey)
     if (existing) {
       if (existing.input.fingerprint !== input.fingerprint) throw new OperationConflict("The idempotency key is already bound to a different immutable input.")
@@ -80,7 +76,7 @@ export class D1OperationRepository {
   }
 
   async stageDispatch(site: SiteContext, kind: RuntimeQueueMessage["kind"], identity: string, principal: string): Promise<RuntimeQueueMessage> {
-    await ensureSchema(this.database)
+    await this.registerSite(site)
     if (!/^[A-Za-z0-9._:@-]{1,128}$/.test(principal)) throw new OperationConflict("Runtime dispatch principal is invalid.")
     const row = await this.database.prepare("SELECT generation FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(site.id).first<{ generation: number }>()
     if (!row) throw new OperationConflict("The site is not active for queue dispatch.")
@@ -90,6 +86,15 @@ export class D1OperationRepository {
     const stored = await this.database.prepare("SELECT principal FROM wp_codebox_runtime_dispatches WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ?").bind(site.id, row.generation, kind, identity).first<{ principal: string }>()
     if (stored?.principal !== principal) throw new OperationConflict("Runtime dispatch identity is bound to another principal.")
     return message
+  }
+
+  private async registerSite(site: SiteContext): Promise<void> {
+    await ensureSchema(this.database)
+    const now = Date.now()
+    await this.database.prepare(`INSERT OR IGNORE INTO wp_codebox_sites (site_id, hostname, origin, state, created_at, activated_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?)`).bind(site.id, site.hostname, site.origin, now, now, now).run()
+    const registered = await this.database.prepare(`SELECT hostname, origin, state FROM wp_codebox_sites WHERE site_id = ?`).bind(site.id).first<{ hostname: string; origin: string; state: string }>()
+    if (!registered) throw new Error("D1 site registration was not observable.")
+    if (registered.hostname !== site.hostname || registered.origin !== site.origin || registered.state !== "active") throw new OperationConflict("The configured site identity conflicts with its registered D1 site.")
   }
 
   async admitDispatch(message: RuntimeQueueMessage, policy: RuntimeQueuePolicy): Promise<boolean> {
@@ -114,7 +119,8 @@ export class D1OperationRepository {
 
   async deliveredDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'sent', attempts = attempts + 1, sent_at = ?, last_error = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state IN ('pending','retryable')").bind(Date.now(), Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
   async processingDispatch(message: RuntimeQueueMessage, now = Date.now()): Promise<boolean> { await ensureSchema(this.database); const result = await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'processing', processing_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND (state IN ('pending','sent') OR (state = 'retryable' AND retry_at <= ?))").bind(now, now, message.siteId, message.generation, message.kind, message.identity, now).run(); return result.meta.changes === 1 }
-  async retryDispatch(message: RuntimeQueueMessage, error: unknown): Promise<void> { await ensureSchema(this.database); const now = Date.now(); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'retryable', attempts = attempts + 1, last_error = ?, retry_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'dead-letter'").bind(sanitizeError(error).message, now + 30_000, now, message.siteId, message.generation, message.kind, message.identity).run() }
+  async continueDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); const now = Date.now(); const result = await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'pending', retry_at = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state = 'processing'").bind(now, message.siteId, message.generation, message.kind, message.identity).run(); if (result.meta.changes !== 1) throw new OperationConflict("Runtime dispatch continuation lost processing ownership.") }
+  async retryDispatch(message: RuntimeQueueMessage, error: unknown, delayMs = 30_000): Promise<void> { await ensureSchema(this.database); if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 300_000) throw new Error("Runtime dispatch retry delay is invalid."); const now = Date.now(); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'retryable', attempts = attempts + 1, last_error = ?, retry_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'dead-letter'").bind(sanitizeError(error).message, now + delayMs, now, message.siteId, message.generation, message.kind, message.identity).run() }
   async failedDispatch(message: RuntimeQueueMessage, error: unknown): Promise<void> { await ensureSchema(this.database); const now = Date.now(); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'backpressured', attempts = attempts + 1, last_error = ?, retry_at = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state NOT IN ('done','dead-letter')").bind(sanitizeError(error).message, now, message.siteId, message.generation, message.kind, message.identity).run() }
   async completeDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'done', completed_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'dead-letter'").bind(Date.now(), Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
   async deadDispatch(message: RuntimeQueueMessage, attempts: number, error: unknown): Promise<void> {

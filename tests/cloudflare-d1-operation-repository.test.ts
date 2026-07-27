@@ -141,6 +141,14 @@ test("queue dispatches are versioned wake-ups with durable repair and dead-lette
   assert.throws(() => runtimeQueueMessage({ id: "alpha" }, 1, "operation", ""), /invalid/)
 })
 
+test("publication dispatch registers configured site identity before any import operation", async () => {
+  const repository = new D1OperationRepository(database())
+  const identity = "sites/alpha/publications/jobs/00000000000000000001-00000000-0000-4000-8000-000000000000.json"
+  const message = await repository.stageDispatch(site, "publication", identity, "system:alpha")
+  assert.deepEqual(message, { schema: RUNTIME_QUEUE_MESSAGE_SCHEMA, siteId: site.id, generation: 1, kind: "publication", identity })
+  await assert.rejects(() => repository.stageDispatch({ ...site, origin: "https://other.example" }, "publication", identity, "system:alpha"), /identity conflicts/)
+})
+
 test("queue admission enforces global and explicit principal backpressure", async () => {
   const repository = new D1OperationRepository(database())
   const betaSite = { id: "beta", hostname: "beta.example", origin: "https://beta.example" }
@@ -167,4 +175,16 @@ test("queue processing ownership survives producer replay and honors retry delay
   await repository.retryDispatch(message, new Error("retry later"))
   assert.equal(await repository.processingDispatch(message), false, "redelivery cannot bypass durable retry_at")
   assert.equal(await repository.processingDispatch(message, Date.now() + 31_000), true)
+})
+
+test("rendered publication dispatches continue as fresh wake-ups", async () => {
+  const repository = new D1OperationRepository(database())
+  const identity = "sites/alpha/publications/jobs/00000000000000000001-00000000-0000-4000-8000-000000000000.json"
+  const message = await repository.stageDispatch(site, "publication", identity, "system:alpha")
+  await repository.admitDispatch(message, DEFAULT_RUNTIME_QUEUE_POLICY)
+  await repository.deliveredDispatch(message)
+  assert.equal(await repository.processingDispatch(message), true)
+  await repository.continueDispatch(message)
+  await repository.deliveredDispatch(message)
+  assert.equal(await repository.processingDispatch(message), true)
 })

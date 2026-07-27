@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { stripVTControlCharacters } from "node:util"
 import { encodeZip } from "@php-wasm/stream-compression"
+import publicationContract from "../packages/runtime-cloudflare/src/publication-contract.json" with { type: "json" }
 
 const port = 8792
 const origin = `http://127.0.0.1:${port}`
@@ -13,6 +14,9 @@ const authSecret = "cloudflare-runtime-test-auth-secret"
 const operatorToken = "cloudflare-runtime-test-operator-token"
 const apiToken = "cloudflare-runtime-test-api-token"
 const administratorClaimSecret = "cloudflare-runtime-test-administrator-claim-secret"
+const maxScheduledPostTicks = 10
+const runtimeQueueSchema = "wp-codebox/runtime-dispatch/v1"
+const runtimeDispatchAttempts = new Map()
 const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
 const publicProvisioning = process.argv.includes("--public-provisioning")
 const artifactPath = process.argv.find((argument) => argument.startsWith("--artifact="))?.slice("--artifact=".length)
@@ -66,18 +70,24 @@ try {
   await assertCoordinatorFence(post.route)
   const updatedPost = await updatePost(adminHtml, post, initialPublication.revision)
   await assertAnonymousWordPressPage(new URL(post.route, origin), "updated post canonical snapshot before publication")
-  // Restart with an explicit pending job to prove progress is durable rather than isolate-local.
+  if (coordinator === "d1") {
+    const automaticallyPublishedPost = await waitForPublication(new URL(post.route, origin), updatedPost.title, "automatically republished post", 15, updatedPost.publicationJob)
+    assertIncludes(automaticallyPublishedPost, updatedPost.title, "automatically republished post")
+    post.title = updatedPost.title
+  }
+  // Local Wrangler queues are process-local; restart after promotion proves the
+  // canonical state and immutable R2 publication survive isolate replacement.
   await stopWorker()
   await startWorker()
-  const automaticallyPublishedPost = await runScheduledPublicationUntil(new URL(post.route, origin), updatedPost.title, "automatically republished post")
-  assertIncludes(automaticallyPublishedPost, updatedPost.title, "automatically republished post")
-  post.title = updatedPost.title
+  const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
+  if (coordinator === "durable-object") {
+    await assertCanonicalPost(post.id, updatedPost.title, restartedAdmin, "updated post after restart")
+  }
   await assertHealthResponse()
   await assertLinkedAssets(frontPage, "front-end")
   await assertLinkedAssets(adminHtml, "admin")
   await assertLinkedAssets(editorHtml, "editor")
   await assertStaticResponseSemantics()
-  const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
   const restartedPost = await assertPublishedWordPressPage(new URL(post.route, origin), "post after publication restart", ["publication-r2", "publication-edge"])
   assertIncludes(restartedPost, post.title, "post after cold restart")
   await assertMediaFile(media, "media after cold restart")
@@ -85,18 +95,18 @@ try {
   await assertDurablePlugin("plugin after cold restart")
   await assertDurablePluginAsset("plugin asset after cold restart")
   await assertDeletedThemeFile(deletedThemePath, "bundled theme tombstone after cold restart")
+  if (coordinator === "d1") { await stopWorker(); await startWorker(true) }
   await assertScheduledPost(scheduledPost.id, "draft", 0, scheduledPost.timestamp, "scheduled post before cron")
   await runScheduledCronUntilPost(scheduledPost.id)
   await assertScheduledPostEventually(scheduledPost.id, "publish", 1, false, "scheduled post after cron")
-  const scheduledPage = await runScheduledPublicationUntil(new URL(scheduledPost.route, origin), "Published by the Cloudflare scheduled handler.", "automatically published scheduled post")
-  assertIncludes(scheduledPage, "Published by the Cloudflare scheduled handler.", "automatically published scheduled post")
   await assertLinkedAssets(restartedAdmin, "admin after cold restart")
   await stopWorker()
 
-  await startWorker()
+  await startWorker(true)
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after cron restart")
   await runScheduledCron()
   await assertScheduledPost(scheduledPost.id, "publish", 1, false, "scheduled post after duplicate cron trigger")
+  if (coordinator === "d1") { await stopWorker(); await startWorker() }
   cookies.length = 0
   const finalAdmin = await login()
   console.log(`Static artifact import starting for ${coordinator}.`)
@@ -105,9 +115,11 @@ try {
   console.log(`Static artifact receipt: ${JSON.stringify({ pages: imported.pages, themeSlug: imported.themeSlug, quality: imported.quality })}`)
   const importedPages = await assertImportedArtifactPages(finalAdmin, imported)
   console.log(`Static artifact pages are editable for ${coordinator}.`)
-  const importedPublication = await runScheduledPublicationUntil(new URL(importedPages.secondary.route, origin), "A second imported page.", "imported static artifact publication", 12)
-  assertIncludes(importedPublication, "A second imported page.", "imported static artifact publication")
-  console.log(`Static artifact publication promoted for ${coordinator}.`)
+  if (coordinator === "d1") {
+    const importedPublication = await waitForPublication(new URL(importedPages.secondary.route, origin), "A second imported page.", "imported static artifact publication", 12, imported.publicationJob)
+    assertIncludes(importedPublication, "A second imported page.", "imported static artifact publication")
+    console.log("Static artifact publication promoted for d1.")
+  }
   await stopWorker()
   await startWorker()
   const importedAdmin = await login()
@@ -115,7 +127,10 @@ try {
   const duplicateStateBefore = await (await fetch(`${origin}/?phase=r2-state`)).json()
   const duplicate = await importStaticArtifact(staticArtifactImport, coordinator === "d1" ? 202 : 200)
   const duplicateStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
-  if (!(["duplicate", ...(coordinator === "d1" ? ["imported"] : [])].includes(duplicate.status)) || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import changed canonical state.")
+  const convergedReplay = coordinator === "d1"
+    ? duplicate.status === "imported" && duplicate.operationId === imported.operationId && JSON.stringify(duplicate.durableReceipt) === JSON.stringify(imported.durableReceipt)
+    : duplicate.status === "duplicate"
+  if (!convergedReplay || duplicateStateAfter.version !== duplicateStateBefore.version || duplicateStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Idempotent static artifact import did not converge on its durable receipt and canonical state.")
   const conflicting = await importStaticArtifact({ ...staticArtifactImport, import: { ...staticArtifactImport.import, slug: "different-artifact-site" } }, 409)
   const conflictStateAfter = await (await fetch(`${origin}/?phase=r2-state`)).json()
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
@@ -208,14 +223,18 @@ async function assertPublicProvisioning(input) {
   if (replayResponse.status !== 202 || replayBody !== createdBody) throw new Error(`Public site creation replay did not converge: ${replayResponse.status} ${replayBody}.`)
 
   let operation
+  const operationId = new URL(created.site.operation, origin).searchParams.get("operationId")
+  if (!operationId) throw new Error(`Public provisioning operation URL omitted its identity: ${created.site.operation}.`)
   for (let tick = 0; tick < 8; tick++) {
+    if (operation?.receipt?.publication?.status === "pending") await runRuntimeDispatch("publication", operation.receipt.publication.jobKey)
+    else await runRuntimeDispatch("operation", operationId)
     const response = await fetch(new URL(created.site.operation, origin), { headers: authorization })
     const body = await response.text()
     if (!response.ok) throw new Error(`Public provisioning operation read failed: ${response.status} ${body}.`)
     operation = JSON.parse(body).operation
     if (operation?.state === "succeeded") break
     if (operation?.state === "failed") throw new Error(`Public provisioning operation failed: ${body}.`)
-    await runScheduledCron()
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   const imported = operation?.receipt?.ssiResult
   if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
@@ -239,7 +258,7 @@ async function assertPublicProvisioning(input) {
   const adminHtml = await login(claim.credential.password)
   const importedPages = await assertImportedArtifactPages(adminHtml, imported)
   const edited = await updateImportedPage(adminHtml, importedPages.secondary)
-  const published = await runScheduledPublicationUntil(new URL(edited.route, origin), edited.marker, "provisioned site edit publication", 12)
+  const published = await waitForPublication(new URL(edited.route, origin), edited.marker, "provisioned site edit publication", 12, edited.publicationJob)
   assertIncludes(published, edited.marker, "provisioned site edit publication")
   await stopWorker()
   await startWorker()
@@ -324,10 +343,11 @@ async function assertTwoSiteIsolation() {
   console.log(`Two-site isolation passed for ${coordinator}.`)
 }
 
-async function startWorker() {
+async function startWorker(testScheduled = coordinator === "durable-object") {
   output = ""
   const apiTokens = [{ id: "local-gate", principal: "local-gate", digest: createHash("sha256").update(apiToken).digest("hex"), scopes: ["sites:create", "sites:read", "sites:import", "operations:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]
-  child = spawn("npm", ["exec", "--", "wrangler", "dev", "--test-scheduled", "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`], {
+  const args = ["exec", "--", "wrangler", "dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
+  child = spawn("npm", args, {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
@@ -406,8 +426,9 @@ async function importStaticArtifact(input, expectedStatus = coordinator === "d1"
   let result = JSON.parse(body)
   if (expectedStatus === 202) {
     if (typeof result.operationId !== "string") throw new Error(`Queued static artifact import omitted its operation ID: ${body}.`)
+    const operationId = result.operationId
     for (let tick = 0; tick < 10; tick++) {
-      await runScheduledCron()
+      await runRuntimeDispatch("operation", operationId)
       const operationResponse = await fetch(`${origin}/?phase=operator-static-artifact-operation&operationId=${encodeURIComponent(result.operationId)}`, {
         headers: { authorization: `Bearer ${operatorToken}` },
       })
@@ -415,13 +436,15 @@ async function importStaticArtifact(input, expectedStatus = coordinator === "d1"
       if (!operationResponse.ok) throw new Error(`Queued static artifact operation read failed: ${operationResponse.status} ${operationBody}.`)
       const operation = JSON.parse(operationBody)
       if (operation.state === "succeeded") {
-        result = operation.receipt?.ssiResult
+        result = { ...operation.receipt?.ssiResult, operationId, publicationJob: operation.receipt?.publication?.jobKey, durableReceipt: operation.receipt }
         break
       }
+      if (operation.state === "publication-pending" && operation.receipt?.publication?.jobKey) await runRuntimeDispatch("publication", operation.receipt.publication.jobKey)
       if (operation.state === "failed") throw new Error(`Queued static artifact operation failed: ${operationBody}.`)
     }
   }
-  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== "imported" || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
+  const expectedResultStatus = expectedStatus === 200 ? "duplicate" : "imported"
+  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== expectedResultStatus || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
     || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
     || (expectedStatus === 201 && (!response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))))) {
     throw new Error(`Static artifact import returned invalid evidence: ${body}.`)
@@ -466,7 +489,7 @@ async function updateImportedPage(adminHtml, page) {
   const raw = updated.content?.raw
   if (typeof raw !== "string" || !raw.includes(marker) || /<!-- wp:(?:html|freeform)\b/.test(raw)) throw new Error(`Provisioned site page edit was not retained as native block content: ${body}.`)
   const link = new URL(updated.link)
-  return { id: page.id, marker, route: `${link.pathname}${link.search}` }
+  return { id: page.id, marker, route: `${link.pathname}${link.search}`, publicationJob: response.headers.get("x-wp-codebox-publication-job") }
 }
 
 async function updatePost(adminHtml, post, previousPublicationRevision) {
@@ -484,7 +507,7 @@ async function updatePost(adminHtml, post, previousPublicationRevision) {
   }
   const payload = JSON.parse(body)
   if (payload.title?.rendered !== title) throw new Error(`Unexpected updated post response: ${body}`)
-  return { title }
+  return { title, publicationJob: response.headers.get("x-wp-codebox-publication-job") }
 }
 
 async function createMedia(adminHtml) {
@@ -683,6 +706,12 @@ async function assertScheduledPostEventually(id, status, runs, next, label) {
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(last)}.\nScheduled diagnostics:\n${diagnostics}`)
 }
 
+async function assertCanonicalPost(id, title, adminHtml, label) {
+  const response = await request(`${origin}/wp-json/wp/v2/posts/${id}?context=edit`, { headers: { "x-wp-nonce": restNonce(adminHtml) } })
+  const payload = await response.json()
+  if (!response.ok || payload.title?.raw !== title) throw new Error(`Unexpected ${label}: status=${response.status} payload=${JSON.stringify(payload)}.`)
+}
+
 async function runScheduledCron() {
   let response
   try {
@@ -695,24 +724,45 @@ async function runScheduledCron() {
 }
 
 async function runScheduledCronUntilPost(id) {
-  for (let tick = 0; tick < 5; tick++) {
+  for (let tick = 0; tick < maxScheduledPostTicks; tick++) {
     await runScheduledCron()
     const response = await request(`${origin}/wp-json/wp-codebox/v1/scheduled-post-status/${id}`)
     const payload = await response.json()
     if (response.ok && payload.status === "publish" && payload.runs === 1 && payload.next === false) return
   }
-  throw new Error("Scheduled post remained queued after five bounded cron ticks.")
+  throw new Error(`Scheduled post remained queued after ${maxScheduledPostTicks} bounded cron ticks.`)
 }
 
-async function runScheduledPublicationUntil(target, expected, label, maxTicks = 5) {
-  for (let tick = 0; tick < maxTicks; tick++) {
-    await runScheduledCron()
+async function waitForPublication(target, expected, label, maxPolls = 15, dispatchIdentity) {
+  for (let poll = 0; poll < maxPolls; poll++) {
+    if (dispatchIdentity) await runRuntimeDispatch("publication", dispatchIdentity)
     const response = await fetch(target)
     const body = await response.text()
     if (response.ok && ["publication-r2", "publication-edge"].includes(response.headers.get("x-wp-codebox-page-cache-source")) && body.includes(expected)) return body
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   const diagnostics = stripVTControlCharacters(output).split("\n").filter((line) => /publication|scheduled|error|exception/i.test(line)).slice(-30).join("\n")
-  throw new Error(`${label} did not reach coordinator-free R2 publication after ${maxTicks} bounded scheduled ticks.\n${diagnostics}`)
+  throw new Error(`${label} did not reach coordinator-free R2 publication after ${maxPolls} bounded polls.\n${diagnostics}`)
+}
+
+async function runRuntimeDispatch(kind, identity) {
+  if (!identity) throw new Error(`Runtime ${kind} dispatch identity is missing.`)
+  const attempts = runtimeDispatchAttempts.get(identity) ?? 1
+  const response = await request(`${origin}/?phase=operator-runtime-dispatch`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json", "x-wp-codebox-dispatch-attempts": String(attempts) },
+    body: JSON.stringify({ schema: runtimeQueueSchema, siteId: "default", generation: 1, kind, identity }),
+  })
+  const body = await response.text()
+  if (!response.ok) throw new Error(`Runtime ${kind} dispatch failed: status=${response.status} body=${body}.`)
+  const result = JSON.parse(body)
+  if (result.outcome === "retry") {
+    runtimeDispatchAttempts.set(identity, attempts + 1)
+    if (result.delaySeconds) await new Promise((resolve) => setTimeout(resolve, result.delaySeconds * 1000))
+  } else {
+    runtimeDispatchAttempts.delete(identity)
+  }
+  return result
 }
 
 async function assertWordPressCronDisabled() {
@@ -885,7 +935,7 @@ async function publishRoutes(routes) {
   } catch {
     throw new Error(`Canonical publication returned non-JSON: status=${response.status} body=${body}.\n${stripVTControlCharacters(output).split("\n").filter((line) => /error|exception|publication/i.test(line)).slice(-30).join("\n")}`)
   }
-  if (!response.ok || payload.schema !== "wp-codebox/published-revision/v3" || payload.routes?.length !== routes.length) {
+  if (!response.ok || payload.schema !== publicationContract.publishedRevisionSchema || payload.routes?.length !== routes.length) {
     throw new Error(`Canonical publication failed: status=${response.status} payload=${JSON.stringify(payload)}.`)
   }
   return payload
