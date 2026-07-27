@@ -4,7 +4,7 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
-import { parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { executeRuntimeServiceProcess, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.ts"
@@ -138,6 +138,35 @@ assert.equal(calls[0]?.args[0], "image", "the provider checks the image before s
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+
+const missingProviderDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  execute: async (_command, args, options) => await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options),
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: missingProviderDependencies }), (error: unknown) => {
+  assert.ok(error instanceof RuntimeServiceProvisionError)
+  assert.deepEqual(error.evidence[0]?.diagnostic, {
+    code: "provider-unavailable",
+    command: "docker",
+    cause: { code: "ENOENT", message: "Provider command executable was not found" },
+  })
+  return true
+})
+
+const failedStartDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "run") throw new Error("provider start failed")
+    return dependencies.execute(command, args, options)
+  },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: failedStartDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "provision-failed")
+
+const failedReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async waitForReady() { throw new Error("provider readiness failed") },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: failedReadinessDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "readiness-failed")
 
 const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const emptyRootDependencies: RuntimeServiceDependencies = {

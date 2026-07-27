@@ -30,7 +30,11 @@ export interface RuntimeServiceEvidence {
   readiness: "pending" | "ready" | "failed"
   lifecycle: "provisioning" | "provisioned" | "released" | "failed"
   teardown?: "completed" | "failed"
-  diagnostic?: { code: "readiness-failed" | "provision-failed" | "teardown-failed" | "interrupted" }
+  diagnostic?: {
+    code: "readiness-failed" | "provision-failed" | "provider-unavailable" | "teardown-failed" | "interrupted"
+    command?: string
+    cause?: { code: string; message: string }
+  }
   controls?: RuntimeServiceControlResult[]
   memory?: { budgetMiB: number; observedRssMiB?: number }
 }
@@ -300,10 +304,17 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   } catch (error) {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"
-    evidence.diagnostic = { code: signal?.aborted ? "interrupted" : started ? "readiness-failed" : "provision-failed" }
+    evidence.diagnostic = signal?.aborted
+      ? { code: "interrupted" }
+      : providerUnavailableDiagnostic(error, "docker") ?? { code: started ? "readiness-failed" : "provision-failed" }
     if (started) await releaseService(container, evidence, dependencies, undefined).catch(() => undefined)
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
   }
+}
+
+function providerUnavailableDiagnostic(error: unknown, command: string): RuntimeServiceEvidence["diagnostic"] | undefined {
+  if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return undefined
+  return { code: "provider-unavailable", command, cause: { code: "ENOENT", message: "Provider command executable was not found" } }
 }
 
 const NATIVE_MARIADB_ROOT_PREFIX = "wp-codebox-mariadb-"
