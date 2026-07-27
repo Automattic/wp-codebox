@@ -42,7 +42,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
   const budget = {
     remainingBytes: COMMAND_ARTIFACT_TOTAL_STRING_MAX_BYTES,
     remainingCommandBytes: COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES,
-    remainingNodes: COMMAND_ARTIFACT_MAX_NODES,
+    remainingNodes: 0,
     remainingTruncations: COMMAND_ARTIFACT_MAX_TRUNCATIONS,
   }
   const selectedCommands = commands.length <= COMMAND_ARTIFACT_MAX_RECORDS
@@ -51,6 +51,7 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
 
   return selectedCommands.map((command, selectedIndex) => {
     budget.remainingCommandBytes = COMMAND_ARTIFACT_COMMAND_STRING_MAX_BYTES
+    budget.remainingNodes = commandArtifactNodeBudget(selectedIndex, selectedCommands.length)
     const fields: CommandArtifactTruncation[] = []
     let omittedFieldCount = 0
     const capture = (value: unknown, path: string): unknown => boundedArtifactValue(value, path, budget, (field) => {
@@ -99,6 +100,11 @@ export function boundedExecutionResultsForArtifacts<T extends ExecutionResult>(c
     }
     return projected
   })
+}
+
+function commandArtifactNodeBudget(commandIndex: number, commandCount: number): number {
+  const nodesPerCommand = Math.floor(COMMAND_ARTIFACT_MAX_NODES / commandCount)
+  return nodesPerCommand + (commandIndex < COMMAND_ARTIFACT_MAX_NODES % commandCount ? 1 : 0)
 }
 
 function boundedArtifactValue(

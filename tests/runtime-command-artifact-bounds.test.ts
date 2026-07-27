@@ -102,6 +102,56 @@ const nodeBudgetRecord = boundedExecutionResultsForArtifacts([{
 assert(nodeBudgetRecord?.artifactCapture?.fields.some((field) => field.reason === "node-limit"))
 assert.equal(nodeBudgetRecord?.artifactCapture?.limits.nodes, COMMAND_ARTIFACT_MAX_NODES)
 
+const fixture37Commands: ExecutionResult[] = [
+  {
+    ...command,
+    id: "fixture-37-import",
+    command: "wordpress.import",
+    stdout: "",
+    result: undefined,
+    diagnostics: Array.from({ length: COMMAND_ARTIFACT_MAX_NODES }, () => ({ import: "node" })),
+  },
+  ...Array.from({ length: 7 }, (_, index) => ({
+    ...command,
+    id: `fixture-37-editor-open-${index}`,
+    command: "wordpress.editor-open",
+    args: [`/page-${index}`],
+    stdout: "editor opened",
+    result: { status: "ok", page: index },
+    diagnostics: { session: `editor-${index}` },
+  })),
+  ...Array.from({ length: 7 }, (_, index) => ({
+    ...command,
+    id: `fixture-37-editor-validate-${index}`,
+    command: "wordpress.editor-validate-blocks",
+    args: [`/page-${index}`],
+    stdout: "validation passed",
+    result: { status: "ok", valid: true, metrics: { blockCount: index + 1 } },
+    diagnostics: { validation: "passed" },
+  })),
+  ...Array.from({ length: 7 }, (_, index) => ({
+    ...command,
+    id: `fixture-37-visual-compare-${index}`,
+    command: "wordpress.visual-compare",
+    args: [`/page-${index}`],
+    stdout: "visual comparison passed",
+    result: { status: "ok", artifactRefs: [`visual-${index}.png`], metrics: { similarity: 1 } },
+    diagnostics: { comparison: "passed" },
+  })),
+]
+const fixture37Records = boundedExecutionResultsForArtifacts(fixture37Commands)
+assert.equal(fixture37Records.length, fixture37Commands.length)
+assert(fixture37Records[0]?.artifactCapture?.fields.some((field) => field.reason === "node-limit"))
+const capturedImportNodes = (fixture37Records[0]?.diagnostics as Array<{ import?: string }>).filter(({ import: value }) => value === "node").length
+assert(capturedImportNodes <= Math.ceil(COMMAND_ARTIFACT_MAX_NODES / fixture37Commands.length))
+for (const record of fixture37Records.slice(1)) {
+  assert(record.args.length > 0)
+  assert(record.stdout.length > 0)
+  assert.equal((record.result as { status?: string } | undefined)?.status, "ok")
+  assert(Object.keys(record.diagnostics ?? {}).length > 0)
+}
+assert.deepEqual(boundedExecutionResultsForArtifacts(fixture37Commands), fixture37Records)
+
 const manyCommands = Array.from({ length: COMMAND_ARTIFACT_MAX_RECORDS + 2 }, (_, index) => ({
   ...command,
   id: `command-${index}`,
