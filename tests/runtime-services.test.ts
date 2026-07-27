@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
-import { parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { executeRuntimeServiceProcess, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.ts"
@@ -138,6 +139,67 @@ assert.equal(calls[0]?.args[0], "image", "the provider checks the image before s
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+
+const missingProviderDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  execute: async (_command, args, options) => await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options),
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: missingProviderDependencies }), (error: unknown) => {
+  assert.ok(error instanceof RuntimeServiceProvisionError)
+  assert.deepEqual(error.evidence[0]?.diagnostic, {
+    code: "provider-unavailable",
+    command: "docker",
+    cause: { code: "ENOENT", message: "Provider command executable was not found" },
+  })
+  return true
+})
+const missingProviderChild = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  import { executeRuntimeServiceProcess } from "./packages/cli/src/runtime-services.ts";
+  await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", [], { timeout: 300_000 }).catch(() => undefined);
+`], { cwd: process.cwd(), encoding: "utf8", timeout: 5_000 })
+assert.equal(missingProviderChild.error, undefined, `spawn ENOENT child exits without retaining its process timeout: ${missingProviderChild.error?.message ?? ""}`)
+assert.equal(missingProviderChild.status, 0, missingProviderChild.stderr)
+
+const failedStartDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "run") throw new Error("provider start failed")
+    return dependencies.execute(command, args, options)
+  },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: failedStartDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "provision-failed")
+
+const failedReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async waitForReady() { throw new Error("provider readiness failed") },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: failedReadinessDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "readiness-failed")
+
+const unavailableDuringReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "exec" || args[0] === "rm") return await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options)
+    return dependencies.execute(command, args, options)
+  },
+}
+await assert.rejects(provisionRuntimeServices([service], { dependencies: unavailableDuringReadinessDependencies }), (error: unknown) => {
+  assert.ok(error instanceof RuntimeServiceProvisionError)
+  assert.equal(error.evidence[0]?.diagnostic?.code, "provider-unavailable", "cleanup failure does not replace the primary provider failure")
+  assert.equal(error.evidence[0]?.teardown, "failed", "failed cleanup remains visible in service evidence")
+  return true
+})
+
+let ordinaryReadinessAttempts = 0
+const retryingReadinessDependencies: RuntimeServiceDependencies = {
+  ...dependencies,
+  async execute(command, args, options) {
+    if (args[0] === "exec" && ordinaryReadinessAttempts++ === 0) throw new Error("provider readiness command failed")
+    return dependencies.execute(command, args, options)
+  },
+}
+const retriedReadiness = await provisionRuntimeServices([service], { dependencies: retryingReadinessDependencies })
+assert.equal(ordinaryReadinessAttempts, 2, "ordinary Docker readiness failures remain retryable")
+await retriedReadiness.release()
 
 const emptyRootCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []
 const emptyRootDependencies: RuntimeServiceDependencies = {

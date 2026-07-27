@@ -30,7 +30,11 @@ export interface RuntimeServiceEvidence {
   readiness: "pending" | "ready" | "failed"
   lifecycle: "provisioning" | "provisioned" | "released" | "failed"
   teardown?: "completed" | "failed"
-  diagnostic?: { code: "readiness-failed" | "provision-failed" | "teardown-failed" | "interrupted" }
+  diagnostic?: {
+    code: "readiness-failed" | "provision-failed" | "provider-unavailable" | "teardown-failed" | "interrupted"
+    command?: string
+    cause?: { code: string; message: string }
+  }
   controls?: RuntimeServiceControlResult[]
   memory?: { budgetMiB: number; observedRssMiB?: number }
 }
@@ -300,10 +304,17 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   } catch (error) {
     evidence.readiness = "failed"
     evidence.lifecycle = "failed"
-    evidence.diagnostic = { code: signal?.aborted ? "interrupted" : started ? "readiness-failed" : "provision-failed" }
+    evidence.diagnostic = signal?.aborted
+      ? { code: "interrupted" }
+      : providerUnavailableDiagnostic(error, "docker") ?? { code: started ? "readiness-failed" : "provision-failed" }
     if (started) await releaseService(container, evidence, dependencies, undefined).catch(() => undefined)
     throw new RuntimeServiceProvisionError(`Managed runtime service failed: ${service.id}`, evidenceList)
   }
+}
+
+function providerUnavailableDiagnostic(error: unknown, command: string): RuntimeServiceEvidence["diagnostic"] | undefined {
+  if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return undefined
+  return { code: "provider-unavailable", command, cause: { code: "ENOENT", message: "Provider command executable was not found" } }
 }
 
 const NATIVE_MARIADB_ROOT_PREFIX = "wp-codebox-mariadb-"
@@ -1403,6 +1414,7 @@ async function waitForMysqlDatabase(container: string, engine: keyof typeof MYSQ
       return
     } catch (error) {
       if (signal?.aborted) throw error
+      if (providerUnavailableDiagnostic(error, "docker")) throw error
       await abortableDelay(100, signal)
     }
   }
@@ -1438,7 +1450,7 @@ async function releaseService(container: string, evidence: RuntimeServiceEvidenc
     }
     evidence.lifecycle = "failed"
     evidence.teardown = "failed"
-    evidence.diagnostic = { code: "teardown-failed" }
+    if (evidence.diagnostic?.code !== "provider-unavailable") evidence.diagnostic = { code: "teardown-failed" }
     throw new Error(`Managed runtime service teardown failed: ${evidence.id}`)
   }
 }
@@ -1548,9 +1560,10 @@ export function executeRuntimeServiceProcess(command: string, args: string[], op
     const child = spawn(command, args, {
       env: options.env,
       signal: options.signal,
-      timeout: options.timeout,
       stdio: ["pipe", "pipe", "pipe"],
     })
+    const timeout = setTimeout(() => child.kill(), options.timeout)
+    timeout.unref()
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     let stdoutBytes = 0
@@ -1571,11 +1584,13 @@ export function executeRuntimeServiceProcess(command: string, args: string[], op
     child.once("error", (error) => {
       if (settled) return
       settled = true
+      clearTimeout(timeout)
       reject(error)
     })
     child.once("close", (code) => {
       if (settled) return
       settled = true
+      clearTimeout(timeout)
       const boundedStdout = Buffer.concat(stdout).toString("utf8")
       const boundedStderr = Buffer.concat(stderr).toString("utf8")
       if (overflow) {
