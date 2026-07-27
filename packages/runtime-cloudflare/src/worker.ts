@@ -14,6 +14,8 @@ import { RevisionConflict, type MarkdownPointer, type MutationFence, type Revisi
 import { routeWorkerRequest } from "./request-routing.js"
 import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticArtifactImportError, type StaticArtifactImport } from "./static-artifact-import.js"
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
+import { parseRuntimeQueueMessage, parseRuntimeQueuePolicy, type RuntimeQueue, type RuntimeQueueMessage } from "./queue-dispatch.js"
+import { dispatchQueueBatch, type ParsedQueueDelivery, type QueueDelivery } from "./queue-batch.js"
 import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
 import { allocationIdentity, CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
@@ -216,6 +218,8 @@ export interface RuntimeEnv {
   WORDPRESS_OPERATOR_TOKEN?: string
   WORDPRESS_API_TOKENS?: string
   WORDPRESS_STATE_DATABASE?: D1Database
+  WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue
+  WORDPRESS_QUEUE_POLICY?: string
 }
 
 export function createCloudflareRuntime<Env extends RuntimeEnv>(
@@ -293,33 +297,55 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
         const deleting = (await lifecycle.pendingDeletions(1, controller.scheduledTime))[0]
         if (deleting) await lifecycle.reclaim(env.WORDPRESS_STATE_BUCKET, deleting.identity, deleting.operationFence, 100, controller.scheduledTime)
       }
-      const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
-      const registered = env.WORDPRESS_STATE_DATABASE && resolveOperations?.(env) ? await resolveOperations(env)!.activeSites() : []
-      const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))
-      if (!sites.length) return
-      const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
-      const coordinator = resolveCoordinator(env, site)
       const operations = resolveOperations?.(env)
-      let provisioningReady = true
-      if (operations && env.WORDPRESS_STATE_DATABASE) {
-        try {
-          await resumeProvisioningAllocation(env as Env & { WORDPRESS_STATE_DATABASE: D1Database }, site, operations)
-        } catch (error) {
-          provisioningReady = false
-          console.error("Provisioning allocation recovery failed.", error)
+      // Cron repairs non-transactional producer sends and runs bounded lifecycle work;
+      // normal mutations and publications are only entered by Queue delivery.
+      if (operations && env.WORDPRESS_RUNTIME_QUEUE) {
+        await operations.repairMissingDispatches(32, controller.scheduledTime)
+        for (const message of await operations.pendingDispatches(parseRuntimeQueuePolicy(env.WORDPRESS_QUEUE_POLICY), 32)) {
+        try { await env.WORDPRESS_RUNTIME_QUEUE.send(message); await operations.deliveredDispatch(message) } catch (error) { await operations.failedDispatch(message, error); console.error("Runtime queue reconciliation is backpressured.", error) }
         }
       }
-      const fence = await coordinator.fenceStatus()
-      const siteCycle = Math.floor(controller.scheduledTime / (60_000 * sites.length))
-      const operationFirst = siteCycle % 2 === 0
-      // Alternate priority while allowing only one heavyweight runtime per invocation.
-      let operation = operationFirst && provisioningReady && !fence.active ? await runNextStaticArtifactOperation(env, coordinator, site, operations) : null
-      const publication = operation ? null : await drainNextPublicationJob(env, coordinator, site, operations)
-      if (!operationFirst && provisioningReady && !publication && !fence.active) operation = await runNextStaticArtifactOperation(env, coordinator, site, operations)
-      const evidence = operation ?? publication ?? (fence.active
-        ? { schema: "wp-codebox/cloudflare-publication/v1" as const, status: "fenced" as const, jobKey: "coordinator" }
-        : await runScheduledWordPressCron(env, coordinator, site, controller.scheduledTime))
-      console.log(JSON.stringify({ siteId: site.id, ...evidence }))
+      // WordPress due events remain a bounded cron responsibility. They do not
+      // drain provisioning or publication work, which is Queue-only above.
+      const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+      const registered = operations ? await operations.activeSites() : []
+      const sites = [...new Map([...configured, ...registered].map((site) => [site.id, site])).values()].sort((left, right) => left.id.localeCompare(right.id))
+      if (sites.length) {
+        const site = sites[Math.floor(controller.scheduledTime / 60_000) % sites.length]
+        console.log(JSON.stringify({ siteId: site.id, ...await runScheduledWordPressCron(env, resolveCoordinator(env, site), site, controller.scheduledTime) }))
+      }
+    },
+    async queue(batch: { messages: QueueDelivery[] }, env: Env): Promise<void> {
+      const operations = resolveOperations?.(env)
+      if (!operations) { for (const message of batch.messages) message.ack(); return }
+      await dispatchQueueBatch(batch.messages, parseRuntimeQueueMessage, async (siteId, messages) => {
+        const selected = await operations.selectLaneDispatch(siteId, messages.map(({ value }) => value))
+        return selected ? messages.find(({ value }) => value.kind === selected.kind && value.identity === selected.identity) ?? null : null
+      }, async ({ raw, value }: ParsedQueueDelivery) => {
+        const siteId = value.siteId
+        const configured = parseSiteContexts(env.WORDPRESS_SITE_CONTEXTS)
+        const registered = await operations.activeSites()
+        const site = [...configured, ...registered].find((candidate) => candidate.id === siteId)
+        try {
+          if (!site || !await operations.matchesGeneration(value.siteId, value.generation)) return "ack"
+          if (!await operations.processingDispatch(value)) return "ack"
+          const coordinator = resolveCoordinator(env, site)
+          const principal = await operations.dispatchPrincipal(value)
+          if (!principal) return "ack"
+          const result = value.kind === "operation" ? await runStaticArtifactOperation(env, coordinator, site, operations, value.identity, principal) : await drainPublicationJob(env, coordinator, site, operations, value.identity)
+          if (result && (result.status === "retryable" || result.status === "pending" || result.status === "rendered")) {
+            await operations.retryDispatch(value, new Error(`Dispatch ${result.status}.`))
+            return result.status === "rendered" ? "retry" : { retryAfterSeconds: 30 }
+          }
+          await operations.completeDispatch(value)
+          return "ack"
+        } catch (error) {
+          if (raw.attempts >= 3) { await operations.deadDispatch(value, raw.attempts, error); return "retry" }
+          await operations.retryDispatch(value, error)
+          return { retryAfterSeconds: 30 }
+        }
+      })
     },
   }
 }
@@ -582,7 +608,8 @@ async function importCanonicalStaticArtifact(request: Request, env: RuntimeEnv, 
   if (operations) {
     try {
       const created = await operations.createOrConverge(site, { ...input, artifact: input.artifactReference })
-      return Response.json(created.operation, { status: 202, headers: { location: `?phase=operator-static-artifact-operation&operationId=${created.operation.operationId}` } })
+      const dispatch = await dispatchRuntimeWork(env, operations, site, "operation", created.operation.operationId, `operator:${site.id}`)
+      return Response.json(await operations.get(site.id, created.operation.operationId) ?? created.operation, { status: 202, headers: { location: `?phase=operator-static-artifact-operation&operationId=${created.operation.operationId}`, "x-wp-codebox-dispatch": dispatch } })
     } catch (error) {
       if (error instanceof OperationConflict) return Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, status: "conflict", error: error.message }, { status: 409 })
       throw error
@@ -606,10 +633,12 @@ async function readStaticArtifactOperation(request: Request, env: RuntimeEnv, si
   return operation ? Response.json(operation) : new Response("Static artifact operation is unavailable.", { status: 404 })
 }
 
-async function runNextStaticArtifactOperation(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, operations?: D1OperationRepository): Promise<{ schema: string; status: string; operationId: string } | null> {
-  if (!operations) return null
-  const claimed = await operations.claimNext(site.id)
-  if (!claimed) return null
+async function runStaticArtifactOperation(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, operations: D1OperationRepository, operationId: string, principal: string): Promise<{ schema: string; status: string; operationId: string } | null> {
+  const claimed = await operations.claimOperation(site.id, operationId)
+  if (!claimed) {
+    const operation = await operations.get(site.id, operationId)
+    return operation && ["queued", "running", "retryable"].includes(operation.state) ? { schema: STATIC_ARTIFACT_OPERATION_SCHEMA, status: "pending", operationId } : null
+  }
   try {
     if (claimed.prepared) {
       const receipt = await coordinator.committed(claimed.prepared.version)
@@ -628,7 +657,10 @@ async function runNextStaticArtifactOperation(env: RuntimeEnv, coordinator: Revi
     const response = await runCoordinatedWordPressRequest(new Request("https://scheduled.invalid/?phase=operator-static-artifact-import", { method: "POST" }), env, coordinator, site, "static-artifact-import", input, async () => operations.recordCommit(site.id, claimed.operationId, claimed.claimToken), async (prepared) => operations.prepareCommit(site.id, claimed.operationId, claimed.claimToken, prepared.version, prepared.pointer, prepared.ssiResult, prepared.publicationJobKey), heartbeat)
     const result = await response.json()
     if (!result || typeof result !== "object" || (result as { status?: unknown }).status !== "imported") throw new Error("Static artifact import did not produce an import receipt.")
-    await operations.complete(site.id, claimed.operationId, claimed.claimToken, result, response.headers.get("x-wp-codebox-publication-job") ?? undefined, site.origin)
+    const publicationJob = response.headers.get("x-wp-codebox-publication-job") ?? undefined
+    await operations.complete(site.id, claimed.operationId, claimed.claimToken, result, publicationJob, site.origin)
+    // The operation receipt and coordinator commit are durable before the queue wake-up.
+    if (publicationJob) await dispatchRuntimeWork(env, operations, site, "publication", publicationJob, principal)
     return { schema: STATIC_ARTIFACT_OPERATION_SCHEMA, status: "completed", operationId: claimed.operationId }
   } catch (error) {
     try {
@@ -642,6 +674,22 @@ async function runNextStaticArtifactOperation(env: RuntimeEnv, coordinator: Revi
       if (transitionError instanceof OperationConflict) return { schema: STATIC_ARTIFACT_OPERATION_SCHEMA, status: "claim-lost", operationId: claimed.operationId }
       throw transitionError
     }
+  }
+}
+
+async function dispatchRuntimeWork(env: RuntimeEnv, operations: D1OperationRepository, site: SiteContext, kind: RuntimeQueueMessage["kind"], identity: string, principal: string): Promise<"queued" | "backpressured"> {
+  let message: RuntimeQueueMessage | undefined
+  try {
+    message = await operations.stageDispatch(site, kind, identity, principal)
+    if (!await operations.admitDispatch(message, parseRuntimeQueuePolicy(env.WORDPRESS_QUEUE_POLICY))) return "backpressured"
+    if (!env.WORDPRESS_RUNTIME_QUEUE) throw new Error("Runtime queue binding is unavailable.")
+    await env.WORDPRESS_RUNTIME_QUEUE.send(message)
+    await operations.deliveredDispatch(message)
+    return "queued"
+  } catch (error) {
+    if (message) await operations.failedDispatch(message, error)
+    console.error("Runtime queue producer is backpressured; reconciliation will retry.", error)
+    return "backpressured"
   }
 }
 
@@ -915,7 +963,7 @@ async function releasePublicationClaim(bucket: R2Bucket, job: PublicationJob, si
   if (claim.etag) await bucket.put(publicationClaimObjectKey(job, site), JSON.stringify({ expiresAt: 0 }), { onlyIf: { etagMatches: claim.etag }, httpMetadata: { contentType: "application/json" } })
 }
 
-async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, operations?: D1OperationRepository): Promise<PublicationInvocationEvidence | null> {
+async function drainPublicationJob(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, operations: D1OperationRepository, jobKey: string): Promise<PublicationInvocationEvidence | null> {
   await reconcilePublicationReceipts(env.WORDPRESS_STATE_BUCKET, site, operations)
   let publicationLease: RevisionLease
   try {
@@ -926,7 +974,7 @@ async function drainNextPublicationJob(env: RuntimeEnv, coordinator: RevisionCoo
     return { schema: "wp-codebox/cloudflare-publication/v1", status: fence.active ? "fenced" : "pending", jobKey: "coordinator" }
   }
   try {
-    return await drainNextPublicationJobWhileLeased(env, coordinator, site, async () => {
+    return await drainPublicationJobWhileLeased(env, coordinator, site, jobKey, async () => {
       publicationLease = await coordinator.renew(publicationLease)
     }, operations)
   } finally {
@@ -951,28 +999,25 @@ async function reconcilePublicationReceipts(bucket: R2Bucket, site: SiteContext,
   }
 }
 
-async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, renewLease: () => Promise<void>, operations?: D1OperationRepository): Promise<PublicationInvocationEvidence | null> {
+async function drainPublicationJobWhileLeased(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, jobKey: string, renewLease: () => Promise<void>, operations?: D1OperationRepository): Promise<PublicationInvocationEvidence | null> {
   await assertActiveAllocation(env, site)
-  const listed = await env.WORDPRESS_STATE_BUCKET.list({ prefix: `${siteStorageKeys(site).publicationJobPrefix}/`, limit: 16 })
-  if (!listed.objects.length) return null
+  // A Queue body is an authority-bearing immutable job key, never permission to drain another job.
+  let exact: PublicationJob
+  try { exact = await readPublicationJob(env.WORDPRESS_STATE_BUCKET, jobKey, site) } catch { return null }
   const state = await coordinator.state()
-  let job: PublicationJob | undefined
-  for (const object of listed.objects) {
-    const candidate = await readPublicationJob(env.WORDPRESS_STATE_BUCKET, object.key, site)
-    const committed = await coordinator.committed(candidate.coordinatorVersion)
-    if (committed?.revision === candidate.canonical.revision) {
-      job = candidate
-      break
-    }
-    if (state.version > candidate.coordinatorVersion || Date.now() - Date.parse(candidate.createdAt) > PUBLICATION_CLAIM_MS) {
+  const committed = await coordinator.committed(exact.coordinatorVersion)
+  if (committed?.revision !== exact.canonical.revision || committed.manifestKey !== exact.canonical.manifestKey || committed.persistedAt !== exact.canonical.persistedAt) {
+    if (state.version > exact.coordinatorVersion || Date.now() - Date.parse(exact.createdAt) > PUBLICATION_CLAIM_MS) {
       await renewLease()
-      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(candidate, site), JSON.stringify({ status: "orphaned", job: candidate.key, recordedAt: new Date().toISOString() }))
-      await operations?.reconcilePublication(site.id, candidate.key, "orphaned")
+      await putImmutableJson(env.WORDPRESS_STATE_BUCKET, publicationReceiptObjectKey(exact, site), JSON.stringify({ status: "orphaned", job: exact.key, recordedAt: new Date().toISOString() }))
+      await operations?.reconcilePublication(site.id, exact.key, "orphaned")
       await renewLease()
-      await env.WORDPRESS_STATE_BUCKET.delete(candidate.key)
+      await env.WORDPRESS_STATE_BUCKET.delete(exact.key)
+      return { schema: "wp-codebox/cloudflare-publication/v1", status: "stale", jobKey: exact.key }
     }
+    return { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: exact.key }
   }
-  if (!job) return listed.truncated ? { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: "scan" } : null
+  const job = exact
   const claim = await claimPublicationJob(env.WORDPRESS_STATE_BUCKET, job, site, renewLease)
   if (!claim) return { schema: "wp-codebox/cloudflare-publication/v1", status: "pending", jobKey: job.key }
   let runtime: Runtime | undefined
@@ -1049,7 +1094,7 @@ async function drainNextPublicationJobWhileLeased(env: RuntimeEnv, coordinator: 
     return { schema: "wp-codebox/cloudflare-publication/v1", status: "promoted", jobKey: job.key }
   } catch (error) {
     console.error("Publication job failed.", error)
-    return { schema: "wp-codebox/cloudflare-publication/v1", status: "failed", jobKey: job.key }
+    throw error
   } finally {
     if (runtime) await discardRuntime(runtime, site)
     try {
@@ -1216,6 +1261,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       }
       const committed = await commitLease(coordinator, request.url, lease, next)
       await onCommitted?.(committed)
+      // A pre-commit R2 job is inert; only the observable coordinator receipt may wake it.
+      if (publicationJob && env.WORDPRESS_STATE_DATABASE) {
+        const operations = new D1OperationRepository(env.WORDPRESS_STATE_DATABASE)
+        await dispatchRuntimeWork(env, operations, site, "publication", publicationJob.key, `system:${site.id}`)
+      }
       response.headers.set("x-wp-codebox-canonical-revision", committed.pointer.revision)
       response.headers.set("x-wp-codebox-canonical-version", String(committed.version))
       logMutationPhase(diagnosticsStartedAt, "commit", retained, { publication: publicationJob ? "queued" : "unchanged" })
@@ -1596,6 +1646,7 @@ async function runScheduledWordPressCron(env: RuntimeEnv, coordinator: RevisionC
       runtime = undefined
       const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, event.publicationChanges, site)
       await commitLease(coordinator, requestUrl, lease, next)
+      if (publicationJob && env.WORDPRESS_STATE_DATABASE) await dispatchRuntimeWork(env, new D1OperationRepository(env.WORDPRESS_STATE_DATABASE), site, "publication", publicationJob.key, `system:${site.id}`)
       finalized = true
       evidence.events.push({ hook: event.hook, timestamp: event.timestamp, revision: next.revision, publication: publicationJob ? "queued" : "unchanged" })
     } catch (error) {

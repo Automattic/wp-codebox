@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository, OperationConflict, shouldRecoverPreparedCommit } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
 import { CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
+import { DEFAULT_RUNTIME_QUEUE_POLICY, parseRuntimeQueueMessage, RUNTIME_QUEUE_MESSAGE_SCHEMA, runtimeQueueMessage } from "../packages/runtime-cloudflare/src/queue-dispatch.js"
 
 function database(): D1Database {
   const sqlite = new DatabaseSync(":memory:")
@@ -34,6 +35,14 @@ test("D1 enforces one active mutation per site while independent sites claim con
   assert.equal([alphaClaim, racedAlphaClaim].filter(Boolean).length, 1)
   assert.ok(betaClaim)
   assert.notEqual((alphaClaim ?? racedAlphaClaim)!.operationId, betaClaim.operationId)
+})
+
+test("an operation wake-up can claim only its exact durable operation identity", async () => {
+  const repository = new D1OperationRepository(database())
+  const created = await repository.createOrConverge(site, input("target"))
+  assert.equal(await repository.claimOperation(site.id, "00000000-0000-4000-8000-000000000000"), null)
+  const claim = await repository.claimOperation(site.id, created.operation.operationId)
+  assert.equal(claim?.operationId, created.operation.operationId)
 })
 
 test("expired claims recover, retries retain attempt history, and terminal receipts are immutable", async () => {
@@ -107,4 +116,55 @@ test("deletion fences an in-flight claim and a publication callback", async () =
   await repository.reconcilePublication(dynamic.id, "job-race", "promoted", "revision")
   assert.equal((await repository.get(dynamic.id, created.operation.operationId))?.state, "failed")
   assert.ok(fence > active.operationFence)
+})
+
+test("queue dispatches are versioned wake-ups with durable repair and dead-letter evidence", async () => {
+  const repository = new D1OperationRepository(database())
+  const created = await repository.createOrConverge(site, input())
+  const message = await repository.stageDispatch(site, "operation", created.operation.operationId, "principal:a")
+  assert.deepEqual(message, { schema: RUNTIME_QUEUE_MESSAGE_SCHEMA, siteId: site.id, generation: 1, kind: "operation", identity: created.operation.operationId })
+  assert.deepEqual(await repository.pendingDispatches(DEFAULT_RUNTIME_QUEUE_POLICY), [message])
+  await repository.failedDispatch(message, new Error("queue unavailable\nsecret"))
+  assert.deepEqual(await repository.pendingDispatches(DEFAULT_RUNTIME_QUEUE_POLICY), [message], "a producer failure leaves durable repair work")
+  await repository.deadDispatch(message, 3, new Error("isolate evicted\nsecret"))
+  const evidence = await repository.deadLetterEvidence(message)
+  assert.equal(evidence?.attempts, 3)
+  assert.equal(evidence?.inputDigest, created.operation.input.fingerprint)
+  assert.equal(evidence?.lastError, "isolate evicted secret")
+  assert.match(evidence?.recoveryCommand ?? "", /^npx wrangler d1 execute wp-codebox-runtime-state --remote --command/)
+  await repository.completeDispatch(message)
+  assert.equal(await repository.dispatchState(message), "dead-letter")
+  assert.deepEqual(await repository.pendingDispatches(DEFAULT_RUNTIME_QUEUE_POLICY), [])
+  assert.equal(parseRuntimeQueueMessage({ ...message, schema: "foreign" }), null)
+  assert.equal(parseRuntimeQueueMessage({ ...message, generation: 0 }), null)
+  assert.equal(parseRuntimeQueueMessage({ ...message, identity: "x".repeat(1024) }), null)
+  assert.throws(() => runtimeQueueMessage({ id: "alpha" }, 1, "operation", ""), /invalid/)
+})
+
+test("queue admission enforces global and explicit principal backpressure", async () => {
+  const repository = new D1OperationRepository(database())
+  const betaSite = { id: "beta", hostname: "beta.example", origin: "https://beta.example" }
+  const alphaOperation = await repository.createOrConverge(site, input("alpha-dispatch"))
+  const betaOperation = await repository.createOrConverge(betaSite, input("beta-dispatch"))
+  const alpha = await repository.stageDispatch(site, "operation", alphaOperation.operation.operationId, "principal:a")
+  const betaMessage = await repository.stageDispatch(betaSite, "operation", betaOperation.operation.operationId, "principal:a")
+  assert.equal(await repository.admitDispatch(alpha, { maxActive: 2, maxActivePerPrincipal: 1 }), true)
+  assert.equal(await repository.admitDispatch(betaMessage, { maxActive: 2, maxActivePerPrincipal: 1 }), false)
+  await repository.completeDispatch(alpha)
+  assert.equal(await repository.admitDispatch(betaMessage, { maxActive: 2, maxActivePerPrincipal: 1 }), true)
+})
+
+test("queue processing ownership survives producer replay and honors retry delay", async () => {
+  const repository = new D1OperationRepository(database())
+  const created = await repository.createOrConverge(site, input("dispatch-ownership"))
+  const message = await repository.stageDispatch(site, "operation", created.operation.operationId, "principal:a")
+  assert.equal(await repository.admitDispatch(message, DEFAULT_RUNTIME_QUEUE_POLICY), true)
+  await repository.deliveredDispatch(message)
+  assert.equal(await repository.processingDispatch(message), true)
+  await repository.deliveredDispatch(message)
+  assert.equal(await repository.dispatchState(message), "processing", "a replayed producer send cannot clear processing ownership")
+  assert.equal(await repository.processingDispatch(message), false)
+  await repository.retryDispatch(message, new Error("retry later"))
+  assert.equal(await repository.processingDispatch(message), false, "redelivery cannot bypass durable retry_at")
+  assert.equal(await repository.processingDispatch(message, Date.now() + 31_000), true)
 })

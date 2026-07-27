@@ -102,6 +102,7 @@ export class CloudflareAllocationLifecycle {
       ])
     }
     if (await tableExists(this.database, "wp_codebox_api_admin_claims")) await this.database.prepare("UPDATE wp_codebox_api_admin_claims SET state = 'expired', updated_at = ? WHERE site_id = ? AND state = 'pending'").bind(now, identity.siteId).run()
+    if (await tableExists(this.database, "wp_codebox_runtime_dispatches")) await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'done', last_error = 'Allocation deletion fenced this dispatch.', completed_at = ?, updated_at = ? WHERE site_id = ? AND state NOT IN ('done','dead-letter')").bind(now, now, identity.siteId).run()
   }
   private async cleanupWork(siteId: string, limit: number): Promise<{ deleted: number; unresolved: number }> {
     let deleted = 0
@@ -114,7 +115,10 @@ export class CloudflareAllocationLifecycle {
     if (await tableExists(this.database, "wp_codebox_api_admin_claims")) {
       const result = await this.database.prepare("DELETE FROM wp_codebox_api_admin_claims WHERE site_id = ?").bind(siteId).run(); deleted += result.meta.changes
     }
-    const tables = ["wp_codebox_operation_attempts", "wp_codebox_operations", "wp_codebox_api_admin_claims"]
+    for (const table of ["wp_codebox_runtime_dead_letters", "wp_codebox_runtime_dispatches", "wp_codebox_runtime_fairness"]) if (await tableExists(this.database, table)) {
+      const result = await this.database.prepare(`DELETE FROM ${table} WHERE site_id = ?`).bind(siteId).run(); deleted += result.meta.changes
+    }
+    const tables = ["wp_codebox_operation_attempts", "wp_codebox_operations", "wp_codebox_api_admin_claims", "wp_codebox_runtime_dead_letters", "wp_codebox_runtime_dispatches", "wp_codebox_runtime_fairness"]
     let unresolved = 0
     for (const table of tables) if (await tableExists(this.database, table)) unresolved += (await this.database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE site_id = ?`).bind(siteId).first<{ count: number }>())?.count ?? 0
     return { deleted, unresolved }
