@@ -8,6 +8,7 @@ import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
 import { leaseRetryDelayMs } from "./lease-retry.js"
 import { logMutationPhase, MutationRetainedBytes } from "./mutation-memory.js"
+import { attachServerTiming, CloudflarePhaseTrace, logPhaseTrace, type PageCacheDisposition, type RuntimeDisposition, type TraceOperation } from "./phase-trace.js"
 import { selectOperatorCoordinator } from "./operator-coordinator.js"
 import { canonicalPublicRoute, MAX_PUBLISHED_PAGE_BYTES, MAX_PUBLISHED_REVISION_BYTES, MAX_PUBLISHED_ROUTES, normalizePublishedRoutes, PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, validatePublishedRevision, type PublishedRevision } from "./published-reader.js"
 import { RevisionConflict, type MarkdownPointer, type MutationFence, type RevisionCoordinator, type RevisionLease } from "./revision-coordinator.js"
@@ -279,7 +280,16 @@ export function createCloudflareRuntime<Env extends RuntimeEnv>(
       if (route.kind === "operator-static-artifact-operation") return readStaticArtifactOperation(request, env, site, route.operationId, resolveOperations?.(env))
       if (route.kind === "operator-publish") return publishCanonicalWordPressPages(request, env, coordinator, site)
       if (route.kind === "probe") {
-        return runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET)
+        const trace = new CloudflarePhaseTrace()
+        try {
+          const response = await trace.measure("boot-probe.opaque", () => runBootProbe(route.phase, env.WORDPRESS_STATE_BUCKET))
+          const summary = trace.complete("diagnostic", "cold", "not-applicable")
+          logPhaseTrace(summary)
+          return attachServerTiming(response, summary)
+        } catch (error) {
+          logPhaseTrace(trace.complete("diagnostic", "cold", "not-applicable", false))
+          throw error
+        }
       }
       if (route.kind === "r2-state") {
         if (request.method !== "GET") return new Response("WordPress state read requires GET.", { status: 405 })
@@ -455,7 +465,7 @@ interface PublicationInvocationEvidence {
   route?: string
 }
 
-const cachedRuntimes = new Map<string, { baseRevision: string; promise: Promise<Runtime> }>()
+const cachedRuntimes = new Map<string, { baseRevision: string; promise: Promise<Runtime>; state: "pending" | "ready" }>()
 const LEASE_ACQUISITION_TIMEOUT_MS = 100_000
 
 async function resetCanonicalWordPress(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext): Promise<Response> {
@@ -1161,38 +1171,73 @@ function validateWordPressPageSnapshot(snapshot: WordPressPageSnapshot, canonica
 }
 
 async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, route: "wordpress" | "health" | "r2-mutate" | "static-artifact-import", staticArtifactImport?: StaticArtifactImport, onCommitted?: (committed: { pointer: MarkdownPointer; version: number }) => Promise<void>, onPreparedCommit?: (prepared: { pointer: MarkdownPointer; version: number; ssiResult: unknown; publicationJobKey: string | null }) => Promise<void>, heartbeat?: (stage: string, progress: number) => Promise<void>): Promise<Response> {
-  if (route === "r2-mutate" && request.method !== "POST") return new Response("WordPress state mutation requires POST.", { status: 405 })
-  if (route === "wordpress" && isCacheableWordPressPageRequest(request)) {
-    const state = await coordinator.state()
-    if (state.pointer) {
-      const cachedPage = await matchWordPressPageCache(request, state.pointer, env.WORDPRESS_STATE_BUCKET, site)
-      if (cachedPage) return cachedPage
-    }
+  const trace = new CloudflarePhaseTrace()
+  const mutatesCanonicalState = isMutation(request, route)
+  const operation: TraceOperation = route === "health" ? "diagnostic" : mutatesCanonicalState ? "mutation" : "read"
+  let runtimeDisposition: RuntimeDisposition = "not-used"
+  let pageCache: PageCacheDisposition = route === "wordpress" && isCacheableWordPressPageRequest(request) ? "miss" : "not-applicable"
+  let logged = false
+  const finish = (completed: boolean, evidence?: Record<string, unknown>) => {
+    const summary = trace.complete(operation, runtimeDisposition, pageCache, completed, evidence)
+    if (!logged) { logged = true; logPhaseTrace(summary) }
+    return summary
   }
-  let lease = await acquireLease(coordinator, request.url)
+  let lease: Lease | undefined
   let runtime: Runtime | undefined
   let finalized = false
   try {
+    if (route === "r2-mutate" && request.method !== "POST") {
+      finish(false)
+      return new Response("WordPress state mutation requires POST.", { status: 405 })
+    }
+    if (route === "wordpress" && isCacheableWordPressPageRequest(request)) {
+      const state = await trace.measure("page-cache.state.read", () => coordinator.state())
+      if (state.pointer) {
+        const cachedPage = await trace.measure("page-cache.lookup", () => matchWordPressPageCache(request, state.pointer!, env.WORDPRESS_STATE_BUCKET, site))
+        if (cachedPage) {
+          pageCache = "hit"
+          finish(true)
+          return cachedPage
+        }
+      }
+    }
+    lease = await trace.measure("lease.acquire", () => acquireLease(coordinator, request.url))
     if (!lease.pointer) {
-      const bootstrapped = await bootstrapCanonicalRuntime(env, coordinator, site, request.url, lease)
+      runtimeDisposition = "cold"
+      const bootstrapped = await bootstrapCanonicalRuntime(env, coordinator, site, request.url, lease, trace)
       // Bootstrap promotion consumes its lease before login or any other request observes it.
-      lease = await acquireLease(coordinator, request.url)
+      lease = await trace.measure("lease.reacquire", () => acquireLease(coordinator, request.url))
       if (!lease.pointer || lease.pointer.revision !== bootstrapped.pointer.revision) throw new Error("Canonical bootstrap promotion was not observed by its next lease.")
       cacheRuntime(lease.pointer, bootstrapped, site)
     }
-    const cachedPage = route === "wordpress" ? await matchWordPressPageCache(request, lease.pointer, env.WORDPRESS_STATE_BUCKET, site) : null
+    const pointer = lease.pointer
+    if (!pointer) throw new Error("Canonical lease completed without a pointer.")
+    const activeLease = lease
+    const cachedPage = route === "wordpress" ? await trace.measure("published.page-cache.lookup", () => matchWordPressPageCache(request, pointer, env.WORDPRESS_STATE_BUCKET, site)) : null
     if (cachedPage) {
-      await releaseLease(coordinator, request.url, lease)
+      pageCache = "hit"
+      await trace.measure("lease.release", () => releaseLease(coordinator, request.url, activeLease))
       finalized = true
+      finish(true)
       return cachedPage
     }
     if (route === "static-artifact-import") await heartbeat?.("booting-runtime", 20)
-    runtime = await getRuntime(env, lease.pointer, site, route === "static-artifact-import")
+    const previousRuntime = cachedRuntimes.get(site.id)
+    if (runtimeDisposition !== "cold") {
+      runtimeDisposition = previousRuntime && previousRuntime.baseRevision === pointer.revision && route !== "static-artifact-import"
+        ? previousRuntime.state === "pending" ? "shared-initialization" : "warm"
+        : previousRuntime ? "invalidated" : "cold"
+    }
+    const bootTrace = runtimeDisposition === "cold" || runtimeDisposition === "invalidated" ? trace : undefined
+    runtime = runtimeDisposition === "shared-initialization"
+      ? await trace.measure("runtime.shared-initialization.wait", () => getRuntime(env, pointer, site, route === "static-artifact-import", bootTrace))
+      : runtimeDisposition === "warm"
+        ? await trace.measure("runtime.cache.reuse", () => getRuntime(env, pointer, site, route === "static-artifact-import", bootTrace))
+        : await getRuntime(env, pointer, site, route === "static-artifact-import", bootTrace)
     if (route === "static-artifact-import") await heartbeat?.("runtime-ready", 35)
-    const mutatesCanonicalState = isMutation(request, route)
     const diagnosticsStartedAt = Date.now()
     const retained = new MutationRetainedBytes()
-    let currentPublication = mutatesCanonicalState ? await readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site) : null
+    let currentPublication = mutatesCanonicalState ? await trace.measure("publication.current.read", () => readCurrentPublication(env.WORDPRESS_STATE_BUCKET, site)) : null
     let response: Response | undefined
     let phpResponse: PHPResponseData | undefined
     let responseBodyBytes = 0
@@ -1203,85 +1248,94 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
       await heartbeat?.("executing-ssi", 45)
       initializePublicationChanges(runtime.php)
       runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
-      const imported = await runStaticArtifactImport(runtime, staticArtifactImport)
+      const imported = await trace.measure("request.ssi", () => runStaticArtifactImport(runtime!, staticArtifactImport))
       await heartbeat?.("ssi-completed", 60)
       if (imported.status !== "imported") {
-        await discardRuntime(runtime, site)
+        await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site))
         runtime = undefined
-        await releaseLease(coordinator, request.url, lease)
+        await trace.measure("lease.release", () => releaseLease(coordinator, request.url, activeLease))
         finalized = true
         const status = imported.status === "duplicate" ? 200 : imported.status === "conflict" ? 409 : 422
-        return Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, ...imported }, { status })
+        const response = Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, ...imported }, { status })
+        finish(true)
+        return response
       }
       response = Response.json({ schema: STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, ...imported }, { status: 201 })
-      canonicalChanges = readCanonicalChanges(runtime.php)
-      publicationChanges = readPublicationChanges(runtime.php)
+      canonicalChanges = await trace.measure("canonical.changes.collect", async () => readCanonicalChanges(runtime!.php))
+      publicationChanges = await trace.measure("publication.changes.collect", async () => readPublicationChanges(runtime!.php))
       console.log(JSON.stringify({ schema: "wp-codebox/cloudflare-static-artifact-persistence/v1", canonicalChanges, publicationChanges }))
     } else if (route === "r2-mutate") {
       initializePublicationChanges(runtime.php)
-      const mutation = await runSyntheticMutation(runtime)
+      const mutation = await trace.measure("synthetic.execution", () => runSyntheticMutation(runtime!))
       response = mutation.response
       canonicalChanges = mutation.canonicalChanges
-      publicationChanges = readPublicationChanges(runtime.php)
+      publicationChanges = await trace.measure("publication.changes.collect", async () => readPublicationChanges(runtime!.php))
     } else if (route === "health") {
-      response = await health(runtime)
+      response = await trace.measure("health.execution", () => health(runtime!))
     } else {
       if (mutatesCanonicalState) {
         runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
         initializePublicationChanges(runtime.php)
       }
-      phpResponse = await runtime.requestHandler.request(await toPHPRequest(request))
+      phpResponse = await trace.measure("request.php", async () => runtime!.requestHandler.request(await toPHPRequest(request)))
       responseBodyBytes = phpResponse.bytes.byteLength
       if (mutatesCanonicalState) retained.retain(responseBodyBytes)
       if (!mutatesCanonicalState) response = toFetchResponse(request, phpResponse)
       if (mutatesCanonicalState) {
-        canonicalChanges = readCanonicalChanges(runtime.php)
-        publicationChanges = readPublicationChanges(runtime.php)
+        canonicalChanges = await trace.measure("canonical.changes.collect", async () => readCanonicalChanges(runtime!.php))
+        publicationChanges = await trace.measure("publication.changes.collect", async () => readPublicationChanges(runtime!.php))
       }
     }
     if (mutatesCanonicalState) {
       if (!canonicalChanges || !publicationChanges) throw new Error("Canonical mutation completed without its persistence evidence.")
       logMutationPhase(diagnosticsStartedAt, "php-request", retained, { canonicalCreated: canonicalChanges.created.length, canonicalChanged: canonicalChanges.changed.length, canonicalDeleted: canonicalChanges.deleted.length })
       if (route === "static-artifact-import") await heartbeat?.("persisting-canonical", 70)
-      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime, canonicalChanges, site, diagnosticsStartedAt, retained)
+      const next = await persistRuntime(env.WORDPRESS_STATE_BUCKET, runtime!, canonicalChanges!, site, diagnosticsStartedAt, retained, trace)
       if (route === "static-artifact-import") await heartbeat?.("canonical-prepared", 80)
       if (!response) {
         if (!phpResponse) throw new Error("WordPress mutation completed without a PHP response.")
         retained.retain(responseBodyBytes)
         response = toFetchResponse(request, phpResponse)
       }
-      await discardRuntime(runtime, site)
+      await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site))
       runtime = undefined
       if (phpResponse) retained.release(responseBodyBytes)
-      if (route === "static-artifact-import" && !currentPublication) currentPublication = await initializeProvisioningPublication(env.WORDPRESS_STATE_BUCKET, lease, site)
-      const publicationJob = await enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, lease, next, currentPublication, publicationChanges, site)
+      if (route === "static-artifact-import" && !currentPublication) currentPublication = await trace.measure("publication.current.initialize", () => initializeProvisioningPublication(env.WORDPRESS_STATE_BUCKET, activeLease, site))
+      const publicationJob = await trace.measure("publication.enqueue", () => enqueuePublicationJob(env.WORDPRESS_STATE_BUCKET, activeLease, next, currentPublication, publicationChanges!, site))
       response.headers.set("x-wp-codebox-publication", publicationJob ? "queued" : "unchanged")
       if (publicationJob) response.headers.set("x-wp-codebox-publication-job", publicationJob.key)
       if (route === "static-artifact-import") {
         await heartbeat?.("preparing-commit", 85)
-        await onPreparedCommit?.({ pointer: next, version: lease.version + 1, ssiResult: await response.clone().json(), publicationJobKey: publicationJob?.key ?? null })
+        await onPreparedCommit?.({ pointer: next, version: activeLease.version + 1, ssiResult: await response.clone().json(), publicationJobKey: publicationJob?.key ?? null })
         await heartbeat?.("committing", 90)
       }
-      const committed = await commitLease(coordinator, request.url, lease, next)
+      const committed = await trace.measure("coordinator.commit", () => commitLease(coordinator, request.url, activeLease, next))
       await onCommitted?.(committed)
       // A pre-commit R2 job is inert; only the observable coordinator receipt may wake it.
       if (publicationJob && env.WORDPRESS_STATE_DATABASE) {
         const operations = new D1OperationRepository(env.WORDPRESS_STATE_DATABASE)
-        await dispatchRuntimeWork(env, operations, site, "publication", publicationJob.key, `system:${site.id}`)
+        await trace.measure("publication.dispatch", () => dispatchRuntimeWork(env, operations, site, "publication", publicationJob.key, `system:${site.id}`))
       }
       response.headers.set("x-wp-codebox-canonical-revision", committed.pointer.revision)
       response.headers.set("x-wp-codebox-canonical-version", String(committed.version))
       logMutationPhase(diagnosticsStartedAt, "commit", retained, { publication: publicationJob ? "queued" : "unchanged" })
     } else {
-      await releaseLease(coordinator, request.url, lease)
+      await trace.measure("lease.release", () => releaseLease(coordinator, request.url, activeLease))
     }
     finalized = true
-    if (!mutatesCanonicalState && route === "wordpress" && response) response = await cacheWordPressPage(request, lease.pointer, response, env.WORDPRESS_STATE_BUCKET, site)
+    if (!mutatesCanonicalState && route === "wordpress" && response) response = await trace.measure("page-cache.write", () => cacheWordPressPage(request, lease!.pointer!, response!, env.WORDPRESS_STATE_BUCKET, site))
     if (!response) throw new Error("WordPress request completed without a response.")
-    return response
+    const summary = finish(true)
+    return route === "health" ? attachServerTiming(response, summary) : response
   } catch (error) {
-    if (!finalized) await abortLease(coordinator, request.url, lease)
-    if (runtime) await discardRuntime(runtime, site)
+    let cleanupFailed = false
+    if (!finalized && lease) {
+      try { await trace.measure("lease.abort", () => abortLease(coordinator, request.url, lease!)) } catch { cleanupFailed = true }
+    }
+    if (runtime) {
+      try { await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site)) } catch { cleanupFailed = true }
+    }
+    finish(false, { cleanupFailed })
     throw error
   }
 }
@@ -1418,17 +1472,21 @@ function commitLease(coordinator: RevisionCoordinator, _requestUrl: string, leas
   return coordinator.commit(lease, pointer)
 }
 
-async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, site: SiteContext, includeStaticSiteImporter = false): Promise<Runtime> {
+async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, site: SiteContext, includeStaticSiteImporter = false, trace?: CloudflarePhaseTrace): Promise<Runtime> {
   let cachedRuntime = cachedRuntimes.get(site.id)
   if (cachedRuntime && (cachedRuntime.baseRevision !== pointer.revision || includeStaticSiteImporter)) {
-    await discardCachedRuntime(site.id)
+    if (trace) await trace.measure("runtime.invalidate.dispose", () => discardCachedRuntime(site.id))
+    else await discardCachedRuntime(site.id)
     cachedRuntime = undefined
   }
   if (!cachedRuntime) {
-    const promise = bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), includeStaticSiteImporter, site)
-    cachedRuntime = { baseRevision: pointer.revision, promise }
+    const promise = (async () => bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), includeStaticSiteImporter, site, trace))()
+    cachedRuntime = { baseRevision: pointer.revision, promise, state: "pending" }
     cachedRuntimes.set(site.id, cachedRuntime)
-    promise.catch(() => {
+    promise.then(() => {
+      const current = cachedRuntimes.get(site.id)
+      if (current?.promise === promise) current.state = "ready"
+    }, () => {
       if (cachedRuntimes.get(site.id)?.promise === promise) cachedRuntimes.delete(site.id)
     })
   }
@@ -1436,7 +1494,7 @@ async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, site: SiteC
 }
 
 function cacheRuntime(pointer: MarkdownPointer, runtime: Runtime, site: SiteContext): void {
-  cachedRuntimes.set(site.id, { baseRevision: pointer.revision, promise: Promise.resolve(runtime) })
+  cachedRuntimes.set(site.id, { baseRevision: pointer.revision, promise: Promise.resolve(runtime), state: "ready" })
 }
 
 async function discardCachedRuntime(siteId: string): Promise<void> {
@@ -1468,27 +1526,31 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeStaticSiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT): Promise<Runtime> {
-  const revision = await readCanonicalRevision(bucket, pointer, site)
-  return { ...await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeStaticSiteImporter), pointer }
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeStaticSiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+  const revision = await readCanonicalRevision(bucket, pointer, site, trace)
+  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeStaticSiteImporter, trace)
+  return { ...booted, pointer }
 }
 
-async function bootstrapCanonicalRuntime(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, requestUrl: string, lease: Lease): Promise<Runtime> {
+async function bootstrapCanonicalRuntime(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, requestUrl: string, lease: Lease, trace?: CloudflarePhaseTrace): Promise<Runtime> {
   const origin = site.origin
-  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env, site), env.WORDPRESS_STATE_BUCKET, true)
+  const seed = trace ? await trace.measure("canonical.bootstrap.seed", packagedCanonicalMarkdownSeed) : await packagedCanonicalMarkdownSeed()
+  const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, seed, new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env, site), env.WORDPRESS_STATE_BUCKET, true, undefined, undefined, [], false, trace)
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
     let adminPassword: string
     try { adminPassword = await administratorPasswordForSite(env, site.id) } catch { throw new Error("Administrator credential roots are required to bootstrap a complete canonical WordPress revision.") }
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(adminPassword))
-    const passwordOutput = (await runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })).text.trim()
+    const passwordOutput = (trace ? await trace.measure("canonical.bootstrap.password", () => runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })) : await runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })).text.trim()
     if (passwordOutput !== "password-updated") throw new Error("Canonical bootstrap did not update the admin password.")
-    const urlOutput = (await runtime.php.run({ code: canonicalBootstrapUrlCode(origin) })).text.trim()
+    const urlOutput = (trace ? await trace.measure("canonical.bootstrap.url", () => runtime.php.run({ code: canonicalBootstrapUrlCode(origin) })) : await runtime.php.run({ code: canonicalBootstrapUrlCode(origin) })).text.trim()
     if (urlOutput !== "urls-updated") throw new Error("Canonical bootstrap did not update the site URLs.")
-    const flushOutput = (await runtime.php.run({ code: canonicalBootstrapFlushCode() })).text.trim()
+    const flushOutput = (trace ? await trace.measure("canonical.bootstrap.flush", () => runtime.php.run({ code: canonicalBootstrapFlushCode() })) : await runtime.php.run({ code: canonicalBootstrapFlushCode() })).text.trim()
     if (flushOutput !== "flushed") throw new Error("MDI did not confirm canonical bootstrap flush.")
-    const pointer = await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, collectRuntimeFiles(runtime.php, MARKDOWN_ROOT), site)
-    await commitLease(coordinator, requestUrl, lease, pointer)
+    const files = trace ? await trace.measure("canonical.bootstrap.collect", async () => collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)) : collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
+    const pointer = await trace?.measure("canonical.bootstrap.persist", () => persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, files, site)) ?? await persistMarkdownRevision(env.WORDPRESS_STATE_BUCKET, files, site)
+    if (trace) await trace.measure("coordinator.commit", () => commitLease(coordinator, requestUrl, lease, pointer))
+    else await commitLease(coordinator, requestUrl, lease, pointer)
     return { ...runtime, pointer }
   } catch (error) {
     runtime.php.exit()
@@ -1526,39 +1588,48 @@ async function canonicalWordPressAuthConstants(env: RuntimeEnv, site: SiteContex
   return deriveWordPressAuthConstants(env.WORDPRESS_AUTH_SECRET ?? "", site.id)
 }
 
-async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, site: SiteContext, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes()): Promise<MarkdownPointer> {
+async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: MarkdownChanges, site: SiteContext, diagnosticsStartedAt = Date.now(), retained = new MutationRetainedBytes(), trace?: CloudflarePhaseTrace): Promise<MarkdownPointer> {
   validateMarkdownChanges(changes)
-  const currentManifest = await readMarkdownManifest(bucket, runtime.pointer, site)
+  const currentManifest = trace ? await trace.measure("canonical.manifest.current.read", () => readMarkdownManifest(bucket, runtime.pointer, site)) : await readMarkdownManifest(bucket, runtime.pointer, site)
   if (!currentManifest) throw new Error(`R2 Markdown manifest is missing: ${runtime.pointer.manifestKey}`)
   validateUploadManifestFiles(currentManifest.uploads ?? [], site)
   validateWpContentManifestFiles(currentManifest.wpContent ?? [], site)
   validateWpContentDeletedPaths(currentManifest.wpContentDeleted ?? [])
   const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
-  const uploads = await collectUploadFiles(runtime.php)
+  const uploads = trace ? await trace.measure("persistence.upload.inventory", () => collectUploadFiles(runtime.php)) : await collectUploadFiles(runtime.php)
   logMutationPhase(diagnosticsStartedAt, "upload-inventory", retained, { files: uploads.length, bytes: sumMetadataBytes(uploads) })
-  const uploadManifestFiles = await persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)
+  const uploadManifestFiles = trace ? await trace.measure("persistence.upload.write", () => persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, UPLOADS_ROOT, uploads, currentManifest.uploads ?? [], siteStorageKeys(site).uploadObjectPrefix, retained)
   logMutationPhase(diagnosticsStartedAt, "upload-persist", retained, { files: uploadManifestFiles.length })
-  const wpContent = await collectWpContentFiles(runtime.php)
+  const wpContent = trace ? await trace.measure("persistence.wp-content.inventory", () => collectWpContentFiles(runtime.php)) : await collectWpContentFiles(runtime.php)
   logMutationPhase(diagnosticsStartedAt, "wp-content-inventory", retained, { files: wpContent.files.length, bytes: sumMetadataBytes(wpContent.files), deleted: wpContent.deleted.length })
-  const wpContentManifestFiles = await persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)
+  const wpContentManifestFiles = trace ? await trace.measure("persistence.wp-content.write", () => persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)) : await persistRuntimeObjects(bucket, runtime.php, "/wordpress/wp-content", wpContent.files, currentManifest.wpContent ?? [], siteStorageKeys(site).wpContentObjectPrefix, retained)
   logMutationPhase(diagnosticsStartedAt, "wp-content-persist", retained, { files: wpContentManifestFiles.length })
 
   const manifestFiles = new Map(currentManifest.files.map((file) => [file.path, file]))
   for (const path of changes.deleted) manifestFiles.delete(path)
-  for (const path of changedPaths) {
-    if (!isCanonicalRelativePath(path)) throw new Error(`Invalid canonical runtime path: ${path}`)
-    const absolute = `${MARKDOWN_ROOT}/${path}`
-    if (runtime.php.isDir(absolute)) throw new Error(`Canonical runtime file is missing: ${path}`)
-    const bytes = runtime.php.readFileAsBuffer(absolute)
-    retained.retain(bytes.byteLength)
-    try {
-      const sha256 = await sha256Hex(bytes)
-      const objectKey = `${siteStorageKeys(site).markdownObjectPrefix}/${sha256}`
-      await bucket.put(objectKey, bytes)
-      manifestFiles.set(path, { path, objectKey, sha256, size: bytes.byteLength })
-    } finally {
-      retained.release(bytes.byteLength)
+  let markdownBytes = 0
+  if (trace) trace.start("persistence.markdown.write", { files: changedPaths.length })
+  try {
+    for (const path of changedPaths) {
+      if (!isCanonicalRelativePath(path)) throw new Error(`Invalid canonical runtime path: ${path}`)
+      const absolute = `${MARKDOWN_ROOT}/${path}`
+      if (runtime.php.isDir(absolute)) throw new Error(`Canonical runtime file is missing: ${path}`)
+      const bytes = runtime.php.readFileAsBuffer(absolute)
+      markdownBytes += bytes.byteLength
+      retained.retain(bytes.byteLength)
+      try {
+        const sha256 = await sha256Hex(bytes)
+        const objectKey = `${siteStorageKeys(site).markdownObjectPrefix}/${sha256}`
+        await bucket.put(objectKey, bytes)
+        manifestFiles.set(path, { path, objectKey, sha256, size: bytes.byteLength })
+      } finally {
+        retained.release(bytes.byteLength)
+      }
     }
+    if (trace) trace.end({ bytes: markdownBytes })
+  } catch (error) {
+    if (trace) trace.end({ bytes: markdownBytes, failed: true })
+    throw error
   }
   logMutationPhase(diagnosticsStartedAt, "markdown-persist", retained, { files: changedPaths.length })
 
@@ -1568,7 +1639,7 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
     && JSON.stringify(currentManifest.wpContent ?? []) === JSON.stringify(wpContentManifestFiles)
     && JSON.stringify(currentManifest.wpContentDeleted ?? []) === JSON.stringify(wpContent.deleted)
   if (unchanged) return runtime.pointer
-  return persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted)
+  return trace ? trace.measure("persistence.manifest.write", () => persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted), { files: files.length }) : persistMarkdownManifest(bucket, files, site, uploadManifestFiles, wpContentManifestFiles, wpContent.deleted)
 }
 
 function readCanonicalChanges(php: PHP): MarkdownChanges {
@@ -1699,23 +1770,31 @@ function isCanonicalRelativePath(path: string): boolean {
   return path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..")
 }
 
-async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer, site: SiteContext): Promise<{ markdown: RuntimeFile[]; uploads: RuntimeFile[]; wpContent: RuntimeFile[]; wpContentDeleted: string[] }> {
+async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer, site: SiteContext, trace?: CloudflarePhaseTrace): Promise<{ markdown: RuntimeFile[]; uploads: RuntimeFile[]; wpContent: RuntimeFile[]; wpContentDeleted: string[] }> {
   if (!isCanonicalRestorePointer(pointer, site)) throw new Error("Canonical pointer belongs to a different site namespace.")
-  const manifestObject = await bucket.get(pointer.manifestKey)
-  if (!manifestObject) throw new Error(`R2 Markdown manifest is missing: ${pointer.manifestKey}`)
-  const manifest = await manifestObject.json<MarkdownManifest>()
-  if (!samePointer(manifest, pointer) || !Array.isArray(manifest.files)) throw new Error("Canonical manifest identity is invalid.")
-  validateMarkdownManifestFiles(manifest.files, site)
-  validateUploadManifestFiles(manifest.uploads ?? [], site)
-  validateWpContentManifestFiles(manifest.wpContent ?? [], site)
-  validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [])
-  const [markdown, uploads, wpContent] = await Promise.all([
+  const readManifest = async () => {
+    const manifestObject = await bucket.get(pointer.manifestKey)
+    if (!manifestObject) throw new Error(`R2 Markdown manifest is missing: ${pointer.manifestKey}`)
+    const manifest = await manifestObject.json<MarkdownManifest>()
+    if (!samePointer(manifest, pointer) || !Array.isArray(manifest.files)) throw new Error("Canonical manifest identity is invalid.")
+    validateMarkdownManifestFiles(manifest.files, site)
+    validateUploadManifestFiles(manifest.uploads ?? [], site)
+    validateWpContentManifestFiles(manifest.wpContent ?? [], site)
+    validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [])
+    return manifest
+  }
+  const manifest = trace ? await trace.measure("canonical.manifest.read", readManifest) : await readManifest()
+  const hydrate = () => Promise.all([
     readManifestFiles(bucket, manifest.files, "Markdown"),
     readManifestFiles(bucket, manifest.uploads ?? [], "upload"),
     readManifestFiles(bucket, manifest.wpContent ?? [], "wp-content"),
   ])
+  const objectEvidence = { markdownFiles: manifest.files.length, markdownBytes: sumManifestFileBytes(manifest.files), uploadFiles: manifest.uploads?.length ?? 0, uploadBytes: sumManifestFileBytes(manifest.uploads ?? []), wpContentFiles: manifest.wpContent?.length ?? 0, wpContentBytes: sumManifestFileBytes(manifest.wpContent ?? []), wpContentDeleted: manifest.wpContentDeleted?.length ?? 0 }
+  const [markdown, uploads, wpContent] = trace ? await trace.measure("canonical.objects.hydrate", hydrate, objectEvidence) : await hydrate()
   return { markdown, uploads, wpContent, wpContentDeleted: manifest.wpContentDeleted ?? [] }
 }
+
+function sumManifestFileBytes(files: MarkdownManifestFile[]): number { return files.reduce((total, file) => total + file.size, 0) }
 
 async function readManifestFiles(bucket: R2Bucket, files: MarkdownManifestFile[], label: string): Promise<RuntimeFile[]> {
   return Promise.all(files.map(async (file): Promise<RuntimeFile> => {
@@ -2112,13 +2191,14 @@ async function bootWordPressRuntime(
   wpContentFiles?: RuntimeFile[],
   wpContentDeleted: string[] = [],
   includeStaticSiteImporter = false,
+  trace?: CloudflarePhaseTrace,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
   validateWpContentDeletedPaths(wpContentDeleted)
-  const sqliteIntegrationPluginZip = includeSqlite ? readSqliteIntegrationArtifact(runtimeBucket!) : undefined
-  const staticSiteImporterZip = includeStaticSiteImporter ? readStaticSiteImporterArtifact(runtimeBucket!) : undefined
-  const requestHandler = await bootWordPressAndRequestHandler({
-    createPhpRuntime,
+  const sqliteIntegrationPluginZip = includeSqlite ? trace ? await trace.measure("runtime.archive.sqlite.fetch-verify", () => readSqliteIntegrationArtifact(runtimeBucket!)) : await readSqliteIntegrationArtifact(runtimeBucket!) : undefined
+  const staticSiteImporterZip = includeStaticSiteImporter ? trace ? await trace.measure("runtime.archive.ssi.fetch-verify", () => readStaticSiteImporterArtifact(runtimeBucket!)) : await readStaticSiteImporterArtifact(runtimeBucket!) : undefined
+  const boot = () => bootWordPressAndRequestHandler({
+    createPhpRuntime: trace ? () => trace.measure("php.runtime.create", () => createPhpRuntime()) : createPhpRuntime,
     constants: {
       AUTOMATIC_UPDATER_DISABLED: true,
       CONCATENATE_SCRIPTS: false,
@@ -2141,25 +2221,28 @@ async function bootWordPressRuntime(
     cookieStore: false,
     hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? {
       beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? async (php: PHP) => {
-        if (streamWordPressFiles) await materializeWordPressServerFiles(php, runtimeBucket)
-        if (staticSiteImporterZip) await materializeStaticSiteImporter(php, await staticSiteImporterZip)
+        if (streamWordPressFiles) trace ? await trace.measure("runtime.archive.wordpress.fetch-verify-extract", () => materializeWordPressServerFiles(php, runtimeBucket)) : await materializeWordPressServerFiles(php, runtimeBucket)
+        if (staticSiteImporterZip) trace ? await trace.measure("runtime.archive.ssi.fetch-materialize", async () => materializeStaticSiteImporter(php, await staticSiteImporterZip)) : await materializeStaticSiteImporter(php, await staticSiteImporterZip)
         if (markdownFiles) {
-          await materializeMarkdownDatabaseIntegration(php)
+          if (trace) await trace.measure("runtime.archive.mdi.extract", () => materializeMarkdownDatabaseIntegration(php))
+          else await materializeMarkdownDatabaseIntegration(php)
           materializeCanonicalChangeAdapter(php)
-          materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
+          if (trace) await trace.measure("canonical.hydration.markdown", async () => materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles), { files: markdownFiles.length, bytes: sumRuntimeFileBytes(markdownFiles) })
+          else materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
           if (markdownIndexSeed) php.writeFile(MARKDOWN_RESOLVED_INDEX_PATH, markdownIndexSeed)
         }
-        if (wpContentFiles?.length) materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentFiles)
-        if (wpContentDeleted.length) await materializeWpContentTombstones(php, wpContentDeleted)
-        if (uploadFiles?.length) materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles)
+        if (wpContentFiles?.length) trace ? await trace.measure("canonical.hydration.wp-content", async () => materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentFiles), { files: wpContentFiles.length, bytes: sumRuntimeFileBytes(wpContentFiles) }) : materializeRuntimeFiles(php, "/wordpress/wp-content", wpContentFiles)
+        if (wpContentDeleted.length) trace ? await trace.measure("canonical.hydration.tombstones", () => materializeWpContentTombstones(php, wpContentDeleted), { count: wpContentDeleted.length }) : await materializeWpContentTombstones(php, wpContentDeleted)
+        if (uploadFiles?.length) trace ? await trace.measure("canonical.hydration.uploads", async () => materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles), { files: uploadFiles.length, bytes: sumRuntimeFileBytes(uploadFiles) }) : materializeRuntimeFiles(php, UPLOADS_ROOT, uploadFiles)
         if (shouldPatchCanonicalRuntimePoliciesAtInit) {
           patchCanonicalRuntimePoliciesAtInit(php)
           patchCanonicalThemeJsonCustomCss(php)
         }
       } : undefined,
-      beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
-        php.mkdir("/wordpress/wp-content/database")
-        php.writeFile(DATABASE_PATH, databaseSeed)
+      beforeDatabaseSetup: databaseSeed ? async (php: PHP) => {
+        const setup = async () => { php.mkdir("/wordpress/wp-content/database"); php.writeFile(DATABASE_PATH, databaseSeed) }
+        if (trace) await trace.measure("playground.before-database-setup", setup, { bytes: databaseSeed.byteLength })
+        else await setup()
       } : undefined,
     } : undefined,
     maxPhpInstances: 1,
@@ -2169,8 +2252,9 @@ async function bootWordPressRuntime(
     sqliteIntegrationPluginZip,
     wordpressInstallMode,
   })
+  const requestHandler = trace ? await trace.measureComposite("playground.opaque", boot) : await boot()
   const php = await requestHandler.getPrimaryPhp()
-  const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
+  const wordpressVersion = (trace ? await trace.measure("playground.version.read", () => php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })) : await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
   return { php, requestHandler, wordpressVersion }
 }
@@ -2193,6 +2277,10 @@ function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): 
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
     php.writeFile(destination, file.bytes)
   }
+}
+
+function sumRuntimeFileBytes(files: RuntimeFile[]): number {
+  return files.reduce((total, file) => total + file.bytes.byteLength, 0)
 }
 
 async function materializeWpContentTombstones(php: PHP, paths: string[]): Promise<void> {
