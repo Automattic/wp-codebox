@@ -226,6 +226,7 @@ test("Cloudflare runtime declares bounded CPU and scheduled execution", async ()
     limits?: { cpu_ms?: number }
     triggers?: { crons?: string[] }
     d1_databases?: Array<{ binding?: string; database_name?: string }>
+    queues?: { producers?: Array<{ binding?: string; queue?: string }>; consumers?: Array<{ queue?: string; max_batch_size?: number; max_retries?: number; max_concurrency?: number; dead_letter_queue?: string }> }
     durable_objects?: unknown
     migrations?: unknown
   }
@@ -238,6 +239,8 @@ test("Cloudflare runtime declares bounded CPU and scheduled execution", async ()
   assert.deepEqual(d1Config.d1_databases?.map(({ binding, database_name }) => ({ binding, database_name })), [{ binding: "WORDPRESS_STATE_DATABASE", database_name: "wp-codebox-runtime-state" }])
   assert.deepEqual((d1Config.durable_objects as { bindings?: Array<{ name?: string; class_name?: string }> } | undefined)?.bindings, [{ name: "WORDPRESS_STATE", class_name: "WordPressStateCoordinator" }])
   assert.deepEqual(d1Config.migrations, [{ tag: "v1", new_sqlite_classes: ["WordPressStateCoordinator"] }])
+  assert.deepEqual(d1Config.queues?.producers, [{ binding: "WORDPRESS_RUNTIME_QUEUE", queue: "wp-codebox-runtime-dispatch" }])
+  assert.deepEqual(d1Config.queues?.consumers, [{ queue: "wp-codebox-runtime-dispatch", max_batch_size: 10, max_batch_timeout: 5, max_retries: 3, max_concurrency: 10, dead_letter_queue: "wp-codebox-runtime-dispatch-dlq" }])
 })
 
 test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
@@ -485,10 +488,13 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
   assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
   assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
-  assert.match(worker, /const publication = operation \? null : await drainNextPublicationJob\(env, coordinator, site, operations\)/)
-  assert.match(worker, /const fence = await coordinator\.fenceStatus\(\)/)
-  assert.match(worker, /const operationFirst = siteCycle % 2 === 0/)
-  assert.match(worker, /: await runScheduledWordPressCron\(env, coordinator, site, controller\.scheduledTime\)/)
+  assert.match(worker, /pendingDispatches\(32\)/)
+  assert.match(worker, /async queue\(batch:/)
+  assert.match(worker, /grouped = new Map/)
+  assert.match(worker, /Promise\.all\(\[\.\.\.grouped\.entries\(\)\]/)
+  assert.match(worker, /matchesGeneration/)
+  assert.doesNotMatch(worker, /siteCycle % 2/)
+  assert.doesNotMatch(worker, /Math\.floor\(controller\.scheduledTime \/ 60_000\) % sites\.length/)
   assert.match(worker, /pathname === "\/wp-cron\.php"/)
   assert.match(worker, /MAX_CRON_EVENTS_PER_INVOCATION = 5/)
   assert.match(worker, /while \(evidence\.events\.length < MAX_CRON_EVENTS_PER_INVOCATION/)

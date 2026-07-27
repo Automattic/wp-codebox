@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 300000 },
 	"triggers": { "crons": ["* * * * *"] },
+	"queues": {
+		"producers": [{ "binding": "WORDPRESS_RUNTIME_QUEUE", "queue": "wp-codebox-runtime-dispatch" }],
+		"consumers": [{ "queue": "wp-codebox-runtime-dispatch", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 3, "max_concurrency": 10, "dead_letter_queue": "wp-codebox-runtime-dispatch-dlq" }]
+	},
 	"r2_buckets": [
 		{ "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
 	],

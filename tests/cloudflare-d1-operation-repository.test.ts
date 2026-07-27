@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { D1OperationRepository, OperationConflict, shouldRecoverPreparedCommit } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
 import { CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
+import { parseRuntimeQueueMessage, RUNTIME_QUEUE_MESSAGE_SCHEMA, runtimeQueueMessage } from "../packages/runtime-cloudflare/src/queue-dispatch.js"
 
 function database(): D1Database {
   const sqlite = new DatabaseSync(":memory:")
@@ -107,4 +108,20 @@ test("deletion fences an in-flight claim and a publication callback", async () =
   await repository.reconcilePublication(dynamic.id, "job-race", "promoted", "revision")
   assert.equal((await repository.get(dynamic.id, created.operation.operationId))?.state, "failed")
   assert.ok(fence > active.operationFence)
+})
+
+test("queue dispatches are versioned wake-ups with durable repair and dead-letter evidence", async () => {
+  const repository = new D1OperationRepository(database())
+  const created = await repository.createOrConverge(site, input())
+  const message = await repository.stageDispatch(site, "operation", created.operation.operationId)
+  assert.deepEqual(message, { schema: RUNTIME_QUEUE_MESSAGE_SCHEMA, siteId: site.id, generation: 1, kind: "operation", identity: created.operation.operationId })
+  assert.deepEqual(await repository.pendingDispatches(), [message])
+  await repository.failedDispatch(message, new Error("queue unavailable\nsecret"))
+  assert.deepEqual(await repository.pendingDispatches(), [message], "a producer failure leaves durable repair work")
+  await repository.deadLetter(message, 3, new Error("isolate evicted"))
+  await repository.completeDispatch(message)
+  assert.deepEqual(await repository.pendingDispatches(), [])
+  assert.equal(parseRuntimeQueueMessage({ ...message, schema: "foreign" }), null)
+  assert.equal(parseRuntimeQueueMessage({ ...message, generation: 0 }), null)
+  assert.throws(() => runtimeQueueMessage({ id: "alpha" }, 1, "operation", ""), /invalid/)
 })

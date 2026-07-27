@@ -1,4 +1,5 @@
 import { D1OperationRepository, OperationConflict, type StaticArtifactOperation, type StaticArtifactOperationInput } from "./d1-operation-repository.js"
+import type { RuntimeQueue } from "./queue-dispatch.js"
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
@@ -17,7 +18,7 @@ export interface ProvisioningAllocation {
   artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"]
 }
 interface CreateInput { key: string; fingerprint: string; artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"] }
-export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
+export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
 
 export async function routeProvisioningApi(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
@@ -36,6 +37,11 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   if (parts.length === 4 && parts[3] === "imports") return method === "POST" ? importSite(request, env, operations, siteId) : methodNotAllowed("POST")
   if (parts.length === 5 && parts[3] === "operations" && /^[0-9a-f-]{36}$/.test(parts[4])) return method === "GET" ? readOperation(request, env, operations, siteId, parts[4]) : methodNotAllowed("GET")
   return notFound()
+}
+
+async function dispatchOperation(env: ProvisioningEnv, operations: D1OperationRepository, site: SiteContext, operation: StaticArtifactOperation): Promise<void> {
+  const message = await operations.stageDispatch(site, "operation", operation.operationId)
+  try { if (!env.WORDPRESS_RUNTIME_QUEUE) throw new Error("Runtime queue binding is unavailable."); await env.WORDPRESS_RUNTIME_QUEUE.send(message); await operations.deliveredDispatch(message) } catch (error) { await operations.failedDispatch(message, error); console.error("Runtime queue producer is backpressured; reconciliation will retry.", error) }
 }
 
 async function lifecycleStatus(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
@@ -153,6 +159,7 @@ async function importSite(request: Request, env: ProvisioningEnv, operations: D1
     const input = await readStaticArtifactImport(request, env.WORDPRESS_STATE_BUCKET, site)
     if (input.idempotencyKey !== key) return apiError(409, "idempotency_conflict", "Idempotency-Key must match the import request.")
     const result = await operations.createOrConverge(site, { ...input, artifact: input.artifactReference })
+    await dispatchOperation(env, operations, site, result.operation)
     await store.linkOperation(token.principal, siteId, result.operation.operationId, "import", key)
     return operationResource(siteId, result.operation, 202)
   } catch (error) { return error instanceof OperationConflict ? apiError(409, "operation_conflict", error.message) : importError(error) }
@@ -187,6 +194,7 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const result = await operations.createOrConverge(site, input)
   await store.bindOperation(allocation, result.operation.operationId)
   await store.linkOperation(allocation.principal, site.id, result.operation.operationId, "provision", allocation.key)
+  await dispatchOperation(env, operations, site, result.operation)
   return result.operation
 }
 
