@@ -1450,7 +1450,7 @@ async function releaseService(container: string, evidence: RuntimeServiceEvidenc
     }
     evidence.lifecycle = "failed"
     evidence.teardown = "failed"
-    evidence.diagnostic = { code: "teardown-failed" }
+    if (evidence.diagnostic?.code !== "provider-unavailable") evidence.diagnostic = { code: "teardown-failed" }
     throw new Error(`Managed runtime service teardown failed: ${evidence.id}`)
   }
 }

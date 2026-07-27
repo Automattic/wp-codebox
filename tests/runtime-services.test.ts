@@ -178,11 +178,16 @@ await assert.rejects(provisionRuntimeServices([service], { dependencies: failedR
 const unavailableDuringReadinessDependencies: RuntimeServiceDependencies = {
   ...dependencies,
   async execute(command, args, options) {
-    if (args[0] === "exec") return await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options)
+    if (args[0] === "exec" || args[0] === "rm") return await executeRuntimeServiceProcess("wp-codebox-provider-command-that-does-not-exist", args, options)
     return dependencies.execute(command, args, options)
   },
 }
-await assert.rejects(provisionRuntimeServices([service], { dependencies: unavailableDuringReadinessDependencies }), (error: unknown) => error instanceof RuntimeServiceProvisionError && error.evidence[0]?.diagnostic?.code === "provider-unavailable")
+await assert.rejects(provisionRuntimeServices([service], { dependencies: unavailableDuringReadinessDependencies }), (error: unknown) => {
+  assert.ok(error instanceof RuntimeServiceProvisionError)
+  assert.equal(error.evidence[0]?.diagnostic?.code, "provider-unavailable", "cleanup failure does not replace the primary provider failure")
+  assert.equal(error.evidence[0]?.teardown, "failed", "failed cleanup remains visible in service evidence")
+  return true
+})
 
 let ordinaryReadinessAttempts = 0
 const retryingReadinessDependencies: RuntimeServiceDependencies = {
