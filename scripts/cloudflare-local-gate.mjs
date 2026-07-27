@@ -81,6 +81,7 @@ try {
   await stopWorker()
   await startWorker()
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
+  await assertRestorePackHydration("repeated canonical mutations after restart")
   if (coordinator === "durable-object") {
     await assertCanonicalPost(post.id, updatedPost.title, restartedAdmin, "updated post after restart")
   }
@@ -137,7 +138,7 @@ try {
   if (conflicting.status !== "conflict" || conflictStateAfter.version !== duplicateStateBefore.version || conflictStateAfter.pointer?.revision !== duplicateStateBefore.pointer?.revision) throw new Error("Conflicting static artifact replay changed canonical state.")
   await assertTwoSiteIsolation()
   assertRuntimePhaseTraceSummaries()
-  console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
+  console.log(`Cloudflare local runtime gate passed with ${coordinator} coordination: canonical full-boot probe, one-pack restore hydration after repeated mutations, explanatory homepage, complete block styles, coordinator-free R2 publication reads, login, dashboard, post editor, concurrent canonical mutations, authenticated REST post and media creation, plugin ZIP installation and activation, direct R2 upload serving, frontend/admin/editor assets, cold-restart persistence, and bounded durable scheduled callback execution.`)
   }
 } finally {
   await stopWorker()
@@ -978,6 +979,23 @@ function assertRuntimePhaseTraceSummaries() {
     if (!phaseNames.has(phase)) throw new Error(`Cloudflare runtime gate did not emit the required ${phase} phase.`)
   }
   if (summaries.some((summary) => !Number.isFinite(summary.totalMs) || !Array.isArray(summary.phases) || summary.phases.reduce((total, phase) => total + phase.durationMs, 0) > summary.totalMs + 1)) throw new Error("Cloudflare runtime gate received an invalid phase trace summary.")
+}
+
+async function assertRestorePackHydration(label) {
+  const deadline = Date.now() + 2_000
+  let packHydrations = []
+  while (Date.now() < deadline) {
+    packHydrations = runtimePhaseTraceSummaries(output).filter((summary) => {
+      const fetch = summary.phases?.find((phase) => phase.name === "canonical.restore-pack.fetch")
+      const decode = summary.phases?.find((phase) => phase.name === "canonical.restore-pack.verify-decode")
+      const legacy = summary.phases?.find((phase) => phase.name === "canonical.objects.hydrate")
+      return !legacy && fetch?.evidence?.requests === 1 && decode?.evidence?.requests === 0 && Number.isSafeInteger(fetch.evidence?.bytes) && Number.isSafeInteger(decode.evidence?.files)
+    })
+    if (packHydrations.length) break
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  if (!packHydrations.length) throw new Error(`Cold restart did not prove one-pack canonical restore hydration for ${label}; expected exactly one R2 pack read and zero legacy object reads in the restore phases.`)
+  console.log(`Restore-pack hydration passed for ${coordinator}: ${label}; one R2 pack read replaced per-file canonical reads.`)
 }
 
 function runtimePhaseTraceSummaries(rawOutput) {

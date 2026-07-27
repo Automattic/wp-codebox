@@ -8,6 +8,7 @@ import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
+import { CANONICAL_RESTORE_PACK_SCHEMA, createCanonicalRestorePack, decodeCanonicalRestorePack, readCanonicalRestorePack, type CanonicalRestorePackFile, type CanonicalRestorePackMetadata } from "../packages/runtime-cloudflare/src/canonical-restore-pack.js"
 import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
 import { selectOperatorCoordinator } from "../packages/runtime-cloudflare/src/operator-coordinator.js"
 import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
@@ -71,6 +72,60 @@ test("Cloudflare wp-content manifests allow bounded user code and reject runtime
   assert.throws(() => validateWpContentManifestFiles([{ ...valid[0], objectKey: "sites/default/uploads/objects/foreign" }]), /invalid file/)
   assert.doesNotThrow(() => validateWpContentDeletedPaths(["themes/example/style.css"]))
   assert.throws(() => validateWpContentDeletedPaths(["themes/z/style.css", "themes/a/style.css"]), /non-deterministic/)
+})
+
+test("Cloudflare canonical restore packs are deterministic, fail closed, and use one R2 read", async () => {
+  const text = new TextEncoder()
+  const root = "sites/default"
+  const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+  const file = (path: string, value: string, prefix: string): CanonicalRestorePackFile => {
+    const bytes = text.encode(value)
+    const sha256 = digest(bytes)
+    return { path, size: bytes.byteLength, sha256, objectKey: `${prefix}/${sha256}` }
+  }
+  const markdown = [file("posts/hello.md", "hello", "sites/default/markdown/objects"), file("state/options.md", "options", "sites/default/markdown/objects")]
+  const uploads = [file("2026/07/image.txt", "image", "sites/default/uploads/objects")]
+  const wpContent = [file("plugins/example/plugin.php", "<?php", "sites/default/wp-content/objects")]
+  const files = { markdown, uploads, wpContent, wpContentDeleted: ["themes/example/style.css"] }
+  const contents = {
+    markdown: [{ path: markdown[0].path, bytes: text.encode("hello") }, { path: markdown[1].path, bytes: text.encode("options") }],
+    uploads: [{ path: uploads[0].path, bytes: text.encode("image") }],
+    wpContent: [{ path: wpContent[0].path, bytes: text.encode("<?php") }],
+    wpContentDeleted: files.wpContentDeleted,
+  }
+  const first = await createCanonicalRestorePack(root, contents)
+  const second = await createCanonicalRestorePack(root, { ...contents, markdown: [...contents.markdown].reverse(), uploads: [...contents.uploads].reverse(), wpContent: [...contents.wpContent].reverse() })
+  assert.deepEqual(first.bytes, second.bytes, "fixed timestamps and sorted entries make equivalent packs byte-identical")
+  assert.equal(first.metadata.schema, CANONICAL_RESTORE_PACK_SCHEMA)
+  let reads = 0
+  const restored = await readCanonicalRestorePack({ get: async (key) => {
+    reads++
+    return key === first.metadata.objectKey ? { size: first.bytes.byteLength, arrayBuffer: async () => first.bytes.slice().buffer } : null
+  } }, first.metadata, root, files)
+  assert.equal(reads, 1)
+  assert.deepEqual(restored, contents)
+  await assert.rejects(() => readCanonicalRestorePack({ get: async () => null }, first.metadata, root, files), /missing/)
+  await assert.rejects(() => decodeCanonicalRestorePack(first.metadata, root, files, new Uint8Array([...first.bytes, 0])), /integrity/)
+  await assert.rejects(() => decodeCanonicalRestorePack({ ...first.metadata, sha256: "a".repeat(64) }, root, files, first.bytes), /metadata/)
+
+  const metadata = async (bytes: Uint8Array): Promise<CanonicalRestorePackMetadata> => {
+    const sha256 = digest(bytes)
+    return { schema: CANONICAL_RESTORE_PACK_SCHEMA, objectKey: `${root}/restore-packs/${sha256}.zip`, sha256, size: bytes.byteLength, fileCount: 4, decodedBytes: 22 }
+  }
+  const zip = async (entries: Array<[string, string]>) => {
+    const stream = encodeZip(entries.map(([name, value]) => new File([value], name, { lastModified: 0 })))
+    return new Uint8Array(await new Response(stream).arrayBuffer())
+  }
+  const incomplete = await zip([[`markdown/${markdown[0].path}`, "hello"], [`markdown/${markdown[1].path}`, "options"], [`uploads/${uploads[0].path}`, "image"], ["metadata/wp-content-deleted.json", JSON.stringify({ wpContentDeleted: files.wpContentDeleted })]])
+  await assert.rejects(async () => decodeCanonicalRestorePack(await metadata(incomplete), root, files, incomplete), /incomplete/)
+  const mismatched = await zip([[`markdown/${markdown[0].path}`, "HELLO"], [`markdown/${markdown[1].path}`, "options"], [`uploads/${uploads[0].path}`, "image"], [`wp-content/${wpContent[0].path}`, "<?php"], ["metadata/wp-content-deleted.json", JSON.stringify({ wpContentDeleted: files.wpContentDeleted })]])
+  await assert.rejects(async () => decodeCanonicalRestorePack(await metadata(mismatched), root, files, mismatched), /integrity/)
+  const duplicate = await zip([[`markdown/${markdown[0].path}`, "hello"], [`markdown/${markdown[0].path}`, "hello"], [`markdown/${markdown[1].path}`, "options"], [`uploads/${uploads[0].path}`, "image"], [`wp-content/${wpContent[0].path}`, "<?php"], ["metadata/wp-content-deleted.json", JSON.stringify({ wpContentDeleted: files.wpContentDeleted })]])
+  await assert.rejects(async () => decodeCanonicalRestorePack(await metadata(duplicate), root, files, duplicate), /invalid ZIP entry/)
+  const traversal = await zip([["markdown/../escape.md", "hello"], [`markdown/${markdown[1].path}`, "options"], [`uploads/${uploads[0].path}`, "image"], [`wp-content/${wpContent[0].path}`, "<?php"], ["metadata/wp-content-deleted.json", JSON.stringify({ wpContentDeleted: files.wpContentDeleted })]])
+  await assert.rejects(async () => decodeCanonicalRestorePack(await metadata(traversal), root, files, traversal), /unexpected ZIP entry/)
+  const tombstoneMismatch = await zip([[`markdown/${markdown[0].path}`, "hello"], [`markdown/${markdown[1].path}`, "options"], [`uploads/${uploads[0].path}`, "image"], [`wp-content/${wpContent[0].path}`, "<?php"], ["metadata/wp-content-deleted.json", JSON.stringify({ wpContentDeleted: [] })]])
+  await assert.rejects(async () => decodeCanonicalRestorePack(await metadata(tombstoneMismatch), root, files, tombstoneMismatch), /tombstones/)
 })
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {

@@ -37,6 +37,7 @@ import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifa
 import wordpressStaticArtifactManifest from "../assets/wordpress-static-artifact.json" with { type: "json" }
 import sqliteIntegrationArtifactManifest from "../assets/sqlite-database-integration-artifact.json" with { type: "json" }
 import staticSiteImporterArtifactManifest from "../assets/static-site-importer-artifact.json" with { type: "json" }
+import { createCanonicalRestorePack, decodeCanonicalRestorePack, validateCanonicalRestorePackMetadata, type CanonicalRestorePackMetadata } from "./canonical-restore-pack.js"
 
 const PHP_VERSION = "8.5.8"
 const wordpressStaticArtifact = wordpressStaticArtifactManifest as WordPressStaticArtifactManifest
@@ -400,6 +401,7 @@ interface MarkdownManifest extends MarkdownPointer {
   uploads?: MarkdownManifestFile[]
   wpContent?: MarkdownManifestFile[]
   wpContentDeleted?: string[]
+  restorePack?: CanonicalRestorePackMetadata
 }
 
 interface RuntimeFile {
@@ -493,6 +495,9 @@ interface PublicationInvocationEvidence {
 
 const cachedRuntimes = new Map<string, { baseRevision: string; promise: Promise<Runtime>; state: "pending" | "ready" }>()
 const LEASE_ACQUISITION_TIMEOUT_MS = 100_000
+const MAX_MARKDOWN_FILES = 5_000
+const MAX_MARKDOWN_FILE_BYTES = 16 * 1024 * 1024
+const MAX_MARKDOWN_TOTAL_BYTES = 64 * 1024 * 1024
 
 async function resetCanonicalWordPress(request: Request, env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext): Promise<Response> {
   if (request.method !== "POST") return new Response("Canonical reset requires POST.", { status: 405 })
@@ -1447,6 +1452,15 @@ async function putImmutableJson(bucket: R2Bucket, key: string, serialized: strin
   if (!existing || await existing.text() !== serialized) throw new Error(`Immutable R2 object conflicts with existing content: ${key}.`)
 }
 
+async function putImmutableBytes(bucket: R2Bucket, key: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const created = await bucket.put(key, bytes, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType } })
+  if (created) return
+  const existing = await bucket.get(key)
+  if (!existing || existing.size !== bytes.byteLength || await sha256Hex(new Uint8Array(await existing.arrayBuffer())) !== await sha256Hex(bytes)) {
+    throw new Error(`Immutable R2 object conflicts with existing content: ${key}.`)
+  }
+}
+
 function wordPressPageCacheKey(request: Request, pointer: MarkdownPointer, site: SiteContext): Request {
   const url = new URL(request.url)
   url.searchParams.set("__wp_codebox_revision", pointer.revision)
@@ -1822,13 +1836,26 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
     return manifest
   }
   const manifest = trace ? await trace.measure("canonical.manifest.read", readManifest) : await readManifest()
+  const objectEvidence = { markdownFiles: manifest.files.length, markdownBytes: sumManifestFileBytes(manifest.files), uploadFiles: manifest.uploads?.length ?? 0, uploadBytes: sumManifestFileBytes(manifest.uploads ?? []), wpContentFiles: manifest.wpContent?.length ?? 0, wpContentBytes: sumManifestFileBytes(manifest.wpContent ?? []), wpContentDeleted: manifest.wpContentDeleted?.length ?? 0 }
+  if (manifest.restorePack !== undefined) {
+    const restorePack = manifest.restorePack
+    validateCanonicalRestorePackMetadata(restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [] })
+    const fetchPack = async () => {
+      const object = await bucket.get(restorePack.objectKey)
+      if (!object) throw new Error("Canonical restore pack is missing.")
+      if (object.size !== restorePack.size) throw new Error("Canonical restore pack compressed size does not match its manifest.")
+      return new Uint8Array(await object.arrayBuffer())
+    }
+    const pack = trace ? await trace.measure("canonical.restore-pack.fetch", fetchPack, { requests: 1, bytes: restorePack.size }) : await fetchPack()
+    const restore = () => decodeCanonicalRestorePack(restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [], wpContentDeleted: manifest.wpContentDeleted ?? [] }, pack)
+    return trace ? trace.measure("canonical.restore-pack.verify-decode", restore, { requests: 0, bytes: restorePack.decodedBytes, files: restorePack.fileCount }) : restore()
+  }
   const hydrate = () => Promise.all([
     readManifestFiles(bucket, manifest.files, "Markdown"),
     readManifestFiles(bucket, manifest.uploads ?? [], "upload"),
     readManifestFiles(bucket, manifest.wpContent ?? [], "wp-content"),
   ])
-  const objectEvidence = { markdownFiles: manifest.files.length, markdownBytes: sumManifestFileBytes(manifest.files), uploadFiles: manifest.uploads?.length ?? 0, uploadBytes: sumManifestFileBytes(manifest.uploads ?? []), wpContentFiles: manifest.wpContent?.length ?? 0, wpContentBytes: sumManifestFileBytes(manifest.wpContent ?? []), wpContentDeleted: manifest.wpContentDeleted?.length ?? 0 }
-  const [markdown, uploads, wpContent] = trace ? await trace.measure("canonical.objects.hydrate", hydrate, objectEvidence) : await hydrate()
+  const [markdown, uploads, wpContent] = trace ? await trace.measure("canonical.objects.hydrate", hydrate, { ...objectEvidence, requests: manifest.files.length + (manifest.uploads?.length ?? 0) + (manifest.wpContent?.length ?? 0) }) : await hydrate()
   return { markdown, uploads, wpContent, wpContentDeleted: manifest.wpContentDeleted ?? [] }
 }
 
@@ -1838,6 +1865,7 @@ async function readManifestFiles(bucket: R2Bucket, files: MarkdownManifestFile[]
   return Promise.all(files.map(async (file): Promise<RuntimeFile> => {
     const object = await bucket.get(file.objectKey)
     if (!object) throw new Error(`R2 ${label} object is missing: ${file.objectKey}`)
+    if (object.size !== file.size) throw new Error(`R2 ${label} object failed size validation: ${file.objectKey}`)
     const bytes = new Uint8Array(await object.arrayBuffer())
     if (bytes.byteLength !== file.size || await sha256Hex(bytes) !== file.sha256) throw new Error(`R2 ${label} object failed integrity validation: ${file.objectKey}`)
     return { path: file.path, bytes }
@@ -1933,7 +1961,19 @@ async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifest
   const manifestKey = `${siteStorageKeys(site).markdownRevisionPrefix}/${revision}.json`
   const persistedAt = new Date().toISOString()
   const pointer: MarkdownPointer = { revision, manifestKey, persistedAt }
-  const manifest: MarkdownManifest = { ...pointer, files, uploads, wpContent, wpContentDeleted }
+  validateMarkdownManifestFiles(files, site)
+  validateUploadManifestFiles(uploads, site)
+  validateWpContentManifestFiles(wpContent, site)
+  validateWpContentDeletedPaths(wpContentDeleted)
+  // Canonical objects remain authoritative; independently re-read them before deriving the pack.
+  const [markdown, restoredUploads, restoredWpContent] = await Promise.all([
+    readManifestFiles(bucket, files, "Markdown"),
+    readManifestFiles(bucket, uploads, "upload"),
+    readManifestFiles(bucket, wpContent, "wp-content"),
+  ])
+  const pack = await createCanonicalRestorePack(siteStorageKeys(site).root, { markdown, uploads: restoredUploads, wpContent: restoredWpContent, wpContentDeleted })
+  await putImmutableBytes(bucket, pack.metadata.objectKey, pack.bytes, "application/zip")
+  const manifest: MarkdownManifest = { ...pointer, files, uploads, wpContent, wpContentDeleted, restorePack: pack.metadata }
   await bucket.put(manifestKey, JSON.stringify(manifest), {
     httpMetadata: { contentType: "application/json" },
   })
@@ -1950,20 +1990,25 @@ async function readMarkdownManifest(bucket: R2Bucket, pointer: MarkdownPointer, 
   validateUploadManifestFiles(manifest.uploads ?? [], site)
   validateWpContentManifestFiles(manifest.wpContent ?? [], site)
   validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [])
+  if (manifest.restorePack !== undefined) validateCanonicalRestorePackMetadata(manifest.restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [] })
   return manifest
 }
 
 function validateMarkdownManifestFiles(files: MarkdownManifestFile[], site: SiteContext): void {
   const prefix = `${siteStorageKeys(site).markdownObjectPrefix}/`
+  if (!Array.isArray(files) || files.length > MAX_MARKDOWN_FILES) throw new Error("Canonical Markdown manifest files are invalid.")
   const paths = new Set<string>()
+  let total = 0
   for (const file of files) {
     if (!file || typeof file !== "object" || !isCanonicalRelativePath(file.path) || paths.has(file.path)
       || typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256)
-      || file.objectKey !== `${prefix}${file.sha256}` || !Number.isSafeInteger(file.size) || file.size < 0) {
+      || file.objectKey !== `${prefix}${file.sha256}` || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_MARKDOWN_FILE_BYTES) {
       throw new Error("Canonical Markdown manifest files are invalid.")
     }
     paths.add(file.path)
+    total += file.size
   }
+  if (total > MAX_MARKDOWN_TOTAL_BYTES) throw new Error("Canonical Markdown manifest files exceed their byte budget.")
 }
 
 function canonicalBootstrapSetupCode(passwordFile: string, origin: string): string {
