@@ -20,7 +20,8 @@ const runtimeDispatchAttempts = new Map()
 const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
 const publicProvisioning = process.argv.includes("--public-provisioning")
 const artifactPath = process.argv.find((argument) => argument.startsWith("--artifact="))?.slice("--artifact=".length)
-const wranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
+const executionWranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
+const controlWranglerConfig = "packages/runtime-cloudflare/wrangler.control.jsonc"
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
 let siteContexts = [{ id: "default", hostname: "127.0.0.1", origin }]
@@ -36,7 +37,7 @@ try {
   await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
   await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   const staticArtifactImport = await provisionStaticArtifact()
-  await startWorker()
+  await startWorker(!publicProvisioning && coordinator === "durable-object", publicProvisioning ? controlWranglerConfig : executionWranglerConfig)
   if (publicProvisioning) {
     await assertPublicProvisioning(staticArtifactImport)
     console.log("Cloudflare public provisioning gate passed: authenticated artifact staging, idempotent site allocation, initial publication, cold-restart site read, administrator claim, native-block edit, automatic republication, and post-restart persistence.")
@@ -223,15 +224,17 @@ async function assertPublicProvisioning(input) {
   if (replayResponse.status !== 202 || replayBody !== createdBody) throw new Error(`Public site creation replay did not converge: ${replayResponse.status} ${replayBody}.`)
 
   let operation
-  const operationId = new URL(created.site.operation, origin).searchParams.get("operationId")
-  if (!operationId) throw new Error(`Public provisioning operation URL omitted its identity: ${created.site.operation}.`)
+  const operationId = new URL(created.site.operation, origin).pathname.split("/").at(-1)
+  if (!operationId || !/^[0-9a-f-]{36}$/.test(operationId)) throw new Error(`Public provisioning operation URL omitted its identity: ${created.site.operation}.`)
+  await stopWorker()
+  await startWorker(false, executionWranglerConfig)
   for (let tick = 0; tick < 8; tick++) {
     if (operation?.receipt?.publication?.status === "pending") await runRuntimeDispatch("publication", operation.receipt.publication.jobKey)
     else await runRuntimeDispatch("operation", operationId)
-    const response = await fetch(new URL(created.site.operation, origin), { headers: authorization })
+    const response = await request(`${origin}/?phase=operator-static-artifact-operation&operationId=${encodeURIComponent(operationId)}`, { headers: { authorization: `Bearer ${operatorToken}` } })
     const body = await response.text()
     if (!response.ok) throw new Error(`Public provisioning operation read failed: ${response.status} ${body}.`)
-    operation = JSON.parse(body).operation
+    operation = JSON.parse(body)
     if (operation?.state === "succeeded") break
     if (operation?.state === "failed") throw new Error(`Public provisioning operation failed: ${body}.`)
     await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -244,7 +247,11 @@ async function assertPublicProvisioning(input) {
   }
 
   await stopWorker()
-  await startWorker()
+  await startWorker(false, controlWranglerConfig)
+  const operationResponse = await fetch(new URL(created.site.operation, origin), { headers: authorization })
+  const operationBody = await operationResponse.text()
+  const controlOperation = JSON.parse(operationBody).operation
+  if (!operationResponse.ok || JSON.stringify(controlOperation?.receipt) !== JSON.stringify(operation.receipt)) throw new Error(`Control plane did not expose the execution receipt: ${operationResponse.status} ${operationBody}.`)
   const siteResponse = await fetch(`${origin}/v1/sites/${created.site.id}`, { headers: authorization })
   const siteBody = await siteResponse.text()
   const site = JSON.parse(siteBody)
@@ -255,6 +262,8 @@ async function assertPublicProvisioning(input) {
   const claimBody = await claimResponse.text()
   const claim = JSON.parse(claimBody)
   if (!claimResponse.ok || claim.credential?.username !== "admin" || claim.credential?.password !== password) throw new Error(`Administrator claim failed: ${claimResponse.status} ${claimBody}.`)
+  await stopWorker()
+  await startWorker(false, executionWranglerConfig)
   const adminHtml = await login(claim.credential.password)
   const importedPages = await assertImportedArtifactPages(adminHtml, imported)
   const edited = await updateImportedPage(adminHtml, importedPages.secondary)
@@ -343,10 +352,10 @@ async function assertTwoSiteIsolation() {
   console.log(`Two-site isolation passed for ${coordinator}.`)
 }
 
-async function startWorker(testScheduled = coordinator === "durable-object") {
+async function startWorker(testScheduled = coordinator === "durable-object", config = executionWranglerConfig) {
   output = ""
   const apiTokens = [{ id: "local-gate", principal: "local-gate", digest: createHash("sha256").update(apiToken).digest("hex"), scopes: ["sites:create", "sites:read", "sites:import", "operations:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]
-  const args = ["exec", "--", "wrangler", "dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", wranglerConfig, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
+  const args = ["exec", "--", "wrangler", "dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", config, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
   child = spawn("npm", args, {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.

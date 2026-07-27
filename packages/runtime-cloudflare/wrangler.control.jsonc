@@ -1,0 +1,21 @@
+// PHP-free provisioning and lifecycle control plane.
+{
+  "name": "wp-codebox-cloudflare-control",
+  "main": "src/worker-control.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 30000 },
+	"queues": {
+		"producers": [{ "binding": "WORDPRESS_RUNTIME_QUEUE", "queue": "wp-codebox-runtime-dispatch" }]
+	},
+	"r2_buckets": [
+		{ "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
+	],
+	"d1_databases": [
+		{
+			"binding": "WORDPRESS_STATE_DATABASE",
+			"database_name": "wp-codebox-runtime-state",
+			"database_id": "00000000-0000-0000-0000-000000000000"
+		}
+	]
+}

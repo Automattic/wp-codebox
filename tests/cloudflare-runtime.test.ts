@@ -244,6 +244,58 @@ test("Cloudflare runtime declares bounded CPU and scheduled execution", async ()
   assert.deepEqual(d1Config.queues?.consumers, [{ queue: "wp-codebox-runtime-dispatch", max_batch_size: 10, max_batch_timeout: 5, max_retries: 3, max_concurrency: 10, dead_letter_queue: "wp-codebox-runtime-dispatch-dlq" }])
 })
 
+test("Cloudflare control plane is PHP-free with only D1, R2, and queue production", async () => {
+  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.control.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
+    main?: string
+    limits?: { cpu_ms?: number }
+    triggers?: unknown
+    queues?: { producers?: Array<{ binding?: string; queue?: string }>; consumers?: unknown }
+    r2_buckets?: Array<{ binding?: string }>
+    d1_databases?: Array<{ binding?: string }>
+    durable_objects?: unknown
+    rules?: unknown
+  }
+  assert.equal(config.main, "src/worker-control.ts")
+  assert.equal(config.limits?.cpu_ms, 30_000)
+  assert.equal(config.triggers, undefined)
+  assert.deepEqual(config.queues?.producers, [{ binding: "WORDPRESS_RUNTIME_QUEUE", queue: "wp-codebox-runtime-dispatch" }])
+  assert.equal(config.queues?.consumers, undefined)
+  assert.deepEqual(config.r2_buckets?.map(({ binding }) => binding), ["WORDPRESS_STATE_BUCKET"])
+  assert.deepEqual(config.d1_databases?.map(({ binding }) => binding), ["WORDPRESS_STATE_DATABASE"])
+  assert.equal(config.durable_objects, undefined)
+  assert.equal(config.rules, undefined)
+
+  const pending = [new URL("../packages/runtime-cloudflare/src/worker-control.ts", import.meta.url)]
+  const sources = new Map<string, string>()
+  while (pending.length) {
+    const url = pending.pop()!
+    if (sources.has(url.href)) continue
+    const source = await readFile(url, "utf8")
+    sources.set(url.href, source)
+    for (const match of source.matchAll(/\b(?:from\s+|import\s*\()(["'])(\.\.?\/[^"']+)\1/g)) {
+      const imported = new URL(match[2], url)
+      if (imported.pathname.endsWith(".js")) imported.pathname = `${imported.pathname.slice(0, -3)}.ts`
+      if (imported.pathname.endsWith(".ts")) pending.push(imported)
+    }
+  }
+  const graph = [...sources.keys()].map((href) => new URL(href).pathname.split("/").at(-1)).sort()
+  assert.deepEqual(graph, [
+    "administrator-secret-bindings.ts",
+    "allocation-lifecycle.ts",
+    "d1-operation-repository.ts",
+    "principal-credential-repository.ts",
+    "provisioning-api.ts",
+    "queue-dispatch.ts",
+    "revision-coordinator.ts",
+    "site-context.ts",
+    "static-artifact-import.ts",
+    "wordpress-auth.ts",
+    "worker-control.ts",
+  ])
+  const source = [...sources.values()].join("\n")
+  assert.doesNotMatch(source, /@php-wasm|@wp-playground|worker\.js|\.wasm|\.sqlite|\.zip|runtime-cloudflare\/assets/)
+})
+
 test("Cloudflare lease contention honors Retry-After without exceeding the acquisition deadline", () => {
   assert.equal(leaseRetryDelayMs(90, 100_000), 90_000)
   assert.equal(leaseRetryDelayMs(90, 12_345), 12_345)
