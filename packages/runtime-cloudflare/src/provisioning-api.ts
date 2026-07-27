@@ -4,6 +4,7 @@ import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactI
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
 import { allocationIdentity, CloudflareAllocationLifecycle, type AllocationLifecycle } from "./allocation-lifecycle.js"
+import { D1PrincipalCredentialRepository, type AuthenticatedPrincipal } from "./principal-credential-repository.js"
 
 export const PROVISIONING_API_SCHEMA = "wp-codebox/provisioning-api/v1"
 export const PROVISIONING_CREATE_REQUEST_SCHEMA = "wp-codebox/provisioning-create-request/v1"
@@ -263,14 +264,23 @@ function idempotencyKey(request: Request): string | Response { const key = reque
 async function authenticate(request: Request, env: ProvisioningEnv, scope: string): Promise<Token | Response> {
   const bearer = request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/)?.[1]
   if (!bearer) return apiError(401, "unauthorized", "Bearer authentication is required.")
-  let tokens: Token[]; try { tokens = parseTokens(env.WORDPRESS_API_TOKENS) } catch { return apiError(401, "unauthorized", "Bearer authentication is unavailable.") }
   const digest = await shaText(bearer)
+  const credentials = new D1PrincipalCredentialRepository(env.WORDPRESS_STATE_DATABASE)
+  const siteId = requestedSiteId(request)
+  let durable: Awaited<ReturnType<typeof credentials.authorizeDigest>>
+  try { durable = await credentials.authorizeDigest(digest, scope, siteId) } catch { return apiError(401, "unauthorized", "Bearer authentication is unavailable.") }
+  if (durable.status === "allowed") return tokenFromPrincipal(durable.principal)
+  if (durable.status === "denied") return durable.reason === "scope" ? apiError(403, "forbidden", "The bearer token lacks the required scope.") : durable.reason === "site" ? notFound() : apiError(401, "unauthorized", "Bearer authentication failed.")
+  let tokens: Token[]; try { tokens = parseTokens(env.WORDPRESS_API_TOKENS) } catch { await credentials.recordUnknownDenial(); return apiError(401, "unauthorized", "Bearer authentication is unavailable.") }
   for (const token of tokens) if (await equal(digest, token.digest)) {
     if (Date.parse(token.expiresAt) <= Date.now()) return apiError(401, "unauthorized", "Bearer authentication failed.")
     return token.scopes.includes(scope) ? token : apiError(403, "forbidden", "The bearer token lacks the required scope.")
   }
+  await credentials.recordUnknownDenial()
   return apiError(401, "unauthorized", "Bearer authentication failed.")
 }
+function tokenFromPrincipal(value: AuthenticatedPrincipal): Token { return { id: `${value.credentialId}.${value.version}`, digest: "", principal: value.principal, scopes: value.scopes, expiresAt: value.expiresAt, maxSites: value.maxSites, ...(value.sites ? { sites: value.sites } : {}) } }
+function requestedSiteId(request: Request): string | undefined { const parts = new URL(request.url).pathname.split("/").filter(Boolean); return parts[1] === "sites" && parts.length > 2 && validSiteId(parts[2]) ? parts[2] : undefined }
 function parseTokens(value: string | undefined): Token[] {
   const tokens: unknown = JSON.parse(value ?? "")
   if (!Array.isArray(tokens) || !tokens.length || tokens.length > 64) throw new Error("Invalid token configuration.")

@@ -6,6 +6,7 @@ import { D1OperationRepository } from "../packages/runtime-cloudflare/src/d1-ope
 import { allocationIdentity, CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
 import { PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
 import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
+import { D1PrincipalCredentialRepository } from "../packages/runtime-cloudflare/src/principal-credential-repository.js"
 
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
 const artifactText = JSON.stringify({ schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "ok" }] })
@@ -45,6 +46,32 @@ test("auth failures, malformed config, expiry, and scope stop before body and R2
   for (const config of [undefined, [], [{ id: "a", principal: "a", digest: hash("good"), scopes: ["sites:create"], expiresAt: "2000-01-01T00:00:00.000Z", maxSites: 1 }], [{ id: "a", principal: "a", digest: hash("good"), scopes: ["sites:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]]) {
     const r = runtime(database(), new Bucket(), config); const response = await routeProvisioningApi(createRequest("key", {}, config === undefined ? "bad" : "good"), r.env, r.operations); assert.ok([401, 403].includes(response.status)); assert.equal(r.bucket.gets, 0)
   }
+})
+test("durable credentials retain provisioning quota semantics while JSON tokens remain compatible", async () => {
+  const r = runtime(database(), new Bucket(), undefined, 9)
+  const credentials = new D1PrincipalCredentialRepository(r.db)
+  await credentials.register({ credentialId: "issuer", version: "v1", digest: hash("durable"), principal: "durable-principal", scopes: ["sites:create", "sites:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 })
+  delete r.env.WORDPRESS_API_TOKENS
+  assert.equal((await routeProvisioningApi(createRequest("durable-1", {}, "durable"), r.env, r.operations)).status, 202)
+  assert.equal((await routeProvisioningApi(createRequest("durable-2", {}, "durable"), r.env, r.operations)).status, 429)
+  const staticAdapter = runtime()
+  assert.equal((await create(staticAdapter)).status, 202)
+  assert.equal(count(staticAdapter.db, "wp_codebox_principal_credential_audit"), 0, "static fallback does not record a false durable denial")
+})
+test("known durable revocation cannot fall through to the static compatibility adapter", async () => {
+  const r = runtime()
+  const credentials = new D1PrincipalCredentialRepository(r.db)
+  await credentials.register({ credentialId: "managed", version: "v1", digest: hash("good"), principal: "a", scopes: ["sites:create"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 2 })
+  await credentials.revoke("managed", "v1")
+  assert.equal((await create(r)).status, 401)
+  assert.equal(count(r.db, "wp_codebox_api_sites"), 0)
+})
+test("malformed matching durable policy fails closed before request body reads", async () => {
+  const r = runtime()
+  await new D1PrincipalCredentialRepository(r.db).initialize()
+  r.db.sqlite.prepare("INSERT INTO wp_codebox_principal_credentials (credential_id, version, digest, principal, scopes, expires_at, max_sites, sites, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)").run("corrupt", "v1", hash("corrupt"), "a", "not-json", Date.parse("2099-01-01T00:00:00.000Z"), 1, Date.now())
+  assert.equal((await routeProvisioningApi(createRequest("corrupt", {}, "corrupt"), r.env, r.operations)).status, 401)
+  assert.equal(r.bucket.gets, 0)
 })
 test("invalid, missing, and oversized artifacts create zero allocations", async () => {
   for (const change of [{ sha256: "bad" }, { sha256: "f".repeat(64) }, { size: 5 * 1024 * 1024 }]) { const r = runtime(); assert.ok((await routeProvisioningApi(createRequest("key", change), r.env, r.operations)).status >= 400); assert.equal(count(r.db, "wp_codebox_api_sites"), 0) }
