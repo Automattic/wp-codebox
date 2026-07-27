@@ -9,6 +9,7 @@ export type WorkerRequestRoute =
   | { kind: "operator-fence"; action: "status" | "acquire" | "renew" | "release" }
   | { kind: "operator-static-artifact-import" }
   | { kind: "operator-static-artifact-operation"; operationId: string }
+  | { kind: "operator-runtime-dispatch" }
   | { kind: "operator-publish" }
   | { kind: "probe"; phase: string }
 
@@ -30,6 +31,7 @@ export function routeWorkerRequest(request: Request): WorkerRequestRoute {
     const operationId = new URL(request.url).searchParams.get("operationId")
     return operationId ? { kind: "operator-static-artifact-operation", operationId } : { kind: "probe", phase }
   }
+  if (phase === "operator-runtime-dispatch") return { kind: "operator-runtime-dispatch" }
   if (phase === "operator-publish") return { kind: "operator-publish" }
   return { kind: "probe", phase }
 }

@@ -1,4 +1,6 @@
-export const PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v4" as const
+import publicationContract from "./publication-contract.json" with { type: "json" }
+
+export const PUBLISHED_REVISION_SCHEMA = publicationContract.publishedRevisionSchema as "wp-codebox/published-revision/v4"
 const PREVIOUS_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v3"
 const OLDER_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v2"
 const LEGACY_PUBLISHED_REVISION_SCHEMA = "wp-codebox/published-revision/v1"
