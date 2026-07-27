@@ -41,6 +41,7 @@ test("credential operator validates private input and action boundaries before W
   const bearerFlag = await run(["issue", ...base, ...policy, "--bearer", "private"], "private")
   for (const result of [missing, oversized, revokeInput, bearerFlag]) assert.equal(result.status, 1)
   assert.equal([missing, oversized, revokeInput, bearerFlag].some((result) => result.stderr.includes("private")), false)
+  for (const result of [missing, oversized, revokeInput, bearerFlag]) assert.equal(errorCode(result), "invalid-request")
 })
 
 test("credential operator uses an atomic parameterized D1 API batch remotely", async () => {
@@ -50,7 +51,7 @@ test("credential operator uses an atomic parameterized D1 API batch remotely", a
   const bearer = "remote-private-bearer"
   const digest = createHash("sha256").update(bearer).digest("hex")
   try {
-    await writeFile(hook, `import { writeFileSync } from "node:fs"; globalThis.fetch=async(url,init)=>{const request=JSON.parse(init.body);writeFileSync(process.env.CAPTURE,JSON.stringify({url,headers:init.headers,body:init.body}));const result=request.batch.map((query,index)=>({success:process.env.FAIL_INDEX!==String(index),results:index===request.batch.length-1?[{wp_codebox_operator_result:process.env.MARKER||"issued"}]:[]}));return new Response(JSON.stringify({success:true,result}),{status:200,headers:{"content-type":"application/json"}})};`)
+    await writeFile(hook, `import { writeFileSync } from "node:fs"; globalThis.fetch=async(url,init)=>{const request=JSON.parse(init.body);writeFileSync(process.env.CAPTURE,JSON.stringify({url,headers:init.headers,body:init.body}));const result=request.batch.map((query,index)=>({success:process.env.FAIL_INDEX!==String(index),results:index===request.batch.length-1?[{wp_codebox_operator_result:process.env.MARKER||"issued"}]:[],...(process.env.FAIL_INDEX===String(index)?{errors:[{message:"UNIQUE constraint failed: wp_codebox_principal_credentials.digest private remote-private-bearer"}]}:{})}));return new Response(JSON.stringify({success:true,result}),{status:200,headers:{"content-type":"application/json"}})};`)
     const result = await run(["issue", ...base, ...policy, "--account-id", "a".repeat(32)], bearer, { imports: [hook], env: { CAPTURE: capture, CLOUDFLARE_API_TOKEN: "cloudflare-test-token" } })
     const request = JSON.parse(await readFile(capture, "utf8"))
     const body = JSON.parse(request.body)
@@ -62,10 +63,27 @@ test("credential operator uses an atomic parameterized D1 API batch remotely", a
     assert.equal(request.body.includes(digest), true)
     assert.equal((result.stdout + result.stderr).includes(bearer) || (result.stdout + result.stderr).includes(digest), false)
     const revoked = await run(["revoke", ...base, "--account-id", "a".repeat(32)], "", { imports: [hook], env: { CAPTURE: capture, CLOUDFLARE_API_TOKEN: "cloudflare-test-token", MARKER: "revoked" } })
-    const failed = await run(["issue", ...base, ...policy, "--account-id", "a".repeat(32)], bearer, { imports: [hook], env: { CAPTURE: capture, CLOUDFLARE_API_TOKEN: "cloudflare-test-token", FAIL_INDEX: "1" } })
+    const failed = await run(["issue", ...base, ...policy, "--account-id", "a".repeat(32)], bearer, { imports: [hook], env: { CAPTURE: capture, CLOUDFLARE_API_TOKEN: "cloudflare-test-token", FAIL_INDEX: "2" } })
     assert.equal(JSON.parse(revoked.stdout).action, "revoked")
     assert.equal(failed.status, 1)
     assert.equal((failed.stdout + failed.stderr).includes(bearer) || (failed.stdout + failed.stderr).includes(digest), false)
+    assert.equal(errorCode(failed), "duplicate-digest-conflict")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("credential operator bounds noisy local provider output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "wp-codebox-credential-noisy-"))
+  const wrangler = join(directory, "wrangler")
+  try {
+    await writeFile(wrangler, `#!${process.execPath}\nprocess.stdout.write("x".repeat(20000)); setInterval(()=>{},1000);`)
+    await chmod(wrangler, 0o755)
+    const result = await run(["issue", ...base, ...policy, "--wrangler", wrangler, "--local"], "bounded-provider-bearer")
+    assert.equal(result.status, 1)
+    assert.equal(errorCode(result), "operation-failed")
+    assert.equal(result.stdout, "")
+    assert.ok(result.stderr.length < 256)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -89,6 +107,8 @@ test("credential operator converges issue and revocation against local D1", asyn
     assert.equal(JSON.parse(replayed.stdout).action, "issued")
     assert.equal(conflict.status, 1)
     assert.equal(duplicate.status, 1)
+    assert.equal(errorCode(conflict), "version-policy-conflict")
+    assert.equal(errorCode(duplicate), "duplicate-digest-conflict")
     assert.equal(JSON.parse(revoked.stdout).action, "revoked")
     assert.equal(JSON.parse(unchanged.stdout).action, "unchanged")
     const evidence = [issued, replayed, conflict, duplicate, revoked, unchanged].map(({ stdout, stderr }) => stdout + stderr).join("")
@@ -113,3 +133,5 @@ function run(args, stdin, options = {}) {
     child.stdin.end(stdin)
   })
 }
+
+function errorCode(result) { return JSON.parse(result.stderr).code }
