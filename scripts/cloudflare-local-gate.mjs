@@ -780,6 +780,7 @@ async function assertWordPressCronDisabled() {
 }
 
 async function assertConcurrentMutations() {
+  const outputOffset = output.length
   const responses = await Promise.all([
     fetch(`${origin}/?phase=r2-mutate`, { method: "POST" }),
     fetch(`${origin}/?phase=r2-mutate`, { method: "POST" }),
@@ -793,6 +794,11 @@ async function assertConcurrentMutations() {
   const revisions = mutations.map((mutation) => mutation.revisionValue).sort((left, right) => left - right)
   if (revisions[1] !== revisions[0] + 1 || !mutations.some((mutation) => mutation.previousPostFound)) {
     throw new Error(`Concurrent canonical mutations were not serialized: ${JSON.stringify(mutations)}`)
+  }
+  const summaries = runtimePhaseTraceSummaries(output.slice(outputOffset)).filter((summary) => summary.operation === "mutation")
+  if (summaries.length !== 2 || summaries.filter((summary) => summary.phases.some((phase) => phase.name === "runtime.cache.promote" && phase.evidence?.stateMatched === true && phase.evidence?.sameRuntime === true)).length !== 2
+    || !summaries.some((summary) => summary.runtime === "warm" && summary.phases.some((phase) => phase.name === "runtime.cache.reuse"))) {
+    throw new Error(`Concurrent canonical mutations did not carry the exact committed runtime forward: ${JSON.stringify(summaries)}.`)
   }
 }
 
@@ -960,14 +966,7 @@ async function timedWordPressPage(target, label) {
 }
 
 function assertRuntimePhaseTraceSummaries() {
-  const summaries = stripVTControlCharacters(output).split("\n").flatMap((line) => {
-    try {
-      const value = JSON.parse(line)
-      return value?.schema === "wp-codebox/cloudflare-runtime-phase-trace/v1" ? [value] : []
-    } catch {
-      return []
-    }
-  })
+  const summaries = runtimePhaseTraceSummaries(output)
   const runtimes = new Set(summaries.map((summary) => summary.runtime))
   const operations = new Set(summaries.map((summary) => summary.operation))
   for (const runtime of ["cold", "warm"]) {
@@ -975,10 +974,21 @@ function assertRuntimePhaseTraceSummaries() {
   }
   if (!operations.has("mutation")) throw new Error("Cloudflare runtime gate did not emit a machine-readable mutation operation summary.")
   const phaseNames = new Set(summaries.flatMap((summary) => summary.phases?.map((phase) => phase.name) ?? []))
-  for (const phase of ["canonical.bootstrap.seed", "persistence.markdown.write", "persistence.manifest.write"]) {
+  for (const phase of ["canonical.bootstrap.seed", "persistence.markdown.write", "persistence.manifest.write", "runtime.cache.promote"]) {
     if (!phaseNames.has(phase)) throw new Error(`Cloudflare runtime gate did not emit the required ${phase} phase.`)
   }
   if (summaries.some((summary) => !Number.isFinite(summary.totalMs) || !Array.isArray(summary.phases) || summary.phases.reduce((total, phase) => total + phase.durationMs, 0) > summary.totalMs + 1)) throw new Error("Cloudflare runtime gate received an invalid phase trace summary.")
+}
+
+function runtimePhaseTraceSummaries(rawOutput) {
+  return stripVTControlCharacters(rawOutput).split("\n").flatMap((line) => {
+    try {
+      const value = JSON.parse(line)
+      return value?.schema === "wp-codebox/cloudflare-runtime-phase-trace/v1" ? [value] : []
+    } catch {
+      return []
+    }
+  })
 }
 
 async function assertExplanatoryHomepage(html) {
