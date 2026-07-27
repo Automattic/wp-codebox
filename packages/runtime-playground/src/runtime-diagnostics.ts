@@ -2,9 +2,25 @@ import { basename, dirname, join } from "node:path"
 import { captureArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
+import { PHPUNIT_COMPLETED_RESULT_PREFIX, parsePhpunitCompletedResult, type PhpunitCompletedResult } from "./phpunit-test-results.js"
 
 export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<void> {
   await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
+}
+
+export async function persistPluginPhpunitCompletedResult(artifactRoot: string, result: PhpunitCompletedResult, namespace?: string): Promise<void> {
+  const hostPath = join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".wp-codebox-result.txt")
+  const { passed: _passed, failed: _failed, ...aggregate } = result
+  await captureArtifactFile({
+    root: dirname(hostPath),
+    path: basename(hostPath),
+    kind: "test-results",
+    contentType: "text/plain; charset=utf-8",
+    contents: `${PHPUNIT_COMPLETED_RESULT_PREFIX}${JSON.stringify(aggregate)}\n`,
+    redact: (_path, contents) => contents,
+    redaction: { policy: "applied", sensitive: false },
+    provenance: { source: "wordpress-playground", operation: "persist-phpunit-completed-result" },
+  })
 }
 
 export async function persistCorePhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string): Promise<void> {
@@ -36,11 +52,21 @@ export async function readPluginPhpunitDiagnostic(server: PlaygroundCliServer, v
   return readPhpunitDiagnostic(server, vfsPath)
 }
 
+export async function readPluginPhpunitCompletedResult(server: PlaygroundCliServer, vfsPath: string): Promise<PhpunitCompletedResult | undefined> {
+  const contents = await readPhpunitResult(server, vfsPath)
+  return contents ? parsePhpunitCompletedResult(contents) : undefined
+}
+
 export async function readCorePhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {
   return readPhpunitDiagnostic(server, vfsPath)
 }
 
 async function readPhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {
+  const contents = await readPhpunitResult(server, vfsPath)
+  return contents ? extractPhpunitFailureMessage(contents) : undefined
+}
+
+async function readPhpunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {
   if (!server.playground.readFileAsText) {
     return undefined
   }
@@ -52,7 +78,7 @@ async function readPhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: strin
     return undefined
   }
 
-  return extractPhpunitFailureMessage(contents)
+  return contents
 }
 
 export async function persistVfsDiagnosticFile(server: PlaygroundCliServer, vfsPath: string, mounts: MountSpec[]): Promise<void> {

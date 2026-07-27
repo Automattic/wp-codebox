@@ -51,10 +51,11 @@ import {
   themeSetupInputFromArgs,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
-import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
+import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
+import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
@@ -981,6 +982,11 @@ export async function runPhpunitCommand({
   } catch (error) {
     await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
     await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
+    const completed = await readPluginPhpunitCompletedResult(server, resultFile) ?? parsePhpunitOutput(playgroundCommandDiagnosticText(error))
+    if (completed) {
+      await persistPluginPhpunitCompletedResult(artifactRoot, completed, processIdentity)
+      throw attachPlaygroundDiagnostics(completedPlaygroundCommandError("wordpress.phpunit", error), "wordpress.phpunit completed result", `completed ${completed.status}; total ${completed.total}; failed ${completed.failed}; skipped ${completed.skipped}; failures ${completed.failures}; errors ${completed.errors}`)
+    }
     const structured = await readPluginPhpunitDiagnostic(server, resultFile)
     if (structured) {
       throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
@@ -991,6 +997,10 @@ export async function runPhpunitCommand({
   await persistPluginPhpunitResult(server, resultFile, artifactRoot, processIdentity)
   await persistVfsDiagnosticFileToHost(server, resultFile, diagnosticHostFile, mounts)
   const structured = await readPluginPhpunitDiagnostic(server, resultFile)
+  const completed = await readPluginPhpunitCompletedResult(server, resultFile) ?? parsePhpunitOutput(response.text)
+  if (completed) {
+    await persistPluginPhpunitCompletedResult(artifactRoot, completed, processIdentity)
+  }
   try {
     assertPlaygroundResponseOk("wordpress.phpunit", response)
   } catch (error) {

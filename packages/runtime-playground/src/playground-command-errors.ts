@@ -115,6 +115,21 @@ export function assertPlaygroundResponseOk(command: string, response: Playground
   }
 }
 
+export function completedPlaygroundCommandError(command: string, cause: unknown): PlaygroundCommandError {
+  const commandCause = cause instanceof PlaygroundCommandCrashError ? cause.cause : cause
+  const diagnostics = playgroundCrashDiagnostics(commandCause)
+  return new PlaygroundCommandError(command, {
+    cause: commandCause,
+    exitCode: playgroundNonzeroExitCode(commandCause) ?? playgroundNonzeroExitCode(cause) ?? 1,
+    errors: diagnostics.length > 0 ? diagnostics.join("\n") : errorMessage(commandCause),
+    text: "",
+  })
+}
+
+export function playgroundCommandDiagnosticText(cause: unknown): string {
+  return [errorMessage(cause), ...playgroundCrashDiagnostics(cause)].join("\n")
+}
+
 /**
  * Extract a human-readable failure message from the structured PHPUnit
  * diagnostics log (.pg-test-result.txt). The PHP runner emits STAGE_FAIL / STAGE_DIE /
@@ -308,6 +323,16 @@ function playgroundCrashDiagnostics(cause: unknown): string[] {
   }
 
   return [...metadata, ...sections]
+}
+
+function playgroundNonzeroExitCode(cause: unknown): number | undefined {
+  for (const record of diagnosticRecords(cause)) {
+    if (typeof record.exitCode === "number" && Number.isInteger(record.exitCode) && record.exitCode !== 0) {
+      return record.exitCode
+    }
+  }
+  const match = errorMessage(cause).match(/\bexit code (\d+)\b/i)
+  return match && Number(match[1]) !== 0 ? Number(match[1]) : undefined
 }
 
 function diagnosticRecords(value: unknown, seen = new Set<unknown>()): Record<string, unknown>[] {

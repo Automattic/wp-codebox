@@ -18,7 +18,6 @@ import type {
   ArtifactRedactionSummary,
   ArtifactReview,
   ArtifactReviewBrowserSummary,
-  ArtifactTestResults,
   MountSpec,
   ObservationResult,
   RuntimeCreateSpec,
@@ -519,31 +518,6 @@ export function buildWorkspacePatchArtifact({
 function stringMetadata(metadata: Record<string, unknown>, key: string): string | undefined {
   const value = metadata[key]
   return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-export function buildTestResults(): ArtifactTestResults {
-  return {
-    schema: "wp-codebox/test-results/v1",
-    status: "unknown",
-    summary: {
-      total: 0,
-      passed: 0,
-      failed: 0,
-      skipped: 0,
-      unknown: 0,
-    },
-    suites: [],
-    rawLogReferences: [
-      {
-        path: "commands.jsonl",
-        kind: "commands-jsonl",
-      },
-      {
-        path: "logs/commands.log",
-        kind: "commands-log",
-      },
-    ],
-  }
 }
 
 export function buildArtifactProvenance({
