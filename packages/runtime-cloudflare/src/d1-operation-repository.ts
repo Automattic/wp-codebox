@@ -1,6 +1,6 @@
 import type { MarkdownPointer } from "./revision-coordinator.js"
 import type { SiteContext } from "./site-context.js"
-import { runtimeQueueMessage, type RuntimeQueueMessage } from "./queue-dispatch.js"
+import { runtimeQueueMessage, type RuntimeQueueMessage, type RuntimeQueuePolicy } from "./queue-dispatch.js"
 
 export const STATIC_ARTIFACT_OPERATION_SCHEMA = "wp-codebox/cloudflare-static-artifact-operation/v1"
 export type StaticArtifactOperationState = "queued" | "running" | "retryable" | "publication-pending" | "succeeded" | "failed"
@@ -25,6 +25,7 @@ export interface StaticArtifactOperation {
 }
 
 export class OperationConflict extends Error {}
+export class DispatchBackpressure extends Error {}
 const schemaReady = new WeakMap<object, Promise<void>>()
 
 export function shouldRecoverPreparedCommit(prepared: StaticArtifactOperation["prepared"], committed: MarkdownPointer | null): boolean {
@@ -78,29 +79,81 @@ export class D1OperationRepository {
     return rows.results.map((row) => ({ id: row.site_id, hostname: row.hostname, origin: row.origin }))
   }
 
-  async stageDispatch(site: SiteContext, kind: RuntimeQueueMessage["kind"], identity: string): Promise<RuntimeQueueMessage> {
+  async stageDispatch(site: SiteContext, kind: RuntimeQueueMessage["kind"], identity: string, principal: string): Promise<RuntimeQueueMessage> {
     await ensureSchema(this.database)
+    if (!/^[A-Za-z0-9._:@-]{1,128}$/.test(principal)) throw new OperationConflict("Runtime dispatch principal is invalid.")
     const row = await this.database.prepare("SELECT generation FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(site.id).first<{ generation: number }>()
     if (!row) throw new OperationConflict("The site is not active for queue dispatch.")
     const message = runtimeQueueMessage(site, row.generation, kind, identity)
     const now = Date.now()
-    await this.database.prepare("INSERT OR IGNORE INTO wp_codebox_runtime_dispatches (site_id, generation, kind, identity, state, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)").bind(site.id, row.generation, kind, identity, now, now).run()
+    await this.database.prepare("INSERT OR IGNORE INTO wp_codebox_runtime_dispatches (site_id, generation, kind, identity, principal, state, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'backpressured', 0, ?, ?)").bind(site.id, row.generation, kind, identity, principal, now, now).run()
+    const stored = await this.database.prepare("SELECT principal FROM wp_codebox_runtime_dispatches WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ?").bind(site.id, row.generation, kind, identity).first<{ principal: string }>()
+    if (stored?.principal !== principal) throw new OperationConflict("Runtime dispatch identity is bound to another principal.")
     return message
+  }
+
+  async admitDispatch(message: RuntimeQueueMessage, policy: RuntimeQueuePolicy): Promise<boolean> {
+    await ensureSchema(this.database)
+    const now = Date.now()
+    const result = await this.database.prepare(`UPDATE wp_codebox_runtime_dispatches SET state = 'pending', retry_at = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state = 'backpressured' AND (SELECT COUNT(*) FROM wp_codebox_runtime_dispatches WHERE state IN ('pending','sent','processing','retryable')) < ? AND (SELECT COUNT(*) FROM wp_codebox_runtime_dispatches active WHERE active.principal = wp_codebox_runtime_dispatches.principal AND active.state IN ('pending','sent','processing','retryable')) < ?`).bind(now, message.siteId, message.generation, message.kind, message.identity, policy.maxActive, policy.maxActivePerPrincipal).run()
+    if (result.meta.changes === 1) return true
+    const state = await this.dispatchState(message)
+    return state !== null && state !== "backpressured" && state !== "dead-letter"
+  }
+
+  async dispatchState(message: RuntimeQueueMessage): Promise<string | null> { await ensureSchema(this.database); const row = await this.database.prepare("SELECT state FROM wp_codebox_runtime_dispatches WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ?").bind(message.siteId, message.generation, message.kind, message.identity).first<{ state: string }>(); return row?.state ?? null }
+  async dispatchPrincipal(message: RuntimeQueueMessage): Promise<string | null> { await ensureSchema(this.database); const row = await this.database.prepare("SELECT principal FROM wp_codebox_runtime_dispatches WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ?").bind(message.siteId, message.generation, message.kind, message.identity).first<{ principal: string }>(); return row?.principal ?? null }
+  async repairMissingDispatches(limit = 32, now = Date.now()): Promise<void> {
+    await ensureSchema(this.database)
+    const principal = "COALESCE(l.principal, 'system:' || o.site_id)"
+    await this.database.prepare(`INSERT OR IGNORE INTO wp_codebox_runtime_dispatches (site_id, generation, kind, identity, principal, state, attempts, created_at, updated_at) SELECT o.site_id, s.generation, 'operation', o.operation_id, ${principal}, 'backpressured', 0, ?, ? FROM wp_codebox_operations o JOIN wp_codebox_sites s ON s.site_id = o.site_id LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE (o.state IN ('queued','retryable') OR (o.state = 'running' AND o.claim_expires_at <= ?)) ORDER BY o.updated_at, o.site_id LIMIT ?`).bind(now, now, now, limit).run()
+    await this.database.prepare(`INSERT OR IGNORE INTO wp_codebox_runtime_dispatches (site_id, generation, kind, identity, principal, state, attempts, created_at, updated_at) SELECT o.site_id, s.generation, 'publication', o.prepared_publication_job, ${principal}, 'backpressured', 0, ?, ? FROM wp_codebox_operations o JOIN wp_codebox_sites s ON s.site_id = o.site_id LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE o.state = 'publication-pending' AND o.prepared_publication_job IS NOT NULL ORDER BY o.updated_at, o.site_id LIMIT ?`).bind(now, now, limit).run()
   }
 
   async matchesGeneration(siteId: string, generation: number): Promise<boolean> { await ensureSchema(this.database); const row = await this.database.prepare("SELECT generation FROM wp_codebox_sites WHERE site_id = ? AND state = 'active'").bind(siteId).first<{ generation: number }>(); return row?.generation === generation }
 
-  async deliveredDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'sent', attempts = attempts + 1, last_error = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'done'").bind(Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
-  async failedDispatch(message: RuntimeQueueMessage, error: unknown): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'pending', attempts = attempts + 1, last_error = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'done'").bind(sanitizeError(error).message, Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
-  async completeDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'done', updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ?").bind(Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
-  async pendingDispatches(limit = 32): Promise<RuntimeQueueMessage[]> { await ensureSchema(this.database); const rows = await this.database.prepare("SELECT d.site_id, d.generation, d.kind, d.identity FROM wp_codebox_runtime_dispatches d JOIN wp_codebox_sites s ON s.site_id = d.site_id AND s.generation = d.generation WHERE d.state = 'pending' AND s.state = 'active' ORDER BY d.updated_at LIMIT ?").bind(limit).all<{ site_id: string; generation: number; kind: RuntimeQueueMessage["kind"]; identity: string }>(); return rows.results.map((row) => runtimeQueueMessage({ id: row.site_id }, row.generation, row.kind, row.identity)) }
+  async deliveredDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'sent', attempts = attempts + 1, sent_at = ?, last_error = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state IN ('pending','retryable')").bind(Date.now(), Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
+  async processingDispatch(message: RuntimeQueueMessage, now = Date.now()): Promise<boolean> { await ensureSchema(this.database); const result = await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'processing', processing_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND (state IN ('pending','sent') OR (state = 'retryable' AND retry_at <= ?))").bind(now, now, message.siteId, message.generation, message.kind, message.identity, now).run(); return result.meta.changes === 1 }
+  async retryDispatch(message: RuntimeQueueMessage, error: unknown): Promise<void> { await ensureSchema(this.database); const now = Date.now(); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'retryable', attempts = attempts + 1, last_error = ?, retry_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'dead-letter'").bind(sanitizeError(error).message, now + 30_000, now, message.siteId, message.generation, message.kind, message.identity).run() }
+  async failedDispatch(message: RuntimeQueueMessage, error: unknown): Promise<void> { await ensureSchema(this.database); const now = Date.now(); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'backpressured', attempts = attempts + 1, last_error = ?, retry_at = NULL, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state NOT IN ('done','dead-letter')").bind(sanitizeError(error).message, now, message.siteId, message.generation, message.kind, message.identity).run() }
+  async completeDispatch(message: RuntimeQueueMessage): Promise<void> { await ensureSchema(this.database); await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'done', completed_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'dead-letter'").bind(Date.now(), Date.now(), message.siteId, message.generation, message.kind, message.identity).run() }
+  async deadDispatch(message: RuntimeQueueMessage, attempts: number, error: unknown): Promise<void> {
+    await ensureSchema(this.database)
+    const failure = sanitizeError(error); const now = Date.now()
+    const input = message.kind === "operation" ? await this.database.prepare("SELECT fingerprint FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ?").bind(message.siteId, message.identity).first<{ fingerprint: string }>() : null
+    const digest = input?.fingerprint ?? message.identity.split("-").at(-1)?.replace(/\.json$/, "") ?? message.identity
+    const command = recoveryCommand(message)
+    const [evidence, dispatch] = await this.database.batch([
+      this.database.prepare("INSERT OR IGNORE INTO wp_codebox_runtime_dead_letters (site_id, generation, kind, identity, attempts, input_digest, last_error, recovery_command, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(message.siteId, message.generation, message.kind, message.identity, attempts, digest, failure.message, command, now),
+      this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'dead-letter', attempts = ?, last_error = ?, completed_at = ?, updated_at = ? WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? AND state != 'done'").bind(attempts, failure.message, now, now, message.siteId, message.generation, message.kind, message.identity),
+    ])
+    if (evidence.meta.changes !== 1 || dispatch.meta.changes !== 1) throw new OperationConflict("Runtime dead-letter transition did not converge.")
+  }
+  async pendingDispatches(policy: RuntimeQueuePolicy, limit = 32, now = Date.now()): Promise<RuntimeQueueMessage[]> {
+    await ensureSchema(this.database)
+    await this.database.prepare("UPDATE wp_codebox_runtime_dispatches SET state = 'backpressured', updated_at = ? WHERE state IN ('sent','processing') AND updated_at <= ?").bind(now, now - this.claimMs).run()
+    const rows = await this.database.prepare("SELECT d.site_id, d.generation, d.kind, d.identity, d.state FROM wp_codebox_runtime_dispatches d JOIN wp_codebox_sites s ON s.site_id = d.site_id AND s.generation = d.generation WHERE d.state IN ('backpressured','pending','retryable') AND s.state = 'active' AND (d.retry_at IS NULL OR d.retry_at <= ?) ORDER BY d.updated_at, d.site_id, d.kind, d.identity LIMIT ?").bind(now, limit).all<{ site_id: string; generation: number; kind: RuntimeQueueMessage["kind"]; identity: string; state: string }>()
+    const admitted: RuntimeQueueMessage[] = []
+    for (const row of rows.results) { const message = runtimeQueueMessage({ id: row.site_id }, row.generation, row.kind, row.identity); if (row.state !== "backpressured" || await this.admitDispatch(message, policy)) admitted.push(message) }
+    return admitted
+  }
   async deadLetter(message: RuntimeQueueMessage, attempts: number, error: unknown): Promise<void> {
     await ensureSchema(this.database)
     const failure = sanitizeError(error)
     const input = message.kind === "operation" ? await this.database.prepare("SELECT fingerprint FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ?").bind(message.siteId, message.identity).first<{ fingerprint: string }>() : null
     const digest = input?.fingerprint ?? message.identity.split("-").at(-1) ?? message.identity
-    const command = `wp-codebox queue recover --site ${message.siteId} --generation ${message.generation} --${message.kind} ${message.identity}`
+    const command = recoveryCommand(message)
     await this.database.prepare("INSERT INTO wp_codebox_runtime_dead_letters (site_id, generation, kind, identity, attempts, input_digest, last_error, recovery_command, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(message.siteId, message.generation, message.kind, message.identity, attempts, digest, failure.message, command, Date.now()).run()
+  }
+  async deadLetterEvidence(message: RuntimeQueueMessage): Promise<{ attempts: number; inputDigest: string; lastError: string; recoveryCommand: string } | null> { await ensureSchema(this.database); const row = await this.database.prepare("SELECT attempts, input_digest, last_error, recovery_command FROM wp_codebox_runtime_dead_letters WHERE site_id = ? AND generation = ? AND kind = ? AND identity = ? ORDER BY attempts DESC LIMIT 1").bind(message.siteId, message.generation, message.kind, message.identity).first<{ attempts: number; input_digest: string; last_error: string; recovery_command: string }>(); return row ? { attempts: row.attempts, inputDigest: row.input_digest, lastError: row.last_error, recoveryCommand: row.recovery_command } : null }
+
+  async selectLaneDispatch(siteId: string, messages: RuntimeQueueMessage[]): Promise<RuntimeQueueMessage | null> {
+    await ensureSchema(this.database)
+    const state = await this.database.prepare("SELECT next_kind FROM wp_codebox_runtime_fairness WHERE site_id = ?").bind(siteId).first<{ next_kind: RuntimeQueueMessage["kind"] }>()
+    const preferred = state?.next_kind ?? "operation"
+    const selected = messages.find((message) => message.kind === preferred) ?? messages[0] ?? null
+    if (selected) await this.database.prepare("INSERT INTO wp_codebox_runtime_fairness (site_id, next_kind, updated_at) VALUES (?, ?, ?) ON CONFLICT(site_id) DO UPDATE SET next_kind = excluded.next_kind, updated_at = excluded.updated_at").bind(siteId, selected.kind === "operation" ? "publication" : "operation", Date.now()).run()
+    return selected
   }
 
   async claimNext(siteId: string, now = Date.now()): Promise<(StaticArtifactOperation & { claimToken: string }) | null> {
@@ -118,6 +171,27 @@ export class D1OperationRepository {
     if (update.meta.changes !== 1) return null
     if (attempt.meta.changes !== 1) throw new OperationConflict("Operation attempt creation did not match its claim.")
     const operation = await this.get(siteId, candidate.operation_id)
+    if (!operation) throw new Error("Claimed operation is unavailable.")
+    return { ...operation, claimToken: token }
+  }
+
+  async claimOperation(siteId: string, operationId: string, now = Date.now()): Promise<(StaticArtifactOperation & { claimToken: string }) | null> {
+    await ensureSchema(this.database)
+    const candidate = await this.database.prepare("SELECT operation_id FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?))").bind(siteId, operationId, now, now).first<{ operation_id: string }>()
+    if (!candidate) return null
+    // claimNext owns the atomic claim implementation; temporarily target its one candidate.
+    return this.claimExact(siteId, operationId, now)
+  }
+
+  private async claimExact(siteId: string, operationId: string, now: number): Promise<(StaticArtifactOperation & { claimToken: string }) | null> {
+    const token = crypto.randomUUID(); const expiresAt = now + this.claimMs
+    const [update, attempt] = await this.database.batch([
+      this.database.prepare(`UPDATE wp_codebox_operations SET state = 'running', stage = 'claimed', claim_token = ?, claim_expires_at = ?, attempts = attempts + 1, retry_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE site_id = ? AND operation_id = ? AND (state = 'queued' OR (state = 'retryable' AND retry_at <= ?) OR (state = 'running' AND claim_expires_at <= ?)) AND EXISTS (SELECT 1 FROM wp_codebox_sites s LEFT JOIN wp_codebox_site_lifecycles l ON l.site_id = s.site_id AND l.generation = s.generation WHERE s.site_id = wp_codebox_operations.site_id AND (l.site_id IS NULL OR (l.state = 'active' AND l.expires_at > ? AND l.operation_fence = wp_codebox_operations.allocation_fence)))`).bind(token, expiresAt, now, siteId, operationId, now, now, now),
+      this.database.prepare("INSERT INTO wp_codebox_operation_attempts (site_id, operation_id, attempt_number, claim_token, started_at, state, stage) SELECT site_id, operation_id, attempts, ?, ?, 'running', 'claimed' FROM wp_codebox_operations WHERE site_id = ? AND operation_id = ? AND state = 'running' AND claim_token = ? AND claim_expires_at = ?").bind(token, new Date(now).toISOString(), siteId, operationId, token, expiresAt),
+    ])
+    if (update.meta.changes !== 1) return null
+    if (attempt.meta.changes !== 1) throw new OperationConflict("Operation attempt creation did not match its claim.")
+    const operation = await this.get(siteId, operationId)
     if (!operation) throw new Error("Claimed operation is unavailable.")
     return { ...operation, claimToken: token }
   }
@@ -214,6 +288,7 @@ function operationFromRow(row: Row, attempts: AttemptRow[]): StaticArtifactOpera
   return { schema: STATIC_ARTIFACT_OPERATION_SCHEMA, site: { id: row.site_id, hostname: row.hostname, origin: row.origin }, operationId: row.operation_id, state: row.state, input, attempts: row.attempts, attemptHistory: attempts.map((attempt) => ({ number: attempt.attempt_number, startedAt: attempt.started_at, completedAt: attempt.completed_at, state: attempt.state, stage: attempt.stage, error: attempt.error_code ? { code: attempt.error_code, message: attempt.error_message ?? "Operation failed." } : null })), stage: row.stage, progress: row.progress, retryAt: row.retry_at, claimExpiresAt: row.claim_expires_at, prepared, error: row.error_code ? { code: row.error_code, message: row.error_message ?? "Operation failed." } : null, receipt: row.receipt_json ? JSON.parse(row.receipt_json) as OperationReceipt : null }
 }
 function sanitizeError(error: unknown): { code: string; message: string } { const message = error instanceof Error ? error.message : "Operation failed."; return { code: error instanceof OperationConflict ? "conflict" : "execution_failed", message: message.replace(/[\r\n\t]/g, " ").slice(0, 500) } }
+function recoveryCommand(message: RuntimeQueueMessage): string { return `npx wrangler d1 execute wp-codebox-runtime-state --remote --command "UPDATE wp_codebox_runtime_dispatches SET state='backpressured', retry_at=NULL, completed_at=NULL, updated_at=unixepoch()*1000 WHERE site_id='${message.siteId}' AND generation=${message.generation} AND kind='${message.kind}' AND identity='${message.identity}' AND state='dead-letter'"` }
 async function ensureSchema(database: D1Database): Promise<void> {
   const existing = schemaReady.get(database as object)
   if (!existing) {
@@ -230,9 +305,10 @@ async function ensureSchema(database: D1Database): Promise<void> {
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_operation_attempts (site_id TEXT NOT NULL, operation_id TEXT NOT NULL, attempt_number INTEGER NOT NULL, claim_token TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, state TEXT NOT NULL, stage TEXT NOT NULL, error_code TEXT, error_message TEXT, PRIMARY KEY (site_id, operation_id, attempt_number), FOREIGN KEY (site_id, operation_id) REFERENCES wp_codebox_operations(site_id, operation_id))`).run()
       await database.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS wp_codebox_one_active_operation ON wp_codebox_operations(site_id) WHERE state IN ('queued','running','retryable')`).run()
       await database.prepare(`CREATE INDEX IF NOT EXISTS wp_codebox_operation_ready ON wp_codebox_operations(site_id, state, retry_at, claim_expires_at, created_at)`).run()
-      await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_runtime_dispatches (site_id TEXT NOT NULL, generation INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('operation','publication')), identity TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','sent','done')), attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (site_id, generation, kind, identity))`).run()
+      await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_runtime_dispatches (site_id TEXT NOT NULL, generation INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('operation','publication')), identity TEXT NOT NULL, principal TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('backpressured','pending','sent','processing','retryable','done','dead-letter')), attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, retry_at INTEGER, sent_at INTEGER, processing_at INTEGER, completed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (site_id, generation, kind, identity))`).run()
       await database.prepare(`CREATE INDEX IF NOT EXISTS wp_codebox_runtime_dispatch_pending ON wp_codebox_runtime_dispatches(state, updated_at)`).run()
       await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_runtime_dead_letters (site_id TEXT NOT NULL, generation INTEGER NOT NULL, kind TEXT NOT NULL, identity TEXT NOT NULL, attempts INTEGER NOT NULL, input_digest TEXT NOT NULL, last_error TEXT NOT NULL, recovery_command TEXT NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (site_id, generation, kind, identity, attempts))`).run()
+      await database.prepare(`CREATE TABLE IF NOT EXISTS wp_codebox_runtime_fairness (site_id TEXT PRIMARY KEY, next_kind TEXT NOT NULL CHECK (next_kind IN ('operation','publication')), updated_at INTEGER NOT NULL)`).run()
     })()
     schemaReady.set(database as object, pending)
     pending.catch(() => schemaReady.delete(database as object))

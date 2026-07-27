@@ -1,5 +1,5 @@
 import { D1OperationRepository, OperationConflict, type StaticArtifactOperation, type StaticArtifactOperationInput } from "./d1-operation-repository.js"
-import type { RuntimeQueue } from "./queue-dispatch.js"
+import { parseRuntimeQueuePolicy, runtimeQueueMessage, type RuntimeQueue } from "./queue-dispatch.js"
 import { MAX_STATIC_ARTIFACT_BYTES, readBoundedRequestBytes, readStaticArtifactImport, StaticArtifactImportError, validateStaticArtifact } from "./static-artifact-import.js"
 import { allocatePreviewSiteContext, parseSiteContexts, previewDomain, siteStorageKeys, type SiteContext } from "./site-context.js"
 import { deriveSiteCredential } from "./wordpress-auth.js"
@@ -18,7 +18,7 @@ export interface ProvisioningAllocation {
   artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"]
 }
 interface CreateInput { key: string; fingerprint: string; artifactSha256: string; artifactSize: number; options: StaticArtifactOperationInput["options"] }
-export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
+export interface ProvisioningEnv { WORDPRESS_STATE_DATABASE: D1Database; WORDPRESS_STATE_BUCKET: R2Bucket; WORDPRESS_RUNTIME_QUEUE?: RuntimeQueue; WORDPRESS_QUEUE_POLICY?: string; WORDPRESS_SITE_CONTEXTS?: string; WORDPRESS_PREVIEW_DOMAIN?: string; WORDPRESS_PREVIEW_HOST_SECRET?: string; WORDPRESS_API_TOKENS?: string; WORDPRESS_ADMIN_CLAIM_SECRET?: string; WORDPRESS_ADMIN_PASSWORD?: string }
 
 export async function routeProvisioningApi(request: Request, env: ProvisioningEnv, operations: D1OperationRepository): Promise<Response> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean)
@@ -39,9 +39,10 @@ export async function routeProvisioningApi(request: Request, env: ProvisioningEn
   return notFound()
 }
 
-async function dispatchOperation(env: ProvisioningEnv, operations: D1OperationRepository, site: SiteContext, operation: StaticArtifactOperation): Promise<void> {
-  const message = await operations.stageDispatch(site, "operation", operation.operationId)
-  try { if (!env.WORDPRESS_RUNTIME_QUEUE) throw new Error("Runtime queue binding is unavailable."); await env.WORDPRESS_RUNTIME_QUEUE.send(message); await operations.deliveredDispatch(message) } catch (error) { await operations.failedDispatch(message, error); console.error("Runtime queue producer is backpressured; reconciliation will retry.", error) }
+async function dispatchOperation(env: ProvisioningEnv, operations: D1OperationRepository, site: SiteContext, operation: StaticArtifactOperation, principal: string): Promise<"queued" | "backpressured"> {
+  const message = await operations.stageDispatch(site, "operation", operation.operationId, principal)
+  if (!await operations.admitDispatch(message, parseRuntimeQueuePolicy(env.WORDPRESS_QUEUE_POLICY))) return "backpressured"
+  try { if (!env.WORDPRESS_RUNTIME_QUEUE) throw new Error("Runtime queue binding is unavailable."); await env.WORDPRESS_RUNTIME_QUEUE.send(message); await operations.deliveredDispatch(message); return "queued" } catch (error) { await operations.failedDispatch(message, error); console.error("Runtime queue producer is backpressured; reconciliation will retry.", error); return "backpressured" }
 }
 
 async function lifecycleStatus(request: Request, env: ProvisioningEnv, siteId: string): Promise<Response> {
@@ -116,7 +117,9 @@ async function create(request: Request, env: ProvisioningEnv, operations: D1Oper
   try {
     const operation = await resumeProvisioningAllocation(env, site, operations)
     const claim = await new AdministratorClaimStore(env.WORDPRESS_STATE_DATABASE).issue(allocation, env)
-    return siteResource(site, operation, 202, claim)
+    const response = siteResource(site, operation, 202, claim)
+    if (operation) response.headers.set("x-wp-codebox-dispatch", dispatchHeader(await operations.dispatchState(runtimeQueueMessage(site, allocationIdentity(site.id).generation, "operation", operation.operationId))))
+    return response
   } catch (error) { if (error instanceof OperationConflict) return apiError(409, "idempotency_conflict", error.message); if (error instanceof AdministratorClaimError) return apiError(409, "administrator_claim_unavailable", "The administrator claim cannot continue provisioning."); throw error }
 }
 
@@ -159,9 +162,11 @@ async function importSite(request: Request, env: ProvisioningEnv, operations: D1
     const input = await readStaticArtifactImport(request, env.WORDPRESS_STATE_BUCKET, site)
     if (input.idempotencyKey !== key) return apiError(409, "idempotency_conflict", "Idempotency-Key must match the import request.")
     const result = await operations.createOrConverge(site, { ...input, artifact: input.artifactReference })
-    await dispatchOperation(env, operations, site, result.operation)
+    const dispatch = await dispatchOperation(env, operations, site, result.operation, token.principal)
     await store.linkOperation(token.principal, siteId, result.operation.operationId, "import", key)
-    return operationResource(siteId, result.operation, 202)
+    const response = operationResource(siteId, await operations.get(siteId, result.operation.operationId) ?? result.operation, 202)
+    response.headers.set("x-wp-codebox-dispatch", dispatch)
+    return response
   } catch (error) { return error instanceof OperationConflict ? apiError(409, "operation_conflict", error.message) : importError(error) }
 }
 
@@ -194,9 +199,11 @@ export async function resumeProvisioningAllocation(env: ProvisioningEnv, site: S
   const result = await operations.createOrConverge(site, input)
   await store.bindOperation(allocation, result.operation.operationId)
   await store.linkOperation(allocation.principal, site.id, result.operation.operationId, "provision", allocation.key)
-  await dispatchOperation(env, operations, site, result.operation)
-  return result.operation
+  await dispatchOperation(env, operations, site, result.operation, allocation.principal)
+  return await operations.get(site.id, result.operation.operationId) ?? result.operation
 }
+
+function dispatchHeader(state: string | null): "queued" | "backpressured" { return state && !["backpressured", "dead-letter"].includes(state) ? "queued" : "backpressured" }
 
 async function readCreate(request: Request, bucket: R2Bucket, key: string): Promise<CreateInput> {
   const bytes = await readBoundedRequestBytes(request)
