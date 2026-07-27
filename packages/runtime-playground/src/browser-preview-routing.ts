@@ -2,6 +2,7 @@ import { redactError, redactString, type RuntimeCreateSpec } from "@automattic/w
 import type { BrowserProbeNetworkPolicySummary, BrowserProbePreviewMode, BrowserProbePreviewRouting } from "./browser-artifacts.js"
 import { argValue, commaListArg, strictBooleanArg } from "./commands.js"
 import type { Page, Route } from "playwright"
+import { playgroundSiteSeedMultisiteTopology, playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS = 5_000
 const BROWSER_PREVIEW_ROUTE_DOCUMENT_FETCH_ATTEMPTS = 3
@@ -110,9 +111,10 @@ export function browserPreviewRouting(args: string[], runtimeSpec: RuntimeCreate
 }
 
 export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string, upstreamRuntimeOrigin?: string): BrowserPreviewTopology {
-  const routedHosts = commaListArg(args, "route-host")
+  const declaredTopology = playgroundSiteSeedMultisiteTopology(runtimeSpec)
+  const routedHosts = [...new Set([...commaListArg(args, "route-host"), ...(declaredTopology?.routeHosts ?? [])])]
   const preview = browserPreviewRouting(args, runtimeSpec, localPreviewOrigin)
-  applyCanonicalRoutedPreviewOrigin(preview, runtimeSpec?.preview?.siteUrl, routedHosts)
+  applyCanonicalRoutedPreviewOrigin(preview, playgroundSiteSeedPrimaryUrl(runtimeSpec) ?? runtimeSpec?.preview?.siteUrl, routedHosts)
   const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
 
   return {

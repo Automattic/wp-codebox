@@ -216,6 +216,7 @@ export interface RecipeDryRunSiteSeed {
   importer?: string
   deterministicIds?: FixtureImportDeterministicIdPlan
   bootstrap?: WorkspaceRecipeSiteSeedBootstrap
+  topology?: RecipeSiteSeedTopologyEvidence
   scopes: WorkspaceRecipeSiteSeed["scopes"]
   bounded: boolean
   dryRunOnly: boolean
@@ -224,6 +225,28 @@ export interface RecipeDryRunSiteSeed {
     importsIntoSandbox: boolean
     includesRecordData: boolean
     secrets: "excluded-by-default"
+  }
+}
+
+export interface RecipeSiteSeedTopologyEvidence {
+  schema: "wp-codebox/site-seed-topology/v1"
+  backend: string
+  requested: WorkspaceRecipeSiteSeedBootstrap
+  effective: {
+    multisite: boolean
+    install: "subdomain" | "subdirectory"
+    network: { id: number; domain: string; path: string }
+    sites: Array<{ id: number; domain: string; path: string; primary: boolean }>
+  }
+  browser: {
+    routeHosts: string[]
+    hostIdentity: "preserved"
+    externalNetworkAccess: "unchanged"
+  }
+  auth: {
+    anonymous: "exact"
+    authenticated: "per-host-materialized"
+    crossDomainCookieParity: "not-claimed"
   }
 }
 

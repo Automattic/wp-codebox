@@ -4,10 +4,11 @@ import { bootWordPressAndRequestHandler } from "@wp-playground/wordpress"
 import type { MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
 import { dirname } from "node:path"
-import { playgroundBlueprint } from "./blueprint.js"
+import { playgroundRuntimeBlueprint } from "./blueprint.js"
 import { assertPhpWasmExternalExtensionsSupported } from "./php-wasm-preflight.js"
 import { phpEnvAssignments } from "./php-snippets.js"
 import type { PlaygroundCliServer, PlaygroundServerRunResponse } from "./preview-server.js"
+import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
   createNodeFsMountHandler(localPath: string): unknown
@@ -53,7 +54,7 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
     maxPhpInstances: 1,
     phpVersion,
-    siteUrl: spec.preview?.siteUrl ?? "http://127.0.0.1",
+    siteUrl: playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl ?? "http://127.0.0.1",
     documentRoot: "/wordpress",
     sapiName: "cli",
     wordpressInstallMode: options.wordpressInstallMode ?? "install-from-existing-files",
@@ -179,7 +180,7 @@ function ensureVfsParentDirectory(php: ProgrammaticPHP, vfsPath: string): void {
 }
 
 async function applyBlueprint(php: ProgrammaticPHP, spec: RuntimeCreateSpec): Promise<void> {
-  const blueprint = playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl)
+  const blueprint = playgroundRuntimeBlueprint(spec)
   if (!blueprint || typeof blueprint !== "object" || !("steps" in blueprint) || !Array.isArray(blueprint.steps) || blueprint.steps.length === 0) {
     return
   }
