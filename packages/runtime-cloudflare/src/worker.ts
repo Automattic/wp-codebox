@@ -16,7 +16,7 @@ import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_RESULT_SCHEMA, StaticA
 import { D1OperationRepository, OperationConflict, STATIC_ARTIFACT_OPERATION_SCHEMA, shouldRecoverPreparedCommit } from "./d1-operation-repository.js"
 import { parseRuntimeQueueMessage, parseRuntimeQueuePolicy, type RuntimeQueue, type RuntimeQueueMessage } from "./queue-dispatch.js"
 import { dispatchQueueBatch, type ParsedQueueDelivery, type QueueDelivery } from "./queue-batch.js"
-import { resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
+import { administratorPasswordForSite, resumeProvisioningAllocation, routeProvisioningApi } from "./provisioning-api.js"
 import { allocationIdentity, CloudflareAllocationLifecycle } from "./allocation-lifecycle.js"
 import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import { DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContextFromRequest, siteStorageKeys, type SiteContext } from "./site-context.js"
@@ -213,6 +213,8 @@ export interface RuntimeEnv {
   WORDPRESS_SITE_CONTEXTS?: string
   WORDPRESS_PREVIEW_DOMAIN?: string
   WORDPRESS_PREVIEW_HOST_SECRET?: string
+  WORDPRESS_ADMIN_SECRET_BINDINGS?: string
+  WORDPRESS_ADMIN_CLAIM_SECRET?: string
   WORDPRESS_ADMIN_PASSWORD?: string
   WORDPRESS_AUTH_SECRET?: string
   WORDPRESS_OPERATOR_TOKEN?: string
@@ -461,6 +463,7 @@ async function resetCanonicalWordPress(request: Request, env: RuntimeEnv, coordi
   if (!await isAuthorizedOperator(request, env, site)) {
     return new Response("Canonical reset authorization failed.", { status: 401 })
   }
+  try { await administratorPasswordForSite(env, site.id) } catch { return new Response("Canonical reset credential root is unavailable.", { status: 409 }) }
   try {
     await coordinator.reset()
   } catch (error) {
@@ -1471,12 +1474,12 @@ async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: s
 }
 
 async function bootstrapCanonicalRuntime(env: RuntimeEnv, coordinator: RevisionCoordinator, site: SiteContext, requestUrl: string, lease: Lease): Promise<Runtime> {
-  if (!env.WORDPRESS_ADMIN_PASSWORD) throw new Error("WORDPRESS_ADMIN_PASSWORD is required to bootstrap a complete canonical WordPress revision.")
   const origin = site.origin
   const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, await packagedCanonicalMarkdownSeed(), new Uint8Array(markdownPrimaryBootstrapIndex), origin, await canonicalWordPressAuthConstants(env, site), env.WORDPRESS_STATE_BUCKET, true)
   try {
     const passwordFile = "/tmp/wordpress-admin-password"
-    const adminPassword = await deriveSiteCredential(env.WORDPRESS_ADMIN_PASSWORD, site.id, "admin-password")
+    let adminPassword: string
+    try { adminPassword = await administratorPasswordForSite(env, site.id) } catch { throw new Error("Administrator credential roots are required to bootstrap a complete canonical WordPress revision.") }
     runtime.php.writeFile(passwordFile, new TextEncoder().encode(adminPassword))
     const passwordOutput = (await runtime.php.run({ code: canonicalBootstrapPasswordCode(passwordFile) })).text.trim()
     if (passwordOutput !== "password-updated") throw new Error("Canonical bootstrap did not update the admin password.")

@@ -115,10 +115,13 @@ export class CloudflareAllocationLifecycle {
     if (await tableExists(this.database, "wp_codebox_api_admin_claims")) {
       const result = await this.database.prepare("DELETE FROM wp_codebox_api_admin_claims WHERE site_id = ?").bind(siteId).run(); deleted += result.meta.changes
     }
+    if (await tableExists(this.database, "wp_codebox_api_admin_roots")) {
+      const result = await this.database.prepare("DELETE FROM wp_codebox_api_admin_roots WHERE site_id = ?").bind(siteId).run(); deleted += result.meta.changes
+    }
     for (const table of ["wp_codebox_runtime_dead_letters", "wp_codebox_runtime_dispatches", "wp_codebox_runtime_fairness"]) if (await tableExists(this.database, table)) {
       const result = await this.database.prepare(`DELETE FROM ${table} WHERE site_id = ?`).bind(siteId).run(); deleted += result.meta.changes
     }
-    const tables = ["wp_codebox_operation_attempts", "wp_codebox_operations", "wp_codebox_api_admin_claims", "wp_codebox_runtime_dead_letters", "wp_codebox_runtime_dispatches", "wp_codebox_runtime_fairness"]
+    const tables = ["wp_codebox_operation_attempts", "wp_codebox_operations", "wp_codebox_api_admin_claims", "wp_codebox_api_admin_roots", "wp_codebox_runtime_dead_letters", "wp_codebox_runtime_dispatches", "wp_codebox_runtime_fairness"]
     let unresolved = 0
     for (const table of tables) if (await tableExists(this.database, table)) unresolved += (await this.database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE site_id = ?`).bind(siteId).first<{ count: number }>())?.count ?? 0
     return { deleted, unresolved }
