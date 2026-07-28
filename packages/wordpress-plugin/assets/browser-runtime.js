@@ -632,19 +632,13 @@
 	};
 
 	const hydrateBrowserPreviewBlueprint = async ( boot, options = {} ) => {
-		if ( options.blueprint && typeof options.blueprint === 'object' ) {
-			return options.blueprint;
-		}
-		if ( boot.blueprint && typeof boot.blueprint === 'object' ) {
-			return boot.blueprint;
-		}
-
-		const blueprintRef = boot.blueprint_ref_dto && typeof boot.blueprint_ref_dto === 'object'
-			? boot.blueprint_ref_dto
-			: ( boot.blueprint_ref && typeof boot.blueprint_ref === 'object' ? boot.blueprint_ref : { ref: boot.blueprint_ref || '' } );
-		const ref = String( blueprintRef.ref || blueprintRef.id || boot.blueprint_ref || '' );
+		const blueprintRef = boot.blueprint_ref && typeof boot.blueprint_ref === 'object' ? boot.blueprint_ref : null;
+		const ref = String( blueprintRef?.ref || blueprintRef?.id || '' );
 		if ( ! ref ) {
 			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_ref_missing', 'Browser preview boot config is missing a hydratable Codebox blueprint ref.' );
+		}
+		if ( blueprintRef.hydratable !== true ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_ref_not_hydratable', 'Browser preview boot config requires a hydratable Codebox blueprint ref.', blueprintRef );
 		}
 
 		const request = {
@@ -657,8 +651,8 @@
 		let hydrated;
 		if ( typeof options.hydrateBlueprintRef === 'function' ) {
 			hydrated = await options.hydrateBlueprintRef( request, boot );
-		} else if ( typeof fetch === 'function' && ( blueprintRef.hydration_endpoint || boot.hydration_endpoint ) ) {
-			const endpoint = new URL( blueprintRef.hydration_endpoint || boot.hydration_endpoint, window.location.href );
+		} else if ( typeof fetch === 'function' && blueprintRef.hydration_endpoint ) {
+			const endpoint = new URL( blueprintRef.hydration_endpoint, window.location.href );
 			endpoint.searchParams.set( 'ref', ref );
 			hydrated = await fetch( endpoint.toString(), {
 				method: 'GET',
@@ -671,7 +665,7 @@
 				return data;
 			} );
 		} else {
-			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_hydrator_missing', 'Provide hydrateBlueprintRef, an inline blueprint, or a blueprint ref hydration endpoint.' );
+			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_hydrator_missing', 'Provide hydrateBlueprintRef or a blueprint ref hydration endpoint.' );
 		}
 
 		const blueprint = hydrated?.blueprint && typeof hydrated.blueprint === 'object'

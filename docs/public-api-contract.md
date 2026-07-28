@@ -78,14 +78,14 @@ Use these package entrypoints from external integrations:
   each safe artifact namespace. Running that recipe through `wp-codebox
   recipe-run` preserves one outer runtime and disposable-service lifecycle.
 
-Browser sessions that load the WordPress plugin browser runtime also publish
-`window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
-for product consumers running inside the browser. Legacy top-level
-`window.wpCodeboxBrowser` methods remain available for existing callers.
-The Codebox-owned browser preview starter is `window.wpCodebox.startBrowserPreview(...)`
-or `window.wpCodeboxBrowser.v1.startBrowserPreview(...)`; callers pass the
-`wp-codebox/browser-preview-boot-config/v1` DTO plus a blueprint hydrator and do
-not import the raw browser backend `startPlaygroundWeb` directly.
+Browser sessions that load the WordPress plugin browser runtime publish
+`window.wpCodeboxBrowser.v1`, the stable browser SDK for product consumers.
+The product preview path is
+`open-or-create-browser-contained-site` followed by
+`window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe })`.
+`preview_boot` is the canonical `wp-codebox/browser-preview-boot-config/v1` DTO;
+it contains a required hydratable `blueprint_ref` object. Consumers do not pass
+inline blueprints or import the raw browser backend `startPlaygroundWeb`.
 
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
@@ -318,7 +318,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `open-only` reuses an existing prepared/live preview and returns unavailable on
   miss, `open-or-create` reuses when possible and otherwise creates, and
   `prepare-new` always creates a fresh preview session. The old boolean
-  `fallback_create` input is not part of the public contract.
+  `fallback_create` input is not part of the public contract. Missing, expired,
+  hash-mismatched, or non-hydratable prepared runtime references return an
+  explicit `decision.action: "prepare-new"` lifecycle state rather than an
+  inline session blueprint.
 - **Browser SDK:** `window.wpCodeboxBrowser.v1.info()` reports SDK version,
   capability strings, and global names; `normalizeError()` returns
   `wp-codebox/browser-sdk-error/v1`; `result()` wraps async browser operations in

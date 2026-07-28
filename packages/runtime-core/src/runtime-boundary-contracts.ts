@@ -172,13 +172,21 @@ export interface BrowserPreviewBootConfig {
   client_module_url?: string
   remote_url?: string
   cors_proxy_url?: string
-  blueprint_ref?: string
-  blueprint_ref_dto?: Record<string, unknown>
+  blueprint_ref: BrowserBlueprintRef
   preview?: PreviewLease
   runtime_access?: RuntimeAccess
   contained_site?: Record<string, unknown>
   artifacts?: Record<string, unknown>
   provenance?: Record<string, unknown>
+}
+
+/** The sole executable blueprint handoff in the public preview boot DTO. */
+export interface BrowserBlueprintRef {
+  schema: "wp-codebox/browser-blueprint-ref/v1"
+  ref: string
+  hydratable: true
+  hydrator_ability: string
+  hydration_endpoint: string
 }
 
 export interface BrowserSessionProductDto {
@@ -536,9 +544,15 @@ function normalizeSourceDigest(input: unknown): { algorithm: "sha256" | (string 
   }
 }
 
-function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
+export function browserPreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
   const value = requireObject(input, "Browser preview boot config") as Partial<BrowserPreviewBootConfig>
   if (value.schema !== BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA) throw new Error(`Browser preview boot config schema must be ${BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA}.`)
+  const blueprintRef = requireObject(value.blueprint_ref, "preview_boot.blueprint_ref") as Partial<BrowserBlueprintRef>
+  if (blueprintRef.schema !== "wp-codebox/browser-blueprint-ref/v1") throw new Error("preview_boot.blueprint_ref schema must be wp-codebox/browser-blueprint-ref/v1.")
+  if (!requiredIdentifier(blueprintRef.ref, "preview_boot.blueprint_ref.ref")) throw new Error("preview_boot.blueprint_ref.ref is required.")
+  if (blueprintRef.hydratable !== true) throw new Error("preview_boot.blueprint_ref must be hydratable.")
+  if (!requiredIdentifier(blueprintRef.hydrator_ability, "preview_boot.blueprint_ref.hydrator_ability")) throw new Error("preview_boot.blueprint_ref.hydrator_ability is required.")
+  if (!requiredIdentifier(blueprintRef.hydration_endpoint, "preview_boot.blueprint_ref.hydration_endpoint")) throw new Error("preview_boot.blueprint_ref.hydration_endpoint is required.")
   return {
     schema: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
     session_id: optionalString(value.session_id, "preview_boot.session_id"),
@@ -546,14 +560,23 @@ function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
     client_module_url: optionalString(value.client_module_url, "preview_boot.client_module_url"),
     remote_url: optionalString(value.remote_url, "preview_boot.remote_url"),
     cors_proxy_url: optionalString(value.cors_proxy_url, "preview_boot.cors_proxy_url"),
-    blueprint_ref: optionalString(value.blueprint_ref, "preview_boot.blueprint_ref"),
-    blueprint_ref_dto: normalizeOptionalObject(value.blueprint_ref_dto, "preview_boot.blueprint_ref_dto"),
+    blueprint_ref: {
+      schema: "wp-codebox/browser-blueprint-ref/v1",
+      ref: requiredIdentifier(blueprintRef.ref, "preview_boot.blueprint_ref.ref"),
+      hydratable: true,
+      hydrator_ability: requiredIdentifier(blueprintRef.hydrator_ability, "preview_boot.blueprint_ref.hydrator_ability"),
+      hydration_endpoint: requiredIdentifier(blueprintRef.hydration_endpoint, "preview_boot.blueprint_ref.hydration_endpoint"),
+    },
     preview: value.preview === undefined ? undefined : previewLease(value.preview),
     runtime_access: value.runtime_access === undefined ? undefined : runtimeAccess(value.runtime_access),
     contained_site: normalizeOptionalObject(value.contained_site, "preview_boot.contained_site"),
     artifacts: normalizeOptionalObject(value.artifacts, "preview_boot.artifacts"),
     provenance: normalizeOptionalObject(value.provenance, "preview_boot.provenance"),
   }
+}
+
+export function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
+  return browserPreviewBootConfig(input)
 }
 
 function normalizeReachability(input: unknown): PreviewReachabilityEvidence {
