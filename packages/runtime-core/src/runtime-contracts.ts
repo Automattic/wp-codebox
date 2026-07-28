@@ -144,6 +144,7 @@ export interface WorkspaceRecipeRuntimeService {
     provider?: "docker" | "external" | "native"
     externalService?: string
     engine?: "mysql" | "mariadb"
+    storage?: "tmpfs" | "disk"
     rootAuthentication?: "generated-password" | "empty-password"
     foreignKeyTargetPolicy?: "unique-only" | "indexed"
     hostEnv?: string

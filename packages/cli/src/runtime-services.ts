@@ -37,6 +37,7 @@ export interface RuntimeServiceEvidence {
   }
   controls?: RuntimeServiceControlResult[]
   memory?: { budgetMiB: number; observedRssMiB?: number }
+  storage?: "tmpfs" | "disk"
 }
 
 export class RuntimeServiceProvisionError extends Error {
@@ -109,11 +110,12 @@ const defaultDependencies: RuntimeServiceDependencies = {
   environment: process.env,
 }
 
-export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback" | "configured"; port: "ephemeral" | "configured"; persistentVolume: false; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
+export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback" | "configured"; port: "ephemeral" | "configured"; persistentVolume: false; storage?: "tmpfs" | "disk"; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
   return services.map((service) => {
     const provider = runtimeServiceProvider(service)
     const external = provider.name === "external"
-    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: external ? "configured" : "loopback", port: external ? "configured" : "ephemeral", persistentVolume: false, ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
+    const storage = provider === mysqlDockerProvider ? service.configuration?.storage ?? "tmpfs" : undefined
+    return { id: service.id, kind: service.kind, provider: provider.name, version: provider.version(service), bind: external ? "configured" : "loopback", port: external ? "configured" : "ephemeral", persistentVolume: false, ...(storage ? { storage } : {}), ...(service.configuration ? { configuration: service.configuration } : {}), outputs: service.outputs }
   })
 }
 
@@ -255,8 +257,9 @@ function runtimeServiceProvider(service: WorkspaceRecipeRuntimeService): Runtime
 async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
   const { signal } = context
   const engine = service.configuration?.engine ?? "mysql"
+  const storage = service.configuration?.storage ?? "tmpfs"
   const image = mysqlDockerImage(service)
-  const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: image, readiness: "pending", lifecycle: "provisioning" }
+  const evidence: RuntimeServiceEvidence = { id: service.id, kind: service.kind, provider: "docker", version: image, readiness: "pending", lifecycle: "provisioning", storage }
   evidenceList.push(evidence)
   const container = `wp-codebox-${service.id}-${dependencies.randomBytes(6).toString("hex")}`
   const password = dependencies.randomBytes(24).toString("base64url")
@@ -267,7 +270,8 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
   const childEnvironment = { ...process.env, [`${environmentPrefix}_DATABASE`]: "runtime", [`${environmentPrefix}_USER`]: "runtime", [`${environmentPrefix}_PASSWORD`]: password, ...rootEnvironment }
   const foreignKeyTargetPolicy = service.configuration?.foreignKeyTargetPolicy
   const mysqlArguments = engine === "mysql" && foreignKeyTargetPolicy ? [`--restrict-fk-on-non-standard-key=${foreignKeyTargetPolicy === "indexed" ? "OFF" : "ON"}`] : []
-  const runArgs = ["run", "--detach", "--name", container, "--label", "wp-codebox.managed=true", "--publish", "127.0.0.1::3306", "--tmpfs", "/var/lib/mysql", "--env", `${environmentPrefix}_DATABASE`, "--env", `${environmentPrefix}_USER`, "--env", `${environmentPrefix}_PASSWORD`, "--env", rootEnvironmentName, image, ...mysqlArguments]
+  const storageArgs = storage === "disk" ? ["--mount", "type=volume,destination=/var/lib/mysql"] : ["--tmpfs", "/var/lib/mysql"]
+  const runArgs = ["run", "--detach", "--name", container, "--label", "wp-codebox.managed=true", "--publish", "127.0.0.1::3306", ...storageArgs, "--env", `${environmentPrefix}_DATABASE`, "--env", `${environmentPrefix}_USER`, "--env", `${environmentPrefix}_PASSWORD`, "--env", rootEnvironmentName, image, ...mysqlArguments]
   let started = false
   try {
     throwIfAborted(signal)
@@ -1439,7 +1443,7 @@ async function releaseServices(services: ManagedRuntimeService[]): Promise<void>
 async function releaseService(container: string, evidence: RuntimeServiceEvidence, dependencies: RuntimeServiceDependencies, signal?: AbortSignal): Promise<void> {
   if (evidence.teardown === "completed") return
   try {
-    await dependencies.execute("docker", ["rm", "--force", container], { signal, timeout: 30_000 })
+    await dependencies.execute("docker", ["rm", "--force", "--volumes", container], { signal, timeout: 30_000 })
     evidence.lifecycle = "released"
     evidence.teardown = "completed"
   } catch (error) {

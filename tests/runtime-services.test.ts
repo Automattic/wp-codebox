@@ -13,7 +13,7 @@ import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../pack
 
 const service = { id: "test-db", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", password: "DB_PASSWORD" } } as const
 const plan = runtimeServicePlan([service])
-assert.deepEqual(plan, [{ id: "test-db", kind: "mysql", provider: "docker", version: "mysql:8.4", bind: "loopback", port: "ephemeral", persistentVolume: false, outputs: service.outputs }])
+assert.deepEqual(plan, [{ id: "test-db", kind: "mysql", provider: "docker", version: "mysql:8.4", bind: "loopback", port: "ephemeral", persistentVolume: false, storage: "tmpfs", outputs: service.outputs }])
 assert.equal(parseLoopbackPort("127.0.0.1:44001\n"), 44001)
 assert.throws(() => parseLoopbackPort("0.0.0.0:3306"), /loopback/)
 const auxiliaryServices = [
@@ -32,6 +32,9 @@ const emptyRootService = { ...service, configuration: { rootAuthentication: "emp
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [emptyRootService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 const indexedForeignKeyService = { ...service, configuration: { foreignKeyTargetPolicy: "indexed" as const } }
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [indexedForeignKeyService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+const diskStorageService = { ...service, configuration: { storage: "disk" as const } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [diskStorageService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+assert.deepEqual(runtimeServicePlan([diskStorageService])[0]?.storage, "disk")
 const mariaDbService = { ...service, configuration: { engine: "mariadb" as const, rootAuthentication: "empty-password" as const } }
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [mariaDbService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 assert.equal(runtimeServicePlan([mariaDbService])[0]?.version, "mariadb:11.4")
@@ -139,6 +142,22 @@ assert.equal(calls[0]?.args[0], "image", "the provider checks the image before s
 await provisioned.release()
 await provisioned.release()
 assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+assert.deepEqual(calls.find((call) => call.args[0] === "rm")?.args.slice(0, 3), ["rm", "--force", "--volumes"])
+
+const diskCalls: Array<{ args: string[] }> = []
+const diskProvisioned = await provisionRuntimeServices([diskStorageService], { dependencies: {
+  ...dependencies,
+  async execute(command, args, options) {
+    diskCalls.push({ args })
+    return await dependencies.execute(command, args, options)
+  },
+} })
+assert.deepEqual(diskProvisioned.evidence[0]?.storage, "disk")
+const diskRunCall = diskCalls.find((call) => call.args[0] === "run")
+assert.deepEqual(diskRunCall?.args.slice(diskRunCall.args.indexOf("--mount"), diskRunCall.args.indexOf("--mount") + 2), ["--mount", "type=volume,destination=/var/lib/mysql"])
+assert.equal(diskRunCall?.args.includes("--tmpfs"), false, "disk storage does not allocate a tmpfs datadir")
+await diskProvisioned.release()
+assert.deepEqual(diskCalls.find((call) => call.args[0] === "rm")?.args.slice(0, 3), ["rm", "--force", "--volumes"], "release removes anonymous Docker volumes")
 
 const missingProviderDependencies: RuntimeServiceDependencies = {
   ...dependencies,

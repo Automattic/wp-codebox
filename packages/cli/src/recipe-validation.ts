@@ -803,14 +803,14 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
         const name = service.configuration[field]
         if (name && exposedEnvironment.has(name)) addIssue("runtime-service-admin-env-exposed", `${path}.configuration.${field}`, `External service administration environment must remain host-only: ${name}`)
       }
-      for (const field of ["image", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
+      for (const field of ["image", "storage", "rootAuthentication", "foreignKeyTargetPolicy"] as const) {
         if (service.configuration[field] !== undefined) addIssue("unsupported-external-runtime-service-option", `${path}.configuration.${field}`, `External MySQL services do not support ${field}.`)
       }
     }
     if (service.configuration?.provider === "native") {
       if (service.kind !== "mysql") addIssue("unsupported-runtime-service-provider", `${path}.configuration.provider`, "The native provider supports only MySQL-compatible services.")
       if (service.configuration.engine !== "mariadb") addIssue("unsupported-native-runtime-service-engine", `${path}.configuration.engine`, "The native provider requires engine=mariadb.")
-      for (const field of ["externalService", "hostEnv", "portEnv", "usernameEnv", "passwordEnv", "image", "rootAuthentication", "foreignKeyTargetPolicy", "responseStatus", "responseBody"] as const) {
+      for (const field of ["externalService", "hostEnv", "portEnv", "usernameEnv", "passwordEnv", "image", "storage", "rootAuthentication", "foreignKeyTargetPolicy", "responseStatus", "responseBody"] as const) {
         if (service.configuration[field] !== undefined) addIssue("unsupported-native-runtime-service-option", `${path}.configuration.${field}`, `Native MariaDB services do not accept ${field}.`)
       }
     }
