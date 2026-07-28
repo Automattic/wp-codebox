@@ -59,6 +59,9 @@ export interface RuntimePHPWasmExtensionManifest {
   manifest: string
 }
 
+export const RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS = ["intl", "redis", "memcached", "xdebug"] as const
+export type RuntimePHPWasmBundledExtension = typeof RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS[number]
+
 export interface RuntimeWordPressEnvironmentSpec extends BackendNeutralEnvironmentSpec {
   blueprint?: unknown
   phpVersion?: string
@@ -67,6 +70,7 @@ export interface RuntimeWordPressEnvironmentSpec extends BackendNeutralEnvironme
   wordpressInstallMode?: RuntimeWordPressInstallModeContract
   databaseSetup?: RuntimeWordPressDatabaseSetupContract
   extensions?: RuntimePHPWasmExtensionManifest[]
+  bundledExtensions?: RuntimePHPWasmBundledExtension[]
 }
 
 export type BackendNeutralReplayStatus = "metadata-only" | "partial-replay" | "replayable-runtime-state" | "runtime-state-artifact" | "not-replayable" | (string & {})
@@ -122,6 +126,7 @@ export function normalizeRuntimeWordPressEnvironmentSpec(input: unknown): Runtim
     wordpressInstallMode: optionalString(value.wordpressInstallMode, "environment.wordpressInstallMode") as RuntimeWordPressInstallModeContract | undefined,
     databaseSetup: optionalString(value.databaseSetup, "environment.databaseSetup") as RuntimeWordPressDatabaseSetupContract | undefined,
     extensions: normalizeRuntimePHPWasmExtensionManifests(value.extensions),
+    bundledExtensions: normalizeRuntimePHPWasmBundledExtensions(value.bundledExtensions),
   })
 }
 
@@ -142,6 +147,17 @@ function normalizeRuntimePHPWasmExtensionManifests(input: unknown): RuntimePHPWa
     const manifest = requiredString(value.manifest, `environment.extensions[${index}].manifest`)
     if (manifest.includes("\0")) throw new Error(`environment.extensions[${index}].manifest must not contain a null byte.`)
     return { manifest }
+  })
+}
+
+function normalizeRuntimePHPWasmBundledExtensions(input: unknown): RuntimePHPWasmBundledExtension[] | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) throw new Error("environment.bundledExtensions must be an array.")
+  return input.map((extension, index) => {
+    if (!RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS.includes(extension as RuntimePHPWasmBundledExtension)) {
+      throw new Error(`environment.bundledExtensions[${index}] must be one of: ${RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS.join(", ")}.`)
+    }
+    return extension as RuntimePHPWasmBundledExtension
   })
 }
 

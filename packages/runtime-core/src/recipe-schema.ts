@@ -138,6 +138,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "External PHP.wasm extension manifests loaded before PHP starts. External extensions require a JSPI runtime.",
             items: { $ref: "#/$defs/phpWasmExtensionManifest" },
           },
+          bundledExtensions: {
+            type: "array",
+            description: "Allowlisted PHP extensions bundled with the Playground runtime.",
+            items: { enum: ["intl", "redis", "memcached", "xdebug"] },
+          },
           backendPackage: { $ref: "#/$defs/runtimeBackendPackage" },
           stack: { $ref: "#/$defs/runtimeStack" },
           overlays: {

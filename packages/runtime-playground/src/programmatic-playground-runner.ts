@@ -12,7 +12,7 @@ import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
   createNodeFsMountHandler(localPath: string): unknown
-  loadNodeRuntime(phpVersion: AllPHPVersion, options?: { followSymlinks?: boolean; emscriptenOptions?: { processId?: number }; extensions?: Array<{ source: { format: "manifest"; manifestUrl: string } }> }): Promise<number>
+  loadNodeRuntime(phpVersion: AllPHPVersion, options?: { followSymlinks?: boolean; emscriptenOptions?: { processId?: number }; extensions?: Array<string | { source: { format: "manifest"; manifestUrl: string } }> }): Promise<number>
 }
 
 type AllPHPVersion = "8.5" | "8.4" | "8.3" | "8.2" | "8.1" | "8.0" | "7.4" | "5.2"
@@ -107,8 +107,11 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
   }
 }
 
-export function programmaticNodeRuntimeOptions(spec: RuntimeCreateSpec, processId: number): { followSymlinks: true; emscriptenOptions: { processId: number }; extensions?: Array<{ source: { format: "manifest"; manifestUrl: string } }> } {
-  const extensions = spec.environment.extensions?.map((extension) => ({ source: { format: "manifest" as const, manifestUrl: extension.manifest } }))
+export function programmaticNodeRuntimeOptions(spec: RuntimeCreateSpec, processId: number): { followSymlinks: true; emscriptenOptions: { processId: number }; extensions?: Array<string | { source: { format: "manifest"; manifestUrl: string } }> } {
+  const extensions = [
+    ...(spec.environment.bundledExtensions ?? []),
+    ...(spec.environment.extensions?.map((extension) => ({ source: { format: "manifest" as const, manifestUrl: extension.manifest } })) ?? []),
+  ]
   return {
     followSymlinks: true,
     emscriptenOptions: { processId },
