@@ -223,6 +223,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       blueprint: plan.runtime.blueprint,
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
       extensions: resolveRecipeRuntimeExtensionManifests(recipe, recipeDirectory),
+      bundledExtensions: recipe.runtime?.bundledExtensions,
     }
     const effectivePreview = effectiveRecipePreview(recipe.runtime?.preview, options)
     const runtimeCreateSpec = {

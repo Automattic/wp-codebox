@@ -1,19 +1,22 @@
 import assert from "node:assert/strict"
 
 import { normalizeRuntimeWordPressEnvironmentSpec, validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
+import { parseWorkspaceRecipe } from "../packages/cli/src/recipe-validation.js"
 import { resolveRecipeRuntimeExtensionManifests } from "../packages/cli/src/commands/recipe-run.js"
 import { assertPhpWasmExternalExtensionsSupported, PhpWasmExternalExtensionCapabilityError } from "../packages/runtime-playground/src/php-wasm-preflight.js"
 import { programmaticNodeRuntimeOptions } from "../packages/runtime-playground/src/programmatic-playground-runner.js"
 
 const recipe: WorkspaceRecipe = {
   schema: "wp-codebox/workspace-recipe/v1",
-  runtime: { extensions: [{ manifest: "extensions/parser/manifest.json" }] },
+  runtime: { extensions: [{ manifest: "extensions/parser/manifest.json" }], bundledExtensions: ["intl"] },
   workflow: { steps: [{ command: "wordpress.run-php" }] },
 }
 
 assert.equal(validateWorkspaceRecipeJsonSchema(recipe).valid, true)
 assert.equal(validateWorkspaceRecipeJsonSchema({ ...recipe, runtime: { extensions: [{ manifest: "", unexpected: true }] } }).valid, false)
-assert.deepEqual(normalizeRuntimeWordPressEnvironmentSpec({ kind: "wordpress", extensions: recipe.runtime?.extensions }), { kind: "wordpress", extensions: [{ manifest: "extensions/parser/manifest.json" }] })
+assert.equal(validateWorkspaceRecipeJsonSchema({ ...recipe, runtime: { bundledExtensions: ["imagick"] } }).valid, false)
+assert.throws(() => parseWorkspaceRecipe(JSON.stringify({ ...recipe, runtime: { bundledExtensions: ["imagick"] } }), "/tmp/recipe.json"), /bundledExtensions\[0\] must be one of/)
+assert.deepEqual(normalizeRuntimeWordPressEnvironmentSpec({ kind: "wordpress", extensions: recipe.runtime?.extensions, bundledExtensions: recipe.runtime?.bundledExtensions }), { kind: "wordpress", extensions: [{ manifest: "extensions/parser/manifest.json" }], bundledExtensions: ["intl"] })
 
 const resolved = resolveRecipeRuntimeExtensionManifests(recipe, "/tmp/recipe")
 assert.deepEqual(resolved, [{ manifest: "/tmp/recipe/extensions/parser/manifest.json" }])
@@ -21,12 +24,12 @@ assert.throws(() => resolveRecipeRuntimeExtensionManifests({ ...recipe, runtime:
 
 const runtimeSpec = {
   backend: "wordpress-playground",
-  environment: { kind: "wordpress", extensions: resolved },
+  environment: { kind: "wordpress", extensions: resolved, bundledExtensions: ["intl"] },
   policy: { network: "deny", filesystem: "readwrite-mounts", commands: [], secrets: "none", approvals: "never" },
 } as const
 const firstInstance = programmaticNodeRuntimeOptions(runtimeSpec, 1)
 const pooledInstance = programmaticNodeRuntimeOptions(runtimeSpec, 2)
-assert.deepEqual(firstInstance.extensions, [{ source: { format: "manifest", manifestUrl: "/tmp/recipe/extensions/parser/manifest.json" } }])
+assert.deepEqual(firstInstance.extensions, ["intl", { source: { format: "manifest", manifestUrl: "/tmp/recipe/extensions/parser/manifest.json" } }])
 assert.deepEqual(pooledInstance.extensions, firstInstance.extensions)
 assert.equal(firstInstance.emscriptenOptions.processId, 1)
 assert.equal(pooledInstance.emscriptenOptions.processId, 2)

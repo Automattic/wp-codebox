@@ -37,6 +37,10 @@ export interface PlaygroundCliModule {
     phpIniEntries?: Record<string, string>
     phpEnv?: Record<string, string>
     phpExtension?: string[]
+    intl?: boolean
+    redis?: boolean
+    memcached?: boolean
+    xdebug?: boolean
   }): Promise<PlaygroundCliServer>
 }
 
@@ -170,6 +174,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           php: spec.environment.phpVersion,
           skipSqliteSetup: spec.environment.databaseSetup === "external",
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
+          ...playgroundBundledExtensionOptions(spec),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           phpEnv: connectorSecretEnvironment(spec),
           "site-url": playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl,
@@ -222,6 +227,10 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     throw error
   }
+}
+
+function playgroundBundledExtensionOptions(spec: RuntimeCreateSpec): { intl?: true; redis?: true; memcached?: true; xdebug?: true } {
+  return Object.fromEntries((spec.environment.bundledExtensions ?? []).map((extension) => [extension, true]))
 }
 
 async function withPreviewLeaseProvider(server: PlaygroundCliServer, spec: RuntimeCreateSpec): Promise<PlaygroundCliServer> {

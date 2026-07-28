@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -146,6 +146,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
   validateRecipeRuntimeExtensions(recipe.runtime?.extensions, recipePath)
+  validateRecipeRuntimeBundledExtensions(recipe.runtime?.bundledExtensions, recipePath)
   validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
@@ -366,6 +367,16 @@ function validateRecipeRuntimeExtensions(extensions: NonNullable<WorkspaceRecipe
     }
     if (/^[a-z][a-z0-9+.-]*:/i.test(extension.manifest) && !/^https:\/\//i.test(extension.manifest)) {
       throw new Error(`Recipe runtime extensions[${index}] manifest URL must use HTTPS: ${recipePath}`)
+    }
+  }
+}
+
+function validateRecipeRuntimeBundledExtensions(extensions: NonNullable<WorkspaceRecipe["runtime"]>["bundledExtensions"] | undefined, recipePath: string): void {
+  if (extensions === undefined) return
+  if (!Array.isArray(extensions)) throw new Error(`Recipe runtime bundledExtensions must be an array: ${recipePath}`)
+  for (const [index, extension] of extensions.entries()) {
+    if (!RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS.includes(extension)) {
+      throw new Error(`Recipe runtime bundledExtensions[${index}] must be one of: ${RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS.join(", ")}: ${recipePath}`)
     }
   }
 }

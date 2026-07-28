@@ -38,6 +38,7 @@ try {
       databaseSetup: "external",
       assets: { wordpressDirectory: wordpressDevelopDirectory },
       extensions: [{ manifest: "/tmp/sodium/manifest.json" }],
+      bundledExtensions: ["intl", "redis"],
       blueprint: {},
     },
     policy: {
@@ -92,6 +93,9 @@ try {
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
+  assert.equal(calls[0].intl, true)
+  assert.equal(calls[0].redis, true)
+  assert.equal(calls[0].memcached, undefined)
   const sharedPhpIniPath = calls[0]["mount-before-install"]?.[0]?.hostPath
   const sharedAutoPrependPath = calls[0]["mount-before-install"]?.[1]?.hostPath
   assert.equal(typeof sharedPhpIniPath, "string")
