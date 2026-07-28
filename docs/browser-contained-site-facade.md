@@ -17,7 +17,7 @@ The contained-site facade is the product-facing browser lane for WordPress previ
 
 ## Boundary
 
-Consumers use `preview_boot` as the public descriptor. It exposes Codebox session identity, preview lease, contained-site handle, and a blueprint ref hydrator. Playground fields such as `clientModuleUrl`, `remoteUrl`, runtime `scope`, and inline `blueprint` data stay out of the product-facing contained-site facade; product consumers hydrate through the Codebox blueprint ref endpoint.
+Consumers open or create the contained site, then call `window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe })`. `preview_boot` is the public descriptor and requires one hydratable `blueprint_ref`; inline blueprint data is not a product response contract.
 
 ## Diagnostics
 

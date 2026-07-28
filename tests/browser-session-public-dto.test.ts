@@ -152,9 +152,9 @@ assert.deepEqual(result.public.runtime_readiness.missing, undefined)
 assert.equal(result.public.executable_session, undefined)
 assert.equal(result.public.runtime_handoff, undefined)
 assert.equal(result.public.parent_tool_bridge, undefined)
-assert.match(result.public.preview_boot.blueprint_ref, /^prepared:public-dto-site:[a-f0-9]{64}$/)
-assert.equal(result.public.preview_boot.blueprint_ref_dto.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
-assert.equal(result.public.preview_ref.boot_ref, result.public.preview_boot.blueprint_ref)
+assert.match(result.public.preview_boot.blueprint_ref.ref, /^prepared:public-dto-site:[a-f0-9]{64}$/)
+assert.equal(result.public.preview_boot.blueprint_ref.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
+assert.equal(result.public.preview_ref.boot_ref, result.public.preview_boot.blueprint_ref.ref)
 assert.deepEqual(result.public.artifact_refs, [{
   schema: "wp-codebox/browser-artifact-ref/v1",
   kind: "browser-html",
@@ -202,7 +202,7 @@ assert.equal(result.raw_task_contract.primary_playground_blueprint_steps_is_arra
 
 assert.equal(result.early_failure.code, "wp_codebox_browser_preview_boot_contract_invalid")
 assert.equal(result.early_failure.data.schema, "wp-codebox/browser-preview-boot-contract-error/v1")
-assert.equal(result.early_failure.data.reason, "prepare-new-required")
+assert.equal(result.early_failure.data.reason, "preview-boot-blueprint-ref-missing")
 assert.equal(result.early_failure.message, "Browser preview sessions require a hydratable blueprint ref. Use prepare-new to create a preview session before opening or hydrating it.")
 
 console.log("browser session public dto ok")
