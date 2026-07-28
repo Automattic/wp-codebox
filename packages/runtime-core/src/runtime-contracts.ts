@@ -155,8 +155,8 @@ export interface WorkspaceRecipeRuntimeService {
     responseStatus?: number
     responseBody?: string
   }
-  /** Explicit map from a provider output (for example `port`) to a runtime env name. */
-  outputs: Record<string, string>
+  /** Explicit map from a provider output (for example `port`) to one or more runtime env names. */
+  outputs: Record<string, string | string[]>
 }
 
 export interface WorkspaceRecipeRuntimeStack {

@@ -110,7 +110,7 @@ const defaultDependencies: RuntimeServiceDependencies = {
   environment: process.env,
 }
 
-export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback" | "configured"; port: "ephemeral" | "configured"; persistentVolume: false; storage?: "tmpfs" | "disk"; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string> }> {
+export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): Array<{ id: string; kind: string; provider: string; version: string; bind: "loopback" | "configured"; port: "ephemeral" | "configured"; persistentVolume: false; storage?: "tmpfs" | "disk"; configuration?: WorkspaceRecipeRuntimeService["configuration"]; outputs: Record<string, string | string[]> }> {
   return services.map((service) => {
     const provider = runtimeServiceProvider(service)
     const external = provider.name === "external"
@@ -238,7 +238,8 @@ function mysqlDockerImage(service: WorkspaceRecipeRuntimeService): string {
 }
 
 function mysqlRuntimeServiceSecretTargets(service: WorkspaceRecipeRuntimeService): Record<string, string> {
-  return service.outputs.password ? { DB_PASSWORD: service.outputs.password } : {}
+  const names = runtimeServiceOutputNames(service.outputs.password)
+  return names.length > 0 ? { DB_PASSWORD: names.includes("DB_PASSWORD") ? "DB_PASSWORD" : names[0] as string } : {}
 }
 
 function runtimeServiceProvider(service: WorkspaceRecipeRuntimeService): RuntimeServiceProvider {
@@ -288,7 +289,7 @@ async function provisionMysqlDockerService(service: WorkspaceRecipeRuntimeServic
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
     return {
       env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
-      secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      secretEnv: runtimeServiceOutputAliases(service.outputs.password, password),
       secretEnvTargets: mysqlRuntimeServiceSecretTargets(service),
       evidence,
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, async (customAction) => {
@@ -498,7 +499,7 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     const values: Record<string, string> = { host: "127.0.0.1", port: String(port), username: "runtime", password, database: "runtime" }
     return {
       env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
-      secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      secretEnv: runtimeServiceOutputAliases(service.outputs.password, password),
       secretEnvTargets: mysqlRuntimeServiceSecretTargets(service),
       evidence,
       async control(action) {
@@ -1157,7 +1158,7 @@ async function provisionMysqlExternalService(service: WorkspaceRecipeRuntimeServ
     const values: Record<string, string> = { host: connection.host, port: String(connection.port), username, password, database }
     return {
       env: runtimeServiceOutputEnvironment(service, values, new Set(["password"])),
-      secretEnv: service.outputs.password ? { [service.outputs.password]: password } : {},
+      secretEnv: runtimeServiceOutputAliases(service.outputs.password, password),
       secretEnvTargets: mysqlRuntimeServiceSecretTargets(service),
       evidence,
       async control(action) {
@@ -1227,17 +1228,27 @@ function mysqlConnectionArgs(host: string, port: number, username: string): stri
 function runtimeServiceOutputEnvironment(service: WorkspaceRecipeRuntimeService, values: Record<string, string>, secretOutputs: ReadonlySet<string> = new Set()): Record<string, string> {
   return Object.fromEntries(Object.entries(service.outputs)
     .filter(([output]) => !secretOutputs.has(output))
-    .map(([output, name]) => [name, values[output] ?? ""]))
+    .flatMap(([output, names]) => runtimeServiceOutputNames(names).map((name) => [name, values[output] ?? ""])))
+}
+
+function runtimeServiceOutputAliases(names: string | string[] | undefined, value: string): Record<string, string> {
+  return Object.fromEntries(runtimeServiceOutputNames(names).map((name) => [name, value]))
+}
+
+function runtimeServiceOutputNames(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value]
 }
 
 function validateDeclaredRuntimeServiceSecretTargets(services: readonly WorkspaceRecipeRuntimeService[], reservedEnvNames: readonly string[]): void {
   const reserved = new Set(reservedEnvNames)
   const outputOwners = new Map<string, Array<{ serviceIndex: number; output: string }>>()
   for (const [serviceIndex, service] of services.entries()) {
-    for (const [output, name] of Object.entries(service.outputs)) {
-      const owners = outputOwners.get(name) ?? []
-      owners.push({ serviceIndex, output })
-      outputOwners.set(name, owners)
+    for (const [output, names] of Object.entries(service.outputs)) {
+      for (const name of runtimeServiceOutputNames(names)) {
+        const owners = outputOwners.get(name) ?? []
+        owners.push({ serviceIndex, output })
+        outputOwners.set(name, owners)
+      }
     }
   }
   const targets = new Map<string, string>()
@@ -1360,7 +1371,7 @@ async function provisionSimpleDockerService(
     evidence.lifecycle = "provisioned"
     const values = spec.values(ports)
     return {
-      env: Object.fromEntries(Object.entries(service.outputs).map(([output, name]) => [name, values[output] ?? ""])),
+      env: runtimeServiceOutputEnvironment(service, values),
       secretEnv: {},
       secretEnvTargets: {},
       evidence,

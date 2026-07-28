@@ -9,7 +9,7 @@ import { executeRuntimeServiceProcess, parseLoopbackPort, provisionRuntimeServic
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.ts"
-import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.ts"
+import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
 const service = { id: "test-db", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", password: "DB_PASSWORD" } } as const
 const plan = runtimeServicePlan([service])
@@ -25,6 +25,12 @@ assert.deepEqual(runtimeServicePlan(auxiliaryServices).map(({ kind, version }) =
 
 const valid = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(valid.valid, true)
+const aliasedPortService: WorkspaceRecipeRuntimeService = { ...service, outputs: { ...service.outputs, port: ["DB_PORT", "TC_MYSQL_PORT"] } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [aliasedPortService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+const aliasedPasswordService: WorkspaceRecipeRuntimeService = { ...service, outputs: { ...service.outputs, password: ["MYSQL_PASSWORD", "DB_PASSWORD"] } }
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [aliasedPasswordService] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: [] } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
+assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: ["DB_PORT", "DB_PORT"] } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: auxiliaryServices }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 const unsafe = validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, outputs: { port: "bad-name" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } })
 assert.equal(unsafe.valid, false)
@@ -126,6 +132,15 @@ assert.equal(provisioned.env.DB_PORT, "41001")
 assert.equal(provisioned.env.DB_PASSWORD, undefined, "password is excluded from the non-secret output channel")
 assert.equal(provisioned.secretEnv.DB_PASSWORD, provisionedPassword)
 assert.deepEqual(provisioned.secretEnvTargets, { DB_PASSWORD: "DB_PASSWORD" })
+const aliasedProvisioned = await provisionRuntimeServices([aliasedPortService], { dependencies })
+assert.equal(aliasedProvisioned.env.DB_PORT, "41001")
+assert.equal(aliasedProvisioned.env.TC_MYSQL_PORT, "41001")
+await aliasedProvisioned.release()
+const aliasedPasswordProvisioned = await provisionRuntimeServices([aliasedPasswordService], { dependencies })
+assert.equal(aliasedPasswordProvisioned.secretEnv.MYSQL_PASSWORD, provisionedPassword)
+assert.equal(aliasedPasswordProvisioned.secretEnv.DB_PASSWORD, provisionedPassword)
+assert.deepEqual(aliasedPasswordProvisioned.secretEnvTargets, { DB_PASSWORD: "DB_PASSWORD" })
+await aliasedPasswordProvisioned.release()
 const runCall = calls.find((call) => call.args[0] === "run")
 assert.ok(runCall?.args.includes("MYSQL_PASSWORD"))
 assert.ok(runCall?.args.includes("127.0.0.1::3306"), "Docker publishes MySQL on a loopback ephemeral port")
@@ -141,7 +156,7 @@ assert.equal(runCall?.env?.DOCKER_HOST, process.env.DOCKER_HOST, "Docker provide
 assert.equal(calls[0]?.args[0], "image", "the provider checks the image before starting the service")
 await provisioned.release()
 await provisioned.release()
-assert.equal(calls.filter((call) => call.args[0] === "rm").length, 1, "release is idempotent")
+assert.equal(calls.filter((call) => call.args[0] === "rm").length, 3, "each service is released exactly once")
 assert.deepEqual(calls.find((call) => call.args[0] === "rm")?.args.slice(0, 3), ["rm", "--force", "--volumes"])
 
 const diskCalls: Array<{ args: string[] }> = []
