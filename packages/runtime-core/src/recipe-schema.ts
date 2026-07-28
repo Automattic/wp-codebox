@@ -957,6 +957,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
               provider: { enum: ["docker", "external", "native"] },
               externalService: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
               engine: { enum: ["mysql", "mariadb"] },
+              storage: { enum: ["tmpfs", "disk"] },
               rootAuthentication: { enum: ["generated-password", "empty-password"] },
               foreignKeyTargetPolicy: { enum: ["unique-only", "indexed"] },
               hostEnv: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
