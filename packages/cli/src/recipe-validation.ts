@@ -781,10 +781,12 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
   const environment = new Set(exposedEnvironment)
   const outputOwners = new Map<string, Array<{ serviceIndex: number; output: string }>>()
   for (const [serviceIndex, service] of services.entries()) {
-    for (const [output, name] of Object.entries(service.outputs)) {
-      const owners = outputOwners.get(name) ?? []
-      owners.push({ serviceIndex, output })
-      outputOwners.set(name, owners)
+    for (const [output, names] of Object.entries(service.outputs)) {
+      for (const name of runtimeServiceOutputNames(names)) {
+        const owners = outputOwners.get(name) ?? []
+        owners.push({ serviceIndex, output })
+        outputOwners.set(name, owners)
+      }
     }
   }
   const connectorTargets = new Set<string>()
@@ -797,7 +799,9 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
     if (service.kind === "mysql" && service.outputs.password) {
       const target = "DB_PASSWORD"
       if (exposedEnvironment.has(target)) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target is already injected by recipe environment: ${target}`)
-      const conflictingOutput = (outputOwners.get(target) ?? []).some((owner) => !(owner.serviceIndex === index && owner.output === "password" && service.outputs.password === target))
+      const passwordOutputs = runtimeServiceOutputNames(service.outputs.password)
+      const source = passwordOutputs.includes(target) ? target : passwordOutputs[0]
+      const conflictingOutput = (outputOwners.get(target) ?? []).some((owner) => !(owner.serviceIndex === index && owner.output === "password" && source === target))
       if (conflictingOutput) addIssue("runtime-service-secret-target-collision", `${path}.outputs.password`, `Managed connector secret target collides with a managed output: ${target}`)
       if (connectorTargets.has(target)) addIssue("ambiguous-runtime-service-secret-target", `${path}.outputs.password`, `Multiple managed connectors target the same runtime environment name: ${target}`)
       connectorTargets.add(target)
@@ -831,13 +835,19 @@ function validateRecipeRuntimeServices(recipe: WorkspaceRecipe, addIssue: (code:
       smtp: /^(host|port|httpPort|url)$/,
       http: /^(host|port|url)$/,
     }
-    for (const [output, name] of Object.entries(service.outputs)) {
+    for (const [output, names] of Object.entries(service.outputs)) {
       if (!(supportedOutputs[service.kind] ?? /^$/).test(output)) addIssue("unknown-runtime-service-output", `${path}.outputs.${output}`, `Unsupported ${service.kind} service output: ${output}`)
-      if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
-      if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
-      environment.add(name)
+      for (const name of runtimeServiceOutputNames(names)) {
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) addIssue("invalid-runtime-service-env", `${path}.outputs.${output}`, "Runtime service environment variable names must match /^[A-Z_][A-Z0-9_]*$/.")
+        if (environment.has(name)) addIssue("duplicate-runtime-service-env", `${path}.outputs.${output}`, `Runtime service output environment variable is already declared: ${name}`)
+        environment.add(name)
+      }
     }
   }
+}
+
+function runtimeServiceOutputNames(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value]
 }
 
 function policyHostListIncludes(policyHosts: readonly string[], boundaryHost: string): boolean {
