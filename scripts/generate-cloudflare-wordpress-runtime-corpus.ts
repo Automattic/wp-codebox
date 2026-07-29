@@ -16,8 +16,8 @@ const staticManifestOutput = resolve("packages/runtime-cloudflare/assets/wordpre
 const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
 const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
-const staticSiteImporterSourceUrl = "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip"
-const staticSiteImporterSha256 = "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29"
+const staticSiteImporterSourceUrl = "https://github.com/Automattic/static-site-importer/releases/download/v1.3.6/static-site-importer.zip"
+const staticSiteImporterSha256 = "fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db"
 const staticSiteImporterOutput = resolve("artifacts/cloudflare-static-site-importer.zip")
 const staticSiteImporterManifestOutput = resolve("packages/runtime-cloudflare/assets/static-site-importer-artifact.json")
 const response = await fetch(sourceUrl)
@@ -94,7 +94,7 @@ const staticSiteImporterManifest: RuntimeArchiveArtifactManifest = {
   name: "static-site-importer",
   key: runtimeArchiveArtifactKey("static-site-importer", staticSiteImporterSha256),
   archive: { sha256: staticSiteImporterSha256, size: staticSiteImporterArchive.byteLength },
-  source: { url: staticSiteImporterSourceUrl, version: "1.3.4", identity: "08b9dd650f3c3161c5b350796a5db6ef083516ae" },
+  source: { url: staticSiteImporterSourceUrl, version: "1.3.6", identity: "8b425f61b4fe051c76d3879aa7e2681c2866db54" },
 }
 validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest)
 await writeFile(staticSiteImporterOutput, staticSiteImporterArchive)
