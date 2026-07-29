@@ -74,7 +74,7 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
     "explain-selector=body",
     "reduced-motion=false",
     "animations=allow",
-    "frozen-time=2020-01-01T00:00:00.000Z",
+    "frozen-time=2020-01-01T01:00:00+01:00",
     "capture-style=body{color:red}",
     "block-external-requests=false",
   ])).output)
@@ -118,6 +118,7 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
   }
   await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "animations=fast"]), /animations must be freeze or allow/)
   await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, `capture-style=${"x".repeat(16 * 1024 + 1)}`]), /capture-style must not exceed 16384 bytes/)
+  await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "frozen-time=July 4, 2020"]), /timezone-bearing ISO-8601/)
 
   const matrix = JSON.parse((await visualCompareRun(artifactRoot, [
     "explain-selector=main",

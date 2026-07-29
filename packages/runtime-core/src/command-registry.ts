@@ -1267,7 +1267,7 @@ export const commandRegistry = [
       { name: "viewport", description: "Browser viewport size for URL targets and optional crop ceiling.", format: "<width>x<height>" },
       { name: "reduced-motion", description: "Emulate reduced motion during URL capture; defaults to true.", format: "boolean" },
       { name: "animations", description: "Freeze page animations at time zero or allow native animation state; defaults to freeze.", format: "freeze|allow" },
-      { name: "frozen-time", description: "Optional ISO-8601 wall-clock time exposed to page scripts during URL capture.", format: "ISO-8601 timestamp" },
+      { name: "frozen-time", description: "Optional timezone-bearing ISO-8601 wall-clock time exposed to page scripts during URL capture. Accepted inputs use YYYY-MM-DDTHH:mm:ss(.sss)(Z|+HH:MM); evidence records canonical UTC milliseconds.", format: "timezone-bearing ISO-8601 timestamp" },
       { name: "capture-style", description: "Optional CSS injected into each URL target before readiness and capture; bounded to 16384 bytes.", format: "CSS source" },
       { name: "block-external-requests", description: "Abort external HTTP(S) requests while allowing the preview origin and loopback runtime handoffs; defaults to true.", format: "boolean" },
       { name: "full-page", description: "Capture full-page screenshots for URL targets; defaults to true.", format: "boolean" },

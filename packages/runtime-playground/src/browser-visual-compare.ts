@@ -485,7 +485,7 @@ async function runVisualComparePairCommand({
   const explainSelectors = visualCompareExplainSelectors(args)
   const reducedMotion = strictBooleanArg(args, "reduced-motion", true)
   const animations = visualCompareAnimationsArg(args)
-  const frozenTime = argValue(args, "frozen-time")?.trim() || undefined
+  const frozenTime = visualCompareFrozenTimeArg(args)
   const captureStyle = visualCompareCaptureStyleArg(args)
   // Disposable WP Codebox sandboxes have no outbound network egress. A captured
   // page that references external resources (Google Fonts, CDNs, analytics) would
@@ -1739,6 +1739,21 @@ function visualCompareAnimationsArg(args: string[]): "freeze" | "allow" {
   throw new Error("animations must be freeze or allow")
 }
 
+function visualCompareFrozenTimeArg(args: string[]): string | undefined {
+  const value = argValue(args, "frozen-time")?.trim()
+  if (!value) return undefined
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)
+  if (!match) throw new Error("frozen-time must be a timezone-bearing ISO-8601 timestamp such as 2020-01-01T00:00:00.000Z")
+  const [, year, month, day, hour, minute, second, fraction = "0"] = match
+  const calendar = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), Number(fraction.padEnd(3, "0"))))
+  if (calendar.getUTCFullYear() !== Number(year) || calendar.getUTCMonth() !== Number(month) - 1 || calendar.getUTCDate() !== Number(day) || calendar.getUTCHours() !== Number(hour) || calendar.getUTCMinutes() !== Number(minute) || calendar.getUTCSeconds() !== Number(second)) {
+    throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
+  }
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
+  return new Date(timestamp).toISOString()
+}
+
 function visualCompareCaptureStyleArg(args: string[]): string {
   const style = argValue(args, "capture-style") ?? ""
   if (Buffer.byteLength(style) > 16 * 1024) {
@@ -1882,7 +1897,7 @@ async function installVisualCompareDeterministicReveal(page: Page): Promise<void
 async function installVisualCompareTimeControl(page: Page, frozenTime?: string): Promise<void> {
   if (!frozenTime) return
   const timestamp = Date.parse(frozenTime)
-  if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be an ISO-8601 timestamp")
+  if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
   await page.addInitScript((fixedTimestamp) => {
     const NativeDate = Date
     const FrozenDate = function (this: unknown, ...args: unknown[]): string | Date {
