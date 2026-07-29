@@ -154,12 +154,14 @@ function assertPhpunitConfigurationAndDiscoveryFailures(source: string, function
   const explicitAdjacentXml = join(tempDir, "missing.xml")
   const defaultXml = join(tempDir, "default", "phpunit.xml.dist")
   const adjacentXml = join(tempDir, "default", "phpunit.xml")
+  const selectedXml = join(tempDir, "selected.xml")
   const scriptPath = join(tempDir, "assert-phpunit-config.php")
   writeFileSync(malformedXml, "<phpunit><testsuites>")
   writeFileSync(malformedAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-mask-malformed</directory></testsuite></testsuites></phpunit>")
   writeFileSync(explicitAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-fallback</directory></testsuite></testsuites></phpunit>")
   mkdirSync(join(tempDir, "default"), { recursive: true })
   writeFileSync(adjacentXml, "<phpunit><testsuites><testsuite><directory>fallback-tests</directory></testsuite></testsuites></phpunit>")
+  writeFileSync(selectedXml, '<phpunit><testsuites><testsuite name="first"><directory suffix="FirstTest.php">first-tests</directory></testsuite><testsuite name="second"><directory suffix="SecondTest.php">second-tests</directory></testsuite></testsuites></phpunit>')
 
   const parseConfigFunction = extractPhpFunction(source, functionName)
   const discoveryFunction = extractPhpFunction(source, discoveryFunctionName)
@@ -183,6 +185,15 @@ ${!supportsImplicitFallback ? `assert_phpunit_error(function() { ${functionName}
 assert_phpunit_error(function() { ${functionName}(${phpString(malformedXml)}, ${phpString(join(tempDir, "tests"))}); }, 'PHPUnit config could not be parsed', 'malformed config');
 assert_phpunit_error(function() { ${discoveryFunctionName}(array(${phpString(join(tempDir, "missing-tests"))}), array('Test.php'), array('test-'), array()); }, 'configured PHPUnit test directory is not a readable directory', 'missing configured directory');
 assert_phpunit_error(function() { ${discoveryFunctionName}(array(), array('Test.php'), array('test-'), array(), array(${phpString(join(tempDir, "MissingTest.php"))})); }, 'configured PHPUnit test file is not a readable PHP file', 'missing configured file');
+$selected = ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('second'));
+if ($selected[0] !== array(${phpString(join(tempDir, "second-tests"))}) || !in_array('SecondTest.php', $selected[1], true) || in_array('FirstTest.php', $selected[1], true)) {
+    throw new RuntimeException('selected testsuite discovery mismatch: ' . json_encode($selected));
+}
+$multiple = ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('first', 'second'));
+if ($multiple[0] !== array(${phpString(join(tempDir, "first-tests"))}, ${phpString(join(tempDir, "second-tests"))})) {
+    throw new RuntimeException('multiple testsuite discovery mismatch: ' . json_encode($multiple));
+}
+assert_phpunit_error(function() { ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('missing')); }, 'Requested PHPUnit testsuite not found in config: missing', 'unknown selected testsuite');
 ${supportsImplicitFallback ? `
 $fallback = ${functionName}(${phpString(defaultXml)}, ${phpString(join(tempDir, "tests"))});
 if ($fallback[0] !== array(${phpString(join(tempDir, "default", "fallback-tests"))})) {
@@ -565,7 +576,7 @@ assert.ok(projectModeCode.includes("$base_dir = dirname($xml_real);"))
 assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);"))
 assert.ok(projectModeCode.includes("function pg_project_bootstrap_from_config(string &$xml_path, bool $xml_is_default): string"))
 assertProjectBootstrapConfigResolution(projectModeCode, implicitProjectConfigCode)
-assert.ok(projectModeCode.includes("foreach ($xml->xpath('//testsuite/file') ?: array() as $file)"))
+assert.ok(projectModeCode.includes("foreach ($testsuite->file as $file)"))
 assert.ok(projectModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config"))
 assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
 assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
@@ -896,27 +907,32 @@ assert.ok(externalMysqlMultisiteRecipe.workflow.steps[0].args.includes("multisit
 
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")
+const selectedTestsuitesFunction = extractPhpFunction(managedModeCode, "pg_selected_phpunit_testsuites")
 const phpunitArgsProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-cache-args-")), "probe.php")
 writeFileSync(phpunitArgsProbe, `<?php
 function pg_log($message) {}
 ${phpunitCacheAllocator}
 ${phpunitArgsFunction}
+${selectedTestsuitesFunction}
 echo json_encode(array(
   'first' => wp_codebox_phpunit_args(array('phpunit', '--filter', 'OnlyTest', '--cache-result-file=/wordpress/ignored.cache')),
   'second' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file', 'ignored.cache')),
   'firstMode' => fileperms(wp_codebox_phpunit_args(array('phpunit'))['cacheResultFile']) & 0777,
+  'selectedSuites' => pg_selected_phpunit_testsuites(array('phpunit', '--testsuite', 'first, second', '--testsuite=third', '--testsuite=first')),
 ));
 `)
 const phpunitArgs = JSON.parse(execFileSync("php", [phpunitArgsProbe], { encoding: "utf8" })) as {
   first: Record<string, unknown>
   second: Record<string, unknown>
   firstMode: number
+  selectedSuites: string[]
 }
 for (const argumentSet of [phpunitArgs.first, phpunitArgs.second]) {
   assert.equal(argumentSet.cacheResult, false, "PHPUnit result caching must start disabled")
   assert.match(String(argumentSet.cacheResultFile), /^\/tmp\/wp-codebox-phpunit-[a-f0-9]{48}\.cache$/, "cache file must be privately allocated under /tmp")
 }
 assert.equal(phpunitArgs.first.filter, "OnlyTest", "unrecognized caller cache options must not affect supported PHPUnit options")
+assert.deepEqual(phpunitArgs.selectedSuites, ["first", "second", "third"], "PHPUnit testsuite selectors support both CLI forms, comma lists, and stable deduplication")
 assert.notEqual(phpunitArgs.first.cacheResultFile, phpunitArgs.second.cacheResultFile, "each PHPUnit invocation must receive an unpredictable cache path")
 assert.equal(phpunitArgs.firstMode, 0o600, "the internal cache file must be private to the sandbox process")
 assert.equal(existsSync(String(phpunitArgs.first.cacheResultFile)), false, "the internal cache must be removed at PHP shutdown")

@@ -102,7 +102,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
   const suffixAssignment = options.replaceDefaultMatchers ? "$suffixes = $config_suffixes;" : "$suffixes = array_merge($suffixes, $config_suffixes);"
   const prefixAssignment = options.replaceDefaultMatchers ? "$prefixes = $config_prefixes;" : "$prefixes = array_merge($prefixes, $config_prefixes);"
 
-  return `function ${options.functionName}($xml_path, $test_dir_default) {
+  return `function ${options.functionName}($xml_path, $test_dir_default, array $selected_testsuites = array()) {
     $directories = array($test_dir_default);
     $suffixes = array('Test.php');
     $prefixes = array('test-');
@@ -124,35 +124,53 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
         throw new RuntimeException('PHPUnit config could not be parsed at ' . $xml_path . ': ' . $first);
     }
     $base = ${options.basePathExpression};
+    $testsuites = $xml->xpath('//testsuite') ?: array();
+    if (!empty($selected_testsuites)) {
+        $selected = array_fill_keys($selected_testsuites, true);
+        $available = array();
+        $testsuites = array_values(array_filter($testsuites, static function($testsuite) use ($selected, &$available): bool {
+            $name = trim((string) ($testsuite['name'] ?? ''));
+            if ($name !== '') {
+                $available[$name] = true;
+            }
+            return isset($selected[$name]);
+        }));
+        $missing = array_values(array_diff($selected_testsuites, array_keys($available)));
+        if (!empty($missing)) {
+            throw new RuntimeException('Requested PHPUnit testsuite not found in config: ' . implode(', ', $missing));
+        }
+    }
     $config_dirs = array();
     $config_suffixes = array();
     $config_prefixes = array();
-    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
-        $raw = trim((string) $dir);${directoryRestriction}
-        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
-        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
-            $suffix = trim($suffix);
-            if ($suffix !== '') {
-                $config_suffixes[] = $suffix;
+    foreach ($testsuites as $testsuite) {
+        foreach ($testsuite->directory as $dir) {
+            $raw = trim((string) $dir);${directoryRestriction}
+            $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
+            foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
+                $suffix = trim($suffix);
+                if ($suffix !== '') {
+                    $config_suffixes[] = $suffix;
+                }
+            }
+            foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
+                $prefix = trim($prefix);
+                if ($prefix !== '') {
+                    $config_prefixes[] = $prefix;
+                }
             }
         }
-        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
-            $prefix = trim($prefix);
-            if ($prefix !== '') {
-                $config_prefixes[] = $prefix;
+        foreach ($testsuite->exclude as $exclude) {
+            $raw = trim((string) $exclude);
+            if ($raw !== '') {
+                $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
             }
         }
-    }
-    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
-        $raw = trim((string) $exclude);
-        if ($raw !== '') {
-            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
-        }
-    }
-    foreach ($xml->xpath('//testsuite/file') ?: array() as $file) {
-        $raw = trim((string) $file);
-        if ($raw !== '') {
-            $files[] = $raw[0] === '/' ? $raw : $base . '/' . $raw;
+        foreach ($testsuite->file as $file) {
+            $raw = trim((string) $file);
+            if ($raw !== '') {
+                $files[] = $raw[0] === '/' ? $raw : $base . '/' . $raw;
+            }
         }
     }
     if (!empty($config_dirs)) {
@@ -338,6 +356,31 @@ function ${functionName}(array $argv) {
 }`
 }
 
+function phpunitSelectedTestsuitesPhp(functionName: string): string {
+  return `function ${functionName}(array $argv): array {
+    $selected = array();
+    $args = array_slice($argv, 1);
+    for ($i = 0; $i < count($args); $i++) {
+        $value = null;
+        if ($args[$i] === '--testsuite' && isset($args[$i + 1])) {
+            $value = $args[++$i];
+        } elseif (strpos($args[$i], '--testsuite=') === 0) {
+            $value = substr($args[$i], strlen('--testsuite='));
+        }
+        if ($value === null) {
+            continue;
+        }
+        foreach (explode(',', (string) $value) as $name) {
+            $name = trim($name);
+            if ($name !== '') {
+                $selected[$name] = true;
+            }
+        }
+    }
+    return array_keys($selected);
+}`
+}
+
 function managedPhpunitConfigWriterPhp(): string {
   return `function pg_write_managed_test_config(array $extra_defines, string $table_prefix, string $database_type): string {
     $config_path = '/tmp/wp-tests-config.php';
@@ -480,6 +523,8 @@ function pg_build_phpunit_argv($raw): array {
     }
     return $phpunit_argv;
 }
+
+${phpunitSelectedTestsuitesPhp("pg_selected_phpunit_testsuites")}
 
 @file_put_contents($result_file, '');
 
@@ -1423,7 +1468,7 @@ try {
     if (!is_dir($test_dir)) {
         throw new RuntimeException('configured PHPUnit test root is not a readable directory: ' . $test_dir);
     }
-    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
+    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, pg_selected_phpunit_testsuites($phpunit_argv));
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
