@@ -700,7 +700,11 @@ async function runStaticArtifactOperation(env: RuntimeEnv, coordinator: Revision
     const input = await readStaticArtifactImport(new Request("https://scheduled.invalid/?phase=operator-static-artifact-import", { method: "POST", body: JSON.stringify(body) }), env.WORDPRESS_STATE_BUCKET, site)
     const response = await runCoordinatedWordPressRequest(new Request("https://scheduled.invalid/?phase=operator-static-artifact-import", { method: "POST" }), env, coordinator, site, "static-artifact-import", input, async () => operations.recordCommit(site.id, claimed.operationId, claimed.claimToken), async (prepared) => operations.prepareCommit(site.id, claimed.operationId, claimed.claimToken, prepared.version, prepared.pointer, prepared.ssiResult, prepared.publicationJobKey), heartbeat)
     const result = await response.json()
-    if (!result || typeof result !== "object" || (result as { status?: unknown }).status !== "imported") throw new Error("Static artifact import did not produce an import receipt.")
+    if (!result || typeof result !== "object" || (result as { status?: unknown }).status !== "imported") {
+      const failure = result && typeof result === "object" ? result as { status?: unknown; error?: unknown } : {}
+      const error = failure.error && typeof failure.error === "object" ? failure.error as { code?: unknown; message?: unknown } : {}
+      throw new Error(`Static artifact import did not produce an import receipt: ${JSON.stringify({ status: failure.status, error: { code: error.code, message: error.message } })}.`)
+    }
     const publicationJob = response.headers.get("x-wp-codebox-publication-job") ?? undefined
     await operations.complete(site.id, claimed.operationId, claimed.claimToken, result, publicationJob, site.origin)
     // The operation receipt and coordinator commit are durable before the queue wake-up.

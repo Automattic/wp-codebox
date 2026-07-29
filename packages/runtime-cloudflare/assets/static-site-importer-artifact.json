@@ -1,14 +1,14 @@
 {
   "schema": "wp-codebox/runtime-archive-artifact/v1",
   "name": "static-site-importer",
-  "key": "runtime/archives/static-site-importer/8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29.zip",
+  "key": "runtime/archives/static-site-importer/fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db.zip",
   "archive": {
-    "sha256": "8d27286021d7c6141609def40a97591322a14340b23a17d9405f7919ea145a29",
-    "size": 13056371
+    "sha256": "fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db",
+    "size": 13133323
   },
   "source": {
-    "url": "https://github.com/Automattic/static-site-importer/releases/download/v1.3.4/static-site-importer.zip",
-    "version": "1.3.4",
-    "identity": "08b9dd650f3c3161c5b350796a5db6ef083516ae"
+    "url": "https://github.com/Automattic/static-site-importer/releases/download/v1.3.6/static-site-importer.zip",
+    "version": "1.3.6",
+    "identity": "8b425f61b4fe051c76d3879aa7e2681c2866db54"
   }
 }

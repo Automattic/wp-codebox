@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process"
 import { createHash, createHmac } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { stripVTControlCharacters } from "node:util"
 import { encodeZip } from "@php-wasm/stream-compression"
+import { runVisualCompareCommand } from "../packages/runtime-playground/dist/browser-visual-compare.js"
 import publicationContract from "../packages/runtime-cloudflare/src/publication-contract.json" with { type: "json" }
 
 const port = 8792
@@ -118,8 +120,8 @@ try {
   const importedPages = await assertImportedArtifactPages(finalAdmin, imported)
   console.log(`Static artifact pages are editable for ${coordinator}.`)
   if (coordinator === "d1") {
-    const importedPublication = await waitForPublication(new URL(importedPages.secondary.route, origin), "A second imported page.", "imported static artifact publication", 12, imported.publicationJob)
-    assertIncludes(importedPublication, "A second imported page.", "imported static artifact publication")
+    const importedPublication = await waitForPublication(new URL(importedPages.secondary.route, origin), "Public reads are cheap.", "imported static artifact publication", 12, imported.publicationJob)
+    assertIncludes(importedPublication, "Public reads are cheap.", "imported static artifact publication")
     console.log("Static artifact publication promoted for d1.")
   }
   await stopWorker()
@@ -142,7 +144,8 @@ try {
   }
 } finally {
   await stopWorker()
-  await rm(stateDirectory, { recursive: true, force: true })
+  if (process.env.CLOUDFLARE_GATE_PRESERVE) console.log(`Preserved Cloudflare local gate evidence at ${stateDirectory}.`)
+  else await rm(stateDirectory, { recursive: true, force: true })
 }
 
 async function run(command, args) {
@@ -154,6 +157,39 @@ async function run(command, args) {
 }
 
 async function provisionStaticArtifact() {
+  const stylesheet = `
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;font-family:Arial,sans-serif;background:#f5f2e8;color:#17211b}
+a{color:inherit}
+.site-header{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:2px solid #17211b;background:#fff}
+.site-header nav{display:flex;gap:24px}.site-header a{text-decoration:none}
+.brand{font-size:17px;font-weight:800;letter-spacing:-.02em}.brand:before{content:'W';display:inline-grid;place-items:center;width:30px;height:30px;margin-right:10px;background:#3157ff;color:#fff;border-radius:6px}
+.site-header nav a{font-size:14px;font-weight:700}
+main{max-width:1180px;margin:0 auto;padding:32px}
+.hero{display:grid;grid-template-columns:1.3fr .7fr;gap:28px;padding:52px;border:2px solid #17211b;border-radius:24px;background:#172b5f;color:#fff;box-shadow:8px 8px 0 #17211b}
+.eyebrow,.proof-kicker,.section-kicker,.step-number{font-size:12px;line-height:1.2;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.eyebrow{display:inline-block;margin:0 0 20px;padding:8px 11px;border:1px solid #9fb0ff;border-radius:999px;color:#dbe2ff}
+h1{max-width:760px;margin:0 0 20px;font-size:54px;line-height:1;letter-spacing:-.05em}
+h2{margin:0;font-size:34px;line-height:1.05;letter-spacing:-.035em}h3{margin:0 0 10px;font-size:19px}p{font-size:17px;line-height:1.55;margin:0}
+.lede{max-width:690px;color:#dbe2ff}.actions{display:flex;align-items:center;gap:16px;margin-top:28px}.status{font-size:13px;font-weight:700;color:#dbe2ff}
+.cta{display:inline-block;padding:13px 18px;border:2px solid #17211b;border-radius:8px;background:#d9ff57;color:#17211b;font-weight:800;text-decoration:none;box-shadow:4px 4px 0 #17211b}
+.proof-card{padding:24px;border:2px solid #17211b;border-radius:16px;background:#fff;color:#17211b}
+.proof-image{display:block;width:86px;height:86px;margin-bottom:24px;border-radius:14px}.proof-kicker{margin-bottom:6px;color:#516057}.artifact-name{font-size:21px;font-weight:800}.proof-row{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-top:1px solid #cdd4cf}.proof-row:first-of-type{margin-top:18px}.proof-label{font-size:13px;color:#607068}.proof-value{font-size:13px;font-weight:800;text-align:right}
+.flow{padding:72px 0 24px}.section-heading{display:grid;grid-template-columns:.65fr 1.35fr;gap:28px;align-items:end;margin-bottom:28px}.section-kicker{color:#3157ff}.section-intro{color:#526057}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.step{min-height:190px;padding:22px;border:2px solid #17211b;border-radius:14px;background:#fff}.step-number{margin-bottom:38px;color:#3157ff}.step p:last-child{font-size:14px;color:#526057}
+.comparison{margin-top:48px}.compare-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px}.compare-card{padding:24px;border:2px solid #17211b;border-radius:14px;background:#fff}.compare-card.current{background:#d9ff57}.compare-title{min-height:48px}.compare-row{padding:12px 0;border-top:1px solid #aeb8b1}.compare-label{margin-bottom:3px;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#526057}.compare-value{font-size:14px;font-weight:700}
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:28px}.detail-card{padding:24px;border:2px solid #17211b;border-radius:14px;background:#fff}.detail-card p{font-size:15px;color:#526057}.evidence{margin-top:32px;padding:28px;border:2px solid #17211b;border-radius:16px;background:#d9ff57}.evidence p{margin-top:10px}
+.site-footer{display:flex;align-items:center;justify-content:space-between;margin-top:56px;padding:22px 32px;background:#17211b;color:#fff}.site-footer p,.site-footer a{font-size:13px}.site-footer a{font-weight:700;text-decoration:none}
+@media(max-width:760px){.site-header,.site-footer{padding:16px 20px}.site-header nav{gap:14px}main{padding:20px}.hero{grid-template-columns:1fr;padding:30px;box-shadow:5px 5px 0 #17211b}h1{font-size:40px}.actions{align-items:flex-start;flex-direction:column}.section-heading{grid-template-columns:1fr}.steps,.detail-grid{grid-template-columns:1fr 1fr}.compare-grid{grid-template-columns:1fr}.site-footer{align-items:flex-start;flex-direction:column;gap:8px}}
+@media(max-width:480px){.site-header nav a:first-child{display:none}.steps,.detail-grid{grid-template-columns:1fr}.hero{padding:24px}h1{font-size:35px}}
+`.trim()
+  const proofSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="16" fill="#3157ff"/><path d="M23 24h34l16 16v32H23z" fill="#fff"/><path d="M57 24v17h16M33 51h30M33 60h23" fill="none" stroke="#3157ff" stroke-width="5" stroke-linejoin="round"/><circle cx="69" cy="69" r="15" fill="#d9ff57" stroke="#17211b" stroke-width="4"/><path d="M62 69l5 5 10-12" fill="none" stroke="#17211b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  const homeContent = `<section class="hero"><div><p class="eyebrow">Architecture explainer</p><h1>How WordPress Playground runs on Cloudflare Workers.</h1><p class="lede">The familiar Playground runtime normally runs WordPress in a browser tab. Here, the same PHP WebAssembly approach runs inside a Cloudflare Worker. Codebox connects that disposable runtime to durable storage, request routing, and publication.</p><div class="actions"><a class="cta" href="/about/">Follow one request</a><p class="status">This website is also the imported test input.</p></div></div><aside class="proof-card"><img class="proof-image" src="assets/proof.svg" alt="WordPress runtime architecture"><p class="proof-kicker">Where each part runs</p><p class="artifact-name">Playground, server-side</p><div class="proof-row"><p class="proof-label">PHP + WordPress</p><p class="proof-value">WebAssembly in the Worker</p></div><div class="proof-row"><p class="proof-label">Current revision</p><p class="proof-value">Coordinated in D1</p></div><div class="proof-row"><p class="proof-label">Files + public pages</p><p class="proof-value">Stored immutably in R2</p></div></aside></section><section class="flow" id="proof"><div class="section-heading"><div><p class="section-kicker">The request lifecycle</p><h2>A disposable runtime with durable WordPress state.</h2></div><p class="section-intro">The Worker can disappear after any request. Persistence comes from reconstructing WordPress from canonical files, not from pretending the Worker has a permanent disk.</p></div><div class="steps"><article class="step"><p class="step-number">01 / Route</p><h3>Classify the request</h3><p>Published anonymous pages can come straight from R2. Admin, REST, preview, and mutation requests continue into WordPress.</p></article><article class="step"><p class="step-number">02 / Boot</p><h3>Start Playground</h3><p>The Worker loads pinned PHP and WordPress artifacts, then rebuilds a disposable SQLite index from canonical state.</p></article><article class="step"><p class="step-number">03 / Execute</p><h3>Run real WordPress</h3><p>Playground translates the HTTP request into PHP. Core, plugins, authentication, REST, and wp-admin run normally.</p></article><article class="step"><p class="step-number">04 / Commit</p><h3>Persist mutations</h3><p>Codebox writes immutable canonical files to R2, then conditionally advances the site revision coordinated by D1.</p></article></div></section><section class="comparison"><div class="section-heading"><div><p class="section-kicker">What is different</p><h2>Three ways to run WordPress.</h2></div><p class="section-intro">All three run WordPress. They differ in where PHP executes, what remains alive between requests, and how state becomes durable.</p></div><div class="compare-grid"><article class="compare-card"><h3 class="compare-title">Typical WordPress hosting</h3><div class="compare-row"><p class="compare-label">PHP runs on</p><p class="compare-value">A long-running web server</p></div><div class="compare-row"><p class="compare-label">State lives in</p><p class="compare-value">A persistent database and filesystem</p></div><div class="compare-row"><p class="compare-label">Between requests</p><p class="compare-value">The server and disk remain available</p></div></article><article class="compare-card"><h3 class="compare-title">Playground at playground.wordpress.net</h3><div class="compare-row"><p class="compare-label">PHP runs on</p><p class="compare-value">WebAssembly in your browser tab</p></div><div class="compare-row"><p class="compare-label">State lives in</p><p class="compare-value">The browser session unless saved or exported</p></div><div class="compare-row"><p class="compare-label">Between visits</p><p class="compare-value">The interactive runtime is client-scoped</p></div></article><article class="compare-card current"><h3 class="compare-title">Playground on Cloudflare Workers</h3><div class="compare-row"><p class="compare-label">PHP runs on</p><p class="compare-value">WebAssembly inside a Worker</p></div><div class="compare-row"><p class="compare-label">State lives in</p><p class="compare-value">Canonical R2 objects with a D1 revision pointer</p></div><div class="compare-row"><p class="compare-label">Between requests</p><p class="compare-value">The runtime may vanish; the site does not</p></div></article></div></section>`
+  const aboutContent = `<section class="hero"><div><p class="eyebrow">Follow one request</p><h1>Public reads are cheap. WordPress boots when it is needed.</h1><p class="lede">A published visitor request can be answered from an immutable R2 page snapshot without starting PHP. Editing, REST, previews, and unpublished routes boot Playground and execute WordPress inside the Worker.</p><div class="actions"><a class="cta" href="/">Back to the architecture</a><p class="status">Codebox owns the lifecycle around Playground.</p></div></div><aside class="proof-card"><img class="proof-image" src="../assets/proof.svg" alt="Cloudflare request lifecycle"><p class="proof-kicker">A dynamic request</p><p class="artifact-name">Boot, run, commit</p><div class="proof-row"><p class="proof-label">Runtime disk</p><p class="proof-value">Disposable memory</p></div><div class="proof-row"><p class="proof-label">SQLite</p><p class="proof-value">Rebuildable index</p></div><div class="proof-row"><p class="proof-label">Source of truth</p><p class="proof-value">Canonical files in R2</p></div></aside></section><section class="flow"><div class="section-heading"><div><p class="section-kicker">The important boundaries</p><h2>Cloudflare services have narrow jobs.</h2></div><p class="section-intro">No single Cloudflare primitive acts like a traditional server. The pieces compose around a normal WordPress request.</p></div><div class="detail-grid"><article class="detail-card"><h3>Worker: execute</h3><p>Loads PHP-WASM, WordPress, and Playground request handling for dynamic traffic. Its memory is an optimization, never the source of truth.</p></article><article class="detail-card"><h3>D1: coordinate</h3><p>Stores the current revision pointer, version, leases, and operation progress so concurrent mutations cannot overwrite each other.</p></article><article class="detail-card"><h3>R2: preserve and serve</h3><p>Stores content-addressed canonical files, WordPress assets, uploaded media, and immutable snapshots for published routes.</p></article></div><section class="evidence"><h2>How this page proves the explanation.</h2><p>The gate imports this HTML site into native Gutenberg blocks, compares the source and WordPress render pixel for pixel, edits this second page through authenticated WordPress APIs, republishes it, kills the Worker, starts a new one, and verifies the public edit and raw block content survived.</p></section></section>`
+  const document = ({ title, secondary, content }) => {
+    const assetRoot = secondary ? "../assets" : "assets"
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="${assetRoot}/site.css"></head><body><header class="site-header"><a class="brand" href="/">Playground on Cloudflare Workers</a><nav><a href="/#proof">How it works</a><a href="/about/">Evidence</a></nav></header><main>${content}</main><footer class="site-footer"><p>WordPress Playground running on Cloudflare Workers.</p><a href="/about/">Read the acceptance proof</a></footer></body></html>`
+  }
   const fixture = {
     schema: "blocks-engine/php-transformer/site-artifact/v1",
     artifact_type: "website",
@@ -166,14 +202,28 @@ async function provisionStaticArtifact() {
       kind: "html",
       mime_type: "text/html",
       encoding: "utf-8",
-      content: "<!doctype html><html><head><meta charset=\"utf-8\"><title>Verified Artifact Site</title></head><body><main><h1>Verified Artifact Site</h1><p>Imported from a verified R2 artifact.</p></main></body></html>",
+      content: document({ title: "WordPress Playground on Cloudflare Workers", secondary: false, content: homeContent }),
     }, {
       path: "website/about/index.html",
       role: "document",
       kind: "html",
       mime_type: "text/html",
       encoding: "utf-8",
-      content: "<!doctype html><html><head><meta charset=\"utf-8\"><title>About the Verified Artifact</title></head><body><main><h1>About the Verified Artifact</h1><p>A second imported page.</p></main></body></html>",
+      content: document({ title: "How the Cloudflare Workers Proof Works", secondary: true, content: aboutContent }),
+    }, {
+      path: "website/assets/site.css",
+      role: "asset",
+      kind: "css",
+      mime_type: "text/css",
+      encoding: "utf-8",
+      content: stylesheet,
+    }, {
+      path: "website/assets/proof.svg",
+      role: "asset",
+      kind: "image",
+      mime_type: "image/svg+xml",
+      encoding: "utf-8",
+      content: proofSvg,
     }],
   }
   const serialized = artifactPath ? await readFile(artifactPath, "utf8") : JSON.stringify(fixture)
@@ -190,7 +240,7 @@ async function provisionStaticArtifact() {
     schema: "wp-codebox/cloudflare-static-artifact-import-request/v1",
     idempotencyKey: `cloudflare-static-artifact-${sha256}`,
     artifact: { r2Key: key, sha256, size: Buffer.byteLength(serialized) },
-    import: { slug: "verified-artifact-site", name: "Verified Artifact Site", siteTitle: "Verified Artifact Site" },
+    import: { slug: "playground-cloudflare-proof", name: "WordPress Playground on Cloudflare Workers", siteTitle: "WordPress Playground on Cloudflare Workers" },
   }
   return publicProvisioning ? { ...request, serialized } : request
 }
@@ -241,7 +291,7 @@ async function assertPublicProvisioning(input) {
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   const imported = operation?.receipt?.ssiResult
-  if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.4" || !imported.themeSlug
+  if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.6" || !imported.themeSlug
     || !imported.pages || Object.keys(imported.pages).length !== expectedPageCount || Object.values(imported.quality ?? {}).some((count) => count !== 0)
     || operation.receipt?.publication?.status !== "promoted") {
     throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
@@ -267,6 +317,7 @@ async function assertPublicProvisioning(input) {
   await startWorker(false, executionWranglerConfig)
   const adminHtml = await login(claim.credential.password)
   const importedPages = await assertImportedArtifactPages(adminHtml, imported)
+  await assertStaticArtifactVisualParity(input.serialized, importedPages)
   const edited = await updateImportedPage(adminHtml, importedPages.secondary)
   const published = await waitForPublication(new URL(edited.route, origin), edited.marker, "provisioned site edit publication", 12, edited.publicationJob)
   assertIncludes(published, edited.marker, "provisioned site edit publication")
@@ -275,9 +326,79 @@ async function assertPublicProvisioning(input) {
   const persisted = await assertPublishedWordPressPage(new URL(edited.route, origin), "provisioned site edit after restart", ["publication-r2", "publication-edge"])
   assertIncludes(persisted, edited.marker, "provisioned site edit after restart")
   const restartedAdmin = await assertAuthenticatedDashboard(new URL("/wp-admin/", origin))
-  const persistedPages = await assertImportedArtifactPages(restartedAdmin, imported)
+  const persistedPages = await assertImportedArtifactPages(restartedAdmin, imported, false)
   const persistedEdit = [persistedPages.primary, persistedPages.secondary].find((page) => page.id === edited.id)
   if (!persistedEdit?.raw.includes(edited.marker)) throw new Error(`Provisioned site edit was not retained as editable block content after restart: ${JSON.stringify(persistedPages)}.`)
+}
+
+async function assertStaticArtifactVisualParity(serialized, importedPages) {
+  const artifact = JSON.parse(serialized)
+  const root = `${(artifact.root ?? "website").replace(/\/$/, "")}/`
+  const files = new Map(artifact.files.map((file) => {
+    const relativePath = file.path.startsWith(root) ? file.path.slice(root.length) : file.path
+    const bytes = typeof file.content === "string" ? Buffer.from(file.content) : Buffer.from(file.content_base64 ?? "", "base64")
+    return [relativePath, { bytes, mimeType: file.mime_type ?? "application/octet-stream" }]
+  }))
+  const routes = new Map()
+  for (const [relativePath, file] of files) {
+    if (!relativePath.endsWith(".html")) continue
+    const route = relativePath === "index.html" ? "/" : relativePath.endsWith("/index.html") ? `/${relativePath.slice(0, -"index.html".length)}` : `/${relativePath}`
+    routes.set(route, file)
+  }
+
+  const sourceServer = createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname
+    const file = routes.get(pathname) ?? files.get(pathname.replace(/^\//, ""))
+    if (!file) {
+      response.writeHead(404).end("Not found")
+      return
+    }
+    response.writeHead(200, { "content-type": file.mimeType, "content-length": String(file.bytes.length) })
+    response.end(request.method === "HEAD" ? undefined : file.bytes)
+  })
+  await new Promise((resolve, reject) => {
+    sourceServer.once("error", reject)
+    sourceServer.listen(0, "127.0.0.1", resolve)
+  })
+
+  try {
+    const address = sourceServer.address()
+    if (!address || typeof address === "string") throw new Error("Static artifact parity server did not expose a loopback port.")
+    const sourceOrigin = `http://127.0.0.1:${address.port}`
+    for (const page of [importedPages.primary, importedPages.secondary]) {
+      const route = new URL(page.route, origin).pathname
+      if (!routes.has(route)) throw new Error(`Imported route ${route} has no exact source-artifact document.`)
+      const artifactRoot = join(stateDirectory, "visual-parity", route === "/" ? "home" : route.replace(/^\/|\/$/g, "").replaceAll("/", "-"))
+      const comparison = await runVisualCompareCommand({
+        artifactRoot,
+        server: {
+          serverUrl: sourceOrigin,
+          playground: { run: async () => ({ text: "" }) },
+          async [Symbol.asyncDispose]() {},
+        },
+        spec: {
+          command: "wordpress.visual-compare",
+          args: [
+            `source-url=${sourceOrigin}${route}`,
+            `candidate-url=${origin}${route}`,
+            "viewport=1280x720",
+            "full-page=true",
+            "threshold=0",
+            "include-aa=true",
+            "block-external-requests=true",
+            "timeout=120s",
+          ],
+        },
+      })
+      const summary = JSON.parse(comparison.output)
+      if (summary.status !== "identical" || summary.comparison?.mismatchPixels !== 0 || summary.comparison?.dimensionMismatch) {
+        throw new Error(`Static artifact visual parity failed for ${route}: ${JSON.stringify({ status: summary.status, comparison: summary.comparison, files: summary.files, artifactRoot })}.`)
+      }
+      console.log(`Static artifact visual parity passed for ${route}: 0 mismatched pixels at 1280x720.`)
+    }
+  } finally {
+    await new Promise((resolve, reject) => sourceServer.close((error) => error ? reject(error) : resolve()))
+  }
 }
 
 async function assertTwoSiteIsolation() {
@@ -454,7 +575,7 @@ async function importStaticArtifact(input, expectedStatus = coordinator === "d1"
     }
   }
   const expectedResultStatus = expectedStatus === 200 ? "duplicate" : "imported"
-  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== expectedResultStatus || result.staticSiteImporterVersion !== "1.3.4" || !result.themeSlug
+  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== expectedResultStatus || result.staticSiteImporterVersion !== "1.3.6" || !result.themeSlug
     || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
     || (expectedStatus === 201 && (!response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))))) {
     throw new Error(`Static artifact import returned invalid evidence: ${body}.`)
@@ -462,7 +583,7 @@ async function importStaticArtifact(input, expectedStatus = coordinator === "d1"
   return result
 }
 
-async function assertImportedArtifactPages(adminHtml, imported) {
+async function assertImportedArtifactPages(adminHtml, imported, assertSourceMarkers = true) {
   const pageIds = Object.values(imported.pages ?? {}).filter(Number.isInteger)
   if (!pageIds.length) throw new Error(`Static artifact import did not return page IDs: ${JSON.stringify(imported)}.`)
   const pages = []
@@ -479,6 +600,14 @@ async function assertImportedArtifactPages(adminHtml, imported) {
   const primary = pages.find(({ route }) => route === "/")
   const secondary = pages.find(({ route }) => route !== "/")
   if (!primary || (pages.length > 1 && !secondary)) throw new Error(`Imported artifact routes are invalid: ${JSON.stringify(pages)}.`)
+  if (assertSourceMarkers) {
+    for (const marker of ["Typical WordPress hosting", "playground.wordpress.net", "Playground on Cloudflare Workers"]) {
+      if (!primary.raw.includes(marker)) throw new Error(`Imported architecture explainer omitted ${marker}: ${primary.raw}.`)
+    }
+    for (const marker of ["Worker: execute", "D1: coordinate", "R2: preserve and serve"]) {
+      if (!(secondary ?? primary).raw.includes(marker)) throw new Error(`Imported request explainer omitted ${marker}: ${(secondary ?? primary).raw}.`)
+    }
+  }
   return { primary, secondary: secondary ?? primary }
 }
 
