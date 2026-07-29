@@ -212,6 +212,15 @@ function countDiffPixels(png: PNG): number {
   const diagnostic: VisualCompareCaptureDiagnostics = {
     schema: "wp-codebox/visual-compare-capture-diagnostics/v1",
     readiness: noisy,
+    effectiveCapture: {
+      reducedMotion: true,
+      animations: "freeze",
+      frozenTime: "2020-01-01T00:00:00.000Z",
+      injectedStyleBytes: 15,
+      externalRequests: "block",
+      requests: { total: 4, blocked: [{ url: "https://fonts.example.invalid/font.woff2", resourceType: "font" }], failed: [{ url: "http://example.test/missing.png", resourceType: "image", error: "net::ERR_FAILED" }] },
+      readiness: { durationMs: 12, fonts: "ready" },
+    },
     assets: {
       stylesheets: { total: 3, loaded: 1, pending: 1, errored: 1 },
       images: { total: 4, loaded: 2, loading: 1, failed: 1 },
@@ -234,6 +243,8 @@ function countDiffPixels(png: PNG): number {
   assert.equal(compact.source?.assets.stylesheets.pending, 1)
   assert.equal(compact.source?.dynamicContent.focusedElementTag, "input")
   assert.equal(compact.source?.environment.url, "http://example.test/page")
+  assert.equal(compact.source?.effectiveCapture.requests.blocked[0]?.resourceType, "font")
+  assert.equal(compact.source?.effectiveCapture.readiness.fonts, "ready")
   assert.equal("title" in (compact.source?.environment ?? {}), false)
 }
 

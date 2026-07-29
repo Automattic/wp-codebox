@@ -48,6 +48,17 @@ function element(path: string, y: number, height: number, options: { position?: 
 }
 
 {
+  const source = [element("header", 0, 40), element("main", 60, 100), element("footer", 180, 20)]
+  const candidate = [element("header", 24, 40), element("main", 84, 100), element("footer", 204, 20)]
+  const drift = visualCompareLayoutDrift(source, candidate, true)
+
+  assert.equal(drift?.summary.firstDivergenceType, "global-origin-offset")
+  assert.equal(drift.summary.alignment, "global-origin-offset")
+  assert.equal(drift.firstDivergence.delta?.y, 24)
+  assert.match(drift.summary.compact, /Anchor-proven global origin offset/)
+}
+
+{
   const source = [element("nav", 0, 30, { position: "fixed" }), element("main", 50, 100)]
   const candidate = [element("nav", 20, 60, { position: "fixed" }), element("main", 50, 100)]
   const drift = visualCompareLayoutDrift(source, candidate, true)
@@ -66,6 +77,7 @@ function element(path: string, y: number, height: number, options: { position?: 
   assert.equal(drift.firstDivergence.path, "new")
   assert.equal(drift.summary.addedFlowElements, 1)
   assert.equal(drift.summary.removedFlowElements, 1)
+  assert.equal(drift.summary.alignment, "reflow")
 }
 
 {
