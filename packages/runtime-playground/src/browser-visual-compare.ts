@@ -1960,18 +1960,18 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
   const readinessTimeoutMs = Math.max(1_000, Math.min(10_000, timeoutMs))
   await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
   const fonts = await page.evaluate(async (timeout) => {
-    const until = Date.now() + timeout
+    const until = performance.now() + timeout
 
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
       .filter((link) => !link.disabled && Boolean(link.href))
     await Promise.all(stylesheetLinks.map(async (link) => {
-      while (!link.sheet && Date.now() < until) {
+      while (!link.sheet && performance.now() < until) {
         await Promise.race([
           new Promise<void>((resolve) => {
             link.addEventListener("load", () => resolve(), { once: true })
             link.addEventListener("error", () => resolve(), { once: true })
           }),
-          new Promise<void>((resolve) => setTimeout(resolve, 100)),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, until - performance.now())))),
         ])
       }
     }))
@@ -1981,7 +1981,7 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
       ? "unavailable" as const
       : await Promise.race([
           fontSet.ready.then(() => "ready" as const).catch(() => "timeout" as const),
-          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), Math.max(0, until - Date.now()))),
+          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), Math.max(0, until - performance.now()))),
         ])
 
     const images = Array.from(document.images)
@@ -1989,7 +1989,7 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
       if (typeof image.decode === "function") {
         await Promise.race([
           image.decode().catch(() => undefined),
-          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - performance.now()))),
         ])
         return
       }
@@ -2001,7 +2001,7 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
           image.addEventListener("load", () => resolve(), { once: true })
           image.addEventListener("error", () => resolve(), { once: true })
         }),
-        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - performance.now()))),
       ])
     }))
 

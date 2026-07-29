@@ -4,12 +4,19 @@ import { readFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { join } from "node:path"
 
+import { chromium } from "playwright"
 import { PNG } from "pngjs"
 
-import { runVisualCompareCommand } from "../packages/runtime-playground/dist/browser-visual-compare.js"
+import { runVisualCompareCommand, waitForVisualComparePaintReady } from "../packages/runtime-playground/dist/browser-visual-compare.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
 const page = createServer((_request, response) => {
+  if (_request.url === "/never.css") return
+  if (_request.url === "/stalled") {
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end("<!doctype html><main>stalled stylesheet</main>")
+    return
+  }
   response.writeHead(200, { "content-type": "text/html" })
   response.end(`<!doctype html>
     <title>Deterministic URL capture</title>
@@ -90,6 +97,25 @@ try {
     const offset = (screenshot.width * 10 + 10) << 2
     assert.deepEqual([...screenshot.data.subarray(offset, offset + 3)], [255, 0, 0])
   })
+
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const stalled = await browser.newPage()
+    await stalled.addInitScript(() => Object.defineProperty(Date, "now", { configurable: true, value: () => 0 }))
+    await stalled.goto(`${url}stalled`, { waitUntil: "domcontentloaded" })
+    await stalled.evaluate(() => {
+      const link = document.createElement("link")
+      link.rel = "stylesheet"
+      link.href = "/never.css"
+      document.head.append(link)
+    })
+    const startedAt = performance.now()
+    await waitForVisualComparePaintReady(stalled, 1_000)
+    const elapsedMs = performance.now() - startedAt
+    assert.ok(elapsedMs >= 800 && elapsedMs < 2_500, `stalled stylesheet readiness must remain bounded under frozen Date.now(), got ${elapsedMs}ms`)
+  } finally {
+    await browser.close()
+  }
 } finally {
   page.close()
 }
