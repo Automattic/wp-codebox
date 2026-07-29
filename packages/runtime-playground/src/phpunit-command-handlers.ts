@@ -374,6 +374,20 @@ function ${functionName}(array $argv) {
 }`
 }
 
+function phpunitPrintTestListPhp(functionName: string): string {
+  return `function ${functionName}($test) {
+    if ($test instanceof PHPUnit\\Framework\\TestSuite) {
+        foreach ($test->tests() as $child) {
+            ${functionName}($child);
+        }
+        return;
+    }
+    if ($test instanceof PHPUnit\\Framework\\TestCase) {
+        echo get_class($test) . '::' . $test->getName() . PHP_EOL;
+    }
+}`
+}
+
 function managedPhpunitConfigWriterPhp(): string {
   return `function pg_write_managed_test_config(array $extra_defines, string $table_prefix, string $database_type): string {
     $config_path = '/tmp/wp-tests-config.php';
@@ -1525,17 +1539,7 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
 }
 pg_stage_ok('load_tests');
 
-function wp_codebox_phpunit_print_test_list($test) {
-    if ($test instanceof PHPUnit\\Framework\\TestSuite) {
-        foreach ($test->tests() as $child) {
-            wp_codebox_phpunit_print_test_list($child);
-        }
-        return;
-    }
-    if ($test instanceof PHPUnit\\Framework\\TestCase) {
-        echo get_class($test) . '::' . $test->getName() . PHP_EOL;
-    }
-}
+${phpunitPrintTestListPhp("wp_codebox_phpunit_print_test_list")}
 
 pg_stage_begin('run_tests');
 pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
@@ -1846,10 +1850,19 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
 }
 core_pg_stage_ok('load_tests');
 
+${phpunitPrintTestListPhp("core_pg_phpunit_print_test_list")}
+
 core_pg_stage_begin('run_tests');
 core_pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
 try {
     $phpunit_args = core_pg_phpunit_args($argv ?? array());
+    if (!empty($phpunit_args['listTests'])) {
+        core_pg_phpunit_print_test_list($suite);
+        core_pg_log('ALL TESTS PASSED');
+        core_pg_log('TESTS: ' . $suite->count() . ' FAILURES: 0 ERRORS: 0');
+        core_pg_stage_ok('run_tests');
+        exit(0);
+    }
     $runner = new PHPUnit\\TextUI\\TestRunner();
     $result = $runner->run($suite, $phpunit_args);
     core_pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');

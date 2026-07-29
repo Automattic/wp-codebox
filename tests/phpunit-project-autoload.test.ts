@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -414,7 +414,7 @@ class DiscoveredTest extends PHPUnit\\Framework\\TestCase {
 
   writeFileSync(scriptPath, `<?php
 namespace PHPUnit\\Framework {
-abstract class TestCase {}
+abstract class TestCase { public function getName(): string { return 'fixture'; } }
 final class TestSuite {
     private $name;
     private $tests = array();
@@ -443,7 +443,7 @@ final class TestRunner {
 namespace {
 $test_files = array(${phpString(testFile)});
 $phpunit_argv = array('phpunit');
-$phpunit_args = array();
+$phpunit_args = getenv('LIST_TESTS') ? array('listTests' => true) : array();
 $argv = array('phpunit');
 function ${stagePrefix}_stage_begin($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_BEGIN:' . $stage . "\\n", FILE_APPEND); }
 function ${stagePrefix}_stage_ok($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_OK:' . $stage . "\\n", FILE_APPEND); }
@@ -452,7 +452,7 @@ function ${stagePrefix}_stage_fail($stage, \\Throwable $e) {
     throw $e;
 }
 function ${stagePrefix}_log($message) {}
-${stagePrefix === "core_pg" ? "function core_pg_phpunit_args($args) { return array(); }" : ""}
+${stagePrefix === "core_pg" ? "function core_pg_phpunit_args($args) { return getenv('LIST_TESTS') ? array('listTests' => true) : array(); }" : ""}
 ${generatedHarnessTail}
 }
 `)
@@ -467,6 +467,14 @@ ${generatedHarnessTail}
   assert.match(stages, /STAGE_BEGIN:run_tests/)
   assert.match(stages, /STAGE_OK:run_tests/)
   assert.doesNotMatch(stages, /STAGE_FAIL:/)
+
+  rmSync(executionMarker)
+  const listed = execFileSync("php", [scriptPath], {
+    encoding: "utf8",
+    env: { ...process.env, EXECUTION_MARKER: executionMarker, STAGE_LOG: stageLog, LIST_TESTS: "1" },
+  })
+  assert.match(listed, /DiscoveredTest::fixture/)
+  assert.equal(existsSync(executionMarker), false, `${stagePrefix} --list-tests must not execute discovered tests`)
 }
 
 const recipe = buildWordPressPhpunitRecipe({
