@@ -34,7 +34,8 @@ const budgetIssues = await validateWorkspaceRecipeSemantics({ schema: "wp-codebo
 assert.equal(budgetIssues.some((issue) => issue.code === "native-runtime-service-budget-exceeded"), true)
 
 const fixture = await mkdtemp(join(tmpdir(), "wp-codebox-native-provider-fake-"))
-const serverScript = `#!/usr/bin/env node
+const nodeShebang = `#!${process.execPath}`
+const serverScript = `${nodeShebang}
 const fs = require('node:fs'); const net = require('node:net');
 if (process.argv.includes('--version')) { console.log('mariadbd Ver 10.11.14-MariaDB'); process.exit(0); }
 const value = (name) => process.argv.find((arg) => arg.startsWith(name + '='))?.slice(name.length + 1);
@@ -52,13 +53,13 @@ while [ "$1" != "--" ] && [ "$#" -gt 0 ]; do shift; done
 shift
 exec "$@"
 `
-const fuseScript = `#!/usr/bin/env node
+const fuseScript = `${nodeShebang}
 const fs = require('node:fs'); const mount = process.argv.at(-1);
 fs.writeFileSync(mount + '/.fuse.actual', String(process.pid));
 const timer = setInterval(() => { if (fs.existsSync(mount + '/.unmount')) { clearInterval(timer); process.exit(0); } }, 10);
 process.on('SIGTERM', () => process.exit(0));
 `
-const initializerScript = `#!/usr/bin/env node
+const initializerScript = `${nodeShebang}
 const fs = require('node:fs');
 if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
 fs.writeFileSync(process.env.HOME + '/initializer-args', process.argv.slice(2).join('\\n'));
@@ -66,7 +67,7 @@ fs.writeFileSync(process.env.HOME + '/initializer-args', process.argv.slice(2).j
 try {
   for (const name of ["mariadbd", "mariadb-install-db", "mariadb", "prlimit", "truncate", "mkfs.ext4", "fuse2fs", "fusermount3"]) {
     const path = join(fixture, name)
-    await writeFile(path, name === "mariadbd" ? serverScript : name === "prlimit" ? limiterScript : name === "fuse2fs" ? fuseScript : name === "mariadb-install-db" ? initializerScript : "#!/usr/bin/env node\nsetInterval(() => {}, 1000)\n")
+    await writeFile(path, name === "mariadbd" ? serverScript : name === "prlimit" ? limiterScript : name === "fuse2fs" ? fuseScript : name === "mariadb-install-db" ? initializerScript : `${nodeShebang}\nsetInterval(() => {}, 1000)\n`)
     await chmod(path, 0o700)
   }
 
@@ -139,7 +140,7 @@ try {
   const after = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !before.has(name))
   assert.deepEqual(after, [], "successful release recursively removes every provider-owned root")
 
-  const descendantInitializerScript = `#!/usr/bin/env node
+  const descendantInitializerScript = `${nodeShebang}
 const fs = require('node:fs'); const { spawn } = require('node:child_process');
 if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
