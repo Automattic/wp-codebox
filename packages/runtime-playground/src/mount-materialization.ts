@@ -34,25 +34,6 @@ export interface MountMaterializationResult {
 
 export type StagedInputMaterializationResult = MountMaterializationResult
 
-export function directMountedPlaygroundStagedInputs(mounts: MountSpec[]): StagedInputMaterializationResult {
-  return {
-    materialized: 0,
-    deleted: 0,
-    skipped: 0,
-    phaseResult: materializationPhaseResult({
-      phase: "playground-staged-input-materialization",
-      status: mounts.length > 0 ? "completed" : "skipped",
-      metadata: {
-        materialized: 0,
-        deleted: 0,
-        skipped: 0,
-        mounts: mounts.length,
-        transport: "direct-nodefs-mount",
-      },
-    }),
-  }
-}
-
 export interface ReadonlyMountStaging {
   mounts: MountSpec[]
   diagnostics: MaterializationDiagnostic[]
@@ -284,10 +265,6 @@ function nestedMountPaths(mounts: MountSpec[], mountIndex: number, parentTarget:
 
 function mountMaterializesVfsToHost(mount: MountSpec): boolean {
   return Boolean(mount.metadata && typeof mount.metadata === "object" && !Array.isArray(mount.metadata) && mount.metadata.materializeVfsToHost === true)
-}
-
-export async function materializePlaygroundMountsToVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
-  return await materializePlaygroundStagedInputs(server, mounts)
 }
 
 export async function materializePlaygroundStagedInputs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<StagedInputMaterializationResult> {
