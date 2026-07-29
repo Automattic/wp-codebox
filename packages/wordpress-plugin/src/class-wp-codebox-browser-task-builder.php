@@ -776,7 +776,12 @@ final class WP_Codebox_Browser_Task_Builder {
 		 * @param array<string,mixed> $config  Browser preview boot config.
 		 * @param array<string,mixed> $session Source browser session contract.
 		 */
-		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_preview_boot_config', $config, $session ) : $config;
+		$config = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_preview_boot_config', $config, $session ) : $config;
+		$contract = self::validate_browser_preview_boot_contract( $config, $blueprint_ref );
+
+		// A boot DTO is executable public API, not lifecycle diagnostics. Do not publish one
+		// until its ref can be hydrated; callers receive the existing recovery state instead.
+		return true === $contract['valid'] ? $config : array();
 	}
 
 	/**
@@ -786,12 +791,21 @@ final class WP_Codebox_Browser_Task_Builder {
 	 */
 	public static function validate_browser_preview_boot_contract( array $preview_boot, array $blueprint_ref = array() ): array {
 		$boot_ref_dto       = is_array( $preview_boot['blueprint_ref'] ?? null ) ? $preview_boot['blueprint_ref'] : array();
-		$boot_dto_ref       = trim( (string) ( $boot_ref_dto['ref'] ?? $boot_ref_dto['id'] ?? '' ) );
-		$contract_ref       = trim( (string) ( $blueprint_ref['ref'] ?? $blueprint_ref['id'] ?? '' ) );
-		$hydration_endpoint = trim( (string) ( $boot_ref_dto['hydration_endpoint'] ?? $boot_ref_dto['endpoint'] ?? '' ) );
+		$boot_dto_ref       = trim( (string) ( $boot_ref_dto['ref'] ?? '' ) );
+		$contract_ref       = trim( (string) ( $blueprint_ref['ref'] ?? '' ) );
+		$hydration_endpoint = trim( (string) ( $boot_ref_dto['hydration_endpoint'] ?? '' ) );
+		$hydrator_ability   = trim( (string) ( $boot_ref_dto['hydrator_ability'] ?? '' ) );
 
 		if ( '' === $boot_dto_ref ) {
 			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-missing' );
+		}
+
+		if ( 'wp-codebox/browser-preview-boot-config/v1' !== (string) ( $preview_boot['schema'] ?? '' ) ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-schema-invalid' );
+		}
+
+		if ( 'wp-codebox/browser-blueprint-ref/v1' !== (string) ( $boot_ref_dto['schema'] ?? '' ) ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-schema-invalid' );
 		}
 
 		if ( '' !== $contract_ref && $boot_dto_ref !== $contract_ref ) {
@@ -804,6 +818,10 @@ final class WP_Codebox_Browser_Task_Builder {
 
 		if ( true !== ( $boot_ref_dto['hydratable'] ?? false ) ) {
 			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-not-hydratable' );
+		}
+
+		if ( 'wp-codebox/hydrate-browser-blueprint-ref' !== $hydrator_ability ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-hydrator-ability-invalid' );
 		}
 
 		return array( 'valid' => true, 'reason' => 'preview-boot-contract-hydratable' );
@@ -951,6 +969,11 @@ final class WP_Codebox_Browser_Task_Builder {
 
 		if ( is_array( $session['preview'] ?? null ) && 'wp-codebox/preview-lease/v1' === (string) ( $session['preview']['schema'] ?? '' ) ) {
 			return self::canonical_preview_lease( self::compact_public_value( $session['preview'] ) );
+		}
+
+		// Product DTOs omit an unhydratable boot config but retain the independent preview lease.
+		if ( is_array( $session['runtime_access']['lease'] ?? null ) ) {
+			return self::canonical_preview_lease( self::compact_public_value( $session['runtime_access']['lease'] ) );
 		}
 
 		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();

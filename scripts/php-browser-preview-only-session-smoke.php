@@ -141,14 +141,14 @@ $preview = WP_Codebox_Abilities::create_browser_playground_session( $input + arr
 if ( is_wp_error( $preview ) ) {
 	fail( 'preview failed: ' . $preview->get_error_code() . ': ' . $preview->get_error_message() );
 }
-$hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $preview['product']['preview_boot']['blueprint_ref'] ?? '' ) );
+$hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $preview['product']['preview_boot']['blueprint_ref']['ref'] ?? '' ) );
 $second_input = $input;
 $second_input['sandbox_session_id'] = 'preview-only-session-second';
 $second_input['post_runtime_blueprint'] = array(
 	'steps' => array( array( 'step' => 'importWxr', 'file' => 'https://example.test/second-caller.xml' ) ),
 );
 $second = WP_Codebox_Abilities::create_browser_playground_session( $second_input + array( 'preview_only' => true ) );
-$second_hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $second['product']['preview_boot']['blueprint_ref'] ?? '' ) );
+$second_hydrated = WP_Codebox_Abilities::hydrate_browser_blueprint_ref( array( 'ref' => $second['product']['preview_boot']['blueprint_ref']['ref'] ?? '' ) );
 $agentic  = WP_Codebox_Abilities::create_browser_playground_session( $input );
 $task     = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'preview_only' => true, 'include_internal_browser_contract' => true ) );
 
@@ -177,7 +177,7 @@ expect( array( 'caller-runtime-plugin' ) === array_column( $preview['runtime']['
 expect( array( 'preview-bootstrap' ) === array_column( $preview['runtime']['mu_plugins'] ?? array(), 'slug' ), 'Preview-only runtime must retain caller MU plugins.' );
 expect( array( 'preview-theme' ) === array_column( $preview['runtime']['themes'] ?? array(), 'slug' ), 'Preview-only runtime must retain caller themes.' );
 expect( 'ready' === ( $preview['product']['runtime_readiness']['status'] ?? '' ), 'Preview-only product DTO must remain runtime-ready.' );
-expect( true === ( $preview['product']['preview_boot']['blueprint_ref_dto']['hydratable'] ?? false ), 'Preview-only product DTO must expose a hydratable blueprint ref.' );
+expect( true === ( $preview['product']['preview_boot']['blueprint_ref']['hydratable'] ?? false ), 'Preview-only product DTO must expose a hydratable blueprint ref.' );
 
 expect( ! is_wp_error( $hydrated ), 'Preview-only prepared runtime blueprint ref must hydrate.' );
 expect( 'miss' === ( $preview['runtime']['prepared_runtime']['status'] ?? '' ), 'First caller tail must materialize the shared runtime cache.' );

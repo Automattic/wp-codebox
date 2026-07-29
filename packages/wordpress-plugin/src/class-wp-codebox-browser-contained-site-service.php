@@ -900,6 +900,10 @@ public function browser_contained_site_facade_session( array $result, string $ac
 }
 
 public function browser_contained_site_boot_descriptor( array $result, array $contained_site, array $preview_boot, array $preview_lease, array $blueprint_ref ): array {
+	if ( true !== ( WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref )['valid'] ?? false ) ) {
+		return array();
+	}
+
 	return array_filter(
 		array(
 			'schema'         => 'wp-codebox/browser-preview-boot-config/v1',
