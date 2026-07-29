@@ -20,7 +20,9 @@ assert.deepEqual(maxElements && { format: maxElements.format }, { format: "posit
 assert.deepEqual(maxCandidates && { format: maxCandidates.format }, { format: "positive integer" })
 assert.deepEqual(selector && { repeatable: selector.repeatable, format: selector.format }, { repeatable: true, format: "CSS selector" })
 const matrixDescription = acceptedArgs.find((arg) => arg.name === "matrix-json")?.description ?? ""
-for (const field of ["reduced-motion", "animations", "frozen-time", "capture-style", "block-external-requests"]) {
+// The matrix catalog is a public compatibility contract. Keep legacy wait/explanation
+// aliases documented while capture controls are added alongside them.
+for (const field of ["wait settings", "waitFor", "wait-for", "durationMs", "duration", "maxExplanationElements", "maxExplanationCandidates", "explainSelectors", "max-explanation-elements", "max-explanation-candidates", "explain-selector", "reducedMotion", "reduced-motion", "animations", "frozenTime", "frozen-time", "captureStyle", "capture-style", "blockExternalRequests", "block-external-requests"]) {
   assert.match(matrixDescription, new RegExp(field))
 }
 
