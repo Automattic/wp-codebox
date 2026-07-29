@@ -218,7 +218,7 @@ function countDiffPixels(png: PNG): number {
       frozenTime: "2020-01-01T00:00:00.000Z",
       injectedStyleBytes: 15,
       externalRequests: "block",
-      requests: { total: 4, blocked: [{ url: "https://fonts.example.invalid/font.woff2", resourceType: "font" }], failed: [{ url: "http://example.test/missing.png", resourceType: "image", error: "net::ERR_FAILED" }] },
+      requests: { total: 104, blockedTotal: 51, blockedTruncated: true, blocked: [{ url: "https://fonts.example.invalid/font.woff2", resourceType: "font" }], failedTotal: 53, failedTruncated: true, failed: [{ url: "http://example.test/missing.png", resourceType: "image", error: "net::ERR_FAILED" }] },
       readiness: { durationMs: 12, fonts: "ready" },
     },
     assets: {
@@ -244,6 +244,8 @@ function countDiffPixels(png: PNG): number {
   assert.equal(compact.source?.dynamicContent.focusedElementTag, "input")
   assert.equal(compact.source?.environment.url, "http://example.test/page")
   assert.equal(compact.source?.effectiveCapture.requests.blocked[0]?.resourceType, "font")
+  assert.equal(compact.source?.effectiveCapture.requests.blockedTruncated, true)
+  assert.equal(compact.source?.effectiveCapture.requests.failedTotal, 53)
   assert.equal(compact.source?.effectiveCapture.readiness.fonts, "ready")
   assert.equal("title" in (compact.source?.environment ?? {}), false)
 }

@@ -28,6 +28,15 @@ function element(path: string, y: number, height: number, options: { position?: 
 }
 
 {
+  const source = [element("header", 0, 40, { width: 100 }), element("main", 60, 100, { width: 100 })]
+  const candidate = [element("header", 24, 40, { width: 120 }), element("main", 84, 100, { width: 120 })]
+  const drift = visualCompareLayoutDrift(source, candidate, true)
+
+  assert.equal(drift?.summary.alignment, "reflow")
+  assert.notEqual(drift?.summary.firstDivergenceType, "global-origin-offset")
+}
+
+{
   const source = [element("intro", 0, 40), element("body", 60, 100)]
   const candidate = [element("intro", 0, 40), element("body", 84, 100)]
   const drift = visualCompareLayoutDrift(source, candidate, true)

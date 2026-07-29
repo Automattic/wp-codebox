@@ -172,7 +172,7 @@ export interface VisualCompareCaptureDiagnostics {
     frozenTime?: string
     injectedStyleBytes: number
     externalRequests: "block" | "allow"
-    requests: { total: number; blocked: Array<{ url: string; resourceType: string }>; failed: Array<{ url: string; resourceType: string; error: string }> }
+    requests: { total: number; blockedTotal: number; blockedTruncated: boolean; blocked: Array<{ url: string; resourceType: string }>; failedTotal: number; failedTruncated: boolean; failed: Array<{ url: string; resourceType: string; error: string }> }
     readiness: { durationMs: number; fonts: "ready" | "timeout" | "unavailable" }
   }
   assets: {
@@ -1749,12 +1749,14 @@ function visualCompareCaptureStyleArg(args: string[]): string {
 
 interface VisualCompareRequestTracker {
   reset(): void
-  snapshot(): { total: number; blocked: Array<{ url: string; resourceType: string }>; failed: Array<{ url: string; resourceType: string; error: string }> }
+  snapshot(): VisualCompareCaptureDiagnostics["effectiveCapture"]["requests"]
   blocked(request: { url(): string; resourceType(): string }): void
 }
 
 function installVisualCompareRequestTracking(page: Page, blockExternalRequests: boolean, previewOrigin: string): VisualCompareRequestTracker {
   let total = 0
+  let blockedTotal = 0
+  let failedTotal = 0
   let blocked: Array<{ url: string; resourceType: string }> = []
   let failed: Array<{ url: string; resourceType: string; error: string }> = []
   const bounded = <T>(items: T[], item: T): void => {
@@ -1763,12 +1765,13 @@ function installVisualCompareRequestTracking(page: Page, blockExternalRequests: 
   page.on("request", () => { total += 1 })
   page.on("requestfailed", (request) => {
     if (blockExternalRequests && !visualCompareOfflineRequestAllowed(request.url(), previewOrigin)) return
+    failedTotal += 1
     bounded(failed, { url: request.url(), resourceType: request.resourceType(), error: request.failure()?.errorText || "request failed" })
   })
   return {
-    reset: () => { total = 0; blocked = []; failed = [] },
-    snapshot: () => ({ total, blocked, failed }),
-    blocked: (request) => bounded(blocked, { url: request.url(), resourceType: request.resourceType() }),
+    reset: () => { total = 0; blockedTotal = 0; failedTotal = 0; blocked = []; failed = [] },
+    snapshot: () => ({ total, blockedTotal, blockedTruncated: blockedTotal > blocked.length, blocked, failedTotal, failedTruncated: failedTotal > failed.length, failed }),
+    blocked: (request) => { blockedTotal += 1; bounded(blocked, { url: request.url(), resourceType: request.resourceType() }) },
   }
 }
 
@@ -1882,12 +1885,15 @@ async function installVisualCompareTimeControl(page: Page, frozenTime?: string):
   if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be an ISO-8601 timestamp")
   await page.addInitScript((fixedTimestamp) => {
     const NativeDate = Date
-    class FrozenDate extends NativeDate {
-      constructor(value?: string | number | Date) {
-        super(value === undefined ? fixedTimestamp : value)
+    const FrozenDate = function (this: unknown, ...args: unknown[]): string | Date {
+      if (!new.target) {
+        return new NativeDate(fixedTimestamp).toString()
       }
-      static now(): number { return fixedTimestamp }
+      return Reflect.construct(NativeDate, args.length === 0 ? [fixedTimestamp] : args)
     }
+    Object.setPrototypeOf(FrozenDate, NativeDate)
+    Object.defineProperty(FrozenDate, "prototype", { value: NativeDate.prototype })
+    Object.defineProperty(FrozenDate, "now", { value: () => fixedTimestamp })
     Object.defineProperty(globalThis, "Date", { configurable: true, value: FrozenDate })
   }, timestamp)
 }
@@ -2082,7 +2088,7 @@ export function visualCompareErrorDetail(error: unknown): string {
 // pathologically tall pages. The clamp computes the document content size and, when it
 // exceeds the cap, captures a top-anchored `clip` of the full content width × capped
 // height instead of a `fullPage` capture — identical treatment for source and candidate.
-async function captureVisualComparePageScreenshot(page: Page, outputPath: string, options: { fullPage: boolean; timeoutMs: number; maxFullPageHeightPx: number; animations: "freeze" | "allow" }): Promise<void> {
+async function captureVisualComparePageScreenshot(page: Page, outputPath: string, options: { fullPage: boolean; timeoutMs: number; maxFullPageHeightPx: number }): Promise<void> {
   let clamp: { width: number; height: number; fullHeight: number } | undefined
   if (options.fullPage && options.maxFullPageHeightPx > 0) {
     const metrics = await page.evaluate(() => ({
@@ -2099,9 +2105,9 @@ async function captureVisualComparePageScreenshot(page: Page, outputPath: string
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       if (clamp) {
-        await page.screenshot({ path: outputPath, fullPage: false, clip: { x: 0, y: 0, width: clamp.width, height: clamp.height }, timeout: options.timeoutMs, ...(options.animations === "freeze" ? { animations: "disabled" } : {}) })
+        await page.screenshot({ path: outputPath, fullPage: false, clip: { x: 0, y: 0, width: clamp.width, height: clamp.height }, timeout: options.timeoutMs })
       } else {
-        await page.screenshot({ path: outputPath, fullPage: options.fullPage, timeout: options.timeoutMs, ...(options.animations === "freeze" ? { animations: "disabled" } : {}) })
+        await page.screenshot({ path: outputPath, fullPage: options.fullPage, timeout: options.timeoutMs })
       }
       return
     } catch (error) {
@@ -2301,13 +2307,11 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   if (capture.animations === "freeze") {
     await page.evaluate(() => document.getAnimations().forEach((animation) => { animation.currentTime = 0; animation.pause() }))
   }
-  const { captureStyle: _captureStyle, ...effectiveCapture } = capture
-  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, { ...effectiveCapture, requests: requestTracker.snapshot(), readiness }), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
-  // to their final state and freezes infinite ones to a deterministic frame, so the
-  // capture does not depend on transition timing. Applied to both sides equally.
-  await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight, animations: capture.animations })
+  await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
+  const { captureStyle: _captureStyle, ...effectiveCapture } = capture
+  // Snapshot after the final paint because screenshotting can trigger lazy resource loads.
+  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, { ...effectiveCapture, requests: requestTracker.snapshot(), readiness }), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
 }
 
@@ -2686,7 +2690,7 @@ function visualCompareGlobalOriginOffset(matched: Array<{ source: VisualCompareD
   const offsets = matched.map(({ source, candidate }) => roundVisualDelta(candidate.boundingBox.y - source.boundingBox.y))
   const offset = offsets[0]
   if (!offset || !offsets.every((value) => value === offset)) return undefined
-  return matched.every(({ source, candidate }) => roundVisualDelta(candidate.boundingBox.height - source.boundingBox.height) === 0) ? offset : undefined
+  return matched.every(({ source, candidate }) => roundVisualDelta(candidate.boundingBox.x - source.boundingBox.x) === 0 && roundVisualDelta(candidate.boundingBox.width - source.boundingBox.width) === 0 && roundVisualDelta(candidate.boundingBox.height - source.boundingBox.height) === 0) ? offset : undefined
 }
 
 function visualCompareElementInDocumentFlow(element: VisualCompareDomElementSnapshot): boolean {
