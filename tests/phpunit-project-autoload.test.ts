@@ -160,8 +160,10 @@ function assertPhpunitConfigurationAndDiscoveryFailures(source: string, function
   writeFileSync(malformedAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-mask-malformed</directory></testsuite></testsuites></phpunit>")
   writeFileSync(explicitAdjacentXml, "<phpunit><testsuites><testsuite><directory>must-not-fallback</directory></testsuite></testsuites></phpunit>")
   mkdirSync(join(tempDir, "default"), { recursive: true })
+  mkdirSync(join(tempDir, "single"), { recursive: true })
   writeFileSync(adjacentXml, "<phpunit><testsuites><testsuite><directory>fallback-tests</directory></testsuite></testsuites></phpunit>")
-  writeFileSync(selectedXml, '<phpunit><testsuites><testsuite name="first"><directory suffix="FirstTest.php">first-tests</directory></testsuite><testsuite name="second"><directory suffix="SecondTest.php">second-tests</directory></testsuite></testsuites></phpunit>')
+  writeFileSync(join(tempDir, "single", "FileOnlyTest.php"), "<?php")
+  writeFileSync(selectedXml, '<phpunit><testsuites><testsuite name="first"><directory suffix="FirstTest.php">first-tests</directory></testsuite><testsuite name="second"><directory suffix="SecondTest.php">second-tests</directory></testsuite><testsuite name="file-only"><file>single/FileOnlyTest.php</file></testsuite></testsuites></phpunit>')
 
   const parseConfigFunction = extractPhpFunction(source, functionName)
   const discoveryFunction = extractPhpFunction(source, discoveryFunctionName)
@@ -192,6 +194,14 @@ if ($selected[0] !== array(${phpString(join(tempDir, "second-tests"))}) || !in_a
 $multiple = ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('first', 'second'));
 if ($multiple[0] !== array(${phpString(join(tempDir, "first-tests"))}, ${phpString(join(tempDir, "second-tests"))})) {
     throw new RuntimeException('multiple testsuite discovery mismatch: ' . json_encode($multiple));
+}
+$file_only = ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('file-only'));
+if ($file_only[0] !== array() || $file_only[4] !== array(${phpString(join(tempDir, "single", "FileOnlyTest.php"))})) {
+    throw new RuntimeException('file-only testsuite discovery mismatch: ' . json_encode($file_only));
+}
+$file_only_discovered = ${discoveryFunctionName}($file_only[0], $file_only[1], $file_only[2], $file_only[3], $file_only[4]);
+if ($file_only_discovered !== array(${phpString(join(tempDir, "single", "FileOnlyTest.php"))})) {
+    throw new RuntimeException('file-only testsuite loaded unrelated files: ' . json_encode($file_only_discovered));
 }
 assert_phpunit_error(function() { ${functionName}(${phpString(selectedXml)}, ${phpString(join(tempDir, "tests"))}, array('missing')); }, 'Requested PHPUnit testsuite not found in config: missing', 'unknown selected testsuite');
 ${supportsImplicitFallback ? `
@@ -433,6 +443,7 @@ final class TestRunner {
 namespace {
 $test_files = array(${phpString(testFile)});
 $phpunit_argv = array('phpunit');
+$phpunit_args = array();
 $argv = array('phpunit');
 function ${stagePrefix}_stage_begin($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_BEGIN:' . $stage . "\\n", FILE_APPEND); }
 function ${stagePrefix}_stage_ok($stage) { file_put_contents(getenv('STAGE_LOG'), 'STAGE_OK:' . $stage . "\\n", FILE_APPEND); }
@@ -907,32 +918,28 @@ assert.ok(externalMysqlMultisiteRecipe.workflow.steps[0].args.includes("multisit
 
 const phpunitCacheAllocator = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args_private_cache_result_file")
 const phpunitArgsFunction = extractPhpFunction(managedModeCode, "wp_codebox_phpunit_args")
-const selectedTestsuitesFunction = extractPhpFunction(managedModeCode, "pg_selected_phpunit_testsuites")
 const phpunitArgsProbe = join(mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-cache-args-")), "probe.php")
 writeFileSync(phpunitArgsProbe, `<?php
 function pg_log($message) {}
 ${phpunitCacheAllocator}
 ${phpunitArgsFunction}
-${selectedTestsuitesFunction}
 echo json_encode(array(
-  'first' => wp_codebox_phpunit_args(array('phpunit', '--filter', 'OnlyTest', '--cache-result-file=/wordpress/ignored.cache')),
+  'first' => wp_codebox_phpunit_args(array('phpunit', '--filter', 'OnlyTest', '--testsuite', 'first, second', '--testsuite=third', '--testsuite=first', '--cache-result-file=/wordpress/ignored.cache')),
   'second' => wp_codebox_phpunit_args(array('phpunit', '--cache-result-file', 'ignored.cache')),
   'firstMode' => fileperms(wp_codebox_phpunit_args(array('phpunit'))['cacheResultFile']) & 0777,
-  'selectedSuites' => pg_selected_phpunit_testsuites(array('phpunit', '--testsuite', 'first, second', '--testsuite=third', '--testsuite=first')),
 ));
 `)
 const phpunitArgs = JSON.parse(execFileSync("php", [phpunitArgsProbe], { encoding: "utf8" })) as {
   first: Record<string, unknown>
   second: Record<string, unknown>
   firstMode: number
-  selectedSuites: string[]
 }
 for (const argumentSet of [phpunitArgs.first, phpunitArgs.second]) {
   assert.equal(argumentSet.cacheResult, false, "PHPUnit result caching must start disabled")
   assert.match(String(argumentSet.cacheResultFile), /^\/tmp\/wp-codebox-phpunit-[a-f0-9]{48}\.cache$/, "cache file must be privately allocated under /tmp")
 }
 assert.equal(phpunitArgs.first.filter, "OnlyTest", "unrecognized caller cache options must not affect supported PHPUnit options")
-assert.deepEqual(phpunitArgs.selectedSuites, ["first", "second", "third"], "PHPUnit testsuite selectors support both CLI forms, comma lists, and stable deduplication")
+assert.deepEqual(phpunitArgs.first.wpCodeboxTestsuites, ["first", "second", "third"], "PHPUnit testsuite selectors support both CLI forms, comma lists, and stable deduplication")
 assert.notEqual(phpunitArgs.first.cacheResultFile, phpunitArgs.second.cacheResultFile, "each PHPUnit invocation must receive an unpredictable cache path")
 assert.equal(phpunitArgs.firstMode, 0o600, "the internal cache file must be private to the sandbox process")
 assert.equal(existsSync(String(phpunitArgs.first.cacheResultFile)), false, "the internal cache must be removed at PHP shutdown")
