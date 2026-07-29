@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicy, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
@@ -39,6 +39,7 @@ export interface ReadonlyMountStaging {
 }
 
 const READONLY_MOUNT_SKIPPED_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
+const STAGED_FILE_CHUNK_SIZE = 256 * 1024
 
 /**
  * Playground's Node filesystem mount handler is writable. Snapshot readonly
@@ -211,6 +212,52 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
   const response = await server.playground.run({ code: vfsMountSnapshotPhp(hostSnapshots) })
   const parsed = JSON.parse(response.text || "{}") as { mounts?: VfsMountSnapshot[] }
   return applyVfsMountSnapshots(mounts, parsed.mounts ?? [])
+}
+
+export async function materializePlaygroundStagedFiles(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<number> {
+  let materialized = 0
+  for (const mount of mounts) {
+    if (mount.type !== "file") continue
+
+    const handle = await open(mount.source, "r")
+    try {
+      const buffer = Buffer.allocUnsafe(STAGED_FILE_CHUNK_SIZE)
+      let position = 0
+      let append = false
+      do {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
+        const response = await server.playground.run({ code: stagedFileWritePhp(mount.target, buffer.subarray(0, bytesRead).toString("base64"), append) })
+        const result = JSON.parse(response.text || "{}") as { schema?: string; written?: number }
+        if (result.schema !== "wp-codebox/staged-file-write/v1" || result.written !== bytesRead) {
+          throw new Error(`Could not materialize staged file at ${mount.target}`)
+        }
+        position += bytesRead
+        append = true
+        if (bytesRead === 0 || bytesRead < buffer.length) break
+      } while (true)
+    } finally {
+      await handle.close()
+    }
+    materialized++
+  }
+  return materialized
+}
+
+function stagedFileWritePhp(target: string, contentsBase64: string, append: boolean): string {
+  const payload = JSON.stringify(JSON.stringify({ target, contentsBase64, append }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$target = (string) ($payload['target'] ?? '');
+$contents = base64_decode((string) ($payload['contentsBase64'] ?? ''), true);
+$written = false;
+if ('' !== $target && !str_contains($target, "\0") && false !== $contents) {
+    $directory = dirname($target);
+    if ((is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory))) {
+        $written = file_put_contents($target, $contents, !empty($payload['append']) ? FILE_APPEND : 0);
+    }
+}
+echo json_encode(array('schema' => 'wp-codebox/staged-file-write/v1', 'written' => false === $written ? -1 : $written), JSON_UNESCAPED_SLASHES);
+`
 }
 
 function nestedMountPaths(mounts: MountSpec[], mountIndex: number, parentTarget: string): string[] {
