@@ -126,6 +126,7 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     $base = ${options.basePathExpression};
     $testsuites = $xml->xpath('//testsuite') ?: array();
     if (!empty($selected_testsuites)) {
+        $directories = array();
         $selected = array_fill_keys($selected_testsuites, true);
         $available = array();
         $testsuites = array_values(array_filter($testsuites, static function($testsuite) use ($selected, &$available): bool {
@@ -326,6 +327,7 @@ function phpunitArgsPhp(functionName: string, logFunction: string): string {
 
 function ${functionName}(array $argv) {
     $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'cacheResultFile' => ${functionName}_private_cache_result_file(), 'extensions' => array());
+    $selected_testsuites = array();
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
         $arg = $args[$i];
@@ -337,6 +339,21 @@ function ${functionName}(array $argv) {
         if (strpos($arg, '--filter=') === 0) {
             $arguments['filter'] = substr($arg, strlen('--filter='));
             ${logFunction}('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        $testsuite = null;
+        if ($arg === '--testsuite' && isset($args[$i + 1])) {
+            $testsuite = $args[++$i];
+        } elseif (strpos($arg, '--testsuite=') === 0) {
+            $testsuite = substr($arg, strlen('--testsuite='));
+        }
+        if ($testsuite !== null) {
+            foreach (explode(',', (string) $testsuite) as $name) {
+                $name = trim($name);
+                if ($name !== '') {
+                    $selected_testsuites[$name] = true;
+                }
+            }
             continue;
         }
         if ($arg === '--list-tests') {
@@ -352,32 +369,8 @@ function ${functionName}(array $argv) {
             continue;
         }
     }
+    $arguments['wpCodeboxTestsuites'] = array_keys($selected_testsuites);
     return $arguments;
-}`
-}
-
-function phpunitSelectedTestsuitesPhp(functionName: string): string {
-  return `function ${functionName}(array $argv): array {
-    $selected = array();
-    $args = array_slice($argv, 1);
-    for ($i = 0; $i < count($args); $i++) {
-        $value = null;
-        if ($args[$i] === '--testsuite' && isset($args[$i + 1])) {
-            $value = $args[++$i];
-        } elseif (strpos($args[$i], '--testsuite=') === 0) {
-            $value = substr($args[$i], strlen('--testsuite='));
-        }
-        if ($value === null) {
-            continue;
-        }
-        foreach (explode(',', (string) $value) as $name) {
-            $name = trim($name);
-            if ($name !== '') {
-                $selected[$name] = true;
-            }
-        }
-    }
-    return array_keys($selected);
 }`
 }
 
@@ -523,8 +516,6 @@ function pg_build_phpunit_argv($raw): array {
     }
     return $phpunit_argv;
 }
-
-${phpunitSelectedTestsuitesPhp("pg_selected_phpunit_testsuites")}
 
 @file_put_contents($result_file, '');
 
@@ -1263,6 +1254,8 @@ ${phpunitChangedTestFilterPhp({
     testsPathFallback: true,
   })}
 
+${phpunitArgsPhp("wp_codebox_phpunit_args", "pg_log")}
+
 pg_install_diagnostics_handlers();
 
 pg_stage_begin('cwd');
@@ -1283,6 +1276,9 @@ $phpunit_argv = pg_build_phpunit_argv($phpunit_args_raw);
 $argv = $phpunit_argv;
 $_SERVER['argv'] = $phpunit_argv;
 $_SERVER['argc'] = count($phpunit_argv);
+$phpunit_args = wp_codebox_phpunit_args($phpunit_argv);
+$selected_testsuites = $phpunit_args['wpCodeboxTestsuites'];
+unset($phpunit_args['wpCodeboxTestsuites']);
 
 if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
@@ -1468,7 +1464,7 @@ try {
     if (!is_dir($test_dir)) {
         throw new RuntimeException('configured PHPUnit test root is not a readable directory: ' . $test_dir);
     }
-    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, pg_selected_phpunit_testsuites($phpunit_argv));
+    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, $selected_testsuites);
     $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
@@ -1529,8 +1525,6 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
 }
 pg_stage_ok('load_tests');
 
-${phpunitArgsPhp("wp_codebox_phpunit_args", "pg_log")}
-
 function wp_codebox_phpunit_print_test_list($test) {
     if ($test instanceof PHPUnit\\Framework\\TestSuite) {
         foreach ($test->tests() as $child) {
@@ -1546,7 +1540,6 @@ function wp_codebox_phpunit_print_test_list($test) {
 pg_stage_begin('run_tests');
 pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
 try {
-    $phpunit_args = wp_codebox_phpunit_args($phpunit_argv);
     if (!empty($phpunit_args['listTests'])) {
         wp_codebox_phpunit_print_test_list($suite);
         pg_log('ALL TESTS PASSED');
