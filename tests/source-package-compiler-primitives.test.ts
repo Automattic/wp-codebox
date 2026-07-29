@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { withTempDir } from "../scripts/test-kit.js"
 import {
+  COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS,
   compileRecipeTemplate,
   composerManagedHostCommandConfig,
   fixtureImportDeterministicIdPlan,
@@ -29,6 +30,15 @@ const composerPolicy = composerManagedHostCommandConfig({ cwd: process.cwd(), al
 assert.equal(composerPolicy.command, "composer")
 assert.deepEqual(composerPolicy.inheritedEnv, ["HOME", "COMPOSER_HOME"])
 assert.equal(composerPolicy.allowedCwdRoots?.[0], process.cwd())
+
+// Hydration produces an autoloader; it must never execute package-supplied
+// code, and must not depend on the host's `allow-plugins` configuration.
+// Without `--no-plugins`, any `"type": "wordpress-plugin"` package requiring
+// `composer/installers` aborts with a PluginManager error.
+assert.ok(composerPolicy.args?.includes("--no-scripts"), "composer hydration must not run package scripts")
+assert.ok(composerPolicy.args?.includes("--no-plugins"), "composer hydration must not run Composer plugins")
+assert.deepEqual(composerPolicy.args, [...COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS])
+assert.ok(COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS.includes("--no-plugins"))
 
 await withTempDir("wp-codebox-composer-source-", async (composerSourceRoot) => {
   await writeFile(join(composerSourceRoot, "composer.json"), JSON.stringify({ name: "example/plugin" }))
