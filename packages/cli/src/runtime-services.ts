@@ -812,7 +812,8 @@ async function nativeExecutableIsTrusted(path: string): Promise<boolean> {
 }
 
 async function createOwnedNativeRoot(): Promise<OwnedNativeRoot> {
-  const path = await mkdtemp(join(tmpdir(), NATIVE_MARIADB_ROOT_PREFIX))
+  const temporaryRoot = await realpath(tmpdir())
+  const path = await mkdtemp(join(temporaryRoot, NATIVE_MARIADB_ROOT_PREFIX))
   await chmod(path, 0o700)
   const canonical = await realpath(path)
   if (canonical !== resolve(path)) throw new Error("Native MariaDB root ownership cannot be proven")
