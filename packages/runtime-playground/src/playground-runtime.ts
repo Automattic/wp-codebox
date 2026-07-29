@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, assertRuntimeSecretEnvTargetsAvailable, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RuntimeActionExecutionError, assertRuntimeCommandAllowed, assertRuntimeSecretEnvTargetsAvailable, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, materializationPhaseResult, parseCommandAgentRunRequest, previewLease, resolveArtifactPath, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserArtifactFileManifest, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact, type BrowserArtifactFiles } from "./browser-artifacts.js"
@@ -21,7 +21,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { directMountedPlaygroundStagedInputs, materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
+import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, runCacheChurnObservationCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -338,7 +338,16 @@ class PlaygroundRuntime implements Runtime {
     }
 
     await this.bootPlayground()
-    const materialization = directMountedPlaygroundStagedInputs(mounts)
+    const materialization = {
+      materialized: 0,
+      deleted: 0,
+      skipped: 0,
+      phaseResult: materializationPhaseResult({
+        phase: "playground-staged-input-materialization",
+        status: "completed",
+        metadata: { materialized: 0, deleted: 0, skipped: 0, mounts: mounts.length, transport: "direct-nodefs-mount" },
+      }),
+    }
     this.recordEvent("runtime.staged-inputs.materialized", { ...materialization, source: "direct-nodefs-mount" })
     return materialization
   }
