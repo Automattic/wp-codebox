@@ -315,6 +315,32 @@ export function composerManagedHostEnv(): Record<string, string> {
   }
 }
 
+/**
+ * Default arguments for hydrating a source package's Composer dependencies.
+ *
+ * Hydration exists to produce an autoloader and vendor tree. It must not run
+ * package-supplied code, and it must not depend on ambient host state:
+ *
+ * - `--no-scripts` keeps package scripts from executing.
+ * - `--no-plugins` keeps Composer plugins from executing. Plugins are a
+ *   strictly more powerful hook than scripts, so allowing them would leave the
+ *   larger hole open. It also decouples hydration from the host's
+ *   `allow-plugins` policy: `composer/installers` is required by nearly every
+ *   `"type": "wordpress-plugin"` package, and without this flag Composer aborts
+ *   with `PluginManager` errors unless the host has pre-authorized it. Its only
+ *   job — relocating packages inside a real WordPress tree — is irrelevant
+ *   here, because callers mount the package at its sandbox path explicitly.
+ */
+export const COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS: readonly string[] = [
+  "install",
+  "--no-dev",
+  "--prefer-dist",
+  "--no-interaction",
+  "--no-progress",
+  "--no-scripts",
+  "--no-plugins",
+]
+
 export function composerManagedHostCommandConfig(options: {
   cwd: string
   allowedCwdRoots: string[]
@@ -325,7 +351,7 @@ export function composerManagedHostCommandConfig(options: {
 }): ManagedHostCommandConfig {
   return {
     command: "composer",
-    args: options.args ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
+    args: options.args ?? [...COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS],
     cwd: options.cwd,
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
@@ -366,7 +392,7 @@ function installComposerDependenciesForSourcePackageSync(source: string, slug: s
   const config = composerManagedHostCommandConfig({
     cwd: source,
     allowedCwdRoots: [allowedRoot],
-    args: composerInstallArgs ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
+    args: composerInstallArgs ?? [...COMPOSER_SOURCE_PACKAGE_INSTALL_ARGS],
     label: `hydrate Composer source package ${slug}`,
   })
   const result = spawnSync(config.command, config.args, {
