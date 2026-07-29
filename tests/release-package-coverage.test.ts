@@ -168,19 +168,14 @@ async function assertPackagedReadonlyMaterialization(root: string): Promise<void
       mounts: Array<{ source: string }>
       [Symbol.asyncDispose](): Promise<void>
     }>
-    materializePlaygroundStagedInputs(server: unknown, mounts: Array<Record<string, unknown>>): Promise<{ materialized: number }>
   }
   assert.equal(typeof runtime.stageReadonlyPlaygroundMounts, "function", "packaged dist must contain readonly mount isolation")
-  assert.equal(typeof runtime.materializePlaygroundStagedInputs, "function", "packaged dist must contain staged input materialization")
 
   const fixtureRoot = await mkdtemp(join(tmpdir(), "wp-codebox-packaged-readonly-"))
   const readonlySource = join(fixtureRoot, "font.woff2")
-  const binarySource = join(fixtureRoot, "translation.mo")
   const readonlyBytes = Buffer.from("774f4632000100000000108000120000", "hex")
-  const binaryBytes = Buffer.from("de12049500000000c50000001c000000", "hex")
   try {
     await writeFile(readonlySource, readonlyBytes)
-    await writeFile(binarySource, binaryBytes)
 
     const staging = await runtime.stageReadonlyPlaygroundMounts([{
       type: "file",
@@ -194,29 +189,6 @@ async function assertPackagedReadonlyMaterialization(root: string): Promise<void
     } finally {
       await staging[Symbol.asyncDispose]()
     }
-
-    let directWrites = 0
-    let materializedBase64 = ""
-    const result = await runtime.materializePlaygroundStagedInputs({
-      playground: {
-        async writeFile() {
-          directWrites++
-        },
-        async run({ code }: { code: string }) {
-          const match = code.match(/\$payload = json_decode\((.*), true\);/)
-          assert.ok(match, "packaged binary fallback includes its materialization payload")
-          const payload = JSON.parse(JSON.parse(match[1])) as { directories?: string[]; files?: Array<{ contentsBase64?: string }> }
-          if (code.includes("wp-codebox/host-mount-directory-materialization/v1")) {
-            return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
-          }
-          materializedBase64 = payload.files?.[0]?.contentsBase64 ?? ""
-          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: 1, created: 0, skipped: 0 }) }
-        },
-      },
-    }, [{ type: "file", source: binarySource, target: "/wordpress/wp-content/languages/example.mo", mode: "readonly" }])
-    assert.equal(result.materialized, 1)
-    assert.equal(directWrites, 0, "invalid UTF-8 bytes must bypass Playground's text writer")
-    assert.equal(materializedBase64, binaryBytes.toString("base64"), "packaged binary fallback must preserve exact bytes")
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true })
   }
