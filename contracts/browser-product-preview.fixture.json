@@ -1,0 +1,27 @@
+{
+  "schema": "wp-codebox/browser-product-preview-path/v1",
+  "response": {
+    "schema": "wp-codebox/browser-contained-site-open-or-create/v1",
+    "success": true,
+    "action": "opened",
+    "preview_boot": {
+      "schema": "wp-codebox/browser-preview-boot-config/v1",
+      "session_id": "preview-session-1",
+      "remote_url": "https://playground.wordpress.net/remote.html",
+      "cors_proxy_url": "https://playground.wordpress.net/proxy.php",
+      "scope": "preview-session-1",
+      "blueprint_ref": {
+        "schema": "wp-codebox/browser-blueprint-ref/v1",
+        "ref": "prepared:preview:abc",
+        "hydratable": true,
+        "hydrator_ability": "wp-codebox/hydrate-browser-blueprint-ref",
+        "hydration_endpoint": "https://codebox.example.test/wp-codebox/v1/browser-blueprint-ref"
+      },
+      "preview": {
+        "schema": "wp-codebox/preview-lease/v1",
+        "public_url": "https://preview.example.test/"
+      }
+    }
+  },
+  "sdk_input": "response.preview_boot"
+}

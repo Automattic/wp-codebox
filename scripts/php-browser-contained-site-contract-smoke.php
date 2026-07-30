@@ -290,7 +290,8 @@ expect( 'wp-codebox/browser-contained-site-open/v1' === $open['schema'], 'Expect
 expect( 'reuse_prepared_runtime' === $open['open_mode'], 'Expected open open_mode=reuse_prepared_runtime.' );
 expect( 'prepared_runtime' === $open['reuse_level'], 'Expected open reuse_level=prepared_runtime.' );
 expect( false === $open['requires_materialization'], 'Expected open not to require materialization.' );
-expect( isset( $open['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected preview boot hydration endpoint.' );
+expect( isset( $open['preview_boot']['blueprint_ref']['hydration_endpoint'] ), 'Expected preview boot hydration endpoint.' );
+expect( $open['preview_boot']['blueprint_ref']['ref'] === $open['blueprint_ref']['ref'], 'Expected preview boot to hand off the public blueprint ref.' );
 expect( 'wp-codebox/preview-lease/v1' === $open['preview_lease']['schema'], 'Expected preview lease DTO.' );
 expect( 'https://preview.example.test' === $open['preview_lease']['public_url'], 'Expected canonical public preview URL.' );
 expect( 'http://localhost:8881/preview' === $open['preview_lease']['local_url'], 'Expected local preview URL to remain distinct.' );
@@ -333,7 +334,8 @@ expect( 'wp-codebox/browser-contained-site-open-or-create/v1' === $open_or_creat
 expect( 'opened' === $open_or_create['action'], 'Expected open-or-create to open reusable prepared runtime.' );
 expect( false === $open_or_create['reload_required'], 'Expected opened reusable runtime not to require reload.' );
 expect( 'hydrate-ref' === $open_or_create['decision']['action'], 'Expected open-or-create decision to hydrate ref.' );
-expect( isset( $open_or_create['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected open-or-create preview boot hydration endpoint.' );
+expect( isset( $open_or_create['preview_boot']['blueprint_ref']['hydration_endpoint'] ), 'Expected open-or-create preview boot hydration endpoint.' );
+expect( $open_or_create['preview_boot']['blueprint_ref']['ref'] === $open_or_create['open']['blueprint_ref']['ref'], 'Expected open-or-create preview boot to hand off the public blueprint ref.' );
 expect( 'wp-codebox/preview-lease/v1' === $open_or_create['preview_lease']['schema'], 'Expected open-or-create preview lease DTO.' );
 
 $snapshot = WP_Codebox_Abilities::snapshot_browser_contained_site(

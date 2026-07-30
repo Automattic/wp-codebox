@@ -80,7 +80,7 @@ assert.equal(result.product.dto_schema, "wp-codebox/browser-preview-boot-config/
 assert.equal(result.product.executable_session, undefined)
 assert.equal(result.product.runtime_handoff, undefined)
 assert.equal(result.product.preview_reference, undefined)
-assert.equal(result.product.preview_boot.blueprint_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.equal(result.product.preview_boot.blueprint_ref.ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
 assert.equal(result.product.artifact_refs[0].path, "files/browser/index.html")
 
 for (const dto of [result.product, result.safe]) {

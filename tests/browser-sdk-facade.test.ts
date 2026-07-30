@@ -6,6 +6,7 @@ import { browserArtifactPersistenceProjection } from "../packages/runtime-core/s
 
 const root = new URL("../", import.meta.url)
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
+const previewFixture = JSON.parse(await readFile(new URL("contracts/browser-product-preview.fixture.json", root), "utf8"))
 
 const sandbox = {
   window: { dispatchEvent: () => true } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean },
@@ -537,15 +538,7 @@ assert.equal(booted.success, true)
 assert.deepEqual(plain(blueprintRuns), [{ blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }])
 
 const previewStarts: any[] = []
-const previewStart = await sandbox.window.wpCodebox!.startBrowserPreview({
-  schema: "wp-codebox/browser-preview-boot-config/v1",
-  session_id: "preview-session-1",
-  remote_url: "https://playground.wordpress.net/remote.html",
-  cors_proxy_url: "https://playground.wordpress.net/proxy.php",
-  scope: "preview-session-1",
-  blueprint_ref_dto: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:preview:abc", hydrator_ability: "wp-codebox/hydrate-browser-blueprint-ref" },
-  preview: { public_url: "https://preview.example.test/" },
-}, {
+const previewStart = await api.v1.startBrowserPreview(previewFixture.response.preview_boot, {
   iframe: { tagName: "IFRAME" },
   hydrateBlueprintRef: async (request: any) => {
     assert.equal(request.ability, "wp-codebox/hydrate-browser-blueprint-ref")
@@ -563,6 +556,16 @@ assert.equal(previewStart.status, "started")
 assert.equal(previewStart.session_id, "preview-session-1")
 assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
 assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
+await assert.rejects(
+  () => api.v1.startBrowserPreview({
+    ...previewFixture.response.preview_boot,
+    blueprint_ref: { ...previewFixture.response.preview_boot.blueprint_ref, hydratable: false },
+  }, { iframe: { tagName: "IFRAME" }, startPlaygroundWeb: async () => ({}) }),
+  (error: any) => {
+    assert.equal(error.code, "browser_preview_blueprint_ref_not_hydratable")
+    return true
+  },
+)
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

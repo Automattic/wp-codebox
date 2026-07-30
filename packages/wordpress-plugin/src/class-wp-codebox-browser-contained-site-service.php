@@ -124,6 +124,7 @@ public function open_browser_contained_site( array $input ): array|WP_Error {
 		$open_status  = 'unusable';
 		$resolution   = $this->browser_contained_site_resolution( $open_status, array( 'invalidation' => array( 'reason' => (string) ( $boot_contract['reason'] ?? 'preview-boot-contract-unusable' ) ) ) );
 		$lifecycle    = $this->browser_contained_site_lifecycle( $open_status, $resolution );
+		$preview_boot = array();
 	}
 	$recovery        = $this->browser_contained_site_open_recovery( $site_id, (string) ( $status['source_digest']['value'] ?? '' ) );
 	$recovery_handle = $this->browser_contained_site_recovery_handle( $site_id, (string) ( $status['source_digest']['value'] ?? '' ) );
@@ -155,7 +156,7 @@ public function open_browser_contained_site( array $input ): array|WP_Error {
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
 	$session['contained_site'] = $opened_site;
-	$preview_session          = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	$preview_session          = $open_success ? WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session ) : array();
 
 	return array_filter(
 		array_merge(
@@ -197,7 +198,25 @@ public function open_or_create_browser_contained_site( array $input ): array|WP_
 
 	$decision = $this->preview_reuse_decision( $input );
 	if ( is_wp_error( $decision ) ) {
-		return $decision;
+		$error_data = is_array( $decision->data ?? null ) ? $decision->data : array();
+		$preview_state = (string) ( $error_data['preview_state'] ?? 'hydratable-ref-missing' );
+		$decision = array(
+			'success' => true,
+			'schema' => 'wp-codebox/preview-reuse-decision/v1',
+			'action' => 'prepare-new',
+			'decision' => 'prepare-new',
+			'reload_required' => true,
+			'prepare_new_required' => true,
+			'preview_state' => $preview_state,
+			'status' => 'hydratable_ref_missing',
+			'reason' => $preview_state,
+			'resolution' => array(
+				'schema' => 'wp-codebox/browser-contained-site-resolution/v1',
+				'outcome' => 'hydratable_ref_missing',
+				'reason' => $preview_state,
+				'prepare_new_required' => true,
+			),
+		);
 	}
 	$decision['mode'] = $mode;
 
@@ -228,6 +247,16 @@ public function open_or_create_browser_contained_site( array $input ): array|WP_
 				static fn( mixed $value ): bool => array() !== $value && '' !== $value
 			);
 		}
+
+		$preview_state = (string) ( $open['preview_state'] ?? $open['resolution']['reason'] ?? 'preview-boot-blueprint-ref-not-hydratable' );
+		$decision['action']               = 'prepare-new';
+		$decision['decision']             = 'prepare-new';
+		$decision['reload_required']      = true;
+		$decision['prepare_new_required'] = true;
+		$decision['preview_state']        = $preview_state;
+		$decision['status']               = (string) ( $open['status'] ?? 'unusable' );
+		$decision['reason']               = $preview_state;
+		$decision['resolution']           = is_array( $open['resolution'] ?? null ) ? $open['resolution'] : $decision['resolution'];
 	}
 
 	if ( 'open-only' === $mode ) {
@@ -851,7 +880,7 @@ public function browser_contained_site_facade_session( array $result, string $ac
 	$contained_site = is_array( $result['contained_site'] ?? null ) ? $result['contained_site'] : array();
 	$preview_boot   = is_array( $result['preview_boot'] ?? null ) ? $result['preview_boot'] : array();
 	$preview_lease  = is_array( $result['preview_lease'] ?? null ) ? $result['preview_lease'] : WP_Codebox_Browser_Task_Builder::preview_lease( $result );
-	$blueprint_ref  = is_array( $result['blueprint_ref'] ?? null ) ? $result['blueprint_ref'] : ( is_array( $preview_boot['blueprint_ref_dto'] ?? null ) ? $preview_boot['blueprint_ref_dto'] : array() );
+	$blueprint_ref  = is_array( $result['blueprint_ref'] ?? null ) ? $result['blueprint_ref'] : ( is_array( $preview_boot['blueprint_ref'] ?? null ) ? $preview_boot['blueprint_ref'] : array() );
 	$boot_contract  = WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref );
 	$boot           = $this->browser_contained_site_boot_descriptor( $result, $contained_site, $preview_boot, $preview_lease, $blueprint_ref );
 
@@ -871,6 +900,10 @@ public function browser_contained_site_facade_session( array $result, string $ac
 }
 
 public function browser_contained_site_boot_descriptor( array $result, array $contained_site, array $preview_boot, array $preview_lease, array $blueprint_ref ): array {
+	if ( true !== ( WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref )['valid'] ?? false ) ) {
+		return array();
+	}
+
 	return array_filter(
 		array(
 			'schema'         => 'wp-codebox/browser-preview-boot-config/v1',
@@ -880,13 +913,6 @@ public function browser_contained_site_boot_descriptor( array $result, array $co
 			'preview'        => $preview_lease,
 			'contained_site' => $contained_site,
 			'blueprint_ref'  => $blueprint_ref,
-			'debug'          => array_filter(
-				array(
-					'preview_boot_schema' => (string) ( $preview_boot['schema'] ?? '' ),
-					'preview_boot_ref'    => (string) ( $preview_boot['blueprint_ref'] ?? '' ),
-				),
-				static fn( string $value ): bool => '' !== $value
-			),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
