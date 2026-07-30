@@ -56,7 +56,7 @@ test("credential operator uses an atomic parameterized D1 API batch remotely", a
     const request = JSON.parse(await readFile(capture, "utf8"))
     const body = JSON.parse(request.body)
     assert.equal(result.status, 0, result.stderr)
-    assert.match(request.url, /accounts\/a{32}\/d1\/database\/00000000-0000-0000-0000-000000000000\/query$/)
+    assert.match(request.url, /accounts\/a{32}\/d1\/database\/25858208-50ff-46f4-b79d-458f2f6f93c4\/query$/)
     assert.equal(request.headers.authorization, "Bearer cloudflare-test-token")
     assert.equal(Array.isArray(body.batch), true)
     assert.equal(request.body.includes(bearer), false)

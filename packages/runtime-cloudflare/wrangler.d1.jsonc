@@ -1,6 +1,7 @@
 // ChatGPT Sites profile: D1 coordinates revisions; R2 stores canonical and published artifacts.
 {
   "name": "wp-codebox-cloudflare-runtime",
+  "account_id": "f2248e657cd8e3f095a18e5eb92f56fc",
   "main": "src/worker-d1.ts",
   "compatibility_date": "2026-07-18",
   "compatibility_flags": ["nodejs_compat"],
@@ -17,7 +18,7 @@
 		{
 			"binding": "WORDPRESS_STATE_DATABASE",
 			"database_name": "wp-codebox-runtime-state",
-			"database_id": "00000000-0000-0000-0000-000000000000"
+			"database_id": "25858208-50ff-46f4-b79d-458f2f6f93c4"
 		}
 	],
 	"rules": [

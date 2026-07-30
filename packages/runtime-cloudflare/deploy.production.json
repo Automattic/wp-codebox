@@ -1,0 +1,52 @@
+{
+  "schema": "homeboy/cloudflare-worker-deploy-contract/v1",
+  "repository": {
+    "worktree": ".",
+    "revision": "HEAD"
+  },
+  "wrangler": {
+    "binary": "node_modules/.bin/wrangler",
+    "config": "packages/runtime-cloudflare/wrangler.d1.jsonc",
+    "config_ref": "packages/runtime-cloudflare/wrangler.d1.jsonc"
+  },
+  "target": {
+    "worker": "wp-codebox-cloudflare-runtime",
+    "account_id": "f2248e657cd8e3f095a18e5eb92f56fc"
+  },
+  "expected_bindings": [
+    "WORDPRESS_RUNTIME_QUEUE",
+    "WORDPRESS_STATE_BUCKET",
+    "WORDPRESS_STATE_DATABASE"
+  ],
+  "secrets": [],
+  "gates": [
+    {
+      "id": "wordpress-runtime-health",
+      "url": "https://wp-codebox-cloudflare-runtime.chubes.workers.dev/?phase=health",
+      "expected_status": 200,
+      "expected_text": "wp-codebox-cloudflare-runtime-health",
+      "timeout_ms": 300000,
+      "retry": {
+        "attempts": 3,
+        "retry_delay_ms": 2000,
+        "transient_statuses": [500, 502, 503, 504]
+      }
+    },
+    {
+      "id": "d1-canonical-state",
+      "url": "https://wp-codebox-cloudflare-runtime.chubes.workers.dev/?phase=r2-state",
+      "expected_status": 200,
+      "expected_text": "\"store\":\"d1\"",
+      "timeout_ms": 30000,
+      "retry": {
+        "attempts": 3,
+        "retry_delay_ms": 1000,
+        "transient_statuses": [500, 502, 503, 504]
+      }
+    }
+  ],
+  "durability": {
+    "redeploy_same_revision": true
+  },
+  "timeout_ms": 600000
+}

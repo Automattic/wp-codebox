@@ -6,6 +6,11 @@
     "nodejs": {}
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
+  "deployment_provider": {
+    "extension": "cloudflare-workers",
+    "provider": "cloudflare-workers.deploy",
+    "contract": "packages/runtime-cloudflare/deploy.production.json"
+  },
   "release": {
     "package_coverage": [
       {
