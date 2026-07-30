@@ -77,7 +77,7 @@ interface VisualCompareDimensionDrift {
   candidateOnly: VisualCompareDimensionDriftRegion[]
 }
 
-export type VisualCompareLayoutDriftDivergenceType = "height-delta" | "gap-delta" | "y-offset" | "added-flow-element" | "removed-flow-element" | "screenshot-only"
+export type VisualCompareLayoutDriftDivergenceType = "global-origin-offset" | "height-delta" | "gap-delta" | "y-offset" | "added-flow-element" | "removed-flow-element" | "screenshot-only"
 
 export interface VisualCompareLayoutDriftAnchor {
   path: string
@@ -113,6 +113,7 @@ export interface VisualCompareLayoutDrift {
     maxAbsYOffset: number
     maxAbsHeightDelta: number
     maxAbsGapDelta: number
+    alignment: "global-origin-offset" | "reflow" | "none"
   }
   firstDivergence: VisualCompareLayoutDriftDivergence
   anchors: VisualCompareLayoutDriftAnchor[]
@@ -165,6 +166,15 @@ export interface VisualCompareCaptureDiagnostics {
     afterSettle: true
     reasons: string[]
   }
+  effectiveCapture: {
+    reducedMotion: boolean
+    animations: "freeze" | "allow"
+    frozenTime?: string
+    injectedStyleBytes: number
+    externalRequests: "block" | "allow"
+    requests: { total: number; blockedTotal: number; blockedTruncated: boolean; blocked: Array<{ url: string; resourceType: string }>; failedTotal: number; failedTruncated: boolean; failed: Array<{ url: string; resourceType: string; error: string }> }
+    readiness: { durationMs: number; fonts: "ready" | "timeout" | "unavailable" }
+  }
   assets: {
     stylesheets: { total: number; loaded: number; pending: number; errored: number }
     images: { total: number; loaded: number; loading: number; failed: number }
@@ -202,6 +212,7 @@ export interface VisualCompareCaptureDiagnosticsCompact {
     fonts: { status: string; loading?: number; error?: number }
   }
   dynamicContent: VisualCompareCaptureDiagnostics["dynamicContent"]
+  effectiveCapture: VisualCompareCaptureDiagnostics["effectiveCapture"]
   environment: Pick<VisualCompareCaptureDiagnostics["environment"], "url" | "viewport" | "devicePixelRatio" | "colorScheme" | "reducedMotion">
 }
 
@@ -472,6 +483,10 @@ async function runVisualComparePairCommand({
   const maxExplanationElements = positiveIntegerArg(args, "max-explanation-elements", 25)
   const maxExplanationCandidates = positiveIntegerArg(args, "max-explanation-candidates", 160)
   const explainSelectors = visualCompareExplainSelectors(args)
+  const reducedMotion = strictBooleanArg(args, "reduced-motion", true)
+  const animations = visualCompareAnimationsArg(args)
+  const frozenTime = visualCompareFrozenTimeArg(args)
+  const captureStyle = visualCompareCaptureStyleArg(args)
   // Disposable WP Codebox sandboxes have no outbound network egress. A captured
   // page that references external resources (Google Fonts, CDNs, analytics) would
   // otherwise leave those requests hanging until the navigation/screenshot hits
@@ -481,6 +496,7 @@ async function runVisualComparePairCommand({
   // fast. On by default; `block-external-requests=false` opts back into the live
   // (egress-dependent) behavior.
   const blockExternalRequests = strictBooleanArg(args, "block-external-requests", true)
+  const captureOptions = { reducedMotion, animations, ...(frozenTime ? { frozenTime } : {}), injectedStyleBytes: Buffer.byteLength(captureStyle), externalRequests: blockExternalRequests ? "block" as const : "allow" as const }
 
   if (threshold < 0 || threshold > 1) {
     throw new Error("threshold must be between 0 and 1")
@@ -529,7 +545,7 @@ async function runVisualComparePairCommand({
       startedAt,
       source: sourceSummary(),
       candidate: candidateSummary(),
-      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, capture: captureOptions, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
       preview,
       viewport,
     })
@@ -539,13 +555,16 @@ async function runVisualComparePairCommand({
     const browser = await launchChromiumBrowser()
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
+      await page.emulateMedia({ reducedMotion: reducedMotion ? "reduce" : "no-preference" })
+      const requestTracker = installVisualCompareRequestTracking(page, blockExternalRequests, preview.effectiveOrigin)
       if (blockExternalRequests) {
-        await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin)
+        await installVisualCompareOfflineIsolation(page, preview.effectiveOrigin, requestTracker)
       }
       // Determinism applies to BOTH source and candidate: the init script runs on
       // every navigation of this shared page, so source and candidate are captured
       // under identical reveal/animation conditions.
       await installVisualCompareDeterministicReveal(page)
+      await installVisualCompareTimeControl(page, frozenTime)
       viewport = await browserProbeViewport(page)
       try {
         let sourceCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
@@ -553,7 +572,7 @@ async function runVisualComparePairCommand({
           sourceCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "source-capture",
-            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, captureStyle }, requestTracker),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -569,7 +588,7 @@ async function runVisualComparePairCommand({
           candidateCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "candidate-capture",
-            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, captureStyle }, requestTracker),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -588,7 +607,7 @@ async function runVisualComparePairCommand({
           startedAt,
           source: sourceSummary(),
           candidate: candidateSummary(),
-          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, capture: captureOptions, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
           preview,
           viewport,
           message: visualCompareErrorDetail(error),
@@ -622,7 +641,7 @@ async function runVisualComparePairCommand({
         startedAt,
         source: sourceSummary(),
         candidate: candidateSummary(),
-        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, capture: captureOptions, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
         preview,
         viewport,
         missingInputs,
@@ -696,7 +715,7 @@ async function runVisualComparePairCommand({
     status,
     source: sourceSummary(),
     candidate: candidateSummary(),
-    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, maxFullPageHeight, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, capture: captureOptions, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
       : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
@@ -1419,6 +1438,11 @@ function visualCompareMatrixArgs(record: Record<string, unknown>): string[] {
     ["wait-for", ["wait-for", "waitFor"]],
     ["duration", ["duration", "durationMs"]],
     ["viewport", ["viewport"]],
+    ["reduced-motion", ["reduced-motion", "reducedMotion"]],
+    ["animations", ["animations"]],
+    ["frozen-time", ["frozen-time", "frozenTime"]],
+    ["capture-style", ["capture-style", "captureStyle"]],
+    ["block-external-requests", ["block-external-requests", "blockExternalRequests"]],
     ["full-page", ["full-page", "fullPage"]],
     ["threshold", ["threshold"]],
     ["include-aa", ["include-aa", "includeAA"]],
@@ -1707,16 +1731,76 @@ function visualCompareExplainSelectors(args: string[]): string[] {
   return [...selectors]
 }
 
+function visualCompareAnimationsArg(args: string[]): "freeze" | "allow" {
+  const value = argValue(args, "animations")?.trim() || "freeze"
+  if (value === "freeze" || value === "allow") {
+    return value
+  }
+  throw new Error("animations must be freeze or allow")
+}
+
+function visualCompareFrozenTimeArg(args: string[]): string | undefined {
+  const value = argValue(args, "frozen-time")?.trim()
+  if (!value) return undefined
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)
+  if (!match) throw new Error("frozen-time must be a timezone-bearing ISO-8601 timestamp such as 2020-01-01T00:00:00.000Z")
+  const [, year, month, day, hour, minute, second, fraction = "0"] = match
+  const calendar = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), Number(fraction.padEnd(3, "0"))))
+  if (calendar.getUTCFullYear() !== Number(year) || calendar.getUTCMonth() !== Number(month) - 1 || calendar.getUTCDate() !== Number(day) || calendar.getUTCHours() !== Number(hour) || calendar.getUTCMinutes() !== Number(minute) || calendar.getUTCSeconds() !== Number(second)) {
+    throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
+  }
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
+  return new Date(timestamp).toISOString()
+}
+
+function visualCompareCaptureStyleArg(args: string[]): string {
+  const style = argValue(args, "capture-style") ?? ""
+  if (Buffer.byteLength(style) > 16 * 1024) {
+    throw new Error("capture-style must not exceed 16384 bytes")
+  }
+  return style
+}
+
+interface VisualCompareRequestTracker {
+  reset(): void
+  snapshot(): VisualCompareCaptureDiagnostics["effectiveCapture"]["requests"]
+  blocked(request: { url(): string; resourceType(): string }): void
+}
+
+function installVisualCompareRequestTracking(page: Page, blockExternalRequests: boolean, previewOrigin: string): VisualCompareRequestTracker {
+  let total = 0
+  let blockedTotal = 0
+  let failedTotal = 0
+  let blocked: Array<{ url: string; resourceType: string }> = []
+  let failed: Array<{ url: string; resourceType: string; error: string }> = []
+  const bounded = <T>(items: T[], item: T): void => {
+    if (items.length < 50) items.push(item)
+  }
+  page.on("request", () => { total += 1 })
+  page.on("requestfailed", (request) => {
+    if (blockExternalRequests && !visualCompareOfflineRequestAllowed(request.url(), previewOrigin)) return
+    failedTotal += 1
+    bounded(failed, { url: request.url(), resourceType: request.resourceType(), error: request.failure()?.errorText || "request failed" })
+  })
+  return {
+    reset: () => { total = 0; blockedTotal = 0; failedTotal = 0; blocked = []; failed = [] },
+    snapshot: () => ({ total, blockedTotal, blockedTruncated: blockedTotal > blocked.length, blocked, failedTotal, failedTruncated: failedTotal > failed.length, failed }),
+    blocked: (request) => { blockedTotal += 1; bounded(blocked, { url: request.url(), resourceType: request.resourceType() }) },
+  }
+}
+
 // Abort every request whose origin differs from the live preview origin so an
 // egress-free sandbox renders captured pages deterministically instead of
 // hanging on unreachable external resources. Same-origin requests (the document,
 // its local CSS/JS/images served by the preview server) pass through untouched.
-async function installVisualCompareOfflineIsolation(page: Page, previewOrigin: string): Promise<void> {
+async function installVisualCompareOfflineIsolation(page: Page, previewOrigin: string, tracker: VisualCompareRequestTracker): Promise<void> {
   await page.route("**/*", (route) => {
     if (visualCompareOfflineRequestAllowed(route.request().url(), previewOrigin)) {
       void route.continue()
       return
     }
+    tracker.blocked(route.request())
     void route.abort()
   })
 }
@@ -1810,6 +1894,25 @@ async function installVisualCompareDeterministicReveal(page: Page): Promise<void
   })
 }
 
+async function installVisualCompareTimeControl(page: Page, frozenTime?: string): Promise<void> {
+  if (!frozenTime) return
+  const timestamp = Date.parse(frozenTime)
+  if (!Number.isFinite(timestamp)) throw new Error("frozen-time must be a valid timezone-bearing ISO-8601 timestamp")
+  await page.addInitScript((fixedTimestamp) => {
+    const NativeDate = Date
+    const FrozenDate = function (this: unknown, ...args: unknown[]): string | Date {
+      if (!new.target) {
+        return new NativeDate(fixedTimestamp).toString()
+      }
+      return Reflect.construct(NativeDate, args.length === 0 ? [fixedTimestamp] : args)
+    }
+    Object.setPrototypeOf(FrozenDate, NativeDate)
+    Object.defineProperty(FrozenDate, "prototype", { value: NativeDate.prototype })
+    Object.defineProperty(FrozenDate, "now", { value: () => fixedTimestamp })
+    Object.defineProperty(globalThis, "Date", { configurable: true, value: FrozenDate })
+  }, timestamp)
+}
+
 // Complements the IntersectionObserver reveal trigger by walking the full document
 // height before capture. This drives genuine scroll-position-driven effects (lazy
 // media, sticky headers) and lets any triggered reveals settle, then returns to the
@@ -1852,34 +1955,41 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
   })
 }
 
-export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<void> {
+export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<{ durationMs: number; fonts: "ready" | "timeout" | "unavailable" }> {
+  const startedAt = Date.now()
   const readinessTimeoutMs = Math.max(1_000, Math.min(10_000, timeoutMs))
   await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
-  await page.evaluate(async (timeout) => {
-    const until = Date.now() + timeout
+  const fonts = await page.evaluate(async (timeout) => {
+    const until = performance.now() + timeout
 
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
       .filter((link) => !link.disabled && Boolean(link.href))
     await Promise.all(stylesheetLinks.map(async (link) => {
-      while (!link.sheet && Date.now() < until) {
+      while (!link.sheet && performance.now() < until) {
         await Promise.race([
           new Promise<void>((resolve) => {
             link.addEventListener("load", () => resolve(), { once: true })
             link.addEventListener("error", () => resolve(), { once: true })
           }),
-          new Promise<void>((resolve) => setTimeout(resolve, 100)),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, until - performance.now())))),
         ])
       }
     }))
 
-    await (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready?.catch(() => undefined)
+    const fontSet = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts
+    const fonts = !fontSet?.ready
+      ? "unavailable" as const
+      : await Promise.race([
+          fontSet.ready.then(() => "ready" as const).catch(() => "timeout" as const),
+          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), Math.max(0, until - performance.now()))),
+        ])
 
     const images = Array.from(document.images)
     await Promise.all(images.map(async (image) => {
       if (typeof image.decode === "function") {
         await Promise.race([
           image.decode().catch(() => undefined),
-          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - performance.now()))),
         ])
         return
       }
@@ -1891,12 +2001,14 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
           image.addEventListener("load", () => resolve(), { once: true })
           image.addEventListener("error", () => resolve(), { once: true })
         }),
-        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - Date.now()))),
+          new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, until - performance.now()))),
       ])
     }))
 
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-  }, readinessTimeoutMs).catch(() => undefined)
+    return fonts
+  }, readinessTimeoutMs).catch(() => "timeout" as const)
+  return { durationMs: Date.now() - startedAt, fonts }
 }
 
 export interface VisualCompareNavigationPolicy {
@@ -2008,9 +2120,9 @@ async function captureVisualComparePageScreenshot(page: Page, outputPath: string
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       if (clamp) {
-        await page.screenshot({ path: outputPath, fullPage: false, clip: { x: 0, y: 0, width: clamp.width, height: clamp.height }, timeout: options.timeoutMs, animations: "disabled" })
+        await page.screenshot({ path: outputPath, fullPage: false, clip: { x: 0, y: 0, width: clamp.width, height: clamp.height }, timeout: options.timeoutMs })
       } else {
-        await page.screenshot({ path: outputPath, fullPage: options.fullPage, timeout: options.timeoutMs, animations: "disabled" })
+        await page.screenshot({ path: outputPath, fullPage: options.fullPage, timeout: options.timeoutMs })
       }
       return
     } catch (error) {
@@ -2082,6 +2194,7 @@ function visualCompareCompactCaptureDiagnostic(input: VisualCompareCaptureDiagno
       fonts: { status: input.assets.fonts.status, ...(input.assets.fonts.loading !== undefined ? { loading: input.assets.fonts.loading } : {}), ...(input.assets.fonts.error !== undefined ? { error: input.assets.fonts.error } : {}) },
     },
     dynamicContent: input.dynamicContent,
+    effectiveCapture: input.effectiveCapture,
     environment: {
       url: input.environment.url,
       viewport: input.environment.viewport,
@@ -2099,7 +2212,7 @@ function visualCompareMatrixCompactCaptureDiagnostics(input: VisualCompareMatrix
   return comparisons.length > 0 ? { comparisons } : undefined
 }
 
-async function captureVisualCompareDiagnostics(page: Page): Promise<VisualCompareCaptureDiagnostics> {
+async function captureVisualCompareDiagnostics(page: Page, effectiveCapture: VisualCompareCaptureDiagnostics["effectiveCapture"]): Promise<VisualCompareCaptureDiagnostics> {
   const diagnostics = await page.evaluate(() => {
     const stylesheetLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')).filter((link) => !link.disabled && Boolean(link.href))
     const stylesheetStatus = stylesheetLinks.map((link) => {
@@ -2174,10 +2287,11 @@ async function captureVisualCompareDiagnostics(page: Page): Promise<VisualCompar
       },
     }
   })
-  return { ...diagnostics, readiness: visualCompareCaptureReadiness(diagnostics) }
+  return { ...diagnostics, effectiveCapture, readiness: visualCompareCaptureReadiness(diagnostics) }
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number, capture: { reducedMotion: boolean; animations: "freeze" | "allow"; frozenTime?: string; injectedStyleBytes: number; externalRequests: "block" | "allow"; captureStyle: string }, requestTracker: VisualCompareRequestTracker): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
+  requestTracker.reset()
   if (waitFor === "duration") {
     await gotoVisualCompareTarget(page, targetUrl, "domcontentloaded", timeoutMs)
     if (durationMs > 0) {
@@ -2197,17 +2311,22 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
-  await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  if (capture.captureStyle) {
+    await page.addStyleTag({ content: capture.captureStyle })
+  }
+  const readiness = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
   // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
   // fully-revealed page state. Identical treatment for source and candidate.
   await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  if (capture.animations === "freeze") {
+    await page.evaluate(() => document.getAnimations().forEach((animation) => { animation.currentTime = 0; animation.pause() }))
+  }
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  // `animations: "disabled"` fast-forwards finite CSS/Web animations and transitions
-  // to their final state and freezes infinite ones to a deterministic frame, so the
-  // capture does not depend on transition timing. Applied to both sides equally.
   await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
+  const { captureStyle: _captureStyle, ...effectiveCapture } = capture
+  // Snapshot after the final paint because screenshotting can trigger lazy resource loads.
+  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, { ...effectiveCapture, requests: requestTracker.snapshot(), readiness }), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
 }
 
@@ -2521,6 +2640,26 @@ export function visualCompareLayoutDrift(sourceElements: VisualCompareDomElement
     anchors.push(visualCompareLayoutDriftAnchor(element, undefined))
   }
 
+  const originOffset = visualCompareGlobalOriginOffset(matched, added, removed)
+  if (originOffset !== undefined) {
+    const firstDivergence: VisualCompareLayoutDriftDivergence = { type: "global-origin-offset", delta: { y: originOffset } }
+    return {
+      summary: {
+        compact: `Anchor-proven global origin offset (${originOffset > 0 ? "+" : ""}${originOffset}px); no content reflow was observed.`,
+        firstDivergenceType: firstDivergence.type,
+        matchedFlowElements: matched.length,
+        addedFlowElements: 0,
+        removedFlowElements: 0,
+        changedFlowElements: matched.length,
+        maxAbsYOffset: Math.abs(originOffset),
+        maxAbsHeightDelta: 0,
+        maxAbsGapDelta: 0,
+        alignment: "global-origin-offset",
+      },
+      firstDivergence,
+      anchors: anchors.sort(visualCompareLayoutAnchorOrder).slice(0, 12),
+    }
+  }
   const changedFlowElements = new Set(anchors.map((anchor) => anchor.path)).size
   if (divergences.length === 0) {
     if (!screenshotChanged) {
@@ -2538,6 +2677,7 @@ export function visualCompareLayoutDrift(sourceElements: VisualCompareDomElement
         maxAbsYOffset: 0,
         maxAbsHeightDelta: 0,
         maxAbsGapDelta: 0,
+        alignment: "none",
       },
       firstDivergence,
       anchors: [],
@@ -2555,8 +2695,17 @@ export function visualCompareLayoutDrift(sourceElements: VisualCompareDomElement
     maxAbsYOffset: roundVisualDelta(maxAbsYOffset),
     maxAbsHeightDelta: roundVisualDelta(maxAbsHeightDelta),
     maxAbsGapDelta: roundVisualDelta(maxAbsGapDelta),
+    alignment: "reflow" as const,
   }
   return { summary, firstDivergence, anchors: anchors.sort(visualCompareLayoutAnchorOrder).slice(0, 12) }
+}
+
+function visualCompareGlobalOriginOffset(matched: Array<{ source: VisualCompareDomElementSnapshot; candidate: VisualCompareDomElementSnapshot }>, added: VisualCompareDomElementSnapshot[], removed: VisualCompareDomElementSnapshot[]): number | undefined {
+  if (matched.length < 2 || added.length > 0 || removed.length > 0) return undefined
+  const offsets = matched.map(({ source, candidate }) => roundVisualDelta(candidate.boundingBox.y - source.boundingBox.y))
+  const offset = offsets[0]
+  if (!offset || !offsets.every((value) => value === offset)) return undefined
+  return matched.every(({ source, candidate }) => roundVisualDelta(candidate.boundingBox.x - source.boundingBox.x) === 0 && roundVisualDelta(candidate.boundingBox.width - source.boundingBox.width) === 0 && roundVisualDelta(candidate.boundingBox.height - source.boundingBox.height) === 0) ? offset : undefined
 }
 
 function visualCompareElementInDocumentFlow(element: VisualCompareDomElementSnapshot): boolean {
@@ -2606,7 +2755,7 @@ function visualCompareLayoutAnchorOrder(a: VisualCompareLayoutDriftAnchor, b: Vi
 }
 
 function visualCompareLayoutDivergencePriority(type: VisualCompareLayoutDriftDivergenceType): number {
-  return ["height-delta", "gap-delta", "y-offset", "added-flow-element", "removed-flow-element", "screenshot-only"].indexOf(type)
+  return ["global-origin-offset", "height-delta", "gap-delta", "y-offset", "added-flow-element", "removed-flow-element", "screenshot-only"].indexOf(type)
 }
 
 function visualCompareLayoutDriftSummary(first: VisualCompareLayoutDriftDivergence, counts: { matched: number; added: number; removed: number }): string {
