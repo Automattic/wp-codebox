@@ -6,6 +6,24 @@
     "nodejs": {}
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
+  "deployment_provider": {
+    "extension": "cloudflare-workers",
+    "provider": "cloudflare-workers.deploy",
+    "policy": {
+      "wrangler": {
+        "binary": "./node_modules/.bin/wrangler",
+        "config": "packages/runtime-cloudflare/wrangler.d1.jsonc",
+        "config_ref": "packages/runtime-cloudflare/wrangler.d1.jsonc"
+      },
+      "expected_bindings": [
+        "WORDPRESS_RUNTIME_QUEUE",
+        "WORDPRESS_STATE_BUCKET",
+        "WORDPRESS_STATE_DATABASE"
+      ],
+      "predeploy_commands": [],
+      "timeout_ms": 300000
+    }
+  },
   "release": {
     "package_coverage": [
       {
