@@ -21,7 +21,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
+import { materializePlaygroundMountsFromVfs, materializePlaygroundStagedFiles } from "./mount-materialization.js"
 import { runAbilityCommand, runAdminActionInventoryCommand, runBenchCommand, runCacheChurnObservationCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestPerformanceObservationCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand, runWordPressExecutionActionCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -337,15 +337,16 @@ class PlaygroundRuntime implements Runtime {
       return undefined
     }
 
-    await this.bootPlayground()
+    const server = await this.bootPlayground()
+    const materialized = await materializePlaygroundStagedFiles(server, mounts)
     const materialization = {
-      materialized: 0,
+      materialized,
       deleted: 0,
       skipped: 0,
       phaseResult: materializationPhaseResult({
         phase: "playground-staged-input-materialization",
         status: "completed",
-        metadata: { materialized: 0, deleted: 0, skipped: 0, mounts: mounts.length, transport: "direct-nodefs-mount" },
+        metadata: { materialized, deleted: 0, skipped: 0, mounts: mounts.length, transport: materialized > 0 ? "direct-nodefs-mount-with-file-write" : "direct-nodefs-mount" },
       }),
     }
     this.recordEvent("runtime.staged-inputs.materialized", { ...materialization, source: "direct-nodefs-mount" })

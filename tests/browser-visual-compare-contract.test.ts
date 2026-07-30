@@ -20,7 +20,9 @@ assert.deepEqual(maxElements && { format: maxElements.format }, { format: "posit
 assert.deepEqual(maxCandidates && { format: maxCandidates.format }, { format: "positive integer" })
 assert.deepEqual(selector && { repeatable: selector.repeatable, format: selector.format }, { repeatable: true, format: "CSS selector" })
 const matrixDescription = acceptedArgs.find((arg) => arg.name === "matrix-json")?.description ?? ""
-for (const field of ["maxExplanationElements", "maxExplanationCandidates", "explainSelectors", "max-explanation-elements", "max-explanation-candidates", "explain-selector"]) {
+// The matrix catalog is a public compatibility contract. Keep legacy wait/explanation
+// aliases documented while capture controls are added alongside them.
+for (const field of ["wait settings", "waitFor", "wait-for", "durationMs", "duration", "maxExplanationElements", "maxExplanationCandidates", "explainSelectors", "max-explanation-elements", "max-explanation-candidates", "explain-selector", "reducedMotion", "reduced-motion", "animations", "frozenTime", "frozen-time", "captureStyle", "capture-style", "blockExternalRequests", "block-external-requests"]) {
   assert.match(matrixDescription, new RegExp(field))
 }
 
@@ -42,7 +44,7 @@ async function visualCompareRun(artifactRoot: string, args: string[]) {
   })
 }
 
-const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[]) => ({
+const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[], capture = { reducedMotion: true, animations: "freeze", injectedStyleBytes: 0, externalRequests: "block" }) => ({
   waitFor: "domcontentloaded",
   durationMs: 0,
   timeoutMs: 120_000,
@@ -53,6 +55,7 @@ const expectedOptions = (maxExplanationElements: number, maxExplanationCandidate
   maxRegions: 8,
   maxExplanationElements,
   maxExplanationCandidates,
+  capture,
   ...(explainSelectors ? { explainSelectors } : {}),
 })
 
@@ -71,8 +74,13 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
     "max-explanation-candidates=240",
     "explain-selector=main",
     "explain-selector=body",
+    "reduced-motion=false",
+    "animations=allow",
+    "frozen-time=2020-01-01T01:00:00+01:00",
+    "capture-style=body{color:red}",
+    "block-external-requests=false",
   ])).output)
-  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"]))
+  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"], { reducedMotion: false, animations: "allow", frozenTime: "2020-01-01T00:00:00.000Z", injectedStyleBytes: 15, externalRequests: "allow" }))
   assert.equal(pair.schema, "wp-codebox/visual-compare/v1")
   assert.equal(pair.command, "wordpress.visual-compare")
   assert.equal(pair.status, "identical")
@@ -110,6 +118,9 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
   for (const [arg, message] of [["max-explanation-elements=0", "max-explanation-elements"], ["max-explanation-candidates=0", "max-explanation-candidates"], ["max-explanation-elements=1.5", "max-explanation-elements"], ["max-explanation-candidates=160px", "max-explanation-candidates"]]) {
     await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, arg]), new RegExp(`${message} must be a positive integer`))
   }
+  await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "animations=fast"]), /animations must be freeze or allow/)
+  await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, `capture-style=${"x".repeat(16 * 1024 + 1)}`]), /capture-style must not exceed 16384 bytes/)
+  await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "frozen-time=July 4, 2020"]), /timezone-bearing ISO-8601/)
 
   const matrix = JSON.parse((await visualCompareRun(artifactRoot, [
     "explain-selector=main",
