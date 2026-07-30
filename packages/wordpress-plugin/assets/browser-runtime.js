@@ -651,6 +651,11 @@
 		let hydrated;
 		if ( typeof options.hydrateBlueprintRef === 'function' ) {
 			hydrated = await options.hydrateBlueprintRef( request, boot );
+		} else if ( window.wp?.apiFetch && typeof blueprintRef.hydration_endpoint === 'string' && blueprintRef.hydration_endpoint.startsWith( '/' ) && ! blueprintRef.hydration_endpoint.startsWith( '//' ) ) {
+			hydrated = await window.wp.apiFetch( {
+				path: blueprintRef.hydration_endpoint,
+				method: 'GET',
+			} );
 		} else if ( typeof fetch === 'function' && blueprintRef.hydration_endpoint ) {
 			const endpoint = new URL( blueprintRef.hydration_endpoint, window.location.href );
 			endpoint.searchParams.set( 'ref', ref );

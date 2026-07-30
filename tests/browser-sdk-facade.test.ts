@@ -556,6 +556,29 @@ assert.equal(previewStart.status, "started")
 assert.equal(previewStart.session_id, "preview-session-1")
 assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
 assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
+const apiFetchRequests: any[] = []
+const restRelativePreviewBoot = {
+  ...previewFixture.response.preview_boot,
+  blueprint_ref: {
+    ...previewFixture.response.preview_boot.blueprint_ref,
+    hydration_endpoint: "/wp-codebox/v1/browser-blueprint-ref?ref=prepared%3Apreview%3Aabc",
+  },
+}
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    apiFetchRequests.push(request)
+    return { schema: "wp-codebox/browser-blueprint-hydration/v1", blueprint: { steps: [{ step: "login" }] } }
+  },
+}
+await api.v1.startBrowserPreview(restRelativePreviewBoot, {
+  iframe: { tagName: "IFRAME" },
+  startPlaygroundWeb: async () => ({ client: "playground" }),
+})
+assert.deepEqual(plain(apiFetchRequests), [{
+  path: restRelativePreviewBoot.blueprint_ref.hydration_endpoint,
+  method: "GET",
+}])
+delete sandbox.window.wp
 await assert.rejects(
   () => api.v1.startBrowserPreview({
     ...previewFixture.response.preview_boot,
