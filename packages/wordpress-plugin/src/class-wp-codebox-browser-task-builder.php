@@ -1071,9 +1071,9 @@ final class WP_Codebox_Browser_Task_Builder {
 			return '';
 		}
 
-		$endpoint = '/wp-codebox/v1/browser-blueprint-ref?ref=' . rawurlencode( $ref );
+		$endpoint = '/wp-codebox/v1/browser-blueprint-ref/' . $ref;
 		if ( function_exists( 'wp_create_nonce' ) ) {
-			$endpoint .= '&_wpnonce=' . rawurlencode( wp_create_nonce( 'wp_rest' ) );
+			$endpoint .= '?_wpnonce=' . rawurlencode( wp_create_nonce( 'wp_rest' ) );
 		}
 
 		return $endpoint;

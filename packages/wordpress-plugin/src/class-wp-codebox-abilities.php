@@ -139,6 +139,15 @@ final class WP_Codebox_Abilities {
 		);
 		register_rest_route(
 			'wp-codebox/v1',
+			'/browser-blueprint-ref/(?P<ref>prepared:[A-Za-z0-9_-]+:[a-f0-9]{64})',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( self::class, 'rest_browser_blueprint_ref' ),
+				'permission_callback' => array( self::class, 'can_hydrate_browser_blueprint_ref' ),
+			)
+		);
+		register_rest_route(
+			'wp-codebox/v1',
 			'/preview-boot-ref',
 			array(
 				'methods'             => 'POST',
