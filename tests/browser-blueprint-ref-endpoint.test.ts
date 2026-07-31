@@ -56,9 +56,9 @@ echo json_encode( array( 'blueprint_ref' => $blueprint_ref, 'runtime_ref' => $ru
 
 assert.equal(result.blueprint_ref.schema, "wp-codebox/browser-blueprint-ref/v1")
 assert.equal(result.blueprint_ref.ref, "prepared:studio-proof:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-assert.match(result.blueprint_ref.hydration_endpoint, /\/wp-codebox\/v1\/browser-blueprint-ref\?ref=prepared%3Astudio-proof%3A[a]{64}&_wpnonce=test-rest-nonce$/)
+assert.match(result.blueprint_ref.hydration_endpoint, /\/wp-codebox\/v1\/browser-blueprint-ref\/prepared:studio-proof:[a]{64}\?_wpnonce=test-rest-nonce$/)
 assert.equal(result.runtime_ref.ref, "prepared:runtime-proof:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 assert.equal(result.boot_config.blueprint_ref.ref, "prepared:boot-runtime-proof:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
-assert.match(result.boot_config.blueprint_ref.hydration_endpoint, /\/wp-codebox\/v1\/browser-blueprint-ref\?ref=prepared%3Aboot-runtime-proof%3A[c]{64}&_wpnonce=test-rest-nonce$/)
+assert.match(result.boot_config.blueprint_ref.hydration_endpoint, /\/wp-codebox\/v1\/browser-blueprint-ref\/prepared:boot-runtime-proof:[c]{64}\?_wpnonce=test-rest-nonce$/)
 
 console.log("browser blueprint ref endpoint ok")
