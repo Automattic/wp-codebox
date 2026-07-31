@@ -125,6 +125,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     assertResolvedInputMountPathArgs(resolvedArgs, options.inputMountPathMap, `Recipe command ${step.command}`)
     return {
       ...spec,
+      ...(step.timeoutMs !== undefined && spec.timeoutMs === undefined ? { timeoutMs: step.timeoutMs } : {}),
       args: resolvedArgs,
       originalCommand: step.command,
       originalArgs: [...originalArgs],
@@ -183,7 +184,11 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     })
   }
 
-  return finish({ command: resolvedStep.command, args: [...(resolvedStep.args ?? []), ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics)], diagnostics: resolvedStep.diagnostics })
+  return finish({
+    command: resolvedStep.command,
+    args: [...(resolvedStep.args ?? []), ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics)],
+    diagnostics: resolvedStep.diagnostics,
+  })
 }
 
 function rewriteRecipeExecutionArgs(command: string, args: readonly string[], recipeDirectory: string, inputMountPathMap: readonly InputMountPathMapping[] = []): string[] {

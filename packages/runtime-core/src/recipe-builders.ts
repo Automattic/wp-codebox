@@ -176,6 +176,7 @@ function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: stri
     return {
       command: step.command,
       ...(step.args !== undefined ? { args: step.args } : {}),
+      ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
       ...(step.metadata !== undefined ? { metadata: step.metadata } : {}),
       ...(step.allowFailure !== undefined ? { allowFailure: step.allowFailure } : {}),
       ...(step.advisory !== undefined ? { advisory: step.advisory } : {}),

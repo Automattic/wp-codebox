@@ -1219,6 +1219,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string" },
           },
+          timeoutMs: { type: "integer", minimum: 1 },
           diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           metadata: { $ref: "#/$defs/metadata" },
           allowFailure: { type: "boolean" },
