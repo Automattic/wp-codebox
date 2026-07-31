@@ -60,6 +60,12 @@ const topology = browserPreviewTopology(
 const browser = await launchChromiumBrowser()
 
 try {
+  const directResponse = await fetch(`${proxy.serverUrl}/direct-preview/`)
+  assert.equal(directResponse.status, 200)
+  const proxyOrigin = new URL(proxy.serverUrl)
+  const upstreamOrigin = new URL(upstreamUrl)
+  assert(requests.some((request) => request.url === "/direct-preview/" && request.host === upstreamOrigin.host && request.forwardedHost === proxyOrigin.host && request.forwardedPort === proxyOrigin.port && request.forwardedProto === "http"))
+
   const context = await browser.newContext({
     ...topology.contextOptions(),
     extraHTTPHeaders: {

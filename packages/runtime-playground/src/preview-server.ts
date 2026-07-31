@@ -163,7 +163,7 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
 
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
   return new Promise((resolve) => {
-    const requestTarget = previewProxyRequestTarget(incoming)
+    const requestTarget = previewProxyRequestTarget(incoming, target)
     let settled = false
     let targetResponse: IncomingMessage | undefined
     const settle = () => {
@@ -215,19 +215,21 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
 }
 
 interface PreviewProxyRequestTarget {
-  host: string
+  upstreamHost: string
+  visibleHost: string
   path: string
   port: string
   protocol: "http:" | "https:"
 }
 
-function previewProxyRequestTarget(incoming: IncomingMessage): PreviewProxyRequestTarget {
+function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): PreviewProxyRequestTarget {
   const rawUrl = incoming.url ?? "/"
   try {
     const url = new URL(rawUrl)
     if (url.protocol === "http:" || url.protocol === "https:") {
       return {
-        host: url.host,
+        upstreamHost: url.host,
+        visibleHost: url.host,
         path: `${url.pathname}${url.search}`,
         port: url.port || (url.protocol === "https:" ? "443" : "80"),
         protocol: url.protocol,
@@ -238,7 +240,7 @@ function previewProxyRequestTarget(incoming: IncomingMessage): PreviewProxyReque
   }
   const host = incoming.headers.host ?? "localhost"
   const authority = new URL(`http://${host}`)
-  return { host: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:" }
+  return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:" }
 }
 
 function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
@@ -309,8 +311,8 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
 
   return {
     ...forwarded,
-    host: requestTarget.host,
-    "x-forwarded-host": requestTarget.host,
+    host: requestTarget.upstreamHost,
+    "x-forwarded-host": requestTarget.visibleHost,
     "x-forwarded-port": requestTarget.port,
     "x-forwarded-proto": requestTarget.protocol.slice(0, -1),
   }
@@ -326,7 +328,7 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: Previ
       const location = new URL(forwarded.location, target)
       if (location.origin === target.origin) {
         location.protocol = requestTarget.protocol
-        const visible = new URL(`${requestTarget.protocol}//${requestTarget.host}`)
+        const visible = new URL(`${requestTarget.protocol}//${requestTarget.visibleHost}`)
         location.hostname = visible.hostname
         location.port = visible.port
         forwarded.location = location.toString()
