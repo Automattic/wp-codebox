@@ -286,6 +286,7 @@ export interface WorkspaceRecipeSourcePackage {
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
+  timeoutMs?: number
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean

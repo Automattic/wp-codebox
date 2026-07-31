@@ -318,7 +318,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         try {
           const execution = await awaitRecipe(operation, async () => workflowStep.step.command === "wordpress.collect-workload-result"
             ? withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args), workflowStep.step.metadata)
-            : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
+            : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap), workflowStep.step.timeoutMs)
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
         } catch (error) {

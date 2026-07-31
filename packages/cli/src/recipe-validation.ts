@@ -104,6 +104,10 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
       throw new Error(`Recipe workflow ${phase} args must be arrays: ${recipePath}`)
     }
 
+    if (step.timeoutMs !== undefined && (!Number.isSafeInteger(step.timeoutMs) || step.timeoutMs <= 0)) {
+      throw new Error(`Recipe workflow ${phase} timeoutMs must be a positive integer: ${recipePath}`)
+    }
+
     if (step.diagnostics !== undefined && (!step.diagnostics || typeof step.diagnostics !== "object" || Array.isArray(step.diagnostics))) {
       throw new Error(`Recipe workflow ${phase} diagnostics must be an object: ${recipePath}`)
     }

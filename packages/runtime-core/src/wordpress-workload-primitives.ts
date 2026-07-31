@@ -146,6 +146,7 @@ function normalizeRecipeSteps(steps: WorkspaceRecipeStep[] | undefined): Workspa
     return stripUndefined({
       command,
       args: Array.isArray(step.args) ? step.args.map((arg) => String(arg)) : undefined,
+      timeoutMs: step.timeoutMs,
       allowFailure: step.allowFailure,
       advisory: step.advisory,
     }) as WorkspaceRecipeStep
