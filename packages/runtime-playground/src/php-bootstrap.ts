@@ -40,6 +40,7 @@ ${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec, args)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
+${bootstrapMode === "runtime-only" ? "" : multisiteRequestBootstrapPhp()}
 ${bootstrapMode === "runtime-only" ? "" : "require_once '/wordpress/wp-load.php';"}
 ${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
 ${bootstrapMode === "runtime-only" ? "" : recipeActivePluginBootstrapPhp(spec, args)}
@@ -49,6 +50,21 @@ putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)
 ${command.body}`
 
   return failureDiagnosticFile && bootstrapMode !== "runtime-only" ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
+}
+
+function multisiteRequestBootstrapPhp(): string {
+  return `$wp_codebox_wp_config = @file_get_contents('/wordpress/wp-config.php');
+if (is_string($wp_codebox_wp_config)) {
+    if (preg_match('/define\\s*\\(\\s*([\\\'\"])DOMAIN_CURRENT_SITE\\1\\s*,\\s*([\\\'\"])([^\\\'\"]+)\\2\\s*\\)/', $wp_codebox_wp_config, $wp_codebox_domain_match)) {
+        $_SERVER['HTTP_HOST'] = $wp_codebox_domain_match[3];
+        $_SERVER['SERVER_NAME'] = $wp_codebox_domain_match[3];
+    }
+    if (preg_match('/define\\s*\\(\\s*([\\\'\"])PATH_CURRENT_SITE\\1\\s*,\\s*([\\\'\"])([^\\\'\"]+)\\2\\s*\\)/', $wp_codebox_wp_config, $wp_codebox_path_match)) {
+        $_SERVER['REQUEST_URI'] = $wp_codebox_path_match[3];
+    }
+}
+unset($wp_codebox_wp_config, $wp_codebox_domain_match, $wp_codebox_path_match);
+`
 }
 
 function phpFailureDiagnosticWrapperPhp(code: string, path: string): string {

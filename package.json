@@ -245,6 +245,7 @@
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
     "test:site-seed-multisite": "tsx tests/site-seed-multisite.test.ts",
     "test:playground-mapped-domain-multisite-integration": "tsx tests/playground-mapped-domain-multisite.integration.test.ts",
+    "test:playground-multisite-checkpoint-integration": "tsx tests/playground-multisite-checkpoint.integration.test.ts",
     "test:runtime-workers": "tsx tests/runtime-workers.test.ts",
     "test:recipe-runtime-backend-normalization": "tsx tests/recipe-runtime-backend-normalization.test.ts",
     "test:recipe-runtime-setup-staged-materialization": "tsx tests/recipe-runtime-setup-staged-materialization.test.ts",
