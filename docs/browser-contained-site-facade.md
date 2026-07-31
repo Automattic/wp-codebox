@@ -17,7 +17,7 @@ The contained-site facade is the product-facing browser lane for WordPress previ
 
 ## Boundary
 
-Consumers open or create the contained site, then call `window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe })`. `preview_boot` is the public descriptor and requires one hydratable `blueprint_ref`; inline blueprint data is not a product response contract.
+Consumers open or create the contained site, then call `window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe, signal })`. `preview_boot` is the public descriptor and requires one hydratable `blueprint_ref`; inline blueprint data is not a product response contract. A successful result preserves the existing `client` and result envelope and adds async `dispose()`. Disposal is idempotent, resets the supplied iframe to terminate its Playground context, and returns `wp-codebox/browser-preview-dispose-result/v1` cleanup evidence; it never removes the caller-owned iframe. Aborting the signal rejects startup with `browser_preview_aborted` and suppresses later Playground lifecycle callbacks.
 
 ## Diagnostics
 

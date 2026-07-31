@@ -46,6 +46,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "runtime-task:create-request",
     "runtime-task:run",
     "browser-preview:start",
+    "browser-preview:lifecycle",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
@@ -556,6 +557,7 @@ assert.equal(previewStart.status, "started")
 assert.equal(previewStart.session_id, "preview-session-1")
 assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
 assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
+assert.equal(typeof previewStart.dispose, "function", "successful previews expose async disposal without changing the result envelope")
 const apiFetchRequests: any[] = []
 const restRelativePreviewBoot = {
   ...previewFixture.response.preview_boot,
@@ -589,6 +591,97 @@ await assert.rejects(
     return true
   },
 )
+
+const lifecycleBoot = {
+  ...previewFixture.response.preview_boot,
+  scope: "preview-lifecycle-test",
+}
+const preAborted = new AbortController()
+preAborted.abort()
+let preAbortStarted = false
+await assert.rejects(
+  () => api.v1.startBrowserPreview(lifecycleBoot, {
+    signal: preAborted.signal,
+    hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+    startPlaygroundWeb: async () => {
+      preAbortStarted = true
+      return {}
+    },
+  }),
+  (error: any) => error.code === "browser_preview_aborted",
+)
+assert.equal(preAbortStarted, false, "a pre-aborted signal does not start Playground")
+
+let finishHydration: ((value: unknown) => void) | undefined
+let duringAbortStarted = false
+const duringAbort = new AbortController()
+const duringAbortIframe: { src: string } = { src: "https://playground.example/remote.html" }
+const duringAbortStart = api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-abort-during-startup" }, {
+  iframe: duringAbortIframe,
+  signal: duringAbort.signal,
+  hydrateBlueprintRef: () => new Promise((resolve) => {
+    finishHydration = resolve
+  }),
+  startPlaygroundWeb: async () => {
+    duringAbortStarted = true
+    return {}
+  },
+})
+duringAbort.abort()
+await assert.rejects(duringAbortStart, (error: any) => error.code === "browser_preview_aborted")
+finishHydration?.({ blueprint: { steps: [] } })
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.equal(duringAbortStarted, false, "aborting startup suppresses work after hydration")
+assert.equal(duringAbortIframe.src, "about:blank", "aborting startup resets the associated iframe")
+
+const lifecycleCallbacks: Record<string, (...args: any[]) => unknown> = {}
+const lifecycleIframe: { src: string } = { src: "https://playground.example/remote.html" }
+let callbackMutations = 0
+const lifecyclePreview = await api.v1.startBrowserPreview(lifecycleBoot, {
+  iframe: lifecycleIframe,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startOptions: {
+    onBlueprintStepCompleted: () => { callbackMutations += 1 },
+    onBlueprintValidated: () => { callbackMutations += 1 },
+    onClientConnected: () => { callbackMutations += 1 },
+  },
+  startPlaygroundWeb: async (request: Record<string, any>) => {
+    Object.assign(lifecycleCallbacks, {
+      onBlueprintStepCompleted: request.onBlueprintStepCompleted,
+      onBlueprintValidated: request.onBlueprintValidated,
+      onClientConnected: request.onClientConnected,
+    })
+    return { client: "lifecycle-playground" }
+  },
+})
+lifecycleCallbacks.onBlueprintStepCompleted()
+lifecycleCallbacks.onBlueprintValidated()
+lifecycleCallbacks.onClientConnected()
+assert.equal(callbackMutations, 3, "Playground lifecycle callbacks retain existing behavior while active")
+const disposed = await lifecyclePreview.dispose()
+assert.deepEqual(plain(disposed), {
+  schema: "wp-codebox/browser-preview-dispose-result/v1",
+  success: true,
+  status: "disposed",
+  scope: "preview-lifecycle-test",
+  iframe_reset: true,
+  listeners_released: true,
+  pending_work_cancelled: true,
+  lifecycle_released: true,
+})
+assert.equal(await lifecyclePreview.dispose(), disposed, "preview disposal is idempotent")
+assert.equal(lifecycleIframe.src, "about:blank", "disposal resets but does not remove the caller-owned iframe")
+lifecycleCallbacks.onBlueprintStepCompleted()
+lifecycleCallbacks.onBlueprintValidated()
+lifecycleCallbacks.onClientConnected()
+assert.equal(callbackMutations, 3, "disposed previews suppress late Playground lifecycle callbacks")
+const replacementPreview = await api.v1.startBrowserPreview(lifecycleBoot, {
+  iframe: { src: "https://playground.example/remote.html" },
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async () => ({ client: "replacement-playground" }),
+})
+assert.equal(replacementPreview.client.client, "replacement-playground", "disposing releases a scope for a replacement preview")
+await replacementPreview.dispose()
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

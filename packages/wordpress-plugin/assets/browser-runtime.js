@@ -15,6 +15,7 @@
 		'runtime-task:create-request',
 		'runtime-task:run',
 		'browser-preview:start',
+		'browser-preview:lifecycle',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
@@ -702,41 +703,139 @@
 		return module.startPlaygroundWeb;
 	};
 
-	const startBrowserPreview = async ( input, options = {} ) => {
-		const boot = browserPreviewBootConfig( input );
-		const startPlaygroundWeb = await resolveStartPlaygroundWeb( boot, options );
-		const blueprint = await hydrateBrowserPreviewBlueprint( boot, options );
-		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
-		const request = {
-			...( options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {} ),
-			...( iframe ? { iframe } : {} ),
-			...( boot.remote_url ? { remoteUrl: boot.remote_url } : {} ),
-			...( boot.cors_proxy_url ? { corsProxyUrl: boot.cors_proxy_url } : {} ),
-			...( boot.scope ? { scope: boot.scope } : {} ),
-			blueprint,
-		};
-		const client = await startPlaygroundWeb( request );
+	const browserPreviewLifecycles = new Map();
+	const browserPreviewAbortError = () => runtimeError( 'browser_preview_start', 'browser_preview_aborted', 'Browser preview start was aborted.' );
 
-		if ( typeof options.onClientConnected === 'function' ) {
-			options.onClientConnected( client );
+	const resetBrowserPreviewIframe = ( iframe ) => {
+		if ( iframe && typeof iframe === 'object' && 'src' in iframe ) {
+			iframe.src = 'about:blank';
+			return true;
 		}
 
-		return {
-			schema: 'wp-codebox/browser-preview-start-result/v1',
-			success: true,
-			status: 'started',
-			session_id: boot.session_id || '',
-			preview: boot.preview || null,
-			boot,
-			request: {
-				remoteUrl: request.remoteUrl || null,
-				corsProxyUrl: request.corsProxyUrl || null,
-				scope: request.scope || null,
-				hasIframe: !! request.iframe,
-				hasBlueprint: !! request.blueprint,
+		return false;
+	};
+
+	const createBrowserPreviewLifecycle = ( scope, iframe, signal ) => {
+		let active = true;
+		let cancelled = false;
+		let cleanup;
+		let abortListener;
+		let rejectCancellation;
+		const cancellation = new Promise( ( unused, reject ) => {
+			rejectCancellation = reject;
+		} );
+		const lifecycle = {
+			isActive: () => active,
+			wait: ( promise ) => Promise.race( [ promise, cancellation ] ),
+			dispose: async () => {
+				if ( cleanup ) {
+					return cleanup;
+				}
+
+				active = false;
+				cleanup = Promise.resolve().then( () => {
+					if ( signal && abortListener && typeof signal.removeEventListener === 'function' ) {
+						signal.removeEventListener( 'abort', abortListener );
+					}
+					if ( scope && browserPreviewLifecycles.get( scope ) === lifecycle ) {
+						browserPreviewLifecycles.delete( scope );
+					}
+					return Object.freeze( {
+						schema: 'wp-codebox/browser-preview-dispose-result/v1',
+						success: true,
+						status: 'disposed',
+						scope: scope || null,
+						iframe_reset: resetBrowserPreviewIframe( iframe ),
+						listeners_released: true,
+						pending_work_cancelled: true,
+						lifecycle_released: true,
+					} );
+				} );
+				return cleanup;
 			},
-			client,
+			cancel: () => {
+				if ( cancelled ) {
+					return;
+				}
+				cancelled = true;
+				rejectCancellation( browserPreviewAbortError() );
+				void lifecycle.dispose();
+			},
 		};
+
+		if ( signal && typeof signal.addEventListener === 'function' ) {
+			abortListener = () => lifecycle.cancel();
+			signal.addEventListener( 'abort', abortListener, { once: true } );
+		}
+
+		return lifecycle;
+	};
+
+	const startBrowserPreview = async ( input, options = {} ) => {
+		if ( options.signal?.aborted ) {
+			throw browserPreviewAbortError();
+		}
+		const boot = browserPreviewBootConfig( input );
+		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const scope = String( boot.scope || '' );
+		const previousLifecycle = scope ? browserPreviewLifecycles.get( scope ) : null;
+		if ( previousLifecycle ) {
+			await previousLifecycle.dispose();
+		}
+		const lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal );
+		if ( options.signal?.aborted ) {
+			await lifecycle.dispose();
+			throw browserPreviewAbortError();
+		}
+		if ( scope ) {
+			browserPreviewLifecycles.set( scope, lifecycle );
+		}
+
+		try {
+			const startPlaygroundWeb = await lifecycle.wait( resolveStartPlaygroundWeb( boot, options ) );
+			const blueprint = await lifecycle.wait( hydrateBrowserPreviewBlueprint( boot, options ) );
+			const startOptions = options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {};
+			const guardedStartOptions = { ...startOptions };
+			for ( const name of [ 'onBlueprintStepCompleted', 'onBlueprintValidated', 'onClientConnected' ] ) {
+				if ( typeof startOptions[ name ] === 'function' ) {
+					guardedStartOptions[ name ] = ( ...args ) => lifecycle.isActive() && startOptions[ name ]( ...args );
+				}
+			}
+			const request = {
+				...guardedStartOptions,
+				...( iframe ? { iframe } : {} ),
+				...( boot.remote_url ? { remoteUrl: boot.remote_url } : {} ),
+				...( boot.cors_proxy_url ? { corsProxyUrl: boot.cors_proxy_url } : {} ),
+				...( boot.scope ? { scope: boot.scope } : {} ),
+				blueprint,
+			};
+			const client = await lifecycle.wait( startPlaygroundWeb( request ) );
+
+			if ( lifecycle.isActive() && typeof options.onClientConnected === 'function' ) {
+				options.onClientConnected( client );
+			}
+
+			return {
+				schema: 'wp-codebox/browser-preview-start-result/v1',
+				success: true,
+				status: 'started',
+				session_id: boot.session_id || '',
+				preview: boot.preview || null,
+				boot,
+				request: {
+					remoteUrl: request.remoteUrl || null,
+					corsProxyUrl: request.corsProxyUrl || null,
+					scope: request.scope || null,
+					hasIframe: !! request.iframe,
+					hasBlueprint: !! request.blueprint,
+				},
+				client,
+				dispose: lifecycle.dispose,
+			};
+		} catch ( error ) {
+			await lifecycle.dispose();
+			throw error;
+		}
 	};
 
 	const browserSdkContract = Object.freeze( [
