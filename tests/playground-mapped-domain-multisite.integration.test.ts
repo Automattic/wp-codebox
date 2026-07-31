@@ -42,6 +42,8 @@ try {
   await rm(root, { recursive: true, force: true })
 }
 
+await verifyConvertedPathMultisitePreview()
+
 function mappedTopologyRecipe(): Record<string, unknown> {
   const probeScript = `
 const rest = await fetch('/wp-json/wp-codebox/v1/mapped-site').then((response) => response.json());
@@ -136,4 +138,50 @@ interface RecipeRunOutput {
   siteSeeds?: Array<{ topology?: { effective?: { multisite?: boolean; install?: string; sites?: Array<{ domain: string; path: string }> }; browser?: { routeHosts?: string[] }; auth?: { anonymous?: string; crossDomainCookieParity?: string } } }>
   executions?: Array<{ command?: string; stdout: string }>
   phaseEvidence?: Array<{ name?: string; error?: { message?: string } }>
+}
+
+async function verifyConvertedPathMultisitePreview(): Promise<void> {
+  const pathRoot = await mkdtemp(join(tmpdir(), "wp-codebox-path-multisite-preview-"))
+  const pathRecipe = join(pathRoot, "recipe.json")
+  const pathArtifacts = join(pathRoot, "artifacts")
+  try {
+    await writeFile(pathRecipe, `${JSON.stringify({
+      schema: "wp-codebox/workspace-recipe/v1",
+      runtime: { backend: "wordpress-playground", wp: "6.5" },
+      workflow: {
+        steps: [
+          { command: "wordpress.wp-cli", args: ["command=wp core multisite-convert --title=\"Path Network\" --base=\"/\""] },
+          { command: "wordpress.run-php", args: ["code=$network = get_network(); $site_id = wp_insert_site( array( 'domain' => $network->domain, 'path' => '/community/', 'network_id' => $network->id, 'title' => 'Community' ) ); if ( is_wp_error( $site_id ) ) { throw new RuntimeException( $site_id->get_error_message() ); } update_blog_option( $site_id, 'home', 'http://' . $network->domain . '/community/' ); update_blog_option( $site_id, 'siteurl', 'http://' . $network->domain . '/community/' ); update_blog_option( $site_id, 'blogname', 'Community' );"] },
+          { command: "wordpress.browser-probe", args: ["url=/community/", "wait-for=load", "script=return { pathname: location.pathname };", "capture=network"] },
+          { command: "wordpress.browser-probe", args: ["url=/community/wp-login.php", "wait-for=load", "script=return { pathname: location.pathname };", "capture=network"] },
+        ],
+      },
+    })}\n`)
+
+    let output: RecipeRunOutput | undefined
+    try {
+      const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", pathRecipe, "--artifacts", pathArtifacts, "--json"], { cwd: process.cwd(), timeout: 300_000, maxBuffer: 4 * 1024 * 1024 })
+      output = JSON.parse(result.stdout) as RecipeRunOutput
+    } catch (error) {
+      const failedOutput = recipeRunOutput(error && typeof error === "object" && "stdout" in error ? error.stdout : undefined)
+      const message = failedOutput?.phaseEvidence?.find((phase) => phase.name === "runtime_startup")?.error?.message ?? ""
+      if (/Unable to resolve Playground startup asset.*fetch failed|Could not resolve host|network is unreachable/i.test(message)) {
+        console.log("playground path multisite preview integration skipped: WordPress runtime source unavailable")
+        return
+      }
+      throw error
+    }
+
+    assert.equal(output.success, true, JSON.stringify(output))
+    const probes = output.executions?.filter((execution) => execution.command === "wordpress.browser-probe") ?? []
+    assert.equal(probes.length, 2)
+    const community = JSON.parse(probes[0]!.stdout)
+    const login = JSON.parse(probes[1]!.stdout)
+    assert.equal(new URL(community.finalUrl).pathname, "/community/")
+    assert.deepEqual(community.summary.scriptResult, { pathname: "/community/" })
+    assert.equal(new URL(login.finalUrl).pathname, "/community/wp-login.php")
+    assert.deepEqual(login.summary.scriptResult, { pathname: "/community/wp-login.php" })
+  } finally {
+    await rm(pathRoot, { recursive: true, force: true })
+  }
 }
