@@ -152,11 +152,11 @@ export class ArtifactBundleBuilder {
         source.spec.environment.blueprint,
       )
       : undefined
-    const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
+    const runtimeSnapshots = source.snapshots
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])
         .filter((ref): ref is typeof ref & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
-        .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
+        .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot-artifact", "application/json")),
     )
     const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
