@@ -335,9 +335,9 @@ export function browserRedirectDiagnosticsArtifact({
   const repeatedUrls = repeatedBrowserRedirectValues(chain.map((entry) => entry.url), "url")
   const repeatedHosts = repeatedBrowserRedirectValues(chain.map((entry) => entry.host).filter((host): host is string => Boolean(host)), "host")
   const repeatedPaths = repeatedBrowserRedirectValues(chain.map((entry) => entry.path).filter((path): path is string => Boolean(path)), "path")
-  const hasRepeatedTarget = repeatedUrls.length > 0 || repeatedHosts.length > 0 || repeatedPaths.length > 0
+  const repeatedRedirectUrls = repeatedBrowserRedirectValues(redirectResponses.map((record) => browserRedirectSafeUrl(record.url)), "url")
 
-  if (!tooManyRedirects && redirectResponses.length === 0 && !hasRepeatedTarget) {
+  if (!tooManyRedirects && redirectResponses.length === 0) {
     return undefined
   }
 
@@ -346,10 +346,10 @@ export function browserRedirectDiagnosticsArtifact({
   const lastUrl = chain.at(-1)?.url ?? finalAttempted
   const sanitizedQueryKeys = [...new Set(chain.flatMap((entry) => entry.queryKeys))].sort()
   const redactedQueryKeys = [...new Set(chain.flatMap((entry) => entry.redactedQueryKeys))].sort()
-  const classification: BrowserRedirectDiagnosticsSummary["classification"] = tooManyRedirects || hasRepeatedTarget ? "redirect-loop" : "redirect-chain"
+  const classification: BrowserRedirectDiagnosticsSummary["classification"] = tooManyRedirects || repeatedRedirectUrls.length > 0 ? "redirect-loop" : "redirect-chain"
   const reason = tooManyRedirects
     ? "playwright reported ERR_TOO_MANY_REDIRECTS"
-    : hasRepeatedTarget ? "document navigation repeated URL, host, or path values" : "document navigation included redirect responses"
+    : repeatedRedirectUrls.length > 0 ? "redirect responses repeated document URL values" : "document navigation included redirect responses"
   const summary: BrowserRedirectDiagnosticsSummary = {
     status: "captured",
     artifact: artifactPath,
