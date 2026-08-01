@@ -2,7 +2,17 @@
 
 declare(strict_types=1);
 
+$plugin_root = sys_get_temp_dir() . '/wp-codebox-nonexecutable-cli-' . bin2hex( random_bytes( 4 ) );
+$wrapper     = $plugin_root . '/vendor/wp-codebox-cli/bin/wp-codebox';
+$entrypoint  = $plugin_root . '/vendor/wp-codebox-cli/packages/cli/dist/index.js';
+mkdir( dirname( $wrapper ), 0777, true );
+mkdir( dirname( $entrypoint ), 0777, true );
+file_put_contents( $wrapper, "#!/usr/bin/env bash\n" );
+file_put_contents( $entrypoint, "#!/usr/bin/env node\n" );
+chmod( $wrapper, 0644 );
+
 define( 'ABSPATH', __DIR__ );
+define( 'WP_CODEBOX_PLUGIN_PATH', $plugin_root . '/' );
 
 final class WP_Error {
 	private string $code;
@@ -150,5 +160,28 @@ foreach ( $cases as $name => $case ) {
 	smoke_assert( is_array( $result ) && ! is_wp_error( $result ), $name . ' returns result envelope' );
 	$case['assert']( $result );
 }
+
+$runner = new WP_Codebox_Agent_Sandbox_Runner(
+	array(
+		'command_resolver' => static fn( string $command ): string => 'node' === $command ? '/usr/bin/node' : '',
+	)
+);
+$method = new ReflectionMethod( $runner, 'command_prefix' );
+$prefix = $method->invoke( $runner, $wrapper );
+smoke_assert( ! is_wp_error( $prefix ), 'non-executable bundled wrapper resolves to a command prefix' );
+smoke_assert(
+	escapeshellarg( '/usr/bin/node' ) . ' ' . escapeshellarg( $entrypoint ) === $prefix,
+	'non-executable bundled wrapper runs its JavaScript entrypoint through Node'
+);
+
+unlink( $wrapper );
+unlink( $entrypoint );
+rmdir( dirname( $wrapper ) );
+rmdir( dirname( $entrypoint ) );
+rmdir( dirname( dirname( $entrypoint ) ) );
+rmdir( dirname( dirname( dirname( $entrypoint ) ) ) );
+rmdir( dirname( dirname( dirname( dirname( $entrypoint ) ) ) ) );
+rmdir( dirname( dirname( dirname( $wrapper ) ) ) );
+rmdir( $plugin_root );
 
 echo "agent runtime execution smoke passed\n";
