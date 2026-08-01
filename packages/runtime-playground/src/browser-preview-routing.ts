@@ -14,6 +14,7 @@ export interface BrowserPreviewNetworkPolicy {
   allowHosts: Set<string>
   blockHosts: Set<string>
   routeHosts: Set<string>
+  routeOrigins: Set<string>
   firstPartyHosts: Set<string>
   recordExternal: boolean
   stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
@@ -115,7 +116,7 @@ export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreat
   const routedHosts = [...new Set([...commaListArg(args, "route-host"), ...(declaredTopology?.routeHosts ?? [])])]
   const preview = browserPreviewRouting(args, runtimeSpec, localPreviewOrigin)
   applyCanonicalRoutedPreviewOrigin(preview, playgroundSiteSeedPrimaryUrl(runtimeSpec) ?? runtimeSpec?.preview?.siteUrl, routedHosts)
-  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview, browserPreviewInternalRouteOrigins(preview, upstreamRuntimeOrigin))
 
   return {
     preview,
@@ -151,6 +152,9 @@ export function browserPreviewNavigationScope(effectivePreviewOrigin: string, po
       }
       if (policy.routeHosts.has(normalizeBrowserPreviewHost(resolved.hostname))) {
         return { allowed: true, rawOrigin, effectiveOrigin, routeDecision: "routed-preview", reason: "declared-route-host" }
+      }
+      if (policy.routeOrigins.has(rawOrigin)) {
+        return { allowed: true, rawOrigin, effectiveOrigin, routeDecision: "routed-preview", reason: "internal-runtime-origin" }
       }
       return { allowed: false, rawOrigin, effectiveOrigin: rawOrigin, routeDecision: "external", reason: policy.allowHosts.has(normalizeBrowserPreviewHost(resolved.hostname)) ? "network-host-allowed-but-not-routed" : "host-not-routed-to-preview" }
     },
@@ -252,7 +256,7 @@ export function browserPreviewAuthCookieUrls(localPreviewOrigin: string, routedH
   return uniqueBrowserPreviewAuthCookieUrls(urls)
 }
 
-export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting): BrowserPreviewNetworkPolicy {
+export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting, routeOrigins: string[] = []): BrowserPreviewNetworkPolicy {
   const mode = browserPreviewNetworkPolicyMode(args)
   const allowHosts = new Set(commaListArg(args, "allow-host").map(normalizeBrowserPreviewHost).filter(Boolean))
   const blockHosts = new Set(commaListArg(args, "block-host").map(normalizeBrowserPreviewHost).filter(Boolean))
@@ -270,6 +274,7 @@ export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[]
     allowHosts,
     blockHosts,
     routeHosts: routedHosts,
+    routeOrigins: new Set(routeOrigins),
     firstPartyHosts,
     recordExternal: strictBooleanArg(args, "record-external", false),
     stats: new Map(),
@@ -283,7 +288,7 @@ export function browserPreviewNetworkPolicyIsActive(policy: BrowserPreviewNetwor
 }
 
 export function browserPreviewNeedsContextRouting(policy: BrowserPreviewNetworkPolicy): boolean {
-  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
+  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.routeOrigins.size > 0 || policy.recordExternal
 }
 
 export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetworkPolicy): BrowserProbeNetworkPolicySummary {
@@ -446,15 +451,25 @@ async function handleBrowserPreviewRoute(route: Route, policy: BrowserPreviewNet
     return
   }
 
-  if (policy.routeHosts.has(host)) {
+  const internalRuntimeRoute = policy.routeOrigins.has(requestUrl.origin)
+  if (internalRuntimeRoute || policy.routeHosts.has(host)) {
     stat.routed += 1
-    if (policy.preserveRoutedOrigin) {
+    if (internalRuntimeRoute && request.resourceType() === "document") {
+      const previewUrl = new URL(requestUrl.toString())
+      previewUrl.protocol = origin.protocol
+      previewUrl.hostname = origin.hostname
+      previewUrl.port = origin.port
+      setOperation("redirect-internal-runtime-document")
+      await route.fulfill({ status: 307, headers: { location: previewUrl.toString() }, body: "" })
+      return
+    }
+    if (!internalRuntimeRoute && policy.preserveRoutedOrigin) {
       setOperation("continue-preserved-routed-origin")
       await route.continue()
       return
     }
     setOperation("fulfill-routed-host")
-    await fulfillBrowserPreviewRoutedHost(route, requestUrl, policy, origin)
+    await fulfillBrowserPreviewRoutedHost(route, requestUrl, policy, origin, !internalRuntimeRoute)
     return
   }
 
@@ -469,8 +484,8 @@ async function handleBrowserPreviewRoute(route: Route, policy: BrowserPreviewNet
   await route.continue()
 }
 
-async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, localOrigin: URL): Promise<void> {
-  const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, policy, localOrigin)
+async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, localOrigin: URL, preserveRequestedAuthority: boolean): Promise<void> {
+  const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, policy, localOrigin, preserveRequestedAuthority)
   if (!response) {
     return
   }
@@ -543,7 +558,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, origin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
+async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, origin: URL, preserveRequestedAuthority: boolean): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
   let currentUrl = requestUrl
   for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
     const routedUrl = new URL(currentUrl.toString())
@@ -562,10 +577,10 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
           url: routedUrl.toString(),
           headers: {
             ...route.request().headers(),
-            host: currentUrl.host,
-            "x-forwarded-host": currentUrl.host,
-            "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
-            "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
+            host: preserveRequestedAuthority ? currentUrl.host : origin.host,
+            "x-forwarded-host": preserveRequestedAuthority ? currentUrl.host : origin.host,
+            "x-forwarded-port": preserveRequestedAuthority ? (currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80")) : (origin.port || (origin.protocol === "https:" ? "443" : "80")),
+            "x-forwarded-proto": (preserveRequestedAuthority ? currentUrl.protocol : origin.protocol).replace(":", ""),
           },
           maxRedirects: 0,
         })
@@ -605,7 +620,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
       return response
     }
     const redirectedHost = normalizeBrowserPreviewHost(redirectedUrl.hostname)
-    if (!policy.routeHosts.has(redirectedHost)) {
+    if (!policy.routeOrigins.has(redirectedUrl.origin) && !policy.routeHosts.has(redirectedHost)) {
       const stat = browserPreviewNetworkPolicyHostStat(policy, redirectedHost)
       stat.requests += 1
       stat.external = true
@@ -624,6 +639,16 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
   }
 
   throw new Error(`wordpress.browser-probe route-host exceeded redirect limit for ${requestUrl.href}`)
+}
+
+function browserPreviewInternalRouteOrigins(preview: BrowserProbePreviewRouting, upstreamRuntimeOrigin: string | undefined): string[] {
+  if (!upstreamRuntimeOrigin) {
+    return []
+  }
+
+  const upstream = new URL(upstreamRuntimeOrigin)
+  const previewOrigins = new Set([new URL(preview.localOrigin).origin, new URL(preview.effectiveOrigin).origin])
+  return [...new Set([upstream.origin, `${upstream.protocol}//${upstream.hostname}`])].filter((origin) => !previewOrigins.has(origin))
 }
 
 export function isBrowserPreviewRouteFetchRequestContextDisposedError(error: unknown): boolean {
