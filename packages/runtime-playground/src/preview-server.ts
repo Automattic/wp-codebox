@@ -1,5 +1,6 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
+import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
 
 export interface PlaygroundServerRunResponse {
@@ -190,14 +191,26 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       },
       (response) => {
         targetResponse = response
-        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, proxyResponseHeaders(response.headers, requestTarget, target))
+        const headers = proxyResponseHeaders(response.headers, requestTarget, target)
+        const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
+        if (bodyTransform) {
+          delete headers["content-length"]
+          delete headers["content-md5"]
+          delete headers.etag
+        }
+        outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, headers)
         response.on("error", (error) => {
           outgoing.destroy(error)
           settle()
         })
         outgoing.on("finish", settle)
         outgoing.on("close", settle)
-        response.pipe(outgoing)
+        if (bodyTransform) {
+          bodyTransform.on("error", (error) => outgoing.destroy(error))
+          response.pipe(bodyTransform).pipe(outgoing)
+        } else {
+          response.pipe(outgoing)
+        }
       },
     )
 
@@ -220,6 +233,7 @@ interface PreviewProxyRequestTarget {
   path: string
   port: string
   protocol: "http:" | "https:"
+  rewriteTargetOrigin: boolean
 }
 
 function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): PreviewProxyRequestTarget {
@@ -233,6 +247,7 @@ function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): Prev
         path: `${url.pathname}${url.search}`,
         port: url.port || (url.protocol === "https:" ? "443" : "80"),
         protocol: url.protocol,
+        rewriteTargetOrigin: false,
       }
     }
   } catch {
@@ -240,7 +255,7 @@ function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): Prev
   }
   const host = incoming.headers.host ?? "localhost"
   const authority = new URL(`http://${host}`)
-  return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:" }
+  return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:", rewriteTargetOrigin: true }
 }
 
 function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
@@ -308,6 +323,9 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
   delete forwarded["x-forwarded-host"]
   delete forwarded["x-forwarded-port"]
   delete forwarded["x-forwarded-proto"]
+  if (requestTarget.rewriteTargetOrigin) {
+    forwarded["accept-encoding"] = "identity"
+  }
 
   return {
     ...forwarded,
@@ -339,6 +357,92 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: Previ
   }
 
   return forwarded
+}
+
+function previewProxyResponseBodyTransform(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): Transform | undefined {
+  if (!requestTarget.rewriteTargetOrigin || requestTarget.visibleHost === target.host || !previewProxyTextResponse(headers)) {
+    return undefined
+  }
+
+  const contentEncoding = headerValue(headers["content-encoding"])
+  if (contentEncoding && contentEncoding.toLowerCase() !== "identity") {
+    return undefined
+  }
+
+  return originRewriteTransform(
+    [target.origin, `${target.protocol}//${target.hostname}`],
+    `${requestTarget.protocol}//${requestTarget.visibleHost}`,
+  )
+}
+
+function previewProxyTextResponse(headers: IncomingHttpHeaders): boolean {
+  const contentType = headerValue(headers["content-type"])
+  return !!contentType && (/^text\//i.test(contentType) || /\b(?:html|css|javascript|json|xml|svg)\b/i.test(contentType))
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value
+}
+
+function originRewriteTransform(internalOrigins: string[], visibleOrigin: string): Transform {
+  const searches = [...new Set(internalOrigins)]
+    .filter((origin) => origin !== visibleOrigin)
+    .map((origin) => Buffer.from(origin))
+    .sort((left, right) => right.length - left.length)
+  const replacement = Buffer.from(visibleOrigin)
+  const overlap = Math.max(...searches.map((search) => search.length), 1)
+  let pending = Buffer.alloc(0)
+
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      pending = Buffer.concat([pending, chunk])
+      let match = nextOriginMatch(pending, searches)
+      while (match) {
+        this.push(pending.subarray(0, match.index))
+        this.push(replacement)
+        pending = pending.subarray(match.index + match.search.length)
+        match = nextOriginMatch(pending, searches)
+      }
+
+      const safeLength = Math.max(0, pending.length - overlap)
+      if (safeLength > 0) {
+        this.push(pending.subarray(0, safeLength))
+        pending = pending.subarray(safeLength)
+      }
+      callback()
+    },
+    flush(callback) {
+      let match = nextOriginMatch(pending, searches, true)
+      while (match) {
+        this.push(pending.subarray(0, match.index))
+        this.push(replacement)
+        pending = pending.subarray(match.index + match.search.length)
+        match = nextOriginMatch(pending, searches, true)
+      }
+      this.push(pending)
+      callback()
+    },
+  })
+}
+
+function nextOriginMatch(buffer: Buffer, searches: Buffer[], allowTerminal = false): { index: number; search: Buffer } | undefined {
+  let match: { index: number; search: Buffer } | undefined
+  for (const search of searches) {
+    let index = buffer.indexOf(search)
+    while (index !== -1) {
+      const end = index + search.length
+      const boundary = end < buffer.length ? String.fromCharCode(buffer[end]!) : undefined
+      const completeOrigin = boundary ? /[\/?#\s'"<>)\]},;\\]/.test(boundary) : allowTerminal
+      if (completeOrigin) {
+        if (!match || index < match.index || (index === match.index && search.length > match.search.length)) {
+          match = { index, search }
+        }
+        break
+      }
+      index = buffer.indexOf(search, index + 1)
+    }
+  }
+  return match
 }
 
 function writeProxyError(outgoing: ServerResponse, error: Error): void {

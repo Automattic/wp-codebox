@@ -33,6 +33,28 @@ const upstream = createServer((request, response) => {
       response.end()
       return
     }
+    if (request.url === "/community/generated.js") {
+      response.writeHead(200, { "content-type": "application/javascript" })
+      response.end("window.generatedAssetLoaded = true")
+      return
+    }
+    if (request.url === "/community/wp-login.php") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+      response.end("<!doctype html><title>Community login</title><main>Login loaded</main>")
+      return
+    }
+    if (request.url === "/community/") {
+      const body = `<!doctype html><script src="${upstreamUrl}/community/generated.js"></script><a id="login" href="${upstreamUrl}/community/wp-login.php">Log in</a><a id="hostname-only" href="http://127.0.0.1/community/">Community</a><a id="unrelated-port" href="http://127.0.0.1:9999/">Unrelated</a>`
+      response.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": String(Buffer.byteLength(body)),
+        etag: "internal-authority-body",
+      })
+      const splitOrigin = Buffer.from(upstreamUrl)
+      response.write(Buffer.concat([Buffer.from("<!doctype html><script src=\""), splitOrigin.subarray(0, splitOrigin.length - 2)]))
+      response.end(`${splitOrigin.subarray(splitOrigin.length - 2).toString()}/community/generated.js\"></script><a id=\"login\" href=\"${upstreamUrl}/community/wp-login.php\">Log in</a><a id=\"hostname-only\" href=\"http://127.0.0.1/community/\">Community</a><a id=\"unrelated-port\" href=\"http://127.0.0.1:9999/\">Unrelated</a>`)
+      return
+    }
 
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
@@ -65,6 +87,20 @@ try {
   const proxyOrigin = new URL(proxy.serverUrl)
   const upstreamOrigin = new URL(upstreamUrl)
   assert(requests.some((request) => request.url === "/direct-preview/" && request.host === upstreamOrigin.host && request.forwardedHost === proxyOrigin.host && request.forwardedPort === proxyOrigin.port && request.forwardedProto === "http"))
+
+  const pathContext = await browser.newContext()
+  const pathPage = await pathContext.newPage()
+  await pathPage.goto(`${proxy.serverUrl}/community/`, { waitUntil: "load" })
+  assert.equal(await pathPage.evaluate(() => (window as typeof window & { generatedAssetLoaded?: boolean }).generatedAssetLoaded), true)
+  assert.equal(await pathPage.locator("script").getAttribute("src"), `${proxy.serverUrl}/community/generated.js`)
+  assert.equal(await pathPage.locator("#login").getAttribute("href"), `${proxy.serverUrl}/community/wp-login.php`)
+  assert.equal(await pathPage.locator("#hostname-only").getAttribute("href"), `${proxy.serverUrl}/community/`)
+  assert.equal(await pathPage.locator("#unrelated-port").getAttribute("href"), "http://127.0.0.1:9999/")
+  await Promise.all([pathPage.waitForURL(`${proxy.serverUrl}/community/wp-login.php`), pathPage.click("#login")])
+  assert.equal(await pathPage.locator("main").textContent(), "Login loaded")
+  assert(requests.some((request) => request.url === "/community/generated.js" && request.host === upstreamOrigin.host && request.forwardedHost === proxyOrigin.host))
+  assert(requests.some((request) => request.url === "/community/wp-login.php" && request.host === upstreamOrigin.host && request.forwardedHost === proxyOrigin.host))
+  await pathContext.close()
 
   const context = await browser.newContext({
     ...topology.contextOptions(),

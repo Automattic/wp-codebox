@@ -152,8 +152,8 @@ async function verifyConvertedPathMultisitePreview(): Promise<void> {
         steps: [
           { command: "wordpress.wp-cli", args: ["command=wp core multisite-convert --title=\"Path Network\" --base=\"/\""] },
           { command: "wordpress.run-php", args: ["code=$network = get_network(); $site_id = wp_insert_site( array( 'domain' => $network->domain, 'path' => '/community/', 'network_id' => $network->id, 'title' => 'Community' ) ); if ( is_wp_error( $site_id ) ) { throw new RuntimeException( $site_id->get_error_message() ); } update_blog_option( $site_id, 'home', 'http://' . $network->domain . '/community/' ); update_blog_option( $site_id, 'siteurl', 'http://' . $network->domain . '/community/' ); update_blog_option( $site_id, 'blogname', 'Community' );"] },
-          { command: "wordpress.browser-probe", args: ["url=/community/", "wait-for=load", "script=return { pathname: location.pathname };", "capture=network"] },
-          { command: "wordpress.browser-probe", args: ["url=/community/wp-login.php", "wait-for=load", "script=return { pathname: location.pathname };", "capture=network"] },
+          { command: "wordpress.browser-probe", args: ["url=/community/", "wait-for=load", "script=const generated = [...document.querySelectorAll('[src],[href]')].map((element) => element.src || element.href).filter((url) => url.startsWith('http://127.0.0.1')); const fetched = await fetch('/community/wp-login.php'); return { pathname: location.pathname, generatedOrigins: [...new Set(generated.map((url) => new URL(url).origin))], fetchUrl: fetched.url };", "capture=network"] },
+          { command: "wordpress.browser-actions", args: ["steps-json=[{\"kind\":\"navigate\",\"url\":\"http://127.0.0.1/community/wp-login.php\",\"waitFor\":\"load\"},{\"kind\":\"evaluate\",\"expression\":\"location.pathname\",\"assert\":\"/community/wp-login.php\"}]", "capture=steps,network"] },
         ],
       },
     })}\n`)
@@ -174,13 +174,24 @@ async function verifyConvertedPathMultisitePreview(): Promise<void> {
 
     assert.equal(output.success, true, JSON.stringify(output))
     const probes = output.executions?.filter((execution) => execution.command === "wordpress.browser-probe") ?? []
-    assert.equal(probes.length, 2)
+    assert.equal(probes.length, 1)
     const community = JSON.parse(probes[0]!.stdout)
-    const login = JSON.parse(probes[1]!.stdout)
     assert.equal(new URL(community.finalUrl).pathname, "/community/")
-    assert.deepEqual(community.summary.scriptResult, { pathname: "/community/" })
+    assert.equal(community.summary.scriptResult.pathname, "/community/")
+    assert(community.summary.scriptResult.generatedOrigins.length > 0)
+    const generatedOrigins = [...new Set(community.summary.scriptResult.generatedOrigins.map((origin: string) => new URL(origin).origin))]
+    assert(generatedOrigins.includes(new URL(community.finalUrl).origin))
+    assert(generatedOrigins.every((origin) => origin === "http://127.0.0.1" || origin === new URL(community.finalUrl).origin))
+    assert.equal(community.summary.scriptResult.fetchUrl, `${new URL(community.finalUrl).origin}/community/wp-login.php`)
+    const actions = output.executions?.filter((execution) => execution.command === "wordpress.browser-actions") ?? []
+    assert.equal(actions.length, 1)
+    const login = JSON.parse(actions[0]!.stdout)
     assert.equal(new URL(login.finalUrl).pathname, "/community/wp-login.php")
-    assert.deepEqual(login.summary.scriptResult, { pathname: "/community/wp-login.php" })
+    assert.equal(new URL(login.finalUrl).origin, new URL(community.finalUrl).origin)
+    assert.deepEqual(login.steps.map((step: { kind: string; status: string }) => ({ kind: step.kind, status: step.status })), [
+      { kind: "navigate", status: "ok" },
+      { kind: "evaluate", status: "ok" },
+    ])
   } finally {
     await rm(pathRoot, { recursive: true, force: true })
   }
