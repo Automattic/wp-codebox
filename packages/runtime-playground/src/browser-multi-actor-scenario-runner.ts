@@ -6,7 +6,7 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeReplayability } from "./browser-probe.js"
-import { browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { installWordPressAdminAuthCookies } from "./browser-probe-support.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
@@ -76,7 +76,7 @@ export async function runBrowserMultiActorScenarioCommand(input: {
     if (error instanceof BrowserMultiActorScenarioError) result = error.result
   } finally {
     const routeErrors = await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)
-    failure ??= routeErrors[0]
+    failure = selectBrowserMultiActorScenarioFailure(failure, routeErrors)
   }
 
   const replay = result?.replay ?? { schema: "wp-codebox/browser-multi-actor-replay/v1", seed: scenario.seed, scenario, schedule: [] }
@@ -95,6 +95,10 @@ export async function runBrowserMultiActorScenarioCommand(input: {
   const artifact = { artifactType: "scenario" as const, requestedUrl: target, url: target, preview: topology.preview, ...topology.origins, files: { summary: "files/browser/multi-actor-scenario-summary.json", steps: "files/browser/multi-actor-events.json", network: "files/browser/multi-actor-network.json", requestCoverage: "files/browser/multi-actor-request-coverage.json", waterfall: "files/browser/multi-actor-waterfall.json", ...(traces.length > 0 ? { traces } : {}) }, summary: { actions: scenario.actions.length, steps: scenario.actions.length, consoleMessages: Object.values(evidence).reduce((total, actor) => total + actor.console.length, 0), errors: Object.values(evidence).reduce((total, actor) => total + actor.errors.length, 0), finalUrl: target, htmlSnapshot: false, networkEvents: network.length, replayability: browserProbeReplayability(captures), screenshot: captures.has("screenshot"), viewport: null, environment: Object.values(evidence)[0]?.environment, multiActor: { seed: scenario.seed, finalState: result?.finalState ?? "failed", actors: Object.keys(evidence), replay: "files/browser/multi-actor-replay.json" } } } satisfies BrowserArtifact
   if (failure) throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${failure.message}`, artifact)
   return browserCommandResult(artifact, { command: "wordpress.browser-scenario", files: artifact.files, summary: artifact.summary, scenario: summary })
+}
+
+export function selectBrowserMultiActorScenarioFailure(failure: Error | undefined, routeErrors: Error[]): Error | undefined {
+  return failure ?? routeErrors.find(browserPreviewCleanupErrorIsFatal)
 }
 
 export async function navigateBrowserMultiActorPages(
