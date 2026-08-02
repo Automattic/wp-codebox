@@ -7,7 +7,7 @@ import type { BrowserContext, Request, Response, Route } from "playwright"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
 import { serializeBrowserError, serializeBrowserRequestFailure, serializeBrowserResponse } from "../packages/runtime-playground/src/browser-metrics.js"
-import { browserPreviewNetworkPolicy, browserPreviewRouting, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicy, browserPreviewRouting, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, isBrowserPreviewRouteClosedError, isBrowserPreviewRouteFetchContentDecodingError, isBrowserPreviewRouteFetchRecoverableError, isBrowserPreviewRouteFetchRequestContextDisposedError, isBrowserPreviewRouteFetchTransientTransportError, routeBrowserPreviewContextNetwork } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import { BrowserProbeSessionResultBuilder, type BrowserProbeSessionResultInput } from "../packages/runtime-playground/src/browser-probe-session-result-builder.js"
 import { createBrowserProbeProgressTracker } from "../packages/runtime-playground/src/browser-probe-support.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -138,6 +138,19 @@ test("shared browser cleanup bounds a close operation that never settles", async
   assert(Date.now() - startedAt < 250)
   assert.equal(lifecycleErrors.length, 1)
   assert.match(lifecycleErrors[0]!.message, /operation=browser-close-timeout/)
+  assert.equal(browserPreviewCleanupErrorIsFatal(lifecycleErrors[0]!), false)
+})
+
+test("close timeout preserves a committed probe outcome while genuine cleanup and probe failures remain fatal", async () => {
+  const tracker = createBrowserPreviewRouteTracker()
+  const timeoutErrors = await closeBrowserAndDrainPreviewRoutes({ close: () => new Promise<void>(() => {}) }, tracker, 10)
+  const committedProbeError = timeoutErrors.find(browserPreviewCleanupErrorIsFatal)
+  assert.equal(committedProbeError, undefined)
+
+  const closeErrors = await closeBrowserAndDrainPreviewRoutes({ close: async () => { throw new Error("browser close failed") } }, createBrowserPreviewRouteTracker())
+  assert.equal(browserPreviewCleanupErrorIsFatal(closeErrors[0]!), true)
+  const probeFailure = new Error("editor validation failed")
+  assert.equal(probeFailure ?? timeoutErrors.find(browserPreviewCleanupErrorIsFatal), probeFailure)
 })
 
 test("the complete route callback contains continue and policy abort failures", async () => {

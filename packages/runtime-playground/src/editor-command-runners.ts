@@ -6,7 +6,7 @@ import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js
 import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
@@ -243,7 +243,7 @@ export async function runEditorCanvasProbeCommand({
   } finally {
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
-      pendingError ??= routeError
+      if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
     if (artifact) {
       artifact.summary.errors = errors.length
@@ -671,7 +671,7 @@ export async function runEditorOpenCommand({
   } finally {
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
-      pendingError ??= routeError
+      if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "editor-steps.jsonl", stepRecords)
@@ -991,7 +991,7 @@ export async function runEditorActionsCommand({
   } finally {
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
-      pendingError ??= routeError
+      if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "editor-action-steps.jsonl", stepRecords)
@@ -2026,7 +2026,7 @@ export async function runEditorValidateBlocksCommand({
   } finally {
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(browser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
-      pendingError ??= routeError
+      if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
 
     const summary: BrowserEditorValidateBlocksSummary | undefined = validation
