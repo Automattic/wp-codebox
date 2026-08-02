@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
-import { chmod, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { arch, platform } from "node:os"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -28,7 +29,9 @@ try {
   await copyIfPresent("LICENSE")
   await cp(resolve(repoRoot, "patches"), join(packageRoot, "patches"), { recursive: true })
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
-  await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
+  await cp(resolve(repoRoot, "npm-shrinkwrap.json"), join(packageRoot, "npm-shrinkwrap.json"))
+  await mkdir(join(packageRoot, "scripts"), { recursive: true })
+  await cp(resolve(repoRoot, "scripts", "apply-development-patches.mjs"), join(packageRoot, "scripts", "apply-development-patches.mjs"))
 
   for (const packageName of ["runtime-core", "runtime-playground", "cli"]) {
     const sourceRoot = resolve(repoRoot, "packages", packageName)
@@ -38,7 +41,7 @@ try {
     await cp(join(sourceRoot, "dist"), join(targetRoot, "dist"), { recursive: true })
   }
 
-  await execFileAsync("npm", ["install", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
+  await execFileAsync("npm", ["ci", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
@@ -47,6 +50,7 @@ try {
     maxBuffer: 1024 * 1024 * 20,
   })
   await materializeWorkspacePackages(packageRoot)
+  await writeBrowserProvenance(packageRoot)
   await bundleNodeRuntime(packageRoot, platformName, archName)
 
   const binDir = join(packageRoot, "bin")
@@ -121,6 +125,23 @@ async function materializeWorkspacePackages(root: string): Promise<void> {
     await rm(target, recursiveRmOptions)
     await cp(join(root, "packages", sourceName), target, { recursive: true, dereference: true })
   }
+}
+
+async function writeBrowserProvenance(root: string): Promise<void> {
+  const playwright = JSON.parse(await readFile(join(root, "node_modules", "playwright", "package.json"), "utf8")) as { version: string }
+  const browsers = JSON.parse(await readFile(join(root, "node_modules", "playwright-core", "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
+  const chromium = browsers.browsers.find((browser) => browser.name === "chromium")
+  if (!chromium?.browserVersion) throw new Error("Installed Playwright package has no Chromium browser provenance.")
+  const dependencyManifest = await readFile(join(root, "npm-shrinkwrap.json"))
+  await writeFile(join(root, "browser-provenance.json"), `${JSON.stringify({
+    schema: "wp-codebox/playwright-browser-provenance/v1",
+    playwrightVersion: playwright.version,
+    chromiumRevision: chromium.revision,
+    chromiumVersion: chromium.browserVersion,
+    platform: platformName,
+    arch: archName,
+    dependencyManifestSha256: createHash("sha256").update(dependencyManifest).digest("hex"),
+  }, null, 2)}\n`)
 }
 
 async function bundleNodeRuntime(root: string, platformName: string, archName: string): Promise<void> {

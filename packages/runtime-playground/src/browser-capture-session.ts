@@ -3,9 +3,11 @@ import type { BrowserProbeErrorRecord, BrowserProbeNetworkRecord, BrowserProbeWe
 import { browserCommandLivenessPolicy } from "./browser-liveness.js"
 import { serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import type { Browser, Page } from "playwright"
+import { assertPlaywrightBrowserReady } from "./playwright-browser-provenance.js"
 
 export async function launchChromiumBrowser(): Promise<Browser> {
   const { chromium } = await import("playwright")
+  await assertPlaywrightBrowserReady()
   return chromium.launch(
     process.env.WP_CODEBOX_BROWSER_CHANNEL
       ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
