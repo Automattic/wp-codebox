@@ -385,6 +385,12 @@ export async function closeBrowserAndDrainPreviewRoutes(browser: Pick<import("pl
   return errors
 }
 
+// A timed-out graceful close is diagnostic-only: cleanup is already bounded and
+// must not replace a result that completed before the browser shutdown stalled.
+export function browserPreviewCleanupErrorIsFatal(error: Error): boolean {
+  return !error.message.includes("operation=browser-close-timeout")
+}
+
 function browserPreviewMode(args: string[], publicOrigin: string | undefined): BrowserProbePreviewMode {
   const raw = argValue(args, "preview-mode")?.trim() || (publicOrigin ? "public" : "local")
   if (raw === "local" || raw === "public" || raw === "secure") {

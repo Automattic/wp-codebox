@@ -12,7 +12,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { executeBrowserObservationAssertion } from "./browser-observation-assertions.js"
-import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
@@ -444,7 +444,7 @@ export async function runBrowserActionsCommand({
     const cleanupBrowser = session ? { close: async () => {} } : { close: async () => { await environmentRuntime?.close(); await browser.close() } }
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, routeTracker)) {
       errors.push(serializeBrowserError("probe-error", routeError))
-      pendingError ??= routeError
+      if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "steps.jsonl", stepRecords)
@@ -1016,7 +1016,7 @@ export async function runBrowserScenarioCommand({
       const activeBrowser = scenarioBrowser
       const cleanupBrowser = { close: async () => { await activeSession.runtime.close(); await activeBrowser.close() } }
       const routeErrors = await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, scenarioRouteTracker)
-      pendingError ??= routeErrors[0]
+      pendingError ??= routeErrors.find(browserPreviewCleanupErrorIsFatal)
     } else {
       await scenarioBrowser?.close().catch(() => undefined)
     }
