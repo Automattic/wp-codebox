@@ -141,16 +141,13 @@ test("shared browser cleanup bounds a close operation that never settles", async
   assert.equal(browserPreviewCleanupErrorIsFatal(lifecycleErrors[0]!), false)
 })
 
-test("close timeout preserves a committed probe outcome while genuine cleanup and probe failures remain fatal", async () => {
+test("close timeout is diagnostic-only while genuine cleanup remains fatal", async () => {
   const tracker = createBrowserPreviewRouteTracker()
   const timeoutErrors = await closeBrowserAndDrainPreviewRoutes({ close: () => new Promise<void>(() => {}) }, tracker, 10)
-  const committedProbeError = timeoutErrors.find(browserPreviewCleanupErrorIsFatal)
-  assert.equal(committedProbeError, undefined)
+  assert.equal(timeoutErrors.find(browserPreviewCleanupErrorIsFatal), undefined)
 
   const closeErrors = await closeBrowserAndDrainPreviewRoutes({ close: async () => { throw new Error("browser close failed") } }, createBrowserPreviewRouteTracker())
   assert.equal(browserPreviewCleanupErrorIsFatal(closeErrors[0]!), true)
-  const probeFailure = new Error("editor validation failed")
-  assert.equal(probeFailure ?? timeoutErrors.find(browserPreviewCleanupErrorIsFatal), probeFailure)
 })
 
 test("the complete route callback contains continue and policy abort failures", async () => {

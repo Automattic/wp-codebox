@@ -6,7 +6,8 @@ import { join } from "node:path"
 import { BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, type BrowserMultiActorScenario } from "../packages/runtime-core/src/browser-multi-actor-scenario-contracts.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/runtime-contracts.js"
 import { BrowserMultiActorScenarioError, runBrowserMultiActorScenario, type BrowserMultiActorClient } from "../packages/runtime-playground/src/browser-multi-actor-scenario.js"
-import { navigateBrowserMultiActorPages, runBrowserMultiActorScenarioCommand } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
+import { navigateBrowserMultiActorPages, runBrowserMultiActorScenarioCommand, selectBrowserMultiActorScenarioFailure } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
+import { closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker } from "../packages/runtime-playground/src/browser-preview-routing.js"
 import type { PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const navigationStarted: string[] = []
@@ -30,6 +31,15 @@ await assert.rejects(
   ], "https://example.test/editor"),
   /Actor reviewer failed to navigate to https:\/\/example\.test\/editor: net::ERR_FAILED/,
 )
+
+const closeTimeoutErrors = await closeBrowserAndDrainPreviewRoutes({ close: () => new Promise<void>(() => {}) }, createBrowserPreviewRouteTracker(), 10)
+assert.equal(selectBrowserMultiActorScenarioFailure(undefined, closeTimeoutErrors), undefined)
+
+const closeFailureErrors = await closeBrowserAndDrainPreviewRoutes({ close: async () => { throw new Error("browser close failed") } }, createBrowserPreviewRouteTracker())
+assert.strictEqual(selectBrowserMultiActorScenarioFailure(undefined, closeFailureErrors), closeFailureErrors[0])
+
+const probeFailure = new Error("editor validation failed")
+assert.strictEqual(selectBrowserMultiActorScenarioFailure(probeFailure, closeTimeoutErrors), probeFailure)
 
 const closed: string[] = []
 const actions: string[] = []
