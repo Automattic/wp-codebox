@@ -1,0 +1,53 @@
+import { createHash } from "node:crypto"
+import { existsSync, readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { dirname, join } from "node:path"
+
+const packageRequire = createRequire(import.meta.url)
+
+export interface PlaywrightBrowserProvenance {
+  schema: "wp-codebox/playwright-browser-provenance/v1"
+  playwrightVersion: string
+  chromiumRevision: string
+  chromiumVersion: string
+  executablePath: string
+  platform: NodeJS.Platform
+  arch: string
+  dependencyManifestSha256?: string
+}
+
+export async function playwrightBrowserProvenance(): Promise<PlaywrightBrowserProvenance> {
+  const { chromium } = await import("playwright")
+  const playwright = packageRequire("playwright/package.json") as { version: string }
+  const browsers = JSON.parse(readFileSync(join(dirname(packageRequire.resolve("playwright-core")), "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
+  const chromiumManifest = browsers.browsers.find((browser) => browser.name === "chromium")
+  if (!chromiumManifest?.browserVersion) throw new Error("Installed Playwright package has no Chromium browser provenance.")
+
+  return {
+    schema: "wp-codebox/playwright-browser-provenance/v1",
+    playwrightVersion: playwright.version,
+    chromiumRevision: chromiumManifest.revision,
+    chromiumVersion: chromiumManifest.browserVersion,
+    executablePath: chromium.executablePath(),
+    platform: process.platform,
+    arch: process.arch,
+    dependencyManifestSha256: dependencyManifestSha256(),
+  }
+}
+
+export async function assertPlaywrightBrowserReady(): Promise<PlaywrightBrowserProvenance> {
+  const provenance = await playwrightBrowserProvenance()
+  if (!existsSync(provenance.executablePath)) {
+    throw new Error(`Playwright Chromium ${provenance.chromiumVersion} (revision ${provenance.chromiumRevision}) is missing at ${provenance.executablePath}. Install the browser owned by this WP Codebox package with: node ./node_modules/playwright/cli.js install chromium`)
+  }
+  return provenance
+}
+
+function dependencyManifestSha256(): string | undefined {
+  try {
+    const lockPath = packageRequire.resolve("../../../npm-shrinkwrap.json")
+    return createHash("sha256").update(readFileSync(lockPath)).digest("hex")
+  } catch {
+    return undefined
+  }
+}

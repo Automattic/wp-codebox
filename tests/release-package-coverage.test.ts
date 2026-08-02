@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -88,6 +89,14 @@ try {
   const pluginCliRoot = join(pluginExtraction, "wp-codebox", "vendor", "wp-codebox-cli")
   const tarCliRoot = join(cliExtraction, "wp-codebox-cli")
   for (const root of [pluginCliRoot, tarCliRoot]) {
+    const browserProvenance = JSON.parse(await readFile(join(root, "browser-provenance.json"), "utf8"))
+    assert.equal(browserProvenance.schema, "wp-codebox/playwright-browser-provenance/v1")
+    assert.equal(browserProvenance.playwrightVersion, "1.61.1")
+    assert.equal(browserProvenance.chromiumRevision, "1228")
+    assert.equal(browserProvenance.chromiumVersion, "149.0.7827.55")
+    assert.equal(browserProvenance.platform, "linux")
+    assert.equal(browserProvenance.arch, "x64")
+    assert.equal(browserProvenance.dependencyManifestSha256, createHash("sha256").update(await readFile(join(root, "npm-shrinkwrap.json"))).digest("hex"))
     for (const packageName of ["wp-codebox-cli", "wp-codebox-core", "wp-codebox-playground"]) {
       const packagePath = join(root, "node_modules", "@automattic", packageName)
       const packageStat = await lstat(packagePath)
@@ -147,6 +156,8 @@ try {
     maxBuffer: 1024 * 1024 * 20,
   })
   const [packed] = JSON.parse(packOutput) as Array<{ filename: string }>
+  const { stdout: packedEntries } = await execFileAsync("tar", ["-tzf", join(packRoot, packed.filename)])
+  assert.ok(packedEntries.split("\n").includes("package/npm-shrinkwrap.json"), "npm package must include its deterministic dependency manifest")
   await execFileAsync("npm", ["install", "--global", "--prefix", installRoot, join(packRoot, packed.filename), "--omit=dev", "--no-audit", "--no-fund"], {
     cwd: consumerRoot,
     maxBuffer: 1024 * 1024 * 20,
