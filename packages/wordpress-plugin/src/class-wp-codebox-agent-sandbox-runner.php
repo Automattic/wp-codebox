@@ -981,6 +981,20 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			if ( is_wp_error( $node ) ) {
 				return $node;
 			}
+
+			$entrypoint = dirname( dirname( $bin ) ) . DIRECTORY_SEPARATOR . 'packages' . DIRECTORY_SEPARATOR . 'cli' . DIRECTORY_SEPARATOR . 'dist' . DIRECTORY_SEPARATOR . 'index.js';
+			if ( ! is_file( $entrypoint ) ) {
+				return new WP_Error(
+					'wp_codebox_bin_missing',
+					'The bundled WP Codebox JavaScript entrypoint is missing.',
+					array(
+						'status' => 500,
+						'path'   => $entrypoint,
+					)
+				);
+			}
+
+			return escapeshellarg( $node ) . ' ' . escapeshellarg( $entrypoint );
 		}
 
 		return escapeshellarg( $bin );
