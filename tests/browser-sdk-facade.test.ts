@@ -634,9 +634,37 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 assert.equal(duringAbortStarted, false, "aborting startup suppresses work after hydration")
 assert.equal(duringAbortIframe.src, "about:blank", "aborting startup resets the associated iframe")
 
+let finishLateStart: ((value: unknown) => void) | undefined
+let lateStartReleased = 0
+const lateStartAbort = new AbortController()
+const lateStart = api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-abort-late-start" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  signal: lateStartAbort.signal,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: () => new Promise((resolve) => {
+    finishLateStart = resolve
+  }),
+  disposeClient: async () => { lateStartReleased += 1 },
+})
+await new Promise((resolve) => setTimeout(resolve, 0))
+lateStartAbort.abort()
+await assert.rejects(lateStart, (error: any) => error.code === "browser_preview_aborted")
+finishLateStart?.({ client: "late-start" })
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.equal(lateStartReleased, 1, "an aborted late start releases its returned client")
+
 const lifecycleCallbacks: Record<string, (...args: any[]) => unknown> = {}
 const lifecycleIframe: { src: string } = { src: "https://playground.example/remote.html" }
 let callbackMutations = 0
+let releasedClients = 0
+let lifecycleClientReleased = false
+const lifecycleClient = {
+  client: "lifecycle-playground",
+  run: async () => {
+    if (lifecycleClientReleased) throw new Error("released")
+    return "running"
+  },
+}
 const lifecyclePreview = await api.v1.startBrowserPreview(lifecycleBoot, {
   iframe: lifecycleIframe,
   hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
@@ -651,7 +679,13 @@ const lifecyclePreview = await api.v1.startBrowserPreview(lifecycleBoot, {
       onBlueprintValidated: request.onBlueprintValidated,
       onClientConnected: request.onClientConnected,
     })
-    return { client: "lifecycle-playground" }
+    return lifecycleClient
+  },
+  disposeClient: async (client: { client: string }) => {
+    assert.equal(client.client, "lifecycle-playground")
+    lifecycleClientReleased = true
+    releasedClients += 1
+    return { client_released: true, runtime_terminated: false }
   },
 })
 lifecycleCallbacks.onBlueprintStepCompleted()
@@ -666,10 +700,20 @@ assert.deepEqual(plain(disposed), {
   scope: "preview-lifecycle-test",
   iframe_reset: true,
   listeners_released: true,
-  pending_work_cancelled: true,
+  pending_work_cancellation_requested: true,
+  pending_work_cancelled: false,
+  stale_result_suppression_enabled: true,
+  client_release_requested: true,
+  client_released: true,
+  client_release_error: null,
+  client_release_evidence: { client_released: true, runtime_terminated: false },
+  runtime_release_requested: true,
+  runtime_terminated: false,
   lifecycle_released: true,
 })
 assert.equal(await lifecyclePreview.dispose(), disposed, "preview disposal is idempotent")
+assert.equal(releasedClients, 1, "disposal releases a host-owned client connection once")
+await assert.rejects(() => lifecyclePreview.client.run(), /released/, "disposed previews release the old client")
 assert.equal(lifecycleIframe.src, "about:blank", "disposal resets but does not remove the caller-owned iframe")
 lifecycleCallbacks.onBlueprintStepCompleted()
 lifecycleCallbacks.onBlueprintValidated()
@@ -681,7 +725,46 @@ const replacementPreview = await api.v1.startBrowserPreview(lifecycleBoot, {
   startPlaygroundWeb: async () => ({ client: "replacement-playground" }),
 })
 assert.equal(replacementPreview.client.client, "replacement-playground", "disposing releases a scope for a replacement preview")
-await replacementPreview.dispose()
+const defaultDispose = await replacementPreview.dispose()
+assert.equal(defaultDispose.client_release_requested, false, "default disposal does not claim a client release")
+assert.equal(defaultDispose.client_released, false, "default disposal does not verify a client release")
+assert.equal(defaultDispose.runtime_release_requested, true, "iframe reset requests runtime release")
+assert.equal(defaultDispose.runtime_terminated, false, "default disposal does not verify runtime termination")
+
+let replacementReleased = 0
+const replacementCallbacks: Record<string, () => unknown> = {}
+const firstReplacement = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-replacement-test" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startOptions: { onClientConnected: () => { callbackMutations += 1 } },
+  startPlaygroundWeb: async (request: Record<string, any>) => {
+    replacementCallbacks.onClientConnected = request.onClientConnected
+    return { client: "first-replacement" }
+  },
+  disposeClient: async () => { replacementReleased += 1; return true },
+})
+const secondReplacement = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-replacement-test" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async () => ({ client: "second-replacement" }),
+})
+replacementCallbacks.onClientConnected()
+assert.equal(replacementReleased, 1, "replacement releases the prior scope owner")
+assert.equal(callbackMutations, 3, "replacement suppresses callbacks from prior ownership")
+await firstReplacement.dispose()
+await secondReplacement.dispose()
+
+let repeatedReleases = 0
+for (let index = 0; index < 8; index += 1) {
+  const preview = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: `preview-cycle-${index}` }, {
+    iframe: { src: "https://playground.example/remote.html" },
+    hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+    startPlaygroundWeb: async () => ({ client: index }),
+    disposeClient: async () => { repeatedReleases += 1 },
+  })
+  await Promise.all([preview.dispose(), preview.dispose()])
+}
+assert.equal(repeatedReleases, 8, "repeated preview disposal remains bounded and idempotent")
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

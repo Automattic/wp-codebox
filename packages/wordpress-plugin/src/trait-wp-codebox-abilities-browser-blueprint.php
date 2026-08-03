@@ -71,15 +71,12 @@ private static function browser_blueprint_with_post_runtime( array $blueprint, a
 
 /** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $runtime Runtime dependency specs. @return array<string,mixed> */
 private static function browser_blueprint_with_runtime( array $blueprint, array $runtime, array $playground = array() ): array {
-	$steps = is_array( $blueprint['steps'] ?? null ) ? $blueprint['steps'] : array();
-	if ( ! self::browser_blueprint_has_login_step( $steps ) ) {
-		array_unshift(
-			$steps,
-			array(
-				'step'     => 'login',
-				'username' => 'admin',
-				'password' => 'password',
-			)
+	$caller_steps  = is_array( $blueprint['steps'] ?? null ) ? $blueprint['steps'] : array();
+	$runtime_steps = array();
+	foreach ( $runtime['filesystem_overlays'] ?? array() as $overlay ) {
+		$runtime_steps[] = array(
+			'step' => 'runPHP',
+			'code' => self::browser_wordpress_filesystem_overlay_write_php( $overlay ),
 		);
 	}
 
@@ -87,9 +84,9 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 		if ( ! empty( $plugin['local_package'] ) ) {
 			$write_step = self::browser_local_package_write_step( $plugin, 'plugin' );
 			if ( ! empty( $write_step ) ) {
-				$steps[] = $write_step;
+				$runtime_steps[] = $write_step;
 			}
-			$steps[] = array(
+			$runtime_steps[] = array(
 				'step' => 'runPHP',
 				'code' => self::browser_plugin_install_php( $plugin, (string) ( $write_step['path'] ?? '' ) ),
 			);
@@ -116,7 +113,7 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 			$options['targetFolderName'] = (string) $plugin['targetFolderName'];
 		}
 
-		$steps[] = array(
+		$runtime_steps[] = array(
 			'step'       => 'installPlugin',
 			'pluginData' => $plugin_data,
 			'options'    => $options,
@@ -126,9 +123,9 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	foreach ( $runtime['mu_plugins'] as $mu_plugin ) {
 		$write_step = ! empty( $mu_plugin['local_package'] ) ? self::browser_local_package_write_step( $mu_plugin, 'mu-plugin' ) : array();
 		if ( ! empty( $write_step ) ) {
-			$steps[] = $write_step;
+			$runtime_steps[] = $write_step;
 		}
-		$steps[] = array(
+		$runtime_steps[] = array(
 			'step' => 'runPHP',
 			'code' => self::browser_mu_plugin_install_php( $mu_plugin, (string) ( $write_step['path'] ?? '' ) ),
 		);
@@ -139,14 +136,14 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 			if ( ! empty( $theme['local_package'] ) ) {
 				$write_step = self::browser_local_package_write_step( $theme, 'theme' );
 				if ( ! empty( $write_step ) ) {
-					$steps[] = $write_step;
+					$runtime_steps[] = $write_step;
 				}
-				$steps[] = array(
+				$runtime_steps[] = array(
 					'step' => 'runPHP',
 					'code' => self::browser_theme_package_install_php( $theme, (string) ( $write_step['path'] ?? '' ) ),
 				);
 			} else {
-				$steps[] = array(
+				$runtime_steps[] = array(
 					'step'      => 'installTheme',
 					'themeData' => array(
 						'resource' => 'url',
@@ -160,7 +157,7 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 		}
 
 		if ( ! empty( $theme['files'] ) ) {
-			$steps[] = array(
+			$runtime_steps[] = array(
 				'step' => 'runPHP',
 				'code' => self::browser_theme_files_install_php( $theme ),
 			);
@@ -168,11 +165,21 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	foreach ( $runtime['bootstrap'] as $operation ) {
-		$steps[] = array(
+		$runtime_steps[] = array(
 			'step' => 'runPHP',
 			'code' => self::browser_bootstrap_operation_php( $operation ),
 		);
 	}
+
+	$steps = $runtime_steps;
+	if ( ! self::browser_blueprint_has_login_step( $caller_steps ) ) {
+		$steps[] = array(
+			'step'     => 'login',
+			'username' => 'admin',
+			'password' => 'password',
+		);
+	}
+	$steps = array_merge( $steps, $caller_steps );
 
 	$blueprint['steps'] = $steps;
 	if ( ! isset( $blueprint['preferredVersions'] ) ) {
@@ -186,6 +193,25 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	return $blueprint;
+}
+
+/** @param array<string,mixed> $overlay Normalized filesystem overlay. */
+private static function browser_wordpress_filesystem_overlay_write_php( array $overlay ): string {
+	return '<?php
+$target = ' . var_export( (string) $overlay['target'], true ) . ';
+$content = ' . var_export( (string) $overlay['content'], true ) . ';
+$overwrite = ' . ( ! empty( $overlay['overwrite'] ) ? 'true' : 'false' ) . ';
+if ( file_exists( $target ) && ! $overwrite ) {
+throw new RuntimeException( "Browser filesystem overlay target already exists: " . $target );
+}
+$directory = dirname( $target );
+if ( ! is_dir( $directory ) && ! mkdir( $directory, 0777, true ) && ! is_dir( $directory ) ) {
+throw new RuntimeException( "Could not create browser filesystem overlay directory: " . $directory );
+}
+if ( false === file_put_contents( $target, $content ) ) {
+throw new RuntimeException( "Could not materialize browser filesystem overlay: " . $target );
+}
+';
 }
 
 /** @param array<string,mixed> $package Runtime package spec. @return array<string,mixed> */
@@ -596,6 +622,7 @@ private static function browser_runtime_readiness_metadata( array $runtime ): ar
 		'mu_plugins' => array_map( static fn( array $mu_plugin ): array => array( 'slug' => $mu_plugin['slug'] ?? '', 'file' => $mu_plugin['file'] ?? '', 'readiness' => $mu_plugin['readiness'] ?? 'compiled' ), $runtime['mu_plugins'] ?? array() ),
 		'themes'    => array_map( static fn( array $theme ): array => array( 'slug' => $theme['slug'] ?? '', 'activate' => (bool) ( $theme['activate'] ?? true ), 'readiness' => $theme['readiness'] ?? 'compiled' ), $runtime['themes'] ?? array() ),
 		'bootstrap' => array_map( static fn( array $operation ): array => array( 'operation' => $operation['operation'] ?? '', 'readiness' => $operation['readiness'] ?? 'compiled' ), $runtime['bootstrap'] ?? array() ),
+		'filesystem_overlays' => array_map( static fn( array $overlay ): array => array( 'target' => $overlay['target'] ?? '', 'overwrite' => $overlay['overwrite'] ?? false, 'source_digest' => $overlay['source_digest'] ?? array(), 'materialized_digest' => $overlay['materialized_digest'] ?? array(), 'provenance' => $overlay['provenance'] ?? array(), 'readiness' => $overlay['readiness'] ?? 'compiled' ), $runtime['filesystem_overlays'] ?? array() ),
 	);
 }
 

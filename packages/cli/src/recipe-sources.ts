@@ -7,8 +7,8 @@ import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, Work
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
-import { evaluateSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
-import { prepareZipSource } from "./zip-source.js"
+import { evaluateSourcePolicy, evaluateZipSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
+import { prepareLocalZipSource, prepareZipSource } from "./zip-source.js"
 
 export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloadHosts, isSha256, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles, MAX_DOWNLOAD_BYTES_ENV, MAX_EXTRACTED_BYTES_ENV, MAX_EXTRACTED_FILES_ENV, REQUIRE_SOURCE_SHA256_ENV, sourceSha256Required } from "./source-policy.js"
 
@@ -1436,8 +1436,24 @@ async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFil
 async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string, expectedSha256?: string): Promise<PreparedExternalSource> {
   const source = recipeSource(sourceRef, expectedSha256)
   if (source.type === "local") {
+    const localPath = resolve(recipeDirectory, sourceRef)
+    if (sourceRef.toLowerCase().endsWith(".zip")) {
+      const [policyIssue] = evaluateZipSourcePolicy(source, expectedSha256)
+      if (policyIssue) {
+        throw new Error(policyIssue.message)
+      }
+      const preparedZip = await prepareLocalZipSource(localPath, slug, source.expectedSha256)
+      return {
+        source: await extractedPluginSourceDirectory(preparedZip.extractDirectory, slug),
+        cleanupPaths: [preparedZip.root],
+        provenance: {
+          ...recipeSourceProvenance(source, recipeDirectory),
+          digest: { sha256: preparedZip.digest, ...(source.expectedSha256 ? { expected: source.expectedSha256, verified: true } : {}) },
+        },
+      }
+    }
     return {
-      source: resolve(recipeDirectory, sourceRef),
+      source: localPath,
       cleanupPaths: [],
       provenance: recipeSourceProvenance(source, recipeDirectory),
     }
@@ -1581,7 +1597,7 @@ export function recipeSource(sourceRef: string, expectedSha256?: string): Parsed
   try {
     url = new URL(sourceRef)
   } catch {
-    return { type: "local", resolvedUrl: sourceRef, host: "" }
+    return { type: "local", resolvedUrl: sourceRef, host: "", ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
   }
 
   if (url.protocol !== "https:") {

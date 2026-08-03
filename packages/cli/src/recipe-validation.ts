@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs"
-import { readFile, stat } from "node:fs/promises"
+import { lstat, readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_PHP_WASM_BUNDLED_EXTENSIONS, assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, browserEnvironment, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateRuntimePolicy, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
+import { evaluateZipSourcePolicy } from "./source-policy.js"
 
 export interface RecipeValidationIssue {
   code: string
@@ -652,6 +653,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, error instanceof Error ? error.message : String(error))
       continue
     }
+    const localZipSource = source.type === "local" && sourceRef.toLowerCase().endsWith(".zip")
     const pluginSource = source.type === "local" ? resolve(recipeDirectory, sourceRef) : undefined
     const sourceRootPath = resolve(recipeDirectory, sourceRoot)
     const pluginMountedSource = source.type === "local" ? resolve(sourceRootPath, sourceSubpath) : undefined
@@ -664,18 +666,22 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     }
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
 
-    validateRecipeSource(source, `${path}.source`, addIssue, plugin.sha256)
+    validateRecipeSource(source, `${path}.source`, addIssue, plugin.sha256, localZipSource)
     if (pluginSource) {
-      await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
+      if (localZipSource) {
+        await validateExistingRegularFile(pluginSource, `${path}.source`, addIssue)
+      } else {
+        await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
+      }
     }
-    if (sourceRoot !== sourceRef) {
+    if (sourceRoot !== sourceRef && !localZipSource) {
       await validateExistingDirectory(resolve(recipeDirectory, sourceRoot), `${path}.sourceRoot`, addIssue)
     }
     if (pluginMountedSource && !pluginMountedSource.startsWith(`${sourceRootPath}/`) && pluginMountedSource !== sourceRootPath) {
       addIssue("invalid-source-subdir", `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, "Plugin source subdirectory must stay inside the source root.")
       continue
     }
-    if (sourceSubpath && pluginMountedSource) {
+    if (sourceSubpath && pluginMountedSource && !localZipSource) {
       await validateExistingDirectory(pluginMountedSource, `${path}.${plugin.sourceSubdir !== undefined ? "sourceSubdir" : "sourceSubpath"}`, addIssue)
     }
 
@@ -684,7 +690,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       continue
     }
 
-    if (pluginMountedSource) {
+    if (pluginMountedSource && !localZipSource) {
       await validateExistingFile(join(pluginMountedSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
     }
   }
@@ -1942,6 +1948,17 @@ async function validateExistingFile(path: string, issuePath: string, addIssue: (
   }
 }
 
+async function validateExistingRegularFile(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  try {
+    const result = await lstat(path)
+    if (result.isSymbolicLink() || !result.isFile()) {
+      addIssue("not-file", issuePath, `Expected regular file: ${path}`)
+    }
+  } catch {
+    addIssue("missing-path", issuePath, `File does not exist: ${path}`)
+  }
+}
+
 async function validateExistingFileOrDirectory(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
   try {
     const result = await stat(path)
@@ -1975,8 +1992,9 @@ function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: 
   }
 }
 
-function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void, expectedSha256?: string): void {
-  for (const issue of evaluateRecipeSourcePolicy(source, expectedSha256)) {
+function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void, expectedSha256?: string, localZipSource = false): void {
+  const issues = localZipSource ? evaluateZipSourcePolicy(source, expectedSha256) : evaluateRecipeSourcePolicy(source, expectedSha256)
+  for (const issue of issues) {
     addIssue(issue.code, issuePath, issue.message)
   }
 }

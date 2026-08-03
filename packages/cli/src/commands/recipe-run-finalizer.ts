@@ -6,7 +6,7 @@ import { serializeError } from "../output.js"
 import { finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput } from "../recipe-evidence.js"
 import { recipeRunFailureStatus, serializeRecipeRunError } from "./recipe-run-output.js"
 import type { RecipeArtifactPointerTracker } from "./recipe-run-artifact-pointers.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeStepFailure } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeStepFailure } from "./recipe-run-types.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 
 export interface RunResourceCleanupEvidence {
@@ -46,6 +46,7 @@ interface RecipeRunCommonOutputFields {
   runtime?: RuntimeInfo
   executions: RecipeExecutionResult[]
   componentContracts?: RecipeRunComponentContract[]
+  preparedExtraPlugins?: RecipeRunPreparedExtraPlugin[]
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
@@ -107,6 +108,7 @@ export function recipeRunOutputWithResult<T extends RecipeRunOutput>(output: T):
 export function completedRecipeOutputFields(args: {
   executions: RecipeExecutionResult[]
   componentContracts?: RecipeRunComponentContract[]
+  preparedExtraPlugins?: RecipeRunPreparedExtraPlugin[]
   stagedFiles: RecipeRunStagedFile[]
   fixtureDatabases: RecipeRunFixtureDatabase[]
   siteSeeds: RecipeRunOutput["siteSeeds"]
@@ -125,6 +127,7 @@ export function completedRecipeOutputFields(args: {
   return {
     executions: args.executions,
     componentContracts: args.componentContracts,
+    preparedExtraPlugins: args.preparedExtraPlugins,
     stagedFiles: args.stagedFiles,
     fixtureDatabases: args.fixtureDatabases,
     siteSeeds: args.siteSeeds,

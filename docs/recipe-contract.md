@@ -909,6 +909,18 @@ resolve inside the mounted plugin directory.
 
 ## Browser Assertions
 
+`wordpress.visual-compare` preserves native animated-image behavior by default.
+Set `animated-media=first-frame` to normalize supported animated images to a
+static first-frame PNG before Chromium decodes them. Normalization is keyed only
+by the SHA-256 digest of the image response, so identical bytes use the same
+normalized frame regardless of URL, timing, or capture order; static images are
+passed through unchanged. Each URL capture records the requested policy,
+observed/normalized/failed/timeout counts, and bounded content and normalized-frame
+SHA-256 evidence. Failure samples contain no image bytes and are bounded to 20
+entries; inputs above 25 MiB and normalization work above 5 seconds are reported
+explicitly rather than counted as normalized. Matrix entries accept either
+`animatedMedia` or `animated-media`.
+
 `wordpress.browser-probe` accepts repeated `assert=<assertion>` arguments.
 Supported assertion forms are the current command contract:
 

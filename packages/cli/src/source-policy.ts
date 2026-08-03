@@ -69,6 +69,28 @@ export function evaluateSourcePolicy(source: ExternalSourcePolicyInput, expected
   return issues
 }
 
+/** Policy shared by downloaded archives and local archive inputs. */
+export function evaluateZipSourcePolicy(source: ExternalSourcePolicyInput, expectedSha256?: string): SourcePolicyIssue[] {
+  if (source.type !== "local") {
+    return evaluateSourcePolicy(source, expectedSha256)
+  }
+
+  const issues: SourcePolicyIssue[] = []
+  if (expectedSha256 !== undefined && !isSha256(expectedSha256)) {
+    issues.push({
+      code: "invalid-source-sha256",
+      message: "Local ZIP recipe source sha256 must be a 64-character hex digest.",
+    })
+  }
+  if (sourceSha256Required() && !expectedSha256) {
+    issues.push({
+      code: "missing-source-sha256",
+      message: `Local ZIP recipe sources require sha256 when ${REQUIRE_SOURCE_SHA256_ENV}=1.`,
+    })
+  }
+  return issues
+}
+
 export function sourceSha256Required(): boolean {
   return process.env[REQUIRE_SOURCE_SHA256_ENV] === "1"
 }

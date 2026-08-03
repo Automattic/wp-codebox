@@ -22,7 +22,7 @@ assert.deepEqual(selector && { repeatable: selector.repeatable, format: selector
 const matrixDescription = acceptedArgs.find((arg) => arg.name === "matrix-json")?.description ?? ""
 // The matrix catalog is a public compatibility contract. Keep legacy wait/explanation
 // aliases documented while capture controls are added alongside them.
-for (const field of ["wait settings", "waitFor", "wait-for", "durationMs", "duration", "maxExplanationElements", "maxExplanationCandidates", "explainSelectors", "max-explanation-elements", "max-explanation-candidates", "explain-selector", "reducedMotion", "reduced-motion", "animations", "frozenTime", "frozen-time", "captureStyle", "capture-style", "blockExternalRequests", "block-external-requests"]) {
+for (const field of ["wait settings", "waitFor", "wait-for", "durationMs", "duration", "animatedMedia", "animated-media", "maxExplanationElements", "maxExplanationCandidates", "explainSelectors", "max-explanation-elements", "max-explanation-candidates", "explain-selector", "reducedMotion", "reduced-motion", "animations", "frozenTime", "frozen-time", "captureStyle", "capture-style", "blockExternalRequests", "block-external-requests"]) {
   assert.match(matrixDescription, new RegExp(field))
 }
 
@@ -44,7 +44,7 @@ async function visualCompareRun(artifactRoot: string, args: string[]) {
   })
 }
 
-const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[], capture = { reducedMotion: true, animations: "freeze", injectedStyleBytes: 0, externalRequests: "block" }) => ({
+const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[], capture = { reducedMotion: true, animations: "freeze", animatedMedia: "allow", injectedStyleBytes: 0, externalRequests: "block" }) => ({
   waitFor: "domcontentloaded",
   durationMs: 0,
   timeoutMs: 120_000,
@@ -80,7 +80,7 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
     "capture-style=body{color:red}",
     "block-external-requests=false",
   ])).output)
-  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"], { reducedMotion: false, animations: "allow", frozenTime: "2020-01-01T00:00:00.000Z", injectedStyleBytes: 15, externalRequests: "allow" }))
+  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"], { reducedMotion: false, animations: "allow", animatedMedia: "allow", frozenTime: "2020-01-01T00:00:00.000Z", injectedStyleBytes: 15, externalRequests: "allow" }))
   assert.equal(pair.schema, "wp-codebox/visual-compare/v1")
   assert.equal(pair.command, "wordpress.visual-compare")
   assert.equal(pair.status, "identical")
@@ -119,6 +119,7 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
     await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, arg]), new RegExp(`${message} must be a positive integer`))
   }
   await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "animations=fast"]), /animations must be freeze or allow/)
+  await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "animated-media=middle"]), /animated-media must be allow or first-frame/)
   await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, `capture-style=${"x".repeat(16 * 1024 + 1)}`]), /capture-style must not exceed 16384 bytes/)
   await assert.rejects(visualCompareRun(artifactRoot, [`source-screenshot=${sourceScreenshot}`, `candidate-screenshot=${candidateScreenshot}`, "frozen-time=July 4, 2020"]), /timezone-bearing ISO-8601/)
 

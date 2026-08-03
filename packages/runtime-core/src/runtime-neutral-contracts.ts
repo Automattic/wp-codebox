@@ -23,11 +23,25 @@ export interface RuntimeWordPressFilesystemIntent {
   metadata?: Record<string, unknown>
 }
 
+/**
+ * Bytes materialized into a WordPress runtime before caller-provided Blueprint
+ * steps execute. Backends must reject targets outside the WordPress root.
+ */
+export interface RuntimeWordPressFilesystemOverlay {
+  target: string
+  content?: string
+  contentBase64?: string
+  overwrite: boolean
+  purpose?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface RuntimeWordPressSetupPlanIntent {
   schema: "wp-codebox/wordpress-runtime-setup-plan/v1"
   backend?: BackendNeutralRuntimeBackendKind
   components?: RuntimeWordPressComponentIntent[]
   filesystem?: RuntimeWordPressFilesystemIntent[]
+  filesystemOverlays?: RuntimeWordPressFilesystemOverlay[]
   metadata?: Record<string, unknown>
 }
 

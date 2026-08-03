@@ -32,7 +32,7 @@ import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRunti
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -447,7 +447,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), preparedExtraPlugins: preparedExtraPluginReceipts(extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
       })
     }
 
@@ -466,7 +466,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), preparedExtraPlugins: preparedExtraPluginReceipts(extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), ...(adversarialCampaigns.length > 0 ? { adversarialCampaigns } : {}), provenance: recipeRunProvenance(recipe, recipePath), managedRuntimeServices: serviceEvidence },
     })
   } catch (error) {
     const failedServiceEvidence = runtimeServiceEvidenceFromError(error)
@@ -1660,6 +1660,15 @@ function componentContractResult(plugin: PreparedExtraPlugin, phases: RecipePhas
     activationStatus,
     failures,
   }) as RecipeRunComponentContract
+}
+
+export function preparedExtraPluginReceipts(plugins: PreparedExtraPlugin[], phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[]): RecipeRunPreparedExtraPlugin[] {
+  return plugins.map((plugin) => {
+    const failures = componentContractFailures(plugin, phases, executions)
+    const activated = plugin.loadAs === "plugin" && plugin.activate !== false && activePluginPhaseIncludes(phases, plugin.pluginFile)
+    const activationStatus = plugin.loadAs === "mu-plugin" ? "not_applicable" : plugin.activate === false ? "not_requested" : activated ? "activated" : failures.some((failure) => failure.phase === "activate_plugins") ? "failed" : "pending"
+    return { schema: "wp-codebox/prepared-extra-plugin/v1", slug: plugin.slug, source: plugin.source, target: plugin.target, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs, activate: plugin.activate, provenance: plugin.provenance, activationStatus, failures }
+  })
 }
 
 function componentContractPreparationFailure(contract: Record<string, unknown>, plugin: WorkspaceRecipeExtraPlugin, error: unknown): RecipeRunComponentContract {
