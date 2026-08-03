@@ -1662,7 +1662,7 @@ function componentContractResult(plugin: PreparedExtraPlugin, phases: RecipePhas
   }) as RecipeRunComponentContract
 }
 
-function preparedExtraPluginReceipts(plugins: PreparedExtraPlugin[], phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[]): RecipeRunPreparedExtraPlugin[] {
+export function preparedExtraPluginReceipts(plugins: PreparedExtraPlugin[], phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[]): RecipeRunPreparedExtraPlugin[] {
   return plugins.map((plugin) => {
     const failures = componentContractFailures(plugin, phases, executions)
     const activated = plugin.loadAs === "plugin" && plugin.activate !== false && activePluginPhaseIncludes(phases, plugin.pluginFile)
