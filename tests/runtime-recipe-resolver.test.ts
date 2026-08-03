@@ -3,7 +3,7 @@ import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 
 const result = await runPhpJson<{
   resolved: {
-    runtime: { components: string[]; plugins: Array<{ slug: string }>; resolved_recipe: { schema: string; summary: { packages: number } } }
+    runtime: { components: string[]; plugins: Array<{ slug: string }>; filesystem_overlays: Array<{ target: string }>; resolved_recipe: { schema: string; summary: { packages: number } } }
     inherit: { connectors: string[] }
     provider_plugin_paths: string[]
     secret_env: string[]
@@ -49,6 +49,7 @@ function apply_filters( $hook, $value, ...$args ) {
 				array( 'slug' => 'sample-runtime-tools', 'url' => 'https://example.test/sample-runtime-tools.zip', 'activate' => true ),
 			),
 			'bootstrap' => array( array( 'operation' => 'set_option', 'args' => array( 'name' => 'sample_runtime', 'value' => 'sandbox' ) ) ),
+			'filesystem_overlays' => array( array( 'target' => '/wordpress/wp-content/mu-plugins/sample-runtime.php', 'content' => '<?php', 'overwrite' => false ) ),
 		),
 	);
 	$value['provider-connector'] = array(
@@ -93,6 +94,7 @@ echo json_encode( array( 'resolved' => $resolved, 'local_task' => $local_task ),
 
 assert.deepEqual(result.resolved.runtime.components, ["agents-api", "sample-runtime", "sample-runtime-tools"])
 assert.deepEqual(result.resolved.runtime.plugins.map((plugin: { slug: string }) => plugin.slug), ["caller-plugin", "agents-api", "sample-runtime", "sample-runtime-tools"])
+assert.deepEqual(result.resolved.runtime.filesystem_overlays.map((overlay) => overlay.target), ["/wordpress/wp-content/mu-plugins/sample-runtime.php"])
 assert.deepEqual(result.resolved.inherit.connectors, ["existing", "primary-ai"])
 assert.deepEqual(result.resolved.provider_plugin_paths, ["/opt/provider-plugin"])
 assert.deepEqual(result.resolved.secret_env, ["PROVIDER_TOKEN"])

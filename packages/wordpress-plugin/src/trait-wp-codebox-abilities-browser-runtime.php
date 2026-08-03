@@ -8,6 +8,73 @@
 defined( 'ABSPATH' ) || exit;
 
 trait WP_Codebox_Abilities_Browser_Runtime {
+/** @param array<int,mixed> $overlays WordPress filesystem overlay specs. @return array<int,array<string,mixed>>|WP_Error */
+private static function normalize_browser_wordpress_filesystem_overlays( array $overlays ): array|WP_Error {
+	$normalized = array();
+	$targets    = array();
+	foreach ( $overlays as $index => $overlay ) {
+		if ( ! is_array( $overlay ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_invalid', 'Each browser filesystem overlay must be an object.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$target = trim( (string) ( $overlay['target'] ?? '' ) );
+		if ( ! self::browser_wordpress_filesystem_overlay_target_is_safe( $target ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_target_invalid', 'Browser filesystem overlay targets must be safe files under /wordpress.', array( 'status' => 400, 'index' => $index, 'target' => $target ) );
+		}
+		if ( isset( $targets[ $target ] ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_target_collision', 'Browser filesystem overlay targets must be unique.', array( 'status' => 400, 'index' => $index, 'target' => $target, 'conflicts_with' => $targets[ $target ] ) );
+		}
+		$targets[ $target ] = $index;
+
+		$has_content = array_key_exists( 'content', $overlay );
+		$has_base64  = array_key_exists( 'content_base64', $overlay );
+		if ( $has_content === $has_base64 ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_content_invalid', 'Browser filesystem overlays require exactly one of content or content_base64.', array( 'status' => 400, 'index' => $index ) );
+		}
+		if ( $has_content && ! is_string( $overlay['content'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_content_invalid', 'Browser filesystem overlay content must be a string.', array( 'status' => 400, 'index' => $index ) );
+		}
+		if ( ! array_key_exists( 'overwrite', $overlay ) || ! is_bool( $overlay['overwrite'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_overwrite_invalid', 'Browser filesystem overlays require an explicit boolean overwrite policy.', array( 'status' => 400, 'index' => $index ) );
+		}
+		$content = $has_content ? $overlay['content'] : base64_decode( (string) $overlay['content_base64'], true );
+		if ( ! is_string( $content ) ) {
+			return new WP_Error( 'wp_codebox_browser_filesystem_overlay_base64_invalid', 'Browser filesystem overlay content_base64 must be valid base64.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$source_digest = hash( 'sha256', $content );
+		$materialized_digest = hash( 'sha256', 'wp-codebox/browser-wordpress-filesystem-overlay/v1' . "\n" . $target . "\n" . $content );
+		$normalized[] = array_filter( array(
+			'target' => $target,
+			'content' => $content,
+			'overwrite' => $overlay['overwrite'],
+			'source_digest' => array( 'algorithm' => 'sha256', 'value' => $source_digest ),
+			'materialized_digest' => array( 'algorithm' => 'sha256', 'value' => $materialized_digest ),
+			'provenance' => array_filter( array(
+				'schema' => 'wp-codebox/browser-wordpress-filesystem-overlay-provenance/v1',
+				'source' => 'runtime.filesystem_overlays[' . $index . ']',
+				'purpose' => trim( (string) ( $overlay['purpose'] ?? '' ) ),
+				'metadata' => is_array( $overlay['metadata'] ?? null ) ? $overlay['metadata'] : array(),
+			) ),
+			'readiness' => 'compiled',
+		), static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value );
+	}
+
+	return $normalized;
+}
+
+private static function browser_wordpress_filesystem_overlay_target_is_safe( string $target ): bool {
+	if ( '' === $target || ! str_starts_with( $target, '/wordpress/' ) || str_contains( $target, "\0" ) || str_contains( $target, '\\' ) || str_contains( $target, '//' ) || str_ends_with( $target, '/' ) ) {
+		return false;
+	}
+	foreach ( explode( '/', substr( $target, 1 ) ) as $segment ) {
+		if ( '' === $segment || '.' === $segment || '..' === $segment ) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /** @param array<int,mixed> $mu_plugins Mu-plugin dependency specs. @return array<int,array<string,mixed>>|WP_Error */
 private static function normalize_browser_mu_plugins( array $mu_plugins ): array|WP_Error {
 	$normalized = array();
@@ -376,6 +443,10 @@ private static function browser_runtime_dependencies( array $input, array $brows
 	if ( is_wp_error( $bootstrap ) ) {
 		return $bootstrap;
 	}
+	$filesystem_overlays = self::normalize_browser_wordpress_filesystem_overlays( is_array( $runtime['filesystem_overlays'] ?? null ) ? $runtime['filesystem_overlays'] : array() );
+	if ( is_wp_error( $filesystem_overlays ) ) {
+		return $filesystem_overlays;
+	}
 
 	$declared_components = is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array();
 	$component_plugins   = self::browser_component_plugins( $input, array_merge( $browser_plugins, $runtime_plugins ), $declared_components );
@@ -384,7 +455,7 @@ private static function browser_runtime_dependencies( array $input, array $brows
 	}
 
 	$plugins = self::dedupe_browser_plugins( array_merge( $browser_plugins, $runtime_plugins, $component_plugins ) );
-	$prepared = self::browser_prepared_runtime_contract( $runtime, $plugins, $mu_plugins, $themes, $bootstrap, $input );
+	$prepared = self::browser_prepared_runtime_contract( $runtime, $plugins, $mu_plugins, $themes, $bootstrap, $filesystem_overlays, $input );
 	if ( is_wp_error( $prepared ) ) {
 		return $prepared;
 	}
@@ -396,6 +467,7 @@ private static function browser_runtime_dependencies( array $input, array $brows
 		'mu_plugins'             => $mu_plugins,
 		'themes'                 => $themes,
 		'bootstrap'              => $bootstrap,
+		'filesystem_overlays'    => $filesystem_overlays,
 		'prepared_runtime'       => $prepared,
 		'component_plugins'      => count( $component_plugins ),
 		'browser_plugins'        => count( $browser_plugins ),
@@ -404,12 +476,13 @@ private static function browser_runtime_dependencies( array $input, array $brows
 			'mu_plugins' => count( $mu_plugins ),
 			'themes'     => count( $themes ),
 			'bootstrap'  => count( $bootstrap ),
+			'filesystem_overlays' => count( $filesystem_overlays ),
 		),
 	);
 }
 
 /** @return array<string,mixed>|WP_Error */
-private static function browser_prepared_runtime_contract( array $runtime, array $plugins, array $mu_plugins, array $themes, array $bootstrap, array $input ): array|WP_Error {
+private static function browser_prepared_runtime_contract( array $runtime, array $plugins, array $mu_plugins, array $themes, array $bootstrap, array $filesystem_overlays, array $input ): array|WP_Error {
 	$prepared = is_array( $runtime['prepared'] ?? null ) ? $runtime['prepared'] : ( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array() );
 	$enabled  = array_key_exists( 'enabled', $prepared ) ? (bool) $prepared['enabled'] : ! empty( $prepared );
 	if ( ! $enabled ) {
@@ -424,6 +497,7 @@ private static function browser_prepared_runtime_contract( array $runtime, array
 		'mu_plugins' => self::browser_prepared_runtime_hashable_dependencies( $mu_plugins ),
 		'themes'     => self::browser_prepared_runtime_hashable_dependencies( $themes ),
 		'bootstrap'  => $bootstrap,
+		'filesystem_overlays' => $filesystem_overlays,
 		'blueprint'  => is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(),
 		'site_blueprint_artifact' => is_array( $input['site_blueprint_artifact'] ?? null ) ? $input['site_blueprint_artifact'] : array(),
 		'playground' => array(
