@@ -150,6 +150,7 @@
     "test:browser-visual-compare-contract": "npm run build && tsx tests/browser-visual-compare-contract.test.ts",
     "test:browser-visual-compare-dom-snapshots": "npm run build && tsx tests/browser-visual-compare-dom-snapshots.test.ts",
     "test:browser-visual-compare-url-capture": "npm run build && tsx tests/browser-visual-compare-url-capture.test.ts",
+    "test:browser-visual-compare-animated-media": "npm run build && tsx tests/browser-visual-compare-animated-media.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
     "test:browser-playground-session-run": "tsx tests/browser-playground-session-run.test.ts",
     "test:browser-prepared-runtime-filesystem-overlays": "tsx tests/browser-prepared-runtime-filesystem-overlays.test.ts",

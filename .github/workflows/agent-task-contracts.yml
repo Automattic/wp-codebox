@@ -122,6 +122,7 @@ jobs:
       - run: npm run build
       - run: npm run test:browser-accessibility-oracles
       - run: npm run test:browser-visual-compare-url-capture
+      - run: npm run test:browser-visual-compare-animated-media
       - run: npm run test:browser-visual-compare-capture-reliability
       - run: npm run test:browser-visual-compare-layout-drift
       - run: npm run test:agent-task-contracts
