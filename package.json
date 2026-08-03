@@ -271,6 +271,7 @@
     "test:composer-package-overlay-autoload-layout": "tsx scripts/composer-package-overlay-autoload-layout-smoke.ts",
     "test:composer-installed-versions-loader-order": "tsx scripts/composer-installed-versions-loader-order-smoke.ts",
     "test:recipe-extra-plugin-composer-autoloaders": "tsx tests/recipe-extra-plugin-composer-autoloaders.test.ts",
+    "test:recipe-extra-plugin-local-zip": "tsx tests/recipe-extra-plugin-local-zip.test.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",

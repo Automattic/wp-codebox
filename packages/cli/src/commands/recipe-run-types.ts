@@ -6,6 +6,7 @@ import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-valid
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import type { RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import type { RuntimeServiceEvidence } from "../runtime-services.js"
+import type { RecipeSourceProvenance } from "../recipe-sources.js"
 
 export interface RecipeRunOptions {
   recipePath: string
@@ -59,6 +60,7 @@ export interface RecipeRunOutput {
   runtime?: RuntimeInfo
   executions: RecipeExecutionResult[]
   componentContracts?: RecipeRunComponentContract[]
+  preparedExtraPlugins?: RecipeRunPreparedExtraPlugin[]
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
@@ -118,6 +120,19 @@ export interface RecipeRunComponentContract {
   loadAs: "plugin" | "mu-plugin" | string
   activate: boolean
   status: "prepared" | "mounted" | "activated" | "failed"
+  activationStatus: "not_requested" | "not_applicable" | "pending" | "activated" | "failed"
+  failures: Array<Record<string, unknown>>
+}
+
+export interface RecipeRunPreparedExtraPlugin {
+  schema: "wp-codebox/prepared-extra-plugin/v1"
+  slug: string
+  source: string
+  target: string
+  pluginFile: string
+  loadAs: "plugin" | "mu-plugin"
+  activate: boolean
+  provenance: RecipeSourceProvenance
   activationStatus: "not_requested" | "not_applicable" | "pending" | "activated" | "failed"
   failures: Array<Record<string, unknown>>
 }
