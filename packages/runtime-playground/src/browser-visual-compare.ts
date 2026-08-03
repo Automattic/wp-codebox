@@ -176,6 +176,7 @@ export interface VisualCompareCaptureDiagnostics {
     animatedMedia: VisualCompareAnimatedMediaEvidence
     requests: { total: number; blockedTotal: number; blockedTruncated: boolean; blocked: Array<{ url: string; resourceType: string }>; failedTotal: number; failedTruncated: boolean; failed: Array<{ url: string; resourceType: string; error: string }> }
     readiness: { durationMs: number; fonts: "ready" | "timeout" | "unavailable" }
+    postScrollStability: VisualComparePostScrollStability
   }
   assets: {
     stylesheets: { total: number; loaded: number; pending: number; errored: number }
@@ -202,6 +203,15 @@ export interface VisualCompareCaptureDiagnostics {
     focusedElement: boolean
     focusedElementTag?: string
   }
+}
+
+export interface VisualComparePostScrollStability {
+  status: "settled" | "dynamic_content_not_settled"
+  durationMs: number
+  quietWindowMs: number
+  timeoutMs: number
+  domMutations: number
+  layoutMutations: number
 }
 
 export interface VisualCompareAnimatedMediaEvidence {
@@ -2072,11 +2082,19 @@ async function installVisualCompareTimeControl(page: Page, frozenTime?: string):
 // media, sticky headers) and lets any triggered reveals settle, then returns to the
 // origin so the full-page capture is deterministic. Bounded by a guard so it can
 // never loop. Applied IDENTICALLY to source and candidate.
-async function settleVisualComparePageForCapture(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
-    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-    const documentHeight = (): number => Math.max(
+const VISUAL_COMPARE_POST_SCROLL_QUIET_WINDOW_MS = 250
+const VISUAL_COMPARE_POST_SCROLL_STABILITY_TIMEOUT_MS = 10_000
+
+// Scroll-triggered pages can begin timer-driven DOM updates only after their content
+// becomes visible. Observe those relevant changes and capture only after a quiet
+// window, with a hard bound for pages that never stop changing.
+export async function settleVisualComparePageForCapture(page: Page): Promise<VisualComparePostScrollStability> {
+  return page.evaluate(`(async () => {
+    const quietWindowMs = ${VISUAL_COMPARE_POST_SCROLL_QUIET_WINDOW_MS}
+    const timeoutMs = ${VISUAL_COMPARE_POST_SCROLL_STABILITY_TIMEOUT_MS}
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const documentHeight = () => Math.max(
       document.body?.scrollHeight ?? 0,
       document.body?.offsetHeight ?? 0,
       document.documentElement?.scrollHeight ?? 0,
@@ -2085,28 +2103,83 @@ async function settleVisualComparePageForCapture(page: Page): Promise<void> {
     )
     const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1)
     const step = Math.max(1, Math.floor(viewportHeight * 0.8))
+    const startedAt = performance.now()
+    let lastActivityAt = startedAt
+    let domMutations = 0
+    let layoutMutations = 0
+    const markDomActivity = () => {
+      domMutations += 1
+      lastActivityAt = performance.now()
+    }
+    const markLayoutActivity = () => {
+      layoutMutations += 1
+      lastActivityAt = performance.now()
+    }
+    const mutationObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData" || mutation.type === "childList" || mutation.type === "attributes") {
+          markDomActivity()
+        }
+      }
+    })
+    mutationObserver.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "open", "src", "href", "width", "height"],
+    })
+    const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(() => markLayoutActivity())
+    resizeObserver?.observe(document.documentElement)
+    if (document.body) resizeObserver?.observe(document.body)
+    const waitForQuietWindow = async () => {
+      lastActivityAt = performance.now()
+      while (performance.now() - startedAt < timeoutMs) {
+        if (performance.now() - lastActivityAt >= quietWindowMs) return true
+        await sleep(Math.min(50, quietWindowMs))
+      }
+      return false
+    }
     let position = 0
     let guard = 0
-    // Walk the full document height in viewport-sized steps, pausing for a frame at
-    // each so IntersectionObserver callbacks (and lazy content) fire as they would
-    // under a real scroll. `documentHeight()` is re-read each iteration because
-    // reveals can grow the page.
-    while (position < documentHeight() - viewportHeight && guard < 2000) {
-      position += step
-      window.scrollTo(0, position)
+    let settled = true
+    try {
+      // Dwell through a quiet window at each viewport. Polling-based lazy content can
+      // otherwise miss a fast scroll walk entirely even though the node was visible.
+      while (position < documentHeight() - viewportHeight && guard < 2000) {
+        position += step
+        window.scrollTo(0, position)
+        await nextFrame()
+        settled = await waitForQuietWindow()
+        if (!settled) break
+        guard += 1
+      }
+      if (settled) {
+        window.scrollTo(0, documentHeight())
+        await nextFrame()
+        settled = await waitForQuietWindow()
+      }
+      // Return to the origin so the full-page screenshot starts from a deterministic
+      // top-of-document position regardless of how far the reveal walk scrolled.
+      window.scrollTo(0, 0)
       await nextFrame()
-      await sleep(16)
-      guard += 1
+      await nextFrame()
+      if (settled) {
+        settled = await waitForQuietWindow()
+      }
+      return {
+        status: settled ? "settled" : "dynamic_content_not_settled",
+        durationMs: Math.round(performance.now() - startedAt),
+        quietWindowMs,
+        timeoutMs,
+        domMutations,
+        layoutMutations,
+      }
+    } finally {
+      mutationObserver.disconnect()
+      resizeObserver?.disconnect()
     }
-    window.scrollTo(0, documentHeight())
-    await nextFrame()
-    await sleep(32)
-    // Return to the origin so the full-page screenshot starts from a deterministic
-    // top-of-document position regardless of how far the reveal walk scrolled.
-    window.scrollTo(0, 0)
-    await nextFrame()
-    await sleep(16)
-  })
+  })()`)
 }
 
 export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<{ durationMs: number; fonts: "ready" | "timeout" | "unavailable" }> {
@@ -2290,7 +2363,7 @@ async function captureVisualComparePageScreenshot(page: Page, outputPath: string
   throw new Error(`wordpress.visual-compare screenshot failed after ${attempts} attempt(s)${where}: ${visualCompareErrorDetail(lastError)}`)
 }
 
-export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDiagnostics, "assets" | "dynamicContent">): VisualCompareCaptureDiagnostics["readiness"] {
+export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDiagnostics, "assets" | "dynamicContent"> & { postScrollStability?: VisualComparePostScrollStability }): VisualCompareCaptureDiagnostics["readiness"] {
   const reasons: string[] = []
   if (input.assets.stylesheets.pending > 0) {
     reasons.push(`${input.assets.stylesheets.pending} stylesheet(s) still pending`)
@@ -2320,6 +2393,9 @@ export function visualCompareCaptureReadiness(input: Pick<VisualCompareCaptureDi
   }
   if (input.dynamicContent.focusedElement) {
     reasons.push("focused element present")
+  }
+  if (input.postScrollStability?.status === "dynamic_content_not_settled") {
+    reasons.push(`dynamic_content_not_settled after ${input.postScrollStability.timeoutMs}ms (${input.postScrollStability.domMutations} DOM, ${input.postScrollStability.layoutMutations} layout mutations)`)
   }
 
   return {
@@ -2441,7 +2517,7 @@ async function captureVisualCompareDiagnostics(page: Page, effectiveCapture: Vis
       },
     }
   })
-  return { ...diagnostics, effectiveCapture, readiness: visualCompareCaptureReadiness(diagnostics) }
+  return { ...diagnostics, effectiveCapture, readiness: visualCompareCaptureReadiness({ ...diagnostics, postScrollStability: effectiveCapture.postScrollStability }) }
 }
 
 async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number, capture: { reducedMotion: boolean; animations: "freeze" | "allow"; animatedMedia: "allow" | "first-frame"; frozenTime?: string; injectedStyleBytes: number; externalRequests: "block" | "allow"; captureStyle: string }, requestTracker: VisualCompareRequestTracker, animatedMediaTracker: VisualCompareAnimatedMediaTracker): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
@@ -2470,18 +2546,18 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
     await page.addStyleTag({ content: capture.captureStyle })
   }
   const readiness = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
-  // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
-  // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
-  // fully-revealed page state. Identical treatment for source and candidate.
-  await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   if (capture.animations === "freeze") {
     await page.evaluate(() => document.getAnimations().forEach((animation) => { animation.currentTime = 0; animation.pause() }))
   }
+  // Settle scroll/IntersectionObserver-gated entrance reveals before snapshotting
+  // so both the DOM snapshot (computed styles) and the pixel screenshot reflect the
+  // fully-revealed page state. Identical treatment for source and candidate.
+  const postScrollStability = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "settle", operation: settleVisualComparePageForCapture(page), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureBrowserDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   await captureVisualComparePageScreenshot(page, outputPath, { fullPage, timeoutMs, maxFullPageHeightPx: maxFullPageHeight })
   const { captureStyle: _captureStyle, ...effectiveCapture } = capture
   // Snapshot after the final paint because screenshotting can trigger lazy resource loads.
-  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, { ...effectiveCapture, animatedMedia: animatedMediaTracker.snapshot(), requests: requestTracker.snapshot(), readiness }), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  const captureDiagnostics = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "capture-diagnostics", operation: captureVisualCompareDiagnostics(page, { ...effectiveCapture, animatedMedia: animatedMediaTracker.snapshot(), requests: requestTracker.snapshot(), readiness, postScrollStability }), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   return { finalUrl: page.url(), domSnapshot, captureDiagnostics }
 }
 
