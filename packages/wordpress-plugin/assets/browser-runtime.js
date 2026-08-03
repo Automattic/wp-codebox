@@ -715,9 +715,35 @@
 		return false;
 	};
 
-	const createBrowserPreviewLifecycle = ( scope, iframe, signal ) => {
+	const browserPreviewClientReleaseEvidence = ( value ) => {
+		if ( typeof value === 'boolean' ) {
+			return {
+				client_released: value,
+				runtime_terminated: false,
+				client_release_evidence: null,
+			};
+		}
+		if ( value && typeof value === 'object' && ! Array.isArray( value ) ) {
+			const client_released = value.client_released === true;
+			const runtime_terminated = value.runtime_terminated === true;
+			return {
+				client_released,
+				runtime_terminated,
+				client_release_evidence: Object.freeze( { client_released, runtime_terminated } ),
+			};
+		}
+		return {
+			client_released: false,
+			runtime_terminated: false,
+			client_release_evidence: null,
+		};
+	};
+
+	const createBrowserPreviewLifecycle = ( scope, iframe, signal, disposeClient ) => {
 		let active = true;
 		let cancelled = false;
+		let client;
+		let clientCleanup;
 		let cleanup;
 		let abortListener;
 		let rejectCancellation;
@@ -727,27 +753,71 @@
 		const lifecycle = {
 			isActive: () => active,
 			wait: ( promise ) => Promise.race( [ promise, cancellation ] ),
+			ownClient: ( nextClient ) => {
+				client = nextClient;
+				if ( ! active ) {
+					void lifecycle.releaseClient().catch( () => {} );
+				}
+				return nextClient;
+			},
+			releaseClient: () => {
+				if ( client === undefined ) {
+					return Promise.resolve( { requested: false, ...browserPreviewClientReleaseEvidence() } );
+				}
+				if ( ! clientCleanup ) {
+					clientCleanup = Promise.resolve().then( async () => {
+						if ( typeof disposeClient === 'function' ) {
+							return { requested: true, ...browserPreviewClientReleaseEvidence( await disposeClient( client ) ) };
+						}
+						return { requested: false, ...browserPreviewClientReleaseEvidence() };
+					} );
+				}
+				return clientCleanup;
+			},
 			dispose: async () => {
 				if ( cleanup ) {
 					return cleanup;
 				}
 
 				active = false;
-				cleanup = Promise.resolve().then( () => {
+				cleanup = Promise.resolve().then( async () => {
 					if ( signal && abortListener && typeof signal.removeEventListener === 'function' ) {
 						signal.removeEventListener( 'abort', abortListener );
 					}
 					if ( scope && browserPreviewLifecycles.get( scope ) === lifecycle ) {
 						browserPreviewLifecycles.delete( scope );
 					}
+					const iframe_reset = resetBrowserPreviewIframe( iframe );
+					let client_release_requested = false;
+					let client_released = false;
+					let runtime_terminated = false;
+					let client_release_evidence = null;
+					let client_release_error = null;
+					try {
+						const clientRelease = await lifecycle.releaseClient();
+						client_release_requested = clientRelease.requested;
+						client_released = clientRelease.client_released;
+						runtime_terminated = clientRelease.runtime_terminated;
+						client_release_evidence = clientRelease.client_release_evidence;
+					} catch ( error ) {
+						client_release_error = error?.message || 'Browser preview client cleanup failed.';
+					}
 					return Object.freeze( {
 						schema: 'wp-codebox/browser-preview-dispose-result/v1',
 						success: true,
 						status: 'disposed',
 						scope: scope || null,
-						iframe_reset: resetBrowserPreviewIframe( iframe ),
+						iframe_reset,
 						listeners_released: true,
-						pending_work_cancelled: true,
+						pending_work_cancellation_requested: true,
+						pending_work_cancelled: false,
+						stale_result_suppression_enabled: true,
+						client_release_requested,
+						client_released,
+						client_release_error,
+						client_release_evidence,
+						runtime_release_requested: iframe_reset,
+						runtime_terminated,
 						lifecycle_released: true,
 					} );
 				} );
@@ -767,6 +837,8 @@
 			abortListener = () => lifecycle.cancel();
 			signal.addEventListener( 'abort', abortListener, { once: true } );
 		}
+		// Abort may happen after the final wait. Keep its rejection observed.
+		void cancellation.catch( () => {} );
 
 		return lifecycle;
 	};
@@ -782,7 +854,7 @@
 		if ( previousLifecycle ) {
 			await previousLifecycle.dispose();
 		}
-		const lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal );
+		const lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal, options.disposeClient );
 		if ( options.signal?.aborted ) {
 			await lifecycle.dispose();
 			throw browserPreviewAbortError();
@@ -809,7 +881,8 @@
 				...( boot.scope ? { scope: boot.scope } : {} ),
 				blueprint,
 			};
-			const client = await lifecycle.wait( startPlaygroundWeb( request ) );
+			const start = Promise.resolve( startPlaygroundWeb( request ) ).then( ( client ) => lifecycle.ownClient( client ) );
+			const client = await lifecycle.wait( start );
 
 			if ( lifecycle.isActive() && typeof options.onClientConnected === 'function' ) {
 				options.onClientConnected( client );
