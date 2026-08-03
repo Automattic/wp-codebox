@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readdir, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { executeManagedHostCommand } from "@automattic/wp-codebox-core"
@@ -32,6 +32,32 @@ export async function prepareZipSource<TSource extends ZipSourceReference>(sourc
   await assertExtractedSourceBounds(extractDirectory)
 
   return { root, zipPath, extractDirectory, digest }
+}
+
+export async function prepareLocalZipSource(sourcePath: string, slug: string, expectedSha256?: string): Promise<PreparedZipSource> {
+  const root = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))
+  const zipPath = join(root, "source.zip")
+  const extractDirectory = join(root, "extracted")
+  try {
+    const source = await lstat(sourcePath)
+    if (source.isSymbolicLink() || !source.isFile()) {
+      throw new Error(`Local ZIP recipe source must be a regular file: ${sourcePath}`)
+    }
+    const buffer = await readFile(sourcePath)
+    const digest = createHash("sha256").update(buffer).digest("hex")
+    if (expectedSha256 && digest !== expectedSha256.toLowerCase()) {
+      throw new Error(`Recipe source sha256 mismatch for ${sourcePath}: expected ${expectedSha256.toLowerCase()}, got ${digest}`)
+    }
+    await writeFile(zipPath, buffer)
+    await mkdir(extractDirectory, { recursive: true })
+    await assertSafeZipEntries(zipPath)
+    await executeManagedHostCommand({ command: "unzip", args: ["-q", zipPath, "-d", extractDirectory], cwd: root, allowedCwdRoots: [root], label: "extract recipe source zip" })
+    await assertExtractedSourceBounds(extractDirectory)
+    return { root, zipPath, extractDirectory, digest }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
 }
 
 async function downloadZipSource<TSource extends ZipSourceReference>(source: TSource, targetPath: string, redirectSource: RedirectSourceResolver<TSource>): Promise<string> {
