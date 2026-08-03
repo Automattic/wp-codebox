@@ -1929,7 +1929,7 @@ async function installVisualCompareTimeControl(page: Page, frozenTime?: string):
 // origin so the full-page capture is deterministic. Bounded by a guard so it can
 // never loop. Applied IDENTICALLY to source and candidate.
 const VISUAL_COMPARE_POST_SCROLL_QUIET_WINDOW_MS = 250
-const VISUAL_COMPARE_POST_SCROLL_STABILITY_TIMEOUT_MS = 5_000
+const VISUAL_COMPARE_POST_SCROLL_STABILITY_TIMEOUT_MS = 10_000
 
 // Scroll-triggered pages can begin timer-driven DOM updates only after their content
 // becomes visible. Observe those relevant changes and capture only after a quiet
@@ -1949,27 +1949,6 @@ export async function settleVisualComparePageForCapture(page: Page): Promise<Vis
     )
     const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1)
     const step = Math.max(1, Math.floor(viewportHeight * 0.8))
-    let position = 0
-    let guard = 0
-    // Walk the full document height in viewport-sized steps, pausing for a frame at
-    // each so IntersectionObserver callbacks (and lazy content) fire as they would
-    // under a real scroll. documentHeight() is re-read each iteration because
-    // reveals can grow the page.
-    while (position < documentHeight() - viewportHeight && guard < 2000) {
-      position += step
-      window.scrollTo(0, position)
-      await nextFrame()
-      await sleep(16)
-      guard += 1
-    }
-    window.scrollTo(0, documentHeight())
-    await nextFrame()
-    // Return to the origin so the full-page screenshot starts from a deterministic
-    // top-of-document position regardless of how far the reveal walk scrolled.
-    window.scrollTo(0, 0)
-    await nextFrame()
-    await nextFrame()
-
     const startedAt = performance.now()
     let lastActivityAt = startedAt
     let domMutations = 0
@@ -1999,15 +1978,49 @@ export async function settleVisualComparePageForCapture(page: Page): Promise<Vis
     const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(() => markLayoutActivity())
     resizeObserver?.observe(document.documentElement)
     if (document.body) resizeObserver?.observe(document.body)
-
-    try {
+    const waitForQuietWindow = async () => {
+      lastActivityAt = performance.now()
       while (performance.now() - startedAt < timeoutMs) {
-        if (performance.now() - lastActivityAt >= quietWindowMs) {
-          return { status: "settled", durationMs: Math.round(performance.now() - startedAt), quietWindowMs, timeoutMs, domMutations, layoutMutations }
-        }
+        if (performance.now() - lastActivityAt >= quietWindowMs) return true
         await sleep(Math.min(50, quietWindowMs))
       }
-      return { status: "dynamic_content_not_settled", durationMs: Math.round(performance.now() - startedAt), quietWindowMs, timeoutMs, domMutations, layoutMutations }
+      return false
+    }
+    let position = 0
+    let guard = 0
+    let settled = true
+    try {
+      // Dwell through a quiet window at each viewport. Polling-based lazy content can
+      // otherwise miss a fast scroll walk entirely even though the node was visible.
+      while (position < documentHeight() - viewportHeight && guard < 2000) {
+        position += step
+        window.scrollTo(0, position)
+        await nextFrame()
+        settled = await waitForQuietWindow()
+        if (!settled) break
+        guard += 1
+      }
+      if (settled) {
+        window.scrollTo(0, documentHeight())
+        await nextFrame()
+        settled = await waitForQuietWindow()
+      }
+      // Return to the origin so the full-page screenshot starts from a deterministic
+      // top-of-document position regardless of how far the reveal walk scrolled.
+      window.scrollTo(0, 0)
+      await nextFrame()
+      await nextFrame()
+      if (settled) {
+        settled = await waitForQuietWindow()
+      }
+      return {
+        status: settled ? "settled" : "dynamic_content_not_settled",
+        durationMs: Math.round(performance.now() - startedAt),
+        quietWindowMs,
+        timeoutMs,
+        domMutations,
+        layoutMutations,
+      }
     } finally {
       mutationObserver.disconnect()
       resizeObserver?.disconnect()

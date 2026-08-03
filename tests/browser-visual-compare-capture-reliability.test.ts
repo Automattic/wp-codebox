@@ -259,10 +259,10 @@ function countDiffPixels(png: PNG): number {
   const browser = await chromium.launch({ headless: true })
   try {
     const page = await browser.newPage({ viewport: { width: 320, height: 240 } })
-    const counterPage = '<!doctype html><style>#spacer { height: 12000px }</style><div id="spacer"></div><div id="gate">trigger</div><output id="counter">blank</output>'
+    const counterPage = '<!doctype html><style>#spacer { height: 900px }</style><div id="spacer"></div><output id="counter">blank</output>'
     for (let run = 0; run < 2; run += 1) {
       await page.setContent(counterPage)
-      await page.evaluate(`setTimeout(() => { const counter = document.querySelector('#counter'); let value = 0; const timer = setInterval(() => { counter.textContent = String(++value); if (value === 50) clearInterval(timer); }, 35); }, 1900)`)
+      await page.evaluate(`(() => { const counter = document.querySelector('#counter'); const visibilityTimer = setInterval(() => { const box = counter.getBoundingClientRect(); if (box.top < 0 || box.bottom > innerHeight) return; clearInterval(visibilityTimer); let value = 0; const timer = setInterval(() => { counter.textContent = String(++value); if (value === 50) clearInterval(timer); }, 10); }, 200); })()`)
       const stability = await settleVisualComparePageForCapture(page)
       assert.equal(stability.status, "settled")
       assert.ok(stability.domMutations > 0, "timer-driven text mutations must delay capture")
@@ -270,12 +270,12 @@ function countDiffPixels(png: PNG): number {
     }
 
     await page.setContent(counterPage)
-    await page.evaluate(`setTimeout(() => { const counter = document.querySelector('#counter'); let value = 0; setInterval(() => { counter.textContent = String(++value); }, 35); }, 1900)`)
+    await page.evaluate(`(() => { const counter = document.querySelector('#counter'); const visibilityTimer = setInterval(() => { const box = counter.getBoundingClientRect(); if (box.top < 0 || box.bottom > innerHeight) return; clearInterval(visibilityTimer); let value = 0; setInterval(() => { counter.textContent = String(++value); }, 10); }, 200); })()`)
     const startedAt = performance.now()
     const activeStability = await settleVisualComparePageForCapture(page)
     const elapsedMs = performance.now() - startedAt
     assert.equal(activeStability.status, "dynamic_content_not_settled")
-    assert.ok(elapsedMs >= 4_500 && elapsedMs < 10_000, `active-page settling must stay bounded, got ${elapsedMs}ms`)
+    assert.ok(elapsedMs >= 9_500 && elapsedMs < 15_000, `active-page settling must stay bounded, got ${elapsedMs}ms`)
     assert.match(visualCompareCaptureReadiness({ assets: { stylesheets: { total: 0, loaded: 0, pending: 0, errored: 0 }, images: { total: 0, loaded: 0, loading: 0, failed: 0 }, fonts: { status: "loaded" } }, dynamicContent: { fixed: 0, sticky: 0, video: 0, canvas: 0, iframe: 0, animated: 0, focusedElement: false }, postScrollStability: activeStability }).reasons.join("\n"), /dynamic_content_not_settled/)
   } finally {
     await browser.close()
