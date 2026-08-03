@@ -235,7 +235,7 @@ final class WP_Codebox_Runtime_Recipe_Resolver {
 
 	/** @param array<string,mixed> $base Base runtime. @param array<string,mixed> $extra Extra runtime. @return array<string,mixed> */
 	private static function merge_runtime( array $base, array $extra ): array {
-		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'bootstrap' ) as $field ) {
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'bootstrap', 'filesystem_overlays' ) as $field ) {
 			$base[ $field ] = self::merge_lists( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
 		}
 

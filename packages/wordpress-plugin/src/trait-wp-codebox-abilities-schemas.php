@@ -1154,6 +1154,22 @@ private static function browser_runtime_input_schema(): array {
 			'mu_plugins' => array( 'type' => 'array' ),
 			'themes'     => array( 'type' => 'array' ),
 			'bootstrap'  => array( 'type' => 'array' ),
+			'filesystem_overlays' => array(
+				'type' => 'array',
+				'description' => 'WordPress-root filesystem bytes materialized before caller Blueprint steps and runtime readiness.',
+				'items' => array(
+					'type' => 'object',
+					'properties' => array(
+						'target' => array( 'type' => 'string' ),
+						'content' => array( 'type' => 'string' ),
+						'content_base64' => array( 'type' => 'string' ),
+						'overwrite' => array( 'type' => 'boolean' ),
+						'purpose' => array( 'type' => 'string' ),
+						'metadata' => array( 'type' => 'object' ),
+					),
+					'required' => array( 'target', 'overwrite' ),
+				),
+			),
 			'prepared'   => array(
 				'type'        => 'object',
 				'description' => 'Optional prepared browser runtime cache contract. When enabled, WP Codebox keys the compiled browser-ready blueprint by a source digest and reuses matching cached artifacts on repeated known-site opens.',
