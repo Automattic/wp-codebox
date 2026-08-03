@@ -4,12 +4,13 @@ import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 const result = await runPhpJson<{
   default_error: { code: string; data: { errors: Array<{ code: string; profile: string }> } }
   input: {
-    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number }; capabilities: string[]; profiles: Array<{ id: string; aliases?: string[]; internal?: { provides?: string[] } }> } }
+    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; filesystem_overlays: Array<{ target: string }>; resolved_profile: { schema: string; summary: { profiles: number }; capabilities: string[]; profiles: Array<{ id: string; aliases?: string[]; internal?: { provides?: string[] } }> } }
     runtime_profile: {
       schema: string
       capabilities: string[]
       provider_plugins?: Array<{ slug: string }>
       runtime_overlays: Array<{ id: string }>
+      filesystem_overlays: Array<{ target: string }>
       readiness: { status: string; checks: Record<string, boolean> }
       diagnostics: Array<{ code: string; status: string; severity: string; evidence: Record<string, unknown> }>
       provenance: { owner: string; resolver: string }
@@ -70,6 +71,7 @@ $input = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 		'components' => array( 'workspace-overlay' ),
 		'capabilities' => array( 'provider.openai' ),
 		'runtime_overlays' => array( array( 'id' => 'codex-runtime-overlay' ) ),
+		'filesystem_overlays' => array( array( 'target' => '/wordpress/wp-content/mu-plugins/profile.php', 'content' => '<?php', 'overwrite' => false ) ),
 	),
 ) );
 
@@ -103,6 +105,8 @@ assert.deepEqual(result.input.runtime_profile.capabilities, [
 assert.deepEqual(result.input.runtime.plugins.map((plugin) => plugin.slug), ["ai-provider-for-openai"])
 assert.equal(result.input.runtime_profile.provider_plugins, undefined)
 assert.deepEqual(result.input.runtime_profile.runtime_overlays.map((overlay) => overlay.id), ["codex-runtime-overlay"])
+assert.deepEqual(result.input.runtime_profile.filesystem_overlays.map((overlay) => overlay.target), ["/wordpress/wp-content/mu-plugins/profile.php"])
+assert.deepEqual(result.input.runtime.filesystem_overlays.map((overlay) => overlay.target), ["/wordpress/wp-content/mu-plugins/profile.php"])
 assert.equal(result.input.runtime_profile.readiness.status, "ready")
 assert.equal(result.input.runtime_profile.readiness.checks.dependencies, true)
 assert.equal(result.input.runtime_profile.diagnostics[0].code, "runtime_profile.resolved")

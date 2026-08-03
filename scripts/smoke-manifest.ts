@@ -46,6 +46,7 @@ export const smokeGroups = {
       npmScript("test:host-recipe-builder"),
       npmScript("test:browser-runner-template"),
       npmScript("test:browser-runtime-file-ops"),
+      npmScript("test:browser-prepared-runtime-filesystem-overlays"),
       npmScript("test:browser-provider-bridge-inheritance"),
       npmScript("test:browser-preview-routing"),
       npmScript("test:browser-routed-command-security"),

@@ -493,6 +493,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'plugins'      => $dependencies( $profile['plugins'] ?? array(), 'plugin' ),
 				'mu_plugins'   => $dependencies( $profile['mu_plugins'] ?? array(), 'mu_plugin' ),
 				'themes'       => $dependencies( $profile['themes'] ?? array(), 'theme' ),
+				'filesystem_overlays' => self::object_list( $profile['filesystem_overlays'] ?? array() ),
 				'overlays'     => $dependencies( $profile['overlays'] ?? $profile['runtime_overlays'] ?? array(), 'overlay' ),
 				'runtime_overlays'     => self::object_list( $profile['runtime_overlays'] ?? array() ),
 				'runtime_state_mounts' => self::object_list( $profile['runtime_state_mounts'] ?? array() ),
@@ -532,7 +533,7 @@ final class WP_Codebox_Browser_Task_Builder {
 		$profile_plugins = self::merge_lists( self::object_list( $profile['plugins'] ?? array() ), self::object_list( $profile['provider_plugins'] ?? array() ) );
 		$runtime_plugins = is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array();
 		$runtime['plugins'] = empty( $runtime['resolved_profile'] ) ? self::merge_lists( $profile_plugins, $runtime_plugins ) : self::merge_lists( $runtime_plugins, $profile_plugins );
-		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
+		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'filesystem_overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
 			$profile_items = self::object_list( $profile[ $field ] ?? array() );
 			if ( ! empty( $profile_items ) ) {
 				$runtime_items = is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array();

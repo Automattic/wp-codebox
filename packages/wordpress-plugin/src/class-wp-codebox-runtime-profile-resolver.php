@@ -36,7 +36,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			is_array( $materialization_profile['provider_plugins'] ?? null ) ? $materialization_profile['provider_plugins'] : array(),
 			is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array()
 		);
-		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
+		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'filesystem_overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
 			$items = is_array( $materialization_profile[ $field ] ?? null ) ? $materialization_profile[ $field ] : array();
 			if ( ! empty( $items ) ) {
 				$runtime[ $field ] = self::merge_lists( $items, is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array() );
@@ -397,7 +397,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 	/** @param array<string,mixed> $profile Resolved runtime profile. @return array<string,mixed> */
 	private static function readiness( array $profile ): array {
 		$missing = array();
-		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays' ) as $field ) {
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'filesystem_overlays', 'overlays' ) as $field ) {
 			foreach ( is_array( $profile[ $field ] ?? null ) ? $profile[ $field ] : array() as $entry ) {
 				if ( ! is_array( $entry ) ) {
 					continue;
@@ -474,7 +474,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 
 	/** @param array<string,mixed> $base Base profile. @param array<string,mixed> $extra Extra profile. @return array<string,mixed> */
 	private static function merge_profile( array $base, array $extra ): array {
-		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts', 'provider_plugins', 'extra_plugins', 'component_contracts', 'bootstrap', 'diagnostics' ) as $field ) {
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'filesystem_overlays', 'overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts', 'provider_plugins', 'extra_plugins', 'component_contracts', 'bootstrap', 'diagnostics' ) as $field ) {
 			$base[ $field ] = self::merge_lists( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
 		}
 		$base['capabilities'] = self::merge_string_lists( $base['capabilities'] ?? array(), $extra['capabilities'] ?? array() );
