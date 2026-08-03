@@ -7,7 +7,7 @@ import { PNG } from "pngjs"
 
 import { chromium } from "playwright"
 
-import { comparePngFiles, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, waitForVisualComparePaintReady, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
+import { comparePngFiles, settleVisualComparePageForCapture, visualCompareCaptureReadiness, visualCompareCompactCaptureDiagnostics, visualCompareErrorDetail, visualCompareNavigationPolicy, visualCompareOfflineRequestAllowed, visualCompareRegionElementOverlaps, visualCompareSelectorDeltas, waitForVisualComparePaintReady, type VisualCompareCaptureDiagnostics } from "../packages/runtime-playground/src/browser-visual-compare.js"
 
 // Build an opaque solid-color PNG. `fill` is [r,g,b].
 function solidPng(width: number, height: number, fill: [number, number, number]): PNG {
@@ -220,6 +220,7 @@ function countDiffPixels(png: PNG): number {
       externalRequests: "block",
       requests: { total: 104, blockedTotal: 51, blockedTruncated: true, blocked: [{ url: "https://fonts.example.invalid/font.woff2", resourceType: "font" }], failedTotal: 53, failedTruncated: true, failed: [{ url: "http://example.test/missing.png", resourceType: "image", error: "net::ERR_FAILED" }] },
       readiness: { durationMs: 12, fonts: "ready" },
+      postScrollStability: { status: "settled", durationMs: 250, quietWindowMs: 250, timeoutMs: 5000, domMutations: 0, layoutMutations: 0 },
     },
     assets: {
       stylesheets: { total: 3, loaded: 1, pending: 1, errored: 1 },
@@ -248,6 +249,37 @@ function countDiffPixels(png: PNG): number {
   assert.equal(compact.source?.effectiveCapture.requests.failedTotal, 53)
   assert.equal(compact.source?.effectiveCapture.readiness.fonts, "ready")
   assert.equal("title" in (compact.source?.environment ?? {}), false)
+}
+
+// 9. Timer-driven content can become active near the end of a long scroll walk. The
+// capture settle phase waits for its final declarative endpoint, then reaches the same
+// endpoint again on a fresh navigation. A continuously changing page exits boundedly
+// and records an explicit low-confidence diagnostic instead of hanging.
+{
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage({ viewport: { width: 320, height: 240 } })
+    const counterPage = '<!doctype html><style>#spacer { height: 12000px }</style><div id="spacer"></div><div id="gate">trigger</div><output id="counter">blank</output>'
+    for (let run = 0; run < 2; run += 1) {
+      await page.setContent(counterPage)
+      await page.evaluate(`setTimeout(() => { const counter = document.querySelector('#counter'); let value = 0; const timer = setInterval(() => { counter.textContent = String(++value); if (value === 50) clearInterval(timer); }, 35); }, 1900)`)
+      const stability = await settleVisualComparePageForCapture(page)
+      assert.equal(stability.status, "settled")
+      assert.ok(stability.domMutations > 0, "timer-driven text mutations must delay capture")
+      assert.equal(await page.locator("#counter").textContent(), "50")
+    }
+
+    await page.setContent(counterPage)
+    await page.evaluate(`setTimeout(() => { const counter = document.querySelector('#counter'); let value = 0; setInterval(() => { counter.textContent = String(++value); }, 35); }, 1900)`)
+    const startedAt = performance.now()
+    const activeStability = await settleVisualComparePageForCapture(page)
+    const elapsedMs = performance.now() - startedAt
+    assert.equal(activeStability.status, "dynamic_content_not_settled")
+    assert.ok(elapsedMs >= 4_500 && elapsedMs < 10_000, `active-page settling must stay bounded, got ${elapsedMs}ms`)
+    assert.match(visualCompareCaptureReadiness({ assets: { stylesheets: { total: 0, loaded: 0, pending: 0, errored: 0 }, images: { total: 0, loaded: 0, loading: 0, failed: 0 }, fonts: { status: "loaded" } }, dynamicContent: { fixed: 0, sticky: 0, video: 0, canvas: 0, iframe: 0, animated: 0, focusedElement: false }, postScrollStability: activeStability }).reasons.join("\n"), /dynamic_content_not_settled/)
+  } finally {
+    await browser.close()
+  }
 }
 
 // 8. The bounded flood-fill region detection runs the real comparePngFiles aggregation
