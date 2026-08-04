@@ -8,7 +8,30 @@ import test from "node:test"
 import { chromium } from "playwright"
 
 import { browserEnvironmentMatrix } from "../packages/runtime-core/src/browser-environment-matrix.js"
-import { createPlaywrightBrowserEnvironmentContext, resolvePlaywrightBrowserEnvironment, runPlaywrightBrowserEnvironmentMatrix } from "../packages/runtime-playground/src/browser-environment-matrix.js"
+import { createPlaywrightBrowserEnvironmentContext, observePlaywrightBrowserEnvironment, resolvePlaywrightBrowserEnvironment, runPlaywrightBrowserEnvironmentMatrix } from "../packages/runtime-playground/src/browser-environment-matrix.js"
+
+test("real browser observes the mobile touch contract without overstating isMobile fidelity", async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const requested = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }
+    const resolved = await resolvePlaywrightBrowserEnvironment({ id: "mobile", index: 0, seed: "mobile", selections: {}, requested, requiredCapabilities: [], optionalCapabilities: [] }, browser)
+    const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved)
+    try {
+      await runtime.page.goto("data:text/html,<meta name=viewport content='width=device-width'><main>mobile</main>")
+      const evidence = await observePlaywrightBrowserEnvironment(runtime.page, requested, resolved)
+      assert.deepEqual(evidence.observed?.viewport, requested.viewport)
+      assert.equal(evidence.observed?.hasTouch, true)
+      assert.equal(evidence.capabilities.find(({ id }) => id === "browser.environment.touch")?.fidelity, "exact")
+      assert.equal(evidence.capabilities.find(({ id }) => id === "browser.environment.mobile")?.fidelity, "emulated")
+      assert.deepEqual(evidence.unsupported, [])
+      assert.deepEqual(evidence.inconclusive, ["browser.environment.mobile"])
+    } finally {
+      await runtime.close()
+    }
+  } finally {
+    await browser.close()
+  }
+})
 
 test("real browser matrix applies viewport, media, locale, timezone, touch, zoom, and throttling", async () => {
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-matrix-"))

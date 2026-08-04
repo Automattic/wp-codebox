@@ -162,7 +162,14 @@ export async function runBrowserActionsCommand({
     }
     resolvedEnvironment = session?.resolved ?? await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(requestedEnvironment), browser)
     const unsupportedEnvironment = resolvedEnvironment.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
-    environmentEvidence = { requested: requestedEnvironment, resolved: resolvedEnvironment.effective, provider: resolvedEnvironment.provider, capabilities: resolvedEnvironment.capabilities, unsupported: unsupportedEnvironment, inconclusive: [] }
+    environmentEvidence = {
+      requested: requestedEnvironment,
+      resolved: resolvedEnvironment.effective,
+      provider: resolvedEnvironment.provider,
+      capabilities: resolvedEnvironment.capabilities,
+      unsupported: unsupportedEnvironment,
+      inconclusive: [...resolvedEnvironment.capabilities.filter(({ fidelity }) => fidelity === "emulated").map(({ id }) => id), "browser.environment.observation"],
+    }
     if (unsupportedEnvironment.length > 0) {
       throw new Error(`wordpress.browser-actions browser environment is unsupported: ${unsupportedEnvironment.join(", ")}`)
     }
