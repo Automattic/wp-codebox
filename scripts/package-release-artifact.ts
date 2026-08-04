@@ -48,7 +48,7 @@ try {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
-  await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
+  await execFileAsync(process.execPath, [join(packageRoot, "scripts", "apply-development-patches.mjs")], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })

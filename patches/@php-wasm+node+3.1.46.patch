@@ -1,0 +1,343 @@
+diff --git a/node_modules/@php-wasm/node/index.cjs b/node_modules/@php-wasm/node/index.cjs
+index ee94a10..50832b3 100644
+--- a/node_modules/@php-wasm/node/index.cjs
++++ b/node_modules/@php-wasm/node/index.cjs
+@@ -28,18 +28,19 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
+ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+ 
+ // packages/php-wasm/node/src/index.ts
+-var src_exports = {};
+-__export(src_exports, {
++var index_exports = {};
++__export(index_exports, {
+   FileLockManagerForPosix: () => FileLockManagerForPosix,
+   FileLockManagerForWindows: () => FileLockManagerForWindows,
+   bindUserSpace: () => bindUserSpace,
+   createNodeFsMountHandler: () => createNodeFsMountHandler,
+   getPHPLoaderModule: () => getPHPLoaderModule,
+   loadNodeRuntime: () => loadNodeRuntime,
++  serializeDnsRecords: () => serializeDnsRecords,
+   useHostFilesystem: () => useHostFilesystem,
+   withNetworking: () => withNetworking
+ });
+-module.exports = __toCommonJS(src_exports);
++module.exports = __toCommonJS(index_exports);
+ 
+ // packages/php-wasm/node/src/lib/get-php-loader-module.ts
+ var import_universal = require("@php-wasm/universal");
+@@ -433,6 +434,23 @@ var import_universal9 = require("@php-wasm/universal");
+ 
+ // packages/php-wasm/node/src/lib/wasm-user-space.ts
+ var import_promises = require("dns/promises");
++function serializeDnsRecords(type, results) {
++  const encode = (value) => Buffer.from(String(value)).toString("hex");
++  const record = (kind, ...fields) => [kind, ...fields.map(encode)].join("	");
++  if (["A", "AAAA", "CNAME", "NS", "PTR"].includes(type))
++    return results.map((value) => record(type, value)).join("\n");
++  if (type === "CAA")
++    return results.flatMap(({ critical, issue, issuewild, iodef }) => [
++      ...issue ? [record("CAA", critical, "issue", issue)] : [],
++      ...issuewild ? [record("CAA", critical, "issuewild", issuewild)] : [],
++      ...iodef ? [record("CAA", critical, "iodef", iodef)] : []
++    ]).join("\n");
++  if (type === "MX")
++    return results.map(({ priority, exchange }) => record("MX", priority, exchange)).join("\n");
++  if (type === "TXT")
++    return results.map((entries) => record("TXT", entries.join(""), ...entries)).join("\n");
++  return "";
++}
+ function bindUserSpace({ fileLockManager }, {
+   pid,
+   memory,
+@@ -818,6 +836,7 @@ function bindUserSpace({ fileLockManager }, {
+           return -EINVAL;
+         }
+       }
++      // TODO: Double check waiting for lock. PHP 8.5 has been observed waiting for a lock.
+       case F_SETLKW:
+       case F_SETLK: {
+         js_wasm_trace("fcntl(%d, F_SETLK)", fd);
+@@ -1128,12 +1147,97 @@ function bindUserSpace({ fileLockManager }, {
+     });
+     return address;
+   }
++  async function dnsResolve(hostname, type) {
++    const encode = (value) => Buffer.from(String(value)).toString("hex");
++    const record = (kind, ...fields) => [kind, ...fields.map(encode)].join("	");
++    try {
++      switch (type) {
++        case "A":
++          return serializeDnsRecords(type, await (0, import_promises.resolve4)(hostname));
++        case "AAAA":
++          return serializeDnsRecords(type, await (0, import_promises.resolve6)(hostname));
++        case "CAA":
++          return serializeDnsRecords(
++            type,
++            await (0, import_promises.resolveCaa)(hostname)
++          );
++        case "CNAME":
++          return serializeDnsRecords(
++            type,
++            await (0, import_promises.resolveCname)(hostname)
++          );
++        case "MX":
++          return serializeDnsRecords(type, await (0, import_promises.resolveMx)(hostname));
++        case "NAPTR":
++          return (await (0, import_promises.resolveNaptr)(hostname)).map(
++            ({
++              flags,
++              service,
++              regexp,
++              replacement,
++              order,
++              preference
++            }) => record(
++              "NAPTR",
++              order,
++              preference,
++              flags,
++              service,
++              regexp,
++              replacement
++            )
++          ).join("\n");
++        case "NS":
++          return serializeDnsRecords(type, await (0, import_promises.resolveNs)(hostname));
++        case "PTR":
++          return serializeDnsRecords(
++            type,
++            await (0, import_promises.resolvePtr)(hostname)
++          );
++        case "SOA": {
++          const {
++            nsname,
++            hostmaster,
++            serial,
++            refresh,
++            retry,
++            expire,
++            minttl
++          } = await (0, import_promises.resolveSoa)(hostname);
++          return record(
++            "SOA",
++            nsname,
++            hostmaster,
++            serial,
++            refresh,
++            retry,
++            expire,
++            minttl
++          );
++        }
++        case "SRV":
++          return (await (0, import_promises.resolveSrv)(hostname)).map(
++            ({ priority, weight, port, name }) => record("SRV", priority, weight, port, name)
++          ).join("\n");
++        case "TXT":
++          return serializeDnsRecords(
++            type,
++            await (0, import_promises.resolveTxt)(hostname)
++          );
++        default:
++          return "";
++      }
++    } catch {
++      return "";
++    }
++  }
+   return {
+     fcntl64,
+     flock,
+     fd_close,
+     js_release_file_locks,
+-    gethostbyname
++    gethostbyname,
++    dnsResolve
+   };
+ }
+ 
+@@ -1875,7 +1979,7 @@ function resolveXdebugExtraFiles(version, xdebugOptions) {
+ var import_util = require("@php-wasm/util");
+ var import_os = require("os");
+ 
+-// node_modules/wasm-feature-detect/dist/esm/index.js
++// ../../workspace/node_modules/wasm-feature-detect/dist/esm/index.js
+ var jspi = () => (async () => "Suspending" in WebAssembly)();
+ 
+ // packages/php-wasm/node/src/lib/load-runtime.ts
+@@ -2142,6 +2246,7 @@ function statPathFollowSymlinks(path3) {
+   createNodeFsMountHandler,
+   getPHPLoaderModule,
+   loadNodeRuntime,
++  serializeDnsRecords,
+   useHostFilesystem,
+   withNetworking
+ });
+diff --git a/node_modules/@php-wasm/node/index.js b/node_modules/@php-wasm/node/index.js
+index 9f13b82..549404e 100644
+--- a/node_modules/@php-wasm/node/index.js
++++ b/node_modules/@php-wasm/node/index.js
+@@ -1,8 +1,7 @@
+ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+ }) : x)(function(x) {
+-  if (typeof require !== "undefined")
+-    return require.apply(this, arguments);
++  if (typeof require !== "undefined") return require.apply(this, arguments);
+   throw Error('Dynamic require of "' + x + '" is not supported');
+ });
+ 
+@@ -407,7 +406,37 @@ import {
+ } from "@php-wasm/universal";
+ 
+ // packages/php-wasm/node/src/lib/wasm-user-space.ts
+-import { lookup as lookup2 } from "dns/promises";
++import {
++  lookup as lookup2,
++  resolve4,
++  resolve6,
++  resolveCaa,
++  resolveCname,
++  resolveMx,
++  resolveNaptr,
++  resolveNs,
++  resolvePtr,
++  resolveSoa,
++  resolveSrv,
++  resolveTxt
++} from "dns/promises";
++function serializeDnsRecords(type, results) {
++  const encode = (value) => Buffer.from(String(value)).toString("hex");
++  const record = (kind, ...fields) => [kind, ...fields.map(encode)].join("	");
++  if (["A", "AAAA", "CNAME", "NS", "PTR"].includes(type))
++    return results.map((value) => record(type, value)).join("\n");
++  if (type === "CAA")
++    return results.flatMap(({ critical, issue, issuewild, iodef }) => [
++      ...issue ? [record("CAA", critical, "issue", issue)] : [],
++      ...issuewild ? [record("CAA", critical, "issuewild", issuewild)] : [],
++      ...iodef ? [record("CAA", critical, "iodef", iodef)] : []
++    ]).join("\n");
++  if (type === "MX")
++    return results.map(({ priority, exchange }) => record("MX", priority, exchange)).join("\n");
++  if (type === "TXT")
++    return results.map((entries) => record("TXT", entries.join(""), ...entries)).join("\n");
++  return "";
++}
+ function bindUserSpace({ fileLockManager }, {
+   pid,
+   memory,
+@@ -793,6 +822,7 @@ function bindUserSpace({ fileLockManager }, {
+           return -EINVAL;
+         }
+       }
++      // TODO: Double check waiting for lock. PHP 8.5 has been observed waiting for a lock.
+       case F_SETLKW:
+       case F_SETLK: {
+         js_wasm_trace("fcntl(%d, F_SETLK)", fd);
+@@ -1103,12 +1133,97 @@ function bindUserSpace({ fileLockManager }, {
+     });
+     return address;
+   }
++  async function dnsResolve(hostname, type) {
++    const encode = (value) => Buffer.from(String(value)).toString("hex");
++    const record = (kind, ...fields) => [kind, ...fields.map(encode)].join("	");
++    try {
++      switch (type) {
++        case "A":
++          return serializeDnsRecords(type, await resolve4(hostname));
++        case "AAAA":
++          return serializeDnsRecords(type, await resolve6(hostname));
++        case "CAA":
++          return serializeDnsRecords(
++            type,
++            await resolveCaa(hostname)
++          );
++        case "CNAME":
++          return serializeDnsRecords(
++            type,
++            await resolveCname(hostname)
++          );
++        case "MX":
++          return serializeDnsRecords(type, await resolveMx(hostname));
++        case "NAPTR":
++          return (await resolveNaptr(hostname)).map(
++            ({
++              flags,
++              service,
++              regexp,
++              replacement,
++              order,
++              preference
++            }) => record(
++              "NAPTR",
++              order,
++              preference,
++              flags,
++              service,
++              regexp,
++              replacement
++            )
++          ).join("\n");
++        case "NS":
++          return serializeDnsRecords(type, await resolveNs(hostname));
++        case "PTR":
++          return serializeDnsRecords(
++            type,
++            await resolvePtr(hostname)
++          );
++        case "SOA": {
++          const {
++            nsname,
++            hostmaster,
++            serial,
++            refresh,
++            retry,
++            expire,
++            minttl
++          } = await resolveSoa(hostname);
++          return record(
++            "SOA",
++            nsname,
++            hostmaster,
++            serial,
++            refresh,
++            retry,
++            expire,
++            minttl
++          );
++        }
++        case "SRV":
++          return (await resolveSrv(hostname)).map(
++            ({ priority, weight, port, name }) => record("SRV", priority, weight, port, name)
++          ).join("\n");
++        case "TXT":
++          return serializeDnsRecords(
++            type,
++            await resolveTxt(hostname)
++          );
++        default:
++          return "";
++      }
++    } catch {
++      return "";
++    }
++  }
+   return {
+     fcntl64,
+     flock,
+     fd_close,
+     js_release_file_locks,
+-    gethostbyname
++    gethostbyname,
++    dnsResolve
+   };
+ }
+ 
+@@ -2124,6 +2239,7 @@ export {
+   createNodeFsMountHandler,
+   getPHPLoaderModule,
+   loadNodeRuntime,
++  serializeDnsRecords,
+   useHostFilesystem,
+   withNetworking
+ };

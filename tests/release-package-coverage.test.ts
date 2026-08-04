@@ -105,6 +105,8 @@ try {
       await lstat(join(packagePath, "package.json"))
     }
 
+    await assertPlaygroundNodeDnsOverlay(root)
+
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
@@ -204,4 +206,17 @@ async function assertPackagedReadonlyMaterialization(root: string): Promise<void
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true })
   }
+}
+
+async function assertPlaygroundNodeDnsOverlay(root: string): Promise<void> {
+  const binaries = [
+    ["asyncify", "336a287c9e8addf683a42d001640daeedb8be419c3ae95497dcd59401e47ad90"],
+    ["jspi", "439bd91ccddfdaba7381bbd915aa17652edb8d50bd7fd2c5c81a25e33cbf8776"],
+  ] as const
+  for (const [mode, expected] of binaries) {
+    const bytes = await readFile(join(root, "node_modules", "@php-wasm", "node-8-4", mode, "8_4_24", "php_8_4.wasm"))
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), expected, `packaged ${mode} PHP 8.4 DNS WASM changed`)
+  }
+  const nodeBundle = await readFile(join(root, "node_modules", "@php-wasm", "node", "index.js"), "utf8")
+  assert.match(nodeBundle, /async function dnsResolve\(hostname, type\)/, "packaged Node runtime must contain the DNS resolver bridge")
 }

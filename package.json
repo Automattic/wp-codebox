@@ -139,6 +139,7 @@
     "test:phpunit-structured-evidence": "tsx tests/phpunit-structured-evidence.test.ts",
     "test:phpunit-runtime-rejection": "tsx tests/phpunit-runtime-rejection.test.ts",
     "test:playground-worker-runtime-rejection": "tsx tests/playground-worker-runtime-rejection.test.ts",
+    "test:playground-node-dns-integration": "node --import tsx tests/playground-node-dns.integration.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
