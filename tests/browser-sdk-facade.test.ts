@@ -22,6 +22,8 @@ const sandbox = {
   TextDecoder,
   TextEncoder,
   URL,
+  setTimeout,
+  clearTimeout,
 }
 
 vm.runInNewContext(runtimeSource, sandbox, { filename: "browser-runtime.js" })
@@ -652,6 +654,147 @@ await assert.rejects(lateStart, (error: any) => error.code === "browser_preview_
 finishLateStart?.({ client: "late-start" })
 await new Promise((resolve) => setTimeout(resolve, 0))
 assert.equal(lateStartReleased, 1, "an aborted late start releases its returned client")
+
+const timeoutIframe: { src: string } = { src: "https://playground.example/remote.html" }
+let timedOutStarts = 0
+await assert.rejects(
+  () => api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-startup-timeout" }, {
+    iframe: timeoutIframe,
+    startupTimeoutMs: 5,
+    hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+    startPlaygroundWeb: () => new Promise(() => {}),
+    disposeClient: async () => { timedOutStarts += 1 },
+  }),
+  (error: any) => {
+    assert.equal(error.schema, "wp-codebox/browser-runtime-error/v1")
+    assert.equal(error.phase, "browser_preview_start")
+    assert.equal(error.code, "browser_preview_startup_timeout")
+    assert.deepEqual(plain(error.data), {
+      schema: "wp-codebox/browser-preview-startup-timeout/v1",
+      phase: "startup",
+      timeout_ms: 5,
+      scope: "preview-startup-timeout",
+      session_id: "preview-session-1",
+      cleanup: {
+        schema: "wp-codebox/browser-preview-dispose-result/v1",
+        success: true,
+        status: "disposed",
+        scope: "preview-startup-timeout",
+        iframe_reset: true,
+        listeners_released: true,
+        pending_work_cancellation_requested: true,
+        pending_work_cancelled: false,
+        stale_result_suppression_enabled: true,
+        client_release_requested: false,
+        client_released: false,
+        client_release_error: null,
+        client_release_evidence: null,
+        runtime_release_requested: true,
+        runtime_terminated: false,
+        lifecycle_released: true,
+      },
+    })
+    return true
+  },
+)
+assert.equal(timedOutStarts, 0, "an unresolved startup has no client to release")
+assert.equal(timeoutIframe.src, "about:blank", "startup timeout resets the associated iframe")
+
+for (let index = 0; index < 3; index += 1) {
+  await assert.rejects(
+    () => api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-timeout-cycle" }, {
+      iframe: { src: "https://playground.example/remote.html" },
+      startupTimeoutMs: 5,
+      hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+      startPlaygroundWeb: () => new Promise(() => {}),
+    }),
+    (error: any) => error.code === "browser_preview_startup_timeout",
+  )
+}
+const timeoutCycleReplacement = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-timeout-cycle" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  startupTimeoutMs: 0,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async () => ({ client: "timeout-cycle-replacement" }),
+})
+assert.equal(timeoutCycleReplacement.client.client, "timeout-cycle-replacement", "repeated timeouts release scope ownership for a new preview")
+await timeoutCycleReplacement.dispose()
+
+let finishTimedOutStart: ((value: unknown) => void) | undefined
+let timedOutLateRelease = 0
+let timedOutLateCallbacks = 0
+const timedOutLateStart = api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-timeout-late-start" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  startupTimeoutMs: 5,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startOptions: { onClientConnected: () => { timedOutLateCallbacks += 1 } },
+  startPlaygroundWeb: (request: Record<string, any>) => new Promise((resolve) => {
+    finishTimedOutStart = (client) => {
+      request.onClientConnected()
+      resolve(client)
+    }
+  }),
+  disposeClient: async () => { timedOutLateRelease += 1; return true },
+})
+await assert.rejects(timedOutLateStart, (error: any) => error.code === "browser_preview_startup_timeout")
+finishTimedOutStart?.({ client: "timed-out-late-start" })
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.equal(timedOutLateRelease, 1, "a late timeout result releases its client exactly once")
+assert.equal(timedOutLateCallbacks, 0, "a timed-out lifecycle suppresses late Playground callbacks")
+
+let finishReplacedStart: ((value: unknown) => void) | undefined
+let replacedLateRelease = 0
+let replacedLateCallbacks = 0
+const replacedStart = api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-replaced-start" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  startupTimeoutMs: 0,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startOptions: { onClientConnected: () => { replacedLateCallbacks += 1 } },
+  startPlaygroundWeb: (request: Record<string, any>) => new Promise((resolve) => {
+    finishReplacedStart = (client) => {
+      request.onClientConnected()
+      resolve(client)
+    }
+  }),
+  disposeClient: async () => { replacedLateRelease += 1; return true },
+})
+await new Promise((resolve) => setTimeout(resolve, 0))
+const replacementAfterPendingStart = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-replaced-start" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  startupTimeoutMs: 5,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async () => ({ client: "replacement-after-pending-start" }),
+})
+await assert.rejects(replacedStart, (error: any) => error.code === "browser_preview_replaced")
+finishReplacedStart?.({ client: "replaced-late-start" })
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.equal(replacedLateRelease, 1, "a replaced late start releases its client exactly once")
+assert.equal(replacedLateCallbacks, 0, "a replaced lifecycle suppresses late Playground callbacks")
+assert.equal(replacementAfterPendingStart.client.client, "replacement-after-pending-start", "same-scope replacement starts without awaiting the prior startup")
+await replacementAfterPendingStart.dispose()
+
+let replacementCleanupAttempted = false
+const neverDisposes = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-hanging-replacement-cleanup" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  startupTimeoutMs: 0,
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async () => ({ client: "hanging-cleanup" }),
+  disposeClient: () => {
+    replacementCleanupAttempted = true
+    return new Promise(() => {})
+  },
+})
+await assert.rejects(
+  () => api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-hanging-replacement-cleanup" }, {
+    iframe: { src: "https://playground.example/remote.html" },
+    startupTimeoutMs: 5,
+    hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+    startPlaygroundWeb: () => new Promise(() => {}),
+  }),
+  (error: any) => error.code === "browser_preview_startup_timeout",
+)
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.equal(replacementCleanupAttempted, true, "replacement starts the prior client cleanup without waiting for it")
 
 const lifecycleCallbacks: Record<string, (...args: any[]) => unknown> = {}
 const lifecycleIframe: { src: string } = { src: "https://playground.example/remote.html" }

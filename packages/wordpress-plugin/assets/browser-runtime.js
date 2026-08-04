@@ -704,7 +704,32 @@
 	};
 
 	const browserPreviewLifecycles = new Map();
+	const defaultBrowserPreviewStartupTimeoutMs = 30000;
 	const browserPreviewAbortError = () => runtimeError( 'browser_preview_start', 'browser_preview_aborted', 'Browser preview start was aborted.' );
+	const browserPreviewReplacedError = () => runtimeError( 'browser_preview_start', 'browser_preview_replaced', 'Browser preview start was replaced by a newer preview for the same scope.' );
+	const browserPreviewStartupTimeoutMs = ( options = {} ) => {
+		const value = options.startupTimeoutMs;
+		if ( value === false || value === null || value === 0 ) {
+			return null;
+		}
+
+		return typeof value === 'number' && Number.isFinite( value ) && value > 0
+			? Math.floor( value )
+			: defaultBrowserPreviewStartupTimeoutMs;
+	};
+	const browserPreviewStartupTimeoutError = ( boot, scope, timeoutMs ) => runtimeError(
+		'browser_preview_start',
+		'browser_preview_startup_timeout',
+		`Browser preview startup did not become ready within ${ timeoutMs }ms.`,
+		{
+			schema: 'wp-codebox/browser-preview-startup-timeout/v1',
+			phase: 'startup',
+			timeout_ms: timeoutMs,
+			scope: scope || null,
+			session_id: boot.session_id || null,
+			cleanup: null,
+		}
+	);
 
 	const resetBrowserPreviewIframe = ( iframe ) => {
 		if ( iframe && typeof iframe === 'object' && 'src' in iframe ) {
@@ -754,12 +779,19 @@
 			isActive: () => active,
 			wait: ( promise ) => Promise.race( [ promise, cancellation ] ),
 			ownClient: ( nextClient ) => {
-				client = nextClient;
 				if ( ! active ) {
-					void lifecycle.releaseClient().catch( () => {} );
+					void lifecycle.releaseLateClient( nextClient ).catch( () => {} );
+					return nextClient;
 				}
+				client = nextClient;
 				return nextClient;
 			},
+			releaseLateClient: ( lateClient ) => Promise.resolve().then( async () => {
+				if ( typeof disposeClient === 'function' ) {
+					return disposeClient( lateClient );
+				}
+				return null;
+			} ),
 			releaseClient: () => {
 				if ( client === undefined ) {
 					return Promise.resolve( { requested: false, ...browserPreviewClientReleaseEvidence() } );
@@ -823,12 +855,12 @@
 				} );
 				return cleanup;
 			},
-			cancel: () => {
+			cancel: ( error = browserPreviewAbortError() ) => {
 				if ( cancelled ) {
 					return;
 				}
 				cancelled = true;
-				rejectCancellation( browserPreviewAbortError() );
+				rejectCancellation( error );
 				void lifecycle.dispose();
 			},
 		};
@@ -850,11 +882,19 @@
 		const boot = browserPreviewBootConfig( input );
 		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
 		const scope = String( boot.scope || '' );
+		const startupTimeoutMs = browserPreviewStartupTimeoutMs( options );
+		let lifecycle;
+		let startupTimeout;
+		if ( startupTimeoutMs !== null ) {
+			startupTimeout = setTimeout( () => {
+				lifecycle?.cancel( browserPreviewStartupTimeoutError( boot, scope, startupTimeoutMs ) );
+			}, startupTimeoutMs );
+		}
 		const previousLifecycle = scope ? browserPreviewLifecycles.get( scope ) : null;
 		if ( previousLifecycle ) {
-			await previousLifecycle.dispose();
+			previousLifecycle.cancel( browserPreviewReplacedError() );
 		}
-		const lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal, options.disposeClient );
+		lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal, options.disposeClient );
 		if ( options.signal?.aborted ) {
 			await lifecycle.dispose();
 			throw browserPreviewAbortError();
@@ -906,8 +946,15 @@
 				dispose: lifecycle.dispose,
 			};
 		} catch ( error ) {
-			await lifecycle.dispose();
+			const cleanup = error?.code === 'browser_preview_replaced' ? null : await lifecycle.dispose();
+			if ( error?.code === 'browser_preview_startup_timeout' && error.data ) {
+				error.data = Object.freeze( { ...error.data, cleanup } );
+			}
 			throw error;
+		} finally {
+			if ( startupTimeout !== undefined ) {
+				clearTimeout( startupTimeout );
+			}
 		}
 	};
 

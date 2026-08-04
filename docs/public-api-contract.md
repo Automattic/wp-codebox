@@ -82,12 +82,18 @@ Browser sessions that load the WordPress plugin browser runtime publish
 `window.wpCodeboxBrowser.v1`, the stable browser SDK for product consumers.
 The product preview path is
 `open-or-create-browser-contained-site` followed by
-`window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe })`.
+`window.wpCodeboxBrowser.v1.startBrowserPreview(response.preview_boot, { iframe, startupTimeoutMs })`.
 `preview_boot` is the canonical `wp-codebox/browser-preview-boot-config/v1` DTO;
 it contains a required hydratable `blueprint_ref` object. Consumers do not pass
-inline blueprints or import the raw browser backend `startPlaygroundWeb`. The
-optional `signal` cancels startup and an accepted start result exposes idempotent
-async `dispose()` cleanup without changing its `client` field or result envelope.
+inline blueprints or import the raw browser backend `startPlaygroundWeb`. Startup
+has a 30-second readiness deadline by default; a positive `startupTimeoutMs`
+overrides it, while `0`, `null`, and `false` disable it for a caller-owned longer
+operation. Expiry rejects with `browser_preview_startup_timeout`, whose data uses
+`wp-codebox/browser-preview-startup-timeout/v1` and includes phase, timeout,
+scope, session identity, and disposal evidence. The optional `signal` cancels
+startup and remains distinguishable as `browser_preview_aborted`; an accepted
+start result exposes idempotent async `dispose()` cleanup without changing its
+`client` field or result envelope.
 
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
