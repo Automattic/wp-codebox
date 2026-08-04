@@ -1,0 +1,33 @@
+{
+  "schema": "wp-codebox/runtime-archive-component-source/v1",
+  "source": {
+    "url": "https://github.com/Automattic/static-site-importer/releases/download/v1.3.6/static-site-importer.zip",
+    "version": "1.3.6",
+    "identity": "8b425f61b4fe051c76d3879aa7e2681c2866db54",
+    "sha256": "fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db"
+  },
+  "component": {
+    "schema": "wp-codebox/runtime-archive-component/v1",
+    "id": "website-importer",
+    "package": {
+      "profile": "website-artifact-import",
+      "root": "static-site-importer"
+    },
+    "wordpress": {
+      "install_path": "plugins/static-site-importer",
+      "bootstrap_file": "static-site-importer.php",
+      "load": {
+        "mode": "mu-plugin-loader",
+        "loader_path": "mu-plugins/wp-codebox-runtime-component-website-importer.php"
+      },
+      "version_constant": "STATIC_SITE_IMPORTER_VERSION"
+    },
+    "abilities": {
+      "website-artifact-import": "static-site-importer/import-website-artifact"
+    },
+    "limits": {
+      "files": 10000,
+      "bytes": 67108864
+    }
+  }
+}
