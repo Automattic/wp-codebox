@@ -94,7 +94,7 @@ export async function resolvePlaywrightBrowserEnvironment(cell: BrowserEnvironme
   if (requested.userAgent) exact("browser.environment.user-agent")
   if (requested.permissions) exact("browser.environment.permissions")
   if (requested.deviceScaleFactor !== undefined) exact("browser.environment.device-scale-factor")
-  if (requested.isMobile !== undefined) exact("browser.environment.mobile")
+  if (requested.isMobile !== undefined) emulated("browser.environment.mobile", "Playwright applies the mobile context setting, but the page has no authoritative API for reading the context flag back.")
   if (requested.hasTouch !== undefined) exact("browser.environment.touch")
   if (requested.orientation) exact("browser.environment.orientation")
   if (requested.colorScheme) exact("browser.environment.color-scheme")
@@ -194,13 +194,22 @@ export async function observePlaywrightBrowserEnvironment(page: Page, requested:
   const inconclusive: string[] = []
   if (requested.device) inconclusive.push("browser.environment.device")
   if (requested.isMobile !== undefined) inconclusive.push("browser.environment.mobile")
+  if (requested.hasTouch !== undefined && observed && requested.hasTouch !== observed.hasTouch) {
+    const capability = "browser.environment.touch"
+    unsupported.push(capability)
+  } else if (requested.hasTouch !== undefined && !observed) {
+    inconclusive.push("browser.environment.touch")
+  }
   if (requested.geolocation && !observed?.geolocation) inconclusive.push("browser.environment.geolocation.coordinates")
   if (requested.permissions?.some((permission) => permission !== "geolocation")) inconclusive.push("browser.environment.permissions")
   for (const [key, capability] of [["orientation", "browser.environment.orientation"], ["zoom", "browser.environment.zoom"], ["colorScheme", "browser.environment.color-scheme"], ["reducedMotion", "browser.environment.reduced-motion"], ["forcedColors", "browser.environment.forced-colors"], ["contrast", "browser.environment.contrast"], ["networkProfile", "browser.environment.network-profile"], ["cpuProfile", "browser.environment.cpu-profile"], ["clock", "browser.environment.clock"], ["capabilities", "browser.environment.capability-state"]] as const) {
     if (requested[key] !== undefined) inconclusive.push(capability)
   }
   if (!observed) inconclusive.push("browser.environment.observation")
-  return { requested, resolved: resolved.effective, ...(observed ? { observed } : {}), provider: resolved.provider, capabilities: resolved.capabilities, unsupported, inconclusive }
+  const capabilities = resolved.capabilities.map((capability) => capability.id === "browser.environment.touch" && requested.hasTouch !== undefined && observed && requested.hasTouch !== observed.hasTouch
+    ? { ...capability, fidelity: "unsupported" as const, reason: `Observed hasTouch=${observed.hasTouch}, requested ${requested.hasTouch}.` }
+    : capability)
+  return { requested, resolved: resolved.effective, ...(observed ? { observed } : {}), provider: resolved.provider, capabilities, unsupported: [...new Set(unsupported)], inconclusive: [...new Set(inconclusive)] }
 }
 
 export async function applyPlaywrightGeolocationPermission(page: Page, state: "denied"): Promise<() => Promise<void>> {
