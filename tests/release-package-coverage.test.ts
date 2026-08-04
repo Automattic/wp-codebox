@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -107,6 +107,11 @@ try {
 
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
+    assert.deepEqual(
+      (await readdir(join(root, "node_modules", "@img"))).filter((name) => name.startsWith("sharp-")).sort(),
+      ["sharp-libvips-linux-x64", "sharp-linux-x64"],
+      "release package must contain only the Sharp native runtime for its declared target",
+    )
     const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
     assert.match(version, /^\d+\.\d+\.\d+\s*$/)
     await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
@@ -157,9 +162,10 @@ try {
     maxBuffer: 1024 * 1024 * 20,
   })
   const [packed] = JSON.parse(packOutput) as Array<{ filename: string }>
-  const { stdout: packedEntries } = await execFileAsync("tar", ["-tzf", join(packRoot, packed.filename)])
+  const packedTarball = join(packRoot, packed.filename)
+  const { stdout: packedEntries } = await execFileAsync("tar", ["-tzf", packedTarball])
   assert.ok(packedEntries.split("\n").includes("package/npm-shrinkwrap.json"), "npm package must include its deterministic dependency manifest")
-  await execFileAsync("npm", ["install", "--global", "--prefix", installRoot, join(packRoot, packed.filename), "--omit=dev", "--no-audit", "--no-fund"], {
+  await execFileAsync("npm", ["install", "--global", "--prefix", installRoot, packedTarball, "--omit=dev", "--no-audit", "--no-fund"], {
     cwd: consumerRoot,
     maxBuffer: 1024 * 1024 * 20,
   })

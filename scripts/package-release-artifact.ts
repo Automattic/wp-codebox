@@ -7,6 +7,7 @@ import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 
 import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
+import { materializeSharpReleaseRuntime, sharpRuntimePackageNames } from "./lib/materialize-sharp-release-runtime.ts"
 
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
@@ -15,6 +16,7 @@ const stagingReleaseRoot = await mkdtemp(join(tmpdir(), "wp-codebox-release-"))
 const packageRoot = join(stagingReleaseRoot, "wp-codebox-cli")
 const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizePlatform(platform())
 const archName = process.env.WP_CODEBOX_RELEASE_ARCH ?? normalizeArch(arch())
+sharpRuntimePackageNames(platformName, archName)
 const nodeRuntimeVersion = process.env.WP_CODEBOX_NODE_RUNTIME_VERSION ?? "24.16.0"
 const artifactName = `wp-codebox-cli-${platformName}-${archName}.tar.gz`
 const artifactPath = resolve(repoRoot, "dist", artifactName)
@@ -48,6 +50,7 @@ try {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  await materializeSharpReleaseRuntime(packageRoot, join(packageRoot, "npm-shrinkwrap.json"), platformName, archName)
   await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
@@ -78,6 +81,10 @@ fi
 exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
 `)
   await chmod(binPath, 0o755)
+
+  // npm ci can recreate workspace files using the caller's umask, so enforce
+  // the public entrypoint contract again at the final archive boundary.
+  await chmod(join(packageRoot, "packages", "cli", "dist", "index.js"), 0o755)
 
   await rm(releaseRoot, recursiveRmOptions)
   await mkdir(releaseRoot, { recursive: true })
