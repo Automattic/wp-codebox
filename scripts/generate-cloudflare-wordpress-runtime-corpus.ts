@@ -6,6 +6,9 @@ import { isWordPressRuntimeFile, isWordPressStaticAsset } from "../packages/runt
 import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
 import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
 import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
+import { runtimeArchiveComponentSource } from "../packages/runtime-core/src/runtime-archive-component.js"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
+import websiteImporterSourceContract from "../packages/runtime-cloudflare/components/website-importer.json" with { type: "json" }
 
 const sourceUrl = process.env.WORDPRESS_RUNTIME_ARCHIVE_URL ?? "https://downloads.wordpress.org/release/wordpress-7.0.2.zip"
 const sourceVersion = process.env.WORDPRESS_RUNTIME_VERSION ?? "7.0.2"
@@ -16,10 +19,9 @@ const staticManifestOutput = resolve("packages/runtime-cloudflare/assets/wordpre
 const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
 const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
-const staticSiteImporterSourceUrl = "https://github.com/Automattic/static-site-importer/releases/download/v1.3.6/static-site-importer.zip"
-const staticSiteImporterSha256 = "fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db"
-const staticSiteImporterOutput = resolve("artifacts/cloudflare-static-site-importer.zip")
-const staticSiteImporterManifestOutput = resolve("packages/runtime-cloudflare/assets/static-site-importer-artifact.json")
+const websiteImporterSource = runtimeArchiveComponentSource(websiteImporterSourceContract)
+const websiteImporterOutput = resolve(`artifacts/cloudflare-${websiteImporterSource.component.id}.zip`)
+const websiteImporterManifestOutput = resolve(`packages/runtime-cloudflare/assets/${websiteImporterSource.component.id}-artifact.json`)
 const response = await fetch(sourceUrl)
 if (!response.ok || !response.body) throw new Error(`Unable to download WordPress archive: ${response.status}.`)
 const identity = response.headers.get("etag") ?? response.headers.get("last-modified") ?? undefined
@@ -84,26 +86,41 @@ validateRuntimeArchiveArtifactManifest(sqliteManifest)
 await writeFile(sqliteOutput, sqliteArchive)
 await writeFile(sqliteManifestOutput, `${JSON.stringify(sqliteManifest, null, 2)}\n`)
 
-const staticSiteImporterResponse = await fetch(staticSiteImporterSourceUrl)
-if (!staticSiteImporterResponse.ok) throw new Error(`Unable to download Static Site Importer archive: ${staticSiteImporterResponse.status}.`)
-const staticSiteImporterArchive = new Uint8Array(await staticSiteImporterResponse.arrayBuffer())
-const actualStaticSiteImporterSha256 = sha256Hex(staticSiteImporterArchive)
-if (actualStaticSiteImporterSha256 !== staticSiteImporterSha256) throw new Error("Static Site Importer release archive does not match its pinned digest.")
-const staticSiteImporterManifest: RuntimeArchiveArtifactManifest = {
+const componentResponse = await fetch(websiteImporterSource.source.url)
+if (!componentResponse.ok) throw new Error(`Unable to download runtime archive component ${websiteImporterSource.component.id}: ${componentResponse.status}.`)
+const componentSourceArchive = new Uint8Array(await componentResponse.arrayBuffer())
+if (sha256Hex(componentSourceArchive) !== websiteImporterSource.source.sha256) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} does not match its pinned digest.`)
+const componentSourceFiles: File[] = []
+for await (const file of decodeZip(new Blob([componentSourceArchive]).stream())) if (!file.name.endsWith("/")) componentSourceFiles.push(file)
+const packageManifests = componentSourceFiles.filter((file) => file.name.endsWith("/runtime-package-manifest.json"))
+if (packageManifests.length !== 1) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} must contain exactly one runtime package manifest.`)
+const packageManifest = parseRuntimePackageManifest(await packageManifests[0].text())
+if (packageManifest.package_root !== websiteImporterSource.component.package.root) throw new Error(`Runtime package profile root does not match component ${websiteImporterSource.component.id}.`)
+const profile = packageManifest.profiles[websiteImporterSource.component.package.profile]
+if (!profile) throw new Error(`Runtime package profile is unavailable: ${websiteImporterSource.component.package.profile}`)
+for (const ability of Object.values(websiteImporterSource.component.abilities)) if (!profile.abilities.includes(ability)) throw new Error(`Runtime package profile does not declare component ability: ${ability}`)
+const selections = selectRuntimePackageProfileFiles(packageManifest, websiteImporterSource.component.package.profile, componentSourceFiles.map((file) => file.name), packageManifests[0].name)
+const bootstrapPath = `${websiteImporterSource.component.package.root}/${websiteImporterSource.component.wordpress.bootstrap_file}`
+if (!selections.some(({ targetPath }) => targetPath === bootstrapPath)) throw new Error(`Runtime archive component ${websiteImporterSource.component.id} is missing its bootstrap file: ${bootstrapPath}`)
+// Preserve the verified source ZIP byte-for-byte while validating its selected profile.
+const componentArchive = componentSourceArchive
+const componentSha256 = sha256Hex(componentArchive)
+const componentManifest: RuntimeArchiveArtifactManifest = {
   schema: RUNTIME_ARCHIVE_ARTIFACT_SCHEMA,
-  name: "static-site-importer",
-  key: runtimeArchiveArtifactKey("static-site-importer", staticSiteImporterSha256),
-  archive: { sha256: staticSiteImporterSha256, size: staticSiteImporterArchive.byteLength },
-  source: { url: staticSiteImporterSourceUrl, version: "1.3.6", identity: "8b425f61b4fe051c76d3879aa7e2681c2866db54" },
+  name: websiteImporterSource.component.id,
+  key: runtimeArchiveArtifactKey(websiteImporterSource.component.id, componentSha256),
+  archive: { sha256: componentSha256, size: componentArchive.byteLength },
+  source: { url: websiteImporterSource.source.url, version: websiteImporterSource.source.version, identity: websiteImporterSource.source.identity },
+  component: websiteImporterSource.component,
 }
-validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest)
-await writeFile(staticSiteImporterOutput, staticSiteImporterArchive)
-await writeFile(staticSiteImporterManifestOutput, `${JSON.stringify(staticSiteImporterManifest, null, 2)}\n`)
+validateRuntimeArchiveArtifactManifest(componentManifest)
+await writeFile(websiteImporterOutput, componentArchive)
+await writeFile(websiteImporterManifestOutput, `${JSON.stringify(componentManifest, null, 2)}\n`)
 console.log(JSON.stringify({
   runtime: { key: manifest.key, bytes: archive.byteLength, files: manifest.files.length, sha256: archiveSha256 },
   static: { key: staticManifest.key, bytes: staticBlob.byteLength, files: staticManifest.files.length, sha256: staticSha256 },
   sqlite: { key: sqliteManifest.key, bytes: sqliteArchive.byteLength, sha256: sqliteSha256 },
-  staticSiteImporter: { key: staticSiteImporterManifest.key, bytes: staticSiteImporterArchive.byteLength, sha256: staticSiteImporterSha256 },
+  [websiteImporterSource.component.id]: { key: componentManifest.key, bytes: componentArchive.byteLength, sha256: componentSha256 },
   source: manifest.source,
 }))
 

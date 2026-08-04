@@ -6,6 +6,8 @@ import { promisify } from "node:util"
 import test from "node:test"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
+import { runtimeArchiveComponentOwnedWpContentPaths, runtimeArchiveComponentSource } from "../packages/runtime-core/src/runtime-archive-component.js"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
 import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
 import { CANONICAL_RESTORE_PACK_SCHEMA, createCanonicalRestorePack, decodeCanonicalRestorePack, readCanonicalRestorePack, type CanonicalRestorePackFile, type CanonicalRestorePackMetadata } from "../packages/runtime-cloudflare/src/canonical-restore-pack.js"
@@ -24,6 +26,42 @@ import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_AR
 import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../packages/runtime-cloudflare/src/wp-content-persistence.js"
 
 const execFileAsync = promisify(execFile)
+
+test("runtime package profiles select deployment-neutral capabilities deterministically", () => {
+  const manifest = parseRuntimePackageManifest(JSON.stringify({
+    schema: "example-package/runtime-package-manifest/v1",
+    package: "example-package",
+    package_root: "example-package",
+    profiles: { import: { abilities: ["example-package/import"], selectors: [{ type: "file", path: "bootstrap.php" }, { type: "prefix", path: "includes/" }], required_files: ["bootstrap.php", "includes/import.php"] } },
+  }))
+  const paths = ["example-package/includes/import.php", "example-package/bootstrap.php", "example-package/tests/test.php", "example-package/runtime-package-manifest.json"]
+  assert.deepEqual(selectRuntimePackageProfileFiles(manifest, "import", paths, "example-package/runtime-package-manifest.json"), [
+    { sourcePath: "example-package/bootstrap.php", targetPath: "example-package/bootstrap.php" },
+    { sourcePath: "example-package/includes/import.php", targetPath: "example-package/includes/import.php" },
+  ])
+  assert.throws(() => parseRuntimePackageManifest(JSON.stringify({ ...manifest, schema: "runtime-package-manifest/v1" })), /schema is invalid/)
+  assert.throws(() => selectRuntimePackageProfileFiles(manifest, "missing", paths, "example-package/runtime-package-manifest.json"), /unavailable/)
+  assert.throws(() => selectRuntimePackageProfileFiles(manifest, "import", [...paths, "example-package/../escape.php"], "example-package/runtime-package-manifest.json"), /invalid or duplicated/)
+  assert.throws(() => selectRuntimePackageProfileFiles(manifest, "import", paths.filter((path) => !path.endsWith("import.php")), "example-package/runtime-package-manifest.json"), /missing required file/)
+})
+
+test("runtime archive components strictly validate source, materialization, abilities, and budgets", async () => {
+  const raw = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/components/website-importer.json", import.meta.url), "utf8"))
+  const descriptor = runtimeArchiveComponentSource(raw)
+  assert.equal(descriptor.component.id, "website-importer")
+  assert.deepEqual(runtimeArchiveComponentOwnedWpContentPaths(descriptor.component), ["plugins/static-site-importer/", "mu-plugins/wp-codebox-runtime-component-website-importer.php"])
+  const invalid = (source: unknown, pattern: RegExp) => assert.throws(() => runtimeArchiveComponentSource(source), pattern)
+  invalid({ ...raw, source: { ...raw.source, url: "http://example.com/archive.zip" } }, /source is invalid/)
+  invalid({ ...raw, source: { ...raw.source, sha256: "A".repeat(64) } }, /source is invalid/)
+  invalid({ ...raw, source: { ...raw.source, identity: "" } }, /source is invalid/)
+  invalid({ ...raw, component: { ...raw.component, id: "Unsafe/ID" } }, /identity is invalid/)
+  invalid({ ...raw, component: { ...raw.component, package: { ...raw.component.package, profile: "../profile" } } }, /package is invalid/)
+  invalid({ ...raw, component: { ...raw.component, wordpress: { ...raw.component.wordpress, install_path: "themes/runtime" } } }, /WordPress contract is invalid/)
+  invalid({ ...raw, component: { ...raw.component, wordpress: { ...raw.component.wordpress, bootstrap_file: "../bootstrap.php" } } }, /WordPress contract is invalid/)
+  invalid({ ...raw, component: { ...raw.component, wordpress: { ...raw.component.wordpress, load: { mode: "manual", loader_path: "mu-plugins/loader.php" } } } }, /load contract is invalid/)
+  invalid({ ...raw, component: { ...raw.component, abilities: { "bad alias": "owner/import" } } }, /abilities are invalid/)
+  invalid({ ...raw, component: { ...raw.component, limits: { files: 0, bytes: 1 } } }, /limits are invalid/)
+})
 
 test("Cloudflare static artifact imports require bounded content-addressed R2 input", async () => {
   const artifact = { schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "<h1>Verified</h1>" }] }
@@ -68,6 +106,8 @@ test("Cloudflare wp-content manifests allow bounded user code and reject runtime
   assert.throws(() => validateWpContentMetadata([{ path: "plugins/sqlite-database-integration/owned.php", size: 1 }]), /invalid file/)
   assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php", size: 1 }]), /invalid file/)
   assert.throws(() => validateWpContentMetadata([{ path: "mu-plugins/wp-codebox-cloudflare-canonical-changes.php/child.php", size: 1 }]), /invalid file/)
+  assert.throws(() => validateWpContentMetadata([{ path: "plugins/example-runtime/owned.php", size: 1 }], ["plugins/example-runtime/"]), /invalid file/)
+  assert.throws(() => validateWpContentDeletedPaths(["mu-plugins/example-runtime.php"], ["mu-plugins/example-runtime.php"]), /invalid/)
   assert.throws(() => validateWpContentMetadata([{ path: "themes/example/large.css", size: MAX_WP_CONTENT_FILE_BYTES + 1 }]), /invalid file/)
   assert.throws(() => validateWpContentManifestFiles([{ ...valid[0], objectKey: "sites/default/uploads/objects/foreign" }]), /invalid file/)
   assert.doesNotThrow(() => validateWpContentDeletedPaths(["themes/example/style.css"]))
@@ -444,7 +484,7 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.doesNotMatch(patcher, /mu-plugins|add_action\(|WP_Site_Health|wp_schedule_site_health_cron|\$GLOBALS\['wp_filter'\]/)
   assert.doesNotMatch(worker, /materializeCanonicalCronAdapter|wp-codebox-canonical-cron-policy/)
   assert.match(worker, /runtimeBucket\?: R2Bucket,\n  shouldPatchCanonicalRuntimePoliciesAtInit = false,\n  uploadFiles\?: RuntimeFile\[\],\n  wpContentFiles\?: RuntimeFile\[\],/)
-  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted, includeStaticSiteImporter, trace\)/)
+  assert.match(worker, /authConstants, bucket, true, revision\.uploads, revision\.wpContent, revision\.wpContentDeleted, includeWebsiteImporter, trace\)/)
   assert.match(worker, /env\.WORDPRESS_STATE_BUCKET, true, undefined, undefined, \[\], false, trace\)/)
   assert.match(worker, /canonicalBootstrapPasswordCode/)
   assert.match(worker, /canonicalBootstrapUrlCode/)
@@ -592,8 +632,8 @@ test("Cloudflare runtime injects composable coordinators without moving PHP out 
   const sha256 = worker.slice(worker.indexOf("async function sha256Hex"), worker.indexOf("async function materializeMarkdownDatabaseIntegration"))
   assert.doesNotMatch(sha256, /Uint8Array\.from\(bytes\)\.buffer/)
   assert.match(worker, /persistWpContentObjects\(bucket, wpContent/)
-  assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\], site\)/)
-  assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\]\)/)
+  assert.match(worker, /validateWpContentManifestFiles\(manifest\.wpContent \?\? \[\], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS\)/)
+  assert.match(worker, /validateWpContentDeletedPaths\(manifest\.wpContentDeleted \?\? \[\], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS\)/)
   assert.match(worker, /materializeWpContentTombstones\(php, wpContentDeleted\)/)
   assert.match(worker, /async scheduled\(controller: ScheduledController, env: Env\)/)
   const scheduledHandler = worker.slice(worker.indexOf("async scheduled(controller"), worker.indexOf("queue: handleQueue"))
@@ -735,7 +775,8 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
   const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
   const sqliteManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
-  const staticSiteImporterManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/static-site-importer-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  const websiteImporterManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/website-importer-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  const websiteImporterSource = runtimeArchiveComponentSource(JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/components/website-importer.json", import.meta.url), "utf8")))
   assert.match(generator, /const response = await fetch\(sourceUrl\)/)
   assert.match(generator, /decodeZip\(response\.body\)/)
   assert.doesNotMatch(generator, /decodeRemoteZip/)
@@ -744,8 +785,9 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.match(generator, /artifacts\/cloudflare-wordpress-runtime-corpus\.zip/)
   assert.match(generator, /artifacts\/cloudflare-wordpress-static-corpus\.bin/)
   assert.match(generator, /artifacts\/cloudflare-sqlite-database-integration\.zip/)
-  assert.match(generator, /artifacts\/cloudflare-static-site-importer\.zip/)
-  assert.match(generator, /fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db/)
+  assert.match(generator, /runtimeArchiveComponentSource/)
+  assert.match(generator, /selectRuntimePackageProfileFiles/)
+  assert.doesNotMatch(generator, /static-site-importer/i)
   assert.doesNotMatch(artifact, /decodeZip/)
   assert.match(artifact, /php\.writeFile\(WORDPRESS_RUNTIME_ARCHIVE_TEMP_PATH, archiveBytes\)/)
   assert.equal(manifest.key, wordpressRuntimeArtifactKey(manifest.archive.sha256))
@@ -754,9 +796,13 @@ test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle
   assert.ok(staticManifest.files.length > 0)
   assert.equal(sqliteManifest.key, runtimeArchiveArtifactKey(sqliteManifest.name, sqliteManifest.archive.sha256))
   assert.equal(RUNTIME_ARCHIVE_MAX_BYTES, 16 * 1024 * 1024)
-  assert.doesNotThrow(() => validateRuntimeArchiveArtifactManifest(staticSiteImporterManifest))
-  assert.equal(staticSiteImporterManifest.source.url, "https://github.com/Automattic/static-site-importer/releases/download/v1.3.6/static-site-importer.zip")
-  assert.equal(staticSiteImporterManifest.source.identity, "8b425f61b4fe051c76d3879aa7e2681c2866db54")
+  assert.doesNotThrow(() => validateRuntimeArchiveArtifactManifest(websiteImporterManifest))
+  assert.equal(websiteImporterManifest.archive.size, 13_133_323)
+  assert.equal(websiteImporterManifest.archive.sha256, "fb3679d679c03422fa77f5f33bc549fa869b0ce2bb16f7431705af4fc16b97db")
+  assert.equal(websiteImporterManifest.name, websiteImporterSource.component.id)
+  assert.deepEqual(websiteImporterManifest.component, websiteImporterSource.component)
+  assert.equal(websiteImporterManifest.source.url, websiteImporterSource.source.url)
+  assert.equal(websiteImporterManifest.source.identity, websiteImporterSource.source.identity)
 })
 
 test("Cloudflare coordinator serializes leases, promotes with CAS, and recovers stale leases", async () => {

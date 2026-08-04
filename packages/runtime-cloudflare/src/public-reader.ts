@@ -3,6 +3,14 @@ import { parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest,
 import { isCanonicalWpContentPath, validateWpContentManifestFiles } from "./wp-content-persistence.js"
 import { validateUploadManifestFiles } from "./upload-persistence.js"
 import { servePublicWordPressStaticAsset } from "./wordpress-static-reader.js"
+import { runtimeArchiveComponentOwnedWpContentPaths } from "../../runtime-core/src/runtime-archive-component.js"
+import { validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
+import websiteImporterArtifactManifest from "../assets/website-importer-artifact.json" with { type: "json" }
+
+const websiteImporterArtifact = websiteImporterArtifactManifest as RuntimeArchiveArtifactManifest
+validateRuntimeArchiveArtifactManifest(websiteImporterArtifact)
+if (!websiteImporterArtifact.component) throw new Error("Website importer runtime artifact is missing its component descriptor.")
+const WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS = runtimeArchiveComponentOwnedWpContentPaths(websiteImporterArtifact.component)
 
 export interface PublicReaderEnv {
   WORDPRESS_STATE_BUCKET: R2Bucket
@@ -101,7 +109,7 @@ async function servePublishedAsset(request: Request, bucket: R2Bucket, site: Sit
   } catch {
     return response("Published asset path is invalid.", 400)
   }
-  if ((uploads === null && !isCanonicalWpContentPath(path)) || (uploads !== null && !isCanonicalRelativePath(path))) return response("Published asset path is invalid.", 400)
+  if ((uploads === null && !isCanonicalWpContentPath(path, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)) || (uploads !== null && !isCanonicalRelativePath(path))) return response("Published asset path is invalid.", 400)
   try {
     const manifestKey = `${siteStorageKeys(site).markdownRevisionPrefix}/${publication.canonicalRevision}.json`
     const manifestObject = await bucket.get(manifestKey)
@@ -109,7 +117,7 @@ async function servePublishedAsset(request: Request, bucket: R2Bucket, site: Sit
     const manifest = await manifestObject.json<{ revision?: unknown; uploads?: PublicationAsset[]; wpContent?: PublicationAsset[] }>()
     if (manifest.revision !== publication.canonicalRevision) return response("Public publication is incomplete.", 503)
     const files = uploads === null ? manifest.wpContent ?? [] : manifest.uploads ?? []
-    if (uploads === null) validateWpContentManifestFiles(files, site)
+    if (uploads === null) validateWpContentManifestFiles(files, site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
     else validateUploadManifestFiles(files, site)
     const file = files.find((candidate) => candidate.path === path)
     if (!file) return response("Published asset not found.", 404)

@@ -291,7 +291,7 @@ async function assertPublicProvisioning(input) {
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   const imported = operation?.receipt?.ssiResult
-  if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.staticSiteImporterVersion !== "1.3.6" || !imported.themeSlug
+  if (operation?.state !== "succeeded" || imported?.status !== "imported" || imported.componentId !== "website-importer" || imported.importerVersion !== "1.3.6" || !imported.themeSlug
     || !imported.pages || Object.keys(imported.pages).length !== expectedPageCount || Object.values(imported.quality ?? {}).some((count) => count !== 0)
     || operation.receipt?.publication?.status !== "promoted") {
     throw new Error(`Public provisioning did not produce a terminal import receipt: ${JSON.stringify(operation)}.`)
@@ -575,7 +575,7 @@ async function importStaticArtifact(input, expectedStatus = coordinator === "d1"
     }
   }
   const expectedResultStatus = expectedStatus === 200 ? "duplicate" : "imported"
-  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== expectedResultStatus || result.staticSiteImporterVersion !== "1.3.6" || !result.themeSlug
+  if (expectedStatus !== 409 && (!result || typeof result !== "object" || result.status !== expectedResultStatus || result.componentId !== "website-importer" || result.importerVersion !== "1.3.6" || !result.themeSlug
     || !result.pages || !Object.keys(result.pages).length || Object.values(result.quality ?? {}).some((count) => count !== 0)
     || (expectedStatus === 201 && (!response.headers.get("x-wp-codebox-canonical-revision") || !response.headers.get("x-wp-codebox-canonical-version"))))) {
     throw new Error(`Static artifact import returned invalid evidence: ${body}.`)

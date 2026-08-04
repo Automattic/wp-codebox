@@ -26,8 +26,9 @@ import { deriveSiteCredential, deriveWordPressAuthConstants, type WordPressAuthC
 import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "./wordpress-runtime-corpus.js"
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, type WordPressStaticArtifactManifest } from "./wordpress-static-artifact.js"
-import { readRuntimeArchiveArtifact, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
-import { isCanonicalWpContentPath, MAX_WP_CONTENT_FILES, MAX_WP_CONTENT_FILE_BYTES, MAX_WP_CONTENT_TOTAL_BYTES, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "./wp-content-persistence.js"
+import { readRuntimeArchiveArtifact, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
+import { runtimeArchiveComponentOwnedWpContentPaths, type RuntimeArchiveComponent } from "../../runtime-core/src/runtime-archive-component.js"
+import { isCanonicalWpContentPath, MAX_WP_CONTENT_FILES, MAX_WP_CONTENT_FILE_BYTES, MAX_WP_CONTENT_TOTAL_BYTES, runtimeOwnedWpContentPaths, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "./wp-content-persistence.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
 import canonicalMarkdownSeed from "../assets/markdown-database-integration-canonical-seed.zip"
 import canonicalMarkdownSeedManifest from "../assets/markdown-database-integration-canonical-seed.json" with { type: "json" }
@@ -36,10 +37,21 @@ import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 import wordpressRuntimeArtifactManifest from "../assets/wordpress-runtime-artifact.json" with { type: "json" }
 import wordpressStaticArtifactManifest from "../assets/wordpress-static-artifact.json" with { type: "json" }
 import sqliteIntegrationArtifactManifest from "../assets/sqlite-database-integration-artifact.json" with { type: "json" }
-import staticSiteImporterArtifactManifest from "../assets/static-site-importer-artifact.json" with { type: "json" }
+import websiteImporterArtifactManifest from "../assets/website-importer-artifact.json" with { type: "json" }
 import { createCanonicalRestorePack, decodeCanonicalRestorePack, validateCanonicalRestorePackMetadata, type CanonicalRestorePackMetadata } from "./canonical-restore-pack.js"
 
 const PHP_VERSION = "8.5.8"
+const websiteImporterArtifact = websiteImporterArtifactManifest as RuntimeArchiveArtifactManifest
+validateRuntimeArchiveArtifactManifest(websiteImporterArtifact)
+if (!websiteImporterArtifact.component) throw new Error("Website importer runtime artifact is missing its component descriptor.")
+const WEBSITE_IMPORTER_COMPONENT = websiteImporterArtifact.component
+const WEBSITE_IMPORT_ABILITY = WEBSITE_IMPORTER_COMPONENT.abilities["website-artifact-import"]
+if (!WEBSITE_IMPORT_ABILITY) throw new Error("Website importer runtime component does not provide the website-artifact-import ability alias.")
+const WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS = runtimeArchiveComponentOwnedWpContentPaths(WEBSITE_IMPORTER_COMPONENT)
+const RUNTIME_OWNED_WP_CONTENT_PATHS = runtimeOwnedWpContentPaths(WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+const WEBSITE_IMPORTER_VERSION_EXPRESSION = WEBSITE_IMPORTER_COMPONENT.wordpress.version_constant
+  ? `defined('${WEBSITE_IMPORTER_COMPONENT.wordpress.version_constant}') ? constant('${WEBSITE_IMPORTER_COMPONENT.wordpress.version_constant}') : ''`
+  : "''"
 const wordpressStaticArtifact = wordpressStaticArtifactManifest as WordPressStaticArtifactManifest
 validateWordPressStaticArtifactManifest(wordpressStaticArtifact)
 const wordpressStaticFiles = new Map(wordpressStaticArtifact.files.map((file) => [file.path, file]))
@@ -48,19 +60,15 @@ const wordpressWpContentBaselineHashes = new Map([
   ...wordpressStaticArtifact.files,
 ].filter((file) => file.path.startsWith("wordpress/wp-content/"))
   .map((file) => [file.path.slice("wordpress/wp-content/".length), file.sha256] as const)
-  .filter(([path]) => isCanonicalWpContentPath(path)))
+  .filter(([path]) => isCanonicalWpContentPath(path, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)))
 const wordpressWpContentRuntimeBaselinePaths = new Set((wordpressRuntimeArtifactManifest as WordPressRuntimeArtifactManifest).files
   .filter((file) => file.path.startsWith("wordpress/wp-content/"))
   .map((file) => file.path.slice("wordpress/wp-content/".length))
-  .filter(isCanonicalWpContentPath))
+  .filter((path) => isCanonicalWpContentPath(path, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)))
 const MARKDOWN_DATABASE_INTEGRATION_REVISION = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
 const PROBE_SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
-const STATIC_SITE_IMPORTER_ROOT = "/wordpress/wp-content/plugins/static-site-importer"
-const STATIC_SITE_IMPORTER_MU_LOADER = "/wordpress/wp-content/mu-plugins/wp-codebox-static-site-importer.php"
-const MAX_STATIC_SITE_IMPORTER_FILES = 10_000
-const MAX_STATIC_SITE_IMPORTER_BYTES = 64 * 1024 * 1024
 const UPLOADS_ROOT = "/wordpress/wp-content/uploads"
 const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
 const MARKDOWN_RESOLVED_INDEX_PATH = "/tmp/markdown-index-8133b4cf3c66.sqlite"
@@ -161,9 +169,10 @@ if (count($records) >= 20) {
     echo wp_json_encode(array('status' => 'failed', 'error' => array('code' => 'idempotency_capacity', 'message' => 'Static artifact import idempotency history is full.')), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     return;
 }
-$ability = function_exists('wp_get_ability') ? wp_get_ability('static-site-importer/import-website-artifact') : null;
+$ability_name = ${JSON.stringify(WEBSITE_IMPORT_ABILITY)};
+$ability = function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
 if (!$ability) {
-    echo wp_json_encode(array('status' => 'failed', 'error' => array('code' => 'ability_unavailable', 'message' => 'Static Site Importer ability is unavailable.')), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    echo wp_json_encode(array('status' => 'failed', 'error' => array('code' => 'ability_unavailable', 'message' => 'The configured website importer ability is unavailable.')), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     return;
 }
 $ability_input = array(
@@ -179,7 +188,7 @@ $ability_input = array(
 $result = $ability->execute($ability_input);
 if (is_wp_error($result)) $result = array('success' => false, 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message()));
 if (!is_array($result) || empty($result['success']) || !isset($result['result']) || !is_array($result['result'])) {
-    $error = is_array($result) && isset($result['error']) && is_array($result['error']) ? $result['error'] : array('code' => 'import_failed', 'message' => 'Static Site Importer failed without a structured error.');
+    $error = is_array($result) && isset($result['error']) && is_array($result['error']) ? $result['error'] : array('code' => 'import_failed', 'message' => 'The configured website importer failed without a structured error.');
     echo wp_json_encode(array('status' => 'failed', 'error' => $error), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     return;
 }
@@ -203,8 +212,9 @@ $record = array(
     'pages' => isset($import['pages']) && is_array($import['pages']) ? $import['pages'] : array(),
     'quality' => $counts,
     'importedAt' => gmdate('c'),
-    'ability' => 'static-site-importer/import-website-artifact',
-    'staticSiteImporterVersion' => defined('STATIC_SITE_IMPORTER_VERSION') ? STATIC_SITE_IMPORTER_VERSION : '',
+    'ability' => $ability_name,
+    'componentId' => ${JSON.stringify(WEBSITE_IMPORTER_COMPONENT.id)},
+    'importerVersion' => ${WEBSITE_IMPORTER_VERSION_EXPRESSION},
 );
 $records[$key] = $record;
 update_option('wp_codebox_static_artifact_imports', $records, false);
@@ -1280,11 +1290,11 @@ async function runCoordinatedWordPressRequest(request: Request, env: RuntimeEnv,
     let publicationChanges: PublicationChanges | undefined
     if (route === "static-artifact-import") {
       if (!staticArtifactImport) throw new Error("Static artifact import input is unavailable.")
-      await heartbeat?.("executing-ssi", 45)
+      await heartbeat?.("executing-importer", 45)
       initializePublicationChanges(runtime.php)
       runtime.php.writeFile(MARKDOWN_CHANGES_PATH, new TextEncoder().encode(JSON.stringify({ created: [], changed: [], deleted: [] })))
       const imported = await trace.measure("request.ssi", () => runStaticArtifactImport(runtime!, staticArtifactImport))
-      await heartbeat?.("ssi-completed", 60)
+      await heartbeat?.("importer-completed", 60)
       if (imported.status !== "imported") {
         await trace.measure("runtime.dispose", () => discardRuntime(runtime!, site))
         runtime = undefined
@@ -1528,15 +1538,15 @@ function commitLease(coordinator: RevisionCoordinator, _requestUrl: string, leas
   return coordinator.commit(lease, pointer)
 }
 
-async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, site: SiteContext, includeStaticSiteImporter = false, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+async function getRuntime(env: RuntimeEnv, pointer: MarkdownPointer, site: SiteContext, includeWebsiteImporter = false, trace?: CloudflarePhaseTrace): Promise<Runtime> {
   let cachedRuntime = cachedRuntimes.get(site.id)
-  if (cachedRuntime && (cachedRuntime.baseRevision !== pointer.revision || includeStaticSiteImporter)) {
+  if (cachedRuntime && (cachedRuntime.baseRevision !== pointer.revision || includeWebsiteImporter)) {
     if (trace) await trace.measure("runtime.invalidate.dispose", () => discardCachedRuntime(site.id))
     else await discardCachedRuntime(site.id)
     cachedRuntime = undefined
   }
   if (!cachedRuntime) {
-    const promise = (async () => bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), includeStaticSiteImporter, site, trace))()
+    const promise = (async () => bootRuntime(env.WORDPRESS_STATE_BUCKET, pointer, site.origin, await canonicalWordPressAuthConstants(env, site), includeWebsiteImporter, site, trace))()
     cachedRuntime = { baseRevision: pointer.revision, promise, state: "pending" }
     cachedRuntimes.set(site.id, cachedRuntime)
     promise.then(() => {
@@ -1582,9 +1592,9 @@ async function disposeRequestHandler(requestHandler: PHPRequestHandler): Promise
   await dispose.call(requestHandler)
 }
 
-async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeStaticSiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
+async function bootRuntime(bucket: R2Bucket, pointer: MarkdownPointer, origin: string, authConstants: Record<WordPressAuthConstant, string>, includeWebsiteImporter = false, site: SiteContext = DEFAULT_SITE_CONTEXT, trace?: CloudflarePhaseTrace): Promise<Runtime> {
   const revision = await readCanonicalRevision(bucket, pointer, site, trace)
-  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeStaticSiteImporter, trace)
+  const booted = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, revision.markdown, new Uint8Array(markdownPrimaryBootstrapIndex), origin, authConstants, bucket, true, revision.uploads, revision.wpContent, revision.wpContentDeleted, includeWebsiteImporter, trace)
   return { ...booted, pointer }
 }
 
@@ -1649,8 +1659,8 @@ async function persistRuntime(bucket: R2Bucket, runtime: Runtime, changes: Markd
   const currentManifest = trace ? await trace.measure("canonical.manifest.current.read", () => readMarkdownManifest(bucket, runtime.pointer, site)) : await readMarkdownManifest(bucket, runtime.pointer, site)
   if (!currentManifest) throw new Error(`R2 Markdown manifest is missing: ${runtime.pointer.manifestKey}`)
   validateUploadManifestFiles(currentManifest.uploads ?? [], site)
-  validateWpContentManifestFiles(currentManifest.wpContent ?? [], site)
-  validateWpContentDeletedPaths(currentManifest.wpContentDeleted ?? [])
+  validateWpContentManifestFiles(currentManifest.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(currentManifest.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const changedPaths = [...changes.created, ...changes.changed].sort((left, right) => left.localeCompare(right))
   const uploads = trace ? await trace.measure("persistence.upload.inventory", () => collectUploadFiles(runtime.php)) : await collectUploadFiles(runtime.php)
   logMutationPhase(diagnosticsStartedAt, "upload-inventory", retained, { files: uploads.length, bytes: sumMetadataBytes(uploads) })
@@ -1721,7 +1731,8 @@ interface StaticArtifactRuntimeResult {
   quality?: { fallbackBlocks: number; coreHtmlBlocks: number; freeformBlocks: number; invalidBlocks: number }
   importedAt?: string
   ability?: string
-  staticSiteImporterVersion?: string
+  componentId?: string
+  importerVersion?: string
   error?: { code?: string; message?: string }
 }
 
@@ -1737,7 +1748,7 @@ async function runStaticArtifactImport(runtime: Runtime, input: StaticArtifactIm
   })))
   const output = (await runtime.php.run({ code: STATIC_ARTIFACT_IMPORT_CODE })).text.trim()
   const result = JSON.parse(output) as StaticArtifactRuntimeResult
-  if (!["imported", "duplicate", "conflict", "failed", "quality-failed"].includes(result.status)) throw new Error("Static Site Importer returned an invalid status envelope.")
+  if (!["imported", "duplicate", "conflict", "failed", "quality-failed"].includes(result.status)) throw new Error("Website importer returned an invalid status envelope.")
   return result
 }
 
@@ -1835,8 +1846,8 @@ async function readCanonicalRevision(bucket: R2Bucket, pointer: MarkdownPointer,
     if (!samePointer(manifest, pointer) || !Array.isArray(manifest.files)) throw new Error("Canonical manifest identity is invalid.")
     validateMarkdownManifestFiles(manifest.files, site)
     validateUploadManifestFiles(manifest.uploads ?? [], site)
-    validateWpContentManifestFiles(manifest.wpContent ?? [], site)
-    validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [])
+    validateWpContentManifestFiles(manifest.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+    validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
     return manifest
   }
   const manifest = trace ? await trace.measure("canonical.manifest.read", readManifest) : await readManifest()
@@ -1880,9 +1891,9 @@ async function persistMarkdownRevision(bucket: R2Bucket, files: RuntimeFile[], s
   const currentManifest = current ? await readMarkdownManifest(bucket, current, site) : null
   if (current && !currentManifest) throw new Error(`R2 Markdown manifest is missing: ${current.manifestKey}`)
   validateUploadManifestFiles(currentManifest?.uploads ?? [], site)
-  validateWpContentManifestFiles(currentManifest?.wpContent ?? [], site)
-  validateWpContentDeletedPaths(currentManifest?.wpContentDeleted ?? [])
-  validateWpContentDeletedPaths(wpContentDeleted)
+  validateWpContentManifestFiles(currentManifest?.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(currentManifest?.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const uploadManifestFiles = await persistUploadObjects(bucket, uploads, currentManifest?.uploads ?? [], site)
   const wpContentManifestFiles = await persistWpContentObjects(bucket, wpContent, currentManifest?.wpContent ?? [], site)
   const uploadsUnchanged = JSON.stringify(currentManifest?.uploads ?? []) === JSON.stringify(uploadManifestFiles)
@@ -1939,7 +1950,7 @@ async function persistUploadObjects(bucket: R2Bucket, files: RuntimeFile[], curr
 }
 
 async function persistWpContentObjects(bucket: R2Bucket, files: RuntimeFile[], current: MarkdownManifestFile[], site: SiteContext): Promise<MarkdownManifestFile[]> {
-  validateWpContentMetadata(files.map((file) => ({ path: file.path, size: file.bytes.byteLength })))
+  validateWpContentMetadata(files.map((file) => ({ path: file.path, size: file.bytes.byteLength })), WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const currentFiles = new Map(current.map((file) => [file.path, file]))
   const persisted: MarkdownManifestFile[] = []
   for (const file of files) {
@@ -1967,8 +1978,8 @@ async function persistMarkdownManifest(bucket: R2Bucket, files: MarkdownManifest
   const pointer: MarkdownPointer = { revision, manifestKey, persistedAt }
   validateMarkdownManifestFiles(files, site)
   validateUploadManifestFiles(uploads, site)
-  validateWpContentManifestFiles(wpContent, site)
-  validateWpContentDeletedPaths(wpContentDeleted)
+  validateWpContentManifestFiles(wpContent, site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   // Canonical objects remain authoritative; independently re-read them before deriving the pack.
   const [markdown, restoredUploads, restoredWpContent] = await Promise.all([
     readManifestFiles(bucket, files, "Markdown"),
@@ -1992,8 +2003,8 @@ async function readMarkdownManifest(bucket: R2Bucket, pointer: MarkdownPointer, 
   if (!samePointer(manifest, pointer) || !Array.isArray(manifest.files)) throw new Error("Canonical manifest identity is invalid.")
   validateMarkdownManifestFiles(manifest.files, site)
   validateUploadManifestFiles(manifest.uploads ?? [], site)
-  validateWpContentManifestFiles(manifest.wpContent ?? [], site)
-  validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [])
+  validateWpContentManifestFiles(manifest.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(manifest.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   if (manifest.restorePack !== undefined) validateCanonicalRestorePackMetadata(manifest.restorePack, siteStorageKeys(site).root, { markdown: manifest.files, uploads: manifest.uploads ?? [], wpContent: manifest.wpContent ?? [] })
   return manifest
 }
@@ -2277,13 +2288,13 @@ async function bootWordPressRuntime(
   uploadFiles?: RuntimeFile[],
   wpContentFiles?: RuntimeFile[],
   wpContentDeleted: string[] = [],
-  includeStaticSiteImporter = false,
+  includeWebsiteImporter = false,
   trace?: CloudflarePhaseTrace,
 ): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   if (includeSqlite && !runtimeBucket) throw new Error("SQLite integration artifact requires WORDPRESS_STATE_BUCKET.")
-  validateWpContentDeletedPaths(wpContentDeleted)
+  validateWpContentDeletedPaths(wpContentDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const sqliteIntegrationPluginZip = includeSqlite ? trace ? await trace.measure("runtime.archive.sqlite.fetch-verify", () => readSqliteIntegrationArtifact(runtimeBucket!)) : await readSqliteIntegrationArtifact(runtimeBucket!) : undefined
-  const staticSiteImporterZip = includeStaticSiteImporter ? trace ? await trace.measure("runtime.archive.ssi.fetch-verify", () => readStaticSiteImporterArtifact(runtimeBucket!)) : await readStaticSiteImporterArtifact(runtimeBucket!) : undefined
+  const websiteImporterZip = includeWebsiteImporter ? trace ? await trace.measure("runtime.archive.component.fetch-verify", () => readWebsiteImporterArtifact(runtimeBucket!)) : await readWebsiteImporterArtifact(runtimeBucket!) : undefined
   const boot = () => bootWordPressAndRequestHandler({
     createPhpRuntime: trace ? () => trace.measure("php.runtime.create", () => createPhpRuntime()) : createPhpRuntime,
     constants: {
@@ -2306,10 +2317,10 @@ async function bootWordPressRuntime(
     // Browser cookies are carried by the Worker Fetch request; Playground's
     // internal store would overwrite that header after an isolate restart.
     cookieStore: false,
-    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? {
-      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeStaticSiteImporter ? async (php: PHP) => {
+    hooks: streamWordPressFiles || databaseSeed || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeWebsiteImporter ? {
+      beforeWordPressFiles: streamWordPressFiles || markdownFiles || uploadFiles?.length || wpContentFiles?.length || wpContentDeleted.length || includeWebsiteImporter ? async (php: PHP) => {
         if (streamWordPressFiles) trace ? await trace.measure("runtime.archive.wordpress.fetch-verify-extract", () => materializeWordPressServerFiles(php, runtimeBucket)) : await materializeWordPressServerFiles(php, runtimeBucket)
-        if (staticSiteImporterZip) trace ? await trace.measure("runtime.archive.ssi.fetch-materialize", async () => materializeStaticSiteImporter(php, await staticSiteImporterZip)) : await materializeStaticSiteImporter(php, await staticSiteImporterZip)
+        if (websiteImporterZip) trace ? await trace.measure("runtime.archive.component.materialize", async () => materializeRuntimeArchiveComponent(php, await websiteImporterZip, WEBSITE_IMPORTER_COMPONENT)) : await materializeRuntimeArchiveComponent(php, await websiteImporterZip, WEBSITE_IMPORTER_COMPONENT)
         if (markdownFiles) {
           if (trace) await trace.measure("runtime.archive.mdi.extract", () => materializeMarkdownDatabaseIntegration(php))
           else await materializeMarkdownDatabaseIntegration(php)
@@ -2371,7 +2382,7 @@ function sumRuntimeFileBytes(files: RuntimeFile[]): number {
 }
 
 async function materializeWpContentTombstones(php: PHP, paths: string[]): Promise<void> {
-  validateWpContentDeletedPaths(paths)
+  validateWpContentDeletedPaths(paths, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   const encodedPaths = JSON.stringify(paths).replace(/</g, "\\u003c")
   await php.run({ code: `<?php
 $root = '/wordpress/wp-content';
@@ -2480,8 +2491,10 @@ echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).tex
 }
 
 async function collectWpContentFiles(php: PHP): Promise<{ files: RuntimeFileMetadata[]; deleted: string[] }> {
+  const runtimeOwnedPaths = JSON.stringify(RUNTIME_OWNED_WP_CONTENT_PATHS)
   const output = (await php.run({ code: `<?php
 $base = '/wordpress/wp-content';
+$runtime_owned_paths = json_decode(${JSON.stringify(runtimeOwnedPaths)}, true, 512, JSON_THROW_ON_ERROR);
 $files = array();
 $total = 0;
 foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
@@ -2492,7 +2505,9 @@ foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
         if (!$file->isFile()) continue;
         $absolute = str_replace('\\\\', '/', $file->getPathname());
         $path = $root . '/' . substr($absolute, strlen($directory) + 1);
-        if (str_starts_with($path, 'plugins/markdown-database-integration/') || str_starts_with($path, 'plugins/sqlite-database-integration/') || str_starts_with($path, 'plugins/static-site-importer/') || str_starts_with($path, 'mu-plugins/wp-codebox-cloudflare-canonical-changes.php') || str_starts_with($path, 'mu-plugins/wp-codebox-static-site-importer.php')) continue;
+        foreach ($runtime_owned_paths as $runtime_owned_path) {
+            if (str_ends_with($runtime_owned_path, '/') ? str_starts_with($path, $runtime_owned_path) : ($path === $runtime_owned_path || str_starts_with($path, $runtime_owned_path . '/'))) continue 2;
+        }
         $size = $file->getSize();
         $total += $size;
         if ($size > ${MAX_WP_CONTENT_FILE_BYTES} || $total > ${MAX_WP_CONTENT_TOTAL_BYTES} || count($files) >= ${MAX_WP_CONTENT_FILES}) {
@@ -2504,7 +2519,7 @@ foreach (array('plugins', 'themes', 'languages', 'mu-plugins') as $root) {
 usort($files, static fn($left, $right) => strcmp($left['path'], $right['path']));
 echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).text.trim()
   const metadata: unknown = JSON.parse(output)
-  validateWpContentMetadata(metadata)
+  validateWpContentMetadata(metadata, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   validateRuntimeFileHashes(metadata)
   const persistent = metadata.filter((file) => wordpressWpContentBaselineHashes.get(file.path) !== file.sha256)
   const currentPaths = new Set(metadata.map((file) => file.path))
@@ -2519,7 +2534,7 @@ echo json_encode($files, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);` })).tex
     }
   }
   const sortedDeleted = [...deleted].sort((left, right) => left.localeCompare(right))
-  validateWpContentDeletedPaths(sortedDeleted)
+  validateWpContentDeletedPaths(sortedDeleted, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   return { files: persistent, deleted: sortedDeleted }
 }
 
@@ -2574,32 +2589,35 @@ async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
   }
 }
 
-async function materializeStaticSiteImporter(php: PHP, archive: Uint8Array): Promise<void> {
-  const required = new Set([
-    "static-site-importer/static-site-importer.php",
-    "static-site-importer/vendor/autoload.php",
-  ])
+async function materializeRuntimeArchiveComponent(php: PHP, archive: Uint8Array, component: RuntimeArchiveComponent): Promise<void> {
+  const packageRoot = `${component.package.root}/`
+  const installRoot = `/wordpress/wp-content/${component.wordpress.install_path}`
+  const loaderPath = `/wordpress/wp-content/${component.wordpress.load.loader_path}`
+  const required = new Set([`${packageRoot}${component.wordpress.bootstrap_file}`])
+  const paths = new Set<string>()
   let count = 0
   let total = 0
-  for await (const entry of decodeZip(new Blob([Uint8Array.from(archive).buffer]).stream())) {
+  for await (const entry of decodeZip(new Blob([archive as BlobPart]).stream())) {
     if (entry.name.endsWith("/")) continue
-    if (!entry.name.startsWith("static-site-importer/") || entry.name.includes("\\") || entry.name.split("/").some((segment: string) => !segment || segment === "." || segment === "..")) {
-      throw new Error("Static Site Importer archive contains an invalid path.")
+    if (!entry.name.startsWith(packageRoot) || entry.name.includes("\\") || entry.name.split("/").some((segment: string) => !segment || segment === "." || segment === "..") || paths.has(entry.name)) {
+      throw new Error(`Runtime archive component ${component.id} contains an invalid or duplicate path.`)
     }
+    paths.add(entry.name)
     const bytes = new Uint8Array(await entry.arrayBuffer())
     count++
     total += bytes.byteLength
-    if (count > MAX_STATIC_SITE_IMPORTER_FILES || total > MAX_STATIC_SITE_IMPORTER_BYTES) throw new Error("Static Site Importer archive exceeds its extraction budget.")
-    const relative = entry.name.slice("static-site-importer/".length)
-    const destination = `${STATIC_SITE_IMPORTER_ROOT}/${relative}`
+    if (count > component.limits.files || total > component.limits.bytes) throw new Error(`Runtime archive component ${component.id} exceeds its extraction budget.`)
+    const relative = entry.name.slice(packageRoot.length)
+    const destination = `${installRoot}/${relative}`
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
     php.writeFile(destination, bytes)
     required.delete(entry.name)
   }
-  if (required.size) throw new Error(`Static Site Importer archive is missing required files: ${[...required].join(", ")}.`)
-  php.mkdir(STATIC_SITE_IMPORTER_MU_LOADER.slice(0, STATIC_SITE_IMPORTER_MU_LOADER.lastIndexOf("/")))
-  php.writeFile(STATIC_SITE_IMPORTER_MU_LOADER, new TextEncoder().encode(`<?php
-require_once '/wordpress/wp-content/plugins/static-site-importer/static-site-importer.php';`))
+  if (required.size) throw new Error(`Runtime archive component ${component.id} is missing required files: ${[...required].join(", ")}.`)
+  const bootstrap = `${installRoot}/${component.wordpress.bootstrap_file}`
+  php.mkdir(loaderPath.slice(0, loaderPath.lastIndexOf("/")))
+  php.writeFile(loaderPath, new TextEncoder().encode(`<?php
+require_once ${JSON.stringify(bootstrap)};`))
 }
 
 function materializeCanonicalChangeAdapter(php: PHP): void {
@@ -2732,8 +2750,8 @@ async function readSqliteIntegrationArtifact(bucket: R2Bucket): Promise<File> {
   return new File([Uint8Array.from(bytes).buffer], "sqlite-database-integration.zip", { type: "application/zip" })
 }
 
-async function readStaticSiteImporterArtifact(bucket: R2Bucket): Promise<Uint8Array> {
-  return readRuntimeArchiveArtifact(bucket, staticSiteImporterArtifactManifest as RuntimeArchiveArtifactManifest)
+async function readWebsiteImporterArtifact(bucket: R2Bucket): Promise<Uint8Array> {
+  return readRuntimeArchiveArtifact(bucket, websiteImporterArtifact)
 }
 
 async function serveWordPressWpContent(request: Request, bucket: R2Bucket, coordinator: RevisionCoordinator, site: SiteContext): Promise<Response | null> {
@@ -2746,7 +2764,7 @@ async function serveWordPressWpContent(request: Request, bucket: R2Bucket, coord
   } catch {
     return new Response("Invalid WordPress content path.", { status: 400 })
   }
-  if (!isCanonicalWpContentPath(path)) return null
+  if (!isCanonicalWpContentPath(path, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)) return null
   const state = await coordinator.state()
   if (!state.pointer) return null
   const cache = typeof caches === "undefined" ? undefined : (caches as CacheStorage & { default?: Cache }).default
@@ -2760,8 +2778,8 @@ async function serveWordPressWpContent(request: Request, bucket: R2Bucket, coord
     }
   }
   const manifest = await readMarkdownManifest(bucket, state.pointer, site)
-  validateWpContentManifestFiles(manifest?.wpContent ?? [], site)
-  validateWpContentDeletedPaths(manifest?.wpContentDeleted ?? [])
+  validateWpContentManifestFiles(manifest?.wpContent ?? [], site, WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
+  validateWpContentDeletedPaths(manifest?.wpContentDeleted ?? [], WEBSITE_IMPORTER_OWNED_WP_CONTENT_PATHS)
   if (manifest?.wpContentDeleted?.includes(path)) return new Response("WordPress content not found.", { status: 404 })
   const file = manifest?.wpContent?.find((candidate) => candidate.path === path)
   if (!file) return null

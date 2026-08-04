@@ -21,16 +21,16 @@ const sqliteManifest = JSON.parse(await readFile("packages/runtime-cloudflare/as
 const sqliteArchive = await readFile("artifacts/cloudflare-sqlite-database-integration.zip")
 const sqliteActual = createHash("sha256").update(sqliteArchive).digest("hex")
 if (sqliteActual !== sqliteManifest.archive.sha256 || sqliteArchive.byteLength !== sqliteManifest.archive.size || sqliteManifest.key !== `runtime/archives/sqlite-database-integration/${sqliteActual}.zip`) throw new Error("Local SQLite integration artifact does not match its content-addressed manifest.")
-const staticSiteImporterManifest = JSON.parse(await readFile("packages/runtime-cloudflare/assets/static-site-importer-artifact.json", "utf8"))
-const staticSiteImporterArchive = await readFile("artifacts/cloudflare-static-site-importer.zip")
-const staticSiteImporterActual = createHash("sha256").update(staticSiteImporterArchive).digest("hex")
-if (staticSiteImporterActual !== staticSiteImporterManifest.archive.sha256 || staticSiteImporterArchive.byteLength !== staticSiteImporterManifest.archive.size || staticSiteImporterManifest.key !== `runtime/archives/static-site-importer/${staticSiteImporterActual}.zip`) throw new Error("Local Static Site Importer artifact does not match its content-addressed manifest.")
+const websiteImporterManifest = JSON.parse(await readFile("packages/runtime-cloudflare/assets/website-importer-artifact.json", "utf8"))
+const websiteImporterArchive = await readFile("artifacts/cloudflare-website-importer.zip")
+const websiteImporterActual = createHash("sha256").update(websiteImporterArchive).digest("hex")
+if (websiteImporterActual !== websiteImporterManifest.archive.sha256 || websiteImporterArchive.byteLength !== websiteImporterManifest.archive.size || websiteImporterManifest.key !== `runtime/archives/${websiteImporterManifest.name}/${websiteImporterActual}.zip`) throw new Error("Local website importer artifact does not match its content-addressed manifest.")
 
 for (const artifact of [
   { key: manifest.key, size: manifest.archive.size, file: "artifacts/cloudflare-wordpress-runtime-corpus.zip" },
   { key: staticManifest.key, size: staticManifest.blob.size, file: "artifacts/cloudflare-wordpress-static-corpus.bin" },
   { key: sqliteManifest.key, size: sqliteManifest.archive.size, file: "artifacts/cloudflare-sqlite-database-integration.zip" },
-  { key: staticSiteImporterManifest.key, size: staticSiteImporterManifest.archive.size, file: "artifacts/cloudflare-static-site-importer.zip" },
+  { key: websiteImporterManifest.key, size: websiteImporterManifest.archive.size, file: "artifacts/cloudflare-website-importer.zip" },
 ]) {
   const command = ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
   if (persistTo) command.push("--persist-to", persistTo)
