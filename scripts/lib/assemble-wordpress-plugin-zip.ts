@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises"
+import { chmod, cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -36,6 +36,7 @@ export async function assembleWordpressPluginZip(repoRoot: string): Promise<stri
 			await cp(join(pluginSource, "assets"), join(stagingPlugin, "assets"), { recursive: true })
 		}
 		await cp(cliPackageRoot, join(stagingPlugin, "vendor", "wp-codebox-cli"), { recursive: true })
+		await chmod(join(stagingPlugin, "vendor", "wp-codebox-cli", "packages", "cli", "dist", "index.js"), 0o755)
 		await rm(outputZip, { force: true })
 		await execFileAsync("zip", ["-qr", outputZip, "wp-codebox"], { cwd: stagingRoot })
 		return outputZip
