@@ -69,6 +69,12 @@ export interface BrowserPreviewRouteTracker {
   registrations: number
 }
 
+export interface BrowserPreviewTransportFaultPolicy {
+  preflight(route: Route): Promise<boolean>
+  fetch(route: Route, overrides: { url?: string; postData?: Buffer }): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined>
+  recordHandled(route: Route): void
+}
+
 export function createBrowserPreviewRouteTracker(): BrowserPreviewRouteTracker {
   return { pending: new Set(), errors: [], registrations: 0 }
 }
@@ -331,6 +337,40 @@ export async function routeBrowserPreviewContextNetwork(context: import("playwri
   await routeBrowserPreviewNetwork(context.route.bind(context), policy, previewOrigin, tracker)
 }
 
+export function browserPreviewTransportFaultPolicy(policy: BrowserPreviewNetworkPolicy, previewOrigin: string): BrowserPreviewTransportFaultPolicy {
+  const origin = new URL(previewOrigin)
+  return {
+    async preflight(route) {
+      const requestUrl = browserPreviewRouteUrl(route)
+      if (!requestUrl) return true
+      if (!browserPreviewRouteIsBlocked(requestUrl, route.request().resourceType(), policy)) return true
+      recordBrowserPreviewPolicyRequest(policy, requestUrl, "blocked")
+      await route.abort("blockedbyclient")
+      return false
+    },
+    async fetch(route, overrides) {
+      const requestUrl = browserPreviewRouteUrl(route, overrides.url)
+      if (!requestUrl) return route.fetch(overrides)
+      if (browserPreviewRouteIsBlocked(requestUrl, route.request().resourceType(), policy)) {
+        recordBrowserPreviewPolicyRequest(policy, requestUrl, "blocked")
+        await route.abort("blockedbyclient")
+        return undefined
+      }
+      const routed = policy.routeOrigins.has(requestUrl.origin) || policy.routeHosts.has(normalizeBrowserPreviewHost(requestUrl.hostname))
+      recordBrowserPreviewPolicyRequest(policy, requestUrl, routed ? "routed" : "handled")
+      return routed
+        ? fetchBrowserPreviewRoutedHost(route, requestUrl, policy, origin, !policy.routeOrigins.has(requestUrl.origin), overrides)
+        : route.fetch(overrides)
+    },
+    recordHandled(route) {
+      const requestUrl = browserPreviewRouteUrl(route)
+      if (!requestUrl) return
+      const routed = policy.routeOrigins.has(requestUrl.origin) || policy.routeHosts.has(normalizeBrowserPreviewHost(requestUrl.hostname))
+      recordBrowserPreviewPolicyRequest(policy, requestUrl, routed ? "routed" : "handled")
+    },
+  }
+}
+
 export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRouteTracker, timeoutMs = BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs
   let observedRegistrations = -1
@@ -516,6 +556,31 @@ function browserPreviewNetworkPolicyHostStat(policy: BrowserPreviewNetworkPolicy
   return stat
 }
 
+function browserPreviewRouteUrl(route: Route, override?: string): URL | undefined {
+  try {
+    return new URL(override ?? route.request().url())
+  } catch {
+    return undefined
+  }
+}
+
+function browserPreviewRouteIsBlocked(requestUrl: URL, resourceType: string, policy: BrowserPreviewNetworkPolicy): boolean {
+  const host = normalizeBrowserPreviewHost(requestUrl.hostname)
+  if (policy.blockHosts.has(host)) return true
+  const routed = policy.routeOrigins.has(requestUrl.origin) || policy.routeHosts.has(host)
+  const external = !policy.firstPartyHosts.has(host)
+  return !routed && (policy.preserveRoutedOrigin || (policy.mode === "block" && external && !policy.allowHosts.has(host)) || (resourceType === "document" && external))
+}
+
+function recordBrowserPreviewPolicyRequest(policy: BrowserPreviewNetworkPolicy, requestUrl: URL, outcome: "blocked" | "routed" | "handled"): void {
+  const host = normalizeBrowserPreviewHost(requestUrl.hostname)
+  const stat = browserPreviewNetworkPolicyHostStat(policy, host)
+  stat.requests += 1
+  stat.external = !policy.firstPartyHosts.has(host)
+  if (outcome === "blocked") stat.blocked += 1
+  if (outcome === "routed") stat.routed += 1
+}
+
 function browserPreviewUrlHostname(url: string): string | undefined {
   try {
     return normalizeBrowserPreviewHost(new URL(url).hostname)
@@ -564,7 +629,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, origin: URL, preserveRequestedAuthority: boolean): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
+async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, policy: BrowserPreviewNetworkPolicy, origin: URL, preserveRequestedAuthority: boolean, overrides: { postData?: Buffer } = {}): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
   let currentUrl = requestUrl
   for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
     const routedUrl = new URL(currentUrl.toString())
@@ -581,6 +646,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, poli
       try {
         response = await route.fetch({
           url: routedUrl.toString(),
+          ...(overrides.postData ? { postData: overrides.postData } : {}),
           headers: {
             ...route.request().headers(),
             host: preserveRequestedAuthority ? currentUrl.host : origin.host,

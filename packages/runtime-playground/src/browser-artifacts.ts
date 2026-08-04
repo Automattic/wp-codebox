@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment, type TransportFaultCapability } from "@automattic/wp-codebox-core"
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
@@ -98,6 +98,7 @@ export interface BrowserArtifactFiles {
   blocksEngineVisualParity?: string | string[]
   redirectDiagnostics?: string
   wordpressDiagnostics?: string
+  transportFaults?: string
   summary: string
 }
 
@@ -198,6 +199,15 @@ export interface BrowserArtifactSummary {
   review?: BrowserProbeReviewSummary
   redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
+  transportFaults?: {
+    seed: string
+    adapter: string
+    fidelity: TransportFaultCapability[]
+    matchedRequests: number
+    consumedSequenceEntries: number
+    unmatchedRules: string[]
+    artifact: string
+  }
   context?: BrowserProbeContextDetails
   auth?: BrowserProbeAuthSummary
   multiActor?: {
@@ -1173,6 +1183,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   blocksEngineVisualParity: { kind: "blocks-engine-visual-parity-report", contentType: "application/json", redact: true },
   redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
   wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
+  transportFaults: { kind: "browser-transport-faults", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
 }
 

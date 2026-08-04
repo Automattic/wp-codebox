@@ -5,6 +5,7 @@ import { stableJson, stripUndefined } from "./object-utils.js"
 export const TRANSPORT_FAULT_MODEL_SCHEMA = "wp-codebox/transport-fault-model/v1" as const
 export const TRANSPORT_FAULT_CAPABILITIES_SCHEMA = "wp-codebox/transport-fault-capabilities/v1" as const
 export const TRANSPORT_FAULT_EVIDENCE_SCHEMA = "wp-codebox/transport-fault-evidence/v1" as const
+export const TRANSPORT_FAULT_SAFE_SCHEDULE_SCHEMA = "wp-codebox/transport-fault-safe-schedule/v1" as const
 
 export type TransportFaultSemantic =
   | "response-substitution"
@@ -34,6 +35,7 @@ export interface TransportRequestMatcher {
 }
 
 export interface TransportFaultOutcome {
+  passthrough?: true
   status?: number
   headers?: Record<string, string>
   body?: string
@@ -130,6 +132,25 @@ export interface TransportFaultEvidence {
   }
 }
 
+export interface TransportFaultSafeSchedule {
+  schema: typeof TRANSPORT_FAULT_SAFE_SCHEDULE_SCHEMA
+  seed: string
+  structuralFingerprint: string
+  rules: Array<{
+    id: string
+    match: Omit<TransportRequestMatcher, "headers"> & { headerNames?: string[] }
+    sequence: Array<Omit<TransportFaultOutcome, "headers" | "body" | "bodyBase64" | "metadata"> & {
+      headerNames?: string[]
+      body?: { encoding: "utf8" | "base64"; bytes: number; redacted: true }
+      metadataRedacted?: true
+    }>
+    repeat?: TransportFaultRule["repeat"]
+    metadataRedacted?: true
+  }>
+  redactHeaders?: string[]
+  metadataRedacted?: true
+}
+
 export class TransportFaultEngine {
   readonly model: TransportFaultModel
   readonly capabilities: TransportFaultCapabilities
@@ -164,8 +185,11 @@ export class TransportFaultEngine {
     const fidelity = decision
       ? decision.semantics.map((semantic) => this.capabilities.capabilities.find((item) => item.semantic === semantic) ?? { semantic, fidelity: "unsupported" as const, reason: "Adapter did not declare this semantic." })
       : []
-    const requestHeaders = redactTransportHeaders(request.headers ?? {}, this.model.redactHeaders)
-    const responseHeaders = response?.headers ? redactTransportHeaders(response.headers, this.model.redactHeaders) : undefined
+    const rule = decision ? this.model.rules.find(({ id }) => id === decision.ruleId) : undefined
+    const declaredHeaders = [...Object.keys(rule?.match.headers ?? {}), ...Object.keys(decision?.outcome.headers ?? {})]
+    const redactedHeaders = [...(this.model.redactHeaders ?? []), ...declaredHeaders]
+    const requestHeaders = redactTransportHeaders(request.headers ?? {}, redactedHeaders)
+    const responseHeaders = response?.headers ? redactTransportHeaders(response.headers, redactedHeaders) : undefined
     const evidence = stripUndefined({
       schema: TRANSPORT_FAULT_EVIDENCE_SCHEMA,
       fingerprint: transportFaultFingerprint({ adapter: this.capabilities.adapter, request: { url: redactTransportUrl(request.url), method: request.method.toUpperCase() }, fault: decision ? { ruleId: decision.ruleId, sequenceIndex: decision.sequenceIndex, semantics: decision.semantics } : undefined, response: response ? { status: response.status, connection: response.connection } : undefined }),
@@ -186,6 +210,7 @@ export class TransportFaultEngine {
 }
 
 export function transportFaultModel(input: Omit<TransportFaultModel, "schema"> & { schema?: string }): TransportFaultModel {
+  if (input.schema !== undefined && input.schema !== TRANSPORT_FAULT_MODEL_SCHEMA) throw new Error(`Transport fault model schema must be ${TRANSPORT_FAULT_MODEL_SCHEMA}.`)
   if (!input.seed) throw new Error("Transport fault model requires a non-empty seed.")
   const ids = new Set<string>()
   const rules = input.rules.map((rule) => {
@@ -202,6 +227,30 @@ export function transportFaultCapabilities(adapter: string, capabilities: readon
   const bySemantic = new Map<TransportFaultSemantic, TransportFaultCapability>()
   for (const capability of capabilities) bySemantic.set(capability.semantic, capability)
   return { schema: TRANSPORT_FAULT_CAPABILITIES_SCHEMA, adapter, capabilities: [...bySemantic.values()].sort((left, right) => left.semantic.localeCompare(right.semantic)) }
+}
+
+export function transportFaultSafeSchedule(modelInput: TransportFaultModel): TransportFaultSafeSchedule {
+  const model = transportFaultModel(modelInput)
+  const safe = stripUndefined({
+    schema: TRANSPORT_FAULT_SAFE_SCHEDULE_SCHEMA,
+    seed: model.seed,
+    rules: model.rules.map((rule) => stripUndefined({
+      id: rule.id,
+      match: stripUndefined({
+        host: rule.match.host,
+        method: rule.match.method,
+        path: rule.match.path,
+        pathPattern: rule.match.pathPattern,
+        headerNames: rule.match.headers ? Object.keys(rule.match.headers).map((name) => name.toLowerCase()).sort() : undefined,
+      }),
+      sequence: rule.sequence.map((outcome) => safeTransportFaultOutcome(outcome)),
+      repeat: rule.repeat,
+      metadataRedacted: rule.metadata ? true as const : undefined,
+    })),
+    redactHeaders: model.redactHeaders ? [...model.redactHeaders].map((name) => name.toLowerCase()).sort() : undefined,
+    metadataRedacted: model.metadata ? true as const : undefined,
+  })
+  return { ...safe, structuralFingerprint: transportFaultFingerprint(safe) }
 }
 
 export function negotiateTransportFaults(model: TransportFaultModel, capabilities: TransportFaultCapabilities): TransportFaultNegotiation {
@@ -265,6 +314,8 @@ export function redactTransportUrl(raw: string): string {
 }
 
 function normalizeTransportFaultOutcome(outcome: TransportFaultOutcome): TransportFaultOutcome {
+  if (outcome.passthrough !== undefined && outcome.passthrough !== true) throw new Error("Transport fault outcome passthrough must be true when declared.")
+  if (outcome.passthrough && Object.entries(outcome).some(([name, value]) => value !== undefined && name !== "passthrough" && name !== "metadata")) throw new Error("Transport fault passthrough outcomes cannot declare another fault effect.")
   for (const [name, value] of Object.entries(outcome)) {
     if ((name.endsWith("Ms") || name.endsWith("Bytes") || name === "bandwidthBytesPerSecond") && typeof value === "number" && (!Number.isFinite(value) || value < 0)) {
       throw new Error(`Transport fault outcome ${name} must be a finite non-negative number.`)
@@ -272,6 +323,21 @@ function normalizeTransportFaultOutcome(outcome: TransportFaultOutcome): Transpo
   }
   if (outcome.status !== undefined && (!Number.isInteger(outcome.status) || outcome.status < 100 || outcome.status > 599)) throw new Error("Transport fault status must be between 100 and 599.")
   return { ...outcome, headers: outcome.headers ? normalizeHeaders(outcome.headers) : undefined }
+}
+
+function safeTransportFaultOutcome(outcome: TransportFaultOutcome): TransportFaultSafeSchedule["rules"][number]["sequence"][number] {
+  const { headers, body, bodyBase64, metadata, remapHost, ...safe } = outcome
+  return stripUndefined({
+    ...safe,
+    remapHost: remapHost ? redactTransportUrl(remapHost) : undefined,
+    headerNames: headers ? Object.keys(headers).map((name) => name.toLowerCase()).sort() : undefined,
+    body: body !== undefined
+      ? { encoding: "utf8" as const, bytes: Buffer.byteLength(body), redacted: true as const }
+      : bodyBase64 !== undefined
+        ? { encoding: "base64" as const, bytes: Buffer.from(bodyBase64, "base64").byteLength, redacted: true as const }
+        : undefined,
+    metadataRedacted: metadata ? true as const : undefined,
+  })
 }
 
 function faultSequenceIndex(rule: TransportFaultRule, invocation: number): number | undefined {
