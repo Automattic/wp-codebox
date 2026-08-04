@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, transportFaultModel, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec, type TransportFaultModel } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -12,7 +12,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { executeBrowserObservationAssertion } from "./browser-observation-assertions.js"
-import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
+import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewTopology, browserPreviewTransportFaultPolicy, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
@@ -26,6 +26,7 @@ import { discoverBrowserActionCorpusDescriptors } from "./browser-action-discove
 import { exploreAdaptiveBrowserStateMachine } from "./browser-adaptive-explorer.js"
 import { createBrowserAccessibilityCollector } from "./browser-accessibility-collector.js"
 import { browserEnvironmentCell, createPlaywrightBrowserEnvironmentContext, observePlaywrightBrowserEnvironment, resolvePlaywrightBrowserEnvironment, type PlaywrightBrowserEnvironmentSession } from "./browser-environment-matrix.js"
+import { installBrowserTransportFaults, type BrowserTransportFaultReport, type InstalledBrowserTransportFaults } from "./browser-transport-faults.js"
 
 export { discoverBrowserActionCorpusDescriptors } from "./browser-action-discovery.js"
 
@@ -50,6 +51,7 @@ export interface BrowserActionsRunPlan {
   maxDomSnapshotElements: number
   actionCorpus?: BrowserActionCorpusContract
   adaptiveExploration?: BrowserAdaptiveExplorationContract
+  transportFaults?: TransportFaultModel
   reusePage?: boolean
 }
 
@@ -154,6 +156,8 @@ export async function runBrowserActionsCommand({
   let environmentEvidence: BrowserArtifact["summary"]["environment"] | undefined
   let resolvedEnvironment: Awaited<ReturnType<typeof resolvePlaywrightBrowserEnvironment>> | undefined
   let activePage: Page | undefined
+  let installedTransportFaults: InstalledBrowserTransportFaults | undefined
+  let transportFaultReport: BrowserTransportFaultReport | undefined
 
   try {
     const previewReadinessError = browserPreviewReadinessError(preview)
@@ -173,17 +177,19 @@ export async function runBrowserActionsCommand({
     if (unsupportedEnvironment.length > 0) {
       throw new Error(`wordpress.browser-actions browser environment is unsupported: ${unsupportedEnvironment.join(", ")}`)
     }
-    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport
+    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults
     environmentRuntime = session?.runtime ?? (needsEnvironmentContext ? await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, {
       contextOptions: {
         ...topology.contextOptions(),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
+        ...(runPlan.transportFaults ? { serviceWorkers: "block" as const } : {}),
       },
     }) : undefined)
     const context = environmentRuntime?.context ?? null
     if (context && !session) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
+    if (context && runPlan.transportFaults) installedTransportFaults = await installBrowserTransportFaults(context, runPlan.transportFaults, { policy: browserPreviewTransportFaultPolicy(networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
@@ -447,6 +453,13 @@ export async function runBrowserActionsCommand({
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs).catch((error) => errors.push(serializeBrowserError("probe-error", error)))
+    if (installedTransportFaults) {
+      await installedTransportFaults.dispose().then((report) => { transportFaultReport = report }).catch((error) => {
+        const cleanupError = error instanceof Error ? error : new Error(String(error))
+        errors.push(serializeBrowserError("probe-error", cleanupError))
+        pendingError ??= cleanupError
+      })
+    }
     if (activePage && resolvedEnvironment) environmentEvidence = await observePlaywrightBrowserEnvironment(activePage, requestedEnvironment, resolvedEnvironment).catch(() => environmentEvidence)
     const cleanupBrowser = session ? { close: async () => {} } : { close: async () => { await environmentRuntime?.close(); await browser.close() } }
     for (const routeError of await closeBrowserAndDrainPreviewRoutes(cleanupBrowser, routeTracker)) {
@@ -470,6 +483,7 @@ export async function runBrowserActionsCommand({
     if (capture.has("websocket")) {
       await artifactSession.writeJson("websocket", "websocket.json", browserProbeWebSocketArtifact(webSockets, startedAt))
     }
+    if (transportFaultReport) await artifactSession.writeJson("transportFaults", "transport-faults.json", transportFaultReport)
 
     const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
       artifactPath: "files/browser/redirect-diagnostics.json",
@@ -519,6 +533,7 @@ export async function runBrowserActionsCommand({
         ...(actionCorpusArtifact ? { actionCorpus: "files/browser/action-corpus.json" } : {}),
         ...(adaptiveExplorationArtifact ? { adaptiveExploration: "files/browser/adaptive-exploration.json" } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
+        ...(transportFaultReport ? { transportFaults: "files/browser/transport-faults.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
       summary: {
@@ -540,6 +555,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("websocket") ? { webSockets: browserProbeWebSocketSummary(webSockets) } : {}),
         ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
+        ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         auth: authSummary,
@@ -571,6 +587,7 @@ export async function runBrowserActionsCommand({
       },
       ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
+      ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
       ...(verifierResults.length > 0 ? { verifierResults } : {}),
       ...(actionCorpusArtifact ? { actionCorpus: actionCorpusArtifact.plan } : {}),
       ...(adaptiveExplorationArtifact ? { adaptiveExploration: adaptiveExplorationArtifact.result } : {}),
@@ -722,6 +739,7 @@ async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: strin
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
     actionCorpus: browserActionCorpusFromArgs(args),
     adaptiveExploration: adaptiveExplorationPlan.contract,
+    transportFaults: await transportFaultModelFromArg(args),
   }
 }
 
@@ -938,6 +956,7 @@ interface BrowserScenarioInput {
   actions?: BrowserMultiActorScenario["actions"]
   barriers?: BrowserMultiActorScenario["barriers"]
   requestGates?: BrowserMultiActorScenario["requestGates"]
+  transportFaults?: TransportFaultModel
 }
 
 export async function runBrowserScenarioCommand({
@@ -955,9 +974,11 @@ export async function runBrowserScenarioCommand({
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const scenario = await browserScenarioFromArgs(args)
+  const scenarioTransportFaults = await browserScenarioTransportFaults(scenario, args)
   const requestedEnvironment = await browserScenarioEnvironment(scenario, args)
   const multiActorScenario = browserMultiActorScenario(scenario, args, requestedEnvironment)
   if (multiActorScenario) {
+    if (scenarioTransportFaults) throw new Error("Multi-actor wordpress.browser-scenario does not support transport faults; browser fault schedules require one isolated browser context per scenario.")
     return runBrowserMultiActorScenarioCommand({ artifactRoot, scenario: multiActorScenario, runtimeSpec, runPlaygroundCommand, server })
   }
   const url = scenario.url?.trim() || argValue(args, "url")?.trim()
@@ -975,9 +996,11 @@ export async function runBrowserScenarioCommand({
   let scenarioSession: PlaywrightBrowserEnvironmentSession | undefined
   let scenarioBrowser: Awaited<ReturnType<typeof launchChromiumBrowser>> | undefined
   let scenarioRouteTracker: ReturnType<typeof createBrowserPreviewRouteTracker> | undefined
+  let installedTransportFaults: InstalledBrowserTransportFaults | undefined
+  let transportFaultReport: BrowserTransportFaultReport | undefined
 
   try {
-    if (runPlan.probe && runPlan.actions) {
+    if ((runPlan.probe && runPlan.actions) || scenarioTransportFaults) {
       const browser = scenarioBrowser = await launchChromiumBrowser()
       const resolved = await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(requestedEnvironment), browser)
       const unsupported = resolved.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
@@ -988,11 +1011,13 @@ export async function runBrowserScenarioCommand({
       const runtime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, {
         contextOptions: {
           ...topology.contextOptions(),
-          ...(runPlan.actions.storageStateImport ? { storageState: runPlan.actions.storageStateImport.storageState } : {}),
+          ...((runPlan.actions?.storageStateImport ?? runPlan.probe?.storageStateImport) ? { storageState: (runPlan.actions?.storageStateImport ?? runPlan.probe?.storageStateImport)?.storageState } : {}),
+          ...(scenarioTransportFaults ? { serviceWorkers: "block" as const } : {}),
         },
       })
       const routeTracker = scenarioRouteTracker = createBrowserPreviewRouteTracker()
       if (browserPreviewNeedsContextRouting(topology.networkPolicy)) await routeBrowserPreviewContextNetwork(runtime.context, topology.networkPolicy, topology.origins.localProxyOrigin, routeTracker)
+      if (scenarioTransportFaults) installedTransportFaults = await installBrowserTransportFaults(runtime.context, scenarioTransportFaults, { policy: browserPreviewTransportFaultPolicy(topology.networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
       scenarioSession = { browser, requested: requestedEnvironment, resolved, routeTracker, runtime }
     }
 
@@ -1009,7 +1034,7 @@ export async function runBrowserScenarioCommand({
 
     if (!pendingError && runPlan.actions) {
       try {
-        actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: { ...runPlan.actions, reusePage: Boolean(scenarioSession) }, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args }, session: scenarioSession })
+        actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: { ...runPlan.actions, reusePage: Boolean(scenarioSession && runPlan.probe) }, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args }, session: scenarioSession })
       } catch (error) {
         if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
           actionsResult = { artifact: error.artifact, output: "" }
@@ -1018,6 +1043,9 @@ export async function runBrowserScenarioCommand({
       }
     }
   } finally {
+    if (installedTransportFaults) {
+      await installedTransportFaults.dispose().then((report) => { transportFaultReport = report }).catch((error) => { pendingError ??= error instanceof Error ? error : new Error(String(error)) })
+    }
     if (scenarioSession && scenarioBrowser && scenarioRouteTracker) {
       const activeSession = scenarioSession
       const activeBrowser = scenarioBrowser
@@ -1049,6 +1077,7 @@ export async function runBrowserScenarioCommand({
     finishedAt: now(),
     context: primaryArtifact.summary.context,
     auth: primaryArtifact.summary.auth,
+    ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
     viewport: primaryArtifact.summary.viewport,
     files: {
       ...(probeResult ? { probeSummary: probeResult.artifact.files.summary } : {}),
@@ -1062,6 +1091,7 @@ export async function runBrowserScenarioCommand({
       auth: primaryArtifact.summary.auth,
     },
   }
+  if (transportFaultReport) await artifactSession.writeJson("transportFaults", "transport-faults.json", transportFaultReport)
   await artifactSession.writeJson("summary", "scenario-summary.json", scenarioSummary)
 
   const artifact: BrowserArtifact = {
@@ -1069,6 +1099,7 @@ export async function runBrowserScenarioCommand({
     artifactType: "scenario",
     files: {
       ...primaryArtifact.files,
+      ...(transportFaultReport ? { transportFaults: "files/browser/transport-faults.json" } : {}),
       summary: "files/browser/scenario-summary.json",
     },
     summary: {
@@ -1079,6 +1110,7 @@ export async function runBrowserScenarioCommand({
       context: primaryArtifact.summary.context,
       auth: primaryArtifact.summary.auth,
       finalUrl,
+      ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
     },
   }
 
@@ -1094,6 +1126,32 @@ export async function runBrowserScenarioCommand({
       summary: artifact.summary,
       scenario: scenarioSummary,
   })
+}
+
+async function browserScenarioTransportFaults(scenario: BrowserScenarioInput, args: string[]): Promise<TransportFaultModel | undefined> {
+  if (scenario.transportFaults && argValue(args, "transport-faults-json")) throw new Error("wordpress.browser-scenario transport faults must be declared once, in scenario-json.transportFaults or transport-faults-json.")
+  return scenario.transportFaults ? transportFaultModel(scenario.transportFaults) : transportFaultModelFromArg(args)
+}
+
+async function transportFaultModelFromArg(args: string[]): Promise<TransportFaultModel | undefined> {
+  const raw = argValue(args, "transport-faults-json")
+  if (!raw) return undefined
+  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  const parsed = JSON.parse(text) as TransportFaultModel
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("transport-faults-json must be a JSON object")
+  return transportFaultModel(parsed)
+}
+
+function browserTransportFaultSummary(report: BrowserTransportFaultReport): NonNullable<BrowserArtifact["summary"]["transportFaults"]> {
+  return {
+    seed: report.seed,
+    adapter: report.adapter,
+    fidelity: report.fidelity,
+    matchedRequests: report.matchedRequests.length,
+    consumedSequenceEntries: report.consumedSequenceEntries.length,
+    unmatchedRules: report.unmatchedRules,
+    artifact: "files/browser/transport-faults.json",
+  }
 }
 
 async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioInput> {

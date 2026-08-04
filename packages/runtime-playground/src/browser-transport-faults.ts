@@ -1,5 +1,8 @@
-import { TransportFaultEngine, negotiateTransportFaults, transportFaultCapabilities, type TransportFaultCapability, type TransportFaultDecision, type TransportFaultEvidence, type TransportFaultModel } from "@automattic/wp-codebox-core"
-import type { Route } from "playwright"
+import { TransportFaultEngine, negotiateTransportFaults, transportFaultCapabilities, transportFaultSafeSchedule, transportRequestMatches, type TransportFaultCapability, type TransportFaultDecision, type TransportFaultEvidence, type TransportFaultFidelity, type TransportFaultModel, type TransportFaultSafeSchedule } from "@automattic/wp-codebox-core"
+import type { BrowserContext, Route } from "playwright"
+import type { BrowserPreviewTransportFaultPolicy } from "./browser-preview-routing.js"
+
+const BROWSER_TRANSPORT_FAULT_DRAIN_TIMEOUT_MS = 5_000
 
 const browserCapabilities: TransportFaultCapability[] = [
   { semantic: "response-substitution", fidelity: "exact" },
@@ -24,8 +27,56 @@ export const BROWSER_TRANSPORT_FAULT_CAPABILITIES = transportFaultCapabilities("
 export interface BrowserTransportFaultAdapter {
   engine: TransportFaultEngine
   negotiation: ReturnType<typeof negotiateTransportFaults>
-  handle(route: Route): Promise<boolean>
+  matches(route: Route): boolean
+  handle(route: Route, options?: BrowserTransportFaultApplyOptions): Promise<boolean>
   evidence(): TransportFaultEvidence[]
+}
+
+export interface BrowserTransportFaultReport {
+  schema: "wp-codebox/browser-transport-fault-report/v1"
+  interception: {
+    browserHttp: { fidelity: TransportFaultFidelity; scope: string; serviceWorkers: "blocked" | "not-enforced"; reason?: string }
+    wordpressHttp: { fidelity: "unsupported"; reason: string }
+  }
+  seed: string
+  schedule: TransportFaultSafeSchedule
+  adapter: string
+  fidelity: TransportFaultCapability[]
+  matchedRequests: TransportFaultEvidence[]
+  consumedSequenceEntries: Array<{ ruleId: string; sequenceIndex: number; invocation: number }>
+  unmatchedRules: string[]
+  teardown?: BrowserTransportFaultTeardown
+  replay: { schema: "wp-codebox/browser-transport-fault-replay/v1"; seed: string; structuralScheduleFingerprint: string; schedule: TransportFaultSafeSchedule; fidelity: "identity-only-redacted" }
+}
+
+export interface BrowserTransportFaultTeardown {
+  status: "drained" | "timed-out"
+  timeoutMs: number
+  pendingHandlers: number
+  pendingRouteFetches: number
+  routeFetchCancellation: {
+    fidelity: "emulated"
+    reason: string
+  }
+}
+
+export interface InstalledBrowserTransportFaults {
+  adapter: BrowserTransportFaultAdapter
+  inFlight(): number
+  report(): BrowserTransportFaultReport
+  dispose(): Promise<BrowserTransportFaultReport>
+}
+
+export interface BrowserTransportFaultApplyOptions {
+  signal?: AbortSignal
+  fetch?: BrowserPreviewTransportFaultPolicy["fetch"]
+  recordHandled?: BrowserPreviewTransportFaultPolicy["recordHandled"]
+}
+
+export interface BrowserTransportFaultInstallOptions {
+  policy?: BrowserPreviewTransportFaultPolicy
+  serviceWorkersBlocked?: boolean
+  drainTimeoutMs?: number
 }
 
 export function createBrowserTransportFaultAdapter(model: TransportFaultModel): BrowserTransportFaultAdapter {
@@ -34,12 +85,118 @@ export function createBrowserTransportFaultAdapter(model: TransportFaultModel): 
   return {
     engine,
     negotiation,
-    async handle(route) { return await applyBrowserTransportFault(route, engine) },
+    matches(route) {
+      const request = route.request()
+      const transportRequest = { url: request.url(), method: request.method(), headers: request.headers(), body: request.postDataBuffer() ?? undefined }
+      return engine.model.rules.some(({ match }) => transportRequestMatches(match, transportRequest))
+    },
+    async handle(route, options) { return await applyBrowserTransportFault(route, engine, options) },
     evidence() { return [...engine.evidence] },
   }
 }
 
-export async function applyBrowserTransportFault(route: Route, engine: TransportFaultEngine): Promise<boolean> {
+/**
+ * Installs a context-local schedule. Teardown aborts handler wrappers and waits
+ * for underlying route.fetch promises up to drainTimeoutMs; Playwright exposes
+ * no direct cancellation signal for route.fetch, so timeout state is evidence.
+ */
+export async function installBrowserTransportFaults(context: BrowserContext, model: TransportFaultModel, options: BrowserTransportFaultInstallOptions = {}): Promise<InstalledBrowserTransportFaults> {
+  const adapter = createBrowserTransportFaultAdapter(model)
+  if (!adapter.negotiation.supported) {
+    throw new Error(`Browser transport fault schedule requires unsupported semantics: ${adapter.negotiation.unsupported.map(({ semantic }) => semantic).join(", ")}`)
+  }
+  const controller = new AbortController()
+  const pending = new Set<Promise<void>>()
+  const pendingRouteFetches = new Set<Promise<void>>()
+  const drainTimeoutMs = options.drainTimeoutMs ?? BROWSER_TRANSPORT_FAULT_DRAIN_TIMEOUT_MS
+  const trackedFetch = (route: Route, overrides: { url?: string; postData?: Buffer }) => {
+    const operation = options.policy ? options.policy.fetch(route, overrides) : route.fetch(overrides)
+    let tracked: Promise<void>
+    tracked = operation.then(() => undefined, () => undefined).finally(() => pendingRouteFetches.delete(tracked))
+    pendingRouteFetches.add(tracked)
+    return operation
+  }
+  let finalReport: BrowserTransportFaultReport | undefined
+  const handler = async (route: Route) => {
+    if (disposed) {
+      await route.abort("aborted").catch(() => undefined)
+      return
+    }
+    const operation = (async () => {
+      if (!adapter.matches(route)) {
+        await route.fallback()
+        return
+      }
+      if (options.policy && !await options.policy.preflight(route)) return
+      if (!await adapter.handle(route, { signal: controller.signal, fetch: trackedFetch, recordHandled: options.policy?.recordHandled })) await route.fallback()
+    })()
+    let tracked: Promise<void>
+    tracked = operation.catch(async (error) => {
+      if (!isTransportFaultAbort(error)) throw error
+      await route.abort("aborted").catch(() => undefined)
+    }).finally(() => pending.delete(tracked))
+    pending.add(tracked)
+    await tracked
+  }
+  await context.route("**/*", handler)
+  let disposed = false
+  return {
+    adapter,
+    inFlight: () => pending.size,
+    report: () => {
+      if (!finalReport) throw new Error("Browser transport fault evidence is unavailable until routing is disposed and drained.")
+      return finalReport
+    },
+    async dispose() {
+      if (disposed) return finalReport ?? browserTransportFaultReport(adapter, options.serviceWorkersBlocked ?? false)
+      disposed = true
+      controller.abort()
+      const deadline = Date.now() + drainTimeoutMs
+      const handlersDrained = await drainTransportFaultTasks(pending, deadline)
+      await context.unroute("**/*", handler)
+      const fetchesDrained = await drainTransportFaultTasks(pendingRouteFetches, deadline)
+      const teardown: BrowserTransportFaultTeardown = {
+        status: handlersDrained && fetchesDrained ? "drained" : "timed-out",
+        timeoutMs: drainTimeoutMs,
+        pendingHandlers: pending.size,
+        pendingRouteFetches: pendingRouteFetches.size,
+        routeFetchCancellation: {
+          fidelity: "emulated",
+          reason: "Playwright route.fetch has no AbortSignal; teardown aborts the owning route wrapper and waits boundedly for the underlying fetch promise.",
+        },
+      }
+      finalReport = browserTransportFaultReport(adapter, options.serviceWorkersBlocked ?? false, teardown)
+      return finalReport
+    },
+  }
+}
+
+export function browserTransportFaultReport(adapter: BrowserTransportFaultAdapter, serviceWorkersBlocked = false, teardown?: BrowserTransportFaultTeardown): BrowserTransportFaultReport {
+  const matchedRequests = adapter.evidence()
+  const matchedRuleIds = new Set(matchedRequests.flatMap((item) => item.fault ? [item.fault.ruleId] : []))
+  const required = new Set(adapter.negotiation.required)
+  const schedule = transportFaultSafeSchedule(adapter.engine.model)
+  return {
+    schema: "wp-codebox/browser-transport-fault-report/v1",
+    interception: {
+      browserHttp: serviceWorkersBlocked
+        ? { fidelity: "exact", scope: "HTTP(S) requests emitted by this isolated browser context, including navigation, fetch, XHR, and subresources.", serviceWorkers: "blocked" }
+        : { fidelity: "emulated", scope: "HTTP(S) requests observed by Playwright routing.", serviceWorkers: "not-enforced", reason: "Service-worker-owned requests can bypass Playwright routing unless the browser context blocks service workers." },
+      wordpressHttp: { fidelity: "unsupported", reason: "Playwright routing cannot observe server-side WordPress HTTP API requests; use the WordPress HTTP fault adapter for that traffic." },
+    },
+    seed: adapter.engine.model.seed,
+    schedule,
+    adapter: adapter.engine.capabilities.adapter,
+    fidelity: adapter.engine.capabilities.capabilities.filter(({ semantic }) => required.has(semantic)),
+    matchedRequests,
+    consumedSequenceEntries: matchedRequests.flatMap((item) => item.fault ? [{ ruleId: item.fault.ruleId, sequenceIndex: item.fault.sequenceIndex, invocation: item.fault.invocation }] : []),
+    unmatchedRules: adapter.engine.model.rules.map(({ id }) => id).filter((id) => !matchedRuleIds.has(id)),
+    ...(teardown ? { teardown } : {}),
+    replay: { schema: "wp-codebox/browser-transport-fault-replay/v1", seed: adapter.engine.model.seed, structuralScheduleFingerprint: schedule.structuralFingerprint, schedule, fidelity: "identity-only-redacted" },
+  }
+}
+
+export async function applyBrowserTransportFault(route: Route, engine: TransportFaultEngine, options: BrowserTransportFaultApplyOptions = {}): Promise<boolean> {
   const request = route.request()
   const transportRequest = { url: request.url(), method: request.method(), headers: request.headers(), body: request.postDataBuffer() ?? undefined }
   const decision = engine.decide(transportRequest)
@@ -50,15 +207,17 @@ export async function applyBrowserTransportFault(route: Route, engine: Transport
     throw new Error(`Browser transport fault semantics are unsupported: ${unsupported.map((item) => item?.semantic).join(", ")}`)
   }
 
-  if (decision.delayMs > 0) await delay(decision.delayMs)
+  if (decision.delayMs > 0) await abortableDelay(decision.delayMs, options.signal)
   if (decision.outcome.timeoutMs !== undefined) {
-    await delay(decision.outcome.timeoutMs)
+    await abortableDelay(decision.outcome.timeoutMs, options.signal)
+    options.recordHandled?.(route)
     await route.abort("timedout")
     engine.record(transportRequest, decision, { connection: "timedout" })
     return true
   }
   if (decision.outcome.connection) {
     const code = decision.outcome.connection === "refuse" ? "connectionrefused" : decision.outcome.connection === "reset" ? "connectionreset" : "failed"
+    options.recordHandled?.(route)
     await route.abort(code)
     engine.record(transportRequest, decision, { connection: decision.outcome.connection })
     return true
@@ -67,20 +226,23 @@ export async function applyBrowserTransportFault(route: Route, engine: Transport
   const continuation = browserFaultContinuation(decision, request.url(), request.postDataBuffer() ?? undefined)
   const needsResponse = browserFaultNeedsResponse(decision)
   if (!needsResponse) {
-    await route.continue(continuation)
+    await route.fallback(continuation)
     engine.record(transportRequest, decision)
     return true
   }
 
-  const upstream = decision.outcome.status === undefined || decision.outcome.body === undefined && decision.outcome.bodyBase64 === undefined || decision.outcome.responseCorruption || decision.outcome.truncateAfterBytes !== undefined
-    ? await route.fetch(continuation)
+  const needsUpstream = decision.outcome.status === undefined || decision.outcome.body === undefined && decision.outcome.bodyBase64 === undefined || decision.outcome.responseCorruption || decision.outcome.truncateAfterBytes !== undefined
+  const upstream = needsUpstream
+    ? await abortableOperation(options.fetch ? options.fetch(route, continuation) : route.fetch(continuation), options.signal)
     : undefined
+  if (needsUpstream && upstream === undefined && options.fetch) return true
   const originalBody = upstream ? await upstream.body() : Buffer.alloc(0)
   let body = decision.outcome.bodyBase64 !== undefined ? Buffer.from(decision.outcome.bodyBase64, "base64") : decision.outcome.body !== undefined ? Buffer.from(decision.outcome.body) : originalBody
   body = mutateResponseBody(body, decision)
-  if (decision.outcome.bandwidthBytesPerSecond && body.length > 0) await delay(Math.ceil(body.length / decision.outcome.bandwidthBytesPerSecond * 1000))
+  if (decision.outcome.bandwidthBytesPerSecond && body.length > 0) await abortableDelay(Math.ceil(body.length / decision.outcome.bandwidthBytesPerSecond * 1000), options.signal)
   const status = decision.outcome.status ?? upstream?.status() ?? 200
   const headers = { ...(upstream?.headers() ?? {}), ...(decision.outcome.headers ?? {}) }
+  if (!(needsUpstream && options.fetch)) options.recordHandled?.(route)
   await route.fulfill({ status, headers, body })
   engine.record(transportRequest, decision, { status, headers, bodyBytes: body.length })
   return true
@@ -122,6 +284,57 @@ function corruptBytes(input: Buffer, mode: "truncate" | "flip-byte" | "invalid-e
   return output
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, milliseconds))
+  if (signal.aborted) return Promise.reject(transportFaultAbortError())
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort)
+      resolve()
+    }, milliseconds)
+    const abort = () => {
+      clearTimeout(timer)
+      reject(transportFaultAbortError())
+    }
+    signal.addEventListener("abort", abort, { once: true })
+  })
+}
+
+function abortableOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation
+  if (signal.aborted) return Promise.reject(transportFaultAbortError())
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(transportFaultAbortError())
+    signal.addEventListener("abort", abort, { once: true })
+    operation.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value) },
+      (error) => { signal.removeEventListener("abort", abort); reject(error) },
+    )
+  })
+}
+
+async function drainTransportFaultTasks(pending: Set<Promise<void>>, deadline: number): Promise<boolean> {
+  if (pending.size === 0) return true
+  const remainingMs = deadline - Date.now()
+  if (remainingMs <= 0) return false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      Promise.allSettled([...pending]).then(() => "drained" as const),
+      new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), remainingMs) }),
+    ])
+    return result === "drained"
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+function transportFaultAbortError(): Error {
+  const error = new Error("Browser transport fault operation aborted during teardown.")
+  error.name = "AbortError"
+  return error
+}
+
+function isTransportFaultAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError"
 }
