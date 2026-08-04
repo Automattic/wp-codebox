@@ -106,6 +106,7 @@ try {
     }
 
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
+    assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
     assert.match(version, /^\d+\.\d+\.\d+\s*$/)
     await execFileAsync(process.execPath, [cliEntrypoint, "commands"])

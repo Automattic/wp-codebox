@@ -39,6 +39,9 @@ try {
     await mkdir(targetRoot, { recursive: true })
     await cp(join(sourceRoot, "package.json"), join(targetRoot, "package.json"))
     await cp(join(sourceRoot, "dist"), join(targetRoot, "dist"), { recursive: true })
+    if (packageName === "cli") {
+      await chmod(join(targetRoot, "dist", "index.js"), 0o755)
+    }
   }
 
   await execFileAsync("npm", ["ci", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
