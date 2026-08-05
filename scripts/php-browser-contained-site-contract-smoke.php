@@ -179,7 +179,7 @@ $recipe = $recipe_method->invoke(
 			'name'  => 'static-site-importer/import',
 			'input' => array(
 				'operation' => 'apply',
-				'source' => array( 'type' => 'artifact', 'artifact' => array( 'schema' => 'blocks-engine/php-transformer/site-artifact/v1' ) ),
+				'source' => array( 'type' => 'files', 'entrypoint' => 'website/index.html', 'files' => array() ),
 			),
 		),
 	),

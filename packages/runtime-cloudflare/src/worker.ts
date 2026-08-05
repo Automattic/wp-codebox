@@ -178,8 +178,9 @@ if (!$ability) {
 $ability_input = array(
     'operation' => 'apply',
     'source' => array(
-        'type' => 'artifact',
-        'artifact' => $artifact,
+        'type' => 'files',
+        'entrypoint' => (string) ($artifact['entrypoint'] ?? ''),
+        'files' => isset($artifact['files']) && is_array($artifact['files']) ? $artifact['files'] : array(),
     ),
     'slug' => $input['slug'],
     'name' => $input['name'],

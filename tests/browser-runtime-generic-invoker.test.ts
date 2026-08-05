@@ -61,8 +61,9 @@ $agents_api_input = wp_codebox_browser_runtime_prepare_input( $agents_api_payloa
 $materializer_input = array(
 	'operation' => 'apply',
 	'source' => array(
-		'type' => 'artifact',
-		'artifact' => array( 'schema' => 'blocks-engine/php-transformer/site-artifact/v1', 'root' => 'website' ),
+		'type' => 'files',
+		'entrypoint' => 'website/index.html',
+		'files' => array( array( 'path' => 'website/index.html', 'content' => '<h1>Canonical</h1>' ) ),
 	),
 	'slug' => 'canonical-site',
 	'name' => 'Canonical Site',
@@ -117,7 +118,7 @@ assert.equal(result.has_principal, false)
 assert.deepEqual(result.agents_api_input, { has_principal: true, source: "peer-agent", peer_agent_call: true, effective_agent_id: "agents-api-agent" })
 assert.deepEqual(result.materializer_input, {
   operation: "apply",
-  source: { type: "artifact", artifact: { schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website" } },
+  source: { type: "files", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "<h1>Canonical</h1>" }] },
   slug: "canonical-site",
   name: "Canonical Site",
   site_title: "Canonical Site",

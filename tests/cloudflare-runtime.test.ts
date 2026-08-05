@@ -87,7 +87,7 @@ test("Cloudflare static artifact imports invoke SSI with the canonical apply inp
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   assert.doesNotMatch(worker, /static-site-importer\/import-website-artifact/)
   assert.match(worker, /'operation' => 'apply'/)
-  assert.match(worker, /'source' => array\(\s*'type' => 'artifact',\s*'artifact' => \$artifact,/)
+  assert.match(worker, /'source' => array\(\s*'type' => 'files',\s*'entrypoint' => \(string\) \(\$artifact\['entrypoint'\] \?\? ''\),\s*'files' => isset\(\$artifact\['files'\]\)/)
   assert.match(worker, /'slug' => \$input\['slug'\]/)
   assert.match(worker, /'name' => \$input\['name'\]/)
   assert.match(worker, /'site_title' => \$input\['siteTitle'\]/)
