@@ -176,7 +176,12 @@ if (!$ability) {
     return;
 }
 $ability_input = array(
-    'artifact' => $artifact,
+    'operation' => 'apply',
+    'source' => array(
+        'type' => 'files',
+        'entrypoint' => (string) ($artifact['entrypoint'] ?? ''),
+        'files' => isset($artifact['files']) && is_array($artifact['files']) ? $artifact['files'] : array(),
+    ),
     'slug' => $input['slug'],
     'name' => $input['name'],
     'site_title' => $input['siteTitle'],

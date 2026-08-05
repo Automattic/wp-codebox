@@ -176,8 +176,11 @@ $recipe = $recipe_method->invoke(
 		'result_path' => '/tmp/recipe-smoke-result.json',
 		'invocation'  => array(
 			'type'  => 'ability',
-			'name'  => 'static-site-importer/import-website-artifact',
-			'input' => array(),
+			'name'  => 'static-site-importer/import',
+			'input' => array(
+				'operation' => 'apply',
+				'source' => array( 'type' => 'files', 'entrypoint' => 'website/index.html', 'files' => array() ),
+			),
 		),
 	),
 	array(
@@ -196,7 +199,8 @@ expect( ! is_wp_error( $recipe ), 'Expected browser agent recipe smoke to build.
 $recipe_steps = is_array( $recipe['runtime']['blueprint']['steps'] ?? null ) ? $recipe['runtime']['blueprint']['steps'] : array();
 $recipe_run_php_steps = array_values( array_filter( $recipe_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) ) );
 expect( count( $recipe_run_php_steps ) >= 1, 'Expected browser recipe Blueprint to include the runner runPHP step.' );
-expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to execute the requested invocation.' );
+expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import' ), 'Expected browser recipe Blueprint runPHP step to execute the canonical invocation.' );
+expect( ! str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to omit the legacy invocation.' );
 
 $blueprint_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_blueprint_with_runtime' );
 $local_package_blueprint = $blueprint_method->invoke(

@@ -62,6 +62,8 @@ or staged task payload. Provider plugins are included only when the caller
 declares them as ordinary `browser_plugins` or `runtime.plugins` dependencies.
 Browser task and materializer contract creation remains agentic.
 
+Materializer recipes preserve caller-owned `materializer.input` unchanged for direct ability execution. Product transport metadata such as `project_id` and `validation_policy` remains on the materializer envelope rather than being reconstructed into a source-specific artifact contract.
+
 ## Browser Contained Site Handle
 
 Browser session, materializer, and task contracts include an additive durable

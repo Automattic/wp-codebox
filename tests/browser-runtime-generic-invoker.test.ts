@@ -9,6 +9,8 @@ const result = await runPhpJson<{
   adapter_ability_names: { chat: string }
   has_principal: boolean
   agents_api_input: { has_principal: boolean; source: string; peer_agent_call: boolean; effective_agent_id: string }
+  materializer_input: Record<string, unknown>
+  materializer_transport: Record<string, unknown>
 }>(`
 define('ABSPATH', ${phpStringLiteral(repoRoot)});
 class WP_Error {
@@ -56,6 +58,36 @@ WP_Codebox_Agents_API_Adapter::register_runtime_profiles();
 $agents_api_payload = array( 'agent' => 'agents-api-agent', 'message' => 'Run adapter runtime', 'task_input' => array() );
 $agents_api_invocation = array( 'type' => 'ability', 'name' => 'agents/chat' );
 $agents_api_input = wp_codebox_browser_runtime_prepare_input( $agents_api_payload, $agents_api_invocation, 'agents-api-session', array(), array(), array(), array() );
+$materializer_input = array(
+	'operation' => 'apply',
+	'source' => array(
+		'type' => 'files',
+		'entrypoint' => 'website/index.html',
+		'files' => array( array( 'path' => 'website/index.html', 'content' => '<h1>Canonical</h1>' ) ),
+	),
+	'slug' => 'canonical-site',
+	'name' => 'Canonical Site',
+	'site_title' => 'Canonical Site',
+	'activate' => true,
+	'overwrite' => true,
+	'fail_on_quality' => true,
+	'source_metadata' => array( 'generator' => 'wp-build' ),
+	'validation_artifacts' => array( 'screenshots' => array( 'before.png', 'after.png' ) ),
+	'validation_policy' => array( 'schema' => 'wp-build/visual-parity-validation-policy/v1', 'required' => true ),
+);
+$materializer_payload = array(
+	'agent' => 'generic-agent',
+	'message' => 'Apply the canonical materializer.',
+	'task_input' => array(),
+	'materializer' => array(
+		'task' => 'static-site-importer/import',
+		'input' => $materializer_input,
+		'project_id' => 2220,
+		'validation_policy' => array( 'schema' => 'wp-build/visual-parity-validation-policy/v1', 'required' => true ),
+	),
+);
+$materializer_ability_input = wp_codebox_browser_runtime_prepare_input( $materializer_payload, array( 'type' => 'ability', 'name' => 'static-site-importer/import' ), 'materializer-session', array(), array(), array(), array() );
+$materializer_task_input = wp_codebox_browser_runtime_prepare_input( $materializer_payload, $invocation, 'materializer-session', array(), array(), array(), array() );
 
 echo json_encode( array(
 	'has_agents_api_adapter' => $has_agents_api_adapter,
@@ -70,6 +102,8 @@ echo json_encode( array(
 		'peer_agent_call' => (bool) ( $agents_api_input['client_context']['peer_agent_call'] ?? false ),
 		'effective_agent_id' => (string) ( $agents_api_input['principal']['effective_agent_id'] ?? '' ),
 	),
+	'materializer_input' => $materializer_ability_input,
+	'materializer_transport' => $materializer_task_input['client_context']['materializer'] ?? array(),
 ), JSON_UNESCAPED_SLASHES );
 `)
 
@@ -82,5 +116,24 @@ assert.deepEqual(result.generic_ability_names, [])
 assert.equal(result.adapter_ability_names.chat, "agents/chat")
 assert.equal(result.has_principal, false)
 assert.deepEqual(result.agents_api_input, { has_principal: true, source: "peer-agent", peer_agent_call: true, effective_agent_id: "agents-api-agent" })
+assert.deepEqual(result.materializer_input, {
+  operation: "apply",
+  source: { type: "files", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "<h1>Canonical</h1>" }] },
+  slug: "canonical-site",
+  name: "Canonical Site",
+  site_title: "Canonical Site",
+  activate: true,
+  overwrite: true,
+  fail_on_quality: true,
+  source_metadata: { generator: "wp-build" },
+  validation_artifacts: { screenshots: ["before.png", "after.png"] },
+  validation_policy: { schema: "wp-build/visual-parity-validation-policy/v1", required: true },
+})
+assert.equal("artifact_bundle" in result.materializer_input, false)
+assert.deepEqual(result.materializer_transport, {
+  task: "static-site-importer/import",
+  project_id: 2220,
+  validation_policy: { schema: "wp-build/visual-parity-validation-policy/v1", required: true },
+})
 
 console.log("browser runtime generic invoker ok")

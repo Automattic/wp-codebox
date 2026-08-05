@@ -23,7 +23,7 @@
       "version_constant": "STATIC_SITE_IMPORTER_VERSION"
     },
     "abilities": {
-      "website-artifact-import": "static-site-importer/import-website-artifact"
+      "website-artifact-import": "static-site-importer/import"
     },
     "limits": {
       "files": 10000,
