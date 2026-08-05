@@ -195,6 +195,24 @@ return $ability->execute( $input );
 }
 
 function wp_codebox_browser_runtime_prepare_input( array $payload, array $invocation, string $session_id, array $ability_tools, array $allowed_tool_ids, array $sandbox_tool_ids ): array {
+
+$materializer = is_array( $payload['materializer'] ?? null ) ? $payload['materializer'] : array();
+$materializer_input = is_array( $materializer['input'] ?? null ) ? $materializer['input'] : null;
+$is_direct_materializer_ability = null !== $materializer_input && 'ability' === (string) ( $invocation['type'] ?? 'ability' );
+$materializer_transport = array_filter(
+	array(
+		'task' => isset( $materializer['task'] ) ? (string) $materializer['task'] : '',
+		'project_id' => $materializer['project_id'] ?? null,
+		'validation_policy' => is_array( $materializer['validation_policy'] ?? null ) ? $materializer['validation_policy'] : array(),
+	),
+	static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+);
+
+// A materializer owns its canonical ability input; product metadata remains transport data.
+if ( $is_direct_materializer_ability ) {
+	return $materializer_input;
+}
+
 $agent = sanitize_key( (string) ( $payload['agent'] ?? '' ) );
 if ( '' === $agent ) {
 	$agent = 'wp-codebox-sandbox';
@@ -231,6 +249,7 @@ $base_input = array(
 		'caller_session_id' => $session_id,
 		'task_input' => $payload['task_input'] ?? array(),
 		'ability_tools' => $ability_tools,
+		'materializer' => $materializer_transport,
 	),
 );
 if ( ! empty( $allowed_tool_ids ) ) {

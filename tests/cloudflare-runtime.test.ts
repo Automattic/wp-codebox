@@ -83,6 +83,20 @@ test("Cloudflare static artifact imports require bounded content-addressed R2 in
   await assert.rejects(() => readStaticArtifactImport(new Request("https://worker.example/", { method: "POST", body: "x".repeat(16 * 1024 + 1) }), bucket as never), /request exceeds its byte budget/)
 })
 
+test("Cloudflare static artifact imports invoke SSI with the canonical apply input", async () => {
+  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  assert.doesNotMatch(worker, /static-site-importer\/import-website-artifact/)
+  assert.match(worker, /'operation' => 'apply'/)
+  assert.match(worker, /'source' => array\(\s*'type' => 'artifact',\s*'artifact' => \$artifact,/)
+  assert.match(worker, /'slug' => \$input\['slug'\]/)
+  assert.match(worker, /'name' => \$input\['name'\]/)
+  assert.match(worker, /'site_title' => \$input\['siteTitle'\]/)
+  assert.match(worker, /'activate' => true/)
+  assert.match(worker, /'overwrite' => true/)
+  assert.match(worker, /'fail_on_quality' => true/)
+  assert.match(worker, /'source_metadata' => array\('provider' => 'wp-codebox-cloudflare'/)
+})
+
 test("Cloudflare upload manifests reject unbounded or non-canonical R2 files", () => {
   const sha256 = "a".repeat(64)
   const valid = [{ path: "2026/07/photo.png", size: 128, sha256, objectKey: `${R2_UPLOAD_OBJECT_PREFIX}/${sha256}` }]

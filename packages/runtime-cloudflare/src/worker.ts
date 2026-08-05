@@ -176,7 +176,11 @@ if (!$ability) {
     return;
 }
 $ability_input = array(
-    'artifact' => $artifact,
+    'operation' => 'apply',
+    'source' => array(
+        'type' => 'artifact',
+        'artifact' => $artifact,
+    ),
     'slug' => $input['slug'],
     'name' => $input['name'],
     'site_title' => $input['siteTitle'],
