@@ -29,6 +29,7 @@ export interface RecipeRunOptions {
   json: boolean
   summary: boolean
   dryRun: boolean
+  hostNodeHeapMiB?: number
 }
 
 export interface RecipeValidateOptions {
@@ -331,6 +332,14 @@ export interface RecipePhpWasmRuntimeDiagnostic {
   repair?: string
 }
 
+export interface RecipeMemoryRuntimeDiagnostic {
+  schema: "wp-codebox/runtime-memory-diagnostic/v1"
+  severity: "error"
+  kind: "host-v8-oom" | "php-wasm-oom"
+  message: string
+  replay?: string
+}
+
 export interface RecipePhaseDiagnostic {
   schema: "wp-codebox/recipe-phase-diagnostic/v1"
   severity: "error"
@@ -342,7 +351,7 @@ export interface RecipePhaseDiagnostic {
   executionIndex?: number
 }
 
-export type RecipeRuntimeDiagnostic = RecipePluginRuntimeDiagnostic | RecipePhaseDiagnostic | RecipePhpWasmRuntimeDiagnostic
+export type RecipeRuntimeDiagnostic = RecipePluginRuntimeDiagnostic | RecipePhaseDiagnostic | RecipePhpWasmRuntimeDiagnostic | RecipeMemoryRuntimeDiagnostic
 
 export interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
   action: "imported" | "skipped"

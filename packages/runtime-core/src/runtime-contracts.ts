@@ -163,6 +163,12 @@ export interface WorkspaceRecipeRuntimeStack {
   mounts?: WorkspaceRecipeMount[]
 }
 
+/** A bounded host V8 old-space budget for memory-heavy runtime profiles. */
+export interface WorkspaceRecipeHostNodeHeap {
+  minimumMiB: number
+  maximumMiB: number
+}
+
 export type WorkspaceRecipeRuntimeOverlayKind = string
 export type WorkspaceRecipeRuntimeOverlayLibrary = string
 export type WorkspaceRecipeRuntimeOverlayStrategy = string
@@ -660,6 +666,7 @@ export interface WorkspaceRecipe {
     backendPackage?: WorkspaceRecipeRuntimeBackendPackage
     stack?: WorkspaceRecipeRuntimeStack
     overlays?: WorkspaceRecipeRuntimeOverlay[]
+    hostNodeHeap?: WorkspaceRecipeHostNodeHeap
   }
   inputs?: {
     workspaces?: WorkspaceRecipeWorkspace[]

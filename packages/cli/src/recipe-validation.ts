@@ -5,6 +5,7 @@ import { BROWSER_PROBE_CHROMIUM_PROFILE_IDS, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CA
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
+import { assertHostNodeHeapRequirement } from "./host-node-heap.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 import { evaluateZipSourcePolicy } from "./source-policy.js"
 
@@ -154,6 +155,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateRecipeRuntimeBundledExtensions(recipe.runtime?.bundledExtensions, recipePath)
   validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
+  if (recipe.runtime?.hostNodeHeap) assertHostNodeHeapRequirement(recipe.runtime.hostNodeHeap)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
   validateRecipeDependencyOverlays(recipe.inputs?.dependency_overlays, recipePath)
 
