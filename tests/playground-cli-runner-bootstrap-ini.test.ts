@@ -89,7 +89,14 @@ try {
   assert.equal(calls[0].workers, 1)
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
-  assert.equal(calls[0].phpEnv?.DB_PASSWORD, "secret")
+  assert.deepEqual(calls[0].phpEnv, {
+    TC_MYSQL_PORT: "33060",
+    DB_HOST: "127.0.0.1",
+    DB_PORT: "33061",
+    DB_USER: "runtime",
+    DB_NAME: "runtime",
+    DB_PASSWORD: "secret",
+  })
   assert.equal(shouldUseProgrammaticPlaygroundRunner(spec), false)
   assert.deepEqual(calls[0].phpIniEntries, { memory_limit: "512M" })
   assert.deepEqual(calls[0].phpExtension, ["/tmp/sodium/manifest.json"])
@@ -125,7 +132,13 @@ try {
   const passwordlessExternalServer = await startPlaygroundCliServer({ ...spec, secretEnv: {}, secretEnvTargets: {} }, [], { cliModule })
   assert.equal((await passwordlessExternalServer.playground.run({ code: "<?php echo getenv('DB_PASSWORD');" })).text, "", "connector secrets do not leak across runtime instances")
   await passwordlessExternalServer[Symbol.asyncDispose]()
-  assert.equal(calls[0]?.phpEnv, undefined)
+  assert.deepEqual(calls[0]?.phpEnv, {
+    TC_MYSQL_PORT: "33060",
+    DB_HOST: "127.0.0.1",
+    DB_PORT: "33061",
+    DB_USER: "runtime",
+    DB_NAME: "runtime",
+  })
   assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => mount.vfsPath === "/internal/wp-codebox"), true, "passwordless external databases retain isolated request workers")
   assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/.test(mount.vfsPath)), true)
 
