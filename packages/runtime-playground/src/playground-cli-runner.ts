@@ -176,7 +176,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           ...playgroundBundledExtensionOptions(spec),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
-          phpEnv: connectorSecretEnvironment(spec),
+          phpEnv: runtimePhpEnvironment(spec),
           "site-url": playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
@@ -491,10 +491,13 @@ require_once ABSPATH . 'wp-settings.php';
 `
 }
 
-function connectorSecretEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+function runtimePhpEnvironment(spec: RuntimeCreateSpec): Record<string, string> | undefined {
   if (spec.environment.databaseSetup !== "external") return undefined
-  const resolved = resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets)
-  return Object.keys(resolved).length > 0 ? resolved : undefined
+  const environment = {
+    ...(spec.runtimeEnv ?? {}),
+    ...resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets),
+  }
+  return Object.keys(environment).length > 0 ? environment : undefined
 }
 
 function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
