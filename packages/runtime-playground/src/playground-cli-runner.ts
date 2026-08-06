@@ -465,7 +465,50 @@ function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
 
 function runtimeAutoPrependPhpBody(spec: RuntimeCreateSpec): string {
   const runtimeEnv = spec.environment.databaseSetup === "external" ? phpEnvAssignments(spec.runtimeEnv ?? {}) : ""
-  return `${runtimeEnv}${distributionBootstrapPhp(spec)}`
+  return `${runtimeEnv}${managedDatabaseDiagnosticsPhp(spec)}${distributionBootstrapPhp(spec)}`
+}
+
+export function managedDatabaseDiagnosticEndpoint(host: string | undefined, port: string | undefined): { hostClass: "absent" | "loopback" | "ipv4" | "ipv6" | "hostname"; port: { present: boolean; valid: boolean } } {
+  const hostClass = !host ? "absent"
+    : host === "localhost" || host === "127.0.0.1" || host === "::1" ? "loopback"
+      : /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ? "ipv4"
+        : host.includes(":") ? "ipv6"
+          : "hostname"
+  const numericPort = port === undefined ? NaN : Number(port)
+  return { hostClass, port: { present: port !== undefined && port !== "", valid: Number.isInteger(numericPort) && numericPort >= 1 && numericPort <= 65535 } }
+}
+
+export function classifyManagedDatabaseMysqliError(errorCode: number): "authentication_failed" | "database_missing" | "endpoint_unreachable" {
+  if (errorCode === 1045) return "authentication_failed"
+  if (errorCode === 1049) return "database_missing"
+  return "endpoint_unreachable"
+}
+
+export function managedDatabaseDiagnosticsPhp(spec: RuntimeCreateSpec): string {
+  if (spec.environment.databaseSetup !== "external") return ""
+  const services = Array.isArray(spec.metadata?.managedRuntimeServices) ? spec.metadata.managedRuntimeServices : []
+  const mysql = services.find((service): service is Record<string, unknown> => typeof service === "object" && service !== null && (service as { kind?: unknown }).kind === "mysql")
+  const receipt = mysql ? {
+    id: typeof mysql.id === "string" ? mysql.id : "managed-mysql",
+    provider: typeof mysql.provider === "string" ? mysql.provider : "unknown",
+    readiness: typeof mysql.readiness === "string" ? mysql.readiness : "unknown",
+    lifecycle: typeof mysql.lifecycle === "string" ? mysql.lifecycle : "unknown",
+  } : { id: "managed-mysql", provider: "unknown", readiness: "unknown", lifecycle: "unknown" }
+  return `
+$wpcb_db_receipt = ${phpLiteral(JSON.stringify(receipt))};
+$wpcb_db_host = getenv('DB_HOST');
+$wpcb_db_port = getenv('DB_PORT');
+$wpcb_db_endpoint = array('host_class' => !$wpcb_db_host ? 'absent' : (($wpcb_db_host === 'localhost' || $wpcb_db_host === '127.0.0.1' || $wpcb_db_host === '::1') ? 'loopback' : (filter_var($wpcb_db_host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 'ipv4' : (filter_var($wpcb_db_host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'ipv6' : 'hostname'))), 'port' => array('present' => is_string($wpcb_db_port) && $wpcb_db_port !== '', 'valid' => is_string($wpcb_db_port) && ctype_digit($wpcb_db_port) && (int) $wpcb_db_port >= 1 && (int) $wpcb_db_port <= 65535));
+$wpcb_db_bindings = array('DB_HOST' => is_string($wpcb_db_host) && $wpcb_db_host !== '', 'DB_PORT' => is_string($wpcb_db_port) && $wpcb_db_port !== '', 'DB_USER' => is_string(getenv('DB_USER')) && getenv('DB_USER') !== '', 'DB_PASSWORD' => is_string(getenv('DB_PASSWORD')) && getenv('DB_PASSWORD') !== '', 'DB_NAME' => is_string(getenv('DB_NAME')) && getenv('DB_NAME') !== '');
+$wpcb_db_diagnostic = array('schema' => 'wp-codebox/managed-database-diagnostic/v1', 'owner' => 'runtime_startup', 'service' => json_decode($wpcb_db_receipt, true), 'endpoint' => $wpcb_db_endpoint, 'bindings' => $wpcb_db_bindings, 'transport' => array('stream_socket_client' => function_exists('stream_socket_client'), 'mysqli' => function_exists('mysqli_init')), 'tcp' => array('attempted' => false), 'mysqli' => array('attempted' => false));
+$wpcb_db_fail = static function ($code, $guidance) use (&$wpcb_db_diagnostic) { $wpcb_db_diagnostic['reason_code'] = $code; $wpcb_db_diagnostic['guidance'] = $guidance; error_log('WP_CODEBOX_MANAGED_DB_DIAGNOSTIC ' . json_encode($wpcb_db_diagnostic, JSON_UNESCAPED_SLASHES)); throw new RuntimeException('Managed database connection failed: ' . $code); };
+if (($wpcb_db_diagnostic['service']['readiness'] ?? '') !== 'ready') $wpcb_db_fail('service_not_ready', 'Wait for the managed service readiness receipt before starting the runtime.');
+if ($wpcb_db_endpoint['host_class'] === 'absent' || !$wpcb_db_endpoint['port']['valid']) $wpcb_db_fail('endpoint_unreachable', 'Provide a reachable managed database endpoint with a numeric port.');
+if (!$wpcb_db_diagnostic['transport']['stream_socket_client'] || !$wpcb_db_diagnostic['transport']['mysqli']) $wpcb_db_fail('transport_unavailable', 'Use a runtime with TCP sockets and the mysqli extension enabled.');
+$wpcb_db_target = strpos($wpcb_db_host, ':') !== false ? 'tcp://[' . $wpcb_db_host . ']:' . $wpcb_db_port : 'tcp://' . $wpcb_db_host . ':' . $wpcb_db_port;
+$wpcb_db_diagnostic['tcp']['attempted'] = true; $wpcb_db_socket = @stream_socket_client($wpcb_db_target, $wpcb_db_tcp_errno, $wpcb_db_tcp_error, 2, STREAM_CLIENT_CONNECT); if (!$wpcb_db_socket) { $wpcb_db_diagnostic['tcp']['error_code'] = (int) $wpcb_db_tcp_errno; $wpcb_db_fail('endpoint_unreachable', 'Verify runtime network access to the managed database endpoint.'); } fclose($wpcb_db_socket); $wpcb_db_diagnostic['tcp']['connected'] = true;
+$wpcb_db_diagnostic['mysqli']['attempted'] = true; $wpcb_db = @mysqli_init(); if (!$wpcb_db) $wpcb_db_fail('transport_unavailable', 'The mysqli client could not initialize in this runtime.'); @mysqli_options($wpcb_db, MYSQLI_OPT_CONNECT_TIMEOUT, 2); $wpcb_db_connected = @mysqli_real_connect($wpcb_db, $wpcb_db_host, getenv('DB_USER'), getenv('DB_PASSWORD'), getenv('DB_NAME'), (int) $wpcb_db_port); if (!$wpcb_db_connected) { $wpcb_db_errno = (int) mysqli_connect_errno(); $wpcb_db_diagnostic['mysqli']['error_code'] = $wpcb_db_errno; $wpcb_db_fail($wpcb_db_errno === 1045 ? 'authentication_failed' : ($wpcb_db_errno === 1049 ? 'database_missing' : 'endpoint_unreachable'), 'Verify the managed database credentials and selected database.'); } mysqli_close($wpcb_db); $wpcb_db_diagnostic['mysqli']['connected'] = true;
+`
 }
 
 function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {

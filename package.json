@@ -279,6 +279,7 @@
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:runtime-requirements-readiness": "tsx tests/runtime-requirements-readiness.test.ts",
     "test:runtime-services": "tsx tests/runtime-services.test.ts && tsx tests/external-mysql-runtime-service.test.ts && tsx tests/native-mariadb-runtime-service.test.ts",
+    "test:managed-database-diagnostics": "tsx tests/managed-database-diagnostics.test.ts",
     "test:runtime-services-lifecycle": "tsx tests/runtime-services-lifecycle.test.ts",
     "test:native-mariadb-runtime-service-integration": "tsx tests/native-mariadb-runtime-service.integration.test.ts",
     "test:disposable-mysql-mysqli-e2e": "tsx tests/disposable-mysql-mysqli.integration.test.ts",
