@@ -145,6 +145,15 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           },
           backendPackage: { $ref: "#/$defs/runtimeBackendPackage" },
           stack: { $ref: "#/$defs/runtimeStack" },
+          hostNodeHeap: {
+            type: "object",
+            additionalProperties: false,
+            required: ["minimumMiB", "maximumMiB"],
+            properties: {
+              minimumMiB: { type: "integer", minimum: 256, maximum: 16384 },
+              maximumMiB: { type: "integer", minimum: 256, maximum: 16384 },
+            },
+          },
           overlays: {
             type: "array",
             description: "Typed runtime overlays prepared by WP Codebox before mounting into Playground.",

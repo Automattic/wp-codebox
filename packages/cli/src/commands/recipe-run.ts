@@ -32,6 +32,7 @@ import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRunti
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
+import { classifyRuntimeMemoryFailure, replayWithHostNodeHeap } from "../host-node-heap.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
@@ -39,6 +40,8 @@ const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 const packageRequire = createRequire(import.meta.url)
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
+  const replayExitCode = await replayWithHostNodeHeap(args, options.hostNodeHeapMiB, (await loadWorkspaceRecipe(options.recipePath)).runtime?.hostNodeHeap)
+  if (replayExitCode !== undefined) return replayExitCode
   if (options.previewLeaseRequested && !options.previewLeaseChild) {
     return startPreviewLeaseRecipeRun({ args, json: options.json, recipePath: options.recipePath, artifactsDirectory: options.artifactsDirectory, runRegistryDirectory: options.runRegistryDirectory, previewHoldSeconds: options.previewHoldSeconds })
   }
@@ -837,6 +840,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--adversarial-replay":
         options.adversarialReplayPath = value
         break
+      case "--host-node-heap-mb":
+        options.hostNodeHeapMiB = Number(value)
+        break
       default:
         throw new Error(`Unknown option: ${name}`)
     }
@@ -1258,6 +1264,18 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
   const phpWasmDiagnostic = phpWasmRuntimeDiagnostic(error)
   if (phpWasmDiagnostic) {
     diagnostics.push(phpWasmDiagnostic)
+  }
+
+  const memoryFailure = classifyRuntimeMemoryFailure(error)
+  if (memoryFailure) {
+    const requirement = recipe.runtime?.hostNodeHeap
+    diagnostics.push({
+      schema: "wp-codebox/runtime-memory-diagnostic/v1",
+      severity: "error",
+      kind: memoryFailure,
+      message: memoryFailure === "host-v8-oom" ? "Node V8 exhausted its old-space heap while the runtime was active." : "PHP.wasm exhausted WebAssembly memory while the runtime was active.",
+      ...(memoryFailure === "host-v8-oom" && requirement ? { replay: `wp-codebox recipe-run --recipe <recipe> --host-node-heap-mb=${requirement.minimumMiB}` } : {}),
+    })
   }
 
   const message = error instanceof Error ? error.message : String(error)

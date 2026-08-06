@@ -137,6 +137,7 @@
     "test:playground-phpunit-bootstrap-failure-integration": "tsx tests/playground-phpunit-bootstrap-failure.integration.test.ts",
     "test:playground-custom-archive-cache": "tsx tests/playground-custom-archive-cache.test.ts && tsx tests/playground-custom-archive-cache-process.test.ts && tsx tests/playground-custom-archive-cache.integration.test.ts",
     "test:phpunit-runtime-failure-diagnostics": "tsx tests/phpunit-runtime-failure-diagnostics.test.ts",
+    "test:host-node-heap": "tsx tests/host-node-heap.test.ts",
     "test:phpunit-structured-evidence": "tsx tests/phpunit-structured-evidence.test.ts",
     "test:phpunit-runtime-rejection": "tsx tests/phpunit-runtime-rejection.test.ts",
     "test:playground-worker-runtime-rejection": "tsx tests/playground-worker-runtime-rejection.test.ts",
