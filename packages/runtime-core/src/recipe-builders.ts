@@ -164,7 +164,28 @@ function phpunitRuntimeServices(databaseType: WordPressPhpunitRecipeOptions["dat
     return [...services, { id: "wordpress-database", kind: "mysql", outputs: canonicalOutputs }]
   }
 
-  return services.map((service, index) => index === mysqlIndex ? { ...service, outputs: { ...service.outputs, ...canonicalOutputs } } : service)
+  return services.map((service, index) => index === mysqlIndex ? { ...service, outputs: mergeCanonicalMysqlOutputs(service.outputs, canonicalOutputs) } : service)
+}
+
+function mergeCanonicalMysqlOutputs(outputs: WorkspaceRecipeRuntimeService["outputs"], canonicalOutputs: Record<string, string>): WorkspaceRecipeRuntimeService["outputs"] {
+  const canonicalTargets = new Map(Object.entries(canonicalOutputs).map(([output, target]) => [target, output]))
+  for (const [output, value] of Object.entries(outputs)) {
+    for (const target of outputTargets(value)) {
+      const canonicalOutput = canonicalTargets.get(target)
+      if (canonicalOutput && canonicalOutput !== output) {
+        throw new Error(`MySQL service output ${output} conflicts with canonical ${canonicalOutput} binding ${target}`)
+      }
+    }
+  }
+
+  return Object.fromEntries(Object.entries(canonicalOutputs).map(([output, target]) => {
+    const targets = [...new Set([target, ...outputTargets(outputs[output])])]
+    return [output, targets.length === 1 ? targets[0]! : targets]
+  }).concat(Object.entries(outputs).filter(([output]) => !(output in canonicalOutputs))))
+}
+
+function outputTargets(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value]
 }
 
 function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: string): WorkspaceRecipeStep[] {
