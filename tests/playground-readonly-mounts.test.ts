@@ -8,7 +8,7 @@ import { promisify } from "node:util"
 
 import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.js"
 import { stageReadonlyPlaygroundMounts } from "../packages/runtime-playground/src/mount-materialization.js"
-import type { BrowserStartupProgressEvent, RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
+import type { BrowserStartupProgressEvent, MaterializationDiagnostic, RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -126,9 +126,63 @@ try {
   assert.equal(serializedDiagnostics.includes(root), false, "diagnostics do not expose absolute host paths")
   assert.equal(serializedDiagnostics.includes("../../../.github/build.sh"), false, "diagnostics do not expose dangling link targets")
   assert.equal(serializedDiagnostics.includes("../tracked-symlink-plugin-private/secret.php"), false, "diagnostics do not expose escaping link targets")
-  assert.deepEqual(staging.phaseResult.metadata, { mounts: 1, skipped: 7, diagnostics: staging.diagnostics }, "staging evidence includes the skip diagnostics")
+  const stagingPreparation = (staging.phaseResult.metadata as { mounts: number; skipped: number; diagnostics: MaterializationDiagnostic[]; preparation: { mode: string; reused: number; bytes: number; files: number; elapsedMs: number } })
+  assert.equal(stagingPreparation.mounts, 1)
+  assert.equal(stagingPreparation.skipped, 7)
+  assert.deepEqual(stagingPreparation.diagnostics, staging.diagnostics, "staging evidence includes the skip diagnostics")
+  assert.equal(stagingPreparation.preparation.mode, "cache-miss")
+  assert.equal(stagingPreparation.preparation.reused, 0)
+  assert.ok(stagingPreparation.preparation.bytes > 0 && stagingPreparation.preparation.files > 0 && stagingPreparation.preparation.elapsedMs >= 0, "staging evidence includes useful preparation metrics")
   await staging[Symbol.asyncDispose]()
   assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "successful staging cleanup removes its temporary root")
+
+  const reused = await stageReadonlyPlaygroundMounts([{ source: pluginSource, target: "/wordpress/wp-content/plugins/tracked-symlink-plugin", mode: "readonly" }])
+  assert.equal((reused.phaseResult.metadata as { preparation: { mode: string; reused: number } }).preparation.mode, "cache-hit", "unchanged readonly sources reuse the prepared snapshot")
+  assert.equal((reused.phaseResult.metadata as { preparation: { mode: string; reused: number } }).preparation.reused, 1, "reuse evidence counts the cached mount")
+  await reused[Symbol.asyncDispose]()
+
+  const cloneIsolationSource = join(root, "clone-isolation-source")
+  await mkdir(cloneIsolationSource)
+  await writeFile(join(cloneIsolationSource, "value.txt"), "canonical")
+  const mutableSnapshot = await stageReadonlyPlaygroundMounts([{ source: cloneIsolationSource, target: "/clone-isolation", mode: "readonly" }])
+  await writeFile(join(mutableSnapshot.mounts[0].source, "value.txt"), "sandbox mutation")
+  await mutableSnapshot[Symbol.asyncDispose]()
+  const cleanSnapshot = await stageReadonlyPlaygroundMounts([{ source: cloneIsolationSource, target: "/clone-isolation", mode: "readonly" }])
+  assert.equal(await readFile(join(cleanSnapshot.mounts[0].source, "value.txt"), "utf8"), "canonical", "a writable sandbox clone cannot mutate the reusable readonly snapshot")
+  await cleanSnapshot[Symbol.asyncDispose]()
+
+  const changingSource = join(root, "changing-source")
+  await mkdir(changingSource)
+  await writeFile(join(changingSource, "value.txt"), "first")
+  const beforeChange = await stageReadonlyPlaygroundMounts([{ source: changingSource, target: "/changing", mode: "readonly" }])
+  await writeFile(join(changingSource, "value.txt"), "second")
+  assert.equal(await readFile(join(beforeChange.mounts[0].source, "value.txt"), "utf8"), "first", "an active readonly snapshot remains isolated from source mutation")
+  const afterChange = await stageReadonlyPlaygroundMounts([{ source: changingSource, target: "/changing", mode: "readonly" }])
+  assert.equal((afterChange.phaseResult.metadata as { preparation: { mode: string } }).preparation.mode, "cache-miss", "a source generation change invalidates the prepared snapshot")
+  assert.equal(await readFile(join(afterChange.mounts[0].source, "value.txt"), "utf8"), "second")
+  await beforeChange[Symbol.asyncDispose]()
+  await afterChange[Symbol.asyncDispose]()
+
+  const concurrentSource = join(root, "concurrent-source")
+  await mkdir(concurrentSource)
+  await writeFile(join(concurrentSource, "value.txt"), "concurrent")
+  const concurrent = await Promise.all(Array.from({ length: 4 }, () => stageReadonlyPlaygroundMounts([{ source: concurrentSource, target: "/concurrent", mode: "readonly" }])))
+  assert.equal(concurrent.filter((entry) => (entry.phaseResult.metadata as { preparation: { mode: string } }).preparation.mode === "cache-miss").length, 1, "concurrent preparation creates exactly one cache snapshot")
+  assert.ok((await Promise.all(concurrent.map(async (entry) => await readFile(join(entry.mounts[0].source, "value.txt"), "utf8") === "concurrent"))).every(Boolean), "concurrent snapshots are complete")
+  await Promise.all(concurrent.map((entry) => entry[Symbol.asyncDispose]()))
+
+  const nestedParent = join(root, "nested-parent")
+  const nestedOverlay = join(root, "nested-overlay")
+  await mkdir(nestedParent)
+  await writeFile(join(nestedParent, "config.php"), "parent")
+  await writeFile(nestedOverlay, "overlay")
+  const nested = await stageReadonlyPlaygroundMounts([
+    { source: nestedParent, target: "/nested", mode: "readonly" },
+    { source: nestedOverlay, target: "/nested/config.php", mode: "readonly", type: "file" },
+  ])
+  assert.equal(await readFile(join(nested.mounts[0].source, "config.php"), "utf8"), "parent", "parent readonly staging retains its source for nested overlays")
+  assert.equal(await readFile(nested.mounts[1].source, "utf8"), "overlay", "nested readonly overlay retains its independent source")
+  await nested[Symbol.asyncDispose]()
 
   await assert.rejects(stageReadonlyPlaygroundMounts([
     { source: pluginSource, target: "/wordpress/wp-content/plugins/tracked-symlink-plugin", mode: "readonly" },
@@ -148,14 +202,12 @@ try {
   assert.deepEqual(await readFile(readwriteSource), Buffer.from("sandbox overwrite"), "readwrite mounts must retain host-write behavior")
   assert.notEqual(mountedReadonlyPath, readonlySource, "readonly mounts must use a private staged path")
   const mountMaterialization = startupProgress.find((event) => event.phase === "preview:materializing-mounts")?.detail?.materialization
-  assert.deepEqual((mountMaterialization as { metadata?: Record<string, unknown> })?.metadata, {
-    mounts: 3,
-    skipped: 7,
-    diagnostics: staging.diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      metadata: { ...diagnostic.metadata, mountIndex: 3 },
-    })),
-  }, "startup progress retains structured symlink skip evidence")
+  const startupMetadata = (mountMaterialization as { metadata?: { mounts?: number; skipped?: number; diagnostics?: MaterializationDiagnostic[]; preparation?: { mode?: string; bytes?: number; files?: number } } })?.metadata
+  assert.equal(startupMetadata?.mounts, 3, "startup progress retains readonly mount count")
+  assert.equal(startupMetadata?.skipped, 7, "startup progress retains symlink skip count")
+  assert.deepEqual(startupMetadata?.diagnostics, staging.diagnostics.map((diagnostic) => ({ ...diagnostic, metadata: { ...diagnostic.metadata, mountIndex: 3 } })), "startup progress retains structured symlink skip evidence")
+  assert.ok(startupMetadata?.preparation?.mode, "startup progress reports readonly preparation mode")
+  assert.ok((startupMetadata?.preparation?.bytes ?? 0) > 0 && (startupMetadata?.preparation?.files ?? 0) > 0, "startup progress reports staging metrics")
 
   await server[Symbol.asyncDispose]()
   await assert.rejects(access(mountedReadonlyPath), /ENOENT/, "readonly mount staging must be removed with the runtime")
