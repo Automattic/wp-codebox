@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto"
-import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { constants } from "node:fs"
+import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicy, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationDiagnostic, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
+import { withPlaygroundArchiveCacheLock } from "./playground-wordpress-archive-cache.js"
 
 export interface HostMountSnapshot {
   mountIndex: number
@@ -40,6 +42,21 @@ export interface ReadonlyMountStaging {
 
 const READONLY_MOUNT_SKIPPED_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
 const STAGED_FILE_CHUNK_SIZE = 256 * 1024
+const READONLY_MOUNT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000
+const READONLY_MOUNT_CACHE_MAX_COUNT = 8
+
+interface ReadonlyMountPreparation {
+  mode: "cache-hit" | "cache-miss"
+  bytes: number
+  files: number
+  elapsedMs: number
+}
+
+interface ReadonlyMountSourceGeneration {
+  fingerprint: string
+  bytes: number
+  files: number
+}
 
 /**
  * Playground's Node filesystem mount handler is writable. Snapshot readonly
@@ -65,13 +82,17 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       const source = join(root, `${index}-${basename(mount.source) || "mount"}`)
       const sourceRoot = await realpath(mount.source)
       const diagnostics: MaterializationDiagnostic[] = []
+      const startedAt = Date.now()
+      let preparation: ReadonlyMountPreparation
       if (mount.type === "file") {
         await cp(mount.source, source, { dereference: true })
+        const sourceStat = await stat(source)
+        preparation = { mode: "cache-miss", bytes: sourceStat.size, files: 1, elapsedMs: Date.now() - startedAt }
       } else {
-        await stageReadonlyDirectory(mount, index, sourceRoot, source, diagnostics)
+        preparation = await prepareReadonlyDirectory(mount, index, sourceRoot, source, diagnostics)
       }
       diagnostics.sort((left, right) => String(left.metadata?.path) < String(right.metadata?.path) ? -1 : String(left.metadata?.path) > String(right.metadata?.path) ? 1 : 0)
-      return { mount: { ...mount, source }, diagnostics }
+      return { mount: { ...mount, source }, diagnostics, preparation }
     }))
     const failedMount = stagedMountResults.find((result) => result.status === "rejected")
     if (failedMount?.status === "rejected") {
@@ -84,10 +105,11 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
       return result.value.mount
     })
     const diagnostics = stagedMountResults.flatMap((result) => result.status === "fulfilled" ? result.value.diagnostics : [])
+    const preparations = stagedMountResults.flatMap((result) => result.status === "fulfilled" && result.value.preparation ? [result.value.preparation] : [])
     return {
       mounts: stagedMounts,
       diagnostics,
-      phaseResult: readonlyMountStagingPhaseResult(readonlyMounts.length, diagnostics),
+      phaseResult: readonlyMountStagingPhaseResult(readonlyMounts.length, diagnostics, preparations),
       async [Symbol.asyncDispose]() {
         await rm(root, { recursive: true, force: true })
       },
@@ -95,6 +117,111 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
   } catch (error) {
     await rm(root, { recursive: true, force: true })
     throw error
+  }
+}
+
+async function prepareReadonlyDirectory(mount: MountSpec, mountIndex: number, sourceRoot: string, destination: string, diagnostics: MaterializationDiagnostic[]): Promise<ReadonlyMountPreparation> {
+  const startedAt = Date.now()
+  const generation = await readonlyMountSourceGeneration(mount, mountIndex, sourceRoot, diagnostics)
+  const cacheRoot = join(tmpdir(), "wp-codebox-readonly-mount-cache-v1")
+  const cachePath = join(cacheRoot, generation.fingerprint)
+  await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
+
+  let mode: ReadonlyMountPreparation["mode"] = "cache-hit"
+  await withPlaygroundArchiveCacheLock(cacheRoot, `readonly-mount-${generation.fingerprint}`, async () => {
+    if (!await directoryExists(cachePath)) {
+      mode = "cache-miss"
+      const temporary = await mkdtemp(join(cacheRoot, ".prepare-"))
+      try {
+        const prepared = join(temporary, "tree")
+        await stageReadonlyDirectory(mount, mountIndex, sourceRoot, prepared, [])
+        const verified = await readonlyMountSourceGeneration(mount, mountIndex, sourceRoot, [])
+        if (verified.fingerprint !== generation.fingerprint) {
+          throw new Error(`Readonly mount source changed while preparing snapshot: ${mount.target}`)
+        }
+        await rename(prepared, cachePath)
+      } finally {
+        await rm(temporary, { recursive: true, force: true })
+      }
+      await retainReadonlyMountCache(cacheRoot, cachePath)
+    }
+  })
+  // Clone the immutable cache tree for this writable Playground mount. APFS and
+  // other supporting filesystems make this copy-on-write; other filesystems copy safely.
+  await cp(cachePath, destination, { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE })
+  return { mode, bytes: generation.bytes, files: generation.files, elapsedMs: Date.now() - startedAt }
+}
+
+async function readonlyMountSourceGeneration(mount: MountSpec, mountIndex: number, sourceRoot: string, diagnostics: MaterializationDiagnostic[]): Promise<ReadonlyMountSourceGeneration> {
+  const entries: string[] = []
+  let bytes = 0
+  let files = 0
+  const visit = async (directory: string, relativeDirectory: string, ancestors: ReadonlySet<string>): Promise<void> => {
+    const children = await readdir(directory, { withFileTypes: true })
+    children.sort((left, right) => left.name.localeCompare(right.name))
+    for (const child of children) {
+      const path = join(directory, child.name)
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${child.name}` : child.name
+      const entryStat = await lstat(path)
+      if (!entryStat.isSymbolicLink()) {
+        if (entryStat.isDirectory()) {
+          if (!READONLY_MOUNT_SKIPPED_DIRECTORIES.has(child.name)) {
+            const target = await realpath(path)
+            entries.push(`${relativePath}\0directory:${entryStat.dev}:${entryStat.ino}:${entryStat.mtimeMs}:${entryStat.ctimeMs}`)
+            await visit(target, relativePath, new Set([...ancestors, target]))
+          }
+        } else {
+          files++
+          bytes += entryStat.size
+          entries.push(`${relativePath}\0${entryStat.dev}:${entryStat.ino}:${entryStat.size}:${entryStat.mtimeMs}:${entryStat.ctimeMs}`)
+        }
+        continue
+      }
+      let target: string
+      try {
+        target = await realpath(path)
+      } catch {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "dangling-target")
+        continue
+      }
+      if (!pathIsWithinRoot(sourceRoot, target)) {
+        addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "source-escape")
+        continue
+      }
+      const targetStat = await stat(target)
+      if (!targetStat.isDirectory()) {
+        files++
+        bytes += targetStat.size
+        entries.push(`${relativePath}\0${targetStat.dev}:${targetStat.ino}:${targetStat.size}:${targetStat.mtimeMs}:${targetStat.ctimeMs}`)
+      } else if (!READONLY_MOUNT_SKIPPED_DIRECTORIES.has(child.name)) {
+        if (ancestors.has(target)) addReadonlySymlinkDiagnostic(diagnostics, mount, mountIndex, relativePath, "directory-cycle")
+        else {
+          entries.push(`${relativePath}\0directory:${targetStat.dev}:${targetStat.ino}:${targetStat.mtimeMs}:${targetStat.ctimeMs}`)
+          await visit(target, relativePath, new Set([...ancestors, target]))
+        }
+      }
+    }
+  }
+  await visit(sourceRoot, "", new Set([sourceRoot]))
+  return { fingerprint: createHash("sha256").update(`${sourceRoot}\0${entries.join("\n")}`).digest("hex"), bytes, files }
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+async function retainReadonlyMountCache(cacheRoot: string, current: string): Promise<void> {
+  const now = Date.now()
+  const entries = await readdir(cacheRoot, { withFileTypes: true })
+  const candidates = await Promise.all(entries.filter((entry) => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name)).map(async (entry) => ({ path: join(cacheRoot, entry.name), stat: await lstat(join(cacheRoot, entry.name)) })))
+  const removable = candidates.filter((entry) => entry.path !== current).sort((left, right) => left.stat.mtimeMs - right.stat.mtimeMs)
+  const excessCount = Math.max(0, candidates.length - READONLY_MOUNT_CACHE_MAX_COUNT)
+  for (const [index, entry] of removable.entries()) {
+    if (now - entry.stat.mtimeMs > READONLY_MOUNT_CACHE_MAX_AGE_MS || index < excessCount) await rm(entry.path, { recursive: true, force: true })
   }
 }
 
@@ -172,11 +299,22 @@ function addReadonlySymlinkDiagnostic(diagnostics: MaterializationDiagnostic[], 
   })
 }
 
-function readonlyMountStagingPhaseResult(mounts: number, diagnostics: MaterializationDiagnostic[]): MaterializationPhaseResult {
+function readonlyMountStagingPhaseResult(mounts: number, diagnostics: MaterializationDiagnostic[], preparations: ReadonlyMountPreparation[] = []): MaterializationPhaseResult {
   return materializationPhaseResult({
     phase: "playground-readonly-mount-staging",
     status: mounts > 0 ? "completed" : "skipped",
-    metadata: { mounts, skipped: diagnostics.length, diagnostics },
+    metadata: {
+      mounts,
+      skipped: diagnostics.length,
+      diagnostics,
+      preparation: {
+        mode: preparations.length === 0 ? "none" : preparations.every((preparation) => preparation.mode === "cache-hit") ? "cache-hit" : preparations.every((preparation) => preparation.mode === "cache-miss") ? "cache-miss" : "mixed",
+        reused: preparations.filter((preparation) => preparation.mode === "cache-hit").length,
+        bytes: preparations.reduce((total, preparation) => total + preparation.bytes, 0),
+        files: preparations.reduce((total, preparation) => total + preparation.files, 0),
+        elapsedMs: preparations.reduce((total, preparation) => total + preparation.elapsedMs, 0),
+      },
+    },
   })
 }
 
