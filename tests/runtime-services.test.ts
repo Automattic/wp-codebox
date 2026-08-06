@@ -49,6 +49,20 @@ assert.deepEqual(buildWordPressPhpunitRecipe({ pluginSlug: "example", services: 
 const mysqlPhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mysql" })
 assert.deepEqual(mysqlPhpunitRecipe.inputs?.services, [{ id: "wordpress-database", kind: "mysql", outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" } }])
 assert.ok(mysqlPhpunitRecipe.workflow.steps[0].args?.includes("database-type=mysql"))
+const mysqlWithExplicitPortAliases = buildWordPressPhpunitRecipe({
+  pluginSlug: "example",
+  databaseType: "mysql",
+  services: [{ id: "mysql", kind: "mysql", outputs: { port: ["DB_PORT", "TC_MYSQL_PORT"] } }],
+})
+assert.deepEqual(mysqlWithExplicitPortAliases.inputs?.services, [{
+  id: "mysql",
+  kind: "mysql",
+  outputs: { host: "DB_HOST", port: ["DB_PORT", "TC_MYSQL_PORT"], username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" },
+}], "canonical MySQL outputs retain explicit aliases")
+assert.throws(
+  () => buildWordPressPhpunitRecipe({ pluginSlug: "example", databaseType: "mysql", services: [{ id: "mysql", kind: "mysql", outputs: { host: "DB_PORT" } }] }),
+  /MySQL service output host conflicts with canonical port binding DB_PORT/,
+)
 const sqlitePhpunitRecipe = buildWordPressPhpunitRecipe({ pluginSlug: "example" })
 assert.equal(sqlitePhpunitRecipe.inputs?.services, undefined)
 assert.equal(sqlitePhpunitRecipe.workflow.steps[0].args?.some((arg) => arg.startsWith("database-type=")), false)
