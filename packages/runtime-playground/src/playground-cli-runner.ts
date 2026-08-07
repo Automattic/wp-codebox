@@ -485,7 +485,7 @@ export function classifyManagedDatabaseMysqliError(errorCode: number): "authenti
 }
 
 export function managedDatabaseDiagnosticsPhp(spec: RuntimeCreateSpec): string {
-  if (spec.environment.databaseSetup !== "external") return ""
+  if (spec.environment.databaseSetup !== "external" || (!spec.runtimeEnv?.DB_HOST && !spec.runtimeEnv?.DB_PORT)) return ""
   const services = Array.isArray(spec.metadata?.managedRuntimeServices) ? spec.metadata.managedRuntimeServices : []
   const mysql = services.find((service): service is Record<string, unknown> => typeof service === "object" && service !== null && (service as { kind?: unknown }).kind === "mysql")
   const receipt = mysql ? {
