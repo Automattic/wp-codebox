@@ -49,7 +49,7 @@ if (!await dockerAvailable()) {
     const mariaDbCode = "if (!function_exists('mysqli_init')) { throw new RuntimeException('mysqli is unavailable'); } mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT); $connect = static function (string $port): mysqli { $db = mysqli_init(); if (!mysqli_real_connect($db, getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASSWORD'), getenv('DB_NAME'), (int) $port)) { throw new RuntimeException(mysqli_connect_error()); } return $db; }; $db = $connect((string) getenv('DB_PORT')); $compatibility = $connect((string) getenv('TC_MYSQL_PORT')); mysqli_query($db, 'CREATE TABLE mariadb_bridge (id INT PRIMARY KEY, value VARCHAR(32) NOT NULL) ENGINE=InnoDB'); mysqli_query($db, \"INSERT INTO mariadb_bridge (id, value) VALUES (1, 'reachable')\"); $row = mysqli_fetch_assoc(mysqli_query($compatibility, 'SELECT value FROM mariadb_bridge WHERE id = 1')); if (($row['value'] ?? null) !== 'reachable') { throw new RuntimeException('MariaDB read failed'); } mysqli_query($db, 'DROP TABLE mariadb_bridge'); echo getenv('DB_PORT') . ':' . getenv('TC_MYSQL_PORT');"
     await writeFile(mariaDbRecipePath, JSON.stringify({
       schema: "wp-codebox/workspace-recipe/v1",
-      runtime: { php: "8.4" },
+      runtime: { phpVersion: "8.4" },
       inputs: {
         services: [{ id: "mariadb", kind: "mysql", configuration: { engine: "mariadb", rootAuthentication: "empty-password" }, outputs: { host: "DB_HOST", port: ["DB_PORT", "TC_MYSQL_PORT"], username: "DB_USER", password: "DB_PASSWORD", database: "DB_NAME" } }],
       },

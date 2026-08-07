@@ -116,7 +116,9 @@ try {
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
   assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.doesNotMatch(sharedAutoPrepend, /secret|DB_PASSWORD/)
+  assert.match(sharedAutoPrepend, /getenv\('DB_USER'\) \?: 'root'/)
+  assert.match(sharedAutoPrepend, /getenv\('DB_NAME'\) \?: 'runtime'/)
+  assert.doesNotMatch(sharedAutoPrepend, /secret/)
   assert.equal(runs[0]?.env?.DB_PASSWORD, undefined)
   const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
   assert.equal(typeof requestWorkerPath, "string")
@@ -141,6 +143,18 @@ try {
   })
   assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => mount.vfsPath === "/internal/wp-codebox"), true, "passwordless external databases retain isolated request workers")
   assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => /^\/wordpress\/wp-codebox-execute-[a-f0-9]{24}\.php$/.test(mount.vfsPath)), true)
+
+  calls.length = 0
+  const customDatabaseServer = await startPlaygroundCliServer({
+    ...spec,
+    runtimeEnv: { TC_MYSQL_PORT: "33060" },
+    secretEnv: { DB_PASSWORD: "secret" },
+    secretEnvTargets: { DB_PASSWORD: "DB_PASSWORD" },
+  }, [], { cliModule })
+  await customDatabaseServer[Symbol.asyncDispose]()
+  const customDatabaseAutoPrependPath = calls[0]?.["mount-before-install"]?.[1]?.hostPath
+  assert.equal(typeof customDatabaseAutoPrependPath, "string")
+  assert.doesNotMatch(await readFile(customDatabaseAutoPrependPath as string, "utf8"), /WP_CODEBOX_MANAGED_DB_DIAGNOSTIC/, "custom database mappings bypass the canonical endpoint diagnostic")
 
   calls.length = 0
   const defaultRuntimeIniSpec: RuntimeCreateSpec = {

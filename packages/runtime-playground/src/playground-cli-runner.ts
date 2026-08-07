@@ -485,7 +485,7 @@ export function classifyManagedDatabaseMysqliError(errorCode: number): "authenti
 }
 
 export function managedDatabaseDiagnosticsPhp(spec: RuntimeCreateSpec): string {
-  if (spec.environment.databaseSetup !== "external") return ""
+  if (spec.environment.databaseSetup !== "external" || (!spec.runtimeEnv?.DB_HOST && !spec.runtimeEnv?.DB_PORT)) return ""
   const services = Array.isArray(spec.metadata?.managedRuntimeServices) ? spec.metadata.managedRuntimeServices : []
   const mysql = services.find((service): service is Record<string, unknown> => typeof service === "object" && service !== null && (service as { kind?: unknown }).kind === "mysql")
   const receipt = mysql ? {
@@ -507,7 +507,7 @@ if ($wpcb_db_endpoint['host_class'] === 'absent' || !$wpcb_db_endpoint['port']['
 if (!$wpcb_db_diagnostic['transport']['stream_socket_client'] || !$wpcb_db_diagnostic['transport']['mysqli']) $wpcb_db_fail('transport_unavailable', 'Use a runtime with TCP sockets and the mysqli extension enabled.');
 $wpcb_db_target = strpos($wpcb_db_host, ':') !== false ? 'tcp://[' . $wpcb_db_host . ']:' . $wpcb_db_port : 'tcp://' . $wpcb_db_host . ':' . $wpcb_db_port;
 $wpcb_db_diagnostic['tcp']['attempted'] = true; $wpcb_db_socket = @stream_socket_client($wpcb_db_target, $wpcb_db_tcp_errno, $wpcb_db_tcp_error, 2, STREAM_CLIENT_CONNECT); if (!$wpcb_db_socket) { $wpcb_db_diagnostic['tcp']['error_code'] = (int) $wpcb_db_tcp_errno; $wpcb_db_fail('endpoint_unreachable', 'Verify runtime network access to the managed database endpoint.'); } fclose($wpcb_db_socket); $wpcb_db_diagnostic['tcp']['connected'] = true;
-$wpcb_db_diagnostic['mysqli']['attempted'] = true; $wpcb_db = @mysqli_init(); if (!$wpcb_db) $wpcb_db_fail('transport_unavailable', 'The mysqli client could not initialize in this runtime.'); @mysqli_options($wpcb_db, MYSQLI_OPT_CONNECT_TIMEOUT, 2); $wpcb_db_connected = @mysqli_real_connect($wpcb_db, $wpcb_db_host, getenv('DB_USER'), getenv('DB_PASSWORD'), getenv('DB_NAME'), (int) $wpcb_db_port); if (!$wpcb_db_connected) { $wpcb_db_errno = (int) mysqli_connect_errno(); $wpcb_db_diagnostic['mysqli']['error_code'] = $wpcb_db_errno; $wpcb_db_fail($wpcb_db_errno === 1045 ? 'authentication_failed' : ($wpcb_db_errno === 1049 ? 'database_missing' : 'endpoint_unreachable'), 'Verify the managed database credentials and selected database.'); } mysqli_close($wpcb_db); $wpcb_db_diagnostic['mysqli']['connected'] = true;
+$wpcb_db_diagnostic['mysqli']['attempted'] = true; $wpcb_db = @mysqli_init(); if (!$wpcb_db) $wpcb_db_fail('transport_unavailable', 'The mysqli client could not initialize in this runtime.'); @mysqli_options($wpcb_db, MYSQLI_OPT_CONNECT_TIMEOUT, 2); $wpcb_db_user = getenv('DB_USER') ?: 'root'; $wpcb_db_name = getenv('DB_NAME') ?: 'runtime'; $wpcb_db_connected = @mysqli_real_connect($wpcb_db, $wpcb_db_host, $wpcb_db_user, getenv('DB_PASSWORD'), $wpcb_db_name, (int) $wpcb_db_port); if (!$wpcb_db_connected) { $wpcb_db_errno = (int) mysqli_connect_errno(); $wpcb_db_diagnostic['mysqli']['error_code'] = $wpcb_db_errno; $wpcb_db_fail($wpcb_db_errno === 1045 ? 'authentication_failed' : ($wpcb_db_errno === 1049 ? 'database_missing' : 'endpoint_unreachable'), 'Verify the managed database credentials and selected database.'); } mysqli_close($wpcb_db); $wpcb_db_diagnostic['mysqli']['connected'] = true;
 `
 }
 

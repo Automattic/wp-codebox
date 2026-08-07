@@ -123,32 +123,44 @@ export async function stageReadonlyPlaygroundMounts(mounts: MountSpec[]): Promis
 async function prepareReadonlyDirectory(mount: MountSpec, mountIndex: number, sourceRoot: string, destination: string, diagnostics: MaterializationDiagnostic[]): Promise<ReadonlyMountPreparation> {
   const startedAt = Date.now()
   const generation = await readonlyMountSourceGeneration(mount, mountIndex, sourceRoot, diagnostics)
-  const cacheRoot = join(tmpdir(), "wp-codebox-readonly-mount-cache-v1")
+  const cacheRoot = join(tmpdir(), "wp-codebox-readonly-mount-cache-v2")
   const cachePath = join(cacheRoot, generation.fingerprint)
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
 
   let mode: ReadonlyMountPreparation["mode"] = "cache-hit"
   await withPlaygroundArchiveCacheLock(cacheRoot, `readonly-mount-${generation.fingerprint}`, async () => {
-    if (!await directoryExists(cachePath)) {
-      mode = "cache-miss"
-      const temporary = await mkdtemp(join(cacheRoot, ".prepare-"))
-      try {
-        const prepared = join(temporary, "tree")
-        await stageReadonlyDirectory(mount, mountIndex, sourceRoot, prepared, [])
-        const verified = await readonlyMountSourceGeneration(mount, mountIndex, sourceRoot, [])
-        if (verified.fingerprint !== generation.fingerprint) {
-          throw new Error(`Readonly mount source changed while preparing snapshot: ${mount.target}`)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!await directoryExists(cachePath)) {
+        mode = "cache-miss"
+        const temporary = await mkdtemp(join(cacheRoot, ".prepare-"))
+        try {
+          const prepared = join(temporary, "tree")
+          await stageReadonlyDirectory(mount, mountIndex, sourceRoot, prepared, [])
+          const verified = await readonlyMountSourceGeneration(mount, mountIndex, sourceRoot, [])
+          if (verified.fingerprint !== generation.fingerprint) {
+            throw new Error(`Readonly mount source changed while preparing snapshot: ${mount.target}`)
+          }
+          await rename(prepared, cachePath)
+        } finally {
+          await rm(temporary, { recursive: true, force: true })
         }
-        await rename(prepared, cachePath)
-      } finally {
-        await rm(temporary, { recursive: true, force: true })
+        await retainReadonlyMountCache(cacheRoot, cachePath)
       }
-      await retainReadonlyMountCache(cacheRoot, cachePath)
+      // Cache retention can evict a different entry. Clone while holding the
+      // shared lock so another preparation cannot evict this tree first.
+      try {
+        await cp(cachePath, destination, { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE })
+        return
+      } catch (error) {
+        if (attempt !== 0 || (error as { code?: unknown }).code !== "ENOENT") throw error
+        // A prior interrupted or raced preparation can leave a cache root with
+        // missing descendants. Rebuild it once while still holding the lock.
+        mode = "cache-miss"
+        await rm(cachePath, { recursive: true, force: true })
+        await rm(destination, { recursive: true, force: true })
+      }
     }
   })
-  // Clone the immutable cache tree for this writable Playground mount. APFS and
-  // other supporting filesystems make this copy-on-write; other filesystems copy safely.
-  await cp(cachePath, destination, { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE })
   return { mode, bytes: generation.bytes, files: generation.files, elapsedMs: Date.now() - startedAt }
 }
 

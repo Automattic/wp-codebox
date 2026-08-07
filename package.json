@@ -272,6 +272,7 @@
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:composer-package-overlay-revision": "tsx scripts/composer-backed-source-hydration-smoke.ts",
     "test:composer-package-overlay-autoload-layout": "tsx scripts/composer-package-overlay-autoload-layout-smoke.ts",
+    "test:composer-overlay-projected-runtime": "tsx tests/composer-overlay-projected-runtime.integration.test.ts",
     "test:composer-installed-versions-loader-order": "tsx scripts/composer-installed-versions-loader-order-smoke.ts",
     "test:recipe-extra-plugin-composer-autoloaders": "tsx tests/recipe-extra-plugin-composer-autoloaders.test.ts",
     "test:recipe-extra-plugin-local-zip": "tsx tests/recipe-extra-plugin-local-zip.test.ts",

@@ -927,7 +927,14 @@ const result = {
   success,
   request_path: requestPath,
   runtime_input_path: ".codebox/native-agent-task-input.json",
-  execution: { stdout_truncated: execution.stdout_truncated, stderr_truncated: execution.stderr_truncated },
+  execution: {
+    stdout_truncated: execution.stdout_truncated,
+    stderr_truncated: execution.stderr_truncated,
+    ...(execution.code !== 0 ? {
+      stdout_tail: bounded(redact(execution.stdout), MAX_WORKFLOW_OUTPUT_BYTES),
+      stderr_tail: bounded(redact(execution.stderr), MAX_WORKFLOW_OUTPUT_BYTES),
+    } : {}),
+  },
   runtime_result: redact(runtimeRecord),
   ...(reviewerEvidence ? { reviewer_evidence: reviewerEvidence } : {}),
   verification,
