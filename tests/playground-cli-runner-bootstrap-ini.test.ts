@@ -116,7 +116,9 @@ try {
   const sharedAutoPrepend = await readFile(sharedAutoPrependPath as string, "utf8")
   assert.match(sharedAutoPrepend, /require_once '\/internal\/shared\/auto_prepend_file\.php'/)
   assert.match(sharedAutoPrepend, /putenv\("TC_MYSQL_PORT=33060"\);/)
-  assert.doesNotMatch(sharedAutoPrepend, /secret|DB_PASSWORD/)
+  assert.match(sharedAutoPrepend, /getenv\('DB_USER'\) \?: 'root'/)
+  assert.match(sharedAutoPrepend, /getenv\('DB_NAME'\) \?: 'runtime'/)
+  assert.doesNotMatch(sharedAutoPrepend, /secret/)
   assert.equal(runs[0]?.env?.DB_PASSWORD, undefined)
   const requestWorkerPath = calls[0]["mount-before-install"]?.[3]?.hostPath
   assert.equal(typeof requestWorkerPath, "string")
