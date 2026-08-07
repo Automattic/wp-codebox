@@ -208,6 +208,11 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
       mkdirSync(preparedSource, { recursive: true })
     }
     const originalPluginSource = join(copySource, sourceSubpath)
+    if (pathExists(join(originalPluginSource, "vendor", "autoload.php"))) {
+      preserveExistingComposerVendor(originalPluginSource, preparedPluginSource)
+      bridgePackageAutoloaderToComposerAutoload(preparedPluginSource)
+      return preparedPluginSource
+    }
     if (!pathExists(join(preparedPluginSource, "composer.json"))) {
       preserveExistingComposerVendor(originalPluginSource, preparedPluginSource)
       return preparedPluginSource
