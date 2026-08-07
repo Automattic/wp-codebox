@@ -79,7 +79,14 @@ add_filter( 'pre_http_request', static function( $preempt, $args, $url ) {
   assert.equal(seedProvenance.files, 2, "only README and the explicit .env.example template are copied")
    assert.equal(seedProvenance.excluded.files, 7)
    assert.deepEqual(seedProvenance.excluded.categories, [{ category: "credentials", count: 2 }, { category: "environment", count: 1 }, { category: "generated-tree", count: 3 }, { category: "private-key", count: 1 }])
-  assert.equal(execution.code, 0, `${execution.stderr ?? ""}\n${JSON.stringify(result)}`)
+  assert.equal(execution.code, 0, JSON.stringify({
+    execution: result.execution,
+    runtimeError: result.runtime_result?.error,
+    agentError: result.runtime_result?.agent_task_run_result?.error,
+    agentResult: result.runtime_result?.agent_result,
+    agentTaskResult: result.runtime_result?.agent_task_run_result,
+    failure: result.failure,
+  }))
   assert.equal(result.success, true)
   assert.equal(await readFile(join(workspace, "README.md"), "utf8"), "after\n")
   assert.equal(result.runtime_result.agent_result?.changedFiles?.count, 1)
