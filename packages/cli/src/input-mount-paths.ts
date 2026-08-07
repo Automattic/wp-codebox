@@ -21,10 +21,21 @@ export function recipeInputMountPathMap(recipe: WorkspaceRecipe): InputMountPath
       originalTarget,
       canonicalTarget: parent
         ? `${parent.canonicalTarget}${originalTarget.slice(parent.originalTarget.length)}`
-        : canonicalInputMountTarget(originalTarget, index),
+        : workflowReferencesInputMountTarget(recipe, originalTarget)
+          ? originalTarget
+          : canonicalInputMountTarget(originalTarget, index),
     })
     return mappings
   }, [])
+}
+
+function workflowReferencesInputMountTarget(recipe: WorkspaceRecipe, target: string): boolean {
+  const steps = [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
+  return steps.some((step) => (step.args ?? []).some((arg) => inputMountTargetReferencePattern(target).test(arg)))
+}
+
+function inputMountTargetReferencePattern(target: string): RegExp {
+  return new RegExp(`${escapeRegExp(target)}(?=$|[\\/\\s'"\\]\\}\\),:;])`)
 }
 
 export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {

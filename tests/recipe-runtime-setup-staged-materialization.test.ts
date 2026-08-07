@@ -252,7 +252,18 @@ const wpcomPathMap = recipeInputMountPathMap({
       { source: "/workspace/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
     ],
   },
-  workflow: { steps: [] },
+  workflow: {
+    steps: [{
+      command: "wordpress.phpunit",
+      args: [
+        "autoload-file=/wp-codebox-vendor/autoload.php",
+        "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+        "cwd=/home/wpcom/public_html/bin/tests/i18n-tools",
+        "test-root=/home/wpcom/public_html/bin/tests/i18n-tools",
+        "phpunit-xml=/home/wpcom/public_html/bin/tests/i18n-tools/phpunit.xml",
+      ],
+    }],
+  },
 })
 const wpcomPhpunitExecution = await executeRecipeWorkflowStep(workflowRuntime, {
   phase: "steps",
@@ -270,20 +281,16 @@ const wpcomPhpunitExecution = await executeRecipeWorkflowStep(workflowRuntime, {
 }, process.cwd(), undefined, undefined, undefined, wpcomPathMap)
 
 assert.deepEqual(wpcomPhpunitExecution.args, [
-  `autoload-file=${wpcomPathMap[1].canonicalTarget}/autoload.php`,
-  `tests-dir=${wpcomPathMap[1].canonicalTarget}/wp-phpunit/wp-phpunit`,
-  `cwd=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools`,
-  `test-root=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools`,
-  `phpunit-xml=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools/phpunit.xml`,
+  "autoload-file=/wp-codebox-vendor/autoload.php",
+  "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+  "cwd=/home/wpcom/public_html/bin/tests/i18n-tools",
+  "test-root=/home/wpcom/public_html/bin/tests/i18n-tools",
+  "phpunit-xml=/home/wpcom/public_html/bin/tests/i18n-tools/phpunit.xml",
 ])
 assert.deepEqual(executedWorkflowSpecs.at(-1)?.args, wpcomPhpunitExecution.args)
-assert.ok(wpcomPhpunitExecution.args.every((arg) => arg.includes("=/tmp/wp-codebox-inputs/") || !arg.includes("/")), "WPCOM phpunit executable path args use canonical input mount paths")
-assert.equal(wpcomPhpunitExecution.args.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), false)
+assert.ok(wpcomPhpunitExecution.args.every((arg) => !arg.includes("/tmp/wp-codebox-inputs/")), "WPCOM phpunit executable path args preserve declared mount targets")
 
-assert.throws(
-  () => assertResolvedInputMountPathArgs(["cwd=/home/wpcom/public_html/bin/tests/i18n-tools"], wpcomPathMap),
-  /still references original input mount target.*\/home\/wpcom\/public_html/s,
-)
+assert.doesNotThrow(() => assertResolvedInputMountPathArgs(["cwd=/home/wpcom/public_html/bin/tests/i18n-tools"], wpcomPathMap))
 
 const agentMountPathMap = recipeInputMountPathMap({
   schema: "wp-codebox/workspace-recipe/v1",
@@ -349,7 +356,7 @@ assert.equal(nestedWorkloadExecution.command, "wordpress.run-workload")
 assert.equal(nestedWorkloadExecution.exitCode, 0)
 assert.deepEqual(executedWorkflowSpecs.map((spec) => spec.command), ["wordpress.phpunit"])
 assert.deepEqual(executedWorkflowSpecs[0]?.args, wpcomPhpunitExecution.args)
-assert.equal(executedWorkflowSpecs[0]?.args?.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), false)
+assert.equal(executedWorkflowSpecs[0]?.args?.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), true)
 
 // Regression (Extra-Chill/data-machine#2840): the plugin-under-test is mounted
 // at /wordpress/wp-content/plugins/<slug>. Canonicalizing that mount into
