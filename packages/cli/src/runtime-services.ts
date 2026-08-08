@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto"
 import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, statfs, writeFile } from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
 import { createConnection, createServer } from "node:net"
-import { tmpdir } from "node:os"
+import { tmpdir, userInfo } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import type { RuntimePolicy, WorkspaceRecipeExternalServiceBoundary, WorkspaceRecipeRuntimeService } from "@automattic/wp-codebox-core"
 
@@ -418,7 +418,9 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     const storageRoot = ownedNativePath(root, "storage")
     await mkdir(storageRoot, { mode: 0o700 })
     const storageEnvironment = nativeMariaDbEnvironment(root.path)
-    const userArgument: string[] = []
+    // MariaDB otherwise selects its package service account, which cannot write
+    // through a FUSE filesystem owned by the unprivileged provider caller.
+    const userArgument = [`--user=${nativeMariaDbCallerUser()}`]
     storage = await provisionNativeMariaDbStorage(binaries, root, storageRoot, dependencies, storageEnvironment, signal)
     const datadir = join(storageRoot, "database")
     const runtimeDirectory = join(storageRoot, "runtime")
@@ -545,34 +547,33 @@ export async function nativeMariaDbHostReadiness(dependencies: RuntimeServiceDep
   } catch {
     return { status: "unavailable", reason: "unprivileged-host-required" }
   }
-  let binaries: NativeMariaDbBinaries
   try {
-    binaries = await resolveNativeMariaDbBinaries(dependencies)
+    await resolveNativeMariaDbBinaries(dependencies)
   } catch {
     return { status: "unavailable", reason: "trusted-containment-tools-unavailable" }
   }
-  let root: OwnedNativeRoot | undefined
-  let storage: NativeMariaDbStorage | undefined
   try {
-    root = await createOwnedNativeRoot()
-    const mountpoint = ownedNativePath(root, "storage")
-    await mkdir(mountpoint, { mode: 0o700 })
-    storage = await provisionNativeMariaDbStorage(binaries, root, mountpoint, dependencies, nativeMariaDbEnvironment(root.path))
-    await writeFile(join(mountpoint, ".readiness"), "ready", { mode: 0o600 })
-    await stopNativeMariaDbStorage(storage, binaries, dependencies, root)
-    storage = undefined
-    await removeOwnedNativeRoot(root, dependencies)
-    root = undefined
+    const evidence: RuntimeServiceEvidence[] = []
+    const managed = await provisionMysqlNativeService({
+      id: "native-mariadb-readiness",
+      kind: "mysql",
+      configuration: { provider: "native", engine: "mariadb" },
+      outputs: {},
+    }, dependencies, { externalServices: [], externalServiceWritesApproved: false }, evidence)
+    await managed.release()
     return { status: "ready" }
-  } catch {
-    try {
-      if (storage && root) await stopNativeMariaDbStorage(storage, binaries, dependencies, root)
-      if (root) await removeOwnedNativeRoot(root, dependencies)
-    } catch {
+  } catch (error) {
+    if (runtimeServiceEvidenceFromError(error)?.some((entry) => entry.teardown === "failed")) {
       return { status: "unavailable", reason: "containment-probe-cleanup-failed" }
     }
     return { status: "unavailable", reason: "bounded-filesystem-unavailable" }
   }
+}
+
+function nativeMariaDbCallerUser(): string {
+  const user = userInfo().username
+  if (!user || user.includes("\0")) throw new Error("Native MariaDB caller identity cannot be proven")
+  return user
 }
 
 function assertNativeMariaDbConfiguration(service: WorkspaceRecipeRuntimeService): void {
