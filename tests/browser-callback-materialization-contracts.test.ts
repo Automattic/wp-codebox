@@ -259,6 +259,65 @@ try {
   await closeHttpServer(hangingTargetServer)
 }
 
+let releaseFirstQueuedRequest: (() => void) | undefined
+let firstQueuedRequestReached: (() => void) | undefined
+const firstQueuedRequest = new Promise<void>((resolve) => {
+  firstQueuedRequestReached = resolve
+})
+const queuedTargetRequests: string[] = []
+const queuedTargetServer = createServer((request, response) => {
+  queuedTargetRequests.push(request.url ?? "")
+  if (request.url === "/first") {
+    firstQueuedRequestReached?.()
+    new Promise<void>((resolve) => {
+      releaseFirstQueuedRequest = resolve
+    }).then(() => response.end("first"))
+    return
+  }
+  response.end("third")
+})
+const queuedTargetServerUrl = await listenLocalHttpServer(queuedTargetServer)
+const queuedAbortProxy = await withPreviewProxy({
+  playground: { async run() { return { text: "" } } },
+  serverUrl: queuedTargetServerUrl,
+  async [Symbol.asyncDispose]() {},
+} satisfies PlaygroundCliServer, 0)
+let secondQueuedRequestReached: (() => void) | undefined
+const secondQueuedRequest = new Promise<void>((resolve) => {
+  secondQueuedRequestReached = resolve
+})
+let secondQueuedRequestCanceled: (() => void) | undefined
+const secondQueuedCancellation = new Promise<void>((resolve) => {
+  secondQueuedRequestCanceled = resolve
+})
+const stopObservingQueuedRequest = queuedAbortProxy.previewRoutes?.add((request, response) => {
+  if (request.url === "/second") {
+    secondQueuedRequestReached?.()
+    response.once("close", () => secondQueuedRequestCanceled?.())
+  }
+  return false
+})
+try {
+  const firstRequest = fetch(`${queuedAbortProxy.serverUrl}/first`)
+  await firstQueuedRequest
+
+  const controller = new AbortController()
+  const canceledRequest = fetch(`${queuedAbortProxy.serverUrl}/second`, { signal: controller.signal }).catch((error) => error)
+  await secondQueuedRequest
+  controller.abort()
+  await canceledRequest
+  await secondQueuedCancellation
+
+  releaseFirstQueuedRequest?.()
+  assert.equal(await (await firstRequest).text(), "first")
+  assert.equal(await (await fetch(`${queuedAbortProxy.serverUrl}/third`)).text(), "third")
+  assert.deepEqual(queuedTargetRequests, ["/first", "/third"], "a canceled queued request must not open an upstream request")
+} finally {
+  stopObservingQueuedRequest?.()
+  await queuedAbortProxy[Symbol.asyncDispose]()
+  await closeHttpServer(queuedTargetServer)
+}
+
 const phase = materializationPhaseResult({
   phase: "persist-browser-artifacts",
   status: "completed",

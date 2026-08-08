@@ -136,7 +136,18 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): 
       return
     }
 
-    upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
+    upstreamQueue(
+      () => proxyPreviewRequest(target, incoming, outgoing),
+      () => incoming.aborted || incoming.destroyed || outgoing.destroyed,
+      (cancel) => {
+        incoming.once("aborted", cancel)
+        outgoing.once("close", cancel)
+        return () => {
+          incoming.off("aborted", cancel)
+          outgoing.off("close", cancel)
+        }
+      },
+    ).catch((error: Error) => writeProxyError(outgoing, error))
   })
 }
 
@@ -203,6 +214,8 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
           outgoing.destroy(error)
           settle()
         })
+        response.on("end", settle)
+        response.on("close", settle)
         outgoing.on("finish", settle)
         outgoing.on("close", settle)
         if (bodyTransform) {
@@ -218,6 +231,7 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       writeProxyError(outgoing, error)
       settle()
     })
+    incoming.on("aborted", abortUpstream)
     incoming.on("error", () => {
       abortUpstream()
     })
@@ -258,37 +272,80 @@ function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): Prev
   return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:", rewriteTargetOrigin: true }
 }
 
-function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
+function createPreviewProxyQueue(): (
+  task: () => Promise<void>,
+  isCanceled: () => boolean,
+  observeCancellation: (cancel: () => void) => () => void,
+) => Promise<void> {
   let active = false
-  const pending: Array<() => void> = []
-
-  const acquire = async () => {
-    if (!active) {
-      active = true
-      return
-    }
-
-    await new Promise<void>((resolve) => pending.push(resolve))
+  interface PendingRequest {
+    task: () => Promise<void>
+    isCanceled: () => boolean
+    stopObservingCancellation: () => void
+    resolve: () => void
+    reject: (error: unknown) => void
   }
+  const pending: PendingRequest[] = []
 
-  const release = () => {
-    const next = pending.shift()
-    if (next) {
-      next()
-      return
+  function release(): void {
+    let next = pending.shift()
+    while (next) {
+      next.stopObservingCancellation()
+      if (!next.isCanceled()) {
+        run(next)
+        return
+      }
+      next.resolve()
+      next = pending.shift()
     }
-
     active = false
   }
 
-  return async (task) => {
-    await acquire()
-    try {
-      await task()
-    } finally {
+  function run(request: PendingRequest): void {
+    request.stopObservingCancellation()
+    if (request.isCanceled()) {
+      request.resolve()
       release()
+      return
     }
+    let task: Promise<void>
+    try {
+      task = request.task()
+    } catch (error) {
+      request.reject(error)
+      release()
+      return
+    }
+    task.then(request.resolve, request.reject).finally(release)
   }
+
+  return (task, isCanceled, observeCancellation) => new Promise<void>((resolve, reject) => {
+    const request: PendingRequest = {
+      task,
+      isCanceled,
+      stopObservingCancellation: () => {},
+      resolve,
+      reject,
+    }
+    const cancel = () => {
+      const index = pending.indexOf(request)
+      if (index === -1) {
+        return
+      }
+      pending.splice(index, 1)
+      request.stopObservingCancellation()
+      resolve()
+    }
+    request.stopObservingCancellation = observeCancellation(cancel)
+
+    if (active) {
+      pending.push(request)
+      return
+    }
+
+    active = true
+    run(request)
+  })
 }
 
 async function listenPreviewProxy(proxy: PreviewProxyServer, port: number, bind: string): Promise<void> {
