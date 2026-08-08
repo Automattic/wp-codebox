@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { commandRegistry } from "../packages/runtime-core/src/command-registry.js"
 import { pluginStateInputFromArgs, pluginStatePhpCode } from "../packages/runtime-playground/src/plugin-state-command-handlers.js"
+import { materializePlaygroundRunResponse } from "../packages/runtime-playground/src/playground-runtime.js"
+import { runPluginStateCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
 
 const command = commandRegistry.find((definition) => definition.id === "wordpress.plugin-state")
 const ensureCommand = commandRegistry.find((definition) => definition.id === "wordpress.ensure-plugin-active")
@@ -36,5 +38,26 @@ assert.match(php, /networkActivePluginsBefore/)
 assert.match(php, /networkActivePluginsAfter/)
 assert.match(php, /artifactRefs/)
 assert.doesNotMatch(JSON.stringify(command), /homeboy|woocommerce|hbx/i)
+
+const pluginStateJson = JSON.stringify({ schema: "wp-codebox/wordpress-plugin-state/v1", active_plugins: ["example/example.php"] })
+let responseAvailable = true
+const lazyResponse = new Proxy({ exitCode: 0 }, {
+  get(target, property, receiver) {
+    return property === "text" ? responseAvailable ? pluginStateJson : "\0" : Reflect.get(target, property, receiver)
+  },
+})
+const materializedResponse = materializePlaygroundRunResponse(lazyResponse as never)
+responseAvailable = false
+assert.equal(typeof materializedResponse.text, "string")
+assert.deepEqual(JSON.parse(materializedResponse.text), JSON.parse(pluginStateJson))
+
+const pluginStateOutput = await runPluginStateCommand({
+  runPlaygroundCommand: async () => materializedResponse,
+  runtimeSpec: { environment: { kind: "wordpress" } } as never,
+  server: {} as never,
+  spec: { command: "wordpress.plugin-state", args: ["plugin=example"] } as never,
+})
+assert.equal(typeof pluginStateOutput, "string")
+assert.deepEqual(JSON.parse(pluginStateOutput), JSON.parse(pluginStateJson))
 
 console.log("plugin-state command ok")

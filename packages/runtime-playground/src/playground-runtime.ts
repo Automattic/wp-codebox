@@ -233,6 +233,10 @@ export interface PlaygroundRuntimeBackendOptions {
   cliModule?: PlaygroundCliModule
 }
 
+export function materializePlaygroundRunResponse(response: PlaygroundRunResponse): PlaygroundRunResponse {
+  return { ...response, text: response.text }
+}
+
 class PlaygroundRuntime implements Runtime {
   private status: RuntimeInfo["status"] = "created"
   private readonly runtimeId = id("runtime")
@@ -1788,7 +1792,8 @@ class PlaygroundRuntime implements Runtime {
         const response = await this.executeRequestWorker(server, options.code, requestWorkerEnvironment, this.executionSignals.getStore())
         return { text: response.text, exitCode: response.ok ? 0 : 1, ...(!response.ok ? { errors: response.text } : {}) }
       }
-      return await abortable(server.playground.run(options), this.executionSignals.getStore())
+      const response = await abortable(server.playground.run(options), this.executionSignals.getStore())
+      return materializePlaygroundRunResponse(response)
     } catch (error) {
       const payload = "code" in options ? options.code : options.scriptPath
       throw new PlaygroundCommandCrashError(command, error, {
