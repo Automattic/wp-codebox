@@ -3,13 +3,14 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "n
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { executeManagedHostCommand } from "@automattic/wp-codebox-core"
-import { allowedDownloadHosts, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles } from "./source-policy.js"
+import { allowedDownloadHosts, maxCompressionRatio, maxDownloadBytes, maxExtractedBytes, maxExtractedFileBytes, maxExtractedFilesFor, type ArchiveSourceClass } from "./source-policy.js"
 
 export interface ZipSourceReference {
   type: string
   resolvedUrl: string
   host: string
   expectedSha256?: string
+  archiveClass?: ArchiveSourceClass
 }
 
 export interface PreparedZipSource {
@@ -27,14 +28,14 @@ export async function prepareZipSource<TSource extends ZipSourceReference>(sourc
   const extractDirectory = join(root, "extracted")
   await mkdir(extractDirectory, { recursive: true })
   const digest = await downloadZipSource(source, zipPath, redirectSource)
-  await assertSafeZipEntries(zipPath)
+  await assertSafeZipEntries(zipPath, source)
   await executeManagedHostCommand({ command: "unzip", args: ["-q", zipPath, "-d", extractDirectory], cwd: root, allowedCwdRoots: [root], label: "extract recipe source zip" })
-  await assertExtractedSourceBounds(extractDirectory)
+  await assertExtractedSourceBounds(extractDirectory, source)
 
   return { root, zipPath, extractDirectory, digest }
 }
 
-export async function prepareLocalZipSource(sourcePath: string, slug: string, expectedSha256?: string): Promise<PreparedZipSource> {
+export async function prepareLocalZipSource(sourcePath: string, slug: string, expectedSha256?: string, archiveClass: ArchiveSourceClass = "standard"): Promise<PreparedZipSource> {
   const root = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))
   const zipPath = join(root, "source.zip")
   const extractDirectory = join(root, "extracted")
@@ -50,9 +51,10 @@ export async function prepareLocalZipSource(sourcePath: string, slug: string, ex
     }
     await writeFile(zipPath, buffer)
     await mkdir(extractDirectory, { recursive: true })
-    await assertSafeZipEntries(zipPath)
+    const archiveSource = { type: "local", resolvedUrl: sourcePath, host: "", archiveClass }
+    await assertSafeZipEntries(zipPath, archiveSource)
     await executeManagedHostCommand({ command: "unzip", args: ["-q", zipPath, "-d", extractDirectory], cwd: root, allowedCwdRoots: [root], label: "extract recipe source zip" })
-    await assertExtractedSourceBounds(extractDirectory)
+    await assertExtractedSourceBounds(extractDirectory, archiveSource)
     return { root, zipPath, extractDirectory, digest }
   } catch (error) {
     await rm(root, { recursive: true, force: true })
@@ -91,26 +93,85 @@ async function downloadZipSource<TSource extends ZipSourceReference>(source: TSo
   return digest
 }
 
-async function assertSafeZipEntries(zipPath: string): Promise<void> {
-  const root = dirname(zipPath)
-  const { stdout } = await executeManagedHostCommand({ command: "unzip", args: ["-Z1", zipPath], cwd: root, allowedCwdRoots: [root], label: "list recipe source zip" })
-  const entries = stdout.split(/\r?\n/).filter(Boolean)
-  if (entries.length > maxExtractedFiles()) {
-    throw new Error(`Recipe source zip contains too many entries: ${entries.length}`)
+async function assertSafeZipEntries(zipPath: string, source: ZipSourceReference): Promise<void> {
+  const entries = zipEntries(await readFile(zipPath))
+  const maxFiles = maxExtractedFilesFor(source)
+  if (entries.length > maxFiles) {
+    throw new Error(`Recipe source zip contains too many entries: ${entries.length}; limit ${maxFiles}; archive class ${source.archiveClass ?? "standard"}`)
   }
 
   for (const entry of entries) {
-    const normalized = entry.replace(/\\/g, "/")
+    const normalized = entry.name.replace(/\\/g, "/")
     if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
-      throw new Error(`Recipe source zip contains an unsafe path: ${entry}`)
+      throw new Error(`Recipe source zip contains an unsafe path: ${entry.name}`)
+    }
+  }
+
+  const expandedBytes = entries.reduce((total, entry) => total + entry.uncompressedBytes, 0)
+  if (expandedBytes > maxExtractedBytes()) {
+    throw new Error(`Recipe source extraction exceeds ${maxExtractedBytes()} bytes: ${expandedBytes}`)
+  }
+
+  for (const { compressedBytes, uncompressedBytes } of entries) {
+    if (uncompressedBytes > maxExtractedFileBytes()) {
+      throw new Error(`Recipe source zip entry exceeds ${maxExtractedFileBytes()} bytes: ${uncompressedBytes}`)
+    }
+    if (uncompressedBytes > 0 && (compressedBytes === 0 || uncompressedBytes / compressedBytes > maxCompressionRatio())) {
+      throw new Error(`Recipe source zip entry exceeds ${maxCompressionRatio()}:1 compression ratio`)
     }
   }
 }
 
-async function assertExtractedSourceBounds(directory: string): Promise<void> {
+function zipEntries(data: Buffer): Array<{ name: string; compressedBytes: number; uncompressedBytes: number }> {
+  const minimumEndOfCentralDirectory = 22
+  const endOfCentralDirectory = findEndOfCentralDirectory(data)
+  if (endOfCentralDirectory < 0 || data.length < minimumEndOfCentralDirectory) {
+    throw new Error("Recipe source zip has no valid central directory")
+  }
+
+  const disk = data.readUInt16LE(endOfCentralDirectory + 4)
+  const centralDirectoryDisk = data.readUInt16LE(endOfCentralDirectory + 6)
+  const entriesOnDisk = data.readUInt16LE(endOfCentralDirectory + 8)
+  const entryCount = data.readUInt16LE(endOfCentralDirectory + 10)
+  const centralDirectoryBytes = data.readUInt32LE(endOfCentralDirectory + 12)
+  let offset = data.readUInt32LE(endOfCentralDirectory + 16)
+  if (disk !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== entryCount || entryCount === 0xffff || centralDirectoryBytes === 0xffffffff || offset === 0xffffffff) {
+    throw new Error("Recipe source zip uses an unsupported central directory")
+  }
+
+  const end = offset + centralDirectoryBytes
+  if (!Number.isSafeInteger(end) || end > endOfCentralDirectory) throw new Error("Recipe source zip has an invalid central directory range")
+
+  const entries: Array<{ name: string; compressedBytes: number; uncompressedBytes: number }> = []
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > end || data.readUInt32LE(offset) !== 0x02014b50) throw new Error("Recipe source zip has an invalid central directory entry")
+    const compressedBytes = data.readUInt32LE(offset + 20)
+    const uncompressedBytes = data.readUInt32LE(offset + 24)
+    const nameBytes = data.readUInt16LE(offset + 28)
+    const extraBytes = data.readUInt16LE(offset + 30)
+    const commentBytes = data.readUInt16LE(offset + 32)
+    if (compressedBytes === 0xffffffff || uncompressedBytes === 0xffffffff) throw new Error("Recipe source zip uses an unsupported ZIP64 entry")
+    entries.push({ name: data.toString("utf8", offset + 46, offset + 46 + nameBytes), compressedBytes, uncompressedBytes })
+    offset += 46 + nameBytes + extraBytes + commentBytes
+  }
+
+  if (offset !== end) throw new Error("Recipe source zip has an invalid central directory size")
+  return entries
+}
+
+function findEndOfCentralDirectory(data: Buffer): number {
+  const earliest = Math.max(0, data.length - 0xffff - 22)
+  for (let offset = data.length - 22; offset >= earliest; offset -= 1) {
+    if (data.readUInt32LE(offset) === 0x06054b50 && offset + 22 + data.readUInt16LE(offset + 20) === data.length) return offset
+  }
+  return -1
+}
+
+async function assertExtractedSourceBounds(directory: string, source: ZipSourceReference): Promise<void> {
   const totals = await directoryTotals(directory)
-  if (totals.files > maxExtractedFiles()) {
-    throw new Error(`Recipe source extraction contains too many files: ${totals.files}`)
+  const maxFiles = maxExtractedFilesFor(source)
+  if (totals.files > maxFiles) {
+    throw new Error(`Recipe source extraction contains too many files: ${totals.files}; limit ${maxFiles}; archive class ${source.archiveClass ?? "standard"}`)
   }
   if (totals.bytes > maxExtractedBytes()) {
     throw new Error(`Recipe source extraction exceeds ${maxExtractedBytes()} bytes: ${totals.bytes}`)

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { ALLOWED_DOWNLOAD_HOSTS_ENV, ALLOW_NETWORK_DOWNLOADS_ENV, evaluateSourcePolicy, REQUIRE_SOURCE_SHA256_ENV, sourcePolicySnapshot } from "../packages/cli/src/source-policy.js"
+import { recipeSource } from "../packages/cli/src/recipe-sources.js"
 
 const originalEnv = {
   [ALLOW_NETWORK_DOWNLOADS_ENV]: process.env[ALLOW_NETWORK_DOWNLOADS_ENV],
@@ -25,6 +26,9 @@ try {
   assert.deepEqual(evaluateSourcePolicy({ type: "https_zip", host: "example.com" }, "a".repeat(64)), [])
   assert.equal(sourcePolicySnapshot("example.com").host, "example.com")
   assert.equal(sourcePolicySnapshot("example.com").sha256Required, true)
+  assert.equal(sourcePolicySnapshot("example.com", "trusted").archiveClass, "trusted")
+  assert.equal(sourcePolicySnapshot("example.com", "trusted").maxExtractedFiles, 10_000)
+  assert.equal(recipeSource("package.zip", "a".repeat(64)).archiveClass, "trusted")
 } finally {
   for (const [name, value] of Object.entries(originalEnv)) {
     if (value === undefined) {
