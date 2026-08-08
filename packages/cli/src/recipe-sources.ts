@@ -7,10 +7,10 @@ import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, Work
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
-import { evaluateSourcePolicy, evaluateZipSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
+import { evaluateSourcePolicy, evaluateZipSourcePolicy, sourcePolicySnapshot, type ArchiveSourceClass, type SourcePolicyIssue } from "./source-policy.js"
 import { prepareLocalZipSource, prepareZipSource } from "./zip-source.js"
 
-export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloadHosts, isSha256, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles, MAX_DOWNLOAD_BYTES_ENV, MAX_EXTRACTED_BYTES_ENV, MAX_EXTRACTED_FILES_ENV, REQUIRE_SOURCE_SHA256_ENV, sourceSha256Required } from "./source-policy.js"
+export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloadHosts, archiveSourceClass, isSha256, maxCompressionRatio, maxDownloadBytes, maxExtractedBytes, maxExtractedFileBytes, maxExtractedFiles, maxExtractedFilesFor, MAX_COMPRESSION_RATIO_ENV, MAX_DOWNLOAD_BYTES_ENV, MAX_EXTRACTED_BYTES_ENV, MAX_EXTRACTED_FILES_ENV, MAX_EXTRACTED_FILE_BYTES_ENV, REQUIRE_SOURCE_SHA256_ENV, sourceSha256Required, TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES_ENV } from "./source-policy.js"
 
 const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
 const PHP_SCOPER_DOWNLOAD_ATTEMPTS = 3
@@ -46,6 +46,9 @@ export interface RecipeSourceProvenance {
     maxDownloadBytes: number
     maxExtractedBytes: number
     maxExtractedFiles: number
+    maxExtractedFileBytes: number
+    maxCompressionRatio: number
+    archiveClass: ArchiveSourceClass
     sha256Required: boolean
   }
   localPathCategory?: "recipe-relative" | "temporary-download" | "temporary-composer-autoload"
@@ -124,6 +127,7 @@ export interface ParsedRecipeSource {
   host: string
   expectedSha256?: string
   wporgSlug?: string
+  archiveClass?: ArchiveSourceClass
 }
 
 const PHP_SCOPER_VERSION = "0.18.17"
@@ -1442,7 +1446,7 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
       if (policyIssue) {
         throw new Error(policyIssue.message)
       }
-      const preparedZip = await prepareLocalZipSource(localPath, slug, source.expectedSha256)
+      const preparedZip = await prepareLocalZipSource(localPath, slug, source.expectedSha256, source.archiveClass)
       return {
         source: await extractedPluginSourceDirectory(preparedZip.extractDirectory, slug),
         cleanupPaths: [preparedZip.root],
@@ -1472,7 +1476,7 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
     provenance: {
       ...recipeSourceProvenance(source, recipeDirectory),
       digest: { sha256: preparedZip.digest, ...(source.expectedSha256 ? { expected: source.expectedSha256, verified: true } : {}) },
-      policy: sourcePolicySnapshot(source.host),
+      policy: sourcePolicySnapshot(source.host, source.archiveClass),
       localPathCategory: "temporary-download",
     },
   }
@@ -1597,7 +1601,8 @@ export function recipeSource(sourceRef: string, expectedSha256?: string): Parsed
   try {
     url = new URL(sourceRef)
   } catch {
-    return { type: "local", resolvedUrl: sourceRef, host: "", ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
+    const normalizedSha256 = expectedSha256?.toLowerCase()
+    return { type: "local", resolvedUrl: sourceRef, host: "", ...(normalizedSha256 ? { expectedSha256: normalizedSha256, archiveClass: "trusted" } : {}) }
   }
 
   if (url.protocol !== "https:") {
@@ -1611,7 +1616,7 @@ export function recipeSource(sourceRef: string, expectedSha256?: string): Parsed
   if (url.hostname === "downloads.wordpress.org" && url.pathname.startsWith("/plugin/")) {
     const filename = basename(url.pathname)
     const match = filename.match(/^([A-Za-z0-9_-]+)\./)
-    return { type: "wporg_plugin_zip", resolvedUrl: url.toString(), host: url.hostname, ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}), ...(match ? { wporgSlug: match[1] } : {}) }
+    return { type: "wporg_plugin_zip", resolvedUrl: url.toString(), host: url.hostname, archiveClass: "trusted", ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}), ...(match ? { wporgSlug: match[1] } : {}) }
   }
 
   return { type: "https_zip", resolvedUrl: url.toString(), host: url.hostname, ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
@@ -1661,7 +1666,7 @@ export function recipeSourceProvenance(source: ParsedRecipeSource, recipeDirecto
     original: source.resolvedUrl,
     resolvedUrl: source.resolvedUrl,
     ...(source.expectedSha256 ? { digest: { sha256: source.expectedSha256, expected: source.expectedSha256, verified: false } } : {}),
-    policy: sourcePolicySnapshot(source.host),
+    policy: sourcePolicySnapshot(source.host, source.archiveClass),
   }
 }
 

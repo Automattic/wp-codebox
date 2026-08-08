@@ -1,7 +1,10 @@
 export interface ExternalSourcePolicyInput {
   type: string
   host: string
+  archiveClass?: ArchiveSourceClass
 }
+
+export type ArchiveSourceClass = "standard" | "trusted"
 
 export interface SourcePolicyIssue {
   code: string
@@ -10,9 +13,12 @@ export interface SourcePolicyIssue {
 
 export interface SourcePolicySnapshot {
   host: string
+  archiveClass: ArchiveSourceClass
   maxDownloadBytes: number
   maxExtractedBytes: number
   maxExtractedFiles: number
+  maxExtractedFileBytes: number
+  maxCompressionRatio: number
   sha256Required: boolean
 }
 
@@ -22,11 +28,17 @@ export const REQUIRE_SOURCE_SHA256_ENV = "WP_CODEBOX_REQUIRE_SOURCE_SHA256"
 export const MAX_DOWNLOAD_BYTES_ENV = "WP_CODEBOX_MAX_DOWNLOAD_BYTES"
 export const MAX_EXTRACTED_BYTES_ENV = "WP_CODEBOX_MAX_EXTRACTED_BYTES"
 export const MAX_EXTRACTED_FILES_ENV = "WP_CODEBOX_MAX_EXTRACTED_FILES"
+export const TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES_ENV = "WP_CODEBOX_TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES"
+export const MAX_EXTRACTED_FILE_BYTES_ENV = "WP_CODEBOX_MAX_EXTRACTED_FILE_BYTES"
+export const MAX_COMPRESSION_RATIO_ENV = "WP_CODEBOX_MAX_COMPRESSION_RATIO"
 
 const DEFAULT_ALLOWED_DOWNLOAD_HOSTS = ["downloads.wordpress.org"]
 const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 const DEFAULT_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
 const DEFAULT_MAX_EXTRACTED_FILES = 5000
+const DEFAULT_TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES = 10_000
+const DEFAULT_MAX_EXTRACTED_FILE_BYTES = 25 * 1024 * 1024
+const DEFAULT_MAX_COMPRESSION_RATIO = 100
 
 export function isSha256(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value)
@@ -119,12 +131,34 @@ export function maxExtractedFiles(): number {
   return envPositiveInteger(MAX_EXTRACTED_FILES_ENV, DEFAULT_MAX_EXTRACTED_FILES)
 }
 
-export function sourcePolicySnapshot(host: string): SourcePolicySnapshot {
+export function archiveSourceClass(source: ExternalSourcePolicyInput): ArchiveSourceClass {
+  return source.archiveClass === "trusted" ? "trusted" : "standard"
+}
+
+export function maxExtractedFilesFor(source: ExternalSourcePolicyInput): number {
+  return archiveSourceClass(source) === "trusted"
+    ? envPositiveInteger(TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES_ENV, DEFAULT_TRUSTED_ARCHIVE_MAX_EXTRACTED_FILES)
+    : maxExtractedFiles()
+}
+
+export function maxExtractedFileBytes(): number {
+  return envPositiveInteger(MAX_EXTRACTED_FILE_BYTES_ENV, DEFAULT_MAX_EXTRACTED_FILE_BYTES)
+}
+
+export function maxCompressionRatio(): number {
+  return envPositiveInteger(MAX_COMPRESSION_RATIO_ENV, DEFAULT_MAX_COMPRESSION_RATIO)
+}
+
+export function sourcePolicySnapshot(host: string, archiveClass: ArchiveSourceClass = "standard"): SourcePolicySnapshot {
+  const source = { type: "archive", host, archiveClass }
   return {
     host,
+    archiveClass,
     maxDownloadBytes: maxDownloadBytes(),
     maxExtractedBytes: maxExtractedBytes(),
-    maxExtractedFiles: maxExtractedFiles(),
+    maxExtractedFiles: maxExtractedFilesFor(source),
+    maxExtractedFileBytes: maxExtractedFileBytes(),
+    maxCompressionRatio: maxCompressionRatio(),
     sha256Required: sourceSha256Required(),
   }
 }
