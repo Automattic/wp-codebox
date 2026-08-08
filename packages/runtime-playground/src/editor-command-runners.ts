@@ -1796,6 +1796,7 @@ const EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS = 30_000
 
 export interface BlockValidationNode {
   name: string
+  originalName?: string
   isValid: boolean
   issues: string[]
   innerBlocks?: BlockValidationNode[]
@@ -1803,6 +1804,7 @@ export interface BlockValidationNode {
 
 export interface BlockValidationResult {
   name: string
+  originalName?: string
   isValid: boolean
   issues: string[]
 }
@@ -1835,7 +1837,8 @@ export function flattenBlockValidationNodes(nodes: BlockValidationNode[]): Block
     for (const node of list) {
       results.push({
         name: typeof node.name === "string" ? node.name : "",
-        isValid: node.isValid !== false,
+        ...(typeof node.originalName === "string" && node.originalName ? { originalName: node.originalName } : {}),
+        isValid: node.isValid !== false && !(node.name === "core/missing" && node.originalName),
         issues: Array.isArray(node.issues) ? node.issues.filter((issue): issue is string => typeof issue === "string") : [],
       })
       if (Array.isArray(node.innerBlocks) && node.innerBlocks.length > 0) {
@@ -1916,10 +1919,11 @@ async function evaluateEditorBlockValidation(page: import("playwright").Page, op
       return String(issue)
     }
 
-    type ValidationNode = { name: string; isValid: boolean; issues: string[]; innerBlocks: ValidationNode[] }
+    type ValidationNode = { name: string; originalName?: string; isValid: boolean; issues: string[]; innerBlocks: ValidationNode[] }
     const validateNode = (block: unknown): ValidationNode => {
       const record = (block && typeof block === "object" ? block : {}) as Record<string, unknown>
       const name = typeof record.name === "string" ? record.name : ""
+      const originalName = typeof record.originalName === "string" ? record.originalName : ""
       let isValid = record.isValid !== false
       let issues: string[] = []
       if (typeof validateBlock === "function") {
@@ -1942,8 +1946,12 @@ async function evaluateEditorBlockValidation(page: import("playwright").Page, op
       if (isValid === false && issues.length === 0 && Array.isArray(record.validationIssues)) {
         issues = (record.validationIssues as unknown[]).map(formatIssue).filter((issue) => issue.length > 0)
       }
+      if (name === "core/missing" && originalName) {
+        isValid = false
+        if (issues.length === 0) issues = [`Missing editor registration for ${originalName}`]
+      }
       const innerBlocks = Array.isArray(record.innerBlocks) ? (record.innerBlocks as unknown[]).map(validateNode) : []
-      return { name, isValid, issues, innerBlocks }
+      return { name, ...(originalName ? { originalName } : {}), isValid, issues, innerBlocks }
     }
 
     const parsed = wpBlocks.parse(content)

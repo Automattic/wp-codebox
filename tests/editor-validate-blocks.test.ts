@@ -25,6 +25,18 @@ const tree: BlockValidationNode[] = [
 const flattened = flattenBlockValidationNodes(tree)
 assert.deepEqual(flattened.map((entry) => entry.name), ["core/columns", "core/column", "core/paragraph"])
 
+const missingCompanion = summarizeBlockValidation({
+  validationProvider: "wordpress-block-editor",
+  nodes: [{ name: "core/missing", originalName: "blocks-engine/form-input", isValid: true, issues: [] }],
+})
+assert.equal(missingCompanion.invalid_blocks, 1)
+assert.deepEqual(missingCompanion.results[0], {
+  name: "core/missing",
+  originalName: "blocks-engine/form-input",
+  isValid: false,
+  issues: [],
+})
+
 // A post with valid blocks: every block isValid, zero invalid.
 const validResult = summarizeBlockValidation({
   validationProvider: "wordpress-block-editor",
