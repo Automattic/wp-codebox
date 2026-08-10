@@ -147,7 +147,16 @@ export async function withPlaygroundArchiveCacheLock<T>(cacheDirectory: string, 
     if (lease) {
       break
     }
-    if (!await cacheLockIsActive(lockPath, Date.now(), policy, true)) {
+    let active: boolean
+    try {
+      active = await cacheLockIsActive(lockPath, Date.now(), policy, true)
+    } catch (error) {
+      // A waiter can observe the completed owner removing its expired lease sidecar.
+      // Re-read the path rather than treating this expected handoff as a replacement attack.
+      if (isLeaseSidecarHandoff(error)) continue
+      throw error
+    }
+    if (!active) {
       continue
     }
     if (Date.now() - startedAt > 120_000) {
@@ -370,9 +379,11 @@ async function tryAcquireCacheLock(lockPath: string, leaseMs: number): Promise<L
     directory = await openSafeLeaseDirectory(lockPath, false)
     return await createDirectoryLease(directory, lockPath, token, leaseMs)
   } catch (error) {
-    await directory?.handle.close().catch(() => undefined)
-    await rmdir(lockPath).catch(() => undefined)
-    if (isConcurrentDisappearance(error)) return undefined
+    if (directory) {
+      await removeLeaseDirectoryIfCurrent(directory).catch(() => undefined)
+      await directory.handle.close().catch(() => undefined)
+    }
+    if (isConcurrentDisappearance(error) || isLeaseSidecarHandoff(error)) return undefined
     throw error
   }
 }
@@ -459,6 +470,7 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
     throw error
   }
   let active = false
+  let inspectionComplete = false
   try {
     let names: string[]
     try {
@@ -490,13 +502,10 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
       }
     }
     if (names.length === 0 && now - lockStat.mtimeMs <= policy.staleLockMs) active = true
+    inspectionComplete = true
   } finally {
+    if (removeStale && !active && inspectionComplete) await removeLeaseDirectoryIfCurrent(directory)
     await directory.handle.close()
-    if (removeStale && !active) {
-      await rmdir(lockPath).catch((error) => {
-        if (!isConcurrentDisappearance(error) && !errorHasCode(error, "ENOTEMPTY")) throw error
-      })
-    }
   }
   return active
 }
@@ -709,9 +718,29 @@ function leaseDirectoryChildPath(directory: LeaseDirectory, name?: string): stri
 
 async function assertLeaseDirectoryGeneration(directory: LeaseDirectory): Promise<void> {
   if (directory.access !== "generation-checked-path") return
+  await assertLeaseDirectoryPathGeneration(directory)
+}
+
+async function assertLeaseDirectoryPathGeneration(directory: LeaseDirectory): Promise<void> {
   const [pathStat, handleStat] = await Promise.all([lstat(directory.path), directory.handle.stat()])
   if (!pathStat.isDirectory() || pathStat.isSymbolicLink() || pathStat.dev !== handleStat.dev || pathStat.ino !== handleStat.ino) {
     throw new LeaseSidecarUnsafeError(`Playground cache lease sidecar changed while accessing: ${directory.path}`)
+  }
+}
+
+async function removeLeaseDirectoryIfCurrent(directory: LeaseDirectory): Promise<boolean> {
+  try {
+    await assertLeaseDirectoryPathGeneration(directory)
+  } catch (error) {
+    if (isConcurrentDisappearance(error) || isLeaseSidecarHandoff(error)) return false
+    throw error
+  }
+  try {
+    await rmdir(directory.path)
+    return true
+  } catch (error) {
+    if (isConcurrentDisappearance(error) || errorHasCode(error, "ENOTEMPTY")) return false
+    throw error
   }
 }
 
@@ -842,6 +871,10 @@ function errorHasCode(error: unknown, code: string): boolean {
 
 function isConcurrentDisappearance(error: unknown): boolean {
   return errorHasCode(error, "ENOENT") || errorHasCode(error, "ESTALE")
+}
+
+function isLeaseSidecarHandoff(error: unknown): boolean {
+  return error instanceof LeaseSidecarUnsafeError && error.message.includes("changed while accessing")
 }
 
 async function unlinkIfPresent(path: string): Promise<boolean> {
