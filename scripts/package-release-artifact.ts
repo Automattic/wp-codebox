@@ -8,13 +8,14 @@ import { promisify } from "node:util"
 
 import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
 import { materializeSharpReleaseRuntime, sharpRuntimePackageNames } from "./lib/materialize-sharp-release-runtime.ts"
+import { normalizeReleasePlatform } from "./lib/release-target.ts"
 
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 const releaseRoot = resolve(repoRoot, "dist", "release")
 const stagingReleaseRoot = await mkdtemp(join(tmpdir(), "wp-codebox-release-"))
 const packageRoot = join(stagingReleaseRoot, "wp-codebox-cli")
-const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizePlatform(platform())
+const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizeReleasePlatform(platform())
 const archName = process.env.WP_CODEBOX_RELEASE_ARCH ?? normalizeArch(arch())
 sharpRuntimePackageNames(platformName, archName)
 const nodeRuntimeVersion = process.env.WP_CODEBOX_NODE_RUNTIME_VERSION ?? "24.16.0"
@@ -179,7 +180,7 @@ async function bundleNodeRuntime(root: string, platformName: string, archName: s
     } finally {
       await rm(tempRoot, recursiveRmOptions)
     }
-  } else if (platformName === normalizePlatform(platform()) && archName === normalizeArch(arch())) {
+  } else if (platformName === normalizeReleasePlatform(platform()) && archName === normalizeArch(arch())) {
     await cp(process.execPath, join(runtimeRoot, "bin", "node"))
     await chmod(join(runtimeRoot, "bin", "node"), 0o755)
   } else {
@@ -196,16 +197,6 @@ function nodeRuntimePackageName(platformName: string, archName: string): string 
   }
 
   return null
-}
-
-function normalizePlatform(value: NodeJS.Platform): string {
-  if (value === "darwin") {
-    return "macos"
-  }
-  if (value === "win32") {
-    return "windows"
-  }
-  return value
 }
 
 function normalizeArch(value: string): string {

@@ -7,6 +7,8 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
+import { releaseTargetMatchesHost } from "../scripts/lib/release-target.ts"
+
 const execFileAsync = promisify(execFile)
 const repositoryRoot = resolve(import.meta.dirname, "..")
 const pluginRoot = "packages/wordpress-plugin"
@@ -50,6 +52,10 @@ const cliArtifact = cliArtifacts[0] as { path: string, platform: string }
 assert.match(cliArtifact.path, /^dist\/wp-codebox-cli-[^/]+\.tar\.gz$/)
 assert.match(cliArtifact.platform, /^[a-z0-9]+-[a-z0-9]+$/)
 assert.equal(cliArtifact.path, `dist/wp-codebox-cli-${cliArtifact.platform}.tar.gz`)
+const canExecuteReleaseTarget = releaseTargetMatchesHost(cliArtifact.platform, process.platform, process.arch)
+if (!canExecuteReleaseTarget) {
+  console.log(`Skipping packaged CLI execution because release target ${cliArtifact.platform} does not match host ${process.platform}-${process.arch}.`)
+}
 
 const { stdout: tracked } = await execFileAsync("git", ["ls-files", "-z", "--", `${pluginRoot}/**`], { cwd: repositoryRoot })
 const mappedFiles = tracked
@@ -112,9 +118,12 @@ try {
       ["sharp-libvips-linux-x64", "sharp-linux-x64"],
       "release package must contain only the Sharp native runtime for its declared target",
     )
-    const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
-    assert.match(version, /^\d+\.\d+\.\d+\s*$/)
-    await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+    let version = ""
+    if (canExecuteReleaseTarget) {
+      ({ stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"]))
+      assert.match(version, /^\d+\.\d+\.\d+\s*$/)
+      await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+    }
     const descriptorModule = await import(pathToFileURL(join(root, "packages", "runtime-core", "dist", "runtime-contract-manifest.js")).href) as { runtimeDescriptor(): { capabilities: string[]; packageCapabilities: string[]; runtimeServices: { nativeMariaDb: { status: string } }; contractManifest: { capabilities: { runtimeServices: { packageCapabilities: string[] } } } } }
     const descriptor = descriptorModule.runtimeDescriptor()
     assert.equal(descriptor.capabilities.includes("runtime-service:mysql:native:mariadb"), false, "package support must not claim unknown host readiness")
@@ -122,11 +131,13 @@ try {
     assert.equal(descriptor.runtimeServices.nativeMariaDb.status, "unknown")
     assert.deepEqual(descriptor.contractManifest.capabilities.runtimeServices.packageCapabilities, ["runtime-service:mysql:native:mariadb"])
 
-    const wrapper = join(root, "bin", "wp-codebox")
-    const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
-      env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
-    })
-    assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+    if (canExecuteReleaseTarget) {
+      const wrapper = join(root, "bin", "wp-codebox")
+      const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
+        env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
+      })
+      assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+    }
 
     await assertPackagedReadonlyMaterialization(root)
   }
