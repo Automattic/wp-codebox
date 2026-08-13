@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, summarizeEditorPresentation, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
@@ -67,6 +67,31 @@ const unavailableEditorState = await captureEditorState({
   },
 } as never, target)
 assert.equal(unavailableEditorState.storesAvailable, false)
+
+const styledPresentation = summarizeEditorPresentation({
+  iframeCount: 2,
+  stylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
+  inlineStyleContents: [
+    "/* blocks-engine-presentation:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789 */",
+    "/* blocks-engine-presentation:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 */",
+  ],
+})
+assert.deepEqual(styledPresentation, {
+  schema: "wp-codebox/editor-presentation/v1",
+  iframeCount: 2,
+  iframeStylesheetUrlCount: 2,
+  iframeStylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
+  generatedPresentationIdentityCount: 1,
+  generatedPresentationIdentities: ["abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"],
+})
+assert.deepEqual(summarizeEditorPresentation({ iframeCount: 1, stylesheetUrls: [], inlineStyleContents: [".editor { color: black; }"] }), {
+  schema: "wp-codebox/editor-presentation/v1",
+  iframeCount: 1,
+  iframeStylesheetUrlCount: 0,
+  iframeStylesheetUrls: [],
+  generatedPresentationIdentityCount: 0,
+  generatedPresentationIdentities: [],
+})
 
 // Runner mutations use only the generic data/block APIs, resolve nested paths,
 // and fail closed when the required store action is unavailable.

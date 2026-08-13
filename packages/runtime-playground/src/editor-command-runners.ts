@@ -3,7 +3,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
@@ -580,6 +580,7 @@ export async function runEditorOpenCommand({
   let editorValidity: EditorValidityArtifact | undefined
   let editorCanvasReadiness: BrowserEditorCanvasProbeSummary | undefined
   let editorReadiness: BrowserEditorReadinessSummary | undefined
+  let editorPresentation: BrowserEditorPresentationSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -639,6 +640,10 @@ export async function runEditorOpenCommand({
       }
     }
 
+    if (editorReadiness) {
+      editorPresentation = await captureEditorPresentation(page)
+    }
+
     if (capture.has("editor-state")) {
       editorState = await captureEditorState(page, target)
       await artifactSession.writeJson("editorState", "editor-state.json", editorState)
@@ -653,6 +658,7 @@ export async function runEditorOpenCommand({
       htmlSha256 = sha256(Buffer.from(html, "utf8"))
     }
     if (capture.has("screenshot")) {
+      await dismissWordPressOnboardingDialogs(page)
       await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", async (path) => {
         if (editorCanvasReadiness?.ready && target.waitSelector) {
           const frame = await resolveEditorCanvasFrame(page, target.waitSelector)
@@ -708,6 +714,7 @@ export async function runEditorOpenCommand({
         ...(editorSummary ? { editor: editorSummary } : {}),
         ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
         ...(editorReadiness ? { editorReadiness } : {}),
+        ...(editorPresentation ? { editorPresentation } : {}),
         ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         viewport,
       },
@@ -803,6 +810,69 @@ export async function waitForEditorOpenReadiness(page: import("playwright").Page
   }
 
   return { editorReadiness, editorCanvasReadiness: probe.summary }
+}
+
+interface EditorPresentationCapture {
+  iframeCount: number
+  stylesheetUrls: string[]
+  inlineStyleContents: string[]
+}
+
+export function summarizeEditorPresentation(capture: EditorPresentationCapture): BrowserEditorPresentationSummary {
+  const iframeStylesheetUrls = [...new Set(capture.stylesheetUrls.map((url) => url.trim()).filter(Boolean))].sort()
+  const generatedPresentationIdentities = [...new Set(
+    capture.inlineStyleContents.flatMap((content) => [...content.matchAll(/blocks-engine-presentation:([a-f0-9]{64})/gi)].map((match) => match[1]!.toLowerCase())),
+  )].sort()
+  return {
+    schema: "wp-codebox/editor-presentation/v1",
+    iframeCount: capture.iframeCount,
+    iframeStylesheetUrlCount: iframeStylesheetUrls.length,
+    iframeStylesheetUrls,
+    generatedPresentationIdentityCount: generatedPresentationIdentities.length,
+    generatedPresentationIdentities,
+  }
+}
+
+export async function captureEditorPresentation(page: import("playwright").Page): Promise<BrowserEditorPresentationSummary> {
+  const capture = await page.evaluate(() => {
+    let iframeCount = 0
+    const stylesheetUrls: string[] = []
+    const inlineStyleContents: string[] = []
+    const iframes = Array.from(document.querySelectorAll("iframe"))
+    for (const iframe of iframes) {
+      const iframeDocument = iframe.contentDocument
+      if (!iframeDocument) continue
+      iframeCount += 1
+      for (const stylesheet of Array.from(iframeDocument.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))) {
+        if (stylesheet.href) stylesheetUrls.push(stylesheet.href)
+      }
+      for (const style of Array.from(iframeDocument.querySelectorAll("style"))) {
+        inlineStyleContents.push(style.textContent ?? "")
+      }
+    }
+    return { iframeCount, stylesheetUrls, inlineStyleContents }
+  }) as EditorPresentationCapture
+  return summarizeEditorPresentation(capture)
+}
+
+export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {
+  await page.evaluate(() => {
+    const selectors = [
+      ".components-guide__finish-button",
+      '.components-guide .components-button[aria-label="Close"]',
+      '.components-guide .components-button[aria-label="Dismiss"]',
+      ".welcome-panel-close",
+    ]
+    const dismissed = new Set<Element>()
+    for (const selector of selectors) {
+      for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+        if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
+          dismissed.add(control)
+          control.click()
+        }
+      }
+    }
+  })
 }
 
 export function editorOpenArtifactError(stepCount: number, error: Error, artifact: BrowserArtifact): BrowserCommandArtifactError {
