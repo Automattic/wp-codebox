@@ -359,7 +359,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
     }
 
     let evidence = await phaseTracker.run("collect_artifacts", { includeLogs: true, includeObservations: true }, async () => {
-      declaredArtifacts = await awaitRecipe("recipe-artifacts.collect", collectRecipeDeclaredArtifacts(recipe, runtime!))
+      declaredArtifacts = await awaitRecipe("recipe-artifacts.collect", collectRecipeDeclaredArtifacts(recipe, runtime!, inputMountPathMap))
       const declaredArtifactFailure = recipeDeclaredArtifactFailure(declaredArtifacts)
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
@@ -391,7 +391,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS, activeExecution: executions.at(-1) }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions, recipe)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
-      declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
+      declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime, inputMountPathMap)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts))
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnvSummary)
@@ -520,7 +520,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
           if (declaredArtifacts.length === 0) {
-            declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
+            declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime, inputMountPathMap)
           }
           await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
           const evidenceFiles = await appendRecipeRuntimeEvidence(artifacts, [

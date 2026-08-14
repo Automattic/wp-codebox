@@ -2,28 +2,30 @@ import { Buffer } from "node:buffer"
 import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, materializeStructuredArtifactFiles, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { appendRecipeRuntimeEvidenceFiles } from "../recipe-evidence.js"
+import { rewriteInputMountPath, type InputMountPathMapping } from "../input-mount-paths.js"
 import { serializeRecipeRunError, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError } from "./recipe-run-output.js"
 import type { RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunProbe } from "./recipe-run-types.js"
 
 const DECLARED_ARTIFACT_CAPTURE_MAX_BYTES = DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
 const declaredArtifactContents = new WeakMap<RecipeRunDeclaredArtifact, Buffer>()
 
-export async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: Runtime): Promise<RecipeRunDeclaredArtifact[]> {
+export async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: Runtime, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeRunDeclaredArtifact[]> {
   const results: RecipeRunDeclaredArtifact[] = []
   for (const { kind, index, artifact } of workspaceRecipeRuntimeCollectedArtifacts(recipe)) {
+    const effectivePath = rewriteInputMountPath(artifact.path, inputMountPathMap)
     results.push(kind === "typed"
-      ? await collectRecipeTypedArtifact(runtime, artifact, index)
-      : await collectRecipeDeclaredArtifact(runtime, artifact, index))
+      ? await collectRecipeTypedArtifact(runtime, artifact, index, effectivePath)
+      : await collectRecipeDeclaredArtifact(runtime, artifact, index, effectivePath))
   }
   return results
 }
 
-async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: WorkspaceRecipeDeclaredArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
+async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: WorkspaceRecipeDeclaredArtifact, index: number, effectivePath: string): Promise<RecipeRunDeclaredArtifact> {
   const required = artifact.required !== false
   try {
     const execution = await runtime.execute({
       command: "wordpress.run-php",
-      args: [`code=${declaredArtifactReadCode(artifact.path, artifact.parseJson === true, false)}`],
+      args: [`code=${declaredArtifactReadCode(effectivePath, artifact.parseJson === true, false)}`],
     })
     const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
     const exists = collected.exists === true
@@ -57,11 +59,11 @@ async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: Workspa
   }
 }
 
-async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
+async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number, effectivePath: string): Promise<RecipeRunDeclaredArtifact> {
   try {
     const execution = await runtime.execute({
       command: "wordpress.run-php",
-      args: [`code=${declaredArtifactReadCode(artifact.path, artifact.parseJson === true, true)}`],
+      args: [`code=${declaredArtifactReadCode(effectivePath, artifact.parseJson === true, true)}`],
     })
     const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
     const exists = collected.exists === true
