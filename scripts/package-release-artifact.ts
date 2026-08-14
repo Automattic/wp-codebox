@@ -3,7 +3,8 @@ import { createHash } from "node:crypto"
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { arch, platform } from "node:os"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { createRequire } from "node:module"
+import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 
 import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
@@ -139,8 +140,9 @@ async function materializeWorkspacePackages(root: string): Promise<void> {
 }
 
 async function writeBrowserProvenance(root: string): Promise<void> {
-  const playwright = JSON.parse(await readFile(join(root, "node_modules", "playwright", "package.json"), "utf8")) as { version: string }
-  const browsers = JSON.parse(await readFile(join(root, "node_modules", "playwright-core", "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
+  const packageRequire = createRequire(join(root, "package.json"))
+  const playwright = packageRequire("playwright/package.json") as { version: string }
+  const browsers = JSON.parse(await readFile(join(dirname(packageRequire.resolve("playwright-core")), "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
   const chromium = browsers.browsers.find((browser) => browser.name === "chromium")
   if (!chromium?.browserVersion) throw new Error("Installed Playwright package has no Chromium browser provenance.")
   const dependencyManifest = await readFile(join(root, "npm-shrinkwrap.json"))
