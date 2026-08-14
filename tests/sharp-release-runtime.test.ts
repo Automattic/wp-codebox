@@ -42,8 +42,8 @@ test("all supported runtime packages have immutable shrinkwrap provenance", asyn
 test("runtime-playground and the published aggregate package own Sharp", async () => {
   const rootPackage = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> }
   const playgroundPackage = JSON.parse(await readFile(join(repositoryRoot, "packages", "runtime-playground", "package.json"), "utf8")) as { dependencies: Record<string, string> }
-  assert.equal(rootPackage.dependencies.sharp, "0.34.5")
-  assert.equal(playgroundPackage.dependencies.sharp, "0.34.5")
+  assert.equal(rootPackage.dependencies.sharp, "0.35.3")
+  assert.equal(playgroundPackage.dependencies.sharp, "0.35.3")
 })
 
 test("rejects an unsupported release target clearly", () => {
