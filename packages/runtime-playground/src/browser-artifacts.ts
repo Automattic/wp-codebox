@@ -141,6 +141,7 @@ export interface BrowserArtifactSummary {
   editorValidity?: BrowserEditorValiditySummary
   editorValidateBlocks?: BrowserEditorValidateBlocksSummary
   editorReadiness?: BrowserEditorReadinessSummary
+  editorPresentation?: BrowserEditorPresentationSummary
   editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
   editorCapabilities?: { clipboard: "unsupported" }
@@ -285,6 +286,16 @@ export interface BrowserEditorReadinessSummary {
   blockTypesRegistered?: number
   postId?: number
   postType?: string
+}
+
+export interface BrowserEditorPresentationSummary {
+  schema: "wp-codebox/editor-presentation/v1"
+  canvasDocumentType: "iframe" | "parent"
+  iframeCount: number
+  iframeStylesheetUrlCount: number
+  iframeStylesheetUrls: string[]
+  generatedPresentationIdentityCount: number
+  generatedPresentationIdentities: string[]
 }
 
 export interface BrowserEditorSaveSummary {

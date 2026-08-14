@@ -138,6 +138,7 @@ jobs:
       - run: npm run test:native-agent-task-interruption
       - run: npm run test:trusted-apply-artifact-channel
       - run: npm run test:runtime-command-artifact-bounds
+      - run: npm run test:recipe-declared-artifacts
       - run: npm run test:redaction
       - run: npm run test:browser-preview-routing
       - run: npm run test:browser-routed-command-security

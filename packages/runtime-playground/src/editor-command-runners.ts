@@ -3,7 +3,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
@@ -22,6 +22,11 @@ const EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR = 'iframe[name="editor-canvas"]'
 const EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR = ".block-editor-block-list__layout"
 const EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR = ".block-editor-block-list__block, [data-block]"
 const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
+const EDITOR_PRESENTATION_SETTLE_MS = 250
+const EDITOR_PRESENTATION_MIN_OBSERVATION_MS = 4_000
+const EDITOR_PRESENTATION_POLL_MS = 50
+const EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS = 1_000
+const EDITOR_PRESENTATION_MAX_CAPTURE_MS = 10_000
 const EDITOR_VALIDITY_WARNING_SELECTORS = [
   ".block-editor-warning",
   ".block-editor-block-list__block.is-invalid",
@@ -350,11 +355,9 @@ async function waitForEditorCanvasProbe(page: import("playwright").Page, options
 }
 
 async function resolveEditorCanvasFrame(page: import("playwright").Page, iframeSelector: string): Promise<import("playwright").Frame | null> {
-  const namedFrame = page.frame({ name: "editor-canvas" })
-  if (namedFrame) {
-    return namedFrame
-  }
-  const handle = await page.locator(iframeSelector).elementHandle().catch(() => null)
+  const locator = page.locator(iframeSelector).first()
+  if (await locator.count() === 0) return null
+  const handle = await locator.elementHandle().catch(() => null)
   return handle ? await handle.contentFrame() : null
 }
 
@@ -580,6 +583,7 @@ export async function runEditorOpenCommand({
   let editorValidity: EditorValidityArtifact | undefined
   let editorCanvasReadiness: BrowserEditorCanvasProbeSummary | undefined
   let editorReadiness: BrowserEditorReadinessSummary | undefined
+  let editorPresentation: BrowserEditorPresentationSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -639,6 +643,10 @@ export async function runEditorOpenCommand({
       }
     }
 
+    if (editorReadiness) {
+      editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
+    }
+
     if (capture.has("editor-state")) {
       editorState = await captureEditorState(page, target)
       await artifactSession.writeJson("editorState", "editor-state.json", editorState)
@@ -653,6 +661,7 @@ export async function runEditorOpenCommand({
       htmlSha256 = sha256(Buffer.from(html, "utf8"))
     }
     if (capture.has("screenshot")) {
+      await dismissWordPressOnboardingDialogs(page)
       await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", async (path) => {
         if (editorCanvasReadiness?.ready && target.waitSelector) {
           const frame = await resolveEditorCanvasFrame(page, target.waitSelector)
@@ -708,6 +717,7 @@ export async function runEditorOpenCommand({
         ...(editorSummary ? { editor: editorSummary } : {}),
         ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
         ...(editorReadiness ? { editorReadiness } : {}),
+        ...(editorPresentation ? { editorPresentation } : {}),
         ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         viewport,
       },
@@ -803,6 +813,116 @@ export async function waitForEditorOpenReadiness(page: import("playwright").Page
   }
 
   return { editorReadiness, editorCanvasReadiness: probe.summary }
+}
+
+interface EditorPresentationCapture {
+  canvasDocumentType: "iframe" | "parent"
+  iframeCount: number
+  stylesheetUrls: string[]
+  inlineStyleContents: string[]
+}
+
+export function summarizeEditorPresentation(capture: EditorPresentationCapture): BrowserEditorPresentationSummary {
+  const iframeStylesheetUrls = [...new Set(capture.stylesheetUrls.map((url) => url.trim()).filter(Boolean))].sort()
+  const generatedPresentationIdentities = [...new Set(
+    capture.inlineStyleContents.flatMap((content) => [...content.matchAll(/blocks-engine-presentation:([a-f0-9]{64})/gi)].map((match) => match[1]!.toLowerCase())),
+  )].sort()
+  return {
+    schema: "wp-codebox/editor-presentation/v1",
+    canvasDocumentType: capture.canvasDocumentType,
+    iframeCount: capture.iframeCount,
+    iframeStylesheetUrlCount: iframeStylesheetUrls.length,
+    iframeStylesheetUrls,
+    generatedPresentationIdentityCount: generatedPresentationIdentities.length,
+    generatedPresentationIdentities,
+  }
+}
+
+export async function captureEditorPresentation(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorPresentationSummary | undefined> {
+  const startedAtMs = Date.now()
+  const deadlineMs = startedAtMs + Math.min(timeoutMs, EDITOR_PRESENTATION_MAX_CAPTURE_MS)
+  let previousFingerprint: string | undefined
+  let stableSinceMs: number | undefined
+  let sawCanvas = false
+
+  while (Date.now() <= deadlineMs) {
+    const frame = await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+    let canvas: import("playwright").Page | import("playwright").Frame | undefined = frame ?? undefined
+    let canvasDocumentType: "iframe" | "parent" = "iframe"
+    if (!frame) {
+      const hasParentDocumentCanvas = await page.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().isVisible().catch(() => false)
+      if (sawCanvas || !hasParentDocumentCanvas || Date.now() - startedAtMs < EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS) {
+        previousFingerprint = undefined
+        stableSinceMs = undefined
+        await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
+        continue
+      }
+      canvas = page
+      canvasDocumentType = "parent"
+    }
+
+    if (!canvas) continue
+    if (frame) sawCanvas = true
+    const capture = await canvas.evaluate(({ canvasDocumentType, iframeCount }) => {
+      if (document.readyState !== "complete" || document.fonts?.status === "loading") return null
+      const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
+      if (stylesheets.some((stylesheet) => !stylesheet.disabled && !stylesheet.sheet)) return null
+      return {
+        documentIdentity: `${location.href}\n${performance.timeOrigin}`,
+        documentAgeMs: performance.now(),
+        canvasDocumentType,
+        iframeCount,
+        stylesheetUrls: stylesheets.flatMap((stylesheet) => stylesheet.href ? [stylesheet.href] : []),
+        inlineStyleContents: Array.from(document.querySelectorAll("style"), (style) => style.textContent ?? ""),
+      }
+    }, { canvasDocumentType, iframeCount: canvasDocumentType === "iframe" ? 1 : 0 }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
+    if (capture) {
+      const summary = summarizeEditorPresentation(capture)
+      const fingerprint = `${capture.documentIdentity}\n${JSON.stringify(summary)}`
+      const observedAtMs = Date.now()
+      if (fingerprint === previousFingerprint) {
+        const currentDocumentIdentity = capture.canvasDocumentType === "iframe"
+          ? await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+              .then(async (currentFrame) => currentFrame && currentFrame === frame ? await currentFrame.evaluate(() => `${location.href}\n${performance.timeOrigin}`) : undefined)
+              .catch(() => undefined)
+          : await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+              .then(async (currentFrame) => currentFrame ? undefined : await page.evaluate(() => `${location.href}\n${performance.timeOrigin}`))
+              .catch(() => undefined)
+        if (stableSinceMs !== undefined
+          && observedAtMs - stableSinceMs >= EDITOR_PRESENTATION_SETTLE_MS
+          && capture.documentAgeMs >= EDITOR_PRESENTATION_MIN_OBSERVATION_MS
+          && currentDocumentIdentity === capture.documentIdentity) {
+          return summary
+        }
+      } else {
+        previousFingerprint = fingerprint
+        stableSinceMs = observedAtMs
+      }
+    }
+    await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
+  }
+
+  return undefined
+}
+
+export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {
+  await page.evaluate(() => {
+    const selectors = [
+      ".components-guide__finish-button",
+      '.components-guide .components-button[aria-label="Close"]',
+      '.components-guide .components-button[aria-label="Dismiss"]',
+      ".welcome-panel-close",
+    ]
+    const dismissed = new Set<Element>()
+    for (const selector of selectors) {
+      for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+        if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
+          dismissed.add(control)
+          control.click()
+        }
+      }
+    }
+  })
 }
 
 export function editorOpenArtifactError(stepCount: number, error: Error, artifact: BrowserArtifact): BrowserCommandArtifactError {
@@ -1813,6 +1933,8 @@ export interface EditorValidateBlocksResult {
   invalid_blocks: number
   validation_method: "wp.blocks.validateBlock"
   validation_provider: string
+  content_source: "argument" | "edited-post-content"
+  block_types_registered: number
   results: BlockValidationResult[]
 }
 
@@ -1847,7 +1969,7 @@ export function flattenBlockValidationNodes(nodes: BlockValidationNode[]): Block
   return results
 }
 
-export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; validationProvider: string }): EditorValidateBlocksResult {
+export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; validationProvider: string; contentSource: "argument" | "edited-post-content"; blockTypesRegistered: number }): EditorValidateBlocksResult {
   const results = flattenBlockValidationNodes(input.nodes)
   const validBlocks = results.filter((result) => result.isValid).length
   return {
@@ -1856,6 +1978,8 @@ export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; 
     invalid_blocks: results.length - validBlocks,
     validation_method: "wp.blocks.validateBlock",
     validation_provider: input.validationProvider,
+    content_source: input.contentSource,
+    block_types_registered: input.blockTypesRegistered,
     results,
   }
 }
@@ -1863,7 +1987,12 @@ export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; 
 export async function validateEditorBlocks(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidation> {
   const evaluation = await evaluateEditorBlockValidation(page, options)
   return {
-    result: summarizeBlockValidation({ nodes: evaluation.nodes, validationProvider: evaluation.validationProvider }),
+    result: summarizeBlockValidation({
+      nodes: evaluation.nodes,
+      validationProvider: evaluation.validationProvider,
+      contentSource: evaluation.contentSource,
+      blockTypesRegistered: evaluation.blockTypesRegistered,
+    }),
     contentSource: evaluation.contentSource,
     blockTypesRegistered: evaluation.blockTypesRegistered,
   }

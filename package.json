@@ -270,6 +270,7 @@
     "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:preview-options": "tsx tests/preview-options.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
+    "test:recipe-declared-artifacts": "tsx tests/recipe-declared-artifacts.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:composer-package-overlay-revision": "tsx scripts/composer-backed-source-hydration-smoke.ts",
     "test:composer-package-overlay-autoload-layout": "tsx scripts/composer-package-overlay-autoload-layout-smoke.ts",

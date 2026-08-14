@@ -1303,7 +1303,7 @@ export const commandRegistry = [
       { name: "capture", description: "Comma-separated artifacts to capture after opening the editor.", format: "steps,console,errors,html,screenshot,editor-state,editor-validity" },
       { name: "artifact-prefix", description: "Optional artifact directory relative to the runtime artifact root for this invocation; defaults to files/browser. Use files/browser/editor-open/<name> to isolate per-fixture editor-open evidence in a batch.", format: "relative artifact directory" },
     ],
-    outputShape: "JSON summary plus files/browser/editor-steps.jsonl, editor-summary.json, editor-state.json, optional editor-validity.json, and optional console/errors/html/screenshot artifacts. When artifact-prefix is supplied, every editor-open artifact is written under that directory instead of files/browser.",
+    outputShape: "JSON summary with additive editorPresentation iframe stylesheet URLs and generated-presentation identities, plus files/browser/editor-steps.jsonl, editor-summary.json, editor-state.json, optional editor-validity.json, and optional console/errors/html/screenshot artifacts. When artifact-prefix is supplied, every editor-open artifact is written under that directory instead of files/browser.",
     policyRequirement: "Runtime policy commands must include wordpress.editor-open.",
     recipe: true,
     handler: { kind: "playground", method: "runEditorOpen" },
