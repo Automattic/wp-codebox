@@ -168,6 +168,7 @@
     "test:bounded-runtime-plan": "tsx tests/bounded-runtime-plan.test.ts",
     "test:bounded-recipe-plan": "tsx tests/bounded-recipe-plan.test.ts",
     "test:bounded-recipe-plan-integration": "tsx tests/bounded-recipe-plan.integration.test.ts",
+    "test:recipe-step-continuation": "tsx tests/recipe-step-continuation.test.ts && tsx tests/recipe-step-continuation.integration.test.ts",
     "test:fanout-execution": "tsx tests/fanout-execution.test.ts",
     "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:fanout-aggregation-contract-parity": "tsx tests/fanout-aggregation-contract-parity.test.ts",

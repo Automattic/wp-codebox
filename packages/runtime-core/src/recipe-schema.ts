@@ -1222,6 +1222,28 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         type: "object",
         additionalProperties: false,
         required: ["command"],
+        allOf: [
+          {
+            if: {
+              properties: {
+                command: {
+                  enum: [
+                    "wordpress.collect-workload-result",
+                    "wordpress.run-workload",
+                    "wp-codebox.agent-fanout",
+                    "wp-codebox.bounded-runtime-plan",
+                    "wp-codebox.checkpoint-create",
+                    "wp-codebox.checkpoint-restore",
+                    "wp-codebox.checkpoint-list",
+                    "wp-codebox/run-fuzz-suite",
+                  ],
+                },
+              },
+              required: ["command"],
+            },
+            then: { not: { required: ["continuation"] } },
+          },
+        ],
         properties: {
           command: commandSchema,
           args: {
@@ -1229,11 +1251,56 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             items: { type: "string" },
           },
           timeoutMs: { type: "integer", minimum: 1 },
+          continuation: { $ref: "#/$defs/stepContinuation" },
           diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           metadata: { $ref: "#/$defs/metadata" },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
         },
+      },
+      stepContinuation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["maxIterations", "while", "inputMappings"],
+        properties: {
+          maxIterations: { type: "integer", minimum: 2, maximum: 1000 },
+          while: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pointer", "equals"],
+            properties: {
+              pointer: { $ref: "#/$defs/jsonPointer" },
+              equals: {},
+            },
+          },
+          inputMappings: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["from", "to"],
+              properties: {
+                from: { $ref: "#/$defs/jsonPointer" },
+                to: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["arg", "pointer"],
+                  properties: {
+                    arg: { type: "string", minLength: 1, maxLength: 256 },
+                    pointer: { $ref: "#/$defs/jsonPointer" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      jsonPointer: {
+        type: "string",
+        maxLength: 1024,
+        pattern: "^(|/(?:[^~/]|~[01])*)*$",
       },
       commandDiagnosticsCapture: {
         type: "object",

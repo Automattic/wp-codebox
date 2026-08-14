@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { commandArgValue, parseCommandJson, parseCommandJsonObject, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type FuzzSuiteContract, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
@@ -12,7 +13,7 @@ import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validat
 import { artifactManifestFilesByPath } from "./recipe-run-benchmark-artifacts.js"
 import { assertResolvedInputMountPathArgs, rewriteInputMountPathArgs, rewriteInputMountPathJsonArgs, type InputMountPathMapping } from "../input-mount-paths.js"
 import { RecipeRunTimeoutError, serializeRecipeRunError } from "./recipe-run-output.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe, RecipeStepFailure, RecipeWorkflowArgsEvidence } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeContinuationEvidence, RecipeContinuationProgress, RecipeExecutionResult, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe, RecipeStepFailure, RecipeWorkflowArgsEvidence } from "./recipe-run-types.js"
 
 export function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string, recipeArgs?: RecipeWorkflowArgsEvidence, recipeStepMetadata?: Record<string, unknown>): RecipeExecutionResult {
   return {
@@ -44,7 +45,8 @@ export function recipeWorkflowStepIsAdvisory(step: WorkspaceRecipe["workflow"]["
   return step.allowFailure === true || step.advisory === true
 }
 
-export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown): RecipeAdvisoryFailure {
+export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown, continuationProgress?: RecipeContinuationProgress): RecipeAdvisoryFailure {
+  const continuationEvidence = recipeFailureContinuationEvidence(error, continuationProgress)
   return {
     schema: "wp-codebox/recipe-advisory-failure/v1",
     phase: workflowStep.phase,
@@ -52,11 +54,13 @@ export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWork
     command: workflowStep.step.command,
     status: "failed",
     error: serializeRecipeRunError(error),
+    ...(continuationEvidence ? { continuationEvidence } : {}),
   }
 }
 
-export function recipeStepFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown, startedAtMs: number, finishedAtMs = Date.now()): RecipeStepFailure {
+export function recipeStepFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown, startedAtMs: number, finishedAtMs = Date.now(), continuationProgress?: RecipeContinuationProgress): RecipeStepFailure {
   const timeoutError = recipeTimeoutError(error)
+  const continuationEvidence = recipeFailureContinuationEvidence(error, continuationProgress)
   return stripUndefined({
     schema: "wp-codebox/recipe-step-failure/v1",
     phase: workflowStep.phase,
@@ -69,13 +73,34 @@ export function recipeStepFailure(workflowStep: ReturnType<typeof recipeWorkflow
     classification: timeoutError ? "timeout" as const : "error" as const,
     timeoutMs: timeoutError?.timeoutMs,
     error: serializeRecipeRunError(error),
+    continuationEvidence,
   }) as RecipeStepFailure
 }
 
 function recipeTimeoutError(error: unknown): RecipeRunTimeoutError | undefined {
   if (error instanceof RecipeRunTimeoutError) return error
-  if (error instanceof Error && error.cause instanceof RecipeRunTimeoutError) return error.cause
+  if (error instanceof Error && error.cause) return recipeTimeoutError(error.cause)
   return undefined
+}
+
+function recipeContinuationError(error: unknown): RecipeContinuationError | undefined {
+  if (error instanceof RecipeContinuationError) return error
+  if (error instanceof Error && error.cause) return recipeContinuationError(error.cause)
+  return undefined
+}
+
+function recipeFailureContinuationEvidence(error: unknown, progress?: RecipeContinuationProgress): RecipeContinuationEvidence | undefined {
+  const evidence = recipeContinuationError(error)?.continuationEvidence
+  if (evidence || !progress) return evidence
+  const timeout = recipeTimeoutError(error)
+  return {
+    ...progress,
+    status: "failed",
+    diagnostics: {
+      code: timeout ? "step-timeout" : "step-failed",
+      message: timeout ? `Continuation timed out after ${timeout.timeoutMs}ms.` : "Continuation failed before producing terminal evidence.",
+    },
+  }
 }
 
 export async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[], recipe?: WorkspaceRecipe): Promise<RecipeBrowserEvidence[]> {
@@ -207,7 +232,7 @@ function recipeCommandProducesBrowserEvidence(command: string): boolean {
   return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.editor-validate-blocks" || command === "wordpress.html-capture" || command === "wordpress.visual-compare"
 }
 
-export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeExecutionResult> {
+export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions, inputMountPathMap: readonly InputMountPathMapping[] = [], onContinuationProgress?: (progress: RecipeContinuationProgress) => void): Promise<RecipeExecutionResult> {
   const originalArgs = workflowStep.step.args ?? []
   const resolvedArgs = rewriteWorkflowStepArgs(workflowStep.step.command, originalArgs, inputMountPathMap)
   assertResolvedInputMountPathArgs(resolvedArgs, inputMountPathMap, `Recipe workflow ${workflowStep.phase}[${workflowStep.index}] ${workflowStep.step.command}`)
@@ -216,6 +241,12 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
   const mappedWorkflowStep = { ...workflowStep, step }
   const phase = (execution: ExecutionResult, command = step.command, evidence = argsEvidence) => withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, command, evidence, step.metadata)
   try {
+    if (step.continuation) {
+      if (recipeCommandHandlesItsOwnExecution(step.command)) {
+        throw new Error(`Continuation is unavailable for recipe command ${step.command}.`)
+      }
+      return await executeRecipeStepContinuation(runtime, mappedWorkflowStep, recipeDirectory, sandboxWorkspace, inputMountPathMap, onContinuationProgress)
+    }
     if (step.command === "wp-codebox.agent-fanout") {
       const startedAt = new Date().toISOString()
       const result = await executeAgentFanoutFromArgs(step.args ?? [], {
@@ -286,6 +317,179 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${mappedWorkflowStep.phase}[${mappedWorkflowStep.index}] failed: ${message}`, { cause: error })
   }
+}
+
+function recipeCommandHandlesItsOwnExecution(command: string): boolean {
+  return command === "wordpress.collect-workload-result"
+    || command === "wordpress.run-workload"
+    || command === "wp-codebox.agent-fanout"
+    || command === "wp-codebox.bounded-runtime-plan"
+    || command === "wp-codebox.checkpoint-create"
+    || command === "wp-codebox.checkpoint-restore"
+    || command === "wp-codebox.checkpoint-list"
+    || command === "wp-codebox/run-fuzz-suite"
+}
+
+export class RecipeContinuationError extends Error {
+  readonly code = "recipe-continuation-failed"
+
+  constructor(message: string, readonly continuationEvidence: RecipeContinuationEvidence) {
+    super(message)
+    this.name = "RecipeContinuationError"
+  }
+}
+
+async function executeRecipeStepContinuation(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace: ReturnType<typeof sandboxWorkspaceContract> | undefined, inputMountPathMap: readonly InputMountPathMapping[], onProgress?: (progress: RecipeContinuationProgress) => void): Promise<RecipeExecutionResult> {
+  const continuation = workflowStep.step.continuation!
+  let args = rewriteWorkflowStepArgs(workflowStep.step.command, workflowStep.step.args ?? [], inputMountPathMap)
+  const policy = continuationPolicyEvidence(continuation)
+  const executions: RecipeContinuationEvidence["executions"] = []
+  const progress = (): RecipeContinuationProgress => ({ schema: "wp-codebox/recipe-continuation-evidence/v1", policy, iterations: executions.length, executions: [...executions] })
+  onProgress?.(progress())
+  const fail = (code: string, message: string): never => {
+    throw new RecipeContinuationError(message, { schema: "wp-codebox/recipe-continuation-evidence/v1", policy, status: "failed", iterations: executions.length, executions, diagnostics: { code, message } })
+  }
+
+  for (let iteration = 1; iteration <= continuation.maxIterations; iteration++) {
+    let execution: ExecutionResult | undefined
+    try {
+      const spec = await recipeExecutionSpec({ ...workflowStep.step, args }, recipeDirectory, sandboxWorkspace, { inputMountPathMap })
+      execution = await runtime.execute(spec)
+      args = spec.resolvedArgs
+    } catch (error) {
+      fail("execution-error", error instanceof Error ? error.message : String(error))
+    }
+    if (!execution) fail("execution-error", "Continuation command did not produce an execution result.")
+    const completedExecution = execution as ExecutionResult
+    const result = continuationResult(completedExecution)
+    executions.push(continuationExecutionEvidence(iteration, args, completedExecution.exitCode, result))
+    onProgress?.(progress())
+    if (completedExecution.exitCode !== 0) {
+      fail("command-failed", `Continuation command exited with code ${completedExecution.exitCode}.`)
+    }
+    const predicate = pointerValue(result, continuation.while.pointer)
+    if (!predicate.found) {
+      fail("predicate-value-missing", `Continuation predicate pointer ${continuation.while.pointer} did not resolve.`)
+    }
+    if (!isDeepStrictEqual(predicate.value, continuation.while.equals)) {
+      return {
+        ...withRecipeExecutionPhase(completedExecution, workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, args), workflowStep.step.metadata),
+        continuationEvidence: { schema: "wp-codebox/recipe-continuation-evidence/v1", policy, status: "completed", iterations: iteration, executions },
+      }
+    }
+    if (iteration === continuation.maxIterations) {
+      throw new RecipeContinuationError(`Continuation reached its maximum of ${continuation.maxIterations} iterations without a terminal result.`, { schema: "wp-codebox/recipe-continuation-evidence/v1", policy, status: "exhausted", iterations: iteration, executions, diagnostics: { code: "max-iterations-exhausted", message: "Continuation predicate remained matched at the iteration limit." } })
+    }
+    args = applyContinuationMappings(args, result, continuation.inputMappings, fail)
+  }
+  throw new Error("Unreachable continuation state")
+}
+
+const CONTINUATION_RESULT_PREVIEW_MAX_BYTES = 4096
+
+function continuationPolicyEvidence(continuation: NonNullable<WorkspaceRecipe["workflow"]["steps"][number]["continuation"]>): RecipeContinuationEvidence["policy"] {
+  const serializedEquals = JSON.stringify(continuation.while.equals) ?? "null"
+  const equalsBytes = Buffer.byteLength(serializedEquals, "utf8")
+  return {
+    maxIterations: continuation.maxIterations,
+    while: {
+      pointer: continuation.while.pointer,
+      equalsBytes,
+      equalsSha256: createHash("sha256").update(serializedEquals).digest("hex"),
+      ...(equalsBytes <= CONTINUATION_RESULT_PREVIEW_MAX_BYTES ? { equals: continuation.while.equals } : { equalsTruncated: true }),
+    },
+    inputMappings: continuation.inputMappings.map((mapping) => ({ from: mapping.from, to: { ...mapping.to } })),
+  }
+}
+
+function continuationExecutionEvidence(iteration: number, args: string[], exitCode: number, result: unknown): RecipeContinuationEvidence["executions"][number] {
+  const serialized = result === undefined ? "" : JSON.stringify(result)
+  const resultBytes = Buffer.byteLength(serialized, "utf8")
+  return {
+    iteration,
+    exitCode,
+    argsSha256: createHash("sha256").update(JSON.stringify(args)).digest("hex"),
+    resultBytes,
+    resultSha256: createHash("sha256").update(serialized).digest("hex"),
+    ...(result !== undefined && resultBytes <= CONTINUATION_RESULT_PREVIEW_MAX_BYTES ? { result } : {}),
+    ...(resultBytes > CONTINUATION_RESULT_PREVIEW_MAX_BYTES ? { resultTruncated: true } : {}),
+  }
+}
+
+function continuationResult(execution: ExecutionResult): unknown {
+  if (execution.result?.json !== undefined) return execution.result.json
+  try {
+    return JSON.parse(execution.stdout)
+  } catch {
+    return undefined
+  }
+}
+
+function applyContinuationMappings(args: string[], result: unknown, mappings: NonNullable<WorkspaceRecipe["workflow"]["steps"][number]["continuation"]>["inputMappings"], fail: (code: string, message: string) => never): string[] {
+  const next = [...args]
+  for (const mapping of mappings) {
+    const source = pointerValue(result, mapping.from)
+    if (!source.found) fail("mapping-source-missing", `Continuation source pointer ${mapping.from} did not resolve.`)
+    const indexes = next.map((argument, index) => argument.startsWith(`${mapping.to.arg}=`) ? index : -1).filter((index) => index >= 0)
+    if (indexes.length !== 1) fail(indexes.length === 0 ? "target-argument-missing" : "target-argument-ambiguous", `Continuation target argument ${mapping.to.arg} must appear exactly once.`)
+    const index = indexes[0]!
+    const raw = next[index]!.slice(mapping.to.arg.length + 1)
+    let target: unknown
+    try {
+      target = JSON.parse(raw)
+    } catch {
+      fail("target-argument-not-json", `Continuation target argument ${mapping.to.arg} must contain JSON.`)
+    }
+    if (!target || typeof target !== "object") fail("target-argument-not-container", `Continuation target argument ${mapping.to.arg} must contain a JSON object or array.`)
+    if (mapping.to.pointer === "") fail("target-root-mutation-unsupported", "Continuation mappings cannot replace a target argument root.")
+    if (!setPointerValue(target, mapping.to.pointer, source.value)) fail("target-pointer-missing", `Continuation target pointer ${mapping.to.pointer} did not resolve to an existing value.`)
+    next[index] = `${mapping.to.arg}=${JSON.stringify(target)}`
+  }
+  return next
+}
+
+function pointerValue(value: unknown, pointer: string): { found: boolean; value?: unknown } {
+  const segments = decodeJsonPointer(pointer)
+  if (!segments) return { found: false }
+  let current = value
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      if (!/^(0|[1-9][0-9]*)$/.test(segment) || Number(segment) >= current.length) return { found: false }
+      current = current[Number(segment)]
+    } else if (current && typeof current === "object" && Object.prototype.hasOwnProperty.call(current, segment)) {
+      current = (current as Record<string, unknown>)[segment]
+    } else return { found: false }
+  }
+  return { found: true, value: current }
+}
+
+function setPointerValue(target: object, pointer: string, value: unknown): boolean {
+  const segments = decodeJsonPointer(pointer)
+  if (!segments || segments.length === 0) return false
+  const parentSegments = segments.slice(0, -1)
+  const parent = pointerValue(target, parentSegments.length === 0 ? "" : `/${parentSegments.map(encodeJsonPointerSegment).join("/")}`)
+  if (!parent.found || !parent.value || typeof parent.value !== "object") return false
+  const key = segments.at(-1)!
+  if (Array.isArray(parent.value)) {
+    if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= parent.value.length) return false
+    parent.value[Number(key)] = value
+    return true
+  }
+  if (["__proto__", "constructor", "prototype"].includes(key)) return false
+  ;(parent.value as Record<string, unknown>)[key] = value
+  return true
+}
+
+function decodeJsonPointer(pointer: string): string[] | undefined {
+  if (pointer === "") return []
+  if (!pointer.startsWith("/")) return undefined
+  const segments = pointer.slice(1).split("/")
+  if (segments.some((segment) => /~(?:[^01]|$)/.test(segment))) return undefined
+  return segments.map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
+}
+
+function encodeJsonPointerSegment(segment: string): string {
+  return segment.replace(/~/g, "~0").replace(/\//g, "~1")
 }
 
 function rewriteWorkflowStepArgs(command: string, args: readonly string[], inputMountPathMap: readonly InputMountPathMapping[] = []): string[] {

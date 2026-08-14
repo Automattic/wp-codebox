@@ -130,6 +130,7 @@ jobs:
       - run: npm run test:bounded-runtime-plan
       - run: npm run test:bounded-recipe-plan
       - run: npm run test:bounded-recipe-plan-integration
+      - run: npm run test:recipe-step-continuation
       - run: npm run test:disposable-mysql-mysqli-e2e
       - run: npm run test:runtime-sources-playground-integration
       - run: npm run test:playground-phpunit-readonly-cache-integration

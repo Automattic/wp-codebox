@@ -293,10 +293,30 @@ export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
   timeoutMs?: number
+  continuation?: WorkspaceRecipeStepContinuation
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean
   advisory?: boolean
+}
+
+export interface WorkspaceRecipeStepContinuation {
+  maxIterations: number
+  while: WorkspaceRecipeStepContinuationPredicate
+  inputMappings: WorkspaceRecipeStepContinuationInputMapping[]
+}
+
+export interface WorkspaceRecipeStepContinuationPredicate {
+  pointer: string
+  equals: unknown
+}
+
+export interface WorkspaceRecipeStepContinuationInputMapping {
+  from: string
+  to: {
+    arg: string
+    pointer: string
+  }
 }
 
 export interface RuntimeCommandDiagnosticsCaptureSpec {
