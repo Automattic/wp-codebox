@@ -125,6 +125,53 @@ Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
 artifact contracts. WP Codebox materializes declared repositories as sandbox
 workspace mounts; callers own the policy that decides which artifacts to pass.
 
+## Bounded Step Continuation
+
+A workflow step can repeat a JSON-producing command in the same runtime and map
+values from one result into the next invocation. The contract uses RFC 6901 JSON
+Pointers and always requires a finite `maxIterations`:
+
+```json
+{
+  "command": "wordpress.ability",
+  "args": [
+    "name=example/resumable-operation",
+    "input={\"url\":\"https://example.com/\"}"
+  ],
+  "continuation": {
+    "maxIterations": 100,
+    "while": {
+      "pointer": "/result/continuation",
+      "equals": true
+    },
+    "inputMappings": [
+      {
+        "from": "/result/receipt",
+        "to": {
+          "arg": "input",
+          "pointer": "/receipt"
+        }
+      }
+    ]
+  }
+}
+```
+
+The runner evaluates pointers against `execution.result.json`, falling back to a
+JSON object parsed from stdout. Each mapping updates one JSON-valued `key=value`
+argument while preserving all unrelated arguments. Missing or malformed values,
+ambiguous target arguments, command failures, and a still-matched predicate at
+the iteration limit fail closed. Continuation is unavailable for synthetic and
+host-executed recipe helpers such as workload collection, workload manifests,
+fanout, bounded plans, checkpoints, and fuzz suites. A continuation accepts at
+most 64 input mappings; argument names and JSON Pointers are length-bounded. The
+terminal command result stays compatible with normal step consumers.
+Per-iteration evidence records argument and result SHA-256 digests, byte counts,
+and a result preview only when it is at most 4 KiB. Predicate equality evidence
+follows the same 4 KiB preview bound. Failed and timed-out steps retain partial
+bounded `wp-codebox/recipe-continuation-evidence/v1` evidence in their failure
+record.
+
 ## Adversarial Campaigns
 
 `adversarialCampaigns` additively declares deterministic corpus campaigns without

@@ -268,6 +268,7 @@ interface RecipeDryRunStep {
   resolvedCommand: string
   resolvedArgs: string[]
   resolvedParsedArgs: Record<string, string | true>
+  continuation?: WorkspaceRecipe["workflow"]["steps"][number]["continuation"]
   policy: {
     status: "allowed" | "denied"
     command: string
@@ -656,6 +657,7 @@ async function recipeDryRunStep(step: WorkspaceRecipe["workflow"]["steps"][numbe
     resolvedCommand: resolved.command,
     resolvedArgs: resolved.args,
     resolvedParsedArgs: parseRecipeArgs(resolved.args),
+    ...(step.continuation ? { continuation: step.continuation } : {}),
     policy: {
       status: allowed ? "allowed" : "denied",
       command: resolved.command,

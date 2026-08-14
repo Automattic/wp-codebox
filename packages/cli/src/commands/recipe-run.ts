@@ -33,7 +33,7 @@ import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeSer
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import { classifyRuntimeMemoryFailure, replayWithHostNodeHeap } from "../host-node-heap.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeContinuationProgress, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -318,20 +318,21 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       for (const workflowStep of workflowSteps) {
         const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
         const stepStartedAtMs = Date.now()
+        let continuationProgress: RecipeContinuationProgress | undefined
         try {
           const execution = await awaitRecipe(operation, async () => workflowStep.step.command === "wordpress.collect-workload-result"
             ? withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args), workflowStep.step.metadata)
-            : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap), workflowStep.step.timeoutMs)
+            : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap, (progress) => { continuationProgress = progress }), workflowStep.step.timeoutMs)
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
         } catch (error) {
-          const failure = recipeStepFailure(workflowStep, error, stepStartedAtMs)
+          const failure = recipeStepFailure(workflowStep, error, stepStartedAtMs, Date.now(), continuationProgress)
           stepFailures.push(failure)
           await artifactPointer.update({ command: operation, commandStatus: "failed", failure: failure.error, phases: phaseTracker.list(), stepFailures })
           if (!recipeWorkflowStepIsAdvisory(workflowStep.step)) {
             throw error
           }
-          advisoryFailures.push(recipeAdvisoryFailure(workflowStep, error))
+          advisoryFailures.push(recipeAdvisoryFailure(workflowStep, error, continuationProgress))
           interruption?.clear()
         }
       }
@@ -1349,7 +1350,7 @@ function pluginFileFromActivationFailure(message: string, phaseData: Record<stri
   return undefined
 }
 
-function recipeWorkflowMetadata(recipe: WorkspaceRecipe): { before?: Array<{ command: string; args: string[] }>; steps: Array<{ command: string; args: string[] }>; after?: Array<{ command: string; args: string[] }> } {
+function recipeWorkflowMetadata(recipe: WorkspaceRecipe): { before?: Array<ReturnType<typeof recipeStepMetadata>>; steps: Array<ReturnType<typeof recipeStepMetadata>>; after?: Array<ReturnType<typeof recipeStepMetadata>> } {
   return {
     ...(recipe.workflow.before ? { before: recipe.workflow.before.map(recipeStepMetadata) } : {}),
     steps: recipe.workflow.steps.map(recipeStepMetadata),
@@ -1368,7 +1369,7 @@ function effectiveRecipeWorkflowMetadata(recipe: WorkspaceRecipe, inputMountPath
 function effectiveRecipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number], inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): Record<string, unknown> {
   const original = step.args ?? []
   const effective = rewriteInputMountPathArgsForEvidence(original, inputMountPathMap)
-  return stripUndefined({ command: step.command, args: effective, originalArgs: original, effectiveArgs: effective, argsRewritten: JSON.stringify(original) !== JSON.stringify(effective) })
+  return stripUndefined({ command: step.command, args: effective, originalArgs: original, effectiveArgs: effective, argsRewritten: JSON.stringify(original) !== JSON.stringify(effective), continuation: step.continuation })
 }
 
 function effectiveRecipeForReplay(recipe: WorkspaceRecipe, inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): WorkspaceRecipe {
@@ -1466,8 +1467,8 @@ function packageDependencyVersion(manifest: Record<string, unknown>, name: strin
     ?? stringValue(recordValue(manifest.peerDependencies)?.[name])
 }
 
-function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]): { command: string; args: string[] } {
-  return { command: step.command, args: step.args ?? [] }
+function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]): { command: string; args: string[]; continuation?: WorkspaceRecipe["workflow"]["steps"][number]["continuation"] } {
+  return stripUndefined({ command: step.command, args: step.args ?? [], continuation: step.continuation }) as { command: string; args: string[]; continuation?: WorkspaceRecipe["workflow"]["steps"][number]["continuation"] }
 }
 
 function effectiveRecipePreview(recipePreview: RuntimePreviewSpec | undefined, options: RecipeRunOptions): RuntimePreviewSpec {
