@@ -15,7 +15,12 @@ import { withTempDir } from "../scripts/test-kit.js"
 
 const TOKEN = "SENTINEL_ROUTED_COMMAND_TOKEN_2094"
 const PUBLIC_URL = `http://routed.test/editor?token=${TOKEN}`
-const editorHtml = `<!doctype html><script>
+const CANVAS_PRESENTATION_IDENTITY = "a".repeat(64)
+const UNRELATED_PRESENTATION_IDENTITY = "b".repeat(64)
+const INITIAL_CANVAS_PRESENTATION_IDENTITY = "c".repeat(64)
+const REPLACED_CANVAS_PRESENTATION_IDENTITY = "d".repeat(64)
+const DELAYED_CANVAS_PRESENTATION_IDENTITY = "e".repeat(64)
+const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
 console.log('normal console text; inspect ${PUBLIC_URL}')
 console.log('relative request /api/check?nonce=${TOKEN}; ordinary words remain')
@@ -30,12 +35,24 @@ window.wp = {
     dispatch: () => ({})
   }
 }
-</script><main>Editor fixture</main><iframe name="editor-canvas" srcdoc="<script>globalThis.__name = (value) => value<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
+</script><main>Editor fixture</main>`
+const editorHtml = `${editorShell}<iframe name="unrelated" srcdoc="<style>/* blocks-engine-presentation:${UNRELATED_PRESENTATION_IDENTITY} */<\/style>"></iframe><iframe name="editor-canvas" srcdoc="<script>globalThis.__name = (value) => value;setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${CANVAS_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 400)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
+const noCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
+const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
+const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
 
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
     response.setHeader("content-type", "text/html")
-    response.end(request.url?.startsWith("/broken") ? "<main>Broken editor fixture</main>" : editorHtml)
+    response.end(request.url?.startsWith("/broken")
+      ? "<main>Broken editor fixture</main>"
+      : request.url?.startsWith("/no-canvas")
+        ? noCanvasEditorHtml
+        : request.url?.startsWith("/replacing-canvas")
+          ? replacingCanvasEditorHtml
+          : request.url?.startsWith("/delayed-canvas")
+            ? delayedCanvasEditorHtml
+          : editorHtml)
   })
   const serverUrl = await listenLocalHttpServer(httpServer)
   const server = { serverUrl, playground: {} } as PlaygroundCliServer
@@ -74,6 +91,51 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         spec: { command: "wordpress.editor-open", args: [`url=${PUBLIC_URL}`, "route-host=routed.test", "capture=steps,errors,console", "wait-timeout=5s"] },
       })
       await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/editor-summary.json", "files/browser/editor-steps.jsonl", "files/browser/editor-console.jsonl"])
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { iframeCount: number; generatedPresentationIdentities: string[] } } }
+      assert.deepEqual(output.summary.editorPresentation, {
+        schema: "wp-codebox/editor-presentation/v1",
+        iframeCount: 1,
+        iframeStylesheetUrlCount: 0,
+        iframeStylesheetUrls: [],
+        generatedPresentationIdentityCount: 1,
+        generatedPresentationIdentities: [CANVAS_PRESENTATION_IDENTITY],
+      })
+    })
+
+    await withTempDir("wp-codebox-real-editor-no-canvas-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/no-canvas?token=${TOKEN}`, "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation?: unknown } }
+      assert.equal(output.summary.editorPresentation, undefined)
+    })
+
+    await withTempDir("wp-codebox-real-editor-replacing-canvas-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/replacing-canvas?token=${TOKEN}`, "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
+      assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [REPLACED_CANVAS_PRESENTATION_IDENTITY])
+    })
+
+    await withTempDir("wp-codebox-real-editor-delayed-canvas-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/delayed-canvas?token=${TOKEN}`, "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
+      assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [DELAYED_CANVAS_PRESENTATION_IDENTITY])
     })
 
     await withTempDir("wp-codebox-real-editor-canvas-security-", async (artifactRoot) => {

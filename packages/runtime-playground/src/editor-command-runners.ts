@@ -22,6 +22,11 @@ const EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR = 'iframe[name="editor-canvas"]'
 const EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR = ".block-editor-block-list__layout"
 const EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR = ".block-editor-block-list__block, [data-block]"
 const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
+const EDITOR_PRESENTATION_SETTLE_MS = 250
+const EDITOR_PRESENTATION_MIN_OBSERVATION_MS = 1_000
+const EDITOR_PRESENTATION_POLL_MS = 50
+const EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS = 1_000
+const EDITOR_PRESENTATION_MAX_CAPTURE_MS = 3_000
 const EDITOR_VALIDITY_WARNING_SELECTORS = [
   ".block-editor-warning",
   ".block-editor-block-list__block.is-invalid",
@@ -350,11 +355,7 @@ async function waitForEditorCanvasProbe(page: import("playwright").Page, options
 }
 
 async function resolveEditorCanvasFrame(page: import("playwright").Page, iframeSelector: string): Promise<import("playwright").Frame | null> {
-  const namedFrame = page.frame({ name: "editor-canvas" })
-  if (namedFrame) {
-    return namedFrame
-  }
-  const handle = await page.locator(iframeSelector).elementHandle().catch(() => null)
+  const handle = await page.locator(iframeSelector).first().elementHandle().catch(() => null)
   return handle ? await handle.contentFrame() : null
 }
 
@@ -641,7 +642,7 @@ export async function runEditorOpenCommand({
     }
 
     if (editorReadiness) {
-      editorPresentation = await captureEditorPresentation(page)
+      editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
     }
 
     if (capture.has("editor-state")) {
@@ -833,26 +834,64 @@ export function summarizeEditorPresentation(capture: EditorPresentationCapture):
   }
 }
 
-export async function captureEditorPresentation(page: import("playwright").Page): Promise<BrowserEditorPresentationSummary> {
-  const capture = await page.evaluate(() => {
-    let iframeCount = 0
-    const stylesheetUrls: string[] = []
-    const inlineStyleContents: string[] = []
-    const iframes = Array.from(document.querySelectorAll("iframe"))
-    for (const iframe of iframes) {
-      const iframeDocument = iframe.contentDocument
-      if (!iframeDocument) continue
-      iframeCount += 1
-      for (const stylesheet of Array.from(iframeDocument.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))) {
-        if (stylesheet.href) stylesheetUrls.push(stylesheet.href)
+export async function captureEditorPresentation(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorPresentationSummary | undefined> {
+  const startedAtMs = Date.now()
+  const deadlineMs = startedAtMs + Math.min(timeoutMs, EDITOR_PRESENTATION_MAX_CAPTURE_MS)
+  let previousFingerprint: string | undefined
+  let stableSinceMs: number | undefined
+  let sawCanvas = false
+
+  while (Date.now() <= deadlineMs) {
+    const frame = await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+    if (!frame) {
+      // Canvas presentation is additive evidence. A visible parent-document
+      // canvas proves this editor does not use the iframe presentation path;
+      // otherwise keep waiting because stores can become ready before the
+      // editor-canvas iframe is inserted.
+      const hasParentDocumentCanvas = await page.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().isVisible().catch(() => false)
+      if (!sawCanvas && hasParentDocumentCanvas && Date.now() - startedAtMs >= EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS) return undefined
+      previousFingerprint = undefined
+      stableSinceMs = undefined
+      await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
+      continue
+    }
+
+    sawCanvas = true
+    const capture = await frame.evaluate(() => {
+      if (document.readyState !== "complete" || document.fonts?.status === "loading") return null
+      const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
+      if (stylesheets.some((stylesheet) => !stylesheet.disabled && !stylesheet.sheet)) return null
+      return {
+        documentIdentity: `${location.href}\n${performance.timeOrigin}`,
+        documentAgeMs: performance.now(),
+        iframeCount: 1,
+        stylesheetUrls: stylesheets.flatMap((stylesheet) => stylesheet.href ? [stylesheet.href] : []),
+        inlineStyleContents: Array.from(document.querySelectorAll("style"), (style) => style.textContent ?? ""),
       }
-      for (const style of Array.from(iframeDocument.querySelectorAll("style"))) {
-        inlineStyleContents.push(style.textContent ?? "")
+    }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
+    if (capture) {
+      const summary = summarizeEditorPresentation(capture)
+      const fingerprint = `${capture.documentIdentity}\n${JSON.stringify(summary)}`
+      const observedAtMs = Date.now()
+      if (fingerprint === previousFingerprint) {
+        const currentDocumentIdentity = await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+          .then(async (currentFrame) => currentFrame === frame ? await currentFrame.evaluate(() => `${location.href}\n${performance.timeOrigin}`) : undefined)
+          .catch(() => undefined)
+        if (stableSinceMs !== undefined
+          && observedAtMs - stableSinceMs >= EDITOR_PRESENTATION_SETTLE_MS
+          && capture.documentAgeMs >= EDITOR_PRESENTATION_MIN_OBSERVATION_MS
+          && currentDocumentIdentity === capture.documentIdentity) {
+          return summary
+        }
+      } else {
+        previousFingerprint = fingerprint
+        stableSinceMs = observedAtMs
       }
     }
-    return { iframeCount, stylesheetUrls, inlineStyleContents }
-  }) as EditorPresentationCapture
-  return summarizeEditorPresentation(capture)
+    await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
+  }
+
+  return undefined
 }
 
 export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {
