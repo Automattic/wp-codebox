@@ -290,6 +290,7 @@ export interface BrowserEditorReadinessSummary {
 
 export interface BrowserEditorPresentationSummary {
   schema: "wp-codebox/editor-presentation/v1"
+  canvasDocumentType: "iframe" | "parent"
   iframeCount: number
   iframeStylesheetUrlCount: number
   iframeStylesheetUrls: string[]

@@ -355,7 +355,9 @@ async function waitForEditorCanvasProbe(page: import("playwright").Page, options
 }
 
 async function resolveEditorCanvasFrame(page: import("playwright").Page, iframeSelector: string): Promise<import("playwright").Frame | null> {
-  const handle = await page.locator(iframeSelector).first().elementHandle().catch(() => null)
+  const locator = page.locator(iframeSelector).first()
+  if (await locator.count() === 0) return null
+  const handle = await locator.elementHandle().catch(() => null)
   return handle ? await handle.contentFrame() : null
 }
 
@@ -814,6 +816,7 @@ export async function waitForEditorOpenReadiness(page: import("playwright").Page
 }
 
 interface EditorPresentationCapture {
+  canvasDocumentType: "iframe" | "parent"
   iframeCount: number
   stylesheetUrls: string[]
   inlineStyleContents: string[]
@@ -826,6 +829,7 @@ export function summarizeEditorPresentation(capture: EditorPresentationCapture):
   )].sort()
   return {
     schema: "wp-codebox/editor-presentation/v1",
+    canvasDocumentType: capture.canvasDocumentType,
     iframeCount: capture.iframeCount,
     iframeStylesheetUrlCount: iframeStylesheetUrls.length,
     iframeStylesheetUrls,
@@ -843,40 +847,47 @@ export async function captureEditorPresentation(page: import("playwright").Page,
 
   while (Date.now() <= deadlineMs) {
     const frame = await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+    let canvas: import("playwright").Page | import("playwright").Frame | undefined = frame ?? undefined
+    let canvasDocumentType: "iframe" | "parent" = "iframe"
     if (!frame) {
-      // Canvas presentation is additive evidence. A visible parent-document
-      // canvas proves this editor does not use the iframe presentation path;
-      // otherwise keep waiting because stores can become ready before the
-      // editor-canvas iframe is inserted.
       const hasParentDocumentCanvas = await page.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().isVisible().catch(() => false)
-      if (!sawCanvas && hasParentDocumentCanvas && Date.now() - startedAtMs >= EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS) return undefined
-      previousFingerprint = undefined
-      stableSinceMs = undefined
-      await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
-      continue
+      if (sawCanvas || !hasParentDocumentCanvas || Date.now() - startedAtMs < EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS) {
+        previousFingerprint = undefined
+        stableSinceMs = undefined
+        await page.waitForTimeout(EDITOR_PRESENTATION_POLL_MS)
+        continue
+      }
+      canvas = page
+      canvasDocumentType = "parent"
     }
 
-    sawCanvas = true
-    const capture = await frame.evaluate(() => {
+    if (!canvas) continue
+    if (frame) sawCanvas = true
+    const capture = await canvas.evaluate(({ canvasDocumentType, iframeCount }) => {
       if (document.readyState !== "complete" || document.fonts?.status === "loading") return null
       const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
       if (stylesheets.some((stylesheet) => !stylesheet.disabled && !stylesheet.sheet)) return null
       return {
         documentIdentity: `${location.href}\n${performance.timeOrigin}`,
         documentAgeMs: performance.now(),
-        iframeCount: 1,
+        canvasDocumentType,
+        iframeCount,
         stylesheetUrls: stylesheets.flatMap((stylesheet) => stylesheet.href ? [stylesheet.href] : []),
         inlineStyleContents: Array.from(document.querySelectorAll("style"), (style) => style.textContent ?? ""),
       }
-    }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
+    }, { canvasDocumentType, iframeCount: canvasDocumentType === "iframe" ? 1 : 0 }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
     if (capture) {
       const summary = summarizeEditorPresentation(capture)
       const fingerprint = `${capture.documentIdentity}\n${JSON.stringify(summary)}`
       const observedAtMs = Date.now()
       if (fingerprint === previousFingerprint) {
-        const currentDocumentIdentity = await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
-          .then(async (currentFrame) => currentFrame === frame ? await currentFrame.evaluate(() => `${location.href}\n${performance.timeOrigin}`) : undefined)
-          .catch(() => undefined)
+        const currentDocumentIdentity = capture.canvasDocumentType === "iframe"
+          ? await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+              .then(async (currentFrame) => currentFrame && currentFrame === frame ? await currentFrame.evaluate(() => `${location.href}\n${performance.timeOrigin}`) : undefined)
+              .catch(() => undefined)
+          : await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+              .then(async (currentFrame) => currentFrame ? undefined : await page.evaluate(() => `${location.href}\n${performance.timeOrigin}`))
+              .catch(() => undefined)
         if (stableSinceMs !== undefined
           && observedAtMs - stableSinceMs >= EDITOR_PRESENTATION_SETTLE_MS
           && capture.documentAgeMs >= EDITOR_PRESENTATION_MIN_OBSERVATION_MS

@@ -69,6 +69,7 @@ const unavailableEditorState = await captureEditorState({
 assert.equal(unavailableEditorState.storesAvailable, false)
 
 const styledPresentation = summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
   iframeCount: 2,
   stylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
   inlineStyleContents: [
@@ -78,15 +79,17 @@ const styledPresentation = summarizeEditorPresentation({
 })
 assert.deepEqual(styledPresentation, {
   schema: "wp-codebox/editor-presentation/v1",
+  canvasDocumentType: "iframe",
   iframeCount: 2,
   iframeStylesheetUrlCount: 2,
   iframeStylesheetUrls: ["https://example.test/styles/editor.css", "https://example.test/styles/theme.css"],
   generatedPresentationIdentityCount: 1,
   generatedPresentationIdentities: ["abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"],
 })
-assert.deepEqual(summarizeEditorPresentation({ iframeCount: 1, stylesheetUrls: [], inlineStyleContents: [".editor { color: black; }"] }), {
+assert.deepEqual(summarizeEditorPresentation({ canvasDocumentType: "parent", iframeCount: 0, stylesheetUrls: [], inlineStyleContents: [".editor { color: black; }"] }), {
   schema: "wp-codebox/editor-presentation/v1",
-  iframeCount: 1,
+  canvasDocumentType: "parent",
+  iframeCount: 0,
   iframeStylesheetUrlCount: 0,
   iframeStylesheetUrls: [],
   generatedPresentationIdentityCount: 0,
