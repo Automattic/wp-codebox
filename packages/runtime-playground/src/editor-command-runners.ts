@@ -1922,6 +1922,8 @@ export interface EditorValidateBlocksResult {
   invalid_blocks: number
   validation_method: "wp.blocks.validateBlock"
   validation_provider: string
+  content_source: "argument" | "edited-post-content"
+  block_types_registered: number
   results: BlockValidationResult[]
 }
 
@@ -1956,7 +1958,7 @@ export function flattenBlockValidationNodes(nodes: BlockValidationNode[]): Block
   return results
 }
 
-export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; validationProvider: string }): EditorValidateBlocksResult {
+export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; validationProvider: string; contentSource: "argument" | "edited-post-content"; blockTypesRegistered: number }): EditorValidateBlocksResult {
   const results = flattenBlockValidationNodes(input.nodes)
   const validBlocks = results.filter((result) => result.isValid).length
   return {
@@ -1965,6 +1967,8 @@ export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; 
     invalid_blocks: results.length - validBlocks,
     validation_method: "wp.blocks.validateBlock",
     validation_provider: input.validationProvider,
+    content_source: input.contentSource,
+    block_types_registered: input.blockTypesRegistered,
     results,
   }
 }
@@ -1972,7 +1976,12 @@ export function summarizeBlockValidation(input: { nodes: BlockValidationNode[]; 
 export async function validateEditorBlocks(page: import("playwright").Page, options: { content?: string; provider: string }): Promise<EditorBlockValidation> {
   const evaluation = await evaluateEditorBlockValidation(page, options)
   return {
-    result: summarizeBlockValidation({ nodes: evaluation.nodes, validationProvider: evaluation.validationProvider }),
+    result: summarizeBlockValidation({
+      nodes: evaluation.nodes,
+      validationProvider: evaluation.validationProvider,
+      contentSource: evaluation.contentSource,
+      blockTypesRegistered: evaluation.blockTypesRegistered,
+    }),
     contentSource: evaluation.contentSource,
     blockTypesRegistered: evaluation.blockTypesRegistered,
   }
