@@ -21,6 +21,7 @@ const INITIAL_CANVAS_PRESENTATION_IDENTITY = "c".repeat(64)
 const REPLACED_CANVAS_PRESENTATION_IDENTITY = "d".repeat(64)
 const DELAYED_CANVAS_PRESENTATION_IDENTITY = "e".repeat(64)
 const PARENT_CANVAS_PRESENTATION_IDENTITY = "f".repeat(64)
+const SLOW_PRESENTATION_IDENTITY = "1".repeat(64)
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
 console.log('normal console text; inspect ${PUBLIC_URL}')
@@ -41,6 +42,7 @@ const editorHtml = `${editorShell}<iframe name="unrelated" srcdoc="<style>/* blo
 const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentation:${PARENT_CANVAS_PRESENTATION_IDENTITY} */</style><div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
 const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
+const slowPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<script>setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${SLOW_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 3500)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='slow'>Slow</div></div>"></iframe>`
 
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
@@ -53,7 +55,9 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
           ? replacingCanvasEditorHtml
           : request.url?.startsWith("/delayed-canvas")
             ? delayedCanvasEditorHtml
-          : editorHtml)
+            : request.url?.startsWith("/slow-presentation")
+              ? slowPresentationEditorHtml
+              : editorHtml)
   })
   const serverUrl = await listenLocalHttpServer(httpServer)
   const server = { serverUrl, playground: {} } as PlaygroundCliServer
@@ -140,6 +144,18 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       })
       const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
       assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [DELAYED_CANVAS_PRESENTATION_IDENTITY])
+    })
+
+    await withTempDir("wp-codebox-real-editor-slow-presentation-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/slow-presentation?token=${TOKEN}`, "route-host=routed.test", "capture=steps", "wait-timeout=6s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
+      assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [SLOW_PRESENTATION_IDENTITY])
     })
 
     await withTempDir("wp-codebox-real-editor-canvas-security-", async (artifactRoot) => {
