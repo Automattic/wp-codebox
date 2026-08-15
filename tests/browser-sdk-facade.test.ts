@@ -11,6 +11,7 @@ const previewFixture = JSON.parse(await readFile(new URL("contracts/browser-prod
 const sandbox = {
   window: { dispatchEvent: () => true } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
+  atob: (value: string) => Buffer.from(value, "base64").toString("binary"),
   CustomEvent: class CustomEvent {
     type: string
     detail: unknown
@@ -63,6 +64,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "filesystem:ensure-directory",
     "review:write-file",
     "contract:probe",
+    "browser-viewport:capture",
+    "browser-viewport:verify",
   ],
   globals: {
     name: "wpCodeboxBrowser",
@@ -105,6 +108,8 @@ const expectedV1TopLevelKeys = [
   "createParentToolRequest",
   "dispatchParentTool",
   "runBrowserSessionRecipe",
+  "captureViewportScreenshot",
+  "verifyViewportScreenshot",
   "setFrontendAdminBarVisible",
   "methods",
 ] as const
@@ -113,6 +118,7 @@ assert.deepEqual(Object.keys(api.v1), expectedV1TopLevelKeys, "wpCodeboxBrowser.
 const expectedV1MethodKeys = [
   "activateTheme",
   "browserSessionRecipe",
+  "captureViewportScreenshot",
   "createBrowserConnectorRequest",
   "executeBrowserConnectorRequest",
   "executeBrowserProviderProxyRequest",
@@ -142,6 +148,7 @@ const expectedV1MethodKeys = [
   "runWordPressOperation",
   "selectPreparedBrowserBlueprint",
   "setFrontendAdminBarVisible",
+  "verifyViewportScreenshot",
   "writeFile",
   "writeReviewFile",
 ] as const
@@ -166,6 +173,8 @@ assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateB
 assert.equal(typeof api.v1.setFrontendAdminBarVisible, "function")
 assert.equal(api.v1.methods.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
+assert.equal(typeof api.v1.captureViewportScreenshot, "function")
+assert.equal(typeof api.v1.verifyViewportScreenshot, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.openOrCreateBrowserContainedSite, "function")
@@ -191,6 +200,88 @@ assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
 assert.equal(typeof api.v1.createRuntimeTaskRequest, "function")
 assert.equal(typeof api.v1.runRuntimeTask, "function")
+
+const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")
+let viewportInvocation: Record<string, unknown> | undefined
+const captured = await api.v1.captureViewportScreenshot({}, {
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  timeout_ms: 50,
+}, {
+  browserInvoker: async (request: Record<string, unknown>) => {
+    viewportInvocation = request
+    return { png_base64: png, diagnostics: [{ code: "browser_ready", message: "Browser is ready.", severity: "info" }] }
+  },
+  persistArtifact: async () => ({ artifact: { id: "viewport-1", path: "files/browser/example.png", sha256: "a".repeat(64) } }),
+})
+assert.deepEqual(plain(viewportInvocation), {
+  schema: "wp-codebox/browser-invocation-request/v1",
+  operation: "viewport-screenshot",
+  client: {},
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  timeout_ms: 50,
+})
+assert.deepEqual(plain(captured), {
+  schema: "wp-codebox/browser-viewport-screenshot/v1",
+  success: true,
+  status: "captured",
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  artifact: { id: "viewport-1", path: "files/browser/example.png", kind: "browser-viewport-screenshot", contentType: "image/png", sha256: "a".repeat(64) },
+  sha256: "a".repeat(64),
+  diagnostics: [{ code: "browser_ready", message: "Browser is ready.", severity: "info" }],
+})
+const verified = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: true, exists: true, sha256: "a".repeat(64) }),
+})
+assert.equal(verified.status, "verified")
+assert.equal(verified.success, true)
+
+const routeFailure = await api.v1.captureViewportScreenshot({}, { route: "https://example.test", viewport: { width: 375, height: 667 } }, {})
+assert.equal(routeFailure.status, "failed")
+assert.equal(routeFailure.diagnostics[0].code, "viewport_capture_route_invalid")
+const timeoutFailure = await api.v1.captureViewportScreenshot({}, { route: "/slow", viewport: { width: 375, height: 667 }, timeout_ms: 1 }, {
+  browserInvoker: async () => await new Promise(() => undefined),
+  persistArtifact: async () => ({ artifact: { id: "unused", path: "unused.png", sha256: "a".repeat(64) } }),
+})
+assert.equal(timeoutFailure.status, "failed")
+assert.equal(timeoutFailure.diagnostics[0].code, "viewport_capture_timeout")
+const missingArtifact = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: false, exists: false, sha256: "a".repeat(64) }),
+})
+assert.equal(missingArtifact.status, "failed")
+assert.equal(missingArtifact.diagnostics[0].code, "viewport_capture_artifact_missing")
+const checksumMismatch = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: true, exists: true, sha256: "b".repeat(64) }),
+})
+assert.equal(checksumMismatch.status, "failed")
+assert.equal(checksumMismatch.diagnostics[0].code, "viewport_capture_checksum_mismatch")
+const previousViewportAbilityWp = sandbox.window.wp
+const viewportAbilityRequests: any[] = []
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    viewportAbilityRequests.push(request)
+    if (request.path === "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run") {
+      return {
+        schema: "wp-codebox/browser-persisted-artifact-bundle/v1",
+        artifact_ref: { schema: "wp-codebox/browser-artifact-ref/v1", artifact_id: "bundle-1", content_digest: "c".repeat(64), artifacts_path: "/artifacts/bundle-1" },
+        files: [{ artifact_path: "files/browser/screenshot.png", kind: "browser-screenshot", mime_type: "image/png", sha256: { algorithm: "sha256", value: "c".repeat(64) } }],
+      }
+    }
+    return { success: true, artifact: { changed_files: { files: [{ artifactPath: "files/browser/screenshot.png", sha256: { algorithm: "sha256", value: "c".repeat(64) } }] } }, verification: { valid: true } }
+  },
+}
+const ownedCapture = await api.v1.captureViewportScreenshot({}, { route: "/owned", viewport: { width: 375, height: 667 } }, { browserInvoker: async () => ({ png_base64: png }) })
+assert.equal(ownedCapture.success, true)
+assert.equal(ownedCapture.artifact.artifact_id, "bundle-1")
+assert.equal(ownedCapture.artifact.sha256, "c".repeat(64))
+assert.equal((await api.v1.verifyViewportScreenshot(ownedCapture)).status, "verified")
+assert.deepEqual(plain(viewportAbilityRequests.map((request) => request.path)), [
+  "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run",
+  "/wp-abilities/v1/abilities/wp-codebox/inspect-artifact/run",
+])
+sandbox.window.wp = previousViewportAbilityWp
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
   code: "demo_error",

@@ -30,6 +30,8 @@
 		'filesystem:ensure-directory',
 		'review:write-file',
 		'contract:probe',
+		'browser-viewport:capture',
+		'browser-viewport:verify',
 	] );
 
 	const safeName = ( name ) => String( name || 'task' ).replace( /[^a-z0-9_-]/gi, '-' ).toLowerCase();
@@ -235,6 +237,212 @@
 				data: null,
 				error: normalizeBrowserSdkError( error ),
 			};
+		}
+	};
+
+	const viewportScreenshotSchema = 'wp-codebox/browser-viewport-screenshot/v1';
+	const viewportScreenshotVerificationSchema = 'wp-codebox/browser-viewport-screenshot-verification/v1';
+	const viewportScreenshotMaxTimeoutMs = 60000;
+	const viewportScreenshotMaxBytes = 5242880;
+
+	const viewportScreenshotDiagnostics = ( code, message, phase, metadata = undefined ) => [ Object.fromEntries( Object.entries( {
+		code,
+		message,
+		severity: 'error',
+		phase,
+		metadata,
+	} ).filter( ( [ , value ] ) => value !== undefined ) ) ];
+
+	const viewportScreenshotFailure = ( input, code, message, phase, metadata = undefined ) => ( {
+		schema: viewportScreenshotSchema,
+		success: false,
+		status: 'failed',
+		route: typeof input?.route === 'string' ? input.route : null,
+		viewport: isPlainObject( input?.viewport ) ? input.viewport : null,
+		artifact: null,
+		sha256: null,
+		diagnostics: viewportScreenshotDiagnostics( code, message, phase, metadata ),
+	} );
+
+	const viewportScreenshotInput = ( input ) => {
+		if ( ! isPlainObject( input ) || typeof input.route !== 'string' || ! input.route.startsWith( '/' ) || input.route.startsWith( '//' ) ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_route_invalid', 'Viewport capture requires a safe absolute route.' );
+		}
+		const viewport = isPlainObject( input.viewport ) ? input.viewport : {};
+		const width = Number( viewport.width );
+		const height = Number( viewport.height );
+		if ( ! Number.isInteger( width ) || ! Number.isInteger( height ) || width < 1 || height < 1 || width > 10000 || height > 10000 ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_viewport_invalid', 'Viewport capture requires width and height between 1 and 10000.' );
+		}
+		const timeoutMs = input.timeout_ms === undefined ? 30000 : Number( input.timeout_ms );
+		if ( ! Number.isInteger( timeoutMs ) || timeoutMs < 1 || timeoutMs > viewportScreenshotMaxTimeoutMs ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_timeout_invalid', `Viewport capture timeout_ms must be between 1 and ${ viewportScreenshotMaxTimeoutMs }.` );
+		}
+		return { route: input.route, viewport: { width, height }, timeout_ms: timeoutMs };
+	};
+
+	const withViewportScreenshotTimeout = async ( promise, timeoutMs ) => {
+		let timeout;
+		try {
+			return await Promise.race( [
+				promise,
+				new Promise( ( resolve, reject ) => {
+					timeout = setTimeout( () => reject( runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.', { timeout_ms: timeoutMs } ) ), timeoutMs );
+				} ),
+			] );
+		} finally {
+			clearTimeout( timeout );
+		}
+	};
+
+	const viewportScreenshotBytes = ( capture ) => {
+		const value = capture?.png_base64 ?? capture?.pngBase64 ?? capture?.data;
+		if ( typeof value !== 'string' || ! value ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_missing', 'Viewport capture did not return PNG bytes.' );
+		}
+		let binary;
+		try {
+			binary = atob( value );
+		} catch ( error ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_invalid', 'Viewport capture returned invalid base64 PNG bytes.' );
+		}
+		if ( binary.length < 8 || binary.length > viewportScreenshotMaxBytes || binary.charCodeAt( 0 ) !== 137 || binary.slice( 1, 4 ) !== 'PNG' ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_invalid', 'Viewport capture did not return a bounded PNG artifact.' );
+		}
+		return { base64: value, bytes: binary.length };
+	};
+
+	const viewportScreenshotArtifact = ( persisted ) => {
+		const persistedBundle = isPlainObject( persisted?.artifact_ref ) ? persisted : ( isPlainObject( persisted?.data ) ? persisted.data : null );
+		if ( persistedBundle?.artifact_ref && Array.isArray( persistedBundle.files ) ) {
+			const file = persistedBundle.files.find( ( item ) => isPlainObject( item ) && typeof item.sha256?.value === 'string' && typeof item.artifact_path === 'string' );
+			if ( ! file || typeof persistedBundle.artifact_ref.artifact_id !== 'string' || ! persistedBundle.artifact_ref.artifact_id ) {
+				throw runtimeError( 'viewport_persist', 'viewport_capture_artifact_invalid', 'Codebox artifact persistence did not return a canonical screenshot ref.' );
+			}
+			return {
+				schema: persistedBundle.artifact_ref.schema || 'wp-codebox/browser-artifact-ref/v1',
+				artifact_id: persistedBundle.artifact_ref.artifact_id,
+				content_digest: persistedBundle.artifact_ref.content_digest,
+				artifacts_path: persistedBundle.artifact_ref.artifacts_path,
+				path: file.artifact_path,
+				kind: file.kind || 'browser-screenshot',
+				contentType: file.mime_type || 'image/png',
+				sha256: file.sha256.value.toLowerCase(),
+			};
+		}
+		const artifact = isPlainObject( persisted?.artifact ) ? persisted.artifact : persisted;
+		const sha256 = artifact?.sha256?.value || artifact?.sha256 || artifact?.digest?.value || artifact?.digest;
+		if ( ! isPlainObject( artifact ) || typeof artifact.id !== 'string' || ! artifact.id || typeof artifact.path !== 'string' || ! artifact.path || typeof sha256 !== 'string' || ! /^[a-f0-9]{64}$/i.test( sha256 ) ) {
+			throw runtimeError( 'viewport_persist', 'viewport_capture_artifact_invalid', 'Artifact persistence must return an immutable artifact id, path, and SHA-256 checksum.' );
+		}
+		return {
+			id: artifact.id,
+			path: artifact.path,
+			kind: typeof artifact.kind === 'string' && artifact.kind ? artifact.kind : 'browser-viewport-screenshot',
+			contentType: artifact.contentType || artifact.content_type || 'image/png',
+			sha256: sha256.toLowerCase(),
+		};
+	};
+
+	const executeBrowserSdkAbility = async ( ability, input ) => {
+		if ( window.wp?.apiFetch ) {
+			return await window.wp.apiFetch( { path: abilityRestPath( ability ), method: 'POST', data: input } );
+		}
+		if ( typeof fetch !== 'function' ) {
+			throw runtimeError( 'ability', 'browser_sdk_ability_fetch_unavailable', 'Browser fetch or wp.apiFetch is required to call a Codebox ability.' );
+		}
+		const response = await fetch( abilityRestEndpoint( ability ), { method: 'POST', credentials: 'same-origin', headers: codeboxRestHeaders(), body: JSON.stringify( input ) } );
+		const json = await response.json().catch( () => null );
+		if ( ! response.ok || ! isPlainObject( json ) ) {
+			throw runtimeError( 'ability', 'browser_sdk_ability_failed', 'Codebox ability request failed.', { ability, status: response.status, response: json } );
+		}
+		return json;
+	};
+
+	const persistViewportScreenshot = async ( request, png, capture, options ) => {
+		if ( typeof options.persistArtifact === 'function' ) {
+			return await options.persistArtifact( request );
+		}
+		return await executeBrowserSdkAbility( 'wp-codebox/persist-browser-artifact', {
+			session_id: typeof options.session?.session_id === 'string' ? options.session.session_id : undefined,
+			caller_schema: viewportScreenshotSchema,
+			caller_kind: 'browser-viewport-screenshot',
+			caller_metadata: { route: request.route, viewport: request.viewport, diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ) },
+			entrypoint: 'screenshot.png',
+			files: [ { path: 'screenshot.png', content_base64: png.base64, encoding: 'base64', mime_type: 'image/png', kind: 'browser-screenshot' } ],
+		} );
+	};
+
+	const captureViewportScreenshot = async ( client, input = {}, options = {} ) => {
+		let request;
+		try {
+			request = viewportScreenshotInput( input );
+		} catch ( error ) {
+			return viewportScreenshotFailure( input, error.code || 'viewport_capture_invalid', error.message, error.phase || 'viewport_capture_validate', error.data );
+		}
+		if ( typeof options.browserInvoker !== 'function' ) {
+			return viewportScreenshotFailure( request, 'viewport_capture_unavailable', 'A generic browserInvoker adapter is required to capture viewport evidence.', 'viewport_capture' );
+		}
+		try {
+			const capture = await withViewportScreenshotTimeout( options.browserInvoker( {
+				schema: 'wp-codebox/browser-invocation-request/v1',
+				operation: 'viewport-screenshot',
+				client,
+				...request,
+			} ), request.timeout_ms );
+			const png = viewportScreenshotBytes( capture );
+			const persistenceRequest = {
+				schema: 'wp-codebox/browser-viewport-screenshot-persistence-request/v1',
+				route: request.route,
+				viewport: request.viewport,
+				content_type: 'image/png',
+				content_base64: png.base64,
+				bytes: png.bytes,
+				diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ),
+			};
+			const persisted = await withViewportScreenshotTimeout( persistViewportScreenshot( persistenceRequest, png, capture, options ), request.timeout_ms );
+			const artifact = viewportScreenshotArtifact( persisted );
+			return {
+				schema: viewportScreenshotSchema,
+				success: true,
+				status: 'captured',
+				route: request.route,
+				viewport: request.viewport,
+				artifact,
+				sha256: artifact.sha256,
+				diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ),
+			};
+		} catch ( error ) {
+			return viewportScreenshotFailure( request, error.code || 'viewport_capture_failed', error.message || 'Viewport screenshot capture failed.', error.phase || 'viewport_capture', error.data );
+		}
+	};
+
+	const verifyViewportScreenshot = async ( evidence, options = {} ) => {
+		const failure = ( code, message, metadata = undefined ) => ( {
+			schema: viewportScreenshotVerificationSchema,
+			success: false,
+			status: 'failed',
+			evidence: evidence || null,
+			diagnostics: viewportScreenshotDiagnostics( code, message, 'viewport_verify', metadata ),
+		} );
+		if ( evidence?.schema !== viewportScreenshotSchema || evidence?.status !== 'captured' || evidence?.success !== true || ! evidence?.artifact || typeof evidence.sha256 !== 'string' ) {
+			return failure( 'viewport_capture_evidence_invalid', 'Viewport evidence must be a successful captured evidence envelope.' );
+		}
+		try {
+			const verification = typeof options.verifyArtifact === 'function'
+				? await options.verifyArtifact( { schema: viewportScreenshotVerificationSchema, artifact: evidence.artifact, sha256: evidence.sha256 } )
+				: await executeBrowserSdkAbility( 'wp-codebox/inspect-artifact', { artifact_id: evidence.artifact.artifact_id } );
+			const verificationFile = Array.isArray( verification?.artifact?.changed_files?.files )
+				? verification.artifact.changed_files.files.find( ( file ) => file?.artifactPath === evidence.artifact.path )
+				: null;
+			const verificationSha256 = verification?.sha256 || verificationFile?.sha256?.value || verificationFile?.sha256;
+			const verificationSuccess = typeof options.verifyArtifact === 'function' ? verification?.success === true && verification?.exists === true : verification?.success === true && verification?.verification?.valid === true && !! verificationFile;
+			if ( ! verificationSuccess || verificationSha256 !== evidence.sha256 ) {
+				return failure( verification?.exists === false ? 'viewport_capture_artifact_missing' : 'viewport_capture_checksum_mismatch', 'Server-side artifact verification did not confirm the captured SHA-256 checksum.', verification || null );
+			}
+			return { schema: viewportScreenshotVerificationSchema, success: true, status: 'verified', evidence, diagnostics: normalizeBrowserRunDiagnostics( verification.diagnostics ) };
+		} catch ( error ) {
+			return failure( error?.code || 'viewport_capture_verification_failed', error?.message || 'Server-side artifact verification failed.', error?.data );
 		}
 	};
 
@@ -961,6 +1169,7 @@
 	const browserSdkContract = Object.freeze( [
 		{ name: 'activateTheme' },
 		{ name: 'browserSessionRecipe' },
+		{ name: 'captureViewportScreenshot', topLevelOrder: 20.5, topLevel: ( api ) => ( client, input = {}, options = {} ) => api.captureViewportScreenshot( client, input, options ) },
 		{ name: 'createBrowserConnectorRequest', topLevelOrder: 16, topLevel: ( api ) => api.createBrowserConnectorRequest },
 		{ name: 'executeBrowserConnectorRequest', topLevelOrder: 17, topLevel: ( api ) => api.executeBrowserConnectorRequest },
 		{ name: 'executeBrowserProviderProxyRequest' },
@@ -990,6 +1199,7 @@
 		{ name: 'runWordPressOperation' },
 		{ name: 'selectPreparedBrowserBlueprint' },
 		{ name: 'setFrontendAdminBarVisible', topLevelOrder: 22, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.setFrontendAdminBarVisible( client, args, options ) },
+		{ name: 'verifyViewportScreenshot', topLevelOrder: 20.6, topLevel: ( api ) => ( evidence, options = {} ) => api.verifyViewportScreenshot( evidence, options ) },
 		{ name: 'writeFile', topLevelOrder: 7, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.writeFile( client, args, options ) },
 		{ name: 'writeReviewFile' },
 	] );
@@ -3327,6 +3537,7 @@ echo wp_json_encode( array(
 		activateTheme,
 		aggregateFanoutOutputs,
 		browserSessionRecipe,
+		captureViewportScreenshot,
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
 		openOrCreateBrowserContainedSite,
@@ -3350,6 +3561,7 @@ echo wp_json_encode( array(
 		runWordPressOperation,
 		selectPreparedBrowserBlueprint,
 		setFrontendAdminBarVisible,
+		verifyViewportScreenshot,
 		startBrowserPreview,
 		validateBrowserRuntimeMaterialization,
 		writeFile,
