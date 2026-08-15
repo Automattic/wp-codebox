@@ -95,6 +95,18 @@ startup and remains distinguishable as `browser_preview_aborted`; an accepted
 start result exposes idempotent async `dispose()` cleanup without changing its
 `client` field or result envelope.
 
+`window.wpCodeboxBrowser.v1.captureViewportScreenshot()` is the generic visual
+evidence primitive. It accepts a prepared client, an absolute route, viewport
+width and height, and a bounded `timeout_ms`. The browser invoker receives
+`wp-codebox/browser-invocation-request/v1` with operation `viewport-screenshot`.
+Codebox persists returned PNG bytes through `wp-codebox/persist-browser-artifact`
+and returns its canonical immutable bundle/file ref and SHA-256.
+The resulting `wp-codebox/browser-viewport-screenshot/v1` envelope reports
+`captured` or a non-passing `failed` state with diagnostics. Consumers call
+`verifyViewportScreenshot(evidence)` before use; it calls the Codebox-owned
+`wp-codebox/inspect-artifact` server-side verifier, which confirms the artifact
+bundle and exact file SHA-256. Explicit adapters are optional test seams.
+
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
 should call directly.
