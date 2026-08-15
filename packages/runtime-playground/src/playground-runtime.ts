@@ -28,6 +28,7 @@ import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
+import { installHostHttpTransportRoute } from "./host-http-transport.js"
 import { wordpressActionAuthNoncePhpCode, wordpressFixtureUserWithoutPassword, wordpressUserSessionFromCommandArgs, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 import type {
   ArtifactBundle,
@@ -1868,10 +1869,12 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
   }
 
   private async startPlayground(): Promise<PlaygroundCliServer> {
-    return startPlaygroundCliServer(this.spec, this.mounts, {
+    const server = await startPlaygroundCliServer(this.spec, this.mounts, {
       onProgress: (event) => this.recordBrowserStartupProgress(event),
       cliModule: this.backendOptions.cliModule,
     })
+    server.hostHttpTransport = installHostHttpTransportRoute(server, this.spec.policy.network)
+    return server
   }
 
   private recordBrowserStartupProgress(event: BrowserStartupProgressEvent): void {

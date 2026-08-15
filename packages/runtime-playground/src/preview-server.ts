@@ -23,6 +23,7 @@ export interface PlaygroundCliServer {
   previewLease?: PreviewLease
   previewRoutes?: PlaygroundPreviewRouteRegistry
   previewProxyDiagnostics?: PlaygroundPreviewProxyDiagnostics
+  hostHttpTransport?: { url: string; token: string }
   [Symbol.asyncDispose](): Promise<void>
 }
 

@@ -59,6 +59,7 @@ import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
+import { executeHostHttpTransportRequest, parseHostHttpTransportMessage } from "./host-http-transport.js"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
@@ -94,9 +95,9 @@ export async function runPhpCommand({
   const commandCode = diagnosticsCapture && marker ? runPhpCommandDiagnosticsPhp(code, marker, diagnosticsCapture.maxItems ?? 50, diagnosticsCapture.maxBytes ?? 64 * 1024) : code
   const bridge = argValue(spec.args ?? [], "wp-cli-bridge") === "1" ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
-  const removeProviderProxy = installBrowserProviderProxy(server)
+  const removeProviderProxy = installPhpMessageBridges(server, runtimeSpec.policy.network)
   try {
-    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, commandCode, bootstrapArgs, bridge) })
+    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, commandCode, bootstrapArgs, bridge, undefined, server.hostHttpTransport) })
     assertPlaygroundResponseOk("wordpress.run-php", response)
   } finally {
     await removeProviderProxy?.()
@@ -292,12 +293,23 @@ async function writeCommandDiagnosticsArtifact(artifactRoot: string, diagnostics
   }
 }
 
-function installBrowserProviderProxy(server: PlaygroundCliServer): (() => Promise<void>) | undefined {
+function installPhpMessageBridges(server: PlaygroundCliServer, networkPolicy: RuntimeCreateSpec["policy"]["network"]): (() => Promise<void>) | undefined {
   if (!server.playground.onMessage) {
     return undefined
   }
 
+  const activeHostRequests = new Set<AbortController>()
   const remove = server.playground.onMessage(async (data) => {
+    const hostHttpMessage = parseHostHttpTransportMessage(data)
+    if (hostHttpMessage) {
+      const controller = new AbortController()
+      activeHostRequests.add(controller)
+      try {
+        return JSON.stringify(await executeHostHttpTransportRequest(hostHttpMessage, networkPolicy, { signal: controller.signal }))
+      } finally {
+        activeHostRequests.delete(controller)
+      }
+    }
     const message = parseBrowserProviderProxyMessage(data)
     if (!message) {
       return undefined
@@ -307,6 +319,7 @@ function installBrowserProviderProxy(server: PlaygroundCliServer): (() => Promis
   })
 
   return async () => {
+    for (const controller of activeHostRequests) controller.abort(new Error("The runtime command ended before the host HTTP request completed."))
     const cleanup = await remove
     if (typeof cleanup === "function") {
       await cleanup()
@@ -657,7 +670,13 @@ export async function runAbilityCommand({
     throw new Error("wordpress.ability accepts either user/session or principal, not both")
   }
   const expectedResultSchema = expectedAbilityResultSchemaFromArgs(spec.args ?? [])
-  const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode({ name, input, userSession, principal })) })
+  const removeMessageBridges = installPhpMessageBridges(server, runtimeSpec.policy.network)
+  let response: PlaygroundRunResponse
+  try {
+    response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode({ name, input, userSession, principal }), server.hostHttpTransport) })
+  } finally {
+    await removeMessageBridges?.()
+  }
   assertPlaygroundResponseOk("wordpress.ability", response)
   return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input, expectedResultSchema)
 }
