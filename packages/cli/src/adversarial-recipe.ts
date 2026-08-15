@@ -24,6 +24,7 @@ import {
   type WorkspaceRecipeStep,
 } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { negotiateWordPressServerClock, wordpressServerClockCleanupAction, wordpressServerClockScheduleAction, type WordPressServerClockNegotiation } from "@automattic/wp-codebox-playground"
 
 import type { InputMountPathMapping } from "./input-mount-paths.js"
 import { recipeAdversarialCapabilities } from "./recipe-validation.js"
@@ -37,6 +38,7 @@ export interface RecipeAdversarialCampaignOutput {
     available: string[]
     required: string[]
     optional: Array<{ id: string; available: boolean }>
+    clock?: WordPressServerClockNegotiation
   }
   evidence?: Awaited<ReturnType<typeof writeAdversarialEvidenceBundle>>
 }
@@ -79,6 +81,15 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
       await options.runtime.createCheckpoint({ name: checkpointName, metadata: { campaignId: declaration.id, immutableBaseline: true } })
     }
     const templates = new Map(declaration.caseTemplates.map((template) => [template.id, template]))
+    const clockTransitions = declaration.corpus.flatMap(({ actions }) => actions.flatMap((action) => action.clock ?? []))
+    const runtimeInfo = clockTransitions.length > 0 ? await options.runtime.info() : undefined
+    if (clockTransitions.length > 0 && runtimeInfo?.backend !== "wordpress-playground") {
+      throw new Error(`Recipe adversarial campaign ${declaration.id} requires server clock transitions, but runtime backend ${runtimeInfo?.backend ?? "unknown"} does not provide the WordPress Playground clock adapter.`)
+    }
+    const clockNegotiation = clockTransitions.length > 0 ? negotiateWordPressServerClock(clockTransitions) : undefined
+    if (clockNegotiation && !clockNegotiation.supported) {
+      throw new Error(`Recipe adversarial campaign ${declaration.id} has unsupported clock transitions: ${clockNegotiation.unsupported.map(({ surface, operation, reason }) => `${surface}.${operation} (${reason})`).join(", ")}`)
+    }
     const campaign = adversarialCampaign({
       id: declaration.id,
       seed: declaration.seed,
@@ -101,7 +112,17 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
     const campaignOptions = { ...options, executions: campaignExecutions }
     const execute = async (plan: AdversarialCasePlan, signal: AbortSignal) => {
       if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
-      return executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions)
+      try {
+        return await executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions)
+      } finally {
+        if (plan.actions.some((action) => action.clock?.length)) {
+          const cleanup = wordpressServerClockCleanupAction()
+          const execution = await options.runtime.execute(cleanup)
+          campaignExecutions.push(execution)
+        }
+        // Checkpoints isolate all runtime state when they are available.
+        if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
+      }
     }
     const result = replay
       ? await runRecipeAdversarialReplay(campaign, declaration, templates, replay, execute, options.signal)
@@ -120,6 +141,7 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
         available: capabilities,
         required: declaration.requiredCapabilities ?? [],
         optional: (declaration.optionalCapabilities ?? []).map((id) => ({ id, available: capabilities.includes(id) })),
+        ...(clockNegotiation ? { clock: clockNegotiation } : {}),
       },
     })
   }
@@ -272,8 +294,20 @@ function stableAdversarialDiagnosticMessage(message: string, caseId: string): st
 
 function materializeCasePhases(plan: AdversarialCasePlan, templates: Map<string, WorkspaceRecipeAdversarialCampaign["caseTemplates"][number]>): Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>> {
   const phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>> = {}
-  for (const phase of ["setup", "action", "assert", "teardown"] as const) {
-    phases[phase] = plan.actions.flatMap((action) => (templates.get(action.type)?.phases[phase] ?? []).map((step) => materializeStep(step, plan, action.input)))
+  for (const action of plan.actions) {
+    const template = templates.get(action.type)
+    if (action.clock?.length && (template?.phases.action?.length ?? 0) === 0) {
+      throw new Error(`Clock transition for adversarial action ${action.type} requires at least one action-phase step.`)
+    }
+    for (const phase of ["setup", "action", "assert", "teardown"] as const) {
+      const steps = (template?.phases[phase] ?? []).map((step) => materializeStep(step, plan, action.input))
+      if (phase === "action" && action.clock?.length) {
+        const transition = wordpressServerClockScheduleAction(action.clock)
+        phases[phase] = [...(phases[phase] ?? []), { command: transition.command, args: transition.args, metadata: transition.metadata }, ...steps]
+      } else {
+        phases[phase] = [...(phases[phase] ?? []), ...steps]
+      }
+    }
   }
   return phases
 }

@@ -15,10 +15,14 @@ const recipe: WorkspaceRecipe = {
     schema: "wp-codebox/adversarial-recipe-campaign/v1",
     id: "neutral-state",
     seed: "deterministic-seed",
-    corpus: [{ id: "seed", actions: [{ type: "option-roundtrip", input: { value: "alpha" } }], input: { state: 1 }, signals: ["seed"] }],
+    corpus: [{ id: "seed", actions: [
+      { type: "option-roundtrip", input: { value: "before-expiry" }, clock: [{ surface: "scheduler", operation: "freeze", time: 1_900_000_000_000 }] },
+      { type: "option-roundtrip", input: { value: "after-expiry" }, clock: [{ surface: "scheduler", operation: "advance", milliseconds: 1_000 }] },
+    ], input: { state: 1 }, signals: ["seed"] }],
     caseTemplates: [{
       id: "option-roundtrip",
       phases: {
+        setup: [{ command: "wordpress.run-php", args: ["code=echo 'setup';"] }],
         action: [{ command: "wordpress.run-php", args: ["code=echo '{{action.input}}';"] }],
         assert: [{ command: "wordpress.run-php", args: ["code=echo '{{case.id}}';"] }],
       },
@@ -40,9 +44,10 @@ assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, "recipe.json"), 
 assert(recipePolicy(recipe).commands.includes("wordpress.run-php"), "template commands must participate in policy derivation")
 
 const executions: ExecutionSpec[] = []
+const recipeExecutions: RecipeExecutionResult[] = []
 const checkpointOperations: string[] = []
 const runtime = {
-  info: async () => ({ id: "neutral", backend: "neutral", environment: { kind: "wordpress", name: "Neutral" }, createdAt: "2026-01-01T00:00:00.000Z", status: "created" }),
+  info: async () => ({ id: "playground", backend: "wordpress-playground", environment: { kind: "wordpress", name: "Playground" }, createdAt: "2026-01-01T00:00:00.000Z", status: "created" }),
   execute: async (spec: ExecutionSpec) => {
     executions.push(spec)
     return { id: `execution-${executions.length}`, command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok\n", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
@@ -62,7 +67,7 @@ const executeCampaign = async () => runRecipeAdversarialCampaigns({
   recipePath: "/portable/recipe.json",
   recipeDirectory: "/portable",
   runtime,
-  executions: [],
+  executions: recipeExecutions,
   provenance: { runtime: "neutral" },
 })
 
@@ -74,6 +79,13 @@ assert.deepEqual(first[0]?.result.schedule, second[0]?.result.schedule)
 assert.deepEqual(first[0]?.result.findings, second[0]?.result.findings)
 assert.equal(first[0]?.capabilities.optional[0]?.available, false, "optional fidelity must be explicit")
 assert(executions.length > 0, "generated cases must execute through runtime commands")
+const clockedSuiteArg = recipeExecutions.flatMap((execution) => execution.args).find((arg) => arg.startsWith("input-json="))
+const clockedPhase = JSON.parse((clockedSuiteArg ?? "input-json={}").slice("input-json=".length)).cases[0].phases.action as Array<{ metadata?: { clockSchedule?: Array<{ operation: string }> }; args?: string[] }>
+assert.equal(clockedPhase[0]?.metadata?.clockSchedule?.[0]?.operation, "freeze", "freeze runs before the pre-expiry action")
+assert.match(clockedPhase[1]?.args?.[0] ?? "", /before-expiry/)
+assert.equal(clockedPhase[2]?.metadata?.clockSchedule?.[0]?.operation, "advance", "advance runs before the post-expiry action")
+assert.match(clockedPhase[3]?.args?.[0] ?? "", /after-expiry/)
+assert(executions.some((execution) => execution.command === "wordpress.run-php" && execution.args.some((arg) => arg.includes("server-clock-cleanup"))), "clock state is cleaned after every case")
 assert(checkpointOperations.includes("create:baseline") && checkpointOperations.includes("restore:baseline"), "campaign cases must use the existing checkpoint reset path")
 assert(checkpointOperations.filter((operation) => operation === "restore:baseline").length >= (first[0]?.result.summary.generated ?? 0) + (second[0]?.result.summary.generated ?? 0), "every campaign and minimization execution must restore the declared baseline before running")
 
@@ -84,6 +96,26 @@ assert.throws(() => validateWorkspaceRecipeShape(unsupportedRecipe, "unsupported
 const unsafeFaultRecipe = structuredClone(recipe)
 unsafeFaultRecipe.adversarialCampaigns![0]!.faultSchedule = { schema: "wp-codebox/transport-fault-model/v1", seed: "faults", rules: [] }
 assert.throws(() => validateWorkspaceRecipeShape(unsafeFaultRecipe, "faults.json"), /faultSchedule requires the transport-faults capability/)
+
+const unsupportedClockRecipe = structuredClone(recipe)
+unsupportedClockRecipe.adversarialCampaigns![0]!.corpus[0]!.actions[0]!.clock = [{ surface: "runtime", operation: "freeze", time: 1 }]
+await assert.rejects(() => runRecipeAdversarialCampaigns({ recipe: unsupportedClockRecipe, recipePath: "/portable/unsupported-clock.json", recipeDirectory: "/portable", runtime, executions: [] }), /runtime\.freeze/)
+
+const neutralClockRuntime = { ...runtime, info: async () => ({ id: "neutral", backend: "neutral", environment: { kind: "wordpress", name: "Neutral" }, createdAt: "2026-01-01T00:00:00.000Z", status: "created" }) } as unknown as Runtime
+await assert.rejects(() => runRecipeAdversarialCampaigns({ recipe, recipePath: "/portable/neutral-clock.json", recipeDirectory: "/portable", runtime: neutralClockRuntime, executions: [] }), /runtime backend neutral/)
+
+const noResetRecipe = structuredClone(recipe)
+noResetRecipe.adversarialCampaigns![0]!.resetPolicy = { mode: "none" }
+const noResetExecutions: ExecutionSpec[] = []
+const failedClockRuntime = {
+  ...runtime,
+  execute: async (spec: ExecutionSpec) => {
+    noResetExecutions.push(spec)
+    return { id: `no-reset-${noResetExecutions.length}`, command: spec.command, args: spec.args ?? [], exitCode: 1, stdout: "", stderr: "failed", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
+  },
+} as unknown as Runtime
+await runRecipeAdversarialCampaigns({ recipe: noResetRecipe, recipePath: "/portable/no-reset.json", recipeDirectory: "/portable", runtime: failedClockRuntime, executions: [] })
+assert(noResetExecutions.some((execution) => execution.args.some((arg) => arg.includes("server-clock-cleanup"))), "failed no-reset cases clean injected clock state")
 
 assert.equal(resolveAdversarialReplayPath("files/replay.json", "/workspace"), "/workspace/files/replay.json")
 assert.throws(() => resolveAdversarialReplayPath("../replay.json", "/workspace"), /escapes the invocation workspace/)
