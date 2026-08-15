@@ -38,7 +38,7 @@ export interface AdversarialBrowserOracleResult {
 }
 
 export interface ClockControlCapability {
-  surface: "runtime" | "browser" | "scheduler" | "database"
+  surface: "runtime" | "wordpress" | "browser" | "scheduler" | "database"
   freeze: boolean
   advance: boolean
   skew: boolean

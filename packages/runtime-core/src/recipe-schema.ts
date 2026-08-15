@@ -1412,7 +1412,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         type: "object",
         additionalProperties: false,
         required: ["type"],
-        properties: { type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }, input: {}, metadata: { $ref: "#/$defs/metadata" } },
+        properties: { type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }, input: {}, clock: { type: "array", minItems: 1, maxItems: 32, items: { $ref: "#/$defs/adversarialClockScheduleEntry" } }, metadata: { $ref: "#/$defs/metadata" } },
       },
       adversarialCaseTemplate: {
         type: "object",
@@ -1466,6 +1466,27 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           snapshotRef: { type: "string" },
           fixtureRefs: { type: "array", items: { type: "string" } },
           metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      adversarialClockScheduleEntry: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surface", "operation"],
+        allOf: [{
+          if: { properties: { operation: { enum: ["freeze", "skew"] } }, required: ["operation"] },
+          then: { required: ["time"] },
+        }, {
+          if: { properties: { operation: { const: "advance" } }, required: ["operation"] },
+          then: { required: ["milliseconds"] },
+        }, {
+          if: { properties: { operation: { const: "restore" } }, required: ["operation"] },
+          then: { not: { anyOf: [{ required: ["time"] }, { required: ["milliseconds"] }] } },
+        }],
+        properties: {
+          surface: { enum: ["runtime", "wordpress", "scheduler", "database"] },
+          operation: { enum: ["freeze", "advance", "skew", "restore"] },
+          time: { type: "integer", minimum: 0 },
+          milliseconds: { type: "integer", minimum: 0 },
         },
       },
       transportFaultModel: {

@@ -4,6 +4,7 @@ import type { Page } from "playwright"
 export const PLAYWRIGHT_CLOCK_CONTROL_CAPABILITIES: ClockControlCapabilities = clockControlCapabilities("playwright", [
   { surface: "browser", freeze: true, advance: true, skew: true, restore: true, fidelity: "exact" },
   { surface: "runtime", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "Browser clock control does not alter the server process clock." },
+  { surface: "wordpress", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "Browser clock control does not alter WordPress API clock seams." },
   { surface: "scheduler", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "Server scheduler control requires a runtime extension." },
   { surface: "database", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "Browser clock control does not alter database time functions." },
 ])
