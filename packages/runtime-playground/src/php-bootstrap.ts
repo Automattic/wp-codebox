@@ -8,7 +8,12 @@ interface PhpBootstrapBridge {
   token: string
 }
 
-export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string): string {
+export interface PhpHostHttpTransportBridge {
+  url: string
+  token: string
+}
+
+export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string, hostHttpTransport?: PhpHostHttpTransportBridge): string {
   assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {})
   return `<?php
 ${phpFatalDiagnosticPhp()}
@@ -18,10 +23,11 @@ ${runtimeEnvPhp(spec)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
+${hostHttpTransport ? hostHttpTransportPhp(hostHttpTransport) : ""}
 ${phpBody(code)}`
 }
 
-export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string): string {
+export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: string[], wpCliBridge?: PhpBootstrapBridge, failureDiagnosticFile?: string, hostHttpTransport?: PhpHostHttpTransportBridge): string {
   const executionEnvironment = runtimeEnvOverride(args)
   assertRuntimeSecretEnvTargetsAvailable(spec.secretEnvTargets, spec.runtimeEnv ?? {}, executionEnvironment)
   const bootstrapMode = argValue(args, "bootstrap")
@@ -42,6 +48,7 @@ ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 ${bootstrapMode === "runtime-only" ? "" : multisiteRequestBootstrapPhp()}
 ${bootstrapMode === "runtime-only" ? "" : "require_once '/wordpress/wp-load.php';"}
+${bootstrapMode === "runtime-only" || !hostHttpTransport ? "" : hostHttpTransportPhp(hostHttpTransport)}
 ${failureDiagnosticFile ? phpFailureDiagnosticCompletionPhp() : ""}
 ${bootstrapMode === "runtime-only" ? "" : recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
@@ -50,6 +57,26 @@ putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)
 ${command.body}`
 
   return failureDiagnosticFile && bootstrapMode !== "runtime-only" ? phpFailureDiagnosticWrapperPhp(bootstrapped, failureDiagnosticFile) : bootstrapped
+}
+
+export function hostHttpTransportPhp(bridge: PhpHostHttpTransportBridge): string {
+  return `if (!function_exists('wp_codebox_host_http_transport_request')) {
+    function wp_codebox_host_http_transport_request(string $payload): string {
+        $message = json_decode($payload, true);
+        $timeout = is_array($message) && isset($message['timeoutMs']) ? max(1.0, min(61.0, ((float) $message['timeoutMs'] / 1000) + 1.0)) : 61.0;
+        $response = wp_remote_post(${JSON.stringify(bridge.url)}, array(
+            'headers' => array('authorization' => ${JSON.stringify(`Bearer ${bridge.token}`)}, 'content-type' => 'application/json'),
+            'body' => $payload,
+            'timeout' => $timeout,
+            'redirection' => 0,
+        ));
+        if (is_wp_error($response)) {
+            return wp_json_encode(array('schema' => 'wp-codebox/host-http-transport-response/v1', 'id' => is_array($message) ? (string) ($message['id'] ?? '') : '', 'success' => false, 'error' => array('code' => 'bridge_unavailable', 'message' => $response->get_error_message())), JSON_UNESCAPED_SLASHES);
+        }
+        return (string) wp_remote_retrieve_body($response);
+    }
+}
+`
 }
 
 function multisiteRequestBootstrapPhp(): string {
