@@ -21,6 +21,11 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
   source_roots: [pluginRoot],
   archive_root: "wp-codebox",
 }])
+assert.deepEqual(homeboy.scripts?.test, [
+  "npm run smoke -- --group package",
+  "npm run test:release-target",
+  "npm run test:release-package-coverage",
+])
 
 await execFileAsync("npm", ["run", "build"], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 * 10 })
 const staleDistPath = resolve(repositoryRoot, "packages/runtime-playground/dist/mount-materialization.js")
