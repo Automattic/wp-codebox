@@ -6,6 +6,7 @@ import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type Comman
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSource, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { assertHostNodeHeapRequirement } from "./host-node-heap.js"
+import { isSmtpSinkRecipeOperation } from "./smtp-sink-recipe-operations.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 import { evaluateZipSourcePolicy } from "./source-policy.js"
 
@@ -1098,7 +1099,7 @@ export function recipePolicy(recipe: WorkspaceRecipe, recipeDirectory?: string):
     return []
   })
   const commands = [
-    ...effectivePolicyCommandsFor(recipeDeclaredWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(recipeDeclaredWorkflowSteps(recipe).map(({ step }) => step.command).filter((command) => !isSmtpSinkRecipeOperation(command)), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(boundedRuntimePlanCommands(recipe), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
@@ -1556,6 +1557,26 @@ export function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeS
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void, recipeDirectory: string): Promise<void> {
   validateRecipeStepDescriptorArgs(step, path, addIssue)
+
+  if (isSmtpSinkRecipeOperation(step.command)) {
+    const allowed = step.command === "host/smtp.inspect" ? new Set(["service", "limit", "recipient", "recipient-label", "subject-marker", "link-marker"]) : new Set(["service"])
+    const seen = new Set<string>()
+    for (const argument of step.args ?? []) {
+      const separator = argument.indexOf("=")
+      const name = separator < 1 ? "" : argument.slice(0, separator)
+      if (!allowed.has(name)) addIssue("unknown-smtp-operation-arg", `${path}.args`, `${step.command} does not accept ${name || "unnamed"} arguments.`)
+      else if (seen.has(name)) addIssue("duplicate-smtp-operation-arg", `${path}.args`, `${step.command} accepts each argument at most once.`)
+      else seen.add(name)
+    }
+    if (!recipeStepArgValue(step.args ?? [], "service")?.trim()) addIssue("missing-smtp-service", `${path}.args`, `${step.command} requires service=<smtp-service-id>.`)
+    if (step.command === "host/smtp.inspect") {
+      const limit = recipeStepArgValue(step.args ?? [], "limit")
+      if (limit && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 100)) addIssue("invalid-smtp-limit", `${path}.args`, "host/smtp.inspect limit must be an integer from 1 through 100.")
+      const label = recipeStepArgValue(step.args ?? [], "recipient-label")
+      if (label && (!/^[a-z][a-z0-9_-]{0,63}$/.test(label) || /token|secret|password|credential|apikey|api_key|private|bearer/i.test(label))) addIssue("unsafe-smtp-recipient-label", `${path}.args`, "host/smtp.inspect recipient-label must be a short safe identifier without secret-like terms.")
+    }
+    return
+  }
 
   if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit" || step.command === "wordpress.core-phpunit") {
     const code = recipeStepArgValue(step.args ?? [], "code")

@@ -7,7 +7,8 @@ import { join } from "node:path"
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
 import { executeRuntimeServiceProcess, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
-import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
+import { executeSmtpSinkRecipeOperation } from "../packages/cli/src/smtp-sink-recipe-operations.ts"
+import { recipePolicy, validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe-builders.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipe, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -100,6 +101,11 @@ try {
 }
 const recipe: WorkspaceRecipe = { schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 'ok';"] }] } }
 assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, "recipe.json"), [])
+assert.equal(recipePolicy({ ...recipe, workflow: { steps: [{ command: "host/unknown", args: [] }] } }).commands.includes("host/unknown"), true, "unknown host commands remain policy-checked")
+assert.deepEqual(
+  (await validateWorkspaceRecipeSemantics({ ...recipe, workflow: { steps: [{ command: "host/smtp.inspect", args: ["service=mail", "unexpected=value", "recipient-label=api_key"] }] } }, "recipe.json")).map((issue) => issue.code).sort(),
+  ["unknown-smtp-operation-arg", "unsafe-smtp-recipient-label"],
+)
 const dryRun = await planWorkspaceRecipe(recipe, process.cwd(), { recipePath: "recipe.json" }, {
   defaultWordPressVersion: "latest",
   resolveExecutionSpec: async (step) => ({ command: step.command, args: step.args ?? [] }),
@@ -279,14 +285,35 @@ assert.deepEqual(indexedForeignKeyRun?.args.slice(-2), ["mysql:8.4", "--restrict
 await indexedForeignKey.release()
 
 const auxiliaryCalls: string[][] = []
+let smtpMessages: unknown[] = [
+  { ID: "first", To: [{ Address: "person@example.test" }], Subject: "Reset your password" },
+  { ID: "second", To: [{ Address: "person@example.test" }], Subject: "Reset your password" },
+]
+let smtpUnavailable = false
+let smtpApiReadinessFailures = 1
+const smtpLinks: Record<string, string[]> = {
+  first: ["http://localhost:41001/reset/token-secret"],
+  second: ["https://example.test/reset/token-secret"],
+}
+const smtpProviderRequests: string[] = []
 const auxiliaryDependencies: RuntimeServiceDependencies = {
   ...dependencies,
   async execute(command, args, options) {
     auxiliaryCalls.push(args)
     return await dependencies.execute(command, args, options)
   },
+  async request(url, options) {
+    smtpProviderRequests.push(url)
+    if (smtpUnavailable) throw new Error("sink unavailable")
+    if (options.method === "DELETE") { smtpMessages = []; return { status: 200, body: "ok" } }
+    if (smtpApiReadinessFailures-- > 0) return { status: 503, body: "starting" }
+    const detailId = url.match(/\/message\/([^/]+)$/)?.[1]
+    if (detailId) return { status: 200, body: JSON.stringify({ ID: detailId, HTML: (smtpLinks[detailId] ?? []).map((URL) => `<a href="${URL}">link</a>`).join(""), Text: (smtpLinks[detailId] ?? []).join("\n") }) }
+    return { status: 200, body: JSON.stringify({ total: smtpMessages.length, messages: smtpMessages }) }
+  },
 }
 const auxiliary = await provisionRuntimeServices(auxiliaryServices, { dependencies: auxiliaryDependencies })
+assert.equal(smtpApiReadinessFailures < 0, true, "SMTP inspection API readiness retries independently after SMTP is reachable")
 assert.equal(auxiliary.env.REDIS_URL, "redis://127.0.0.1:41001")
 assert.equal(auxiliary.env.FIXTURE_URL, "http://127.0.0.1:41001")
 assert.equal((await auxiliary.control("cache", "pause")).status, "applied")
@@ -300,6 +327,34 @@ assert.ok(auxiliaryCalls.some((args) => args.includes("redis:7.4-alpine")))
 assert.ok(auxiliaryCalls.some((args) => args.includes("axllent/mailpit:v1.27")))
 assert.ok(auxiliaryCalls.some((args) => args.includes("hashicorp/http-echo:1.0")))
 assert.equal(auxiliary.evidence.find((item) => item.id === "cache")?.controls?.length, 5)
+const inspectedMail = await auxiliary.inspectSmtpSink("mail", { limit: 1, recipient: "person@example.test", recipientLabel: "account", subjectMarker: "Reset", linkMarker: "/reset/" })
+assert.equal(inspectedMail.count, 2)
+assert.equal(inspectedMail.returned, 1)
+assert.equal(inspectedMail.truncated, true)
+assert.deepEqual(inspectedMail.messages[0]?.recipientLabels, ["account"])
+assert.equal(inspectedMail.messages[0]?.subjectMarkerMatched, true)
+assert.equal(inspectedMail.messages[0]?.linkMarkerMatched, true)
+assert.equal(JSON.stringify(inspectedMail).includes("person@example.test"), false)
+assert.equal(JSON.stringify(inspectedMail).includes("token-secret"), false)
+assert.equal(JSON.stringify(inspectedMail).includes("41001"), false)
+assert.equal(smtpProviderRequests.every((url) => /^http:\/\/127\.0\.0\.1:\d+\/api\/v1\/(messages(?:\?[^/]*)?|message\/[^/]+)$/.test(url)), true, "SMTP inspection uses only loopback Mailpit list/detail/reset/readiness endpoints")
+assert.equal(smtpProviderRequests.some((url) => url.includes("link-check") || url.includes("token-secret") || url.includes("example.test")), false, "message URLs never become provider requests")
+smtpUnavailable = true
+await assert.rejects(auxiliary.inspectSmtpSink("mail"), /sink unavailable/)
+smtpUnavailable = false
+assert.equal((await auxiliary.control("mail", "restart")).status, "applied", "recovery verifies the inspection API after SMTP restart")
+assert.deepEqual(await auxiliary.resetSmtpSink("mail"), { schema: "wp-codebox/smtp-sink-reset/v1", serviceId: "service-1", reset: true })
+const emptyMail = await auxiliary.inspectSmtpSink("mail")
+assert.deepEqual(emptyMail.messages, [])
+assert.equal(emptyMail.count, 0)
+smtpMessages = [{ ID: "single", To: [{ Address: "other@example.test" }], Subject: "Welcome", Links: [] }]
+assert.equal((await auxiliary.inspectSmtpSink("mail", { limit: 1 })).returned, 1)
+const recipeInspection = await executeSmtpSinkRecipeOperation({ command: "host/smtp.inspect", args: ["service=mail", "recipient=other@example.test", "recipient-label=other", "subject-marker=Welcome secret", "link-marker=/token-secret"] }, auxiliary)
+assert.equal(recipeInspection.execution.stdout.includes("other@example.test"), false)
+assert.equal(recipeInspection.evidenceArgs.some((argument) => argument.includes("other@example.test")), false)
+assert.equal(recipeInspection.evidenceArgs.some((argument) => argument.includes("Welcome secret") || argument.includes("token-secret") || argument === "service=mail"), false)
+assert.equal(auxiliary.evidence.find((item) => item.id === "mail")?.operations?.length, 6)
+await assert.rejects(auxiliary.inspectSmtpSink("mail", { limit: 101 }), /1 through 100/)
 await auxiliary.release()
 
 const mariaDbCalls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = []

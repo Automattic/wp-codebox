@@ -11,6 +11,9 @@ const MYSQL_IMAGES = { mysql: "mysql:8.4", mariadb: "mariadb:11.4" } as const
 const SERVICE_IMAGES = { redis: "redis:7.4-alpine", smtp: "axllent/mailpit:v1.27", http: "hashicorp/http-echo:1.0" } as const
 const DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES = 1024 * 1024
 const MAX_NATIVE_RUNTIME_SERVICES = 2
+const SMTP_SINK_RESPONSE_MAX_BYTES = 128 * 1024
+const SMTP_SINK_MESSAGE_TEXT_MAX_BYTES = 64 * 1024
+const SMTP_SINK_MAX_LINKS = 20
 
 export type RuntimeServiceControlAction = "stop" | "start" | "pause" | "resume" | "restart" | "disconnect" | "reconnect" | "flush" | "read-only" | "read-write" | "latency"
 
@@ -36,8 +39,34 @@ export interface RuntimeServiceEvidence {
     cause?: { code: string; message: string }
   }
   controls?: RuntimeServiceControlResult[]
+  operations?: RuntimeServiceOperationEvidence[]
   memory?: { budgetMiB: number; observedRssMiB?: number }
   storage?: "tmpfs" | "disk"
+}
+
+export interface SmtpSinkInspectOptions {
+  limit?: number
+  recipient?: string
+  recipientLabel?: string
+  subjectMarker?: string
+  linkMarker?: string
+}
+
+export interface SmtpSinkInspection {
+  schema: "wp-codebox/smtp-sink-inspection/v1"
+  serviceId: string
+  count: number
+  returned: number
+  truncated: boolean
+  messages: Array<{ id: string; recipientLabels: string[]; subjectMarkerMatched?: boolean; linkMarkerMatched?: boolean; links: Array<{ id: string; scheme: string; hostClass: "loopback" | "external"; pathDepth: number }> }>
+}
+
+export interface RuntimeServiceOperationEvidence {
+  schema: "wp-codebox/runtime-service-operation/v1"
+  operation: "smtp.inspect" | "smtp.reset"
+  status: "completed" | "failed"
+  result?: SmtpSinkInspection | { schema: "wp-codebox/smtp-sink-reset/v1"; serviceId: string; reset: true }
+  reason?: string
 }
 
 export class RuntimeServiceProvisionError extends Error {
@@ -65,6 +94,9 @@ interface ManagedRuntimeService {
   evidence: RuntimeServiceEvidence
   release(): Promise<void>
   control(action: RuntimeServiceControlAction, options?: Record<string, unknown>): Promise<RuntimeServiceControlResult>
+  inspectSmtpSink?(options: SmtpSinkInspectOptions): Promise<SmtpSinkInspection>
+  resetSmtpSink?(): Promise<{ schema: "wp-codebox/smtp-sink-reset/v1"; serviceId: string; reset: true }>
+  providerData?: unknown
 }
 
 export interface RuntimeServiceDependencies {
@@ -77,6 +109,7 @@ export interface RuntimeServiceDependencies {
   removeNativeRoot?: (root: string) => Promise<void>
   signalNativeProcess?: (child: ChildProcess, signal: NodeJS.Signals) => boolean
   verifyNativeFilesystem?: (root: string, datadir: string) => Promise<void>
+  request?: (url: string, options: { method: "GET" | "DELETE"; signal?: AbortSignal }) => Promise<{ status: number; body?: string }>
 }
 
 export interface RuntimeServiceProvider {
@@ -92,6 +125,7 @@ interface RuntimeServiceProvisionContext {
   policy?: RuntimePolicy
   externalServices: WorkspaceRecipeExternalServiceBoundary[]
   externalServiceWritesApproved: boolean
+  nextSmtpServiceOrdinal(): number
 }
 
 export interface ProvisionRuntimeServicesOptions {
@@ -119,16 +153,18 @@ export function runtimeServicePlan(services: WorkspaceRecipeRuntimeService[]): A
   })
 }
 
-export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: ProvisionRuntimeServicesOptions = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; secretEnvTargets: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; release(): Promise<void> }> {
+export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeService[], options: ProvisionRuntimeServicesOptions = {}): Promise<{ env: Record<string, string>; secretEnv: Record<string, string>; secretEnvTargets: Record<string, string>; evidence: RuntimeServiceEvidence[]; control(serviceId: string, action: RuntimeServiceControlAction, controlOptions?: Record<string, unknown>): Promise<RuntimeServiceControlResult>; inspectSmtpSink(serviceId: string, inspectOptions?: SmtpSinkInspectOptions): Promise<SmtpSinkInspection>; resetSmtpSink(serviceId: string): Promise<{ schema: "wp-codebox/smtp-sink-reset/v1"; serviceId: string; reset: true }>; release(): Promise<void> }> {
   const dependencies = options.dependencies ?? defaultDependencies
   const provisioned: ManagedRuntimeService[] = []
   const evidence: RuntimeServiceEvidence[] = []
   let environment: ReturnType<typeof aggregateRuntimeServiceEnvironment>
+  let smtpServiceOrdinal = 0
   const context: RuntimeServiceProvisionContext = {
     signal: options.signal,
     policy: options.policy,
     externalServices: options.externalServices ?? [],
     externalServiceWritesApproved: options.externalServiceWritesApproved ?? false,
+    nextSmtpServiceOrdinal: () => ++smtpServiceOrdinal,
   }
   try {
     if (services.filter((service) => service.configuration?.provider === "native").length > MAX_NATIVE_RUNTIME_SERVICES) throw new Error(`Managed runtime services exceed the native service budget of ${MAX_NATIVE_RUNTIME_SERVICES}`)
@@ -156,6 +192,16 @@ export async function provisionRuntimeServices(services: WorkspaceRecipeRuntimeS
       const service = provisioned.find((candidate) => candidate.evidence.id === serviceId)
       if (!service) throw new Error(`Managed runtime service does not exist: ${serviceId}`)
       return await service.control(action, controlOptions)
+    },
+    async inspectSmtpSink(serviceId, inspectOptions = {}) {
+      const service = provisioned.find((candidate) => candidate.evidence.id === serviceId)
+      if (!service?.inspectSmtpSink) throw new Error("Managed SMTP sink is unavailable")
+      return await recordServiceOperation(service.evidence, "smtp.inspect", async () => await service.inspectSmtpSink!(inspectOptions))
+    },
+    async resetSmtpSink(serviceId) {
+      const service = provisioned.find((candidate) => candidate.evidence.id === serviceId)
+      if (!service?.resetSmtpSink) throw new Error("Managed SMTP sink is unavailable")
+      return await recordServiceOperation(service.evidence, "smtp.reset", async () => await service.resetSmtpSink!())
     },
     async release() {
       try {
@@ -1328,13 +1374,179 @@ async function provisionRedisDockerService(service: WorkspaceRecipeRuntimeServic
 }
 
 async function provisionSmtpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
-  return await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
+  const managed = await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
     image: service.configuration?.image ?? SERVICE_IMAGES.smtp,
     ports: [1025, 8025],
     runArgs: [],
     values: (ports) => ({ host: "127.0.0.1", port: String(ports[0]), httpPort: String(ports[1]), url: `smtp://127.0.0.1:${ports[0]}` }),
   })
+  const httpPort = (managed.providerData as { ports?: number[] } | undefined)?.ports?.[1]
+  if (typeof httpPort !== "number" || !Number.isInteger(httpPort)) throw new Error("SMTP sink inspection port is unavailable")
+  const inspectionPort = httpPort
+  const labels = opaqueSmtpLabels(context.nextSmtpServiceOrdinal())
+  try {
+    await waitForSmtpInspectionReady(dependencies, inspectionPort, context.signal)
+  } catch (error) {
+    await managed.release().catch(() => undefined)
+    managed.evidence.readiness = "failed"
+    managed.evidence.lifecycle = "failed"
+    managed.evidence.diagnostic = { code: "readiness-failed" }
+    throw error
+  }
+  return {
+    ...managed,
+    async inspectSmtpSink(options) {
+      const limit = smtpSinkLimit(options.limit)
+      // Mailpit's HTTP API is contained in this provider adapter. Link-check is
+      // intentionally not used: it makes outbound requests for message URLs.
+      const payload = await smtpSinkRequest(dependencies, `http://127.0.0.1:${inspectionPort}/api/v1/messages?limit=100`, "GET", context.signal)
+      return await normalizeMailpitMessages(labels, payload, options, limit, async (id) => await smtpSinkRequest(dependencies, `http://127.0.0.1:${inspectionPort}/api/v1/message/${encodeURIComponent(id)}`, "GET", context.signal))
+    },
+    async resetSmtpSink() {
+      await smtpSinkRequest(dependencies, `http://127.0.0.1:${inspectionPort}/api/v1/messages`, "DELETE", context.signal)
+      return { schema: "wp-codebox/smtp-sink-reset/v1", serviceId: labels.service, reset: true }
+    },
+    async control(action, options) {
+      const result = await managed.control(action, options)
+      if (result.status === "applied" && ["start", "resume", "restart", "reconnect"].includes(action)) {
+        try {
+          await waitForSmtpInspectionReady(dependencies, inspectionPort, context.signal)
+        } catch {
+          result.status = "failed"
+          result.reason = "SMTP sink inspection API did not recover"
+        }
+      }
+      return result
+    },
+  }
 }
+
+async function recordServiceOperation<T extends RuntimeServiceOperationEvidence["result"]>(evidence: RuntimeServiceEvidence, operation: RuntimeServiceOperationEvidence["operation"], run: () => Promise<T>): Promise<T> {
+  try {
+    const result = await run()
+    ;(evidence.operations ??= []).push({ schema: "wp-codebox/runtime-service-operation/v1", operation, status: "completed", result })
+    return result
+  } catch (error) {
+    ;(evidence.operations ??= []).push({ schema: "wp-codebox/runtime-service-operation/v1", operation, status: "failed", reason: "provider-operation-failed" })
+    throw error
+  }
+}
+
+function smtpSinkLimit(value: number | undefined): number {
+  const limit = value ?? 20
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("SMTP sink inspection limit must be an integer from 1 through 100")
+  return limit
+}
+
+async function smtpSinkRequest(dependencies: RuntimeServiceDependencies, url: string, method: "GET" | "DELETE", signal?: AbortSignal): Promise<unknown> {
+  if (dependencies.request) {
+    const response = await dependencies.request(url, { method, signal })
+    if (response.status < 200 || response.status >= 300) throw new Error("SMTP sink provider request failed")
+    return parseSmtpSinkResponse(response.body)
+  }
+  const response = await fetch(url, { method, signal })
+  if (!response.ok) throw new Error("SMTP sink provider request failed")
+  return parseSmtpSinkResponse(await response.text())
+}
+
+function parseSmtpSinkResponse(body: string | undefined): unknown {
+  if (body && Buffer.byteLength(body) > SMTP_SINK_RESPONSE_MAX_BYTES) throw new Error("SMTP sink provider response exceeded the bounded response limit")
+  if (!body?.trim()) return undefined
+  try { return JSON.parse(body) } catch { return body }
+}
+
+async function waitForSmtpInspectionReady(dependencies: RuntimeServiceDependencies, port: number, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    throwIfAborted(signal)
+    try {
+      const response = await smtpSinkRequest(dependencies, `http://127.0.0.1:${port}/api/v1/messages?limit=1`, "GET", signal)
+      if (objectRecord(response)) return
+    } catch (error) {
+      if (signal?.aborted) throw error
+    }
+    await abortableDelay(100, signal)
+  }
+  throw new Error("SMTP sink inspection API readiness timed out")
+}
+
+function opaqueSmtpLabels(serviceOrdinal: number): { service: string; message(value: string): string; recipient(value: string): string; link(value: string): string } {
+  const labels = new Map<string, number>()
+  const label = (kind: string, value: string): string => {
+    const key = `${kind}:${value}`
+    let ordinal = labels.get(key)
+    if (ordinal === undefined) { ordinal = labels.size + 1; labels.set(key, ordinal) }
+    return `${kind}-${ordinal}`
+  }
+  return { service: `service-${serviceOrdinal}`, message: (value) => label("message", value), recipient: (value) => label("recipient", value), link: (value) => label("link", value) }
+}
+
+async function normalizeMailpitMessages(labels: ReturnType<typeof opaqueSmtpLabels>, payload: unknown, options: SmtpSinkInspectOptions, limit: number, linkCheck: (id: string) => Promise<unknown>): Promise<SmtpSinkInspection> {
+  const record = objectRecord(payload)
+  const source = Array.isArray(record?.messages) ? record.messages : []
+  const filtered = source.filter((message) => {
+    const item = objectRecord(message)
+    const recipients = mailpitRecipients(item)
+    const subject = stringField(item, "Subject")
+    return (!options.recipient || recipients.includes(options.recipient)) && (!options.subjectMarker || subject.includes(options.subjectMarker))
+  })
+  const messages = await Promise.all(filtered.slice(0, limit).map(async (message) => {
+    const summary = objectRecord(message)
+    const id = stringField(summary, "ID")
+    const links = id ? await linkCheck(id) : undefined
+    return normalizeMailpitMessage(labels, summary, links, options)
+  }))
+  const total = numberField(record, "total") ?? source.length
+  return { schema: "wp-codebox/smtp-sink-inspection/v1", serviceId: labels.service, count: filtered.length, returned: messages.length, truncated: filtered.length > messages.length || total > source.length, messages }
+}
+
+function normalizeMailpitMessage(labels: ReturnType<typeof opaqueSmtpLabels>, message: Record<string, unknown> | undefined, detail: unknown, options: SmtpSinkInspectOptions): SmtpSinkInspection["messages"][number] {
+  const recipients = mailpitRecipients(message)
+  const subject = stringField(message, "Subject")
+  const extractedLinks = extractMailpitMessageLinks(detail)
+  const links = extractedLinks.map((link) => normalizeSmtpLink(labels, link))
+  return {
+    id: labels.message(stringField(message, "ID")),
+    recipientLabels: [...new Set(recipients.map((recipient) => options.recipient && recipient === options.recipient && options.recipientLabel ? options.recipientLabel : labels.recipient(recipient)))].sort(),
+    ...(options.subjectMarker ? { subjectMarkerMatched: subject.includes(options.subjectMarker) } : {}),
+    ...(options.linkMarker ? { linkMarkerMatched: extractedLinks.some((link) => link.includes(options.linkMarker!)) } : {}),
+    links,
+  }
+}
+
+function mailpitRecipients(message: Record<string, unknown> | undefined): string[] {
+  const recipients = Array.isArray(message?.To) ? message.To : []
+  return recipients.map(objectRecord).map((recipient) => stringField(recipient, "Address")).filter((value): value is string => Boolean(value))
+}
+
+function extractMailpitMessageLinks(payload: unknown): string[] {
+  const message = objectRecord(payload)
+  const html = stringField(message, "HTML").slice(0, SMTP_SINK_MESSAGE_TEXT_MAX_BYTES)
+  const text = stringField(message, "Text").slice(0, SMTP_SINK_MESSAGE_TEXT_MAX_BYTES)
+  const links = new Set<string>()
+  const collect = (value: string): void => {
+    for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+      if (links.size >= SMTP_SINK_MAX_LINKS) return
+      links.add(match[0])
+    }
+  }
+  collect(html)
+  collect(text)
+  return [...links]
+}
+
+function normalizeSmtpLink(labels: ReturnType<typeof opaqueSmtpLabels>, link: string): { id: string; scheme: string; hostClass: "loopback" | "external"; pathDepth: number } {
+  try {
+    const parsed = new URL(link)
+    return { id: labels.link(link), scheme: parsed.protocol.replace(/:$/, ""), hostClass: /^(localhost|127\.0\.0\.1|::1)$/i.test(parsed.hostname) ? "loopback" : "external", pathDepth: parsed.pathname.split("/").filter(Boolean).length }
+  } catch {
+    return { id: labels.link(link), scheme: "unknown", hostClass: "external", pathDepth: 0 }
+  }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined }
+function stringField(value: Record<string, unknown> | undefined, key: string): string { return typeof value?.[key] === "string" ? value[key] : "" }
+function numberField(value: Record<string, unknown> | undefined, key: string): number | undefined { return typeof value?.[key] === "number" && Number.isFinite(value[key]) ? value[key] : undefined }
 
 async function provisionHttpDockerService(service: WorkspaceRecipeRuntimeService, dependencies: RuntimeServiceDependencies, context: RuntimeServiceProvisionContext, evidenceList: RuntimeServiceEvidence[]): Promise<ManagedRuntimeService> {
   return await provisionSimpleDockerService(service, dependencies, context.signal, evidenceList, {
@@ -1376,6 +1588,7 @@ async function provisionSimpleDockerService(
       secretEnv: {},
       secretEnvTargets: {},
       evidence,
+      providerData: { ports },
       async control(action, options) { return await controlDockerService(container, evidence, dependencies, action, options, spec.customControl ? async (candidate, candidateOptions) => await spec.customControl?.(container, candidate, candidateOptions) ?? false : undefined, async () => await dependencies.waitForReady("127.0.0.1", ports[0] as number, 30_000)) },
       async release() { await releaseService(container, evidence, dependencies) },
     }
