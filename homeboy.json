@@ -76,8 +76,7 @@
     "test": [
       "npm run smoke -- --group package",
       "npm run test:release-target",
-      "npm run test:release-package-coverage",
-      "npm run release:package"
+      "npm run test:release-package-coverage"
     ]
   }
 }
