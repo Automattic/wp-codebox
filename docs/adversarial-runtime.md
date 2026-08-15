@@ -149,10 +149,38 @@ removed in reverse order after success, failure, cancellation, or timeout.
 ## Clock control
 
 Playwright browser time supports exact freeze, advance, skew, and resume through
-its clock API. The same capability response explicitly marks server process,
-scheduler, and database clocks unsupported. A WordPress runtime extension is
-required to control those surfaces without faking server behavior in browser
-JavaScript.
+its clock API. WordPress Playground additionally supports a disposable,
+opt-in server clock seam for recipe campaigns. A normalized clock transition is
+declared on an adversarial action and applied immediately before that action's
+action phase. Setup phases remain grouped before action execution, so a later
+transition cannot advance time before an earlier action runs. This preserves
+before/after expiry boundaries and is copied with
+the action into replay evidence.
+
+```json
+"actions": [
+  { "type": "assert-before-expiry", "clock": [{ "surface": "scheduler", "operation": "freeze", "time": 1900000000000 }] },
+  { "type": "assert-after-expiry", "clock": [{ "surface": "scheduler", "operation": "advance", "milliseconds": 1000 }] }
+]
+```
+
+The Playground seam exposes `wp_codebox_adversarial_clock_now()`,
+`wp_codebox_adversarial_clock_timestamp()`, and
+`wp_codebox_adversarial_clock_datetime()` for code paths that explicitly choose
+deterministic campaign time. It supplies the scheduler's explicit due-event
+timestamp. These WordPress and scheduler surfaces are **emulated**. Native PHP
+`time()`, `DateTime`, WordPress `current_time()`/`current_datetime()` consumers
+that do not use the seam, and database clock functions remain **unsupported**;
+the adapter never claims native interception. Browser clocks remain a separate
+Playwright capability; server clock action transitions intentionally exclude the
+browser surface rather than claiming mixed-clock coordination.
+
+Clock transition negotiation is backend-specific. The WordPress Playground
+adapter is selected only when the active runtime reports that backend; neutral
+or other backends fail closed before campaign cases begin. If a case does not
+settle within the bounded abort grace after timing out, the campaign is marked
+incomplete and no subsequent case is scheduled on that runtime. Runtime teardown
+owns any non-cooperative execution that remains alive.
 
 ## Browser oracles
 
@@ -243,7 +271,8 @@ The following capabilities are intentionally not claimed by this change:
 - exact socket framing faults require a lower-level proxy provider;
 - server-side WordPress HTTP fault interception requires a WordPress extension
   adapter using the generic fault contract;
-- PHP/WordPress, cron, and database clock control require a WordPress extension;
+- native PHP/WordPress and database clock interception are unsupported; the
+  WordPress scheduler seam is an explicitly emulated capability;
 - WordPress-specific mutation grammars, security policies, and instrumentation
   remain extension-owned;
 - live vulnerable plugin/theme discovery campaigns require disposable runtime

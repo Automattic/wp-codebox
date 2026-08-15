@@ -368,7 +368,7 @@ export interface WorkspaceRecipeAdversarialCampaign {
   seed: string
   corpus: Array<{
     id: string
-    actions: Array<{ type: string; input?: unknown; metadata?: Record<string, unknown> }>
+    actions: Array<{ type: string; input?: unknown; clock?: import("./adversarial-campaign.js").AdversarialClockScheduleEntry[]; metadata?: Record<string, unknown> }>
     input?: unknown
     signals?: string[]
     metadata?: Record<string, unknown>

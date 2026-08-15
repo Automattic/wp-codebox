@@ -8,10 +8,13 @@ import {
   createWordPressAdversarialAdapter,
   evaluateWordPressAdversarialOracles,
   negotiateWordPressHttpTransportFaults,
+  negotiateWordPressServerClock,
   wordpressAdversarialActionSpec,
   wordpressHttpFaultConfigurationAction,
   wordpressNoveltySignals,
   wordpressSchedulerClockAction,
+  wordpressServerClockScheduleAction,
+  wordpressServerClockCleanupAction,
 } from "../packages/runtime-playground/src/wordpress-adversarial-adapter.js"
 
 const adapter = createWordPressAdversarialAdapter()
@@ -20,7 +23,9 @@ assert.equal(WORDPRESS_ADVERSARIAL_CAPABILITIES.find(({ surface }) => surface ==
 assert.equal(WORDPRESS_ADVERSARIAL_CAPABILITIES.find(({ surface }) => surface === "ajax")?.fidelity, "exact")
 assert.equal(WORDPRESS_ADVERSARIAL_CAPABILITIES.find(({ surface }) => surface === "xmlrpc")?.fidelity, "exact")
 assert.equal(WORDPRESS_CLOCK_CONTROL_CAPABILITIES.capabilities.find(({ surface }) => surface === "runtime")?.fidelity, "unsupported")
+assert.equal(WORDPRESS_CLOCK_CONTROL_CAPABILITIES.capabilities.find(({ surface }) => surface === "wordpress")?.fidelity, "emulated")
 assert.equal(WORDPRESS_CLOCK_CONTROL_CAPABILITIES.capabilities.find(({ surface }) => surface === "scheduler")?.fidelity, "emulated")
+assert.match(WORDPRESS_CLOCK_CONTROL_CAPABILITIES.capabilities.find(({ surface }) => surface === "runtime")?.reason ?? "", /time\(\)/)
 
 const rest = wordpressAdversarialActionSpec({ surface: "rest", operation: "POST", target: "/fixture/v1/action", input: { value: "mutated" } })
 assert.equal(rest.command, "wordpress.run-php")
@@ -41,6 +46,24 @@ assert.deepEqual(cli.args, ["command=option get home"])
 const scheduler = wordpressSchedulerClockAction(1900000000, "fixture_hook")
 assert.equal(scheduler.operation, "adversarial:cron")
 assert.equal(scheduler.metadata?.fidelity, "exact")
+
+const clockSchedule = wordpressServerClockScheduleAction([
+  { surface: "scheduler", operation: "freeze", time: 1_900_000_000_000 },
+  { surface: "scheduler", operation: "advance", milliseconds: 1_000 },
+])
+assert.equal(clockSchedule.command, "wordpress.run-php")
+assert.match(clockSchedule.args?.[0] ?? "", /wp-codebox-adversarial-clock\.php/)
+assert.match(clockSchedule.args?.[0] ?? "", /wp_codebox_adversarial_clock_apply/)
+assert.deepEqual(clockSchedule.metadata?.clockSchedule, [
+  { surface: "scheduler", operation: "freeze", time: 1_900_000_000_000 },
+  { surface: "scheduler", operation: "advance", milliseconds: 1_000 },
+])
+assert.equal((clockSchedule.metadata?.fidelity as Record<string, string>).runtime, "unsupported")
+assert.equal((clockSchedule.metadata?.fidelity as Record<string, string>).scheduler, "emulated")
+assert.throws(() => wordpressServerClockScheduleAction([{ surface: "database", operation: "freeze", time: 1 }]), /database/)
+assert.equal(negotiateWordPressServerClock([{ surface: "runtime", operation: "freeze", time: 1 }]).supported, false)
+assert.match(negotiateWordPressServerClock([{ surface: "runtime", operation: "freeze", time: 1 }]).unsupported[0]?.reason ?? "", /time\(\)/)
+assert.match(wordpressServerClockCleanupAction().args?.[0] ?? "", /delete_option/)
 
 const emulated = negotiateWordPressHttpTransportFaults(transportFaultModel({
   seed: "faults",

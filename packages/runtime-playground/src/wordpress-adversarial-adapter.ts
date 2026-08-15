@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import {
   ADVERSARIAL_ORACLE_SCHEMA,
   clockControlCapabilities,
+  normalizeAdversarialClockSchedule,
   negotiateTransportFaults,
   transportFaultCapabilities,
   type AdversarialCasePlan,
@@ -10,6 +11,7 @@ import {
   type AdversarialOracleContract,
   type AdversarialOracleResult,
   type ClockControlCapabilities,
+  type AdversarialClockScheduleEntry,
   type RuntimeEpisodeActionSpec,
   type TransportFaultCapabilities,
   type TransportFaultModel,
@@ -59,6 +61,12 @@ export interface WordPressAdversarialAdapter {
   oracleIds: string[]
 }
 
+export interface WordPressServerClockNegotiation {
+  supported: boolean
+  schedule: AdversarialClockScheduleEntry[]
+  unsupported: Array<{ surface: AdversarialClockScheduleEntry["surface"]; operation: AdversarialClockScheduleEntry["operation"]; reason: string }>
+}
+
 export const WORDPRESS_ADVERSARIAL_CAPABILITIES: readonly WordPressAdversarialCapability[] = [
   { surface: "rest", fidelity: "exact", reason: "Dispatched through WP_REST_Request and rest_do_request()." },
   { surface: "ajax", fidelity: "exact", reason: "Dispatched through the runtime HTTP server to wp-admin/admin-ajax.php, preserving HTTP and wp_die() termination semantics." },
@@ -96,9 +104,10 @@ const transportCapabilities = [
 export const WORDPRESS_HTTP_TRANSPORT_FAULT_CAPABILITIES = transportFaultCapabilities("wordpress-http-api", [...transportCapabilities])
 
 export const WORDPRESS_CLOCK_CONTROL_CAPABILITIES = clockControlCapabilities("wordpress-playground", [
-  { surface: "runtime", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "PHP time(), current_time(), and current_datetime() have no global supported clock injection primitive in this runtime." },
+  { surface: "runtime", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "PHP native time(), DateTime, and direct runtime clock consumers cannot be intercepted by a supported primitive." },
+  { surface: "wordpress", freeze: true, advance: true, skew: true, restore: true, fidelity: "emulated", reason: "The opt-in WordPress clock seam is available to supported code paths; current_time() and current_datetime() are not intercepted." },
   { surface: "browser", freeze: true, advance: true, skew: false, restore: true, fidelity: "exact", reason: "Use the existing Playwright clock controller for browser time." },
-  { surface: "scheduler", freeze: true, advance: true, skew: true, restore: true, fidelity: "emulated", reason: "Campaigns select and invoke due cron events against an explicit timestamp; background spawn timing is not changed." },
+  { surface: "scheduler", freeze: true, advance: true, skew: true, restore: true, fidelity: "emulated", reason: "The injected WordPress clock seam supplies explicit due-event timestamps; background spawning and native time consumers are unchanged." },
   { surface: "database", freeze: false, advance: false, skew: false, restore: false, fidelity: "unsupported", reason: "The default SQLite runtime database clock is independent and exposes no supported injection primitive." },
 ])
 
@@ -160,6 +169,47 @@ export function wordpressAdversarialActionSpec(action: WordPressAdversarialActio
 export function wordpressSchedulerClockAction(timestamp: number, hook: string, args: unknown[] = []): RuntimeEpisodeActionSpec {
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error("Scheduler clock timestamp must be a positive Unix timestamp.")
   return wordpressAdversarialActionSpec({ surface: "cron", operation: "run-due", target: hook, input: { timestamp, args } })
+}
+
+/**
+ * Installs the disposable WordPress clock seam and applies a normalized schedule.
+ * The seam is intentionally opt-in: it does not claim to intercept PHP time().
+ */
+export function wordpressServerClockScheduleAction(entries: readonly AdversarialClockScheduleEntry[]): RuntimeEpisodeActionSpec {
+  const negotiation = negotiateWordPressServerClock(entries)
+  if (!negotiation.supported) throw new Error(`WordPress server clock negotiation failed: ${negotiation.unsupported.map(({ surface, operation, reason }) => `${surface}.${operation} (${reason})`).join(", ")}`)
+  const schedule = negotiation.schedule
+  const encodedSchedule = Buffer.from(JSON.stringify(schedule), "utf8").toString("base64")
+  const encodedPlugin = Buffer.from(wordpressServerClockMuPluginPhp(), "utf8").toString("base64")
+  return {
+    kind: "command",
+    command: "wordpress.run-php",
+    args: [`code=wp_mkdir_p(WPMU_PLUGIN_DIR); $__clock_plugin = WPMU_PLUGIN_DIR . '/wp-codebox-adversarial-clock.php'; file_put_contents($__clock_plugin, base64_decode('${encodedPlugin}')); if (!function_exists('wp_codebox_adversarial_clock_apply')) { require_once $__clock_plugin; } $__schedule = json_decode(base64_decode('${encodedSchedule}'), true); foreach ($__schedule as $__entry) { wp_codebox_adversarial_clock_apply($__entry); } echo wp_json_encode(array('schema' => 'wp-codebox/server-clock-application/v1', 'schedule' => $__schedule, 'fidelity' => array('runtime' => 'unsupported', 'wordpress' => 'emulated', 'scheduler' => 'emulated', 'database' => 'unsupported')));`],
+    operation: "adversarial:server-clock",
+    metadata: { adapter: WORDPRESS_ADVERSARIAL_ADAPTER_SCHEMA, clockSchedule: schedule, clockNegotiation: negotiation, fidelity: { runtime: "unsupported", wordpress: "emulated", scheduler: "emulated", database: "unsupported" } },
+  }
+}
+
+export function negotiateWordPressServerClock(entries: readonly AdversarialClockScheduleEntry[]): WordPressServerClockNegotiation {
+  const schedule = normalizeAdversarialClockSchedule(entries)
+  const unsupported = schedule.flatMap((entry) => {
+    const capability = WORDPRESS_CLOCK_CONTROL_CAPABILITIES.capabilities.find(({ surface }) => surface === entry.surface)
+    const enabled = capability?.[entry.operation]
+    return capability && capability.fidelity !== "unsupported" && enabled
+      ? []
+      : [{ surface: entry.surface, operation: entry.operation, reason: capability?.reason ?? "surface is not declared by this adapter" }]
+  })
+  return { supported: unsupported.length === 0, schedule, unsupported }
+}
+
+export function wordpressServerClockCleanupAction(): RuntimeEpisodeActionSpec {
+  return {
+    kind: "command",
+    command: "wordpress.run-php",
+    args: ["code=delete_option('wp_codebox_adversarial_clock_state'); $___clock_plugin = WPMU_PLUGIN_DIR . '/wp-codebox-adversarial-clock.php'; if (file_exists($___clock_plugin)) { unlink($___clock_plugin); } echo wp_json_encode(array('schema' => 'wp-codebox/server-clock-cleanup/v1', 'status' => 'restored'));"],
+    operation: "adversarial:server-clock-cleanup",
+    metadata: { adapter: WORDPRESS_ADVERSARIAL_ADAPTER_SCHEMA, cleanup: true },
+  }
 }
 
 export function wordpressHttpFaultConfigurationAction(model: TransportFaultModel): RuntimeEpisodeActionSpec {
@@ -248,8 +298,8 @@ try {
    $candidate = wp_normalize_path($root . '/' . ltrim($target, '/')); $root_normalized = trailingslashit(wp_normalize_path($root));
    if (strpos($candidate, $root_normalized) !== 0 || strpos($candidate, '..') !== false) { $result['status'] = 'denied'; $result['violations'][] = 'filesystem-escape-attempt'; break; }
    wp_mkdir_p(dirname($candidate)); $result['response'] = array('bytes' => file_put_contents($candidate, is_string($input) ? $input : wp_json_encode($input)), 'relativePath' => substr($candidate, strlen($root_normalized))); break;
-  case 'cron':
-   $clock = is_array($input) ? (int) ($input['timestamp'] ?? time()) : time(); $args = is_array($input['args'] ?? null) ? $input['args'] : array();
+   case 'cron':
+    $clock = is_array($input) ? (int) ($input['timestamp'] ?? (function_exists('wp_codebox_adversarial_clock_timestamp') ? wp_codebox_adversarial_clock_timestamp() : time())) : (function_exists('wp_codebox_adversarial_clock_timestamp') ? wp_codebox_adversarial_clock_timestamp() : time()); $args = is_array($input['args'] ?? null) ? $input['args'] : array();
    if ($request['operation'] === 'schedule') { $result['response'] = wp_schedule_single_event($clock, $target, $args, true); }
    else { $executed = 0; foreach ((array) _get_cron_array() as $timestamp => $hooks) { if ((int) $timestamp > $clock || empty($hooks[$target])) { continue; } foreach ($hooks[$target] as $event) { $event_args = (array) ($event['args'] ?? array()); do_action_ref_array($target, $event_args); wp_unschedule_event((int) $timestamp, $target, $event_args); $executed++; } } $result['response'] = array('hook' => $target, 'clock' => $clock, 'executed' => $executed); } break;
   case 'role-capability':
@@ -306,6 +356,17 @@ add_filter('pre_http_request', static function ($preempt, $args, $url) {
     }
     return $preempt;
 }, 10, 3);`
+}
+
+function wordpressServerClockMuPluginPhp(): string {
+  return `<?php
+/* Disposable adversarial clock seam. Native PHP clocks remain intentionally untouched. */
+function wp_codebox_adversarial_clock_state() { $state = get_option('wp_codebox_adversarial_clock_state', array()); return is_array($state) ? $state : array(); }
+function wp_codebox_adversarial_clock_now() { $state = wp_codebox_adversarial_clock_state(); return isset($state['time']) ? (int) $state['time'] : (int) floor(microtime(true) * 1000); }
+function wp_codebox_adversarial_clock_timestamp() { return (int) floor(wp_codebox_adversarial_clock_now() / 1000); }
+function wp_codebox_adversarial_clock_datetime() { return (new DateTimeImmutable('@' . wp_codebox_adversarial_clock_timestamp()))->setTimezone(wp_timezone()); }
+function wp_codebox_adversarial_clock_apply($entry) { $entry = is_array($entry) ? $entry : array(); $operation = (string) ($entry['operation'] ?? ''); if ('restore' === $operation) { delete_option('wp_codebox_adversarial_clock_state'); return; } $state = wp_codebox_adversarial_clock_state(); if ('advance' === $operation) { $state['time'] = (int) ($state['time'] ?? floor(microtime(true) * 1000)) + max(0, (int) ($entry['milliseconds'] ?? 0)); } elseif ('freeze' === $operation || 'skew' === $operation) { $state['time'] = max(0, (int) ($entry['time'] ?? 0)); } else { throw new InvalidArgumentException('Unsupported adversarial clock operation.'); } update_option('wp_codebox_adversarial_clock_state', $state, false); }
+`
 }
 
 function boundedFingerprint(value: unknown): string {
