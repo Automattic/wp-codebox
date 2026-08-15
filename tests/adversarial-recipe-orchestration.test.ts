@@ -10,6 +10,7 @@ import type { RecipeExecutionResult } from "../packages/cli/src/commands/recipe-
 
 const recipe: WorkspaceRecipe = {
   schema: "wp-codebox/workspace-recipe/v1",
+  inputs: { services: [{ id: "mail", kind: "smtp", outputs: { host: "SMTP_HOST" } }] },
   workflow: { steps: [{ command: "inspect-mounted-inputs" }] },
   adversarialCampaigns: [{
     schema: "wp-codebox/adversarial-recipe-campaign/v1",
@@ -41,6 +42,7 @@ assert(recipePolicy(recipe).commands.includes("wordpress.run-php"), "template co
 
 const executions: ExecutionSpec[] = []
 const checkpointOperations: string[] = []
+const smtpResets: string[] = []
 const runtime = {
   info: async () => ({ id: "neutral", backend: "neutral", environment: { kind: "wordpress", name: "Neutral" }, createdAt: "2026-01-01T00:00:00.000Z", status: "created" }),
   execute: async (spec: ExecutionSpec) => {
@@ -63,6 +65,7 @@ const executeCampaign = async () => runRecipeAdversarialCampaigns({
   recipeDirectory: "/portable",
   runtime,
   executions: [],
+  managedServices: { resetSmtpSink: async (serviceId) => { smtpResets.push(serviceId); return { schema: "wp-codebox/smtp-sink-reset/v1", serviceId: "service-1", reset: true } } },
   provenance: { runtime: "neutral" },
 })
 
@@ -76,6 +79,8 @@ assert.equal(first[0]?.capabilities.optional[0]?.available, false, "optional fid
 assert(executions.length > 0, "generated cases must execute through runtime commands")
 assert(checkpointOperations.includes("create:baseline") && checkpointOperations.includes("restore:baseline"), "campaign cases must use the existing checkpoint reset path")
 assert(checkpointOperations.filter((operation) => operation === "restore:baseline").length >= (first[0]?.result.summary.generated ?? 0) + (second[0]?.result.summary.generated ?? 0), "every campaign and minimization execution must restore the declared baseline before running")
+assert.equal(smtpResets.length > 0, true, "checkpointed cases reset host-side SMTP sinks")
+assert.equal(first[0]?.result.corpus.some((entry) => entry.signals.includes("smtp-sink-reset:1")), true, "replay corpus retains normalized SMTP reset evidence")
 
 const unsupportedRecipe = structuredClone(recipe)
 unsupportedRecipe.adversarialCampaigns![0]!.requiredCapabilities = ["missing-adapter"]

@@ -63,6 +63,7 @@ interface RunRecipeAdversarialCampaignsOptions {
   signal?: AbortSignal
   executions: RecipeExecutionResult[]
   provenance?: Record<string, unknown>
+  managedServices?: { resetSmtpSink(serviceId: string): Promise<unknown> }
 }
 
 export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversarialCampaignsOptions): Promise<RecipeAdversarialCampaignOutput[]> {
@@ -100,8 +101,17 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
     const campaignExecutions: RecipeExecutionResult[] = []
     const campaignOptions = { ...options, executions: campaignExecutions }
     const execute = async (plan: AdversarialCasePlan, signal: AbortSignal) => {
-      if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
-      return executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions)
+      const smtpSinkResets: unknown[] = []
+      if (checkpointName) {
+        await options.runtime.restoreCheckpoint!(checkpointName)
+        // Runtime checkpoints do not include host-side sinks. Resetting declared
+        // SMTP sinks keeps every checkpointed case independently replayable.
+        for (const service of options.recipe.inputs?.services?.filter((candidate) => candidate.kind === "smtp") ?? []) {
+          const reset = await options.managedServices?.resetSmtpSink(service.id)
+          if (reset) smtpSinkResets.push(reset)
+        }
+      }
+      return executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions, smtpSinkResets)
     }
     const result = replay
       ? await runRecipeAdversarialReplay(campaign, declaration, templates, replay, execute, options.signal)
@@ -208,6 +218,7 @@ async function executeRecipeAdversarialCase(
   plan: AdversarialCasePlan,
   signal: AbortSignal,
   options: RunRecipeAdversarialCampaignsOptions,
+  smtpSinkResets: unknown[] = [],
 ): Promise<AdversarialExecutionObservation> {
   if (signal.aborted) return { status: "error", diagnostics: [{ code: "campaign-case-interrupted", message: "Case was interrupted before execution." }] }
   const phases = materializeCasePhases(plan, templates)
@@ -222,7 +233,7 @@ async function executeRecipeAdversarialCase(
       phases,
       metadata: { adversarialCase: true },
     }],
-    metadata: { adversarialCampaignId: declaration.id, faultSchedule: declaration.faultSchedule },
+    metadata: { adversarialCampaignId: declaration.id, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }
   const execution = await executeRecipeWorkflowStep(options.runtime, {
     phase: "adversarial:action",
@@ -243,6 +254,7 @@ async function executeRecipeAdversarialCase(
   options.executions.push(execution)
   const signals = [
     `status:${status}`,
+    ...(smtpSinkResets.length > 0 ? [`smtp-sink-reset:${smtpSinkResets.length}`] : []),
     ...diagnostics.map((diagnostic) => `diagnostic:${diagnostic.code}`),
     ...diagnostics.map((diagnostic) => `diagnostic-message:${createHash("sha256").update(stableAdversarialDiagnosticMessage(diagnostic.message, plan.caseId)).digest("hex").slice(0, 16)}`),
     ...(typeof fuzzCase?.skipReason === "string" ? [`skip:${fuzzCase.skipReason}`] : []),
@@ -253,7 +265,7 @@ async function executeRecipeAdversarialCase(
     diagnostics,
     artifacts: artifactRefs,
     stateDigest: createHash("sha256").update(JSON.stringify({ campaignId: declaration.id, status, signals, matrix: plan.matrix })).digest("hex"),
-    metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule },
+    metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }) as AdversarialExecutionObservation
 }
 

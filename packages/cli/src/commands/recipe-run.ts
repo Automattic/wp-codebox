@@ -30,6 +30,7 @@ import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseRele
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
+import { executeSmtpSinkRecipeOperation, isSmtpSinkRecipeOperation } from "../smtp-sink-recipe-operations.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import { classifyRuntimeMemoryFailure, replayWithHostNodeHeap } from "../host-node-heap.js"
@@ -322,6 +323,8 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         try {
           const execution = await awaitRecipe(operation, async () => workflowStep.step.command === "wordpress.collect-workload-result"
             ? withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args), workflowStep.step.metadata)
+            : isSmtpSinkRecipeOperation(workflowStep.step.command)
+              ? (() => executeSmtpSinkRecipeOperation(workflowStep.step, managedServices!).then(({ execution, evidenceArgs }) => withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(evidenceArgs, evidenceArgs), workflowStep.step.metadata)))()
             : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap, (progress) => { continuationProgress = progress }), workflowStep.step.timeoutMs)
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
@@ -349,6 +352,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
       inputMountPathMap,
       signal: interruption?.signal,
       executions,
+      managedServices,
       provenance: recipeRunProvenance(recipe, recipePath) as unknown as Record<string, unknown>,
     }))
     interruption?.throwIfInterrupted()
