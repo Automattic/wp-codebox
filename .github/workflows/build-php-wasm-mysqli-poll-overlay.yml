@@ -1,0 +1,88 @@
+name: Build PHP-WASM mysqli_poll Overlay
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/2010-mysqli-poll-overlay
+    paths:
+      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
+      - "package.json"
+      - "tests/mysqli-poll.integration.test.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      PLAYGROUND_SHA: 581c7c172428159eb4e6c5309054a568cd39a97a
+      PLAYGROUND_ARCHIVE_SHA256: b9526f0fb0839cb255d0ae8bb815c548aafe603a3a49b1b8701442a0c1afca8e
+      PATCH_SHA: d746c930477eae3d726f754753eb92692ad30855
+      PATCH_SHA256: f42ffb44f21e736c3fbf6e504e01e4a07207f8d764c38ce1f9c81db80d614a04
+      PHP_VERSION: "8.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          docker system prune --all --force
+
+      - name: Materialize pinned Playground source
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 --output playground.tar.gz "https://github.com/WordPress/wordpress-playground/archive/${PLAYGROUND_SHA}.tar.gz"
+          test "$(shasum -a 256 playground.tar.gz | cut -d ' ' -f 1)" = "${PLAYGROUND_ARCHIVE_SHA256}"
+          curl --fail --location --retry 3 --output mysqli-poll.patch "https://github.com/WordPress/wordpress-playground/commit/${PATCH_SHA}.patch"
+          test "$(shasum -a 256 mysqli-poll.patch | cut -d ' ' -f 1)" = "${PATCH_SHA256}"
+          mkdir wordpress-playground
+          tar -xzf playground.tar.gz --strip-components=1 -C wordpress-playground
+          git -C wordpress-playground apply --check --include=packages/php-wasm/compile/php/Dockerfile --include=packages/php-wasm/compile/php/php_wasm.c ../mysqli-poll.patch
+          git -C wordpress-playground apply --include=packages/php-wasm/compile/php/Dockerfile --include=packages/php-wasm/compile/php/php_wasm.c ../mysqli-poll.patch
+
+      - name: Install Playground build dependencies
+        working-directory: ${{ runner.temp }}/wordpress-playground
+        run: npm ci
+
+      - name: Compile PHP 8.3 Node runtimes
+        working-directory: ${{ runner.temp }}/wordpress-playground
+        run: |
+          node packages/php-wasm/compile/build.js --PLATFORM=node --PHP_VERSION="${PHP_VERSION}"
+          node packages/php-wasm/compile/build.js --PLATFORM=node --PHP_VERSION="${PHP_VERSION}" --WITH_JSPI=yes
+          npx nx build php-wasm-node-8-3
+
+      - name: Pack overlay and record provenance
+        working-directory: ${{ runner.temp }}/wordpress-playground
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+          npm pack ./dist/packages/php-wasm/node-builds/8-3 --pack-destination "${GITHUB_WORKSPACE}/artifacts"
+          ARTIFACT_PATH="$(find "${GITHUB_WORKSPACE}/artifacts" -name '*.tgz' -type f -print -quit)"
+          ARTIFACT_SHA256="$(shasum -a 256 "${ARTIFACT_PATH}" | cut -d ' ' -f 1)"
+          node -e 'const fs = require("node:fs"); fs.writeFileSync(process.argv[1], JSON.stringify({ schema: "wp-codebox/php-wasm-overlay-provenance/v1", upstream: { repository: "WordPress/wordpress-playground", revision: process.env.PLAYGROUND_SHA }, patch: { revision: process.env.PATCH_SHA, sha256: process.env.PATCH_SHA256, files: ["packages/php-wasm/compile/php/Dockerfile", "packages/php-wasm/compile/php/php_wasm.c"] }, artifact: { file: require("node:path").basename(process.argv[2]), sha256: process.argv[3] } }, null, 2) + "\n")' "${GITHUB_WORKSPACE}/artifacts/provenance.json" "${ARTIFACT_PATH}" "${ARTIFACT_SHA256}"
+
+      - name: Install WP Codebox and overlay
+        run: |
+          npm ci
+          npm install --no-save --ignore-scripts "$(find "${GITHUB_WORKSPACE}/artifacts" -name '*.tgz' -type f -print -quit)"
+          npm run build
+
+      - name: Verify mysqli_poll against MariaDB
+        env:
+          PLAYGROUND_NO_JSPI_RESPAWN: "1"
+          WP_CODEBOX_PHP_WASM_MODE: asyncify
+        run: npm run test:mysqli-poll-integration
+
+      - name: Upload immutable overlay
+        uses: actions/upload-artifact@v4
+        with:
+          name: php-wasm-node-8-3-mysqli-poll-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error

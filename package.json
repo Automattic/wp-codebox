@@ -288,6 +288,7 @@
     "test:managed-database-diagnostics": "tsx tests/managed-database-diagnostics.test.ts",
     "test:runtime-services-lifecycle": "tsx tests/runtime-services-lifecycle.test.ts",
     "test:native-mariadb-runtime-service-integration": "tsx tests/native-mariadb-runtime-service.integration.test.ts",
+    "test:mysqli-poll-integration": "tsx tests/mysqli-poll.integration.test.ts",
     "test:disposable-mysql-mysqli-e2e": "tsx tests/disposable-mysql-mysqli.integration.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
