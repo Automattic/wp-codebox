@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/scripts/run-agent-task/**"
       - ".github/workflows/agent-task-contracts.yml"
+      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
       - ".github/workflows/run-agent-task.yml"
       - "contracts/agent-task-workflow-request.fixture.json"
       - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
@@ -48,10 +49,12 @@ on:
       - "packages/runtime-core/src/bounded-runtime-plan.ts"
       - "tests/bounded-*.test.ts"
       - "tests/disposable-mysql-mysqli.integration.test.ts"
+      - "tests/mysqli-poll.integration.test.ts"
   push:
     paths:
       - ".github/scripts/run-agent-task/**"
       - ".github/workflows/agent-task-contracts.yml"
+      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
       - ".github/workflows/run-agent-task.yml"
       - "contracts/agent-task-workflow-request.fixture.json"
       - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
@@ -95,6 +98,7 @@ on:
       - "packages/runtime-core/src/bounded-runtime-plan.ts"
       - "tests/bounded-*.test.ts"
       - "tests/disposable-mysql-mysqli.integration.test.ts"
+      - "tests/mysqli-poll.integration.test.ts"
 
 jobs:
   contracts:
@@ -132,6 +136,7 @@ jobs:
       - run: npm run test:bounded-recipe-plan-integration
       - run: npm run test:recipe-step-continuation
       - run: npm run test:disposable-mysql-mysqli-e2e
+      - run: npm run test:mysqli-poll-integration
       - run: npm run test:runtime-sources-playground-integration
       - run: npm run test:playground-phpunit-readonly-cache-integration
       - run: npm run test:playground-custom-archive-cache
@@ -152,4 +157,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker://rhysd/actionlint:1.7.7
         with:
-          args: .github/workflows/agent-task-contracts.yml .github/workflows/run-agent-task.yml
+          args: .github/workflows/agent-task-contracts.yml .github/workflows/build-php-wasm-mysqli-poll-overlay.yml .github/workflows/run-agent-task.yml

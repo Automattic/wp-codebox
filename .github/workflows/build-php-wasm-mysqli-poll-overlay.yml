@@ -2,13 +2,6 @@ name: Build PHP-WASM mysqli_poll Overlay
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - fix/2010-mysqli-poll-overlay
-    paths:
-      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
-      - "package.json"
-      - "tests/mysqli-poll.integration.test.ts"
 
 permissions:
   contents: read
@@ -90,5 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: php-wasm-node-8-3-mysqli-poll-${{ github.sha }}
-          path: artifacts/
+          path: |
+            artifacts/*.tgz
+            artifacts/provenance.json
           if-no-files-found: error

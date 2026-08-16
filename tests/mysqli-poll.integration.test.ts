@@ -18,9 +18,8 @@ $first = $connect();
 $second = $connect();
 $first->query('CREATE TABLE poll_lock (id INT PRIMARY KEY) ENGINE=InnoDB');
 $first->query('INSERT INTO poll_lock VALUES (1)');
-$first->begin_transaction();
+$first->query('START TRANSACTION');
 $first->query('SELECT id FROM poll_lock WHERE id = 1 FOR UPDATE');
-$second->begin_transaction();
 $second->query('SELECT id FROM poll_lock WHERE id = 1 FOR UPDATE', MYSQLI_ASYNC);
 $read = array($second);
 $error = array();
@@ -29,7 +28,7 @@ $started = microtime(true);
 $ready = mysqli_poll($read, $error, $reject, 0, 100000);
 $elapsed_ms = (microtime(true) - $started) * 1000;
 $timeout_set_counts = array(count($read), count($error), count($reject));
-$first->rollback();
+$first->query('ROLLBACK');
 $cleanup_ready = false;
 for ($attempt = 0; $attempt < 20; $attempt++) {
     $read = array($second);
@@ -43,7 +42,6 @@ for ($attempt = 0; $attempt < 20; $attempt++) {
 if ($cleanup_ready) {
     $second->reap_async_query();
 }
-$second->rollback();
 $first->query('DROP TABLE poll_lock');
 echo json_encode(array(
     'ready' => $ready,
