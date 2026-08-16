@@ -53,7 +53,7 @@ import {
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
+import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
@@ -932,6 +932,13 @@ export async function runPhpunitCommand({
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
+  const discoveryOnly = booleanArg(args, "discovery-only")
+  const changedTestFiles = changedTestFilesArg(args)
+  const selectedTestFile = argValue(args, "test-file")?.trim() || ""
+  const phpunitArgs = jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string")
+  if (discoveryOnly && (explicitCode || selectedTestFile || changedTestFiles.length > 0 || phpunitArgs.length > 0)) {
+    throw new Error("wordpress.phpunit discovery-only cannot be combined with code overrides, test selectors, or PHPUnit arguments")
+  }
   const { bootstrapMode, databaseType, externalDatabase, multisite } = phpunitExecutionSemantics(args, runtimeSpec)
   const declaredDatabaseType = argValue(args, "database-type")?.trim()
   if (databaseType === "mysql" && !externalDatabase) {
@@ -943,7 +950,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
-  const managedMultisitePreinstalled = !explicitCode && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
+  const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
@@ -956,9 +963,10 @@ export async function runPhpunitCommand({
     testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,
     phpunitXml: phpunitXmlArg?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
     phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
-    selectedTestFile: argValue(args, "test-file")?.trim() || "",
-    changedTestFiles: changedTestFilesArg(args),
-    phpunitArgs: jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string"),
+    selectedTestFile,
+    changedTestFiles,
+    discoveryOnly,
+    phpunitArgs,
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
@@ -1027,6 +1035,12 @@ export async function runPhpunitCommand({
       throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
     }
     throw error
+  }
+
+  if (discoveryOnly) {
+    const discovery = await readPluginPhpunitDiscoveryResult(server, resultFile)
+    if (!discovery) throw new Error("wordpress.phpunit discovery-only completed without a valid discovery result")
+    return `${JSON.stringify(discovery)}\n`
   }
 
   return response.text

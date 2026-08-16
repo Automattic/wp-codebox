@@ -24,6 +24,7 @@ interface WordPressPhpunitBuilderOptions {
   cwd?: string
   selectedTestFile?: string
   changedTestFiles?: string[]
+  discoveryOnly?: boolean
   env?: Record<string, unknown>
   wpConfigDefines?: Record<string, unknown>
   autoloadFile?: string
@@ -96,6 +97,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         cwd: stringOrUndefined(phpunitOptions.cwd),
         selectedTestFile: stringOrUndefined(phpunitOptions.selectedTestFile),
         changedTestFiles: Array.isArray(phpunitOptions.changedTestFiles) ? phpunitOptions.changedTestFiles : [],
+        discoveryOnly: Boolean(phpunitOptions.discoveryOnly),
         env: plainObject(phpunitOptions.env),
         wpConfigDefines: plainObject(phpunitOptions.wpConfigDefines),
         autoloadFile: stringOrUndefined(phpunitOptions.autoloadFile),
