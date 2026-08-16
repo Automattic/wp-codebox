@@ -386,9 +386,14 @@ class PlaygroundRuntime implements Runtime {
         const executeCommand = async () => spec.processIdentity
           ? await this.requestWorkerExecutions.run(spec.environment ?? {}, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
           : await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController)
-        return spec.command === "wordpress.phpunit"
-          ? await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
-          : await executeCommand()
+        // A php.wasm trap is a property of the runtime, not of the command that
+        // happened to be running: it leaves the interpreter unusable, and the
+        // rejection arrives out of band on the process rather than through the
+        // command's own promise. Scoping this to wordpress.phpunit left every
+        // other command able to hang forever on the identical fault — a trap in
+        // wordpress.run-php wedged a recipe-run for its whole 1500s budget and
+        // reported only a timeout.
+        return await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
       })
       const finishedAt = now()
       const envelope = typeof output === "string"
