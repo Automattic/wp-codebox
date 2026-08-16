@@ -12,6 +12,7 @@ export interface PhpunitRunCodeOptions {
   phpunitXmlIsDefault: boolean
   selectedTestFile: string
   changedTestFiles: string[]
+  discoveryOnly?: boolean
   phpunitArgs: string[]
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
@@ -506,6 +507,7 @@ $test_root = ${JSON.stringify(options.testRoot || `/wordpress/wp-content/plugins
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
 $changed_test_scope = ${JSON.stringify(options.changedTestFiles.length > 0)};
+$discovery_only = ${JSON.stringify(options.discoveryOnly ?? false)};
 $phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitArgs))}, true);
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
@@ -1293,6 +1295,38 @@ $_SERVER['argc'] = count($phpunit_argv);
 $phpunit_args = wp_codebox_phpunit_args($phpunit_argv);
 $selected_testsuites = $phpunit_args['wpCodeboxTestsuites'];
 unset($phpunit_args['wpCodeboxTestsuites']);
+
+if ($discovery_only) {
+    pg_stage_begin('discover_tests');
+    try {
+        $test_dir = $test_root;
+        if (!is_dir($test_dir)) {
+            throw new RuntimeException('configured PHPUnit test root is not a readable directory: ' . $test_dir);
+        }
+        list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir, $selected_testsuites);
+        $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
+        if (empty($test_files)) {
+            pg_log('NO_TEST_FILES');
+            throw new RuntimeException('PHPUnit discovery found no test files');
+        }
+        sort($test_files, SORT_STRING);
+        $discovery_result = array(
+            'schema' => 'wp-codebox/phpunit-discovery/v1',
+            'plugin_slug' => $plugin_slug,
+            'phpunit_xml' => ${JSON.stringify(options.phpunitXml)},
+            'test_root' => $test_dir,
+            'selected_testsuites' => array_values($selected_testsuites),
+            'files' => array_values($test_files),
+        );
+        pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' files=' . count($configured_files) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
+        pg_log('DISCOVERY_RESULT_JSON:' . json_encode($discovery_result, JSON_UNESCAPED_SLASHES));
+        pg_stage_ok('discover_tests');
+        exit(0);
+    } catch (Throwable $e) {
+        pg_stage_fail('discover_tests', $e);
+        exit(1);
+    }
+}
 
 if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();

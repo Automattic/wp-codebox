@@ -143,6 +143,7 @@
     "test:host-node-heap": "tsx tests/host-node-heap.test.ts",
     "test:phpunit-structured-evidence": "tsx tests/phpunit-structured-evidence.test.ts",
     "test:phpunit-runtime-rejection": "tsx tests/phpunit-runtime-rejection.test.ts",
+    "test:phpunit-discovery-only": "tsx --test tests/phpunit-discovery-only.test.ts",
     "test:php-wasm-runtime-rejection-any-command": "tsx tests/php-wasm-runtime-rejection-any-command.test.ts",
     "test:playground-worker-runtime-rejection": "tsx tests/playground-worker-runtime-rejection.test.ts",
     "test:php-wasm-extension-manifests": "tsx tests/php-wasm-extension-manifests.test.ts",

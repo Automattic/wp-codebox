@@ -30,6 +30,7 @@ export interface WordPressPhpunitRecipeOptions {
   cwd?: string
   selectedTestFile?: string
   changedTestFiles?: string[]
+  discoveryOnly?: boolean
   env?: JsonObject
   wpConfigDefines?: JsonObject
   autoloadFile?: string
@@ -108,6 +109,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("cwd", options.cwd ?? pluginTarget),
           commandArg("test-file", options.selectedTestFile ?? ""),
           commandJsonArg("changed-tests-json", options.changedTestFiles ?? []),
+          commandArg("discovery-only", options.discoveryOnly ? "1" : ""),
           commandJsonArg("env-json", options.env ?? {}),
           commandJsonArg("wp-config-defines-json", options.wpConfigDefines ?? {}),
           commandArg("autoload-file", autoloadFile),

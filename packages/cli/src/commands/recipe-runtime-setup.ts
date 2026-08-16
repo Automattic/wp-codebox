@@ -1,7 +1,7 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
-import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { requiresManagedMysqlMultisitePreinstall } from "@automattic/wp-codebox-playground"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -209,6 +209,13 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
+  // Discovery inventories mounted files only. Running setup PHP here would
+  // activate dependencies before the discovery command can enforce its
+  // no-bootstrap boundary.
+  if (recipeHasPhpunitDiscoveryOnly(recipe)) {
+    return { executions }
+  }
+
   const isolateManagedMultisitePreinstall = recipeHasManagedMysqlMultisitePhpunit(recipe, runtimeSpec)
   const muPluginInstallCode = isolateManagedMultisitePreinstall ? null : installMuPluginsCode(extraPlugins)
   if (muPluginInstallCode) {
@@ -269,6 +276,16 @@ function managedPhpunitDeferredPluginFiles(recipe: WorkspaceRecipe, runtimeSpec:
 function recipeHasManagedMysqlMultisitePhpunit(recipe: WorkspaceRecipe, runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
   return [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
     .some((step) => step.command === "wordpress.phpunit" && requiresManagedMysqlMultisitePreinstall(step.args ?? [], runtimeSpec))
+}
+
+export function recipeHasPhpunitDiscoveryOnly(recipe: WorkspaceRecipe): boolean {
+  const steps = [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
+  const discoverySteps = steps.filter((step) => step.command === "wordpress.phpunit" && booleanCommandArg(step.args ?? [], "discovery-only"))
+  if (discoverySteps.length === 0) return false
+  if (steps.length !== 1 || discoverySteps.length !== 1) {
+    throw new Error("wordpress.phpunit discovery-only must be the recipe's sole workflow step")
+  }
+  return true
 }
 
 export async function cleanupInputMountBaselines(paths: string[]): Promise<void> {
