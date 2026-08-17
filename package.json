@@ -82,7 +82,7 @@
     "npm-shrinkwrap.json",
     "scripts/apply-development-patches.mjs",
     "patches",
-    "runtime-overlays/php-wasm-node-8-3-3.1.46.tgz",
+    "runtime-overlays/php-wasm-node-8-3",
     "runtime-overlays/provenance.json",
     "README.md",
     "LICENSE"
@@ -343,7 +343,7 @@
     "@automattic/wp-codebox-cli": "file:packages/cli",
     "@automattic/wp-codebox-core": "file:packages/runtime-core",
     "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
-    "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3-3.1.46.tgz",
+    "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3",
     "@php-wasm/node-8-4": "3.1.46",
     "@php-wasm/universal": "3.1.46",
     "@types/pngjs": "^6.0.5",

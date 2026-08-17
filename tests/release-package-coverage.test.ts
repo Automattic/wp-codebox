@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
@@ -115,7 +115,7 @@ try {
       assert.equal(packageStat.isSymbolicLink(), false, `${packagePath} must not depend on archive symlinks`)
       await lstat(join(packagePath, "package.json"))
     }
-
+    await assertPinnedPhpWasmOverlay(root, join(root, "php-wasm-overlay-provenance.json"))
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     assert.deepEqual(
@@ -185,6 +185,12 @@ try {
     cwd: consumerRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  const installedPackage = join(installRoot, "lib", "node_modules", "wp-codebox-workspace")
+  const pinnedPhpWasm = join(installedPackage, "node_modules", "@php-wasm", "node-8-3")
+  assert.equal((await stat(pinnedPhpWasm)).isDirectory(), true, "consumer install must materialize the pinned php-wasm overlay")
+  assert.ok((await realpath(pinnedPhpWasm)).startsWith(`${await realpath(installedPackage)}/`), "installed php-wasm overlay must resolve inside the consumer package")
+  assert.equal(JSON.parse(await readFile(join(pinnedPhpWasm, "package.json"), "utf8")).version, "3.1.46")
+  await assertPinnedPhpWasmOverlay(installedPackage, join(installedPackage, "runtime-overlays", "provenance.json"), true)
   const installedCli = join(installRoot, "bin", "wp-codebox")
   const { stdout: installedVersion } = await execFileAsync(installedCli, ["--version"])
   assert.match(installedVersion, /^\d+\.\d+\.\d+\s*$/)
@@ -194,6 +200,38 @@ try {
 }
 
 console.log("release package coverage passed")
+
+async function assertPinnedPhpWasmOverlay(root: string, provenancePath: string, allowInternalSymlink = false): Promise<void> {
+  const overlay = join(root, "node_modules", "@php-wasm", "node-8-3")
+  const overlayStat = await lstat(overlay)
+  if (!allowInternalSymlink) {
+    assert.equal(overlayStat.isDirectory(), true, "pinned php-wasm overlay must be a materialized directory")
+    assert.equal(overlayStat.isSymbolicLink(), false, "release artifacts must not retain a staging symlink")
+  }
+  const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as { artifact?: { tree_sha256?: string } }
+  assert.equal(await digestDirectory(overlay), provenance.artifact?.tree_sha256, "pinned php-wasm overlay does not match provenance")
+  assert.ok(Object.keys(await import(pathToFileURL(join(overlay, "index.js")).href)).length > 0, "pinned php-wasm overlay must be importable")
+}
+
+async function digestDirectory(root: string): Promise<string> {
+  const files: string[] = []
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await walk(path)
+      else files.push(path)
+    }
+  }
+  await walk(root)
+  const hash = createHash("sha256")
+  for (const path of files.sort()) {
+    hash.update(relative(root, path).split("\\").join("/"))
+    hash.update("\0")
+    hash.update(await readFile(path))
+    hash.update("\0")
+  }
+  return hash.digest("hex")
+}
 
 async function assertPackagedReadonlyMaterialization(root: string): Promise<void> {
   const modulePath = join(root, "packages", "runtime-playground", "dist", "mount-materialization.js")

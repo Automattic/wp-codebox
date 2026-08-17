@@ -3,7 +3,8 @@ vendor/
 dist/
 artifacts/
 runtime-overlays/*
-!runtime-overlays/php-wasm-node-8-3-3.1.46.tgz
+!runtime-overlays/php-wasm-node-8-3/
+!runtime-overlays/php-wasm-node-8-3/**
 !runtime-overlays/provenance.json
 scripts/uploads/
 *.tsbuildinfo

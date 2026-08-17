@@ -13,7 +13,9 @@
     ]
   },
   "artifact": {
-    "file": "php-wasm-node-8-3-3.1.46.tgz",
-    "sha256": "109c079c958e1ab35ebcd098bdd895b080e2c5405b147f93ecb04e768c723553"
+    "directory": "php-wasm-node-8-3",
+    "source_archive": "php-wasm-node-8-3-3.1.46.tgz",
+    "sha256": "109c079c958e1ab35ebcd098bdd895b080e2c5405b147f93ecb04e768c723553",
+    "tree_sha256": "f5f4bdb2e77fbe2a20a6a9872e21bf0f812326012c24e3b1ce92963162c1c3c4"
   }
 }
