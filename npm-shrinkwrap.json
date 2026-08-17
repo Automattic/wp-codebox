@@ -16,7 +16,7 @@
         "@automattic/wp-codebox-cli": "file:packages/cli",
         "@automattic/wp-codebox-core": "file:packages/runtime-core",
         "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
-        "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3-3.1.46.tgz",
+        "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3",
         "@php-wasm/node-8-4": "3.1.46",
         "@php-wasm/universal": "3.1.46",
         "@types/pngjs": "^6.0.5",
@@ -1834,18 +1834,8 @@
       }
     },
     "node_modules/@php-wasm/node-8-3": {
-      "version": "3.1.46",
-      "resolved": "file:runtime-overlays/php-wasm-node-8-3-3.1.46.tgz",
-      "integrity": "sha512-dnBmSZR9uki2wiXFpXVRFmH8Azg/AC+TIAcKoZgv1L2j6wSagSF+UG7LqEbqJMzMs+cY72c/4J1bLEY66N5P/g==",
-      "license": "GPL-2.0-or-later",
-      "dependencies": {
-        "@php-wasm/universal": "3.1.46",
-        "wasm-feature-detect": "1.8.0"
-      },
-      "engines": {
-        "node": ">=20.10.0",
-        "npm": ">=10.2.3"
-      }
+      "resolved": "runtime-overlays/php-wasm-node-8-3",
+      "link": true
     },
     "node_modules/@php-wasm/node-8-4": {
       "version": "3.1.46",
@@ -5752,6 +5742,19 @@
     "packages/wordpress-plugin": {
       "name": "wp-codebox-wordpress-plugin",
       "version": "0.8.0"
+    },
+    "runtime-overlays/php-wasm-node-8-3": {
+      "name": "@php-wasm/node-8-3",
+      "version": "3.1.46",
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/universal": "3.1.46",
+        "wasm-feature-detect": "1.8.0"
+      },
+      "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+      }
     }
   }
 }

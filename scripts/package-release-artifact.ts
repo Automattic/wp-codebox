@@ -34,6 +34,7 @@ try {
   await cp(resolve(repoRoot, "patches"), join(packageRoot, "patches"), { recursive: true })
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
   await cp(resolve(repoRoot, "npm-shrinkwrap.json"), join(packageRoot, "npm-shrinkwrap.json"))
+  await cp(resolve(repoRoot, "runtime-overlays"), join(packageRoot, "runtime-overlays"), { recursive: true })
   await mkdir(join(packageRoot, "scripts"), { recursive: true })
   await cp(resolve(repoRoot, "scripts", "apply-development-patches.mjs"), join(packageRoot, "scripts", "apply-development-patches.mjs"))
 
@@ -52,6 +53,7 @@ try {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  await materializePinnedPhpWasmOverlay(packageRoot)
   await materializeSharpReleaseRuntime(packageRoot, join(packageRoot, "npm-shrinkwrap.json"), platformName, archName)
   await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
     cwd: packageRoot,
@@ -121,6 +123,15 @@ async function copyIfPresent(relativePath: string): Promise<void> {
       throw error
     }
   }
+}
+
+async function materializePinnedPhpWasmOverlay(root: string): Promise<void> {
+  const source = join(root, "runtime-overlays", "php-wasm-node-8-3")
+  const target = join(root, "node_modules", "@php-wasm", "node-8-3")
+  await rm(target, recursiveRmOptions)
+  await cp(source, target, { recursive: true })
+  await cp(join(root, "runtime-overlays", "provenance.json"), join(root, "php-wasm-overlay-provenance.json"))
+  await rm(join(root, "runtime-overlays"), recursiveRmOptions)
 }
 
 async function materializeWorkspacePackages(root: string): Promise<void> {
