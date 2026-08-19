@@ -347,7 +347,6 @@ function normalizeRuntimeRequirementExtraPlugins(value: unknown[], fallback: Wor
       source,
       sourceRoot: stringValue(plugin.sourceRoot ?? plugin.source_root),
       sourceSubpath: stringValue(plugin.sourceSubpath ?? plugin.source_subpath),
-      originalSource: stringValue(plugin.originalSource ?? plugin.original_source),
       slug: stringValue(plugin.slug),
       pluginFile: stringValue(plugin.pluginFile ?? plugin.plugin_file),
       activate: typeof plugin.activate === "boolean" ? plugin.activate : undefined,
@@ -422,13 +421,48 @@ async function readInput(options: Map<string, string | true>): Promise<Record<st
     throw new Error("Use either --input-file or --input-json, not both")
   }
   if (inputFile) {
-    const parsed = parseCommandJson(await readFile(resolve(inputFile), "utf8"), "--input-file")
-    return objectInput(parsed, "--input-file")
+    const resolvedInputFile = resolve(inputFile)
+    const parsed = objectInput(parseCommandJson(await readFile(resolvedInputFile, "utf8"), "--input-file"), "--input-file")
+    return resolveFuzzSuiteRuntimeRequirementPaths(parsed, dirname(resolvedInputFile))
   }
   if (inputJson) {
     return objectInput(parseCommandJson(inputJson, "--input-json"), "--input-json")
   }
   throw new Error("Missing required option: --input-file")
+}
+
+// Runtime requirements become recipe inputs after the suite is read, so anchor
+// their local sources to the suite file rather than the temporary recipe.
+function resolveFuzzSuiteRuntimeRequirementPaths(input: Record<string, unknown>, inputDirectory: string): Record<string, unknown> {
+  const metadata = objectOption(input.metadata)
+  const requirements = objectOption(metadata?.runtime_requirements)
+  if (!metadata || !requirements) return input
+
+  const resolvePath = (value: unknown): unknown => typeof value === "string" && value.trim() && !/^https?:\/\//i.test(value) ? resolve(inputDirectory, value) : value
+  const resolvePluginPaths = (entries: unknown): unknown => Array.isArray(entries)
+    ? entries.map((entry) => {
+      const plugin = objectOption(entry)
+      if (!plugin) return entry
+      const resolved = { ...plugin }
+      for (const key of ["source", "path", "sourceRoot", "source_root"]) {
+        if (key in plugin) resolved[key] = resolvePath(plugin[key])
+      }
+      return resolved
+    })
+    : entries
+
+  return {
+    ...input,
+    metadata: {
+      ...metadata,
+      runtime_requirements: {
+        ...requirements,
+        wordpress_directory: resolvePath(requirements.wordpress_directory),
+        extra_plugins: resolvePluginPaths(requirements.extra_plugins),
+        component_contracts: resolvePluginPaths(requirements.component_contracts),
+      },
+    },
+  }
 }
 
 function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): WordPressWorkloadRunRecipeOptions {
