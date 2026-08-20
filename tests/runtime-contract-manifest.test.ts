@@ -199,6 +199,12 @@ assert.equal(descriptor.schema, RUNTIME_DESCRIPTOR_SCHEMA)
 assert.equal(descriptor.readiness.status, "available")
 assert.equal(descriptor.readiness.publicApi, true)
 assert.equal(descriptor.readiness.contractManifest, true)
+assert.deepEqual(runtimeDescriptor({ browserRuntime: { status: "unavailable", reason: "browser is missing" } }).readiness, {
+  status: "unavailable",
+  publicApi: true,
+  contractManifest: true,
+  browserRuntime: { status: "unavailable", reason: "browser is missing" },
+})
 assert.deepEqual(descriptor.capabilities, CODEBOX_PUBLIC_RUNTIME_CAPABILITIES)
 assert.deepEqual(descriptor.packageCapabilities, CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES)
 assert.ok(descriptor.capabilities.includes("runtime-requirements:resolve"))

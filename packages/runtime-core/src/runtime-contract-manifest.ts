@@ -282,9 +282,13 @@ export interface RuntimeDescriptor {
     name: "WP Codebox"
   }
   readiness: {
-    status: "available"
+    status: "available" | "unavailable"
     publicApi: true
     contractManifest: true
+    browserRuntime?: {
+      status: "ready" | "unavailable"
+      reason?: string
+    }
   }
   capabilities: readonly string[]
   packageCapabilities: typeof CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES
@@ -313,8 +317,9 @@ export function runtimeContractManifest(): RuntimeContractManifest {
   }
 }
 
-export function runtimeDescriptor(options: { nativeMariaDb?: { status: "ready" | "unavailable" | "unknown"; reason?: string } } = {}): RuntimeDescriptor {
+export function runtimeDescriptor(options: { nativeMariaDb?: { status: "ready" | "unavailable" | "unknown"; reason?: string }; browserRuntime?: { status: "ready" | "unavailable"; reason?: string } } = {}): RuntimeDescriptor {
   const nativeMariaDb = options.nativeMariaDb ?? { status: "unknown" as const }
+  const browserRuntime = options.browserRuntime
   return {
     schema: RUNTIME_DESCRIPTOR_SCHEMA,
     version: 1,
@@ -323,9 +328,10 @@ export function runtimeDescriptor(options: { nativeMariaDb?: { status: "ready" |
       name: "WP Codebox",
     },
     readiness: {
-      status: "available",
+      status: browserRuntime?.status === "unavailable" ? "unavailable" : "available",
       publicApi: true,
       contractManifest: true,
+      ...(browserRuntime ? { browserRuntime } : {}),
     },
     capabilities: nativeMariaDb.status === "ready" ? [...CODEBOX_PUBLIC_RUNTIME_CAPABILITIES, NATIVE_MARIADB_RUNTIME_SERVICE_CAPABILITY] : CODEBOX_PUBLIC_RUNTIME_CAPABILITIES,
     packageCapabilities: CODEBOX_PUBLIC_RUNTIME_PACKAGE_CAPABILITIES,
