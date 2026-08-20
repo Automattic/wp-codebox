@@ -190,6 +190,11 @@ path `wp-codebox run-fuzz-suite --runner-mode=runtime-backed`. Targets that
 require the runtime command, browser, editor, or page-load executors return
 `status: "skipped"`, a case-level `skipReason`, and a warning diagnostic in
 permissive PHP mode rather than silently passing without exercising the target.
+For the Node CLI `--input-file` path, local `metadata.runtime_requirements`
+`wordpress_directory`, `extra_plugins`, and `component_contracts` paths resolve
+relative to the input file before WP Codebox materializes its temporary recipe.
+Absolute paths remain unchanged; `sourceSubpath` and `sourceSubdir` remain
+bounded relative plugin-internal paths.
 Public suite builders declare
 `metadata.requiredRunnerCapabilities`, and the PHP ability also infers required
 target/runtime-action capabilities from suite targets, so callers can choose
