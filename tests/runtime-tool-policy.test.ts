@@ -67,6 +67,14 @@ const invalidLocationPolicy = structuredClone(policy)
 invalidLocationPolicy.tools[0].execution_location = "external"
 assert.throws(() => assertSandboxToolPolicySnapshot(invalidLocationPolicy), /must be sandbox or parent/)
 
+const noToolsPolicy = sandboxToolPolicyFromAllowedTools([])
+assert.doesNotThrow(() => assertSandboxToolPolicySnapshot(noToolsPolicy))
+assert.deepEqual(sandboxAllowedRuntimeToolIds(noToolsPolicy), [])
+assert.throws(
+  () => assertSandboxToolPolicySnapshot({ schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: "none" }),
+  /tools must be an array/,
+)
+
 const canonicalPolicy = sandboxToolPolicyFromAllowedTools(["workspace.read", "workspace.search", "workspace.write", "workspace.edit"], { source: "test" })
 assert.equal(canonicalPolicy.schema, "wp-codebox/sandbox-tool-policy/v1")
 assert.deepEqual(canonicalPolicy.tools.map((tool) => tool.id), ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"])
