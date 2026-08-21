@@ -58,6 +58,10 @@
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
+      "file": "npm-shrinkwrap.json",
+      "pattern": "(?s)\"name\":\\s*\"(?:wp-codebox-workspace|@automattic/wp-codebox-(?:cli|core|playground))\",\\s*\"version\":\\s*\"([0-9.]+)\""
+    },
+    {
       "file": "packages/wordpress-plugin/wp-codebox.php",
       "pattern": "Version:\\s*([0-9.]+)"
     },
