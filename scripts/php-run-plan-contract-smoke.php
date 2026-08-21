@@ -40,6 +40,8 @@ function is_wp_error( mixed $value ): bool {
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-run-plan.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-status-taxonomy.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-fanout-aggregation.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-run-result-builder.php';
 
 function assert_same_contract( mixed $expected, mixed $actual, string $label ): void {
@@ -101,6 +103,75 @@ $worker_result = $builder->fanout_worker_success_result(
 assert_same_contract( 'completed', $worker_result['status'], 'fanout worker success status' );
 assert_same_contract( array( 'path' => '/tmp/artifacts', 'bundle_id' => 'bundle-1', 'namespace' => 'design', 'result' => 'result.json' ), $worker_result['artifacts'], 'fanout artifact result shaping' );
 
+$failed_worker_result = $builder->fanout_worker_success_result(
+    array(
+        'id'       => 'failed-worker',
+        'index'    => 0,
+        'prepared' => array( 'input' => array( 'agent' => '' ) ),
+    ),
+    array(
+        'success'   => false,
+        'status'    => 'failed',
+        'exit_code' => 127,
+        'session'   => array( 'id' => 'child-failed', 'status' => 'failed' ),
+        'error'     => array( 'code' => 'wp_codebox_run_failed', 'message' => 'Worker process failed.' ),
+    ),
+    1000.0,
+    1001.25
+);
+assert_same_contract( false, $failed_worker_result['success'], 'nonzero fanout worker success' );
+assert_same_contract( 'failed', $failed_worker_result['status'], 'nonzero fanout worker status' );
+assert_same_contract( 127, $failed_worker_result['exit_code'], 'nonzero fanout worker exit code' );
+assert_same_contract( 'wp_codebox_run_failed', $failed_worker_result['error']['code'], 'nonzero fanout worker error' );
+
+$nested_failed_worker_result = $builder->fanout_worker_success_result(
+    array(
+        'id'       => 'nested-failed-worker',
+        'index'    => 1,
+        'prepared' => array( 'input' => array( 'agent' => 'planner' ) ),
+    ),
+    array(
+        'success'   => true,
+        'status'    => 'completed',
+        'exit_code' => 0,
+        'session'   => array( 'id' => 'child-nested-failed', 'status' => 'failed' ),
+    ),
+    1000.0,
+    1001.25
+);
+assert_same_contract( false, $nested_failed_worker_result['success'], 'nested failed fanout worker success' );
+assert_same_contract( 'failed', $nested_failed_worker_result['status'], 'nested failed fanout worker status' );
+
+$failed_counts = $builder->status_counts( array( $failed_worker_result, $nested_failed_worker_result ) );
+assert_same_contract( array( 'total' => 2, 'completed' => 0, 'failed' => 2, 'skipped' => 0, 'cancelled' => 0, 'timed_out' => 0 ), $failed_counts, 'failed fanout counts' );
+
+$aggregation = new WP_Codebox_Fanout_Aggregation();
+$failed_aggregate = $aggregation->aggregate(
+    $aggregation->input_from_worker_artifacts(
+        array(
+            'plan' => array(
+                'id'      => 'failed-fanout',
+                'workers' => array(
+                    array( 'id' => 'failed-worker', 'required' => true ),
+                    array( 'id' => 'nested-failed-worker', 'required' => true ),
+                ),
+            ),
+            'workerResultRefs' => array_map(
+                static fn( array $run ): array => array(
+                    'workerId' => $run['worker_id'],
+                    'status'   => $run['status'],
+                    'success'  => $run['success'],
+                    'required' => true,
+                    'error'    => $run['error'] ?? null,
+                ),
+                array( $failed_worker_result, $nested_failed_worker_result )
+            ),
+        )
+    )
+);
+assert_same_contract( 'failed', $failed_aggregate['status'], 'failed fanout aggregate status' );
+assert_same_contract( array( 'failed', 'failed' ), array_column( $failed_aggregate['workerResultRefs'], 'status' ), 'failed aggregate worker ref statuses' );
+
 $paths = $run_plan->paths( '/tmp/root', 'fanout' );
 $fanout_result = $builder->fanout_result(
     'wp-codebox/agent-fanout-result/v1',
@@ -119,6 +190,24 @@ $fanout_result = $builder->fanout_result(
 assert_same_contract( true, $fanout_result['success'], 'fanout result success' );
 assert_same_contract( 'wp-codebox/agent-fanout-artifacts/v1', $fanout_result['artifacts']['schema'], 'fanout artifacts schema' );
 assert_same_contract( 'child-1', $fanout_result['session']['children'][0]['session_id'], 'fanout child session ref' );
+
+$failed_fanout_result = $builder->fanout_result(
+    'wp-codebox/agent-fanout-result/v1',
+    'wp-codebox/agent-fanout-artifacts/v1',
+    'bounded-concurrent-isolated-sandboxes',
+    'parent-failed',
+    'failed',
+    array( 'session_id' => 'agent-session-failed' ),
+    $paths,
+    $failed_counts,
+    1000.0,
+    1001.25,
+    $run_plan->plan( 'wp-codebox/agent-fanout-plan/v1', 'parent-failed', 2, array(), $descriptors ),
+    array( $failed_worker_result, $nested_failed_worker_result )
+);
+assert_same_contract( false, $failed_fanout_result['success'], 'failed fanout result success' );
+assert_same_contract( 2, $failed_fanout_result['failed'], 'failed fanout result failed count' );
+assert_same_contract( 2, count( $failed_fanout_result['failures'] ), 'failed fanout failures' );
 
 $batch_result = $builder->batch_result(
     'wp-codebox/agent-task-batch/v1',
