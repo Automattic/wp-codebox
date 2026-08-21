@@ -1057,11 +1057,15 @@ async function signalOwnedNativeProcess(state: OwnedNativeProcess, signal: NodeJ
 
 async function linuxProcessStartIdentity(pid: number): Promise<string> {
   const processStat = await readFile(`/proc/${pid}/stat`, "utf8")
-  const commandEnd = processStat.lastIndexOf(")")
-  const fieldsAfterCommand = commandEnd >= 0 ? processStat.slice(commandEnd + 2).trim().split(/\s+/) : []
+  const fieldsAfterCommand = linuxProcessStatFields(processStat)
   const startTime = fieldsAfterCommand[19]
   if (!startTime || !/^\d+$/.test(startTime)) throw new Error("Owned process start identity is unavailable")
   return `${pid}:${startTime}`
+}
+
+function linuxProcessStatFields(processStat: string): string[] {
+  const commandEnd = processStat.lastIndexOf(")")
+  return commandEnd >= 0 ? processStat.slice(commandEnd + 2).trim().split(/\s+/) : []
 }
 
 async function waitForOwnedProcessExit(state: OwnedNativeProcess, timeoutMs: number): Promise<boolean> {
@@ -1080,13 +1084,31 @@ async function ownedProcessGroupExists(state: OwnedNativeProcess): Promise<boole
   try { process.kill(-state.groupId, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH" }
 }
 
+async function ownedProcessGroupHasLiveMembers(state: OwnedNativeProcess): Promise<boolean> {
+  if (process.platform !== "linux" || !state.groupId) return await ownedProcessGroupExists(state)
+  if (!await ownedProcessGroupExists(state)) return false
+  // Capturing parents can retain killed descendants as zombies; they cannot execute
+  // and only the adopting parent, not this process, can reap them.
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      const fields = linuxProcessStatFields(await readFile(`/proc/${entry}/stat`, "utf8"))
+      if (Number(fields[2]) === state.groupId && !["Z", "X", "x"].includes(fields[0] ?? "")) return true
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "ENOENT" && code !== "EACCES" && code !== "EPERM") throw error
+    }
+  }
+  return false
+}
+
 async function waitForOwnedProcessGroupExit(state: OwnedNativeProcess, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!await ownedProcessGroupExists(state)) return true
+    if (!await ownedProcessGroupHasLiveMembers(state)) return true
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 10))
   }
-  return !await ownedProcessGroupExists(state)
+  return !await ownedProcessGroupHasLiveMembers(state)
 }
 
 async function ownedProcessRssMiB(state: OwnedNativeProcess): Promise<number | undefined> {

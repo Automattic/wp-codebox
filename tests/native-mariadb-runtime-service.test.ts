@@ -14,6 +14,21 @@ const service: WorkspaceRecipeRuntimeService = {
   outputs: { host: "DB_HOST", port: "DB_PORT", username: "DB_USER", password: "NATIVE_DB_PASSWORD", database: "DB_NAME" },
 }
 
+async function assertProcessTerminated(pid: number, message: string): Promise<void> {
+  if (process.platform === "linux") {
+    try {
+      const processStat = await readFile(`/proc/${pid}/stat`, "utf8")
+      const commandEnd = processStat.lastIndexOf(")")
+      const state = commandEnd >= 0 ? processStat.slice(commandEnd + 2).trim().split(/\s+/)[0] : undefined
+      assert.ok(state === "Z" || state === "X" || state === "x", message)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+    return
+  }
+  assert.throws(() => process.kill(pid, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH", message)
+}
+
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [service] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, true)
 assert.deepEqual(runtimeServicePlan([service]), [{ id: "native-db", kind: "mysql", provider: "native", version: "mariadb:native", bind: "loopback", port: "ephemeral", persistentVolume: false, configuration: service.configuration, outputs: service.outputs }])
 assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [{ ...service, configuration: { provider: "native", engine: "mysql" } }] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }).valid, false)
@@ -152,7 +167,7 @@ fs.writeFileSync(process.env.HOME + '/initializer-child-pid', String(child.pid))
   const descendantRoot = (await readdir(tmpdir())).find((name) => name.startsWith("wp-codebox-mariadb-") && !before.has(name))
   assert.ok(descendantRoot)
   const descendantPid = Number(await readFile(join(tmpdir(), descendantRoot, "storage", "tmp", "initializer-child-pid"), "utf8"))
-  assert.throws(() => process.kill(descendantPid, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH", "initializer descendants are gone before provisioning continues")
+  await assertProcessTerminated(descendantPid, "initializer descendants are terminated before provisioning continues")
   await descendantProvisioned.release()
   await writeFile(join(fixture, "mariadb-install-db"), initializerScript)
   await chmod(join(fixture, "mariadb-install-db"), 0o700)
