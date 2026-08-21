@@ -524,11 +524,12 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
   }
   const failed = executions.find((execution) => execution.exitCode !== 0)
   const artifacts = recipeWorkloadExecutionArtifacts(executions)
+  const incompleteResults = recipeIncompleteWorkloadResults(executions)
   if (workloadAlias && !artifacts[workloadAlias]) {
     const aliasPayloads = dedupeRecipeArtifactPayloads(executions.flatMap(recipeAllWorkloadArtifactPayloadsFromExecution))
     if (aliasPayloads.length === 1) artifacts[workloadAlias] = aliasPayloads[0]!.payload
   }
-  const payload = stripUndefined({ schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0, artifacts: Object.keys(artifacts).length > 0 ? artifacts : undefined })
+  const payload = stripUndefined({ schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0, artifacts: Object.keys(artifacts).length > 0 ? artifacts : undefined, incompleteResults: incompleteResults.length > 0 ? incompleteResults : undefined })
   return {
     id: `wordpress-run-workload:${startedAt}`,
     command: "wordpress.run-workload",
@@ -541,6 +542,22 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
     finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
     artifactRefs: executions.flatMap((execution) => [...(execution.artifactRefs ?? []), ...recipeWorkloadResultArtifactRefs(execution)]),
   }
+}
+
+function recipeIncompleteWorkloadResults(executions: ExecutionResult[]): Array<{ schema: string; status: "incomplete"; budgetExhausted?: string }> {
+  const results = executions.flatMap((execution) => incompleteResultSummaries(isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)))
+  return results.filter((result, index) => results.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(result)) === index)
+}
+
+function incompleteResultSummaries(value: unknown): Array<{ schema: string; status: "incomplete"; budgetExhausted?: string }> {
+  if (!value || typeof value !== "object") return []
+  if (Array.isArray(value)) return value.flatMap(incompleteResultSummaries)
+  const record = value as Record<string, unknown>
+  const summary = isRecord(record.summary) ? record.summary : undefined
+  const current = typeof record.schema === "string" && record.status === "incomplete"
+    ? [{ schema: record.schema, status: "incomplete" as const, budgetExhausted: typeof record.budgetExhausted === "string" ? record.budgetExhausted : typeof summary?.budgetExhausted === "string" ? summary.budgetExhausted : undefined }]
+    : []
+  return [...current, ...Object.values(record).flatMap(incompleteResultSummaries)]
 }
 
 export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string, workloadAlias?: string): ExecutionResult {

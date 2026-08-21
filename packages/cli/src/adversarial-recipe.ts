@@ -272,7 +272,15 @@ async function executeRecipeAdversarialCase(
     const ref = parseObjectValue(item)
     return ref && typeof ref.path === "string" ? [{ path: ref.path, kind: String(ref.kind ?? "fuzz-artifact"), bytes: typeof ref.bytes === "number" ? ref.bytes : undefined, sha256: typeof ref.sha256 === "string" ? ref.sha256 : undefined }] : []
   }) : []
-  const status = fuzzCase?.status === "passed" && execution.exitCode === 0 ? "passed" : fuzzCase?.status === "failed" ? "failed" : "error"
+  const incompleteAdaptive = findIncompleteAdaptiveExploration(fuzzCase)
+  if (incompleteAdaptive) diagnostics.unshift({
+    code: "adaptive-exploration-incomplete",
+    message: incompleteAdaptive.budgetExhausted
+      ? `Adaptive browser exploration stopped at the ${incompleteAdaptive.budgetExhausted} bound and retained partial evidence.`
+      : "Adaptive browser exploration retained partial evidence but did not complete coverage.",
+    severity: "warning",
+  })
+  const status = incompleteAdaptive ? "resource-exhausted" : fuzzCase?.status === "passed" && execution.exitCode === 0 ? "passed" : fuzzCase?.status === "failed" ? "failed" : "error"
   options.executions.push(execution)
   const signals = [
     `status:${status}`,
@@ -289,6 +297,27 @@ async function executeRecipeAdversarialCase(
     stateDigest: createHash("sha256").update(JSON.stringify({ campaignId: declaration.id, status, signals, matrix: plan.matrix })).digest("hex"),
     metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }) as AdversarialExecutionObservation
+}
+
+function findIncompleteAdaptiveExploration(value: unknown): { budgetExhausted?: string } | undefined {
+  if (!value || typeof value !== "object") return undefined
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const result = findIncompleteAdaptiveExploration(item)
+      if (result) return result
+    }
+    return undefined
+  }
+  const record = value as Record<string, unknown>
+  if (record.schema === "wp-codebox/browser-adaptive-exploration/v1" && record.status === "incomplete") {
+    const summary = parseObjectValue(record.summary)
+    return { budgetExhausted: typeof record.budgetExhausted === "string" ? record.budgetExhausted : typeof summary?.budgetExhausted === "string" ? summary.budgetExhausted : undefined }
+  }
+  for (const item of Object.values(record)) {
+    const result = findIncompleteAdaptiveExploration(item)
+    if (result) return result
+  }
+  return undefined
 }
 
 function stableAdversarialDiagnosticMessage(message: string, caseId: string): string {

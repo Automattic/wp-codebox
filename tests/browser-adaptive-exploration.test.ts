@@ -70,6 +70,19 @@ document.querySelector('#continue').addEventListener('click', () => {
 });
 </script>`
 
+const asynchronousMountFixture = `<!doctype html>
+<style>button,[role="progressbar"] { display:block; width:180px; height:30px; margin:8px; }</style>
+<div id="loading" role="progressbar">Loading editor...</div>
+<script>
+setTimeout(() => {
+  document.querySelector('#loading').remove();
+  const button = document.createElement('button');
+  button.id = 'editor-control';
+  button.textContent = 'Edit document';
+  document.body.append(button);
+}, 80);
+</script>`
+
 test("adaptive browser exploration is an additive public browser-actions mode", () => {
   const definition = getCommandDefinition("wordpress.browser-actions")
   const argument = definition?.acceptedArgs.find((candidate) => candidate.name === "adaptive-exploration-json")
@@ -351,6 +364,19 @@ test("bounded stabilization captures delayed conditional fields and route state"
   assert(destination?.descriptors.some((descriptor) => descriptor.selector === "#conditional-field"))
 })
 
+test("initial adaptive frontier waits for asynchronous mount readiness", async () => {
+  const run = await runFixture(asynchronousMountFixture, {
+    seed: "asynchronous-initial-mount",
+    failOnFinding: false,
+    budgets: { maxActions: 1, maxStates: 2, maxTransitions: 1, maxDurationMs: 5_000 },
+    actionFamilies: ["click"],
+  })
+  const initial = run.result.states[0]
+  assert.equal(initial?.loadingIndicators, 0)
+  assert(initial?.descriptors.some((descriptor) => descriptor.selector === "#editor-control"), "initial frontier includes controls mounted after the loading state clears")
+  assert(run.result.transitions.some((transition) => transition.action.steps[0]?.selector === "#editor-control"))
+})
+
 test("identical seed and DOM produce deterministic state and action graph identity", async () => {
   const input = {
     seed: "deterministic-graph",
@@ -444,7 +470,7 @@ test("cancellation during a partially failed action retains bounded non-replayab
     failOnFinding: false,
     budgets: { maxActions: 8, maxStates: 8, maxTransitions: 8, maxDurationMs: 15_000, maxErrors: 4 },
     actionFamilies: ["repeat"],
-  }, controller.signal, () => setTimeout(() => controller.abort("cancel during intercepted click"), 250))
+  }, controller.signal, () => setTimeout(() => controller.abort("cancel during intercepted click"), 500))
   const failed = run.result.transitions.find((transition) => transition.status === "error")
   assert(failed)
   assert.equal(run.result.status, "incomplete")

@@ -244,6 +244,11 @@ export async function runAdversarialCampaign(campaignInput: AdversarialCampaign,
       const observation = observations[index] as AdversarialExecutionObservation
       executed += 1
       if (observation.status === "timed-out") timedOut += 1
+      if (observation.status === "resource-exhausted") {
+        incomplete = true
+        diagnostics.push({ code: "campaign-case-resource-exhausted", message: observation.diagnostics?.[0]?.message ?? `Campaign stopped because ${plan.caseId} exhausted a runtime resource before coverage completed.` })
+        break
+      }
       if (observation.diagnostics?.some(({ code }) => code === "case-timeout-unsettled")) {
         incomplete = true
         diagnostics.push({ code: "campaign-timeout-unsettled", message: `Campaign stopped because ${plan.caseId} did not settle after cancellation. The runtime must be torn down before further work.` })

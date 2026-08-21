@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment, type TransportFaultCapability } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserAdaptiveExplorationResult, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment, type TransportFaultCapability } from "@automattic/wp-codebox-core"
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
@@ -181,6 +181,7 @@ export interface BrowserArtifactSummary {
     states: number
     transitions: number
     findings: number
+    budgetExhausted?: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
     artifact: string
   }
   networkPolicy?: BrowserProbeNetworkPolicySummary

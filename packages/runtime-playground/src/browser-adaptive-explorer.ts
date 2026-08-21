@@ -90,7 +90,7 @@ export async function exploreAdaptiveBrowserStateMachine({
     remainingBytes: Math.floor(contract.budgets.maxArtifactBytes / 8),
   }
 
-  const initial = await captureAdaptiveState(page, contract, 0, navigationScope)
+  const initial = await stabilizeAdaptiveState(page, contract, 0, now, navigationScope)
   appendDiagnostics(diagnostics, initial.diagnostics, contract.descriptorLimits.maxDiagnostics)
   states.set(initial.state.digest, initial.state)
   const frontier: FrontierEntry[] = [{ state: initial.state, path: [] }]
