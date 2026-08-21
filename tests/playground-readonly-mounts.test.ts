@@ -194,7 +194,7 @@ try {
   const server = await startPlaygroundCliServer(spec, [
     { type: "file", source: readonlySource, target: "/readonly", mode: "readonly" },
     { type: "file", source: readwriteSource, target: "/readwrite", mode: "readwrite" },
-    { type: "file", source: wpConfigSource, target: "/wordpress/wp-config.php", mode: "readonly" },
+    { type: "file", source: wpConfigSource, target: "/wordpress/wp-config.php", mode: "readonly", phase: "pre-install" },
     { type: "directory", source: pluginSource, target: "/wordpress/wp-content/plugins/tracked-symlink-plugin", mode: "readonly" },
   ], { cliModule, onProgress: (event) => startupProgress.push(event) })
 

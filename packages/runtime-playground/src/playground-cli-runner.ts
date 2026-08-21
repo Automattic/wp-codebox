@@ -98,8 +98,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       materialization: readonlyMountStaging.phaseResult,
     })
     const stagedMounts = readonlyMountStaging.mounts
-    const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
-    const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
+    const preinstallMounts = stagedMounts.filter((mount) => mount.phase === "pre-install")
+    const postinstallMounts = stagedMounts.filter((mount) => mount.phase !== "pre-install")
     if (usesArchiveCache) {
       const maintenance = await automaticPlaygroundCustomArchiveCacheMaintenance()
       cacheMaintenance = maintenance.result

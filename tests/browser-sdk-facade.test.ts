@@ -632,6 +632,7 @@ assert.equal(booted.success, true)
 assert.deepEqual(plain(blueprintRuns), [{ blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }])
 
 const previewStarts: any[] = []
+const previewArchive = new Uint8Array([80, 75, 3, 4, 0])
 const previewStart = await api.v1.startBrowserPreview(previewFixture.response.preview_boot, {
   iframe: { tagName: "IFRAME" },
   hydrateBlueprintRef: async (request: any) => {
@@ -643,6 +644,7 @@ const previewStart = await api.v1.startBrowserPreview(previewFixture.response.pr
     previewStarts.push(request)
     return { client: "playground" }
   },
+  zipWpContent: async () => previewArchive,
 })
 assert.equal(previewStart.schema, "wp-codebox/browser-preview-start-result/v1")
 assert.equal(previewStart.success, true)
@@ -651,6 +653,43 @@ assert.equal(previewStart.session_id, "preview-session-1")
 assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
 assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
 assert.equal(typeof previewStart.dispose, "function", "successful previews expose async disposal without changing the result envelope")
+const replayAbilityRequests: any[] = []
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    replayAbilityRequests.push(request)
+    if (request.path === "/wp-abilities/v1/abilities/wp-codebox/replay-browser-viewport/run") {
+      return { success: true, schema: "wp-codebox/browser-viewport-replay-result/v1", status: "captured", png_base64: png }
+    }
+    return { artifact: { id: "viewport-replay", path: "files/browser/screenshot.png", sha256: "d".repeat(64) } }
+  },
+}
+const replayCapture = await api.v1.captureViewportScreenshot(previewStart.client, { route: "/replayed", viewport: { width: 390, height: 844 }, timeout_ms: 5000 })
+assert.equal(replayCapture.success, true)
+assert.equal(replayCapture.artifact.id, "viewport-replay")
+assert.deepEqual(plain(replayAbilityRequests.map(({ signal: _signal, ...request }: any) => request)), [
+  {
+    path: "/wp-abilities/v1/abilities/wp-codebox/replay-browser-viewport/run",
+    method: "POST",
+    data: {
+      archive_base64: Buffer.from(previewArchive).toString("base64"),
+      route: "/replayed",
+      viewport: { width: 390, height: 844 },
+      timeout_ms: 5000,
+    },
+  },
+  {
+    path: "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run",
+    method: "POST",
+    data: {
+      caller_schema: "wp-codebox/browser-viewport-screenshot/v1",
+      caller_kind: "browser-viewport-screenshot",
+      caller_metadata: { route: "/replayed", viewport: { width: 390, height: 844 }, diagnostics: [] },
+      entrypoint: "screenshot.png",
+      files: [{ path: "screenshot.png", content_base64: png, encoding: "base64", mime_type: "image/png", kind: "browser-screenshot" }],
+    },
+  },
+])
+delete sandbox.window.wp
 const apiFetchRequests: any[] = []
 const restRelativePreviewBoot = {
   ...previewFixture.response.preview_boot,

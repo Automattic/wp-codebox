@@ -570,6 +570,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
           captureArtifacts: { type: "boolean" },
+          phase: { enum: ["pre-install", "post-install"] },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

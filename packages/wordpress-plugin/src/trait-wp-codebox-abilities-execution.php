@@ -45,6 +45,11 @@ public static function run_runtime_task( array $input ): array|WP_Error {
 	return ( new WP_Codebox_Runtime_Task_Runner() )->run( $input );
 }
 
+/** @param array<string,mixed> $input Viewport replay request. @return array<string,mixed>|WP_Error */
+public static function replay_browser_viewport( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Browser_Viewport_Replay() )->run( $input );
+}
+
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_wordpress_workload( array $input ): array|WP_Error {
 	$unsafe = self::unsafe_execution_fields( $input );

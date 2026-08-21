@@ -321,6 +321,7 @@
     "test:wp-cli-temporary-script": "tsx tests/wp-cli-temporary-script.test.ts",
     "test:wp-cli-recipe-result": "tsx tests/wp-cli-recipe-result.test.ts",
     "test:browser-sdk-facade": "tsx tests/browser-sdk-facade.test.ts",
+    "test:browser-viewport-replay": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core --force && node ./node_modules/typescript/bin/tsc -b packages/runtime-playground packages/cli --force && node scripts/ensure-cli-bin-executable.mjs && tsx tests/browser-viewport-replay.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },
   "workspaces": [

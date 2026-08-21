@@ -63,6 +63,8 @@ require_once __DIR__ . '/src/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
+require_once __DIR__ . '/src/class-wp-codebox-zip-archive-validator.php';
+require_once __DIR__ . '/src/class-wp-codebox-browser-viewport-replay.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-auth-strategies.php';
 require_once __DIR__ . '/src/class-wp-codebox-php-ai-client-browser-provider-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';

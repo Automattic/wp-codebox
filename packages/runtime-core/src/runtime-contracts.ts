@@ -114,6 +114,8 @@ export interface WorkspaceRecipeMount {
   target: string
   mode?: "readonly" | "readwrite"
   captureArtifacts?: boolean
+  /** Selects when a Playground mount becomes available relative to installation. */
+  phase?: "pre-install" | "post-install"
   metadata?: Record<string, unknown>
 }
 
@@ -802,6 +804,8 @@ export interface MountSpec {
   target: string
   mode: "readonly" | "readwrite"
   captureArtifacts?: boolean
+  /** Selects when a Playground mount becomes available relative to installation. */
+  phase?: "pre-install" | "post-install"
   metadata?: Record<string, unknown>
 }
 
