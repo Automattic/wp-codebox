@@ -187,10 +187,6 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 			}
 		}
 
-		if ( empty( $policy_tools ) ) {
-			return array();
-		}
-
 		$policy = array(
 			'schema'  => self::SCHEMA,
 			'version' => self::VERSION,
@@ -229,8 +225,8 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		if ( self::VERSION !== (int) ( $policy['version'] ?? 0 ) ) {
 			$issues[] = array( 'field' => 'version', 'message' => 'sandbox_tool_policy.version must be ' . self::VERSION . '.' );
 		}
-		if ( empty( $policy['tools'] ) || ! is_array( $policy['tools'] ) ) {
-			$issues[] = array( 'field' => 'tools', 'message' => 'sandbox_tool_policy.tools must be a non-empty array.' );
+		if ( ! isset( $policy['tools'] ) || ! is_array( $policy['tools'] ) ) {
+			$issues[] = array( 'field' => 'tools', 'message' => 'sandbox_tool_policy.tools must be an array.' );
 			return $issues;
 		}
 

@@ -78,7 +78,7 @@ $result = $builder->build(
 		'secret_env_names' => static function () use ( &$legacy_adapter_calls ): array { $legacy_adapter_calls[] = 'secret_env_names'; return array(); },
 		'component_plugins' => static fn( array $paths ): array => array( array( 'source' => '/components/demo-plugin', 'slug' => 'demo-plugin', 'activate' => true, 'loadAs' => 'plugin' ) ),
 		'runtime_task' => static fn( array $input ): array => array(),
-		'task_input' => static fn( array $input ): array => array( 'goal' => $input['goal'], 'sandbox_tool_policy' => array( 'commands' => array() ) ),
+		'task_input' => static fn( array $input ): array => array( 'goal' => $input['goal'], 'sandbox_tool_policy' => array( 'schema' => 'wp-codebox/sandbox-tool-policy/v1', 'version' => 1, 'tools' => array() ) ),
 		'json_encode' => static fn( mixed $value ): string => json_encode( $value, JSON_UNESCAPED_SLASHES ),
 		'task_timeout_seconds' => static fn( array $input ): int => 0,
 		'recipe_mounts' => static fn( array $input ): array => array(),
@@ -108,7 +108,7 @@ $preset_result = $builder->build(
 		'secret_env_names' => static fn(): array => array(),
 		'component_plugins' => static fn(): array => array(),
 		'runtime_task' => static fn(): array => array(),
-		'task_input' => static fn( array $input ): array => array( 'goal' => $input['goal'], 'sandbox_tool_policy' => array( 'commands' => array() ) ),
+		'task_input' => static fn( array $input ): array => array( 'goal' => $input['goal'], 'sandbox_tool_policy' => array( 'schema' => 'wp-codebox/sandbox-tool-policy/v1', 'version' => 1, 'tools' => array() ) ),
 		'json_encode' => static fn( mixed $value ): string => json_encode( $value, JSON_UNESCAPED_SLASHES ),
 		'task_timeout_seconds' => static fn( array $input ): int => 0,
 		'recipe_mounts' => static fn(): array => array(),
@@ -167,6 +167,12 @@ assert.ok(result.recipe.workflow.steps[0].args.includes("mode=planned-mode"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("provider=planned-provider"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("model=planned-model"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("provider-plugin-slugs=planned-provider"))
+const sandboxToolPolicyArg = result.recipe.workflow.steps[0].args.find((arg) => arg.startsWith("sandbox-tool-policy-json=")) ?? ""
+assert.deepEqual(JSON.parse(sandboxToolPolicyArg.slice("sandbox-tool-policy-json=".length)), {
+  schema: "wp-codebox/sandbox-tool-policy/v1",
+  version: 1,
+  tools: [],
+})
 const runtimeComponentContractsArg = result.recipe.workflow.steps[0].args.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
 const runtimeComponentContracts = JSON.parse(runtimeComponentContractsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
 assert.deepEqual(runtimeComponentContracts.map((component) => component.slug), ["demo-plugin"])

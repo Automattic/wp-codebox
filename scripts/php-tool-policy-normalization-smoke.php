@@ -49,6 +49,21 @@ function assert_not_error( mixed $actual, string $label ): void {
 	}
 }
 
+$goal_only_task_input = WP_Codebox_Agent_Task::normalize_input( array( 'goal' => 'Review the site' ) );
+assert_not_error( $goal_only_task_input, 'goal-only task normalizes' );
+assert_same( 'wp-codebox/sandbox-tool-policy/v1', $goal_only_task_input['sandbox_tool_policy']['schema'], 'goal-only policy schema' );
+assert_same( array(), $goal_only_task_input['sandbox_tool_policy']['tools'], 'goal-only policy denies all tools' );
+assert_same( '{"schema":"wp-codebox/sandbox-tool-policy/v1","version":1,"tools":[]}', json_encode( $goal_only_task_input['sandbox_tool_policy'], JSON_UNESCAPED_SLASHES ), 'goal-only policy serializes as an object' );
+
+$malformed_policy = WP_Codebox_Agent_Task::normalize_input(
+	array(
+		'goal'                => 'Review the site',
+		'sandbox_tool_policy' => array( 'schema' => 'wp-codebox/sandbox-tool-policy/v1', 'version' => 1, 'tools' => 'none' ),
+	)
+);
+assert_same( true, is_wp_error( $malformed_policy ), 'malformed no-tools policy is rejected' );
+assert_same( 'wp_codebox_sandbox_tool_policy_invalid', $malformed_policy->get_error_code(), 'malformed no-tools policy error code' );
+
 $task_input = WP_Codebox_Agent_Task::normalize_input(
 	array(
 		'goal'          => 'Create a page',
