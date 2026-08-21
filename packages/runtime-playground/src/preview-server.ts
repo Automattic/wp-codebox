@@ -2,6 +2,7 @@ import { createServer as createHttpServer, request as httpRequest, type Incoming
 import { createServer as createNetServer } from "node:net"
 import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
+import { createPreviewProxyRequestTrace, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -34,6 +35,7 @@ export interface PlaygroundPreviewProxyDiagnostics {
   queue: "fifo"
   bind: string
   targetOrigin: string
+  requestTrace: PlaygroundPreviewProxyRequestTrace
 }
 
 export interface PlaygroundPreviewRouteRegistry {
@@ -45,7 +47,7 @@ export type PlaygroundPreviewRouteHandler = (incoming: IncomingMessage, outgoing
 interface PlaygroundPreviewProxy {
   serverUrl: string
   previewRoutes: PlaygroundPreviewRouteRegistry
-  diagnostics: PlaygroundPreviewProxyDiagnostics
+  diagnostics(): PlaygroundPreviewProxyDiagnostics
   dispose(): Promise<void>
 }
 
@@ -74,7 +76,9 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
     serverUrl: proxy.serverUrl,
     wordpressUrl: server.wordpressUrl ?? server.serverUrl,
     previewRoutes: proxy.previewRoutes,
-    previewProxyDiagnostics: proxy.diagnostics,
+    get previewProxyDiagnostics() {
+      return proxy?.diagnostics()
+    },
     async [Symbol.asyncDispose]() {
       await proxy.dispose()
       await server[Symbol.asyncDispose]()
@@ -85,13 +89,14 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
 async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
   const routes = createPreviewRouteRegistry()
-  const proxy = previewProxyServer(target, routes)
+  const requestTrace = createPreviewProxyRequestTrace()
+  const proxy = previewProxyServer(target, routes, requestTrace)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target, routes)
+    const ipv6Proxy = previewProxyServer(target, routes, requestTrace)
     try {
       await listenPreviewProxy(ipv6Proxy, port, "::1")
       servers.push(ipv6Proxy)
@@ -110,13 +115,16 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   return {
     serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
     previewRoutes: routes,
-    diagnostics: {
-      schema: "wp-codebox/preview-proxy-diagnostics/v1",
-      upstreamConcurrency: "serialized",
-      maxConcurrentUpstreamRequests: 1,
-      queue: "fifo",
-      bind,
-      targetOrigin: target.origin,
+    diagnostics() {
+      return {
+        schema: "wp-codebox/preview-proxy-diagnostics/v1",
+        upstreamConcurrency: "serialized",
+        maxConcurrentUpstreamRequests: 1,
+        queue: "fifo",
+        bind,
+        targetOrigin: target.origin,
+        requestTrace: snapshotPreviewProxyRequestTrace(requestTrace),
+      }
     },
     async dispose() {
       await closePreviewProxyServers(servers)
@@ -124,7 +132,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   }
 }
 
-function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): PreviewProxyServer {
+function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace): PreviewProxyServer {
   const upstreamQueue = createPreviewProxyQueue()
 
   return createHttpServer(async (incoming, outgoing) => {
@@ -138,7 +146,7 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): 
     }
 
     upstreamQueue(
-      () => proxyPreviewRequest(target, incoming, outgoing),
+      () => proxyPreviewRequest(target, incoming, outgoing, requestTrace),
       () => incoming.aborted || incoming.destroyed || outgoing.destroyed,
       (cancel) => {
         incoming.once("aborted", cancel)
@@ -174,10 +182,11 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
   }
 }
 
-function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
+function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse, requestTrace: PlaygroundPreviewProxyRequestTrace): Promise<void> {
   return new Promise((resolve) => {
     const requestTarget = previewProxyRequestTarget(incoming, target)
     let settled = false
+    let clientCanceled = false
     let targetResponse: IncomingMessage | undefined
     const settle = () => {
       if (settled) {
@@ -187,6 +196,7 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       resolve()
     }
     const abortUpstream = () => {
+      clientCanceled = true
       targetRequest.destroy()
       targetResponse?.destroy()
       settle()
@@ -204,6 +214,19 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       (response) => {
         targetResponse = response
         const headers = proxyResponseHeaders(response.headers, requestTarget, target)
+        const responseOutcome: PlaygroundPreviewProxyRequestOutcome = {
+          outcome: "response",
+          status: response.statusCode ?? 502,
+          upstreamLocation: headerValue(response.headers.location),
+          visibleLocation: headerValue(headers.location),
+        }
+        let outcomeRecorded = false
+        const recordOutcome = (outcome: PlaygroundPreviewProxyRequestOutcome) => {
+          if (!outcomeRecorded) {
+            outcomeRecorded = true
+            recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, outcome)
+          }
+        }
         const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
         if (bodyTransform) {
           delete headers["content-length"]
@@ -212,11 +235,20 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         }
         outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, headers)
         response.on("error", (error) => {
+          recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
           outgoing.destroy(error)
           settle()
         })
-        response.on("end", settle)
-        response.on("close", settle)
+        response.on("end", () => {
+          recordOutcome(responseOutcome)
+          settle()
+        })
+        response.on("close", () => {
+          if (!response.complete && !clientCanceled) {
+            recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+          }
+          settle()
+        })
         outgoing.on("finish", settle)
         outgoing.on("close", settle)
         if (bodyTransform) {
@@ -229,6 +261,9 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     )
 
     targetRequest.on("error", (error) => {
+      if (!clientCanceled) {
+        recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, { outcome: "upstream-error" })
+      }
       writeProxyError(outgoing, error)
       settle()
     })
