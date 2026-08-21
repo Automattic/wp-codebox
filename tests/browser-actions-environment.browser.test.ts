@@ -312,6 +312,31 @@ test("adaptive actions retain their declared environment through routed preview 
   }
 })
 
+test("browser actions close active Playwright work when the runtime signal aborts", async () => {
+  const fixture = await browserFixture()
+  const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-actions-cancellation-"))
+  const controller = new AbortController()
+  const started = Date.now()
+  const timer = setTimeout(() => controller.abort(), 50)
+  try {
+    await assert.rejects(runBrowserActionsCommand({
+      abortSignal: controller.signal,
+      artifactRoot,
+      runtimeSpec,
+      server: fixture.server,
+      spec: {
+        command: "wordpress.browser-actions",
+        args: [`steps-json=${JSON.stringify([{ kind: "navigate", url: "/" }, { kind: "evaluate", expression: "await new Promise(() => {})" }])}`, "capture=steps"],
+      },
+    }), /aborted during runtime cleanup/)
+    assert(Date.now() - started < 1_000, "browser cleanup must settle within the adversarial cancellation grace period")
+  } finally {
+    clearTimeout(timer)
+    await fixture.close()
+    await rm(artifactRoot, { recursive: true, force: true })
+  }
+})
+
 test("scenario steps-json file payloads execute instead of being dropped", async () => {
   const fixture = await browserFixture()
   const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-browser-scenario-steps-file-"))

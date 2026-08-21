@@ -261,7 +261,7 @@ async function executeRecipeAdversarialCase(
     phase: "adversarial:action",
     index: plan.iteration,
     step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(suite)}`], metadata: { campaignId: declaration.id, caseId: plan.caseId } },
-  }, options.recipeDirectory, options.sandboxWorkspace, options.artifactRoot, options.runOptions, options.inputMountPathMap)
+  }, options.recipeDirectory, options.sandboxWorkspace, options.artifactRoot, options.runOptions, options.inputMountPathMap, undefined, signal)
   const parsed = parseObject(execution.stdout)
   const fuzzCase = Array.isArray(parsed?.cases) ? parseObjectValue(parsed.cases[0]) : undefined
   const diagnostics = Array.isArray(fuzzCase?.diagnostics) ? fuzzCase.diagnostics.flatMap((item) => {
