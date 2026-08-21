@@ -189,11 +189,22 @@ assert.match(browserPreviewReadinessError(unsupportedCanonicalTopology.preview)?
 
 let activeUpstreamRequests = 0
 let maxActiveUpstreamRequests = 0
-const targetServer = createServer(async (_request, response) => {
+const targetServer = createServer(async (request, response) => {
   activeUpstreamRequests += 1
   maxActiveUpstreamRequests = Math.max(maxActiveUpstreamRequests, activeUpstreamRequests)
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
   activeUpstreamRequests -= 1
+  if (request.url?.startsWith("/service-worker-redirect")) {
+    response.writeHead(302, { location: `${targetServerUrl}/login?token=PRIVATE_REDIRECT_TOKEN` })
+    response.end()
+    return
+  }
+  if (request.url === "/truncated-service-worker") {
+    response.writeHead(302, { location: `${targetServerUrl}/login?token=PRIVATE_TRUNCATED_TOKEN` })
+    response.flushHeaders()
+    response.socket?.destroy()
+    return
+  }
   response.end("ok")
 })
 const targetServerUrl = await listenLocalHttpServer(targetServer)
@@ -208,16 +219,61 @@ const proxied = await withPreviewProxy({
 try {
   assert.equal(proxied.wordpressUrl, targetServerUrl)
   assert.notEqual(proxied.serverUrl, proxied.wordpressUrl)
-  assert.deepEqual(proxied.previewProxyDiagnostics, {
+  const initialProxyDiagnostics = proxied.previewProxyDiagnostics
+  assert.deepEqual(initialProxyDiagnostics, {
     schema: "wp-codebox/preview-proxy-diagnostics/v1",
     upstreamConcurrency: "serialized",
     maxConcurrentUpstreamRequests: 1,
     queue: "fifo",
     bind: "127.0.0.1",
     targetOrigin: new URL(targetServerUrl).origin,
+    requestTrace: { scope: "service-worker", capacity: 64, total: 0, dropped: 0, entries: [] },
   })
   await Promise.all([fetch(proxied.serverUrl), fetch(proxied.serverUrl)])
   assert.equal(maxActiveUpstreamRequests, 1)
+  await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_ORDINARY_NONCE`, { redirect: "manual" })
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 0, "ordinary redirects remain outside the service-worker trace")
+  const redirectResponse = await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_REQUEST_NONCE`, {
+    headers: { "service-worker": "script", "sec-fetch-dest": "serviceworker" },
+    redirect: "manual",
+  })
+  assert.equal(redirectResponse.status, 302)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 1)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.dropped, 0)
+  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+    sequence: 1,
+    method: "GET",
+    path: "/service-worker-redirect?nonce=[redacted]",
+    destination: "serviceworker",
+    serviceWorker: true,
+    outcome: "response",
+    status: 302,
+    upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
+    visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
+  })
+  assert.equal(initialProxyDiagnostics?.requestTrace.total, 0, "completed diagnostics snapshots do not mutate with later proxy requests")
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_REQUEST_NONCE|PRIVATE_REDIRECT_TOKEN/)
+  await fetch(`${proxied.serverUrl}/truncated-service-worker`, { headers: { "service-worker": "script" }, redirect: "manual" }).then((response) => response.text()).catch(() => undefined)
+  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+    sequence: 2,
+    method: "GET",
+    path: "/truncated-service-worker",
+    destination: null,
+    serviceWorker: true,
+    outcome: "upstream-error",
+    status: 302,
+    upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
+    visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
+  })
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_TRUNCATED_TOKEN/)
+  await Promise.all(Array.from({ length: 64 }, (_, index) => fetch(`${proxied.serverUrl}/bounded-trace/${index}`, { headers: { "service-worker": "script", ...(index === 0 ? { "sec-fetch-dest": "PRIVATE_DESTINATION" } : {}) } })))
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 66)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.dropped, 2)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries.length, 64)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries[0]?.sequence, 3)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries[0]?.destination, null)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1)?.sequence, 66)
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_DESTINATION/)
 } finally {
   await proxied[Symbol.asyncDispose]()
   await closeHttpServer(targetServer)
