@@ -337,6 +337,7 @@ export async function runBrowserActionsCommand({
           states: result.summary.states,
           transitions: result.summary.transitions,
           findings: result.summary.findings,
+          ...(result.summary.budgetExhausted ? { budgetExhausted: result.summary.budgetExhausted } : {}),
           artifact: "files/browser/adaptive-exploration.json",
         }
         finalUrl = page.url()

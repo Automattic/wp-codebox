@@ -194,6 +194,28 @@ const incompleteCampaigns = structuredClone(findingCampaigns)
 incompleteCampaigns[0]!.result.status = "incomplete"
 assert.equal(recipeAdversarialCampaignFailure(incompleteCampaigns)?.code, "adversarial-campaign-incomplete")
 
+const adaptiveRecipe = structuredClone(recipe)
+adaptiveRecipe.adversarialCampaigns![0]!.budgets.maxCases = 1
+adaptiveRecipe.adversarialCampaigns![0]!.corpus[0]!.actions = [{ type: "option-roundtrip" }]
+adaptiveRecipe.adversarialCampaigns![0]!.caseTemplates[0]!.phases.action = [{ command: "wordpress.browser-actions", args: ["adaptive-exploration-json={}"] }]
+const adaptiveRuntime = {
+  ...runtime,
+  execute: async (spec: ExecutionSpec) => ({
+    id: "adaptive-incomplete",
+    command: spec.command,
+    args: spec.args ?? [],
+    exitCode: 0,
+    stdout: spec.command === "wordpress.browser-actions" ? JSON.stringify({ summary: { adaptiveExploration: { schema: "wp-codebox/browser-adaptive-exploration/v1", status: "incomplete", budgetExhausted: "maxDurationMs" } } }) : "ok\n",
+    stderr: "",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: "2026-01-01T00:00:00.001Z",
+  }),
+} as unknown as Runtime
+const adaptiveCampaigns = await runRecipeAdversarialCampaigns({ recipe: adaptiveRecipe, recipePath: "/portable/adaptive.json", recipeDirectory: "/portable", runtime: adaptiveRuntime, executions: [] })
+assert.equal(adaptiveCampaigns[0]?.result.status, "incomplete")
+assert.equal(adaptiveCampaigns[0]?.result.findings.length, 0, "incomplete adaptive coverage is not an actionable finding")
+assert(adaptiveCampaigns[0]?.result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-case-resource-exhausted" && diagnostic.message.includes("maxDurationMs")))
+
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-adversarial-recipe-"))
 try {
   const manifestPath = join(artifactRoot, "manifest.json")

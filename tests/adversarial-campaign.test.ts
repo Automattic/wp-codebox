@@ -190,6 +190,23 @@ test("an uncooperative timed-out case terminalizes the campaign without starting
   assert(result.diagnostics.some(({ code }) => code === "campaign-timeout-unsettled"))
 })
 
+test("resource-exhausted cases make coverage incomplete without creating findings", async () => {
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "partial-coverage",
+    seed: "partial-coverage-seed",
+    corpus: [{ id: "seed", actions: [{ type: "explore" }] }],
+    mutationKinds: ["sequence"],
+    budgets: { maxCases: 2, workers: 1, maxCaseTimeMs: 1_000, maxWallTimeMs: 5_000 },
+    oracles: [{ schema: "wp-codebox/adversarial-oracle/v1", id: "runtime-status", severity: "high" }],
+  }), {
+    execute: async () => ({ status: "resource-exhausted", diagnostics: [{ code: "adaptive-exploration-incomplete", message: "Adaptive browser exploration stopped at the maxDurationMs bound and retained partial evidence." }], artifacts: [{ path: "adaptive-exploration.json", kind: "browser-adaptive-exploration" }] }),
+  })
+  assert.equal(result.status, "incomplete")
+  assert.equal(result.summary.executed, 1)
+  assert.equal(result.findings.length, 0)
+  assert(result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-case-resource-exhausted" && diagnostic.message.includes("maxDurationMs")))
+})
+
 test("minimization preserves the exact oracle and state fingerprint", async () => {
   const exactState = adversarialCampaign({
     id: "exact-state",
