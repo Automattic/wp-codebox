@@ -63,6 +63,7 @@ interface BrowserRunPlan {
 }
 
 export async function runBrowserActionsCommand({
+  abortSignal,
   artifactRoot,
   plan,
   runtimeSpec,
@@ -72,6 +73,7 @@ export async function runBrowserActionsCommand({
   onProgress,
   session,
 }: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   plan?: BrowserActionsRunPlan
   runtimeSpec: RuntimeCreateSpec
@@ -159,8 +161,19 @@ export async function runBrowserActionsCommand({
   let activePage: Page | undefined
   let installedTransportFaults: InstalledBrowserTransportFaults | undefined
   let transportFaultReport: BrowserTransportFaultReport | undefined
+  const abortHandler = () => {
+    pendingError ??= new Error("Browser command aborted during runtime cleanup")
+    void activePage?.close().catch(() => undefined)
+    void environmentRuntime?.close().catch(() => undefined)
+    if (!session) void browser.close().catch(() => undefined)
+  }
+  abortSignal?.addEventListener("abort", abortHandler, { once: true })
 
   try {
+    if (abortSignal?.aborted) {
+      abortHandler()
+      throw pendingError
+    }
     const previewReadinessError = browserPreviewReadinessError(preview)
     if (previewReadinessError) {
       throw previewReadinessError
@@ -281,7 +294,7 @@ export async function runBrowserActionsCommand({
           observations: { consoleMessages, errors, network },
           navigationScope: topology.navigationScope,
           networkPolicy: topology.networkPolicy,
-          signal: spec.signal,
+          signal: abortSignal,
           accessibilityCollector: adaptiveContract.accessibility ? createBrowserAccessibilityCollector(page, adaptiveContract.accessibility) : undefined,
           onAccessibilityFindingEvidence: adaptiveContract.accessibility ? async (scan) => {
             const basename = `accessibility-${String(scan.index).padStart(3, "0")}`
@@ -601,6 +614,7 @@ export async function runBrowserActionsCommand({
       environment: environmentEvidence,
       summary: artifact.summary,
     })
+    abortSignal?.removeEventListener("abort", abortHandler)
   }
 
   if (pendingError) {

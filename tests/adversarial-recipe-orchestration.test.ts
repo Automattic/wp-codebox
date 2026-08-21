@@ -122,6 +122,58 @@ const failedClockRuntime = {
 await runRecipeAdversarialCampaigns({ recipe: noResetRecipe, recipePath: "/portable/no-reset.json", recipeDirectory: "/portable", runtime: failedClockRuntime, executions: [] })
 assert(noResetExecutions.some((execution) => execution.args.some((arg) => arg.includes("server-clock-cleanup"))), "failed no-reset cases clean injected clock state")
 
+const cancellationRecipe: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: { steps: [{ command: "inspect-mounted-inputs" }] },
+  adversarialCampaigns: [{
+    schema: "wp-codebox/adversarial-recipe-campaign/v1",
+    id: "browser-cancellation",
+    seed: "browser-cancellation-seed",
+    corpus: [{ id: "adaptive-browser", actions: [{ type: "explore-browser" }] }],
+    caseTemplates: [{ id: "explore-browser", phases: { action: [{ command: "wordpress.browser-actions", args: ["adaptive-exploration-json={\"startUrl\":\"/\"}"] }] } }],
+    mutators: ["scalar"],
+    oracles: [],
+    budgets: { maxCases: 2, maxCaseTimeMs: 20, maxWallTimeMs: 2_000, maxArtifactBytes: 100_000 },
+    resetPolicy: { mode: "checkpoint-per-case", checkpointName: "browser-baseline" },
+    shrinking: { enabled: false },
+  }],
+}
+let browserCommands = 0
+let activeBrowserCommands = 0
+let cancelledBrowserCommands = 0
+let restoredWhileActive = false
+const cancellationRuntime = {
+  info: async () => ({ id: "playground", backend: "wordpress-playground", environment: { kind: "wordpress", name: "Playground" }, createdAt: "2026-01-01T00:00:00.000Z", status: "created" }),
+  createCheckpoint: async ({ name }: { name: string }) => ({ schema: "wp-codebox/runtime-checkpoint-result/v1", operation: "create", status: "created", name, supported: true }),
+  restoreCheckpoint: async (name: string) => {
+    restoredWhileActive ||= activeBrowserCommands > 0
+    return { schema: "wp-codebox/runtime-checkpoint-result/v1", operation: "restore", status: "restored", name, supported: true }
+  },
+  execute: async (spec: ExecutionSpec) => {
+    browserCommands += 1
+    if (browserCommands === 1) {
+      assert(spec.signal, "the adversarial case signal reaches the runtime-backed browser command")
+      activeBrowserCommands += 1
+      await new Promise<void>((resolve) => spec.signal!.aborted ? resolve() : spec.signal!.addEventListener("abort", () => resolve(), { once: true }))
+      activeBrowserCommands -= 1
+      cancelledBrowserCommands += 1
+      throw new Error("browser action cancelled")
+    }
+    assert.equal(activeBrowserCommands, 0, "the next case starts after the cancelled browser command settles")
+    return { id: `browser-${browserCommands}`, command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok\n", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
+  },
+} as unknown as Runtime
+const cancellationCampaigns = await runRecipeAdversarialCampaigns({ recipe: cancellationRecipe, recipePath: "/portable/browser-cancellation.json", recipeDirectory: "/portable", runtime: cancellationRuntime, executions: [] })
+const cancellationResult = cancellationCampaigns[0]!.result
+assert.equal(cancelledBrowserCommands, 1)
+assert.equal(browserCommands, 2, "the campaign continues with a clean runtime after cancellation")
+assert.equal(restoredWhileActive, false, "checkpoint restoration waits for browser cleanup")
+assert.equal(cancellationResult.summary.timedOut, 1)
+assert.equal(cancellationResult.status, "findings")
+assert.equal(cancellationResult.findings[0]?.status, "timed-out")
+assert(cancellationResult.findings[0]?.diagnostics.some(({ code }) => code === "case-time-budget-exhausted"))
+assert(!cancellationResult.diagnostics.some(({ code }) => code === "campaign-timeout-unsettled"))
+
 assert.equal(resolveAdversarialReplayPath("files/replay.json", "/workspace"), "/workspace/files/replay.json")
 assert.throws(() => resolveAdversarialReplayPath("../replay.json", "/workspace"), /escapes the invocation workspace/)
 assert.throws(() => resolveAdversarialReplayPath("/outside/replay.json", "/workspace"), /escapes the invocation workspace/)
