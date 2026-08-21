@@ -83,6 +83,7 @@ export interface BrowserArtifactFiles {
   performance?: string
   review?: string
   screenshot?: string
+  screenshots?: string[]
   traces?: string[]
   domSnapshots?: string[]
   verifierResults?: string[]
@@ -1179,6 +1180,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
+  screenshots: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   traces: { kind: "browser-trace", contentType: "application/zip", redact: true },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
   verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },

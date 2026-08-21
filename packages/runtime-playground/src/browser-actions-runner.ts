@@ -141,6 +141,7 @@ export async function runBrowserActionsCommand({
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
+  const screenshots: string[] = []
   const domSnapshots: Array<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> = []
   const verifierResults: NonNullable<BrowserArtifact["summary"]["verifierResults"]> = []
   let viewport: BrowserProbeViewport | null = null
@@ -292,6 +293,7 @@ export async function runBrowserActionsCommand({
               return {}
             }
             await artifactSession.writeGenerated("screenshot", `${basename}.png`, (path) => writeFile(path, screenshot))
+            screenshots.push(screenshotRef)
             try {
               const snapshot = await captureBrowserActionDomSnapshot({
                 artifactSession,
@@ -380,6 +382,9 @@ export async function runBrowserActionsCommand({
         }
         if (outcome.screenshot && capture.has("screenshot") && outcome.screenshotIsDefault) {
           screenshotSha256 = await fileSha256(screenshotPath)
+        }
+        if (outcome.screenshot && !outcome.screenshotIsDefault) {
+          screenshots.push(outcome.screenshot)
         }
         if (outcome.screenshot && capture.has("dom-snapshot")) {
           domSnapshots.push(await captureBrowserActionDomSnapshot({
@@ -528,6 +533,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("websocket") ? { websocket: "files/browser/websocket.json" } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
+        ...(screenshots.length > 0 ? { screenshots } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
         ...(actionCorpusArtifact ? { actionCorpus: "files/browser/action-corpus.json" } : {}),
