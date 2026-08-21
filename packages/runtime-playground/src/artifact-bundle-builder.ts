@@ -80,6 +80,7 @@ export interface ArtifactBundleBuilderSource {
   previewInfo(createdAt: string, previewHoldSeconds: number | undefined, commands: ExecutionResult[]): Promise<ArtifactPreview | undefined>
   browserReviewSummary(): ArtifactReviewBrowserSummary | undefined
   browserArtifacts(): BrowserArtifact[]
+  additionalArtifactDiagnostics?(): unknown[]
   captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles>
   captureMountDiffs(filesDirectory: string, redactor: ArtifactRedactor): Promise<MountDiffsResult>
   redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void>
@@ -172,6 +173,7 @@ export class ArtifactBundleBuilder {
     })
     const previewSessionEvidenceRelativePath = relative(source.artifactRoot, previewSessionEvidencePath)
     const diagnostics = buildArtifactDiagnostics(source.observations)
+    diagnostics.diagnostics.push(...buildArtifactDiagnostics(source.additionalArtifactDiagnostics?.() ?? []).diagnostics)
     diagnostics.diagnostics.push(...mountDiffDiagnostics)
     diagnostics.summary.total = diagnostics.diagnostics.length
     diagnostics.summary.error = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length
