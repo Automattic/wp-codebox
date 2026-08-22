@@ -199,6 +199,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     })
     return {
       ...proxiedServer,
+      get previewProxyDiagnostics() {
+        return proxiedServer.previewProxyDiagnostics
+      },
       async [Symbol.asyncDispose]() {
         try {
           await proxiedServer[Symbol.asyncDispose]()
@@ -258,6 +261,9 @@ async function withPreviewLeaseProvider(server: PlaygroundCliServer, spec: Runti
 
   return {
     ...server,
+    get previewProxyDiagnostics() {
+      return server.previewProxyDiagnostics
+    },
     previewLease: lease,
     async [Symbol.asyncDispose]() {
       try {
