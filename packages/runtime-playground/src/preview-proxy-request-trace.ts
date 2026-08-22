@@ -63,6 +63,10 @@ export function isPreviewProxyServiceWorkerRequest(incoming: IncomingMessage, pa
   return incoming.headers["service-worker"] === "script" || previewProxyFetchDestination(incoming.headers["sec-fetch-dest"]) === "serviceworker" || isServiceWorkerScriptPath(path)
 }
 
+export function isPreviewProxyServiceWorkerRegistrationRequest(incoming: IncomingMessage): boolean {
+  return incoming.method === "GET" && (incoming.headers["service-worker"] === "script" || previewProxyFetchDestination(incoming.headers["sec-fetch-dest"]) === "serviceworker")
+}
+
 function redactPreviewProxyUrl(value: string): string {
   return redactString(value, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }

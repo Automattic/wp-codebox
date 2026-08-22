@@ -2,7 +2,7 @@ import { createServer as createHttpServer, request as httpRequest, type Incoming
 import { createServer as createNetServer } from "node:net"
 import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
-import { createPreviewProxyRequestTrace, isPreviewProxyServiceWorkerRequest, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
+import { createPreviewProxyRequestTrace, isPreviewProxyServiceWorkerRegistrationRequest, isPreviewProxyServiceWorkerRequest, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -186,9 +186,12 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse, requestTrace: PlaygroundPreviewProxyRequestTrace): Promise<void> {
   return new Promise((resolve) => {
     const requestTarget = previewProxyRequestTarget(incoming, target)
+    const serviceWorkerRegistration = isPreviewProxyServiceWorkerRegistrationRequest(incoming)
     let settled = false
     let clientCanceled = false
     let targetResponse: IncomingMessage | undefined
+    let targetRequest: ReturnType<typeof httpRequest> | undefined
+    let serviceWorkerRedirectRetries = 0
     let outcomeRecorded = false
     const recordOutcome = (outcome: PlaygroundPreviewProxyRequestOutcome) => {
       if (!outcomeRecorded) {
@@ -206,21 +209,19 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     const abortUpstream = () => {
       clientCanceled = true
       recordOutcome({ outcome: "client-canceled" })
-      targetRequest.destroy()
+      targetRequest?.destroy()
       targetResponse?.destroy()
       settle()
     }
-
-    const targetRequest = httpRequest(
-      {
+    const sendUpstreamRequest = () => {
+      targetRequest = httpRequest({
         protocol: target.protocol,
         hostname: target.hostname,
         port: target.port,
         method: incoming.method,
         path: requestTarget.path,
         headers: proxyRequestHeaders(incoming.headers, requestTarget),
-      },
-      (response) => {
+      }, (response) => {
         targetResponse = response
         const headers = proxyResponseHeaders(response.headers, requestTarget, target)
         const responseOutcome: PlaygroundPreviewProxyRequestOutcome = {
@@ -228,6 +229,29 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
           status: response.statusCode ?? 502,
           upstreamLocation: headerValue(response.headers.location),
           visibleLocation: headerValue(headers.location),
+        }
+        if (serviceWorkerRegistration && responseOutcome.status !== undefined && responseOutcome.status >= 300 && responseOutcome.status < 400 && serviceWorkerRedirectRetries < 2) {
+          // The runtime can redirect its worker script while it warms up. Chromium rejects
+          // registration scripts that see a redirect, so retry the same bounded request upstream.
+          serviceWorkerRedirectRetries += 1
+          response.resume()
+          response.once("end", () => {
+            if (!clientCanceled) {
+              sendUpstreamRequest()
+            }
+          })
+          response.once("error", (error) => {
+            recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+            outgoing.destroy(error)
+            settle()
+          })
+          response.once("close", () => {
+            if (!response.complete && !clientCanceled) {
+              recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+              settle()
+            }
+          })
+          return
         }
         if (isPreviewProxyServiceWorkerRequest(incoming, requestTarget.path) && responseOutcome.status !== undefined && responseOutcome.status >= 300 && responseOutcome.status < 400) {
           // Browsers reject and cancel redirected service-worker scripts as soon as headers arrive.
@@ -263,23 +287,27 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         } else {
           response.pipe(outgoing)
         }
-      },
-    )
+      })
 
-    targetRequest.on("error", (error) => {
-      if (!clientCanceled) {
-        recordOutcome({ outcome: "upstream-error" })
+      targetRequest.on("error", (error) => {
+        if (!clientCanceled) {
+          recordOutcome({ outcome: "upstream-error" })
+        }
+        writeProxyError(outgoing, error)
+        settle()
+      })
+      if (serviceWorkerRedirectRetries > 0) {
+        targetRequest.end()
       }
-      writeProxyError(outgoing, error)
-      settle()
-    })
+    }
     incoming.on("aborted", abortUpstream)
     incoming.on("error", () => {
       abortUpstream()
     })
     outgoing.on("error", abortUpstream)
     outgoing.on("close", abortUpstream)
-    incoming.pipe(targetRequest)
+    sendUpstreamRequest()
+    incoming.pipe(targetRequest!)
   })
 }
 
