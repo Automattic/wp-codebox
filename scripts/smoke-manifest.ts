@@ -157,6 +157,7 @@ export const smokeGroups = {
       npmScript("test:php-agents-api-adapter-contract"),
       npmScript("test:php-sandbox-workspace-executor"),
       phpSmoke("php-browser-runtime-agent-substrate-smoke"),
+      phpSmoke("php-browser-runtime-url-policy-smoke"),
       phpSmoke("php-run-plan-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("component-contracts-agent-task-smoke"),
