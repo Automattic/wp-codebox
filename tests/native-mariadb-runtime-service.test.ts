@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
-import { tmpdir } from "node:os"
+import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
@@ -115,6 +115,8 @@ try {
   }
 
   assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
+  assert.ok(calls.some((call) => call.stdin?.includes("CREATE DATABASE")), "readiness provisions a disposable database instead of only writing a mount marker")
+  assert.ok(calls.some((call) => call.stdin === "SHOW ENGINES;\n"), "readiness proves the daemon storage-engine policy")
   assert.equal(calls.every((call) => call.env?.PATH === "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), true, "native commands ignore the caller PATH")
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
@@ -136,6 +138,7 @@ try {
   const initializerArgs = (await readFile(join(dirname(datadir), "tmp", "initializer-args"), "utf8")).trim().split("\n")
   assert.ok(initializerArgs.includes("--no-defaults"))
   assert.ok(initializerArgs.some((arg) => arg === `--datadir=${datadir}`))
+  assert.ok(initializerArgs.includes(`--user=${userInfo().username}`), "the initializer runs as the unprivileged FUSE mount owner")
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("truncate")) && call.args.includes("268435456")), "the provider creates a fixed 256 MiB backing image")
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("mkfs.ext4")) && call.args.includes("-N") && call.args.includes("4096")), "the provider creates a fixed 4096-inode filesystem")
   assert.ok(daemonArgs.includes("--as=2147483648"))
@@ -145,6 +148,7 @@ try {
   assert.ok(daemonArgs.includes("--nproc=512"))
   assert.ok(daemonArgs.includes(`--plugin-dir=${join(dirname(datadir), "plugins")}`))
   assert.ok(daemonArgs.includes(`--secure-file-priv=${join(dirname(datadir), "files")}`))
+  assert.ok(daemonArgs.includes(`--user=${userInfo().username}`), "the daemon runs as the unprivileged FUSE mount owner")
   assert.ok(daemonArgs.every((arg) => !arg.startsWith("--socket=") || arg.startsWith(`--socket=${dirname(datadir)}/runtime/`)))
   assert.equal(daemonArgs.includes(password), false)
   const createUser = calls.find((call) => call.stdin?.includes("CREATE USER"))
