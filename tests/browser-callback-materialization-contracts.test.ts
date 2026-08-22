@@ -235,7 +235,7 @@ try {
     queue: "fifo",
     bind: "127.0.0.1",
     targetOrigin: new URL(targetServerUrl).origin,
-    requestTrace: { scope: "service-worker", capacity: 64, total: 0, dropped: 0, entries: [] },
+    requestTrace: { scope: "service-worker-and-failed-script", capacity: 64, total: 0, dropped: 0, entries: [] },
   })
   await Promise.all([fetch(proxied.serverUrl), fetch(proxied.serverUrl)])
   assert.equal(maxActiveUpstreamRequests, 1)
