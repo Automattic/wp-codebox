@@ -4,11 +4,10 @@ import { bootWordPressAndRequestHandler } from "@wp-playground/wordpress"
 import type { MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
 import { dirname } from "node:path"
-import { playgroundRuntimeBlueprint } from "./blueprint.js"
+import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl } from "./blueprint.js"
 import { assertPhpWasmExternalExtensionsSupported } from "./php-wasm-preflight.js"
 import { phpEnvAssignments } from "./php-snippets.js"
 import type { PlaygroundCliServer, PlaygroundServerRunResponse } from "./preview-server.js"
-import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
   createNodeFsMountHandler(localPath: string): unknown
@@ -56,7 +55,7 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
     maxPhpInstances: 1,
     phpVersion,
-    siteUrl: playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl ?? "http://127.0.0.1",
+    siteUrl: playgroundRuntimeSiteUrl(spec) ?? "http://127.0.0.1",
     documentRoot: "/wordpress",
     sapiName: "cli",
     wordpressInstallMode: options.wordpressInstallMode ?? "install-from-existing-files",
