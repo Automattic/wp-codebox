@@ -174,6 +174,7 @@ export async function applyRecipeRuntimeSetup(args: {
       target,
       mode: mount.mode ?? "readwrite",
       ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
+      ...(mount.phase !== undefined ? { phase: mount.phase } : {}),
       metadata,
     }
     inputMounts.push(inputMount)

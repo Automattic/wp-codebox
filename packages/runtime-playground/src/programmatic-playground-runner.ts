@@ -50,6 +50,8 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     ...options.bootstrapIniEntries,
     ...options.phpIniEntries,
   }
+  const preinstallMounts = mounts.filter((mount) => mount.phase === "pre-install")
+  const postinstallMounts = mounts.filter((mount) => mount.phase !== "pre-install")
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
     maxPhpInstances: 1,
@@ -68,13 +70,16 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     async onPHPInstanceCreated(php: unknown) {
       const programmaticPhp = php as ProgrammaticPHP
       await mountHostDirectory(programmaticPhp, "/wordpress", options.wordpressDirectory)
-      for (const mount of mounts) {
+      for (const mount of preinstallMounts) {
         await mountHostDirectory(programmaticPhp, mount.target, mount.source)
       }
     },
   })
 
   const primaryPhp = await requestHandler.getPrimaryPhp() as ProgrammaticPHP
+  for (const mount of postinstallMounts) {
+    await mountHostDirectory(primaryPhp, mount.target, mount.source)
+  }
   await applyBlueprint(primaryPhp, spec)
 
   const httpServer = createHttpServer((incoming, outgoing) => {

@@ -97,10 +97,13 @@ start result exposes idempotent async `dispose()` cleanup without changing its
 
 `window.wpCodeboxBrowser.v1.captureViewportScreenshot()` is the generic visual
 evidence primitive. It accepts a prepared client, an absolute route, viewport
-width and height, and a bounded `timeout_ms`. The browser invoker receives
-`wp-codebox/browser-invocation-request/v1` with operation `viewport-screenshot`.
-Codebox persists returned PNG bytes through `wp-codebox/persist-browser-artifact`
-and returns its canonical immutable bundle/file ref and SHA-256.
+width and height, and a bounded `timeout_ms`. By default, Codebox exports the
+prepared client with the matching Playground module's `zipWpContent`, replays
+that archive through the Codebox-owned Playwright runtime, and persists the
+returned PNG bytes through `wp-codebox/persist-browser-artifact`. It returns
+the canonical immutable bundle/file ref and SHA-256. An optional `browserInvoker`
+receives `wp-codebox/browser-invocation-request/v1` with operation
+`viewport-screenshot` and remains an explicit test or extensibility seam.
 The resulting `wp-codebox/browser-viewport-screenshot/v1` envelope reports
 `captured` or a non-passing `failed` state with diagnostics. Consumers call
 `verifyViewportScreenshot(evidence)` before use; it calls the Codebox-owned

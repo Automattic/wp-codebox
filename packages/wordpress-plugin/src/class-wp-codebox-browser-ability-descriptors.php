@@ -52,6 +52,43 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 		);
 
 		$descriptors = array(
+			'wp-codebox/replay-browser-viewport'          => array(
+				'label'               => 'Replay Browser Viewport',
+				'description'         => 'Replay a bounded Playground site archive through the bundled WP Codebox Playwright runtime and return PNG viewport bytes.',
+				'category'            => 'wp-codebox',
+				'input_schema'        => array(
+					'type'       => 'object',
+					'required'   => array( 'archive_base64', 'route', 'viewport' ),
+					'properties' => array(
+						'archive_base64' => array( 'type' => 'string' ),
+						'route'          => array( 'type' => 'string' ),
+						'viewport'       => array(
+							'type'       => 'object',
+							'required'   => array( 'width', 'height' ),
+							'properties' => array(
+								'width'  => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 10000 ),
+								'height' => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 10000 ),
+							),
+						),
+						'timeout_ms'     => array( 'type' => 'integer', 'minimum' => 5000, 'maximum' => 180000 ),
+						'wp_version'     => array( 'type' => 'string' ),
+						'php_version'    => array( 'type' => 'string' ),
+					),
+				),
+				'output_schema'       => array(
+					'type'       => 'object',
+					'properties' => array(
+						'success'     => array( 'type' => 'boolean' ),
+						'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/browser-viewport-replay-result/v1' ),
+						'status'      => array( 'type' => 'string' ),
+						'png_base64'  => array( 'type' => 'string' ),
+						'diagnostics' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					),
+				),
+				'execute_callback'    => array( WP_Codebox_Abilities::class, 'replay_browser_viewport' ),
+				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
+				'meta'                => array( 'show_in_rest' => true ),
+			),
 			'wp-codebox/hydrate-browser-blueprint-ref'      => array(
 				'label'               => 'Hydrate Browser Blueprint Ref',
 				'description'         => 'Resolve a product-safe prepared browser blueprint ref into an executable contained WordPress runtime blueprint without requiring consumers to store blueprint files.',

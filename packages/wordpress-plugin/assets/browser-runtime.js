@@ -242,7 +242,7 @@
 
 	const viewportScreenshotSchema = 'wp-codebox/browser-viewport-screenshot/v1';
 	const viewportScreenshotVerificationSchema = 'wp-codebox/browser-viewport-screenshot-verification/v1';
-	const viewportScreenshotMaxTimeoutMs = 60000;
+	const viewportScreenshotMaxTimeoutMs = 180000;
 	const viewportScreenshotMaxBytes = 5242880;
 
 	const viewportScreenshotDiagnostics = ( code, message, phase, metadata = undefined ) => [ Object.fromEntries( Object.entries( {
@@ -281,13 +281,17 @@
 		return { route: input.route, viewport: { width, height }, timeout_ms: timeoutMs };
 	};
 
-	const withViewportScreenshotTimeout = async ( promise, timeoutMs ) => {
+	const withViewportScreenshotTimeout = async ( operation, timeoutMs ) => {
+		const controller = typeof AbortController === 'function' ? new AbortController() : null;
 		let timeout;
 		try {
 			return await Promise.race( [
-				promise,
+				operation( controller?.signal ),
 				new Promise( ( resolve, reject ) => {
-					timeout = setTimeout( () => reject( runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.', { timeout_ms: timeoutMs } ) ), timeoutMs );
+					timeout = setTimeout( () => {
+						controller?.abort();
+						reject( runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.', { timeout_ms: timeoutMs } ) );
+					}, timeoutMs );
 				} ),
 			] );
 		} finally {
@@ -344,14 +348,15 @@
 		};
 	};
 
-	const executeBrowserSdkAbility = async ( ability, input ) => {
+	const executeBrowserSdkAbility = async ( ability, input, options = {} ) => {
+		const request = { path: abilityRestPath( ability ), method: 'POST', data: input, ...( options.signal ? { signal: options.signal } : {} ) };
 		if ( window.wp?.apiFetch ) {
-			return await window.wp.apiFetch( { path: abilityRestPath( ability ), method: 'POST', data: input } );
+			return await window.wp.apiFetch( request );
 		}
 		if ( typeof fetch !== 'function' ) {
 			throw runtimeError( 'ability', 'browser_sdk_ability_fetch_unavailable', 'Browser fetch or wp.apiFetch is required to call a Codebox ability.' );
 		}
-		const response = await fetch( abilityRestEndpoint( ability ), { method: 'POST', credentials: 'same-origin', headers: codeboxRestHeaders(), body: JSON.stringify( input ) } );
+		const response = await fetch( abilityRestEndpoint( ability ), { method: 'POST', credentials: 'same-origin', headers: codeboxRestHeaders(), body: JSON.stringify( input ), ...( options.signal ? { signal: options.signal } : {} ) } );
 		const json = await response.json().catch( () => null );
 		if ( ! response.ok || ! isPlainObject( json ) ) {
 			throw runtimeError( 'ability', 'browser_sdk_ability_failed', 'Codebox ability request failed.', { ability, status: response.status, response: json } );
@@ -373,6 +378,49 @@
 		} );
 	};
 
+	const viewportReplayArchiveBase64 = async ( archive ) => {
+		const buffer = archive instanceof ArrayBuffer
+			? archive
+			: ( ArrayBuffer.isView( archive )
+				? archive.buffer.slice( archive.byteOffset, archive.byteOffset + archive.byteLength )
+				: ( typeof archive?.arrayBuffer === 'function' ? await archive.arrayBuffer() : null ) );
+		if ( ! buffer || buffer.byteLength < 4 || buffer.byteLength > 26214400 ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_archive_invalid', 'Prepared browser preview export did not return a bounded ZIP archive.' );
+		}
+		const bytes = new Uint8Array( buffer );
+		if ( bytes[ 0 ] !== 80 || bytes[ 1 ] !== 75 || bytes[ 2 ] !== 3 || bytes[ 3 ] !== 4 ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_archive_invalid', 'Prepared browser preview export did not return a ZIP archive.' );
+		}
+		let binary = '';
+		for ( let offset = 0; offset < bytes.length; offset += 32768 ) {
+			binary += String.fromCharCode( ...bytes.subarray( offset, offset + 32768 ) );
+		}
+		return btoa( binary );
+	};
+
+	const replayBrowserViewport = async ( request, signal ) => {
+		const replay = browserPreviewReplaySources.get( request.client );
+		if ( ! replay || typeof replay.zipWpContent !== 'function' ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_unavailable', 'The prepared browser preview does not expose a replay archive exporter.' );
+		}
+		if ( signal?.aborted ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.' );
+		}
+		const archive = await replay.zipWpContent( request.client );
+		if ( signal?.aborted ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.' );
+		}
+		const preferredVersions = isPlainObject( replay.blueprint?.preferredVersions ) ? replay.blueprint.preferredVersions : {};
+		return executeBrowserSdkAbility( 'wp-codebox/replay-browser-viewport', {
+			archive_base64: await viewportReplayArchiveBase64( archive ),
+			route: request.route,
+			viewport: request.viewport,
+			timeout_ms: request.timeout_ms,
+			wp_version: typeof preferredVersions.wp === 'string' ? preferredVersions.wp : undefined,
+			php_version: typeof preferredVersions.php === 'string' ? preferredVersions.php : undefined,
+		}, { signal } );
+	};
+
 	const captureViewportScreenshot = async ( client, input = {}, options = {} ) => {
 		let request;
 		try {
@@ -380,16 +428,19 @@
 		} catch ( error ) {
 			return viewportScreenshotFailure( input, error.code || 'viewport_capture_invalid', error.message, error.phase || 'viewport_capture_validate', error.data );
 		}
-		if ( typeof options.browserInvoker !== 'function' ) {
-			return viewportScreenshotFailure( request, 'viewport_capture_unavailable', 'A generic browserInvoker adapter is required to capture viewport evidence.', 'viewport_capture' );
-		}
 		try {
-			const capture = await withViewportScreenshotTimeout( options.browserInvoker( {
+			const browserInvoker = typeof options.browserInvoker === 'function' ? options.browserInvoker : replayBrowserViewport;
+			if ( typeof options.browserInvoker !== 'function' && request.timeout_ms < 5000 ) {
+				throw runtimeError( 'viewport_capture_validate', 'viewport_capture_timeout_invalid', 'Viewport replay requires timeout_ms between 5000 and 180000.' );
+			}
+			const deadline = Date.now() + request.timeout_ms;
+			const remaining = () => Math.max( 1, deadline - Date.now() );
+			const capture = await withViewportScreenshotTimeout( ( signal ) => browserInvoker( {
 				schema: 'wp-codebox/browser-invocation-request/v1',
 				operation: 'viewport-screenshot',
 				client,
 				...request,
-			} ), request.timeout_ms );
+			}, signal ), remaining() );
 			const png = viewportScreenshotBytes( capture );
 			const persistenceRequest = {
 				schema: 'wp-codebox/browser-viewport-screenshot-persistence-request/v1',
@@ -400,7 +451,7 @@
 				bytes: png.bytes,
 				diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ),
 			};
-			const persisted = await withViewportScreenshotTimeout( persistViewportScreenshot( persistenceRequest, png, capture, options ), request.timeout_ms );
+			const persisted = await withViewportScreenshotTimeout( () => persistViewportScreenshot( persistenceRequest, png, capture, options ), remaining() );
 			const artifact = viewportScreenshotArtifact( persisted );
 			return {
 				schema: viewportScreenshotSchema,
@@ -892,9 +943,9 @@
 		return blueprint;
 	};
 
-	const resolveStartPlaygroundWeb = async ( boot, options = {} ) => {
+	const resolvePlaygroundClientModule = async ( boot, options = {} ) => {
 		if ( typeof options.startPlaygroundWeb === 'function' ) {
-			return options.startPlaygroundWeb;
+			return { startPlaygroundWeb: options.startPlaygroundWeb, zipWpContent: options.zipWpContent };
 		}
 
 		const moduleUrl = String( options.clientModuleUrl || boot.client_module_url || '' );
@@ -908,10 +959,11 @@
 			throw runtimeError( 'browser_preview_start', 'browser_preview_start_unavailable', 'Codebox browser preview client module does not export startPlaygroundWeb.' );
 		}
 
-		return module.startPlaygroundWeb;
+		return { startPlaygroundWeb: module.startPlaygroundWeb, zipWpContent: module.zipWpContent };
 	};
 
 	const browserPreviewLifecycles = new Map();
+	const browserPreviewReplaySources = new WeakMap();
 	const defaultBrowserPreviewStartupTimeoutMs = 30000;
 	const browserPreviewAbortError = () => runtimeError( 'browser_preview_start', 'browser_preview_aborted', 'Browser preview start was aborted.' );
 	const browserPreviewReplacedError = () => runtimeError( 'browser_preview_start', 'browser_preview_replaced', 'Browser preview start was replaced by a newer preview for the same scope.' );
@@ -1112,7 +1164,7 @@
 		}
 
 		try {
-			const startPlaygroundWeb = await lifecycle.wait( resolveStartPlaygroundWeb( boot, options ) );
+			const playgroundModule = await lifecycle.wait( resolvePlaygroundClientModule( boot, options ) );
 			const blueprint = await lifecycle.wait( hydrateBrowserPreviewBlueprint( boot, options ) );
 			const startOptions = options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {};
 			const guardedStartOptions = { ...startOptions };
@@ -1129,8 +1181,11 @@
 				...( boot.scope ? { scope: boot.scope } : {} ),
 				blueprint,
 			};
-			const start = Promise.resolve( startPlaygroundWeb( request ) ).then( ( client ) => lifecycle.ownClient( client ) );
+			const start = Promise.resolve( playgroundModule.startPlaygroundWeb( request ) ).then( ( client ) => lifecycle.ownClient( client ) );
 			const client = await lifecycle.wait( start );
+			if ( client && ( typeof client === 'object' || typeof client === 'function' ) ) {
+				browserPreviewReplaySources.set( client, { zipWpContent: playgroundModule.zipWpContent, blueprint } );
+			}
 
 			if ( lifecycle.isActive() && typeof options.onClientConnected === 'function' ) {
 				options.onClientConnected( client );
