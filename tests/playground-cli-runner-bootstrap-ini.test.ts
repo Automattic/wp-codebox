@@ -87,6 +87,7 @@ try {
   assert.deepEqual(calls[0]["mount-before-install"]?.[5], { hostPath: wordpressDevelopDirectory, vfsPath: "/wordpress" })
   assert.deepEqual(calls[0].mount, [])
   assert.equal(calls[0].workers, 1)
+  assert.equal("internalCookieStore" in calls[0], false, "browser cookies must remain outside the CLI-global cookie store")
   assert.equal(calls[0].wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(calls[0].skipSqliteSetup, true)
   assert.deepEqual(calls[0].phpEnv, {

@@ -460,6 +460,12 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
     delete forwarded["service-worker"]
     delete forwarded["sec-fetch-dest"]
   }
+  if (isCredentiallessPlaygroundWorkerAssetRequest(headers, requestTarget)) {
+    // The CLI's auto-login bootstrap cookie is required by worker requests that Chromium
+    // sends without its browsing-context cookie jar. Keep this stateless and narrow so
+    // normal browser authentication and Set-Cookie responses remain browser-owned.
+    forwarded.cookie = "playground_auto_login_already_happened=1"
+  }
   if (requestTarget.rewriteTargetOrigin) {
     forwarded["accept-encoding"] = "identity"
   }
@@ -471,6 +477,21 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
     "x-forwarded-port": requestTarget.port,
     "x-forwarded-proto": requestTarget.protocol.slice(0, -1),
   }
+}
+
+function isCredentiallessPlaygroundWorkerAssetRequest(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget): boolean {
+  if (!requestTarget.rewriteTargetOrigin || headerValue(headers.cookie)) {
+    return false
+  }
+
+  const destination = headerValue(headers["sec-fetch-dest"])?.toLowerCase()
+  if (headers["service-worker"] !== "script" && destination !== "serviceworker" && destination !== "worker" && destination !== "sharedworker" && destination !== "script") {
+    // Requests without a fetch destination are not correlated to a worker safely.
+    return false
+  }
+
+  const path = new URL(requestTarget.path, "http://localhost").pathname
+  return path.endsWith("/sw.js") || /(?:^|\/)assets\/[^/]+\.(?:m?js|wasm)$/i.test(path)
 }
 
 function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): IncomingHttpHeaders {
