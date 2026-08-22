@@ -24,6 +24,7 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
 assert.deepEqual(homeboy.scripts?.test, [
   "npm run smoke -- --group package",
   "npm run test:release-target",
+  "npm run test:prepare-declaration-rebuild",
   "npm run test:release-package-coverage",
 ])
 
