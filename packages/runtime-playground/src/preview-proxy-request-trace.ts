@@ -18,7 +18,7 @@ export interface PlaygroundPreviewProxyRequestTraceEntry {
   path: string
   destination: string | null
   serviceWorker: boolean
-  outcome: "response" | "upstream-error"
+  outcome: "response" | "upstream-error" | "client-canceled" | "canceled-before-upstream"
   status?: number
   upstreamLocation?: string
   visibleLocation?: string
@@ -35,8 +35,9 @@ export function snapshotPreviewProxyRequestTrace(trace: PlaygroundPreviewProxyRe
 }
 
 export function recordPreviewProxyRequest(trace: PlaygroundPreviewProxyRequestTrace, incoming: IncomingMessage, path: string, outcome: PlaygroundPreviewProxyRequestOutcome): void {
-  const serviceWorker = incoming.headers["service-worker"] === "script"
-  if (!serviceWorker) {
+  const destination = previewProxyFetchDestination(incoming.headers["sec-fetch-dest"])
+  const serviceWorker = incoming.headers["service-worker"] === "script" || destination === "serviceworker"
+  if (!serviceWorker && !isServiceWorkerScriptPath(path)) {
     return
   }
 
@@ -45,9 +46,10 @@ export function recordPreviewProxyRequest(trace: PlaygroundPreviewProxyRequestTr
     sequence: trace.total,
     method: incoming.method ?? "GET",
     path: redactPreviewProxyUrl(path),
-    destination: previewProxyFetchDestination(incoming.headers["sec-fetch-dest"]),
+    destination,
     serviceWorker,
-    ...outcome,
+    outcome: outcome.outcome,
+    ...(outcome.status !== undefined ? { status: outcome.status } : {}),
     ...(outcome.upstreamLocation ? { upstreamLocation: redactPreviewProxyUrl(outcome.upstreamLocation) } : {}),
     ...(outcome.visibleLocation ? { visibleLocation: redactPreviewProxyUrl(outcome.visibleLocation) } : {}),
   })
@@ -57,8 +59,20 @@ export function recordPreviewProxyRequest(trace: PlaygroundPreviewProxyRequestTr
   }
 }
 
+export function isPreviewProxyServiceWorkerRequest(incoming: IncomingMessage, path: string): boolean {
+  return incoming.headers["service-worker"] === "script" || previewProxyFetchDestination(incoming.headers["sec-fetch-dest"]) === "serviceworker" || isServiceWorkerScriptPath(path)
+}
+
 function redactPreviewProxyUrl(value: string): string {
   return redactString(value, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
+}
+
+function isServiceWorkerScriptPath(path: string): boolean {
+  try {
+    return new URL(path, "http://localhost").pathname === "/sw.js"
+  } catch {
+    return false
+  }
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {

@@ -2,7 +2,7 @@ import { createServer as createHttpServer, request as httpRequest, type Incoming
 import { createServer as createNetServer } from "node:net"
 import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
-import { createPreviewProxyRequestTrace, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
+import { createPreviewProxyRequestTrace, isPreviewProxyServiceWorkerRequest, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -156,6 +156,7 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, r
           outgoing.off("close", cancel)
         }
       },
+      () => recordPreviewProxyRequest(requestTrace, incoming, incoming.url ?? "/", { outcome: "canceled-before-upstream" }),
     ).catch((error: Error) => writeProxyError(outgoing, error))
   })
 }
@@ -188,6 +189,13 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     let settled = false
     let clientCanceled = false
     let targetResponse: IncomingMessage | undefined
+    let outcomeRecorded = false
+    const recordOutcome = (outcome: PlaygroundPreviewProxyRequestOutcome) => {
+      if (!outcomeRecorded) {
+        outcomeRecorded = true
+        recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, outcome)
+      }
+    }
     const settle = () => {
       if (settled) {
         return
@@ -197,6 +205,7 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
     }
     const abortUpstream = () => {
       clientCanceled = true
+      recordOutcome({ outcome: "client-canceled" })
       targetRequest.destroy()
       targetResponse?.destroy()
       settle()
@@ -220,12 +229,9 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
           upstreamLocation: headerValue(response.headers.location),
           visibleLocation: headerValue(headers.location),
         }
-        let outcomeRecorded = false
-        const recordOutcome = (outcome: PlaygroundPreviewProxyRequestOutcome) => {
-          if (!outcomeRecorded) {
-            outcomeRecorded = true
-            recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, outcome)
-          }
+        if (isPreviewProxyServiceWorkerRequest(incoming, requestTarget.path) && responseOutcome.status !== undefined && responseOutcome.status >= 300 && responseOutcome.status < 400) {
+          // Browsers reject and cancel redirected service-worker scripts as soon as headers arrive.
+          recordOutcome(responseOutcome)
         }
         const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
         if (bodyTransform) {
@@ -262,7 +268,7 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
 
     targetRequest.on("error", (error) => {
       if (!clientCanceled) {
-        recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, { outcome: "upstream-error" })
+        recordOutcome({ outcome: "upstream-error" })
       }
       writeProxyError(outgoing, error)
       settle()
@@ -312,12 +318,14 @@ function createPreviewProxyQueue(): (
   task: () => Promise<void>,
   isCanceled: () => boolean,
   observeCancellation: (cancel: () => void) => () => void,
+  onCanceledBeforeRun: () => void,
 ) => Promise<void> {
   let active = false
   interface PendingRequest {
     task: () => Promise<void>
     isCanceled: () => boolean
     stopObservingCancellation: () => void
+    onCanceledBeforeRun: () => void
     resolve: () => void
     reject: (error: unknown) => void
   }
@@ -331,6 +339,7 @@ function createPreviewProxyQueue(): (
         run(next)
         return
       }
+      next.onCanceledBeforeRun()
       next.resolve()
       next = pending.shift()
     }
@@ -340,6 +349,7 @@ function createPreviewProxyQueue(): (
   function run(request: PendingRequest): void {
     request.stopObservingCancellation()
     if (request.isCanceled()) {
+      request.onCanceledBeforeRun()
       request.resolve()
       release()
       return
@@ -355,11 +365,12 @@ function createPreviewProxyQueue(): (
     task.then(request.resolve, request.reject).finally(release)
   }
 
-  return (task, isCanceled, observeCancellation) => new Promise<void>((resolve, reject) => {
+  return (task, isCanceled, observeCancellation, onCanceledBeforeRun) => new Promise<void>((resolve, reject) => {
     const request: PendingRequest = {
       task,
       isCanceled,
       stopObservingCancellation: () => {},
+      onCanceledBeforeRun,
       resolve,
       reject,
     }
@@ -370,6 +381,7 @@ function createPreviewProxyQueue(): (
       }
       pending.splice(index, 1)
       request.stopObservingCancellation()
+      request.onCanceledBeforeRun()
       resolve()
     }
     request.stopObservingCancellation = observeCancellation(cancel)
@@ -416,6 +428,10 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
   delete forwarded["x-forwarded-host"]
   delete forwarded["x-forwarded-port"]
   delete forwarded["x-forwarded-proto"]
+  if (headers["service-worker"] === "script" || headers["sec-fetch-dest"] === "serviceworker") {
+    delete forwarded["service-worker"]
+    delete forwarded["sec-fetch-dest"]
+  }
   if (requestTarget.rewriteTargetOrigin) {
     forwarded["accept-encoding"] = "identity"
   }
