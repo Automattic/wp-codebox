@@ -576,11 +576,12 @@ register_shutdown_function(static function () use ($plugin, $plugin_file): void 
     ), JSON_UNESCAPED_SLASHES) . "\n";
 });
 wp_codebox_activate_plugin_preload_recipe_plugin($plugin, false, 'activation-recipe-plugin', 'recipe-runtime-setup activate_plugin');
-if (is_plugin_active($plugin_file)) {
-    deactivate_plugins($plugin_file, true, false);
+$network_wide = is_multisite() && is_network_only_plugin($plugin_file);
+if (is_plugin_active($plugin_file) || is_plugin_active_for_network($plugin_file)) {
+    deactivate_plugins($plugin_file, true, $network_wide);
 }
 $lifecycle = wp_codebox_activate_plugin_component_lifecycle_replay_prepare();
-$result = activate_plugin($plugin_file, '', false, false);
+$result = activate_plugin($plugin_file, '', $network_wide, false);
 wp_codebox_activate_plugin_component_lifecycle_replay_complete($lifecycle);
 if (is_wp_error($result)) {
     throw new RuntimeException('Failed to activate extra plugin ' . $plugin_file . ': ' . $result->get_error_message());

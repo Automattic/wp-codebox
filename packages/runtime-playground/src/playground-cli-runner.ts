@@ -1,4 +1,4 @@
-import { playgroundRuntimeBlueprint } from "./blueprint.js"
+import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
@@ -14,7 +14,6 @@ import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheDiagnostic, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
-import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -177,7 +176,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           ...playgroundBundledExtensionOptions(spec),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           phpEnv: runtimePhpEnvironment(spec),
-          "site-url": playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl,
+          "site-url": playgroundRuntimeSiteUrl(spec),
           blueprint: playgroundCliBlueprint(spec),
         })
       } finally {
