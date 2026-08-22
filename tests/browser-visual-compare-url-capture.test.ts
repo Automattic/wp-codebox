@@ -113,6 +113,22 @@ try {
     await waitForVisualComparePaintReady(stalled, 1_000)
     const elapsedMs = performance.now() - startedAt
     assert.ok(elapsedMs >= 800 && elapsedMs < 2_500, `stalled stylesheet readiness must remain bounded under frozen Date.now(), got ${elapsedMs}ms`)
+
+    const readiness = await browser.newPage()
+    await readiness.setContent("<!doctype html><main>record readiness</main>")
+    await readiness.evaluate(() => {
+      setTimeout(() => {
+        const record = document.createElement("script")
+        record.id = "required-record"
+        record.type = "application/json"
+        record.textContent = JSON.stringify({ status: "loaded" })
+        document.head.append(record)
+      }, 100)
+    })
+    const readyRecord = await waitForVisualComparePaintReady(readiness, 1_000, ["#required-record"])
+    assert.deepEqual(readyRecord.records, [{ selector: "#required-record", expectedStatus: "loaded", observedStatus: "loaded", status: "ready" }])
+    const missingRecord = await waitForVisualComparePaintReady(readiness, 1_000, ["#absent-record"])
+    assert.deepEqual(missingRecord.records, [{ selector: "#absent-record", expectedStatus: "loaded", observedStatus: "", status: "timeout" }])
   } finally {
     await browser.close()
   }
