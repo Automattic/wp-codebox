@@ -301,8 +301,10 @@ WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `runtime descriptor`, `run-runtime-task`, `run-wordpress-workload`,
 `run-runtime-package`, `resolve-runtime-requirements`, `run-fuzz-suite`, and
 artifact inspection/apply commands. The WP-CLI wrappers parse JSON payloads from
-`--input-json` or `--input-file` and delegate through
-`WP_Codebox_API` rather than backend internals.
+`--input-json` or `--input-file`. Most delegate through `WP_Codebox_API`;
+`run-wordpress-workload` and `run-fuzz-suite` invoke their owning PHP runners
+directly because WP-CLI is a trusted operator transport. Their Ability and
+`WP_Codebox_API` surfaces retain the raw-execution input guard.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,
