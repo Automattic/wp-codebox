@@ -91,15 +91,18 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   const target = new URL(targetUrl)
   const routes = createPreviewRouteRegistry()
   const requestTrace = createPreviewProxyRequestTrace()
-  const proxy = previewProxyServer(target, routes, requestTrace)
+  const upstreamQueue = createPreviewProxyQueue()
+  const proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
+  const address = proxy.address()
+  const resolvedPort = address && typeof address === "object" ? address.port : port
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target, routes, requestTrace)
+    const ipv6Proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
     try {
-      await listenPreviewProxy(ipv6Proxy, port, "::1")
+      await listenPreviewProxy(ipv6Proxy, resolvedPort, "::1")
       servers.push(ipv6Proxy)
     } catch (error) {
       if (!errorHasCode(error, "EADDRNOTAVAIL")) {
@@ -109,8 +112,6 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
     }
   }
 
-  const address = proxy.address()
-  const resolvedPort = address && typeof address === "object" ? address.port : port
   const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
 
   return {
@@ -133,9 +134,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   }
 }
 
-function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace): PreviewProxyServer {
-  const upstreamQueue = createPreviewProxyQueue()
-
+function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace, upstreamQueue: ReturnType<typeof createPreviewProxyQueue>): PreviewProxyServer {
   return createHttpServer(async (incoming, outgoing) => {
     try {
       if (await routes.handle(incoming, outgoing)) {

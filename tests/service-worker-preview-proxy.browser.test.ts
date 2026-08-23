@@ -67,6 +67,86 @@ test("the preview proxy registers a service worker after transient upstream redi
   }
 })
 
+test("one UI action queues same-origin requests across preview listeners", async () => {
+  let activeUpstreamRequests = 0
+  let releaseHeldRequest: (() => void) | undefined
+  let heldRequestReached: (() => void) | undefined
+  const heldRequest = new Promise<void>((resolve) => {
+    heldRequestReached = resolve
+  })
+  const upstream = createServer(async (request, response) => {
+    activeUpstreamRequests += 1
+    if (activeUpstreamRequests > 1) {
+      activeUpstreamRequests -= 1
+      response.writeHead(503, { "content-type": "text/plain" })
+      response.end("serialized Playground is busy")
+      return
+    }
+
+    if (request.url === "/hold") {
+      heldRequestReached?.()
+      await new Promise<void>((resolve) => {
+        releaseHeldRequest = resolve
+      })
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    activeUpstreamRequests -= 1
+
+    if (request.url === "/application-503") {
+      response.writeHead(503, { "content-type": "text/plain", "x-application-response": "true" })
+      response.end("application unavailable")
+      return
+    }
+    if (request.url === "/") {
+      response.writeHead(200, { "content-type": "text/html" })
+      response.end(`<!doctype html><button id="load">Load tab</button><output></output><script>
+        document.querySelector('#load').addEventListener('click', async () => {
+          const responses = await Promise.all(['/data/one', '/data/two'].map((path) => fetch(path)))
+          document.querySelector('output').textContent = responses.map((item) => item.status).join(',')
+        })
+      </script>`)
+      return
+    }
+    response.end("ok")
+  })
+  const upstreamUrl = await listenLocalHttpServer(upstream)
+  const proxy = await withPreviewProxy({
+    playground: { async run() { return { text: "", exitCode: 0 } } },
+    serverUrl: upstreamUrl,
+    async [Symbol.asyncDispose]() {},
+  } satisfies PlaygroundCliServer, 0)
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const port = new URL(proxy.serverUrl).port
+    const ipv6Origin = `http://[::1]:${port}`
+    const page = await browser.newPage()
+    await page.goto(ipv6Origin)
+
+    const heldResponse = fetch(`${proxy.serverUrl}/hold`)
+    await heldRequest
+    await page.click("#load")
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(activeUpstreamRequests, 1, "all preview listeners must share one upstream slot")
+
+    releaseHeldRequest?.()
+    assert.equal(await (await heldResponse).text(), "ok")
+    await page.waitForFunction(() => document.querySelector("output")?.textContent === "200,200")
+    assert.equal(await page.locator("output").textContent(), "200,200")
+
+    const applicationFailure = await page.evaluate(async () => {
+      const response = await fetch("/application-503")
+      return { status: response.status, marker: response.headers.get("x-application-response"), body: await response.text() }
+    })
+    assert.deepEqual(applicationFailure, { status: 503, marker: "true", body: "application unavailable" })
+  } finally {
+    releaseHeldRequest?.()
+    await browser.close()
+    await proxy[Symbol.asyncDispose]()
+    await closeHttpServer(upstream)
+  }
+})
+
 test("the preview proxy returns a connected client from the packaged Playground remote", { timeout: 60_000 }, async () => {
   const app = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" })
