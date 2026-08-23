@@ -160,14 +160,14 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	/**
-	 * Run a safe WordPress workload through the public API facade.
+	 * Run a WordPress workload in trusted operator context.
 	 *
 	 * @param array<int,string>   $args       Positional arguments.
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function run_wordpress_workload( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_API::run_wordpress_workload( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( ( new WP_Codebox_WordPress_Workload_Runner() )->run( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -204,14 +204,14 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	/**
-	 * Run a public fuzz suite through the public API facade.
+	 * Run a public fuzz suite in trusted operator context.
 	 *
 	 * @param array<int,string>   $args       Positional arguments.
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function run_fuzz_suite( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_API::run_fuzz_suite( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( ( new WP_Codebox_Fuzz_Suite_Runner() )->run( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**

@@ -315,9 +315,9 @@ list. CLI output is JSON-first for automation.
 
 WP-CLI commands run in trusted operator context. They do not call the Ability
 permission callbacks; shell/WP-CLI access is the permission boundary. The command
-methods delegate to the same PHP services as Abilities, so validation, artifact
-digest checks, pending-action staging, apply adapters, and runner errors behave
-the same way.
+methods delegate to the same PHP services as Abilities without entering the
+Ability-only raw-execution guard, so validation, artifact digest checks,
+pending-action staging, apply adapters, and runner errors behave the same way.
 
 The `run-fuzz-suite` wrapper exposes the same public fuzz-suite contract as
 `WP_Codebox_API::run_fuzz_suite()`. Its WordPress-plugin execution path reports
