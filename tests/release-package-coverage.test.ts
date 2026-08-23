@@ -7,7 +7,8 @@ import { join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
-import { releaseTargetMatchesHost } from "../scripts/lib/release-target.ts"
+import { normalizeReleasePlatform, releaseTargetMatchesHost } from "../scripts/lib/release-target.ts"
+import { sharpRuntimePackageNames } from "../scripts/lib/materialize-sharp-release-runtime.ts"
 
 const execFileAsync = promisify(execFile)
 const repositoryRoot = resolve(import.meta.dirname, "..")
@@ -24,11 +25,14 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
 assert.deepEqual(homeboy.scripts?.test, [
   "npm run smoke -- --group package",
   "npm run test:release-target",
+  "npm run test:sharp-release-runtime",
   "npm run test:prepare-declaration-rebuild",
   "npm run test:release-package-coverage",
 ])
 
 await execFileAsync("npm", ["run", "build"], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 * 10 })
+const releasePlatform = normalizeReleasePlatform(process.platform)
+const releaseArch = process.arch
 const staleDistPath = resolve(repositoryRoot, "packages/runtime-playground/dist/mount-materialization.js")
 const currentDist = await readFile(staleDistPath)
 await writeFile(staleDistPath, "export const staleBuild = true\n")
@@ -39,8 +43,8 @@ try {
     cwd: repositoryRoot,
     env: {
       ...process.env,
-      WP_CODEBOX_RELEASE_PLATFORM: "linux",
-      WP_CODEBOX_RELEASE_ARCH: "x64",
+      WP_CODEBOX_RELEASE_PLATFORM: releasePlatform,
+      WP_CODEBOX_RELEASE_ARCH: releaseArch,
     },
     maxBuffer: 1024 * 1024 * 20,
   }))
@@ -106,8 +110,8 @@ try {
     assert.equal(browserProvenance.playwrightVersion, "1.61.1")
     assert.equal(browserProvenance.chromiumRevision, "1228")
     assert.equal(browserProvenance.chromiumVersion, "149.0.7827.55")
-    assert.equal(browserProvenance.platform, "linux")
-    assert.equal(browserProvenance.arch, "x64")
+    assert.equal(browserProvenance.platform, releasePlatform)
+    assert.equal(browserProvenance.arch, releaseArch)
     assert.equal(browserProvenance.dependencyManifestSha256, createHash("sha256").update(await readFile(join(root, "npm-shrinkwrap.json"))).digest("hex"))
     for (const packageName of ["wp-codebox-cli", "wp-codebox-core", "wp-codebox-playground"]) {
       const packagePath = join(root, "node_modules", "@automattic", packageName)
@@ -121,12 +125,14 @@ try {
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     assert.deepEqual(
       (await readdir(join(root, "node_modules", "@img"))).filter((name) => name.startsWith("sharp-")).sort(),
-      ["sharp-libvips-linux-x64", "sharp-linux-x64"],
+      sharpRuntimePackageNames(releasePlatform, releaseArch).map((packageName) => packageName.slice("@img/".length)).sort(),
       "release package must contain only the Sharp native runtime for its declared target",
     )
     let version = ""
     if (canExecuteReleaseTarget) {
-      ({ stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"]))
+      await execFileAsync(process.execPath, ["--input-type=module", "--eval", "await import('sharp')"], { cwd: root })
+      const cliVersion = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
+      version = cliVersion.stdout
       assert.match(version, /^\d+\.\d+\.\d+\s*$/)
       await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
     }
