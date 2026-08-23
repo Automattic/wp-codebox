@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, materializeStructuredArtifactFiles, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, materializeStructuredArtifactFiles, redactJsonText, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { appendRecipeRuntimeEvidenceFiles } from "../recipe-evidence.js"
 import { rewriteInputMountPath, type InputMountPathMapping } from "../input-mount-paths.js"
@@ -128,7 +128,7 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
         source: artifact.path,
       },
     })
-    inputs.push({ artifact, ref, contents, contentType: typedArtifact.contentType })
+    inputs.push({ artifact, ref, contents: redactTypedArtifactContents(contents, typedArtifact.contentType), contentType: typedArtifact.contentType })
   }
 
   if (inputs.length === 0) {
@@ -157,6 +157,14 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
     maxBytes: DECLARED_ARTIFACT_CAPTURE_MAX_BYTES,
   }))
   await appendRecipeRuntimeEvidenceFiles(artifacts, files)
+}
+
+function redactTypedArtifactContents(contents: Buffer, contentType: string): Buffer {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase()
+  if (mediaType !== "application/json" && !mediaType?.endsWith("+json")) {
+    return contents
+  }
+  return Buffer.from(redactJsonText(contents.toString("utf8"), { profile: "browser_event" }), "utf8")
 }
 
 function recipeRunTypedArtifactDeclaration(artifact: RecipeRunDeclaredArtifact): { name: string; type: string; contentType: string; payloadSchema?: string | Record<string, unknown> } | undefined {

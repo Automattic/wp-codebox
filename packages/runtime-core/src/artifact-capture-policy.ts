@@ -3,7 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path"
 
 import { artifactFileDigest, artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions } from "./artifact-manifest.js"
 import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
-import { containsSecretLikeValue, redactString } from "./redaction.js"
+import { containsSecretLikeValue, redactJsonText, redactString } from "./redaction.js"
 
 export interface ArtifactPartInput {
   root: string
@@ -98,7 +98,11 @@ export async function captureArtifactFile(input: CapturedArtifactFileInput): Pro
       return captureSkipped(input, relativePath, "sensitive", "secret-like-value", { originalBytes: contents.byteLength, maxBytes, allowedRoots })
     }
 
-    const capturedContents = binary ? contents : Buffer.from(input.redact ? input.redact(relativePath, text) : redactString(text), "utf8")
+    const capturedContents = binary ? contents : Buffer.from(input.redact
+      ? input.redact(relativePath, text)
+      : isJsonContentType(input.contentType)
+        ? redactJsonText(text, { profile: "browser_event" })
+        : redactString(text), "utf8")
     await mkdir(dirname(absolutePath), { recursive: true })
     await writeFile(absolutePath, capturedContents)
     const manifestFile = artifactManifestFile(relativePath, input.kind, input.contentType ?? (binary ? "application/octet-stream" : "text/plain; charset=utf-8"), artifactFileDigest(capturedContents), {
@@ -126,6 +130,11 @@ export async function captureArtifactFile(input: CapturedArtifactFileInput): Pro
     }
     return captureSkipped(input, relativePath, "failed", "capture-failed", { maxBytes, allowedRoots, error: error instanceof Error ? error.message : String(error) })
   }
+}
+
+function isJsonContentType(contentType: string | undefined): boolean {
+  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase()
+  return mediaType === "application/json" || Boolean(mediaType?.endsWith("+json"))
 }
 
 export function normalizeArtifactPartPath(path: string): string {
