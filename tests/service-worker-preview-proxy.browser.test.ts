@@ -57,10 +57,75 @@ test("the preview proxy registers a service worker after transient upstream redi
       serviceWorker: true,
       outcome: "response",
       status: 200,
+      contentType: "application/javascript",
+      bodyRewritten: true,
     }])
   } finally {
     await browser.close()
     await proxy[Symbol.asyncDispose]()
     await closeHttpServer(upstream)
+  }
+})
+
+test("the preview proxy returns a connected client from the packaged Playground remote", { timeout: 60_000 }, async () => {
+  const app = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end("<!doctype html><title>Playground proxy integration</title>")
+  })
+  const appUrl = await listenLocalHttpServer(app)
+  const proxy = await withPreviewProxy({
+    playground: { async run() { return { text: "", exitCode: 0 } } },
+    serverUrl: "https://playground.wordpress.net",
+    async [Symbol.asyncDispose]() {},
+  } satisfies PlaygroundCliServer, 5400)
+  const browser = await chromium.launch({ headless: true })
+  const consoleMessages: string[] = []
+  const pageErrors: string[] = []
+  try {
+    const page = await browser.newPage()
+    page.on("console", (message) => {
+      if (consoleMessages.length < 32) consoleMessages.push(`${message.type()}: ${message.text()}`)
+    })
+    page.on("pageerror", (error) => {
+      if (pageErrors.length < 32) pageErrors.push(error.message)
+    })
+    await page.goto(appUrl)
+    const startup = page.evaluate(async (remoteUrl) => {
+      const { startPlaygroundWeb } = await import("https://playground.wordpress.net/client/index.js")
+      const iframe = document.createElement("iframe")
+      document.body.append(iframe)
+      const client = await startPlaygroundWeb({
+        iframe,
+        remoteUrl,
+        corsProxyUrl: "https://wordpress-playground-cors-proxy.net/?",
+        blueprint: { steps: [] },
+      })
+      await client.isConnected()
+      return { connected: true, url: await client.getCurrentURL() }
+    }, `${proxy.serverUrl}/remote.html`)
+    const result: { connected?: boolean; url?: string; error?: string; timeout?: true } = await Promise.race([
+      startup.catch((error: Error) => ({ error: error.message })),
+      new Promise<{ timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), 45_000)),
+    ])
+    const trace = proxy.previewProxyDiagnostics?.requestTrace
+
+    assert.equal(result.connected, true, JSON.stringify({ consoleMessages, pageErrors, trace }, null, 2))
+    assert.equal(typeof result.url, "string", JSON.stringify({ consoleMessages, pageErrors, trace }, null, 2))
+    assert.deepEqual(pageErrors, [], JSON.stringify({ consoleMessages, trace }, null, 2))
+    assert.deepEqual(consoleMessages.filter((message) => /service worker|worker script|failed to load/i.test(message)), [], JSON.stringify({ pageErrors, trace }, null, 2))
+    const workerResponse = trace?.entries.find((entry) => entry.path === "/sw.js" && entry.serviceWorker)
+    assert.deepEqual(workerResponse && {
+      status: workerResponse.status,
+      contentType: workerResponse.contentType,
+      bodyRewritten: workerResponse.bodyRewritten,
+    }, {
+      status: 200,
+      contentType: "application/javascript",
+      bodyRewritten: true,
+    })
+  } finally {
+    await browser.close()
+    await proxy[Symbol.asyncDispose]()
+    await closeHttpServer(app)
   }
 })

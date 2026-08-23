@@ -1,4 +1,5 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
+import { request as httpsRequest } from "node:https"
 import { createServer as createNetServer } from "node:net"
 import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
@@ -214,7 +215,8 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       settle()
     }
     const sendUpstreamRequest = () => {
-      targetRequest = httpRequest({
+      const request = target.protocol === "https:" ? httpsRequest : httpRequest
+      targetRequest = request({
         protocol: target.protocol,
         hostname: target.hostname,
         port: target.port,
@@ -224,9 +226,14 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       }, (response) => {
         targetResponse = response
         const headers = proxyResponseHeaders(response.headers, requestTarget, target)
+        const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
         const responseOutcome: PlaygroundPreviewProxyRequestOutcome = {
           outcome: "response",
           status: response.statusCode ?? 502,
+          contentType: headerValue(headers["content-type"]),
+          contentLength: headerValue(headers["content-length"]),
+          serviceWorkerAllowed: headerValue(headers["service-worker-allowed"]),
+          bodyRewritten: Boolean(bodyTransform),
           upstreamLocation: headerValue(response.headers.location),
           visibleLocation: headerValue(headers.location),
         }
@@ -257,7 +264,6 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
           // Browsers reject and cancel redirected service-worker scripts as soon as headers arrive.
           recordOutcome(responseOutcome)
         }
-        const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
         if (bodyTransform) {
           delete headers["content-length"]
           delete headers["content-md5"]

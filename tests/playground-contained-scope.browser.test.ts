@@ -148,6 +148,8 @@ test("CLI-started previews preserve browser sessions while credential-less worke
       serviceWorker: false,
       outcome: "response",
       status: 503,
+      contentType: "application/javascript",
+      bodyRewritten: true,
     })
     assert.doesNotMatch(JSON.stringify(trace), /PRIVATE_WORKER_TOKEN|PRIVATE_DYNAMIC_IMPORT_TOKEN|browser_session/)
   } finally {

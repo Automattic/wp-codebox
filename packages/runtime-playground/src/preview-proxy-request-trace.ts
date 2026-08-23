@@ -18,13 +18,18 @@ export interface PlaygroundPreviewProxyRequestTraceEntry {
   path: string
   destination: string | null
   serviceWorker: boolean
+  workerModule?: boolean
   outcome: "response" | "upstream-error" | "client-canceled" | "canceled-before-upstream"
   status?: number
+  contentType?: string
+  contentLength?: string
+  serviceWorkerAllowed?: string
+  bodyRewritten?: boolean
   upstreamLocation?: string
   visibleLocation?: string
 }
 
-export type PlaygroundPreviewProxyRequestOutcome = Pick<PlaygroundPreviewProxyRequestTraceEntry, "outcome" | "status" | "upstreamLocation" | "visibleLocation">
+export type PlaygroundPreviewProxyRequestOutcome = Pick<PlaygroundPreviewProxyRequestTraceEntry, "outcome" | "status" | "contentType" | "contentLength" | "serviceWorkerAllowed" | "bodyRewritten" | "upstreamLocation" | "visibleLocation">
 
 export function createPreviewProxyRequestTrace(): PlaygroundPreviewProxyRequestTrace {
   return { scope: "service-worker-and-failed-script", capacity: PREVIEW_PROXY_REQUEST_TRACE_CAPACITY, total: 0, dropped: 0, entries: [] }
@@ -37,7 +42,8 @@ export function snapshotPreviewProxyRequestTrace(trace: PlaygroundPreviewProxyRe
 export function recordPreviewProxyRequest(trace: PlaygroundPreviewProxyRequestTrace, incoming: IncomingMessage, path: string, outcome: PlaygroundPreviewProxyRequestOutcome): void {
   const destination = previewProxyFetchDestination(incoming.headers["sec-fetch-dest"])
   const serviceWorker = incoming.headers["service-worker"] === "script" || destination === "serviceworker"
-  if (!serviceWorker && !isServiceWorkerScriptPath(path) && !isFailedScriptRequest(destination, outcome)) {
+  const workerModule = isPreviewProxyServiceWorkerModuleRequest(incoming, destination)
+  if (!serviceWorker && !workerModule && !isServiceWorkerScriptPath(path) && !isFailedScriptRequest(destination, outcome)) {
     return
   }
 
@@ -48,8 +54,13 @@ export function recordPreviewProxyRequest(trace: PlaygroundPreviewProxyRequestTr
     path: redactPreviewProxyUrl(path),
     destination,
     serviceWorker,
+    ...(workerModule ? { workerModule: true } : {}),
     outcome: outcome.outcome,
     ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+    ...(outcome.contentType ? { contentType: outcome.contentType } : {}),
+    ...(outcome.contentLength ? { contentLength: outcome.contentLength } : {}),
+    ...(outcome.serviceWorkerAllowed ? { serviceWorkerAllowed: outcome.serviceWorkerAllowed } : {}),
+    ...(outcome.bodyRewritten !== undefined ? { bodyRewritten: outcome.bodyRewritten } : {}),
     ...(outcome.upstreamLocation ? { upstreamLocation: redactPreviewProxyUrl(outcome.upstreamLocation) } : {}),
     ...(outcome.visibleLocation ? { visibleLocation: redactPreviewProxyUrl(outcome.visibleLocation) } : {}),
   })
@@ -69,6 +80,23 @@ export function isPreviewProxyServiceWorkerRequest(incoming: IncomingMessage, pa
 
 export function isPreviewProxyServiceWorkerRegistrationRequest(incoming: IncomingMessage): boolean {
   return incoming.method === "GET" && (incoming.headers["service-worker"] === "script" || previewProxyFetchDestination(incoming.headers["sec-fetch-dest"]) === "serviceworker")
+}
+
+function isPreviewProxyServiceWorkerModuleRequest(incoming: IncomingMessage, destination = previewProxyFetchDestination(incoming.headers["sec-fetch-dest"])): boolean {
+  if (destination !== "script") {
+    return false
+  }
+
+  const referrer = headerValue(incoming.headers.referer)
+  if (!referrer) {
+    return false
+  }
+
+  try {
+    return new URL(referrer).pathname.endsWith("/sw.js")
+  } catch {
+    return false
+  }
 }
 
 function redactPreviewProxyUrl(value: string): string {
