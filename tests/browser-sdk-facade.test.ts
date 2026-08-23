@@ -1004,6 +1004,24 @@ assert.equal(defaultDispose.client_released, false, "default disposal does not v
 assert.equal(defaultDispose.runtime_release_requested, true, "iframe reset requests runtime release")
 assert.equal(defaultDispose.runtime_terminated, false, "default disposal does not verify runtime termination")
 
+let moduleDisposedClient: unknown
+const moduleDisposePreview = await api.v1.startBrowserPreview({ ...lifecycleBoot, client_module_url: "https://playground.example/client/index.js", scope: "preview-module-dispose-test" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  importModule: async () => ({
+    startPlaygroundWeb: async () => lifecycleClient,
+    disposePlaygroundClient: async (client: unknown) => {
+      moduleDisposedClient = client
+      return { client_released: true, runtime_terminated: true }
+    },
+  }),
+})
+const moduleDisposeResult = await moduleDisposePreview.dispose()
+assert.equal(moduleDisposedClient, lifecycleClient, "default disposal delegates runtime teardown to the imported Playground module")
+assert.equal(moduleDisposeResult.client_release_requested, true, "module-owned runtime teardown is reported as requested")
+assert.equal(moduleDisposeResult.client_released, true, "module-owned client release evidence is preserved")
+assert.equal(moduleDisposeResult.runtime_terminated, true, "module-owned runtime termination evidence is preserved")
+
 let replacementReleased = 0
 const replacementCallbacks: Record<string, () => unknown> = {}
 const firstReplacement = await api.v1.startBrowserPreview({ ...lifecycleBoot, scope: "preview-replacement-test" }, {
