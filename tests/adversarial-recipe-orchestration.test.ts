@@ -216,6 +216,35 @@ assert.equal(adaptiveCampaigns[0]?.result.status, "incomplete")
 assert.equal(adaptiveCampaigns[0]?.result.findings.length, 0, "incomplete adaptive coverage is not an actionable finding")
 assert(adaptiveCampaigns[0]?.result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-case-resource-exhausted" && diagnostic.message.includes("maxDurationMs")))
 
+const adaptiveFindingRuntime = {
+  ...runtime,
+  execute: async (spec: ExecutionSpec) => {
+    if (spec.command === "wordpress.browser-actions") {
+      throw Object.assign(new Error("Adaptive browser exploration found 1 reproducible oracle failure(s): oracle-fingerprint@transition-1. Evidence: files/browser/adaptive-exploration.json"), {
+        artifactRefs: [{ kind: "browser-adaptive-exploration", id: "actions:adaptiveExploration:0", path: "files/browser/adaptive-exploration.json", contentType: "application/json" }],
+      })
+    }
+    return { id: "adaptive-finding", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok\n", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
+  },
+} as unknown as Runtime
+const adaptiveFindingCampaigns = await runRecipeAdversarialCampaigns({ recipe: adaptiveRecipe, recipePath: "/portable/adaptive-finding.json", recipeDirectory: "/portable", runtime: adaptiveFindingRuntime, executions: [] })
+const adaptiveFinding = adaptiveFindingCampaigns[0]!.result.findings[0]!
+assert.equal(adaptiveFindingCampaigns[0]?.result.status, "findings")
+assert.equal(adaptiveFinding.diagnostics[0]?.code, "adaptive-browser-oracle-failure")
+assert.match(adaptiveFinding.diagnostics[0]?.message ?? "", /oracle-fingerprint@transition-1/)
+assert.deepEqual(adaptiveFinding.artifactRefs.map(({ path, kind }) => ({ path, kind })), [{ path: "files/browser/adaptive-exploration.json", kind: "browser-adaptive-exploration" }])
+
+const adaptiveClosedRuntime = {
+  ...adaptiveFindingRuntime,
+  execute: async (spec: ExecutionSpec) => {
+    if (spec.command === "wordpress.browser-actions") throw new Error("page.evaluate: Target page, context or browser has been closed")
+    return { id: "adaptive-closed", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok\n", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:00.001Z" }
+  },
+} as unknown as Runtime
+const adaptiveClosedCampaigns = await runRecipeAdversarialCampaigns({ recipe: adaptiveRecipe, recipePath: "/portable/adaptive-closed.json", recipeDirectory: "/portable", runtime: adaptiveClosedRuntime, executions: [] })
+assert.equal(adaptiveClosedCampaigns[0]?.result.findings[0]?.diagnostics[0]?.code, "adaptive-browser-runtime-closed")
+assert.notEqual(adaptiveClosedCampaigns[0]?.result.findings[0]?.diagnostics[0]?.code, adaptiveFinding.diagnostics[0]?.code)
+
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-adversarial-recipe-"))
 try {
   const manifestPath = join(artifactRoot, "manifest.json")

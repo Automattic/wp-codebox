@@ -266,7 +266,9 @@ async function executeRecipeAdversarialCase(
   const fuzzCase = Array.isArray(parsed?.cases) ? parseObjectValue(parsed.cases[0]) : undefined
   const diagnostics = Array.isArray(fuzzCase?.diagnostics) ? fuzzCase.diagnostics.flatMap((item) => {
     const diagnostic = parseObjectValue(item)
-    return diagnostic ? [{ code: String(diagnostic.code ?? "fuzz-suite-diagnostic"), message: String(diagnostic.message ?? "Fuzz suite diagnostic"), severity: typeof diagnostic.severity === "string" ? diagnostic.severity : undefined }] : []
+    if (!diagnostic) return []
+    const message = String(diagnostic.message ?? "Fuzz suite diagnostic")
+    return [{ code: adaptiveBrowserDiagnosticCode(String(diagnostic.code ?? "fuzz-suite-diagnostic"), message), message, severity: typeof diagnostic.severity === "string" ? diagnostic.severity : undefined }]
   }) : []
   const artifactRefs = Array.isArray(fuzzCase?.artifactRefs) ? fuzzCase.artifactRefs.flatMap((item) => {
     const ref = parseObjectValue(item)
@@ -297,6 +299,13 @@ async function executeRecipeAdversarialCase(
     stateDigest: createHash("sha256").update(JSON.stringify({ campaignId: declaration.id, status, signals, matrix: plan.matrix })).digest("hex"),
     metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }) as AdversarialExecutionObservation
+}
+
+function adaptiveBrowserDiagnosticCode(code: string, message: string): string {
+  if (/Adaptive browser exploration found \d+ reproducible oracle failure/i.test(message)) return "adaptive-browser-oracle-failure"
+  if (/Target page, context or browser has been closed|browser (?:has been |is )?closed/i.test(message)) return "adaptive-browser-runtime-closed"
+  if (/browser[^\n]*(?:cancelled|canceled|aborted)|(?:cancelled|canceled|aborted)[^\n]*browser/i.test(message)) return "adaptive-browser-cancelled"
+  return code
 }
 
 function findIncompleteAdaptiveExploration(value: unknown): { budgetExhausted?: string } | undefined {
