@@ -105,6 +105,11 @@ try {
   const pluginCliRoot = join(pluginExtraction, "wp-codebox", "vendor", "wp-codebox-cli")
   const tarCliRoot = join(cliExtraction, "wp-codebox-cli")
   for (const root of [pluginCliRoot, tarCliRoot]) {
+    const cliBuildProvenance = JSON.parse(await readFile(join(root, "packages", "cli", "dist", "cli-build-provenance.json"), "utf8"))
+    assert.equal(cliBuildProvenance.schema, "wp-codebox/cli-build-provenance/v1")
+    assert.equal(cliBuildProvenance.package.version, JSON.parse(await readFile(join(root, "packages", "cli", "package.json"), "utf8")).version)
+    assert.match(cliBuildProvenance.source.sha256, /^[a-f0-9]{64}$/)
+    assert.match(cliBuildProvenance.dist.sha256, /^[a-f0-9]{64}$/)
     const browserProvenance = JSON.parse(await readFile(join(root, "browser-provenance.json"), "utf8"))
     assert.equal(browserProvenance.schema, "wp-codebox/playwright-browser-provenance/v1")
     assert.equal(browserProvenance.playwrightVersion, "1.61.1")

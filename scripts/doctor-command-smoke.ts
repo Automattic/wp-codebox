@@ -26,6 +26,9 @@ try {
   assert.equal(doctor.cleanup, false)
   assert.equal(doctor.status, "warning")
   assert.ok(doctor.checks.some((check: { id: string }) => check.id === "wp-codebox.binary"))
+  const sourceCheck = doctor.checks.find((check: { id: string }) => check.id === "wp-codebox.source")
+  assert.equal(sourceCheck.status, "ok")
+  assert.equal(sourceCheck.details.provenance.schema, "wp-codebox/cli-build-provenance/v1")
   const runtimeCheck = doctor.checks.find((check: { id: string }) => check.id === "wp-codebox.temp-runtime")
   const processEvidenceAvailable = runtimeCheck.details.candidateCount === 1
   if (processEvidenceAvailable) {

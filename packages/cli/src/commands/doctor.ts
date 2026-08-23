@@ -3,8 +3,9 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { opendir, readFile, realpath, stat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { DEFAULT_TEMP_RUNTIME_SCAN_LIMIT, DEFAULT_TEMP_RUNTIME_USAGE_ENTRY_LIMIT, inventoryTempRuntimeDirectories } from "./temp-runtime-cleanup.js"
+import { findPackageRoot, inspectCliFreshness } from "../cli-build-provenance.js"
 
 type HealthStatus = "ok" | "warning" | "error"
 
@@ -179,12 +180,7 @@ async function sourceCheck(): Promise<HealthCheck> {
   if (!root) {
     return { id: "wp-codebox.source", status: "warning", message: "package root not found for wp-codebox binary", details: { binaryPath } }
   }
-  return {
-    id: "wp-codebox.source",
-    status: "ok",
-    message: "wp-codebox source resolved",
-    details: { packageRoot: root, packageJsonSha256: await sha256File(join(root, "package.json")).catch(() => undefined), gitHead: await gitHead(root) },
-  }
+  return inspectCliFreshness(root, binaryPath)
 }
 
 async function staleRecipeRunCheck(options: DoctorOptions): Promise<HealthCheck> {
@@ -282,30 +278,10 @@ function defaultArchiveRoots(): string[] {
   return [join(homedir(), ".cache", "wp-codebox"), join(homedir(), ".wp-codebox"), join(homedir(), ".cache", "wordpress-playground"), join(homedir(), ".wordpress-playground")]
 }
 
-async function findPackageRoot(start: string): Promise<string | undefined> {
-  let directory = dirname(start)
-  while (directory && directory !== dirname(directory)) {
-    if (existsSync(join(directory, "package.json"))) {
-      return directory
-    }
-    directory = dirname(directory)
-  }
-  return undefined
-}
-
 async function sha256File(path: string): Promise<string> {
   const hash = createHash("sha256")
   hash.update(await readFile(path))
   return hash.digest("hex")
-}
-
-async function gitHead(cwd: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFile("git", ["rev-parse", "HEAD"], { cwd })
-    return stdout.trim() || undefined
-  } catch {
-    return undefined
-  }
 }
 
 interface ProcessRow { pid: number; ageSeconds: number; command: string }
