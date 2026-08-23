@@ -9,11 +9,7 @@ const repoRoot = resolve(import.meta.dirname, "..")
 
 await execFileAsync("npm", ["run", "release:package"], {
 	cwd: repoRoot,
-	env: {
-		...process.env,
-		WP_CODEBOX_RELEASE_PLATFORM: process.env.WP_CODEBOX_RELEASE_PLATFORM ?? "linux",
-		WP_CODEBOX_RELEASE_ARCH: process.env.WP_CODEBOX_RELEASE_ARCH ?? "x64",
-	},
+	env: process.env,
 	maxBuffer: 1024 * 1024 * 20,
 })
 
