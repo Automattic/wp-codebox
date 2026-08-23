@@ -186,6 +186,7 @@
     "test:editor-actions-save-integration": "node --import tsx --test tests/editor-actions-save.integration.test.ts",
     "test:editor-validate-blocks": "tsx tests/editor-validate-blocks.test.ts",
     "test:artifact-result-envelope": "tsx tests/artifact-result-envelope.test.ts",
+    "test:artifact-redaction-integrity": "tsx tests/artifact-redaction-integrity.test.ts",
     "test:async-agent-task-contracts": "tsx tests/async-agent-task-contracts.test.ts",
     "test:artifact-reference-dtos": "tsx tests/artifact-reference-dtos.test.ts",
     "test:artifact-path-primitives": "tsx tests/artifact-path-primitives.test.ts",

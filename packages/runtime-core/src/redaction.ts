@@ -94,6 +94,11 @@ export function redactJsonValue(value: unknown, options: RedactJsonOptions = {},
   return value
 }
 
+export function redactJsonText(value: string, options: RedactJsonOptions = {}): string {
+  const redacted = redactJsonValue(JSON.parse(value), options)
+  return `${JSON.stringify(redacted, null, 2)}\n`
+}
+
 export function redactString(value: string, options: RedactStringOptions = {}): string {
   return value
     .replace(/(^|\r?\n)([ \t]*([A-Za-z0-9_-]+)[ \t]*:[ \t]*)[^\r\n]*/g, (line, prefix: string, assignment: string, key: string) => (
