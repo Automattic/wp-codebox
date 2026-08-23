@@ -342,7 +342,8 @@ export async function runBrowserActionsCommand({
         }
         finalUrl = page.url()
         if (result.findings.length > 0 && adaptiveContract.failOnFinding) {
-          pendingError = new Error(`Adaptive browser exploration found ${result.findings.length} reproducible oracle failure(s).`)
+          const findingRefs = result.findings.slice(0, 3).map((finding) => `${finding.fingerprint}@${finding.transitionId}`).join(", ")
+          pendingError = new Error(`Adaptive browser exploration found ${result.findings.length} reproducible oracle failure(s): ${findingRefs}. Evidence: files/browser/adaptive-exploration.json`)
         }
       }
     }
