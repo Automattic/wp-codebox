@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 import { opendir, readFile, realpath, stat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { inventoryTempRuntimeDirectories } from "./temp-runtime-cleanup.js"
+import { DEFAULT_TEMP_RUNTIME_SCAN_LIMIT, DEFAULT_TEMP_RUNTIME_USAGE_ENTRY_LIMIT, inventoryTempRuntimeDirectories } from "./temp-runtime-cleanup.js"
 
 type HealthStatus = "ok" | "warning" | "error"
 
@@ -19,6 +19,8 @@ interface DoctorOptions {
   json: boolean
   cleanup: boolean
   staleAfterSeconds: number
+  tempScanLimit: number
+  tempUsageEntryLimit: number
   archiveRoots: string[]
   runRegistryRoots: string[]
 }
@@ -48,7 +50,9 @@ export async function runCleanupCommand(args: string[]): Promise<number> {
 
 function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
   let json = false
-  let staleAfterSeconds = Number.parseInt(process.env.WP_CODEBOX_STALE_AFTER_SECONDS ?? "3600", 10)
+  let staleAfterSeconds = Number.parseInt(process.env.WP_CODEBOX_STALE_AFTER_SECONDS ?? "86400", 10)
+  let tempScanLimit = Number.parseInt(process.env.WP_CODEBOX_TEMP_SCAN_LIMIT ?? String(DEFAULT_TEMP_RUNTIME_SCAN_LIMIT), 10)
+  let tempUsageEntryLimit = Number.parseInt(process.env.WP_CODEBOX_TEMP_USAGE_ENTRY_LIMIT ?? String(DEFAULT_TEMP_RUNTIME_USAGE_ENTRY_LIMIT), 10)
   const archiveRoots = archiveRootsFromEnv()
   const runRegistryRoots = runRegistryRootsFromEnv()
 
@@ -78,6 +82,13 @@ function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
       archiveRoots.push(value)
       continue
     }
+    if (arg === "--temp-scan-limit" || arg === "--temp-usage-entry-limit") {
+      const value = args[++index]
+      if (!value || !/^\d+$/.test(value) || Number.parseInt(value, 10) < 1) throw new Error(`${arg} requires a positive integer value`)
+      if (arg === "--temp-scan-limit") tempScanLimit = Number.parseInt(value, 10)
+      else tempUsageEntryLimit = Number.parseInt(value, 10)
+      continue
+    }
     if (arg === "--run-registry") {
       const value = args[++index]
       if (!value) throw new Error("--run-registry requires a directory")
@@ -91,7 +102,9 @@ function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
   return {
     json,
     cleanup,
-    staleAfterSeconds: Number.isFinite(staleAfterSeconds) ? staleAfterSeconds : 3600,
+    staleAfterSeconds: Number.isFinite(staleAfterSeconds) ? staleAfterSeconds : 86400,
+    tempScanLimit: Number.isSafeInteger(tempScanLimit) && tempScanLimit > 0 ? tempScanLimit : DEFAULT_TEMP_RUNTIME_SCAN_LIMIT,
+    tempUsageEntryLimit: Number.isSafeInteger(tempUsageEntryLimit) && tempUsageEntryLimit > 0 ? tempUsageEntryLimit : DEFAULT_TEMP_RUNTIME_USAGE_ENTRY_LIMIT,
     archiveRoots,
     runRegistryRoots,
   }
@@ -127,13 +140,16 @@ async function tempRuntimeCheck(options: DoctorOptions): Promise<HealthCheck> {
   const inventory = await inventoryTempRuntimeDirectories({
     cleanup: options.cleanup,
     staleAfterSeconds: options.staleAfterSeconds,
+    scanLimit: options.tempScanLimit,
+    usageEntryLimit: options.tempUsageEntryLimit,
     runRegistryRoots: unique([...options.runRegistryRoots, resolve("artifacts", "runs")]),
   })
   const failures = inventory.entries.filter((row) => row.state === "failed")
   const removed = inventory.entries.filter((row) => row.state === "removed").length
-  const status: HealthStatus = failures.length > 0 ? "error" : !options.cleanup && inventory.candidateCount > 0 ? "warning" : "ok"
+  const blocked = inventory.entries.filter((row) => row.state === "retained" && !["recent", "live-process", "active-lease", "recent-run"].includes(row.retainedReason ?? ""))
+  const status: HealthStatus = failures.length > 0 ? "error" : inventory.candidateCount > 0 || blocked.length > 0 || !inventory.scanComplete ? "warning" : "ok"
   const message = options.cleanup
-    ? `removed ${removed}/${inventory.candidateCount} stale owned temp runtime director${inventory.candidateCount === 1 ? "y" : "ies"}`
+    ? `removed ${removed}/${inventory.candidateCount} stale owned temp runtime director${inventory.candidateCount === 1 ? "y" : "ies"}; blocked ${blocked.length}`
     : inventory.candidateCount > 0
       ? `${inventory.candidateCount} stale owned temp runtime director${inventory.candidateCount === 1 ? "y" : "ies"} found`
       : `no stale owned temp runtime directories found; retained ${inventory.retainedCount}`

@@ -169,28 +169,32 @@ async function copyWorkspaceSeedDirectory(source: string, target: string, exclud
 export async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedWorkspaceMount[]> {
   const workspaces = recipe.inputs?.workspaces ?? []
   const mounts: PreparedWorkspaceMount[] = []
-  for (const [index, workspace] of workspaces.entries()) {
-    const slug = workspace.seed.slug ?? basename(resolve(recipeDirectory, workspace.seed.source ?? `workspace-${index}`))
-    const prepared = await prepareRecipeWorkspace(workspace, recipeDirectory, slug)
-    const target = workspace.target ?? defaultWorkspaceTarget(workspace, slug)
-    mounts.push({
-      source: prepared.source,
-      target,
-      mode: workspace.mode ?? "readwrite",
-      cleanupPaths: prepared.cleanupPaths,
-      metadata: {
-        kind: "recipe-workspace",
-        index,
-        seed: workspace.seed,
-        baselineSource: prepared.baselineSource,
+  try {
+    for (const [index, workspace] of workspaces.entries()) {
+      const slug = workspace.seed.slug ?? basename(resolve(recipeDirectory, workspace.seed.source ?? `workspace-${index}`))
+      const prepared = await prepareRecipeWorkspace(workspace, recipeDirectory, slug)
+      const target = workspace.target ?? defaultWorkspaceTarget(workspace, slug)
+      mounts.push({
+        source: prepared.source,
         target,
-        workspaceRoot: SANDBOX_WORKSPACE_ROOT,
-        sourceMode: workspace.sourceMode ?? "repo-backed",
-      },
-    })
+        mode: workspace.mode ?? "readwrite",
+        cleanupPaths: prepared.cleanupPaths,
+        metadata: {
+          kind: "recipe-workspace",
+          index,
+          seed: workspace.seed,
+          baselineSource: prepared.baselineSource,
+          target,
+          workspaceRoot: SANDBOX_WORKSPACE_ROOT,
+          sourceMode: workspace.sourceMode ?? "repo-backed",
+        },
+      })
+    }
+    return mounts
+  } catch (error) {
+    await cleanupRecipeWorkspaces(mounts)
+    throw error
   }
-
-  return mounts
 }
 
 export async function prepareRecipeWorkspacePreloads(recipe: WorkspaceRecipe): Promise<PreparedWorkspaceMount[]> {
@@ -1493,25 +1497,31 @@ async function extractedPluginSourceDirectory(extractDirectory: string, slug: st
 }
 
 async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recipeDirectory: string, slug: string): Promise<PreparedWorkspaceSource> {
-  const directory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-`))
-  const baselineDirectory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-baseline-`))
-  if (workspace.seed.type === "directory") {
-    const source = resolve(recipeDirectory, workspace.seed.source ?? "")
-    await copyWorkspaceSeedDirectory(source, directory, workspace.seed.excludePaths)
-    await copyWorkspaceSeedDirectory(source, baselineDirectory, workspace.seed.excludePaths)
-    await ensureStandaloneGitPrimary(directory)
-    return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
-  }
+  const directory = await mkdtemp(join(tmpdir(), `wp-codebox-workspace-${slug}-`))
+  let baselineDirectory: string | undefined
+  try {
+    baselineDirectory = await mkdtemp(join(tmpdir(), `wp-codebox-workspace-baseline-${slug}-`))
+    if (workspace.seed.type === "directory") {
+      const source = resolve(recipeDirectory, workspace.seed.source ?? "")
+      await copyWorkspaceSeedDirectory(source, directory, workspace.seed.excludePaths)
+      await copyWorkspaceSeedDirectory(source, baselineDirectory, workspace.seed.excludePaths)
+      await ensureStandaloneGitPrimary(directory)
+      return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
+    }
 
-  if (workspace.seed.type === "theme_scaffold") {
-    await writeThemeScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
-    await writeThemeScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
-    return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
-  }
+    if (workspace.seed.type === "theme_scaffold") {
+      await writeThemeScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
+      await writeThemeScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
+      return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
+    }
 
-  await writePluginScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
-  await writePluginScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
-  return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
+    await writePluginScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
+    await writePluginScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
+    return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
+  } catch (error) {
+    await Promise.all([directory, baselineDirectory].filter((path): path is string => Boolean(path)).map((path) => rm(path, { recursive: true, force: true })))
+    throw error
+  }
 }
 
 async function ensureStandaloneGitPrimary(directory: string): Promise<void> {

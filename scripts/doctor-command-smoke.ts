@@ -21,23 +21,34 @@ try {
   await utimes(join(staleRuntime, "payload"), staleTimestamp, staleTimestamp)
   await utimes(staleRuntime, staleTimestamp, staleTimestamp)
 
-  const doctor = await runCli(["doctor", "--archive-root", cacheDirectory, "--json"])
+  const doctor = await runCli(["doctor", "--archive-root", cacheDirectory, "--stale-after-seconds", "3600", "--json"])
   assert.equal(doctor.schema, "wp-codebox/doctor/v1")
   assert.equal(doctor.cleanup, false)
   assert.equal(doctor.status, "warning")
   assert.ok(doctor.checks.some((check: { id: string }) => check.id === "wp-codebox.binary"))
   const runtimeCheck = doctor.checks.find((check: { id: string }) => check.id === "wp-codebox.temp-runtime")
-  assert.equal(runtimeCheck.details.candidateCount, 1)
-  assert.ok(runtimeCheck.details.estimatedAllocatedBytes > 0)
+  const processEvidenceAvailable = runtimeCheck.details.candidateCount === 1
+  if (processEvidenceAvailable) {
+    assert.ok(runtimeCheck.details.estimatedAllocatedBytes > 0)
+  } else {
+    assert.equal(runtimeCheck.details.retainedReasons["evidence-unavailable"], 1, "restricted process visibility must fail closed")
+    assert.ok(runtimeCheck.details.entries[0].blockingEvidence.length > 0)
+  }
   assert.equal(existsSync(corruptArchive), true, "doctor must not remove corrupt archives without --fix")
 
-  const cleanup = await runCli(["cleanup", "--archive-root", cacheDirectory, "--json"])
+  const cleanup = await runCli(["cleanup", "--archive-root", cacheDirectory, "--stale-after-seconds", "3600", "--json"])
   assert.equal(cleanup.schema, "wp-codebox/doctor/v1")
   assert.equal(cleanup.cleanup, true)
-  assert.equal(cleanup.status, "ok")
   const cleanupRuntimeCheck = cleanup.checks.find((check: { id: string }) => check.id === "wp-codebox.temp-runtime")
-  assert.equal(cleanupRuntimeCheck.details.reclaimedAllocatedBytes, runtimeCheck.details.estimatedAllocatedBytes)
-  await assert.rejects(stat(staleRuntime), /ENOENT/)
+  if (processEvidenceAvailable) {
+    assert.equal(cleanup.status, "ok")
+    assert.equal(cleanupRuntimeCheck.details.reclaimedAllocatedBytes, runtimeCheck.details.estimatedAllocatedBytes)
+    await assert.rejects(stat(staleRuntime), /ENOENT/)
+  } else {
+    assert.equal(cleanup.status, "warning")
+    assert.equal(cleanupRuntimeCheck.details.reclaimedAllocatedBytes, 0)
+    await stat(staleRuntime)
+  }
   assert.equal(existsSync(corruptArchive), false, "cleanup should remove corrupt archives")
 
   console.log("Doctor command smoke passed")
