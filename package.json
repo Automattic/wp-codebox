@@ -88,8 +88,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
-    "build:release": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
+    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
+    "build:release": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
     "cloudflare:dry-run": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
     "cloudflare:dry-run:d1": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.d1.jsonc",
     "cloudflare:dry-run:control": "npm exec -- wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.control.jsonc",
@@ -109,6 +109,7 @@
     "test:release-package-coverage": "tsx tests/release-package-coverage.test.ts",
     "test:prepare-declaration-rebuild": "tsx tests/prepare-declaration-rebuild.test.ts",
     "test:release-target": "tsx --test tests/release-target.test.ts",
+    "test:cli-build-freshness": "tsx --test tests/cli-build-freshness.test.ts",
     "test:sharp-release-runtime": "tsx --test tests/sharp-release-runtime.test.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "wp-codebox:source": "node bin/wp-codebox-source.mjs",
