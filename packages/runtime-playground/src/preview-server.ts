@@ -504,6 +504,10 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: Previ
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
 
+  if (new URL(requestTarget.path, "http://localhost").pathname.endsWith("/sw.js")) {
+    forwarded["service-worker-allowed"] = "/"
+  }
+
   if (typeof forwarded.location === "string") {
     try {
       const location = new URL(forwarded.location, target)

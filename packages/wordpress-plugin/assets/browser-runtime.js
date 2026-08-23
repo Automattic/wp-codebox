@@ -945,7 +945,7 @@
 
 	const resolvePlaygroundClientModule = async ( boot, options = {} ) => {
 		if ( typeof options.startPlaygroundWeb === 'function' ) {
-			return { startPlaygroundWeb: options.startPlaygroundWeb, zipWpContent: options.zipWpContent };
+			return { startPlaygroundWeb: options.startPlaygroundWeb, zipWpContent: options.zipWpContent, disposePlaygroundClient: options.disposePlaygroundClient };
 		}
 
 		const moduleUrl = String( options.clientModuleUrl || boot.client_module_url || '' );
@@ -959,10 +959,13 @@
 			throw runtimeError( 'browser_preview_start', 'browser_preview_start_unavailable', 'Codebox browser preview client module does not export startPlaygroundWeb.' );
 		}
 
-		return { startPlaygroundWeb: module.startPlaygroundWeb, zipWpContent: module.zipWpContent };
+		return { startPlaygroundWeb: module.startPlaygroundWeb, zipWpContent: module.zipWpContent, disposePlaygroundClient: module.disposePlaygroundClient };
 	};
 
 	const browserPreviewLifecycles = new Map();
+	const browserPreviewSlotRoots = new WeakMap();
+	const browserPreviewSlotIframes = new WeakMap();
+	const browserPreviewSlotLifecycles = new WeakMap();
 	const browserPreviewReplaySources = new WeakMap();
 	const defaultBrowserPreviewStartupTimeoutMs = 30000;
 	const browserPreviewAbortError = () => runtimeError( 'browser_preview_start', 'browser_preview_aborted', 'Browser preview start was aborted.' );
@@ -991,8 +994,44 @@
 		}
 	);
 
-	const resetBrowserPreviewIframe = ( iframe ) => {
+	const browserPreviewSlot = ( iframe ) => {
+		if ( ! iframe || ( typeof iframe !== 'object' && typeof iframe !== 'function' ) ) return null;
+		const slot = browserPreviewSlotRoots.get( iframe ) || iframe;
+		browserPreviewSlotRoots.set( iframe, slot );
+		if ( ! browserPreviewSlotIframes.has( slot ) ) browserPreviewSlotIframes.set( slot, iframe );
+		return slot;
+	};
+	const currentBrowserPreviewIframe = ( slot, fallback ) => slot ? ( browserPreviewSlotIframes.get( slot ) || fallback ) : fallback;
+	const resetBrowserPreviewIframe = async ( iframe, slot ) => {
 		if ( iframe && typeof iframe === 'object' && 'src' in iframe ) {
+			if ( iframe.parentNode && typeof iframe.cloneNode === 'function' && typeof iframe.parentNode.replaceChild === 'function' ) {
+				const replacement = iframe.cloneNode( false );
+				replacement.src = 'about:blank';
+				iframe.parentNode.replaceChild( replacement, iframe );
+				if ( slot ) {
+					browserPreviewSlotRoots.set( replacement, slot );
+					browserPreviewSlotIframes.set( slot, replacement );
+				}
+				return true;
+			}
+			if ( typeof iframe.addEventListener === 'function' && typeof iframe.removeEventListener === 'function' ) {
+				await new Promise( ( resolve ) => {
+					let settled = false;
+					const finish = () => {
+						if ( settled ) {
+							return;
+						}
+						settled = true;
+						iframe.removeEventListener( 'load', finish );
+						clearTimeout( timeout );
+						resolve();
+					};
+					const timeout = setTimeout( finish, 5000 );
+					iframe.addEventListener( 'load', finish, { once: true } );
+					iframe.src = 'about:blank';
+				} );
+				return true;
+			}
 			iframe.src = 'about:blank';
 			return true;
 		}
@@ -1004,27 +1043,31 @@
 		if ( typeof value === 'boolean' ) {
 			return {
 				client_released: value,
+				runtime_termination_requested: false,
 				runtime_terminated: false,
 				client_release_evidence: null,
 			};
 		}
 		if ( value && typeof value === 'object' && ! Array.isArray( value ) ) {
 			const client_released = value.client_released === true;
+			const runtime_termination_requested = value.runtime_termination_requested === true;
 			const runtime_terminated = value.runtime_terminated === true;
 			return {
 				client_released,
+				runtime_termination_requested,
 				runtime_terminated,
-				client_release_evidence: Object.freeze( { client_released, runtime_terminated } ),
+				client_release_evidence: Object.freeze( { client_released, runtime_termination_requested, runtime_terminated } ),
 			};
 		}
 		return {
 			client_released: false,
+			runtime_termination_requested: false,
 			runtime_terminated: false,
 			client_release_evidence: null,
 		};
 	};
 
-	const createBrowserPreviewLifecycle = ( scope, iframe, signal, disposeClient ) => {
+	const createBrowserPreviewLifecycle = ( scope, slot, iframe, signal, disposeClient ) => {
 		let active = true;
 		let cancelled = false;
 		let client;
@@ -1037,6 +1080,9 @@
 		} );
 		const lifecycle = {
 			isActive: () => active,
+			setDisposeClient: ( nextDisposeClient ) => {
+				if ( typeof nextDisposeClient === 'function' ) disposeClient = nextDisposeClient;
+			},
 			wait: ( promise ) => Promise.race( [ promise, cancellation ] ),
 			ownClient: ( nextClient ) => {
 				if ( ! active ) {
@@ -1079,9 +1125,12 @@
 					if ( scope && browserPreviewLifecycles.get( scope ) === lifecycle ) {
 						browserPreviewLifecycles.delete( scope );
 					}
-					const iframe_reset = resetBrowserPreviewIframe( iframe );
+					if ( slot && browserPreviewSlotLifecycles.get( slot ) === lifecycle ) {
+						browserPreviewSlotLifecycles.delete( slot );
+					}
 					let client_release_requested = false;
 					let client_released = false;
+					let runtime_termination_requested = false;
 					let runtime_terminated = false;
 					let client_release_evidence = null;
 					let client_release_error = null;
@@ -1089,11 +1138,13 @@
 						const clientRelease = await lifecycle.releaseClient();
 						client_release_requested = clientRelease.requested;
 						client_released = clientRelease.client_released;
+						runtime_termination_requested = clientRelease.runtime_termination_requested;
 						runtime_terminated = clientRelease.runtime_terminated;
 						client_release_evidence = clientRelease.client_release_evidence;
 					} catch ( error ) {
 						client_release_error = error?.message || 'Browser preview client cleanup failed.';
 					}
+					const iframe_reset = await resetBrowserPreviewIframe( iframe, slot );
 					return Object.freeze( {
 						schema: 'wp-codebox/browser-preview-dispose-result/v1',
 						success: true,
@@ -1109,6 +1160,7 @@
 						client_release_error,
 						client_release_evidence,
 						runtime_release_requested: iframe_reset,
+						runtime_termination_requested,
 						runtime_terminated,
 						lifecycle_released: true,
 					} );
@@ -1140,21 +1192,26 @@
 			throw browserPreviewAbortError();
 		}
 		const boot = browserPreviewBootConfig( input );
-		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const requestedIframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const slot = browserPreviewSlot( requestedIframe );
+		let iframe = currentBrowserPreviewIframe( slot, requestedIframe );
 		const scope = String( boot.scope || '' );
 		const startupTimeoutMs = browserPreviewStartupTimeoutMs( options );
 		let lifecycle;
 		let startupTimeout;
-		if ( startupTimeoutMs !== null ) {
-			startupTimeout = setTimeout( () => {
-				lifecycle?.cancel( browserPreviewStartupTimeoutError( boot, scope, startupTimeoutMs ) );
-			}, startupTimeoutMs );
-		}
 		const previousLifecycle = scope ? browserPreviewLifecycles.get( scope ) : null;
 		if ( previousLifecycle ) {
 			previousLifecycle.cancel( browserPreviewReplacedError() );
 		}
-		lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal, options.disposeClient );
+		const previousSlotLifecycle = slot ? browserPreviewSlotLifecycles.get( slot ) : null;
+		if ( previousSlotLifecycle && previousSlotLifecycle !== previousLifecycle ) {
+			previousSlotLifecycle.cancel( browserPreviewReplacedError() );
+		}
+		if ( previousSlotLifecycle ) {
+			await previousSlotLifecycle.dispose();
+			iframe = currentBrowserPreviewIframe( slot, iframe );
+		}
+		lifecycle = createBrowserPreviewLifecycle( scope, slot, iframe, options.signal, options.disposeClient );
 		if ( options.signal?.aborted ) {
 			await lifecycle.dispose();
 			throw browserPreviewAbortError();
@@ -1162,9 +1219,18 @@
 		if ( scope ) {
 			browserPreviewLifecycles.set( scope, lifecycle );
 		}
+		if ( slot ) {
+			browserPreviewSlotLifecycles.set( slot, lifecycle );
+		}
+		if ( startupTimeoutMs !== null ) {
+			startupTimeout = setTimeout( () => {
+				lifecycle.cancel( browserPreviewStartupTimeoutError( boot, scope, startupTimeoutMs ) );
+			}, startupTimeoutMs );
+		}
 
 		try {
 			const playgroundModule = await lifecycle.wait( resolvePlaygroundClientModule( boot, options ) );
+			if ( typeof options.disposeClient !== 'function' ) lifecycle.setDisposeClient( playgroundModule.disposePlaygroundClient );
 			const blueprint = await lifecycle.wait( hydrateBrowserPreviewBlueprint( boot, options ) );
 			const startOptions = options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {};
 			const guardedStartOptions = { ...startOptions };

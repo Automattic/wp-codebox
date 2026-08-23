@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import test from "node:test"
 
@@ -7,14 +8,15 @@ import { chromium } from "playwright"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 test("the preview proxy registers a service worker after transient upstream redirects", async () => {
+  const workerPath = "/runtime/version/sw.js"
   let workerRequests = 0
   const forwardedWorkerHeaders: Array<{ serviceWorker: string | string[] | undefined; destination: string | string[] | undefined }> = []
   const upstream = createServer((request, response) => {
-    if (request.url === "/sw.js") {
+    if (request.url === workerPath) {
       workerRequests += 1
       forwardedWorkerHeaders.push({ serviceWorker: request.headers["service-worker"], destination: request.headers["sec-fetch-dest"] })
       if (workerRequests < 3) {
-        response.writeHead(302, { location: "/sw.js" })
+        response.writeHead(302, { location: workerPath })
         response.end()
         return
       }
@@ -36,7 +38,7 @@ test("the preview proxy registers a service worker after transient upstream redi
     const page = await browser.newPage()
     await page.goto(proxy.serverUrl)
     const registration = await page.evaluate(async () => {
-      const registered = await navigator.serviceWorker.register("/sw.js")
+      const registered = await navigator.serviceWorker.register("/runtime/version/sw.js", { scope: "/" })
       await navigator.serviceWorker.ready
       return { scope: registered.scope, active: !!registered.active }
     })
@@ -52,12 +54,13 @@ test("the preview proxy registers a service worker after transient upstream redi
     assert.deepEqual(proxy.previewProxyDiagnostics?.requestTrace.entries, [{
       sequence: 1,
       method: "GET",
-      path: "/sw.js",
+      path: workerPath,
       destination: "serviceworker",
       serviceWorker: true,
       outcome: "response",
       status: 200,
       contentType: "application/javascript",
+      serviceWorkerAllowed: "/",
       bodyRewritten: true,
     }])
   } finally {
@@ -203,6 +206,157 @@ test("the preview proxy returns a connected client from the packaged Playground 
       contentType: "application/javascript",
       bodyRewritten: true,
     })
+  } finally {
+    await browser.close()
+    await proxy[Symbol.asyncDispose]()
+    await closeHttpServer(app)
+  }
+})
+
+test("the browser SDK replaces a packaged Playground preview in one slot", { timeout: 120_000 }, async () => {
+  const app = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end("<!doctype html><title>Playground replacement integration</title><iframe></iframe>")
+  })
+  const appUrl = await listenLocalHttpServer(app)
+  const proxy = await withPreviewProxy({
+    playground: { async run() { return { text: "", exitCode: 0 } } },
+    serverUrl: "https://playground.wordpress.net",
+    async [Symbol.asyncDispose]() {},
+  } satisfies PlaygroundCliServer, 5400)
+  const browser = await chromium.launch({ headless: true })
+  const consoleMessages: string[] = []
+  const pageErrors: string[] = []
+  try {
+    const page = await browser.newPage()
+    page.on("console", (message) => {
+      if (consoleMessages.length < 64) consoleMessages.push(`${message.type()}: ${message.text()}`)
+    })
+    page.on("pageerror", (error) => {
+      if (pageErrors.length < 64) pageErrors.push(error.message)
+    })
+    await page.goto(appUrl)
+    await page.evaluate("globalThis.__name = (value) => value")
+    await page.addScriptTag({ content: await readFile(new URL("../packages/wordpress-plugin/assets/browser-runtime.js", import.meta.url), "utf8") })
+    const result = await page.evaluate(async ({ remoteUrl }) => {
+      const { startPlaygroundWeb } = await import("https://playground.wordpress.net/client/index.js")
+      const iframe = document.querySelector("iframe")
+      const phases: string[] = []
+      const heavyBlueprint = (marker: string) => ({
+        steps: [
+          ...Array.from({ length: 6 }, (_, index) => ({
+            step: "writeFile",
+            path: `/tmp/codebox-${marker}-${index}.txt`,
+            data: `${marker}:${index}:` + "x".repeat(256 * 1024),
+          })),
+          {
+            step: "writeFile",
+            path: "/wordpress/wp-content/mu-plugins/codebox-site-marker.php",
+            data: `<?php add_action( 'wp_head', static function () { echo '<meta name="codebox-site-marker" content="${marker}">'; } );`,
+          },
+        ],
+      })
+      const markerEvidence = async (client: any) => {
+        const response = await client.request({ url: "/" })
+        const html = new TextDecoder().decode(response.bytes)
+        return { a: html.includes('content="marker-a"'), b: html.includes('content="marker-b"') }
+      }
+      try {
+        phases.push("a:starting")
+        const first = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+          schema: "wp-codebox/browser-preview-boot-config/v1",
+          session_id: "replacement-a",
+          remote_url: remoteUrl,
+          scope: "replacement-a",
+          blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-a", hydratable: true },
+        }, {
+          iframe,
+          startupTimeoutMs: 45_000,
+          hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-a") }),
+          startPlaygroundWeb,
+          startOptions: {
+            disableProgressBar: true,
+            onClientConnected: () => phases.push("replacement-a:client-connected"),
+            onBlueprintValidated: () => phases.push("replacement-a:blueprint-validated"),
+          },
+        })
+        phases.push("a:started")
+        const firstMarkers = await markerEvidence(first.client)
+        const firstIframe = document.querySelector("iframe")
+        const second = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+          schema: "wp-codebox/browser-preview-boot-config/v1",
+          session_id: "replacement-b",
+          remote_url: remoteUrl,
+          scope: "replacement-b",
+          blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-b", hydratable: true },
+        }, {
+          iframe,
+          startupTimeoutMs: 45_000,
+          hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-b") }),
+          startPlaygroundWeb,
+          startOptions: {
+            disableProgressBar: true,
+            onClientConnected: () => phases.push("replacement-b:client-connected"),
+            onBlueprintValidated: () => phases.push("replacement-b:blueprint-validated"),
+          },
+        })
+        phases.push("b:started")
+        const secondMarkers = await markerEvidence(second.client)
+        const secondIframe = document.querySelector("iframe")
+        const third = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+          schema: "wp-codebox/browser-preview-boot-config/v1",
+          session_id: "replacement-a-return",
+          remote_url: remoteUrl,
+          scope: "replacement-a",
+          blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-a-return", hydratable: true },
+        }, {
+          iframe,
+          startupTimeoutMs: 45_000,
+          hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-a") }),
+          startPlaygroundWeb,
+          startOptions: {
+            disableProgressBar: true,
+            onClientConnected: () => phases.push("replacement-a-return:client-connected"),
+            onBlueprintValidated: () => phases.push("replacement-a-return:blueprint-validated"),
+          },
+        })
+        phases.push("a-return:started")
+        const thirdMarkers = await markerEvidence(third.client)
+        const thirdIframe = document.querySelector("iframe")
+        await third.dispose()
+        return {
+          success: true,
+          phases,
+          firstMarkers,
+          secondMarkers,
+          thirdMarkers,
+          slotReplacedAB: firstIframe !== secondIframe,
+          slotReplacedBA: secondIframe !== thirdIframe,
+        }
+      } catch (error) {
+        return { success: false, phases, error: { name: error?.name, code: error?.code, message: error?.message, data: error?.data } }
+      }
+    }, { remoteUrl: `${proxy.serverUrl}/remote.html` })
+
+    assert.equal(result.success, true, JSON.stringify({ result, consoleMessages, pageErrors, trace: proxy.previewProxyDiagnostics?.requestTrace }, null, 2))
+    assert.deepEqual(result.phases, [
+      "a:starting",
+      "replacement-a:client-connected",
+      "replacement-a:blueprint-validated",
+      "a:started",
+      "replacement-b:client-connected",
+      "replacement-b:blueprint-validated",
+      "b:started",
+      "replacement-a-return:client-connected",
+      "replacement-a-return:blueprint-validated",
+      "a-return:started",
+    ])
+    assert.deepEqual(result.firstMarkers, { a: true, b: false })
+    assert.deepEqual(result.secondMarkers, { a: false, b: true })
+    assert.deepEqual(result.thirdMarkers, { a: true, b: false })
+    assert.equal(result.slotReplacedAB, true)
+    assert.equal(result.slotReplacedBA, true)
+    assert.deepEqual(pageErrors, [])
   } finally {
     await browser.close()
     await proxy[Symbol.asyncDispose]()
