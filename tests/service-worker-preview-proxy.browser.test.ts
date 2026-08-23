@@ -7,14 +7,15 @@ import { chromium } from "playwright"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 test("the preview proxy registers a service worker after transient upstream redirects", async () => {
+  const workerPath = "/runtime/version/sw.js"
   let workerRequests = 0
   const forwardedWorkerHeaders: Array<{ serviceWorker: string | string[] | undefined; destination: string | string[] | undefined }> = []
   const upstream = createServer((request, response) => {
-    if (request.url === "/sw.js") {
+    if (request.url === workerPath) {
       workerRequests += 1
       forwardedWorkerHeaders.push({ serviceWorker: request.headers["service-worker"], destination: request.headers["sec-fetch-dest"] })
       if (workerRequests < 3) {
-        response.writeHead(302, { location: "/sw.js" })
+        response.writeHead(302, { location: workerPath })
         response.end()
         return
       }
@@ -36,7 +37,7 @@ test("the preview proxy registers a service worker after transient upstream redi
     const page = await browser.newPage()
     await page.goto(proxy.serverUrl)
     const registration = await page.evaluate(async () => {
-      const registered = await navigator.serviceWorker.register("/sw.js")
+      const registered = await navigator.serviceWorker.register("/runtime/version/sw.js", { scope: "/" })
       await navigator.serviceWorker.ready
       return { scope: registered.scope, active: !!registered.active }
     })
@@ -52,12 +53,13 @@ test("the preview proxy registers a service worker after transient upstream redi
     assert.deepEqual(proxy.previewProxyDiagnostics?.requestTrace.entries, [{
       sequence: 1,
       method: "GET",
-      path: "/sw.js",
+      path: workerPath,
       destination: "serviceworker",
       serviceWorker: true,
       outcome: "response",
       status: 200,
       contentType: "application/javascript",
+      serviceWorkerAllowed: "/",
       bodyRewritten: true,
     }])
   } finally {
