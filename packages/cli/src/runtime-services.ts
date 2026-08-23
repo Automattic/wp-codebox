@@ -1087,16 +1087,26 @@ async function ownedProcessGroupExists(state: OwnedNativeProcess): Promise<boole
 async function ownedProcessGroupHasLiveMembers(state: OwnedNativeProcess): Promise<boolean> {
   if (process.platform !== "linux" || !state.groupId) return await ownedProcessGroupExists(state)
   if (!await ownedProcessGroupExists(state)) return false
+  return await linuxProcessGroupHasLiveMembers(state.groupId)
+}
+
+export async function linuxProcessGroupHasLiveMembers(groupId: number, probe: { entries(): Promise<string[]>; readStat(pid: string): Promise<string> } = {
+  entries: async () => await readdir("/proc"),
+  readStat: async (pid) => await readFile(`/proc/${pid}/stat`, "utf8"),
+}): Promise<boolean> {
   // Capturing parents can retain killed descendants as zombies; they cannot execute
   // and only the adopting parent, not this process, can reap them.
-  for (const entry of await readdir("/proc")) {
+  for (const entry of await probe.entries()) {
     if (!/^\d+$/.test(entry)) continue
     try {
-      const fields = linuxProcessStatFields(await readFile(`/proc/${entry}/stat`, "utf8"))
-      if (Number(fields[2]) === state.groupId && !["Z", "X", "x"].includes(fields[0] ?? "")) return true
+      const fields = linuxProcessStatFields(await probe.readStat(entry))
+      const state = fields[0]
+      const processGroup = fields[2]
+      if (!state || !processGroup || !/^\d+$/.test(processGroup)) throw new Error(`Malformed Linux process stat for PID ${entry}`)
+      if (Number(processGroup) === groupId && !["Z", "X", "x"].includes(state)) return true
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code !== "ENOENT" && code !== "EACCES" && code !== "EPERM") throw error
+      if (code !== "ENOENT" && code !== "ESRCH") throw error
     }
   }
   return false

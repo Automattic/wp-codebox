@@ -5,7 +5,7 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.ts"
-import { executeRuntimeServiceProcess, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { executeRuntimeServiceProcess, linuxProcessGroupHasLiveMembers, parseLoopbackPort, provisionRuntimeServices, provisionRuntimeServicesForRecipe, RuntimeServiceProvisionError, runtimeServiceEvidenceFromError, runtimeServicePlan, waitForMysqlProtocol, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { planWorkspaceRecipe } from "../packages/cli/src/recipe-dry-run.ts"
 import { executeSmtpSinkRecipeOperation } from "../packages/cli/src/smtp-sink-recipe-operations.ts"
 import { recipePolicy, validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
@@ -17,6 +17,16 @@ const plan = runtimeServicePlan([service])
 assert.deepEqual(plan, [{ id: "test-db", kind: "mysql", provider: "docker", version: "mysql:8.4", bind: "loopback", port: "ephemeral", persistentVolume: false, storage: "tmpfs", outputs: service.outputs }])
 assert.equal(parseLoopbackPort("127.0.0.1:44001\n"), 44001)
 assert.throws(() => parseLoopbackPort("0.0.0.0:3306"), /loopback/)
+for (const code of ["ENOENT", "ESRCH"]) {
+  const vanished = Object.assign(new Error(`${code}: vanished process entry`), { code })
+  assert.equal(await linuxProcessGroupHasLiveMembers(42, { entries: async () => ["100"], readStat: async () => { throw vanished } }), false, `${code} after /proc enumeration is a completed process exit`)
+}
+assert.equal(await linuxProcessGroupHasLiveMembers(42, { entries: async () => ["100", "101"], readStat: async (pid) => pid === "100" ? "100 (zombie) Z 1 42" : "101 (live) S 1 42" }), true, "the bounded probe continues past exited members")
+for (const code of ["EACCES", "EPERM", "EIO"]) {
+  const failure = Object.assign(new Error(`${code}: process stat unavailable`), { code })
+  await assert.rejects(linuxProcessGroupHasLiveMembers(42, { entries: async () => ["100"], readStat: async () => { throw failure } }), (error: unknown) => error === failure, `${code} remains fatal`)
+}
+await assert.rejects(linuxProcessGroupHasLiveMembers(42, { entries: async () => ["100"], readStat: async () => "malformed" }), /Malformed Linux process stat/, "malformed process stat remains fatal")
 const auxiliaryServices = [
   { id: "cache", kind: "redis", outputs: { host: "REDIS_HOST", port: "REDIS_PORT", url: "REDIS_URL" } },
   { id: "mail", kind: "smtp", outputs: { host: "SMTP_HOST", port: "SMTP_PORT", httpPort: "SMTP_HTTP_PORT" } },
