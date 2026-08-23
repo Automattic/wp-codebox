@@ -820,6 +820,7 @@ await assert.rejects(
         client_release_error: null,
         client_release_evidence: null,
         runtime_release_requested: true,
+        runtime_termination_requested: false,
         runtime_terminated: false,
         lifecycle_released: true,
       },
@@ -958,7 +959,7 @@ const lifecyclePreview = await api.v1.startBrowserPreview(lifecycleBoot, {
     assert.equal(client.client, "lifecycle-playground")
     lifecycleClientReleased = true
     releasedClients += 1
-    return { client_released: true, runtime_terminated: false }
+    return { client_released: true, runtime_termination_requested: false, runtime_terminated: false }
   },
 })
 lifecycleCallbacks.onBlueprintStepCompleted()
@@ -979,8 +980,9 @@ assert.deepEqual(plain(disposed), {
   client_release_requested: true,
   client_released: true,
   client_release_error: null,
-  client_release_evidence: { client_released: true, runtime_terminated: false },
+  client_release_evidence: { client_released: true, runtime_termination_requested: false, runtime_terminated: false },
   runtime_release_requested: true,
+  runtime_termination_requested: false,
   runtime_terminated: false,
   lifecycle_released: true,
 })
@@ -1012,7 +1014,7 @@ const moduleDisposePreview = await api.v1.startBrowserPreview({ ...lifecycleBoot
     startPlaygroundWeb: async () => lifecycleClient,
     disposePlaygroundClient: async (client: unknown) => {
       moduleDisposedClient = client
-      return { client_released: true, runtime_terminated: true }
+      return { client_released: true, runtime_termination_requested: true, runtime_terminated: false }
     },
   }),
 })
@@ -1020,7 +1022,8 @@ const moduleDisposeResult = await moduleDisposePreview.dispose()
 assert.equal(moduleDisposedClient, lifecycleClient, "default disposal delegates runtime teardown to the imported Playground module")
 assert.equal(moduleDisposeResult.client_release_requested, true, "module-owned runtime teardown is reported as requested")
 assert.equal(moduleDisposeResult.client_released, true, "module-owned client release evidence is preserved")
-assert.equal(moduleDisposeResult.runtime_terminated, true, "module-owned runtime termination evidence is preserved")
+assert.equal(moduleDisposeResult.runtime_termination_requested, true, "module-owned runtime termination request evidence is preserved")
+assert.equal(moduleDisposeResult.runtime_terminated, false, "module-owned teardown does not overstate confirmed runtime termination")
 
 let replacementReleased = 0
 const replacementCallbacks: Record<string, () => unknown> = {}

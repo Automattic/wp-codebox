@@ -1043,21 +1043,25 @@
 		if ( typeof value === 'boolean' ) {
 			return {
 				client_released: value,
+				runtime_termination_requested: false,
 				runtime_terminated: false,
 				client_release_evidence: null,
 			};
 		}
 		if ( value && typeof value === 'object' && ! Array.isArray( value ) ) {
 			const client_released = value.client_released === true;
+			const runtime_termination_requested = value.runtime_termination_requested === true;
 			const runtime_terminated = value.runtime_terminated === true;
 			return {
 				client_released,
+				runtime_termination_requested,
 				runtime_terminated,
-				client_release_evidence: Object.freeze( { client_released, runtime_terminated } ),
+				client_release_evidence: Object.freeze( { client_released, runtime_termination_requested, runtime_terminated } ),
 			};
 		}
 		return {
 			client_released: false,
+			runtime_termination_requested: false,
 			runtime_terminated: false,
 			client_release_evidence: null,
 		};
@@ -1126,6 +1130,7 @@
 					}
 					let client_release_requested = false;
 					let client_released = false;
+					let runtime_termination_requested = false;
 					let runtime_terminated = false;
 					let client_release_evidence = null;
 					let client_release_error = null;
@@ -1133,6 +1138,7 @@
 						const clientRelease = await lifecycle.releaseClient();
 						client_release_requested = clientRelease.requested;
 						client_released = clientRelease.client_released;
+						runtime_termination_requested = clientRelease.runtime_termination_requested;
 						runtime_terminated = clientRelease.runtime_terminated;
 						client_release_evidence = clientRelease.client_release_evidence;
 					} catch ( error ) {
@@ -1154,6 +1160,7 @@
 						client_release_error,
 						client_release_evidence,
 						runtime_release_requested: iframe_reset,
+						runtime_termination_requested,
 						runtime_terminated,
 						lifecycle_released: true,
 					} );
