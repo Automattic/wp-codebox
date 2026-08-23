@@ -154,7 +154,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           quiet: true,
           verbosity: "quiet",
           skipBrowser: true,
-          workers: spec.environment.workers ?? 6,
+          // Mutable runtime state must stay on one VFS unless callers explicitly opt into worker concurrency.
+          workers: spec.environment.workers ?? 1,
           mount: [
             ...postinstallMounts.map((mount) => ({
               hostPath: mount.source,
