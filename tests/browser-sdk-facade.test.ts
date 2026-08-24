@@ -50,7 +50,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "runtime-task:run",
     "browser-preview:start",
     "browser-preview:lifecycle",
-    "browser-preview:workspace",
+    "browser-preview:double-buffer",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
@@ -88,7 +88,7 @@ const expectedV1TopLevelKeys = [
   "runRuntimeTask",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
-  "createBrowserPreviewWorkspace",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "aggregateFanoutOutputs",
   "validateBrowserRuntimeMaterialization",
@@ -126,7 +126,7 @@ const expectedV1MethodKeys = [
   "executeBrowserProviderProxyRequest",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
-  "createBrowserPreviewWorkspace",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "bootExecutableBrowserSession",
   "createParentToolRequest",
@@ -179,14 +179,14 @@ assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.captureViewportScreenshot, "function")
 assert.equal(typeof api.v1.verifyViewportScreenshot, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
-assert.equal(typeof api.v1.createBrowserPreviewWorkspace, "function")
+assert.equal(typeof api.v1.createBrowserPreviewBuffer, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.openOrCreateBrowserContainedSite, "function")
 const studioNativeConsumedTopLevelMethods = [
   "consumeContainedSiteSync",
   "ensureDirectory",
   "openOrCreateBrowserContainedSite",
-  "createBrowserPreviewWorkspace",
+  "createBrowserPreviewBuffer",
   "runBrowserSessionRecipe",
   "runRecipe",
   "setFrontendAdminBarVisible",
@@ -1090,12 +1090,12 @@ const workspaceTemplate: any = createWorkspaceIframe()
 workspaceTemplate.parentNode = workspaceContainer
 const workspaceStarts: string[] = []
 const workspaceReleases: string[] = []
-const previewWorkspace = api.v1.createBrowserPreviewWorkspace({ iframe: workspaceTemplate, maxHandles: 2, activeAttribute: "data-preview-active" })
+const previewBuffer = api.v1.createBrowserPreviewBuffer({ iframe: workspaceTemplate, activeAttribute: "data-preview-active" })
 const workspaceBoot = (key: string) => ({ ...lifecycleBoot, scope: `workspace-${key}` })
-const openWorkspacePreview = (key: string) => previewWorkspace.open(key, workspaceBoot(key), {
+const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.prepare(slot, workspaceBoot(key), {
   hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
   startPlaygroundWeb: async (request: any) => {
-	assert.equal(request.iframe.style.display, "", "a lazy preview iframe remains visible while its runtime starts")
+	assert.equal(request.iframe.style.display, "none", "prepared standby runtimes remain invisible")
 	assert.equal(request.iframe.loading, "eager", "Codebox owns startup instead of deferring to iframe lazy loading")
     workspaceStarts.push(key)
     return { client: key }
@@ -1105,24 +1105,29 @@ const openWorkspacePreview = (key: string) => previewWorkspace.open(key, workspa
     return true
   },
 })
-const workspaceA = await openWorkspacePreview("site-a@revision-1")
-const workspaceB = await openWorkspacePreview("site-b@revision-1")
-assert.equal(previewWorkspace.has("site-a@revision-1"), true)
-const workspaceAReturn = await openWorkspacePreview("site-a@revision-1")
-assert.equal(workspaceAReturn, workspaceA, "opening an existing resource returns its durable handle")
-assert.deepEqual(workspaceStarts, ["site-a@revision-1", "site-b@revision-1"], "A-B-A starts only two runtimes")
-assert.equal(previewWorkspace.activeKey, "site-a@revision-1")
-assert.equal(previewWorkspace.size, 2)
+const workspaceA = await prepareWorkspacePreview("slot-a", "site-a@revision-1")
+await previewBuffer.activate("slot-a")
+const workspaceB = await prepareWorkspacePreview("slot-b", "site-b@revision-1")
+assert.equal(previewBuffer.has("slot-a"), true)
+assert.equal(await previewBuffer.prepare("slot-a", workspaceBoot("unused")), workspaceA, "preparing an occupied slot returns it without replacing its runtime")
+assert.deepEqual(workspaceStarts, ["site-a@revision-1", "site-b@revision-1"], "preparing the double buffer starts exactly two runtimes")
+assert.equal(previewBuffer.activeSlot, "slot-a")
+assert.equal(previewBuffer.size, 2)
 assert.equal(workspaceA.iframe.style.display, "")
 assert.equal(workspaceB.iframe.style.display, "none")
 assert.equal(workspaceA.iframe.attributes["data-preview-active"], "")
 assert.equal(workspaceB.iframe.attributes["data-preview-active"], undefined)
-await openWorkspacePreview("site-c@revision-1")
-assert.deepEqual(workspaceReleases, ["site-b@revision-1"], "the least-recently-used inactive handle is evicted before a third boot")
-assert.equal(previewWorkspace.has("site-b@revision-1"), false)
-assert.equal(previewWorkspace.size, 2)
-await previewWorkspace.dispose()
-assert.deepEqual(workspaceReleases, ["site-b@revision-1", "site-a@revision-1", "site-c@revision-1"])
+await assert.rejects(() => prepareWorkspacePreview("slot-c", "site-c@revision-1"), (error: any) => error.code === "browser_preview_buffer_full")
+await previewBuffer.activate("slot-b")
+assert.equal(workspaceA.iframe.style.display, "none", "activation atomically hides the old active iframe")
+assert.equal(workspaceB.iframe.style.display, "")
+await previewBuffer.release("slot-a")
+assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old active runtime is explicit")
+const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
+assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
+assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
+await previewBuffer.dispose()
+assert.deepEqual(workspaceReleases, ["site-a@revision-1", "site-b@revision-1", "blank-replenishment"])
 assert.equal(workspaceTemplate.style.display, "", "workspace disposal restores the caller's template iframe")
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })

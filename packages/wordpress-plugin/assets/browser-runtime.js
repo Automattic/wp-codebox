@@ -16,7 +16,7 @@
 		'runtime-task:run',
 		'browser-preview:start',
 		'browser-preview:lifecycle',
-		'browser-preview:workspace',
+		'browser-preview:double-buffer',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
@@ -1288,20 +1288,16 @@
 		}
 	};
 
-	const createBrowserPreviewWorkspace = ( options = {} ) => {
+	const createBrowserPreviewBuffer = ( options = {} ) => {
 		const templateIframe = options.iframe;
 		const container = options.container || templateIframe?.parentNode;
 		if ( ! templateIframe || typeof templateIframe.cloneNode !== 'function' || ! container || typeof container.appendChild !== 'function' ) {
-			throw runtimeError( 'browser_preview_workspace', 'browser_preview_workspace_mount_invalid', 'A browser preview workspace requires an iframe template in an appendable container.' );
-		}
-		const requestedMaxHandles = Number( options.maxHandles ?? 2 );
-		if ( ! Number.isInteger( requestedMaxHandles ) || requestedMaxHandles < 1 ) {
-			throw runtimeError( 'browser_preview_workspace', 'browser_preview_workspace_limit_invalid', 'Browser preview workspace maxHandles must be a positive integer.' );
+			throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_mount_invalid', 'A browser preview buffer requires an iframe template in an appendable container.' );
 		}
 
-		const handles = new Map();
+		const slots = new Map();
 		const activeAttribute = typeof options.activeAttribute === 'string' && options.activeAttribute ? options.activeAttribute : '';
-		let activeKey = '';
+		let activeSlot = '';
 		let operationQueue = Promise.resolve();
 		templateIframe.style.display = 'none';
 		templateIframe.setAttribute?.( 'aria-hidden', 'true' );
@@ -1312,102 +1308,96 @@
 			operationQueue = result.catch( () => {} );
 			return result;
 		};
-		const setHandleVisible = ( handle, visible ) => {
-			handle.iframe.style.display = visible ? '' : 'none';
-			handle.iframe.setAttribute?.( 'aria-hidden', visible ? 'false' : 'true' );
+		const setSlotVisible = ( slot, visible ) => {
+			slot.iframe.style.display = visible ? '' : 'none';
+			slot.iframe.setAttribute?.( 'aria-hidden', visible ? 'false' : 'true' );
 			if ( activeAttribute ) {
-				if ( visible ) handle.iframe.setAttribute?.( activeAttribute, '' );
-				else handle.iframe.removeAttribute?.( activeAttribute );
+				if ( visible ) slot.iframe.setAttribute?.( activeAttribute, '' );
+				else slot.iframe.removeAttribute?.( activeAttribute );
 			}
 		};
-		const activateHandle = ( handle ) => {
-			if ( ! handle || handles.get( handle.key ) !== handle ) {
-				throw runtimeError( 'browser_preview_workspace', 'browser_preview_handle_closed', 'The browser preview handle is closed.' );
+		const activateSlot = ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
 			}
-			for ( const candidate of handles.values() ) {
-				setHandleVisible( candidate, candidate === handle );
+			for ( const candidate of slots.values() ) {
+				setSlotVisible( candidate, candidate === slot );
 			}
-			handles.delete( handle.key );
-			handles.set( handle.key, handle );
-			activeKey = handle.key;
-			return handle;
+			activeSlot = slot.id;
+			return slot;
 		};
-		const closeHandle = async ( handle ) => {
-			if ( ! handle || handles.get( handle.key ) !== handle ) {
-				return handle?.closedResult || null;
+		const releaseSlot = async ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				return slot?.releaseResult || null;
 			}
-			handles.delete( handle.key );
-			if ( activeKey === handle.key ) activeKey = '';
-			const lifecycle = await handle.preview.dispose();
-			handle.iframe.remove?.();
-			handle.closedResult = Object.freeze( {
-				schema: 'wp-codebox/browser-preview-handle-close-result/v1',
+			slots.delete( slot.id );
+			if ( activeSlot === slot.id ) activeSlot = '';
+			const lifecycle = await slot.preview.dispose();
+			slot.iframe.remove?.();
+			slot.releaseResult = Object.freeze( {
+				schema: 'wp-codebox/browser-preview-slot-release-result/v1',
 				success: true,
-				status: 'closed',
-				key: handle.key,
+				status: 'released',
+				slot: slot.id,
 				lifecycle,
 			} );
-			return handle.closedResult;
+			return slot.releaseResult;
 		};
-		const workspace = {
-			has: ( key ) => handles.has( String( key || '' ) ),
-			open: ( key, input, previewOptions = {} ) => enqueue( async () => {
-				const resourceKey = String( key || '' );
-				if ( ! resourceKey ) {
-					throw runtimeError( 'browser_preview_workspace', 'browser_preview_handle_key_required', 'Browser preview handles require an immutable resource key.' );
+		const buffer = {
+			has: ( id ) => slots.has( String( id || '' ) ),
+			prepare: ( id, input, previewOptions = {} ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				if ( ! slotId ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_id_required', 'Browser preview slots require an ID.' );
 				}
-				const existing = handles.get( resourceKey );
-				if ( existing ) return activateHandle( existing );
-
-				const previousActive = handles.get( activeKey );
-				while ( handles.size >= requestedMaxHandles ) {
-					await closeHandle( handles.values().next().value );
+				const existing = slots.get( slotId );
+				if ( existing ) return existing;
+				if ( slots.size >= 2 ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_full', 'Both browser preview slots are already prepared.' );
 				}
 				const iframe = templateIframe.cloneNode( false );
 				iframe.src = 'about:blank';
 				iframe.loading = 'eager';
-				for ( const handle of handles.values() ) setHandleVisible( handle, false );
-				setHandleVisible( { iframe }, true );
+				setSlotVisible( { iframe }, false );
 				container.appendChild( iframe );
 				let preview;
 				try {
 					preview = await startBrowserPreview( input, { ...previewOptions, iframe } );
 				} catch ( error ) {
 					iframe.remove?.();
-					if ( previousActive && handles.get( previousActive.key ) === previousActive ) activateHandle( previousActive );
 					throw error;
 				}
-				const handle = {
-					schema: 'wp-codebox/browser-preview-handle/v1',
-					key: resourceKey,
+				const slot = {
+					schema: 'wp-codebox/browser-preview-slot/v1',
+					id: slotId,
 					iframe,
 					client: preview.client,
 					preview,
-					activate: () => workspace.activate( resourceKey ),
-					close: () => workspace.close( resourceKey ),
+					activate: () => buffer.activate( slotId ),
+					release: () => buffer.release( slotId ),
 				};
-				handles.set( resourceKey, handle );
-				return activateHandle( handle );
+				slots.set( slotId, slot );
+				return slot;
 			} ),
-			activate: ( key ) => enqueue( async () => activateHandle( handles.get( String( key || '' ) ) ) ),
-			close: ( key ) => enqueue( async () => closeHandle( handles.get( String( key || '' ) ) ) ),
+			activate: ( id ) => enqueue( async () => activateSlot( slots.get( String( id || '' ) ) ) ),
+			release: ( id ) => enqueue( async () => releaseSlot( slots.get( String( id || '' ) ) ) ),
 			dispose: () => enqueue( async () => {
 				const results = [];
-				for ( const handle of [ ...handles.values() ] ) results.push( await closeHandle( handle ) );
+				for ( const slot of [ ...slots.values() ] ) results.push( await releaseSlot( slot ) );
 				templateIframe.style.display = '';
 				templateIframe.setAttribute?.( 'aria-hidden', 'false' );
 				if ( activeAttribute ) templateIframe.setAttribute?.( activeAttribute, '' );
-				return Object.freeze( { schema: 'wp-codebox/browser-preview-workspace-dispose-result/v1', success: true, status: 'disposed', handles: results } );
+				return Object.freeze( { schema: 'wp-codebox/browser-preview-buffer-dispose-result/v1', success: true, status: 'disposed', slots: results } );
 			} ),
-			get activeKey() {
-				return activeKey;
+			get activeSlot() {
+				return activeSlot;
 			},
 			get size() {
-				return handles.size;
+				return slots.size;
 			},
 		};
 
-		return Object.freeze( workspace );
+		return Object.freeze( buffer );
 	};
 
 	const browserSdkContract = Object.freeze( [
@@ -1419,7 +1409,7 @@
 		{ name: 'executeBrowserProviderProxyRequest' },
 		{ name: 'consumeContainedSiteSync', topLevelOrder: 1, topLevel: ( api ) => ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ) },
 		{ name: 'openOrCreateBrowserContainedSite', topLevelOrder: 2, topLevel: ( api ) => ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ) },
-		{ name: 'createBrowserPreviewWorkspace', topLevelOrder: 2.5, topLevel: ( api ) => ( options = {} ) => api.createBrowserPreviewWorkspace( options ) },
+		{ name: 'createBrowserPreviewBuffer', topLevelOrder: 2.5, topLevel: ( api ) => ( options = {} ) => api.createBrowserPreviewBuffer( options ) },
 		{ name: 'startBrowserPreview', topLevelOrder: 3, topLevel: ( api ) => ( input, options = {} ) => api.startBrowserPreview( input, options ) },
 		{ name: 'bootExecutableBrowserSession', topLevelOrder: 14, topLevel: ( api ) => async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ) },
 		{ name: 'createParentToolRequest', topLevelOrder: 18, topLevel: ( api ) => api.createParentToolRequest },
@@ -3786,7 +3776,7 @@ echo wp_json_encode( array(
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
 		openOrCreateBrowserContainedSite,
-		createBrowserPreviewWorkspace,
+		createBrowserPreviewBuffer,
 		createBrowserConnectorRequest: browserConnectorRequest,
 		executeBrowserConnectorRequest,
 		executeBrowserProviderProxyRequest,
