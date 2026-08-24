@@ -777,7 +777,7 @@ export const commandRegistry = [
       { name: "artifact", description: "Logical workload artifact or coverage name requested by the phase.", format: "string" },
       { name: "schema", description: "Optional expected artifact schema id for runtimes that materialize a concrete artifact.", format: "string" },
     ],
-    outputShape: "The requested typed artifact payload, for example wp-codebox/wordpress-rest-db-query-profile/v1.",
+    outputShape: "wp-codebox/typed-workload-artifact/v1 JSON object containing one requested typed artifact payload and preserving its concrete schema id, for example wp-codebox/wordpress-rest-db-query-profile/v1; collection fails when the artifact is missing or ambiguous.",
     outputSchema: objectEnvelopeSchema("wp-codebox/typed-workload-artifact/v1", {
       schema: { type: "string" },
     }),
