@@ -107,7 +107,8 @@ export function redactString(value: string, options: RedactStringOptions = {}): 
     .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => redactUrl(match, options))
     .replace(SECRET_LIKE_VALUE_GLOBAL_PATTERN, REDACTED_VALUE)
     .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, options.redactQueryAssignments ? `$1=${REDACTED_VALUE}` : "$&")
-    .replace(/((?:[A-Za-z0-9_-]*)(?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)(?:[A-Za-z0-9_-]*)(?:["'\s:=]+))[^&#\s"'<>]+/gi, `$1${REDACTED_VALUE}`)
+    .replace(/\b(Bearer[ \t]+)[^&#\s"'<>]+/gi, `$1${REDACTED_VALUE}`)
+    .replace(/((?:[A-Za-z0-9_-]*)(?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)(?:[A-Za-z0-9_-]*)(?:["'\s]*[:=]["'\s]*))[^&#\s"'<>]+/gi, `$1${REDACTED_VALUE}`)
 }
 
 export function redactError(error: unknown, options: RedactStringOptions = {}): Error {
