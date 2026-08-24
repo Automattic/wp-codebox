@@ -31,6 +31,14 @@ async function main(): Promise<void> {
     assert(Array.isArray(command.acceptedArgs), `${command.id} acceptedArgs must be an array`)
   }
 
+  const collectWorkloadResult = commandRegistry.find((command) => command.id === "wordpress.collect-workload-result")
+  assert(collectWorkloadResult, "wordpress.collect-workload-result must be registered")
+  assert(collectWorkloadResult.outputShape === "wp-codebox/typed-workload-artifact/v1 JSON object containing one requested typed artifact payload and preserving its concrete schema id, for example wp-codebox/wordpress-rest-db-query-profile/v1; collection fails when the artifact is missing or ambiguous.", "wordpress.collect-workload-result outputShape must describe the bounded typed artifact contract")
+  assert(collectWorkloadResult.outputSchema?.id === "wp-codebox/typed-workload-artifact/v1", "wordpress.collect-workload-result must declare the typed workload artifact output schema")
+  assert(collectWorkloadResult.outputSchema.jsonSchema?.type === "object", "wordpress.collect-workload-result output must be a JSON object")
+  const collectWorkloadResultSchemaProperty = (collectWorkloadResult.outputSchema.jsonSchema.properties as Record<string, Record<string, unknown>>).schema
+  assert(collectWorkloadResultSchemaProperty?.type === "string", "wordpress.collect-workload-result output must preserve the concrete artifact schema id")
+
   const metadataRuntimeIds = new Set(runtimeCommandDefinitions().map((command) => command.id))
   const handlerRuntimeIds = new Set(playgroundRuntimeCommandIds())
   const metadataWithoutHandler = sorted([...metadataRuntimeIds].filter((id) => !handlerRuntimeIds.has(id)))
