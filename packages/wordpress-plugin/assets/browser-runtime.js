@@ -995,6 +995,12 @@
 			cleanup: null,
 		}
 	);
+	const scopedBrowserPreviewRemoteUrl = ( remoteUrl, scope ) => {
+		if ( typeof remoteUrl !== 'string' || ! remoteUrl || ! scope ) return remoteUrl;
+		const url = new URL( remoteUrl, window.location?.href || 'http://localhost/' );
+		url.searchParams.set( 'wp-codebox-preview-scope', scope );
+		return url.toString();
+	};
 
 	const browserPreviewSlot = ( iframe ) => {
 		if ( ! iframe || ( typeof iframe !== 'object' && typeof iframe !== 'function' ) ) return null;
@@ -1244,7 +1250,7 @@
 			const request = {
 				...guardedStartOptions,
 				...( iframe ? { iframe } : {} ),
-				...( boot.remote_url ? { remoteUrl: boot.remote_url } : {} ),
+				...( boot.remote_url ? { remoteUrl: scopedBrowserPreviewRemoteUrl( boot.remote_url, scope ) } : {} ),
 				...( boot.cors_proxy_url ? { corsProxyUrl: boot.cors_proxy_url } : {} ),
 				...( boot.scope ? { scope: boot.scope } : {} ),
 				blueprint,
