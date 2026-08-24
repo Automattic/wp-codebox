@@ -1353,8 +1353,11 @@
 			}
 			slots.delete( slot.id );
 			if ( activeSlot === slot.id ) activeSlot = '';
+			const slotRoot = browserPreviewSlot( slot.iframe );
 			const lifecycle = await slot.preview.dispose();
-			slot.iframe.remove?.();
+			const currentIframe = currentBrowserPreviewIframe( slotRoot, slot.iframe );
+			currentIframe?.remove?.();
+			if ( currentIframe !== slot.iframe ) slot.iframe.remove?.();
 			slot.releaseResult = Object.freeze( {
 				schema: 'wp-codebox/browser-preview-slot-release-result/v1',
 				success: true,

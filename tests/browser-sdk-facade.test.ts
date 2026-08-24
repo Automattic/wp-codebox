@@ -1153,15 +1153,25 @@ assert.equal(repeatedReleases, 8, "repeated preview disposal remains bounded and
 
 const workspaceChildren: any[] = []
 const workspaceContainer = {
+	attach(iframe: any) {
+		iframe.parentNode = this
+		iframe.remove = () => {
+			const index = workspaceChildren.indexOf(iframe)
+			if (index >= 0) workspaceChildren.splice(index, 1)
+			iframe.parentNode = null
+		}
+	},
   appendChild(iframe: any) {
-    iframe.parentNode = this
-    iframe.remove = () => {
-      const index = workspaceChildren.indexOf(iframe)
-      if (index >= 0) workspaceChildren.splice(index, 1)
-      iframe.parentNode = null
-    }
+	this.attach(iframe)
     workspaceChildren.push(iframe)
   },
+	replaceChild(next: any, previous: any) {
+		const index = workspaceChildren.indexOf(previous)
+		assert.notEqual(index, -1)
+		previous.parentNode = null
+		this.attach(next)
+		workspaceChildren[index] = next
+	},
 }
 const createWorkspaceIframe = () => ({
   src: "about:blank",
@@ -1224,6 +1234,7 @@ assert.equal(workspaceA.iframe.style.display, "none", "activation atomically hid
 assert.equal(workspaceB.iframe.style.display, "")
 await previewBuffer.release("slot-a")
 assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old active runtime is explicit")
+assert.equal(workspaceChildren.length, 1, "release removes the lifecycle replacement iframe instead of leaking an about:blank browsing context")
 const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
 assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
 assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
