@@ -3373,7 +3373,8 @@ echo wp_json_encode( array(
 		let lastResult = null;
 		const invocationType = String( recipe?.browser?.invocation?.type || '' );
 		const materializerTask = String( taskPayload?.materializer?.task || '' );
-		const removeProviderProxy = invocationType === 'ability' || materializerTask ? null : installBrowserProviderProxy( client );
+		const localInvocation = invocationType === 'ability' || !! materializerTask;
+		const removeProviderProxy = localInvocation ? null : installBrowserProviderProxy( client );
 		try {
 			for ( const step of steps ) {
 				if ( step?.command === 'wp-codebox.agent-fanout-aggregate' ) {
@@ -3398,7 +3399,7 @@ echo wp_json_encode( array(
 					code: markBrowserPlaygroundRunner( withBrowserRunnerPrelude( codeArg.slice( 5 ), recipe ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
-					forceRequest: true,
+					forceRequest: ! localInvocation,
 				} );
 				if ( ! lastResult.success ) {
 					throw runtimeError( 'recipe_step_php', lastResult?.error?.code || 'browser_recipe_step_failed', lastResult?.error?.message || 'WP Codebox browser recipe step failed.', lastResult?.error?.data ?? null );

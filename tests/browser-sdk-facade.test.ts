@@ -362,10 +362,18 @@ await assert.rejects(
 )
 
 let providerProxyInstallations = 0
+let materializerDirectRuns = 0
+let materializerRequests = 0
 const materializerRecipeClient = {
-  run: async () => JSON.stringify({ success: true, data: null, error: null }),
+  run: async () => {
+    materializerDirectRuns += 1
+    return JSON.stringify({ success: true, data: materializerDirectRuns === 1 ? null : { invoked: true }, error: null })
+  },
   writeFile: async () => undefined,
-  request: async () => JSON.stringify({ success: true, data: { invoked: true }, error: null }),
+  request: async () => {
+    materializerRequests += 1
+    throw new Error("materializer recipes must run directly")
+  },
   onMessage: () => {
     providerProxyInstallations += 1
     throw new Error("materializer recipes must not install the provider proxy")
@@ -380,6 +388,8 @@ const materializerRecipeResult = await api.v1.methods.runRecipe(materializerReci
   },
 }, { materializer: { task: "example/run" } })
 assert.equal(providerProxyInstallations, 0)
+assert.equal(materializerDirectRuns, 2)
+assert.equal(materializerRequests, 0)
 assert.deepEqual(plain(materializerRecipeResult), { success: true, data: { invoked: true }, error: null })
 
 const browserRun = api.v1.normalizeBrowserRunResult({
