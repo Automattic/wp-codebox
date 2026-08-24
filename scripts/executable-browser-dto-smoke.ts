@@ -6,7 +6,7 @@ import { join } from "node:path"
 const dir = mkdtempSync(join(tmpdir(), "wp-codebox-executable-browser-dto-"))
 const smokePhp = join(dir, "smoke.php")
 const browserTaskBuilderPath = new URL("../packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php", import.meta.url).pathname
-const traitPath = new URL("../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php", import.meta.url).pathname
+const contractServicePath = new URL("../packages/wordpress-plugin/src/class-wp-codebox-browser-task-contract-service.php", import.meta.url).pathname
 
 writeFileSync(smokePhp, `<?php
 define('ABSPATH', __DIR__);
@@ -23,17 +23,26 @@ function smoke_assert(bool $condition, string $message): void {
 	}
 }
 
+function is_wp_error(mixed $value): bool {
+	return false;
+}
+
 require ${JSON.stringify(browserTaskBuilderPath)};
-require ${JSON.stringify(traitPath)};
+require ${JSON.stringify(contractServicePath)};
 
-class Smoke_Browser_DTO {
-	use WP_Codebox_Abilities_Execution;
-
-	public static function compact(array $contract): array {
-		return self::compact_browser_materializer_contract_dto($contract);
-	}
-
-	private static function normalize_agent_bundles(mixed $bundles): array {
+$helpers = array(
+	'create_browser_playground_session' => static function(array $input): array {
+		return array(
+			'success' => true,
+			'session' => array(
+				'id' => 'session-123',
+				'authorization' => array('mode' => 'runtime-principal'),
+			),
+			'task_input' => $input['task_input'],
+			'task_payload' => $input['task_payload'],
+		);
+	},
+	'normalize_agent_bundles' => static function(mixed $bundles): array {
 		$normalized = array();
 		foreach (is_array($bundles) ? $bundles : array() as $bundle) {
 			if (!is_array($bundle)) {
@@ -57,13 +66,17 @@ class Smoke_Browser_DTO {
 			$normalized[] = $entry;
 		}
 		return $normalized;
-	}
-}
+	},
+);
 
-$contract = array(
-	'success' => true,
-	'schema' => 'wp-codebox/browser-materializer-contract/v1',
-	'session_id' => 'session-123',
+$service = new WP_Codebox_Browser_Task_Contract_Service(
+	static function(string $name, array $args) use ($helpers): mixed {
+		smoke_assert(isset($helpers[$name]), 'fixture helper call must exist: ' . $name);
+		return $helpers[$name](...$args);
+	}
+);
+
+$input = array(
 	'task_input' => array(
 		'schema' => 'wp-codebox/agent-task-input/v1',
 		'goal' => 'Build a site',
@@ -87,7 +100,15 @@ $contract = array(
 	),
 );
 
-$compact = Smoke_Browser_DTO::compact($contract);
+$fixture_calls = array('create_browser_materializer_contract' => $input);
+$fixture_outputs = array();
+foreach ($fixture_calls as $method => $args) {
+	smoke_assert(method_exists($service, $method), 'generated fixture call must exist on contract service: ' . $method);
+	$fixture_outputs[$method] = $service->{$method}($args);
+	$encoded = json_encode($fixture_outputs[$method], JSON_UNESCAPED_SLASHES);
+	smoke_assert(is_string($encoded) && strlen($encoded) <= 4096, 'generated fixture output must remain bounded to 4096 bytes: ' . $method);
+}
+$compact = $fixture_outputs['create_browser_materializer_contract'];
 
 smoke_assert('wp-codebox/browser-materializer-product-dto/v1' === ($compact['schema'] ?? ''), 'summary DTO schema should remain product DTO');
 smoke_assert(!isset($compact['task_payload']['agent_bundles'][0]['bundle']), 'summary task_payload should not include inline bundle payloads');
