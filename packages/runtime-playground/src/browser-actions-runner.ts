@@ -6,7 +6,7 @@ import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError, isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import { runBrowserMultiActorScenarioCommand } from "./browser-multi-actor-scenario-runner.js"
 import type { BrowserArtifact, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeNetworkRecord, BrowserProbeViewport, BrowserProbeWebSocketRecord, BrowserStepRecord } from "./browser-artifacts.js"
-import { attachBrowserCaptureListeners, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
+import { attachBrowserCaptureListeners, captureBrowserPageHtml, launchChromiumBrowser, settleBrowserNetworkTasks, trackBrowserNavigation, type BrowserNavigationTracker } from "./browser-capture-session.js"
 import { captureBrowserDomSnapshot, type BrowserDomSnapshotArtifact } from "./browser-dom-snapshot.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness } from "./browser-liveness.js"
@@ -159,6 +159,9 @@ export async function runBrowserActionsCommand({
   let environmentEvidence: BrowserArtifact["summary"]["environment"] | undefined
   let resolvedEnvironment: Awaited<ReturnType<typeof resolvePlaywrightBrowserEnvironment>> | undefined
   let activePage: Page | undefined
+  let navigationTracker: BrowserNavigationTracker | undefined
+  let adaptiveCaptureNavigationUnsettled = false
+  let adaptiveCaptureBudgetMs = 0
   let installedTransportFaults: InstalledBrowserTransportFaults | undefined
   let transportFaultReport: BrowserTransportFaultReport | undefined
   const abortHandler = () => {
@@ -205,6 +208,7 @@ export async function runBrowserActionsCommand({
     }
     if (context && runPlan.transportFaults) installedTransportFaults = await installBrowserTransportFaults(context, runPlan.transportFaults, { policy: browserPreviewTransportFaultPolicy(networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
+    navigationTracker = trackBrowserNavigation(page)
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
         const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
@@ -433,9 +437,30 @@ export async function runBrowserActionsCommand({
 
     if (capture.has("html")) {
       try {
-        const html = await page.content()
-        await artifactSession.writeText("html", "snapshot.html", html)
-        htmlSha256 = sha256(Buffer.from(html, "utf8"))
+        const captureBudgetMs = Math.min(
+          runPlan.adaptiveExploration?.stabilization.maxWaitMs ?? stepTimeoutMs,
+          livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs),
+        )
+        adaptiveCaptureBudgetMs = captureBudgetMs
+        const captureResult = await captureBrowserPageHtml(page, navigationTracker, captureBudgetMs)
+        if (captureResult.status === "captured") {
+          await artifactSession.writeText("html", "snapshot.html", captureResult.html)
+          htmlSha256 = sha256(Buffer.from(captureResult.html, "utf8"))
+        } else if (adaptiveExplorationArtifact) {
+          adaptiveCaptureNavigationUnsettled = true
+          adaptiveExplorationArtifact.result.status = "incomplete"
+          adaptiveExplorationArtifact.result.diagnostics.unshift({
+            code: "browser_adaptive_capture_navigation_unsettled",
+            message: "Adaptive exploration ended while document navigation remained active; HTML capture was omitted and partial browser evidence was retained.",
+            metadata: { attempts: captureResult.attempts, budgetMs: captureBudgetMs, waitedMs: captureResult.waitedMs, reason: captureResult.reason },
+          })
+          adaptiveExplorationArtifact.result.diagnostics.splice(adaptiveExplorationArtifact.contract.descriptorLimits.maxDiagnostics)
+          boundAdaptiveExplorationArtifact(adaptiveExplorationArtifact, Math.max(512, Math.floor(adaptiveExplorationArtifact.contract.budgets.maxArtifactBytes / 2)))
+          await artifactSession.writeJson("adaptiveExploration", "adaptive-exploration.json", adaptiveExplorationArtifact)
+          if (adaptiveExplorationSummary) adaptiveExplorationSummary.status = "incomplete"
+        } else {
+          throw new Error(captureResult.reason)
+        }
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
@@ -447,7 +472,19 @@ export async function runBrowserActionsCommand({
 
     if (capture.has("screenshot")) {
       try {
-        await artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
+        const screenshotCaptureBudgetMs = adaptiveCaptureNavigationUnsettled ? Math.min(adaptiveCaptureBudgetMs, livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)) : 0
+        if (adaptiveCaptureNavigationUnsettled && screenshotCaptureBudgetMs <= 0) throw new Error("Adaptive screenshot capture budget was exhausted before capture started.")
+        const screenshotCapture = artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
+        if (adaptiveCaptureNavigationUnsettled) {
+          await withBrowserCommandLiveness({
+            command: "wordpress.browser-actions",
+            phase: "adaptive partial screenshot capture",
+            operation: screenshotCapture,
+            policy: { wallTimeoutMs: screenshotCaptureBudgetMs, idleTimeoutMs: 0 },
+          })
+        } else {
+          await screenshotCapture
+        }
         screenshotSha256 = await fileSha256(screenshotPath)
         if (capture.has("dom-snapshot")) {
           domSnapshots.push(await captureBrowserActionDomSnapshot({
@@ -463,7 +500,16 @@ export async function runBrowserActionsCommand({
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
-        if (!pendingError) {
+        if (adaptiveCaptureNavigationUnsettled && adaptiveExplorationArtifact) {
+          adaptiveExplorationArtifact.result.diagnostics.unshift({
+            code: "browser_adaptive_capture_screenshot_unavailable",
+            message: "Screenshot capture did not settle inside the remaining adaptive capture budget; other partial browser evidence was retained.",
+            metadata: { budgetMs: adaptiveCaptureBudgetMs, reason: error instanceof Error ? error.message : String(error) },
+          })
+          adaptiveExplorationArtifact.result.diagnostics.splice(adaptiveExplorationArtifact.contract.descriptorLimits.maxDiagnostics)
+          boundAdaptiveExplorationArtifact(adaptiveExplorationArtifact, Math.max(512, Math.floor(adaptiveExplorationArtifact.contract.budgets.maxArtifactBytes / 2)))
+          await artifactSession.writeJson("adaptiveExploration", "adaptive-exploration.json", adaptiveExplorationArtifact)
+        } else if (!pendingError) {
           pendingError = error instanceof Error ? error : new Error(String(error))
         }
       }
@@ -547,7 +593,7 @@ export async function runBrowserActionsCommand({
 		...(capture.has("network") ? { waterfall: "files/browser/waterfall.json" } : {}),
         ...(capture.has("websocket") ? { websocket: "files/browser/websocket.json" } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
-        ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
+        ...(screenshotSha256 ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(screenshots.length > 0 ? { screenshots } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(verifierResults.length > 0 ? { verifierResults: verifierResults.map((result) => result.artifact) } : {}),
@@ -578,7 +624,7 @@ export async function runBrowserActionsCommand({
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
         replayability: browserProbeReplayability(capture),
-        screenshot: capture.has("screenshot"),
+        screenshot: Boolean(screenshotSha256),
         auth: authSummary,
         environment: environmentEvidence,
         viewport,
@@ -617,6 +663,7 @@ export async function runBrowserActionsCommand({
       summary: artifact.summary,
     })
     abortSignal?.removeEventListener("abort", abortHandler)
+    navigationTracker?.dispose()
   }
 
   if (pendingError) {
