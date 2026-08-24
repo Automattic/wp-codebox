@@ -1327,7 +1327,7 @@
 			activeSlot = slot.id;
 			return slot;
 		};
-		const navigateSlot = async ( slot, path = '/', navigateOptions = {} ) => {
+		const navigateSlot = ( slot, path = '/', navigateOptions = {} ) => {
 			if ( ! slot || slots.get( slot.id ) !== slot ) {
 				throw runtimeError( 'browser_preview_navigation', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
 			}
@@ -1337,30 +1337,12 @@
 			if ( typeof slot.client?.goTo !== 'function' ) {
 				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_unavailable', 'The browser preview client does not support navigation.' );
 			}
-			const timeoutMs = Number( navigateOptions.timeoutMs ?? 15000 );
-			if ( ! Number.isFinite( timeoutMs ) || timeoutMs < 1 || timeoutMs > 180000 ) {
-				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_timeout_invalid', 'Browser preview navigation timeoutMs must be between 1 and 180000.' );
-			}
-			let timeout;
-			try {
-				await Promise.race( [
-					Promise.resolve( slot.client.goTo( path ) ),
-					new Promise( ( _resolve, reject ) => {
-						timeout = setTimeout( () => reject( runtimeError(
-							'browser_preview_navigation',
-							'browser_preview_navigation_timeout',
-							`Browser preview navigation to ${ path } timed out.`,
-							{ slot: slot.id, path, timeout_ms: timeoutMs }
-						) ), timeoutMs );
-					} ),
-				] );
-			} finally {
-				clearTimeout( timeout );
-			}
+			const navigation = Promise.resolve( slot.client.goTo( path ) );
+			void navigation.catch( ( error ) => navigateOptions.onError?.( error ) );
 			return Object.freeze( {
 				schema: 'wp-codebox/browser-preview-navigation-result/v1',
 				success: true,
-				status: 'navigated',
+				status: 'requested',
 				slot: slot.id,
 				path,
 			} );

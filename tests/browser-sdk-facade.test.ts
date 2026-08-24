@@ -1177,6 +1177,7 @@ workspaceTemplate.parentNode = workspaceContainer
 const workspaceStarts: string[] = []
 const workspaceReleases: string[] = []
 const workspaceNavigations: string[] = []
+const workspaceNavigationErrors: string[] = []
 const previewBuffer = api.v1.createBrowserPreviewBuffer({ iframe: workspaceTemplate, activeAttribute: "data-preview-active" })
 const workspaceBoot = (key: string) => ({ ...lifecycleBoot, scope: `workspace-${key}` })
 const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.prepare(slot, workspaceBoot(key), {
@@ -1189,7 +1190,7 @@ const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.pre
       client: key,
       goTo: async (path: string) => {
         workspaceNavigations.push(`${key}:${path}`)
-        if (key === "blank-replenishment") await new Promise(() => undefined)
+        if (key === "blank-replenishment") throw new Error("late navigation failure")
       },
     }
   },
@@ -1200,10 +1201,10 @@ const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.pre
 })
 const workspaceA = await prepareWorkspacePreview("slot-a", "site-a@revision-1")
 await previewBuffer.activate("slot-a")
-assert.deepEqual(plain(await workspaceA.navigate("/site-a", { timeoutMs: 50 })), {
+assert.deepEqual(plain(await workspaceA.navigate("/site-a")), {
   schema: "wp-codebox/browser-preview-navigation-result/v1",
   success: true,
-  status: "navigated",
+  status: "requested",
   slot: "slot-a",
   path: "/site-a",
 })
@@ -1226,11 +1227,10 @@ assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old ac
 const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
 assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
 assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
-await assert.rejects(
-  () => replenishedA.navigate("/slow", { timeoutMs: 5 }),
-  (error: any) => error.code === "browser_preview_navigation_timeout" && error.data.slot === "slot-a",
-)
+assert.equal((await replenishedA.navigate("/slow", { onError: (error: Error) => workspaceNavigationErrors.push(error.message) })).status, "requested")
+await new Promise((resolve) => setTimeout(resolve, 0))
 assert.deepEqual(workspaceNavigations, ["site-a@revision-1:/site-a", "blank-replenishment:/slow"])
+assert.deepEqual(workspaceNavigationErrors, ["late navigation failure"], "navigation dispatch reports asynchronous client failures without blocking readiness")
 await previewBuffer.dispose()
 assert.deepEqual(workspaceReleases, ["site-a@revision-1", "site-b@revision-1", "blank-replenishment"])
 assert.equal(workspaceTemplate.style.display, "", "workspace disposal restores the caller's template iframe")
