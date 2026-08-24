@@ -361,6 +361,28 @@ await assert.rejects(
   },
 )
 
+let providerProxyInstallations = 0
+const abilityRecipeClient = {
+  run: async () => JSON.stringify({ success: true, data: null, error: null }),
+  writeFile: async () => undefined,
+  request: async () => JSON.stringify({ success: true, data: { invoked: true }, error: null }),
+  onMessage: () => {
+    providerProxyInstallations += 1
+    throw new Error("ability recipes must not install the provider proxy")
+  },
+}
+const abilityRecipeResult = await api.v1.methods.runRecipe(abilityRecipeClient, {
+  browser: {
+    task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json",
+    invocation: { type: "ability", name: "example/run" },
+  },
+  workflow: {
+    steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ],
+  },
+}, { input: true })
+assert.equal(providerProxyInstallations, 0)
+assert.deepEqual(plain(abilityRecipeResult), { success: true, data: { invoked: true }, error: null })
+
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
   data: {

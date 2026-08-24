@@ -3371,7 +3371,8 @@ echo wp_json_encode( array(
 		}
 
 		let lastResult = null;
-		const removeProviderProxy = installBrowserProviderProxy( client );
+		const invocationType = String( recipe?.browser?.invocation?.type || '' );
+		const removeProviderProxy = invocationType === 'ability' ? null : installBrowserProviderProxy( client );
 		try {
 			for ( const step of steps ) {
 				if ( step?.command === 'wp-codebox.agent-fanout-aggregate' ) {
