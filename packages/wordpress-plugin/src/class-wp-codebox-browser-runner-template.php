@@ -915,6 +915,7 @@ PHP;
 		// The generated Playground runner is intentionally self-contained. Embed the
 		// same bounded executor used by the host registration, never a host bridge.
 		$sandbox_executor = file_get_contents( __DIR__ . '/class-wp-codebox-sandbox-workspace-executor.php' );
+		$sandbox_executor = preg_replace( '/^\s*<\?php\s*/', '', (string) $sandbox_executor, 1 );
 		return "\nif ( ! class_exists( 'WP_Codebox_Sandbox_Workspace_Executor' ) ) {\n" . $sandbox_executor . "\n}\n" . '
 class WP_Codebox_Browser_Filesystem_Write_Tool {
 	public function handle_tool_call( array $parameters, array $tool_def = array() ): array {
