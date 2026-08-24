@@ -341,6 +341,26 @@ await assert.rejects(
   },
 )
 
+const failedRequestClient = {
+  writeFile: async () => undefined,
+  request: async () => {
+    throw Object.assign(new Error("PHP endpoint returned 500"), { code: "http_500" })
+  },
+}
+await assert.rejects(
+  () => api.v1.methods.runPhpRequest(failedRequestClient, {
+    code: "<?php throw new Exception( 'broken' );",
+    forceRequest: true,
+  }),
+  (error: any) => {
+    assert.equal(error.code, "playground_request_failed")
+    assert.match(error.message, /PHP endpoint returned 500/)
+    assert.equal(error.data.last_error.code, "http_500")
+    assert.equal(error.data.attempts.length, 2)
+    return true
+  },
+)
+
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
   data: {

@@ -1521,7 +1521,7 @@
 		throw runtimeError(
 			phase,
 			`playground_${ method }_failed`,
-			`Playground ${ method } failed during ${ phase }.`,
+			`Playground ${ method } failed during ${ phase }: ${ lastError?.message || 'unknown error' }`,
 			{
 				last_error: lastError ? errorDetails( lastError ) : null,
 				attempts: failedAttempts,
