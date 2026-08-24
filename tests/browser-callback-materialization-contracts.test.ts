@@ -242,7 +242,8 @@ try {
   await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_ORDINARY_NONCE`, { redirect: "manual" })
   assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 0, "ordinary redirects remain outside the service-worker trace")
   await fetch(`${proxied.serverUrl}/sw.js`)
-  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+  const serviceWorkerResponse = proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1)
+  assert.deepEqual(serviceWorkerResponse, {
     sequence: 1,
     method: "GET",
     path: "/sw.js",
@@ -250,7 +251,13 @@ try {
     serviceWorker: false,
     outcome: "response",
     status: 200,
+    contentLength: "2",
+    serviceWorkerAllowed: "/",
+    bodyRewritten: false,
   })
+  assert.equal(serviceWorkerResponse?.contentLength, "2", "the trace preserves the normalized response content length")
+  assert.equal(serviceWorkerResponse?.serviceWorkerAllowed, "/", "the trace exposes the worker's allowed root scope")
+  assert.equal(serviceWorkerResponse?.bodyRewritten, false, "the trace reports that an untyped worker body was not rewritten")
   const redirectResponse = await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_REQUEST_NONCE`, {
     headers: { "service-worker": "script", "sec-fetch-dest": "serviceworker" },
     redirect: "manual",
@@ -267,6 +274,7 @@ try {
     serviceWorker: true,
     outcome: "response",
     status: 302,
+    bodyRewritten: false,
     upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
     visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
   })
@@ -285,6 +293,7 @@ try {
     serviceWorker: true,
     outcome: "response",
     status: 302,
+    bodyRewritten: false,
     upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
     visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
   })
@@ -298,6 +307,8 @@ try {
     serviceWorker: true,
     outcome: "upstream-error",
     status: 200,
+    contentType: "application/javascript",
+    bodyRewritten: true,
   })
   assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_TRUNCATED_TOKEN/)
   await Promise.all(Array.from({ length: 64 }, (_, index) => fetch(`${proxied.serverUrl}/bounded-trace/${index}`, { headers: { "service-worker": "script", ...(index === 0 ? { "sec-fetch-dest": "PRIVATE_DESTINATION" } : {}) } })))
