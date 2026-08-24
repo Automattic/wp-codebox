@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { createRuntime } from "../packages/runtime-core/src/index.js"
+import { createRuntime, type RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { PlaygroundCommandCrashError, PlaygroundCommandError } from "../packages/runtime-playground/src/playground-command-errors.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundCliModule } from "../packages/runtime-playground/src/index.js"
@@ -258,7 +258,41 @@ await assert.rejects(
 )
 await workerFailureRuntime.destroy()
 
-const bootstrappedRunPhp = bootstrapPhpCode({ kind: "wordpress", name: "fatal-diagnostic", version: "7.0", blueprint: { steps: [] } }, "throw new RuntimeException('boom');", [])
+const fatalDiagnosticRuntimeSpec: RuntimeCreateSpec = {
+  backend: "wordpress-playground",
+  environment: {
+    kind: "wordpress",
+    name: "fatal-diagnostic",
+    version: "7.0",
+    blueprint: { steps: [] },
+  },
+  policy: {
+    network: "deny",
+    filesystem: "sandbox",
+    commands: ["wordpress.run-php"],
+    secrets: "none",
+    approvals: "never",
+  },
+}
+
+assert.deepEqual(fatalDiagnosticRuntimeSpec, {
+  backend: "wordpress-playground",
+  environment: {
+    kind: "wordpress",
+    name: "fatal-diagnostic",
+    version: "7.0",
+    blueprint: { steps: [] },
+  },
+  policy: {
+    network: "deny",
+    filesystem: "sandbox",
+    commands: ["wordpress.run-php"],
+    secrets: "none",
+    approvals: "never",
+  },
+})
+
+const bootstrappedRunPhp = bootstrapPhpCode(fatalDiagnosticRuntimeSpec, "throw new RuntimeException('boom');", [])
 assert.match(bootstrappedRunPhp, /register_shutdown_function/)
 assert.match(bootstrappedRunPhp, /WP_CODEBOX_PHP_FATAL_DIAGNOSTIC/)
 assert.match(bootstrappedRunPhp, /wp-codebox\/php-fatal-diagnostic\/v1/)
