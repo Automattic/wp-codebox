@@ -1296,6 +1296,7 @@
 		}
 
 		const slots = new Map();
+		const releasedSlots = new Map();
 		const activeAttribute = typeof options.activeAttribute === 'string' && options.activeAttribute ? options.activeAttribute : '';
 		let activeSlot = '';
 		let operationQueue = Promise.resolve();
@@ -1364,6 +1365,8 @@
 				slot: slot.id,
 				lifecycle,
 			} );
+			releasedSlots.set( slot.id, slot.releaseResult );
+			if ( releasedSlots.size > 2 ) releasedSlots.delete( releasedSlots.keys().next().value );
 			return slot.releaseResult;
 		};
 		const buffer = {
@@ -1401,10 +1404,14 @@
 					release: () => buffer.release( slotId ),
 				};
 				slots.set( slotId, slot );
+				releasedSlots.delete( slotId );
 				return slot;
 			} ),
 			activate: ( id ) => enqueue( async () => activateSlot( slots.get( String( id || '' ) ) ) ),
-			release: ( id ) => enqueue( async () => releaseSlot( slots.get( String( id || '' ) ) ) ),
+			release: ( id ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				return slots.has( slotId ) ? releaseSlot( slots.get( slotId ) ) : ( releasedSlots.get( slotId ) || null );
+			} ),
 			dispose: () => enqueue( async () => {
 				const results = [];
 				for ( const slot of [ ...slots.values() ] ) results.push( await releaseSlot( slot ) );
