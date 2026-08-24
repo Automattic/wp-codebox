@@ -51,6 +51,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-preview:start",
     "browser-preview:lifecycle",
     "browser-preview:double-buffer",
+    "browser-preview:navigation",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
@@ -1175,6 +1176,7 @@ const workspaceTemplate: any = createWorkspaceIframe()
 workspaceTemplate.parentNode = workspaceContainer
 const workspaceStarts: string[] = []
 const workspaceReleases: string[] = []
+const workspaceNavigations: string[] = []
 const previewBuffer = api.v1.createBrowserPreviewBuffer({ iframe: workspaceTemplate, activeAttribute: "data-preview-active" })
 const workspaceBoot = (key: string) => ({ ...lifecycleBoot, scope: `workspace-${key}` })
 const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.prepare(slot, workspaceBoot(key), {
@@ -1183,7 +1185,13 @@ const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.pre
 	assert.equal(request.iframe.style.display, "none", "prepared standby runtimes remain invisible")
 	assert.equal(request.iframe.loading, "eager", "Codebox owns startup instead of deferring to iframe lazy loading")
     workspaceStarts.push(key)
-    return { client: key }
+    return {
+      client: key,
+      goTo: async (path: string) => {
+        workspaceNavigations.push(`${key}:${path}`)
+        if (key === "blank-replenishment") await new Promise(() => undefined)
+      },
+    }
   },
   disposeClient: async () => {
     workspaceReleases.push(key)
@@ -1192,6 +1200,13 @@ const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.pre
 })
 const workspaceA = await prepareWorkspacePreview("slot-a", "site-a@revision-1")
 await previewBuffer.activate("slot-a")
+assert.deepEqual(plain(await workspaceA.navigate("/site-a", { timeoutMs: 50 })), {
+  schema: "wp-codebox/browser-preview-navigation-result/v1",
+  success: true,
+  status: "navigated",
+  slot: "slot-a",
+  path: "/site-a",
+})
 const workspaceB = await prepareWorkspacePreview("slot-b", "site-b@revision-1")
 assert.equal(previewBuffer.has("slot-a"), true)
 assert.equal(await previewBuffer.prepare("slot-a", workspaceBoot("unused")), workspaceA, "preparing an occupied slot returns it without replacing its runtime")
@@ -1211,6 +1226,11 @@ assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old ac
 const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
 assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
 assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
+await assert.rejects(
+  () => replenishedA.navigate("/slow", { timeoutMs: 5 }),
+  (error: any) => error.code === "browser_preview_navigation_timeout" && error.data.slot === "slot-a",
+)
+assert.deepEqual(workspaceNavigations, ["site-a@revision-1:/site-a", "blank-replenishment:/slow"])
 await previewBuffer.dispose()
 assert.deepEqual(workspaceReleases, ["site-a@revision-1", "site-b@revision-1", "blank-replenishment"])
 assert.equal(workspaceTemplate.style.display, "", "workspace disposal restores the caller's template iframe")

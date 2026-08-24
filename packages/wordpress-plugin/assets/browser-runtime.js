@@ -17,6 +17,7 @@
 		'browser-preview:start',
 		'browser-preview:lifecycle',
 		'browser-preview:double-buffer',
+		'browser-preview:navigation',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
@@ -1326,6 +1327,44 @@
 			activeSlot = slot.id;
 			return slot;
 		};
+		const navigateSlot = async ( slot, path = '/', navigateOptions = {} ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
+			}
+			if ( typeof path !== 'string' || ! path.startsWith( '/' ) || path.startsWith( '//' ) ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_path_invalid', 'Browser preview navigation requires a safe absolute path.' );
+			}
+			if ( typeof slot.client?.goTo !== 'function' ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_unavailable', 'The browser preview client does not support navigation.' );
+			}
+			const timeoutMs = Number( navigateOptions.timeoutMs ?? 15000 );
+			if ( ! Number.isFinite( timeoutMs ) || timeoutMs < 1 || timeoutMs > 180000 ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_timeout_invalid', 'Browser preview navigation timeoutMs must be between 1 and 180000.' );
+			}
+			let timeout;
+			try {
+				await Promise.race( [
+					Promise.resolve( slot.client.goTo( path ) ),
+					new Promise( ( _resolve, reject ) => {
+						timeout = setTimeout( () => reject( runtimeError(
+							'browser_preview_navigation',
+							'browser_preview_navigation_timeout',
+							`Browser preview navigation to ${ path } timed out.`,
+							{ slot: slot.id, path, timeout_ms: timeoutMs }
+						) ), timeoutMs );
+					} ),
+				] );
+			} finally {
+				clearTimeout( timeout );
+			}
+			return Object.freeze( {
+				schema: 'wp-codebox/browser-preview-navigation-result/v1',
+				success: true,
+				status: 'navigated',
+				slot: slot.id,
+				path,
+			} );
+		};
 		const releaseSlot = async ( slot ) => {
 			if ( ! slot || slots.get( slot.id ) !== slot ) {
 				return slot?.releaseResult || null;
@@ -1374,6 +1413,7 @@
 					client: preview.client,
 					preview,
 					activate: () => buffer.activate( slotId ),
+					navigate: ( path = '/', navigateOptions = {} ) => enqueue( () => navigateSlot( slot, path, navigateOptions ) ),
 					release: () => buffer.release( slotId ),
 				};
 				slots.set( slotId, slot );
