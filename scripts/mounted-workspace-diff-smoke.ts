@@ -72,11 +72,11 @@ try {
   assert.match(changed.get("delete-me.txt")?.beforeSha256 ?? "", /^[a-f0-9]{64}$/)
   assert.equal(changed.get("delete-me.txt")?.afterSha256, undefined)
   assert.equal(changed.get("delete-me.txt")?.beforeMode, "100644")
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/generated\.txt b\/workspace\/plugin\/generated\.txt/)
+  assert.match(result.patch, /diff --git a\/generated\.txt b\/generated\.txt/)
   assert.match(result.patch, /\+cooked/)
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/plugin\.php b\/workspace\/plugin\/plugin\.php/)
+  assert.match(result.patch, /diff --git a\/plugin\.php b\/plugin\.php/)
   assert.match(result.patch, /\+\/\/ after/)
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/script\.sh b\/workspace\/plugin\/script\.sh/)
+  assert.match(result.patch, /diff --git a\/script\.sh b\/script\.sh/)
   assert.match(result.patch, /@@ -39,7 \+39,7 @@/)
   assert.match(result.patch, /-line 042 before/)
   assert.match(result.patch, /\+line 042 after/)
@@ -148,7 +148,7 @@ try {
   assert.equal(gitChanged.get("AGENT_WROTE_THIS.md")?.status, "added")
   assert.equal(gitChanged.get("committed.php")?.status, "modified")
   assert.equal(gitChanged.get("remove-me.txt")?.status, "deleted")
-  assert.match(gitResult.patch, /diff --git a\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md b\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md/)
+  assert.match(gitResult.patch, /diff --git a\/AGENT_WROTE_THIS\.md b\/AGENT_WROTE_THIS\.md/)
   assert.match(gitResult.patch, /\+cooked by the agent/)
   assert.match(gitResult.patch, /\+\/\/ edited by agent/)
   assert.match(gitResult.patch, /deleted file mode 100644/)
@@ -195,7 +195,7 @@ try {
 
   // The real agent change is captured.
   assert.equal(excludeChanged.get("docs/README.md")?.status, "modified")
-  assert.match(excludeResult.patch, /diff --git a\/workspace\/build-with-wordpress\/docs\/README\.md b\/workspace\/build-with-wordpress\/docs\/README\.md/)
+  assert.match(excludeResult.patch, /diff --git a\/docs\/README\.md b\/docs\/README\.md/)
   assert.match(excludeResult.patch, /\+after the agent edit/)
   // None of the runner's `.ci/**` materialization leaks into the change set.
   for (const relativePath of excludeChanged.keys()) {

@@ -1,54 +1,135 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { directoryDiff } from "../packages/runtime-playground/src/artifacts.js"
 
 const execFileAsync = promisify(execFile)
-const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-artifact-patch-"))
+const root = await mkdtemp(join(tmpdir(), "wp-codebox-artifact-patch-"))
 
 try {
-  const addedBaseline = join(workspace, "added-baseline")
-  const addedCurrent = join(workspace, "added-current")
-  await mkdir(addedBaseline, { recursive: true })
-  await mkdir(addedCurrent, { recursive: true })
-  await writeFile(join(addedCurrent, "added.txt"), "added\n")
+  const textBaseline = join(root, "text-baseline")
+  const textCurrent = join(root, "text-current")
+  const baselineTextFiles = {
+    "deleted.txt": "deleted\n",
+    "modified.txt": "before\n",
+  }
+  const currentTextFiles = {
+    "added.txt": "added\n",
+    "modified.txt": "after\n",
+  }
+  await writeFiles(textBaseline, baselineTextFiles)
+  await writeFiles(textCurrent, currentTextFiles)
 
-  const added = await directoryDiff(addedBaseline, addedCurrent, "/workspace/plugin")
-  assert.match(added.patch, /^diff --git a\/workspace\/plugin\/added\.txt b\/workspace\/plugin\/added\.txt/m)
-  assert.match(added.patch, /^--- \/dev\/null$/m)
-  assert.match(added.patch, /^\+\+\+ b\/workspace\/plugin\/added\.txt$/m)
-  await assertPatchApplies(join(workspace, "added-apply"), added.patch)
+  const textDiff = await directoryDiff(textBaseline, textCurrent, "/workspace/plugin")
+  assert.deepEqual(textDiff.files.map(({ path, relativePath, status }) => ({ path, relativePath, status })), [
+    { path: "/workspace/plugin/added.txt", relativePath: "added.txt", status: "added" },
+    { path: "/workspace/plugin/deleted.txt", relativePath: "deleted.txt", status: "deleted" },
+    { path: "/workspace/plugin/modified.txt", relativePath: "modified.txt", status: "modified" },
+  ])
+  assert.deepEqual(patchHeaders(textDiff.patch), [
+    "diff --git a/added.txt b/added.txt",
+    "diff --git a/deleted.txt b/deleted.txt",
+    "diff --git a/modified.txt b/modified.txt",
+  ])
+  assert.deepEqual(fileMarkers(textDiff.patch), [
+    "--- /dev/null",
+    "+++ b/added.txt",
+    "--- a/deleted.txt",
+    "+++ /dev/null",
+    "--- a/modified.txt",
+    "+++ b/modified.txt",
+  ])
+  await assertPatchRoundTrip(join(root, "text-apply"), textDiff.patch, baselineTextFiles, currentTextFiles)
 
-  const deletedBaseline = join(workspace, "deleted-baseline")
-  const deletedCurrent = join(workspace, "deleted-current")
-  await mkdir(deletedBaseline, { recursive: true })
-  await mkdir(deletedCurrent, { recursive: true })
-  await writeFile(join(deletedBaseline, "deleted.txt"), "deleted\n")
+  const gitSource = join(root, "git-source")
+  const baselineGitFiles = {
+    "binary-deleted.bin": Buffer.from([0, 1, 2, 3, 4]),
+    "binary-modified.bin": Buffer.from([0, 10, 20, 30, 40]),
+    "text-deleted.txt": "deleted\n",
+    "text-modified.txt": "before\n",
+  }
+  const currentGitFiles = {
+    "binary-added.bin": Buffer.from([0, 5, 10, 15, 20]),
+    "binary-modified.bin": Buffer.from([0, 10, 99, 30, 40]),
+    "text-added.txt": "added\n",
+    "text-modified.txt": "after\n",
+  }
+  await writeFiles(gitSource, baselineGitFiles)
+  await execFileAsync("git", ["init", "--quiet"], { cwd: gitSource })
+  await execFileAsync("git", ["config", "user.email", "smoke@wp-codebox.test"], { cwd: gitSource })
+  await execFileAsync("git", ["config", "user.name", "WP Codebox Smoke"], { cwd: gitSource })
+  await execFileAsync("git", ["add", "."], { cwd: gitSource })
+  await execFileAsync("git", ["commit", "--quiet", "-m", "baseline"], { cwd: gitSource })
+  await replaceFiles(gitSource, baselineGitFiles, currentGitFiles)
+  await execFileAsync("git", ["add", "--all"], { cwd: gitSource })
+  const { stdout: gitPatch } = await execFileAsync("git", [
+    "diff",
+    "--cached",
+    "--binary",
+    "--no-ext-diff",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "HEAD",
+    "--",
+  ], { cwd: gitSource, maxBuffer: 1024 * 1024 })
 
-  const deleted = await directoryDiff(deletedBaseline, deletedCurrent, "/workspace/plugin")
-  assert.match(deleted.patch, /^diff --git a\/workspace\/plugin\/deleted\.txt b\/workspace\/plugin\/deleted\.txt/m)
-  assert.match(deleted.patch, /^--- a\/workspace\/plugin\/deleted\.txt$/m)
-  assert.match(deleted.patch, /^\+\+\+ \/dev\/null$/m)
-  await assertPatchApplies(join(workspace, "deleted-apply"), deleted.patch, { "workspace/plugin/deleted.txt": "deleted\n" })
+  assert.deepEqual(patchHeaders(gitPatch), [
+    "diff --git a/binary-added.bin b/binary-added.bin",
+    "diff --git a/binary-deleted.bin b/binary-deleted.bin",
+    "diff --git a/binary-modified.bin b/binary-modified.bin",
+    "diff --git a/text-added.txt b/text-added.txt",
+    "diff --git a/text-deleted.txt b/text-deleted.txt",
+    "diff --git a/text-modified.txt b/text-modified.txt",
+  ])
+  assert.equal(gitPatch.match(/^GIT binary patch$/gm)?.length, 3)
+  await assertPatchRoundTrip(join(root, "binary-apply"), gitPatch, baselineGitFiles, currentGitFiles)
 
   console.log("Artifact patch git apply smoke passed")
 } finally {
-  await rm(workspace, { recursive: true, force: true })
+  await rm(root, { recursive: true, force: true })
 }
 
-async function assertPatchApplies(directory: string, patch: string, files: Record<string, string> = {}): Promise<void> {
+type FixtureFiles = Record<string, string | Buffer>
+
+async function assertPatchRoundTrip(directory: string, patch: string, baseline: FixtureFiles, expected: FixtureFiles): Promise<void> {
+  await writeFiles(directory, baseline)
+  await execFileAsync("git", ["init", "--quiet"], { cwd: directory })
+  const patchPath = join(root, `${basename(directory)}.diff`)
+  await writeFile(patchPath, patch)
+  await execFileAsync("git", ["apply", "--check", "--whitespace=error", "--", patchPath], { cwd: directory })
+  await execFileAsync("git", ["apply", "--whitespace=error", "--", patchPath], { cwd: directory })
+
+  for (const [path, contents] of Object.entries(expected)) {
+    assert.deepEqual(await readFile(join(directory, path)), Buffer.from(contents))
+  }
+  for (const path of Object.keys(baseline).filter((path) => !(path in expected))) {
+    await assert.rejects(readFile(join(directory, path)), (error: NodeJS.ErrnoException) => error.code === "ENOENT")
+  }
+}
+
+async function replaceFiles(directory: string, before: FixtureFiles, after: FixtureFiles): Promise<void> {
+  for (const path of Object.keys(before).filter((path) => !(path in after))) {
+    await rm(join(directory, path))
+  }
+  await writeFiles(directory, after)
+}
+
+async function writeFiles(directory: string, files: FixtureFiles): Promise<void> {
   await mkdir(directory, { recursive: true })
-  await execFileAsync("git", ["init"], { cwd: directory })
   for (const [path, contents] of Object.entries(files)) {
     const fullPath = join(directory, path)
     await mkdir(dirname(fullPath), { recursive: true })
     await writeFile(fullPath, contents)
   }
+}
 
-  const patchPath = join(directory, "patch.diff")
-  await writeFile(patchPath, patch)
-  await execFileAsync("git", ["apply", "--check", patchPath], { cwd: directory })
+function patchHeaders(patch: string): string[] {
+  return patch.split("\n").filter((line) => line.startsWith("diff --git "))
+}
+
+function fileMarkers(patch: string): string[] {
+  return patch.split("\n").filter((line) => line.startsWith("--- ") || line.startsWith("+++ "))
 }
