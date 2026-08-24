@@ -212,6 +212,7 @@ try {
   await execFileAsync("git", ["-C", vfsBackedRepo, "config", "user.name", "wp-codebox smoke"])
   await writeFile(join(vfsBackedRepo, "committed.php"), "<?php\n// committed\n")
   await writeFile(join(vfsBackedRepo, "remove-me.txt"), "delete this\n")
+  await writeFile(join(vfsBackedRepo, "preserve-me.txt"), "preserve this\n")
   await execFileAsync("git", ["-C", vfsBackedRepo, "add", "."])
   await execFileAsync("git", ["-C", vfsBackedRepo, "commit", "-q", "-m", "baseline"])
 
@@ -277,7 +278,7 @@ try {
         contentsBase64: "",
       },
       {
-        relativePath: "remove-me.txt",
+        relativePath: "preserve-me.txt",
         sha256: "unused",
       },
       {
@@ -293,15 +294,22 @@ try {
     ],
   }])
   assert.equal(emptyAndUnsafePathMaterialized.materialized, 1)
-  assert.equal(emptyAndUnsafePathMaterialized.deleted, 1)
+  assert.equal(emptyAndUnsafePathMaterialized.deleted, 0)
   assert.equal(emptyAndUnsafePathMaterialized.skipped, 2)
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.schema, "wp-codebox/materialization-phase-result/v1")
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.phase, "playground-vfs-mount-materialization")
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.status, "completed")
   assert.equal((await stat(join(vfsBackedRepo, "empty.txt"))).size, 0)
+  assert.equal(await readFile(join(vfsBackedRepo, "committed.php"), "utf8"), "<?php\n// committed\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "remove-me.txt"), "utf8"), "delete this\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "preserve-me.txt"), "utf8"), "preserve this\n")
   await assert.rejects(() => stat(join(root, "escaped.txt")))
 
-  const materialized = await applyVfsMountSnapshots(vfsMounts, [{
+  const deletionMounts: MountSpec[] = [{
+    ...vfsMounts[0],
+    metadata: { ...vfsMounts[0].metadata, materializeDeletes: true },
+  }]
+  const materialized = await applyVfsMountSnapshots(deletionMounts, [{
     mountIndex: 0,
     target: "/workspace/vfs-backed-repo",
     files: [
@@ -315,10 +323,20 @@ try {
         sha256: "unused",
         contentsBase64: Buffer.from("created inside playground\n").toString("base64"),
       },
+      {
+        relativePath: "preserve-me.txt",
+        sha256: "unused",
+      },
     ],
   }])
   assert.equal(materialized.materialized, 2)
   assert.equal(materialized.deleted, 2)
+  assert.equal(materialized.skipped, 0)
+  assert.equal(await readFile(join(vfsBackedRepo, "committed.php"), "utf8"), "<?php\n// edited inside playground\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "AGENT_WROTE_THIS.md"), "utf8"), "created inside playground\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "preserve-me.txt"), "utf8"), "preserve this\n")
+  await assert.rejects(() => stat(join(vfsBackedRepo, "empty.txt")))
+  await assert.rejects(() => stat(join(vfsBackedRepo, "remove-me.txt")))
 
   const vfsResult = await captureMountDiffs(artifactRoot, filesDirectory, vfsMounts, new ArtifactRedactor())
   const vfsChanged = new Map(vfsResult.changedFiles.files.map((file) => [file.relativePath, file]))
