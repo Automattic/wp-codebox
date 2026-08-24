@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { mkdtempSync } from "node:fs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
-import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
+import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction, type RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode, phpCodeFromArgs } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { phpEnvAssignmentFunction, phpEnvAssignments } from "../packages/runtime-playground/src/php-snippets.js"
 
@@ -116,7 +116,29 @@ assert.deepEqual(JSON.parse(actionOutput), {
   contained_runtime_abilities_ready: 1,
 })
 
+const runtimeSpec: RuntimeCreateSpec = {
+  backend: "wordpress-playground",
+  environment: {
+    kind: "wordpress",
+    version: "latest",
+    blueprint: {},
+  },
+  policy: {
+    network: "deny",
+    filesystem: "readwrite-mounts",
+    commands: ["wordpress.run-php"],
+    secrets: "none",
+    approvals: "never",
+  },
+}
+
 const bootstrappedRunPhp = bootstrapPhpCode({
+  ...runtimeSpec,
+  environment: { ...runtimeSpec.environment, databaseSetup: "external" },
+  policy: { ...runtimeSpec.policy, secrets: "connector-scoped" },
+  runtimeEnv: { EXAMPLE_RUNTIME_ENV: "runtime-value" },
+  secretEnv: { EXAMPLE_SECRET_ENV: "secret-value", MYSQL_PASSWORD: "connector-secret" },
+  secretEnvTargets: { DB_PASSWORD: "MYSQL_PASSWORD" },
   metadata: {
     recipe: {
       inputs: {
@@ -125,10 +147,13 @@ const bootstrappedRunPhp = bootstrapPhpCode({
       },
     },
   },
-} as never, "<?php echo 'ok';", [])
+}, "<?php echo 'ok';", [])
 assert.match(bootstrappedRunPhp, /contained_runtime_run_php_component_lifecycle_replay_prepare/)
 assert.match(bootstrappedRunPhp, /CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON/)
 assert.match(bootstrappedRunPhp, /define\('STDOUT', fopen\('php:\/\/stdout', 'wb'\)\)/)
+assert.match(bootstrappedRunPhp, /putenv\("EXAMPLE_RUNTIME_ENV=runtime-value"\);/)
+assert.match(bootstrappedRunPhp, /putenv\("EXAMPLE_SECRET_ENV=secret-value"\);/)
+assert.doesNotMatch(bootstrappedRunPhp, /connector-secret|MYSQL_PASSWORD|DB_PASSWORD/)
 assert.ok(bootstrappedRunPhp.indexOf("define('STDOUT'") < bootstrappedRunPhp.indexOf("require_once '/wordpress/wp-load.php';"), "CLI streams must exist before WordPress and test dependencies load")
 assert.doesNotMatch(bootstrappedRunPhp, /wp_codebox_run_php|wp_codebox_component_manifest|WP_CODEBOX_COMPONENT_MANIFEST_JSON/)
 
@@ -136,7 +161,7 @@ const strictTypesCodeFileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-run-php-s
 const strictTypesCodeFile = join(strictTypesCodeFileRoot, "strict-types.php")
 writeFileSync(strictTypesCodeFile, "<?php declare(strict_types=1);\necho 'strict';")
 const strictTypesCode = await phpCodeFromArgs([`code-file=${strictTypesCodeFile}`])
-const bootstrappedStrictTypesCodeFile = bootstrapPhpCode({} as never, strictTypesCode, [])
+const bootstrappedStrictTypesCodeFile = bootstrapPhpCode(runtimeSpec, strictTypesCode, [])
 assert.match(bootstrappedStrictTypesCodeFile, /^<\?php\ndeclare\(strict_types=1\);\nregister_shutdown_function/)
 assert.equal((bootstrappedStrictTypesCodeFile.match(/declare\(strict_types=1\);/g) ?? []).length, 1)
 assert.match(bootstrappedStrictTypesCodeFile, /echo 'strict';/)
