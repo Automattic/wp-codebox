@@ -369,7 +369,7 @@ const materializerRecipeClient = {
     materializerDirectRuns += 1
     return JSON.stringify(materializerDirectRuns === 1
       ? { success: true, data: null, error: null }
-      : { success: true, response: { success: true, theme_slug: "example" }, error: null })
+      : { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null })
   },
   writeFile: async () => undefined,
   request: async () => {
@@ -396,9 +396,9 @@ assert.deepEqual(plain(materializerRecipeResult), {
   schema: "wp-codebox/materialization-result/v1",
   success: true,
   task: "example/run",
-  result: { success: true, theme_slug: "example" },
+  result: { theme_slug: "example" },
   report: null,
-  response: { success: true, response: { success: true, theme_slug: "example" }, error: null },
+  response: { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null },
   error: null,
 })
 

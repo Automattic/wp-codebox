@@ -3346,16 +3346,17 @@ echo wp_json_encode( array(
 	};
 
 	const materializationResultEnvelope = ( task, execution ) => {
-		const result = execution?.response && typeof execution.response === 'object' ? execution.response : execution;
-		const success = execution?.success === true && result?.success !== false;
+		const abilityResult = execution?.response && typeof execution.response === 'object' ? execution.response : execution;
+		const success = execution?.success === true && abilityResult?.success !== false;
+		const result = success && abilityResult?.result && typeof abilityResult.result === 'object' ? abilityResult.result : abilityResult;
 		return {
 			schema: 'wp-codebox/materialization-result/v1',
 			success,
 			task,
 			result,
-			report: result?.import_report_summary || result?.report || null,
+			report: abilityResult?.import_report_summary || result?.import_report_summary || result?.report || null,
 			response: execution,
-			error: success ? null : ( result?.error || execution?.error || {
+			error: success ? null : ( abilityResult?.error || execution?.error || {
 				code: 'materialization_failed',
 				message: 'Materialization failed.',
 			} ),
