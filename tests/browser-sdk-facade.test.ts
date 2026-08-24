@@ -9,7 +9,7 @@ const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/b
 const previewFixture = JSON.parse(await readFile(new URL("contracts/browser-product-preview.fixture.json", root), "utf8"))
 
 const sandbox = {
-  window: { dispatchEvent: () => true, location: { href: "https://host.example.test/" } } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean, location?: { href: string } },
+  window: { dispatchEvent: () => true } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
   atob: (value: string) => Buffer.from(value, "base64").toString("binary"),
   CustomEvent: class CustomEvent {
@@ -741,8 +741,8 @@ assert.equal(previewStart.schema, "wp-codebox/browser-preview-start-result/v1")
 assert.equal(previewStart.success, true)
 assert.equal(previewStart.status, "started")
 assert.equal(previewStart.session_id, "preview-session-1")
-assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html?wp-codebox-preview-scope=preview-session-1", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
-assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html?wp-codebox-preview-scope=preview-session-1", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
+assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
+assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
 assert.equal(typeof previewStart.dispose, "function", "successful previews expose async disposal without changing the result envelope")
 const replayAbilityRequests: any[] = []
 sandbox.window.wp = {
