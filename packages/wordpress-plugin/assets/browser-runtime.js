@@ -3345,6 +3345,23 @@ echo wp_json_encode( array(
 		};
 	};
 
+	const materializationResultEnvelope = ( task, execution ) => {
+		const result = execution?.response && typeof execution.response === 'object' ? execution.response : execution;
+		const success = execution?.success === true && result?.success !== false;
+		return {
+			schema: 'wp-codebox/materialization-result/v1',
+			success,
+			task,
+			result,
+			report: result?.import_report_summary || result?.report || null,
+			response: execution,
+			error: success ? null : ( result?.error || execution?.error || {
+				code: 'materialization_failed',
+				message: 'Materialization failed.',
+			} ),
+		};
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -3409,7 +3426,7 @@ echo wp_json_encode( array(
 			await removeProviderProxy?.();
 		}
 
-		return lastResult;
+		return materializerTask ? materializationResultEnvelope( materializerTask, lastResult ) : lastResult;
 	};
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {

@@ -367,7 +367,9 @@ let materializerRequests = 0
 const materializerRecipeClient = {
   run: async () => {
     materializerDirectRuns += 1
-    return JSON.stringify({ success: true, data: materializerDirectRuns === 1 ? null : { invoked: true }, error: null })
+    return JSON.stringify(materializerDirectRuns === 1
+      ? { success: true, data: null, error: null }
+      : { success: true, response: { success: true, theme_slug: "example" }, error: null })
   },
   writeFile: async () => undefined,
   request: async () => {
@@ -390,7 +392,39 @@ const materializerRecipeResult = await api.v1.methods.runRecipe(materializerReci
 assert.equal(providerProxyInstallations, 0)
 assert.equal(materializerDirectRuns, 2)
 assert.equal(materializerRequests, 0)
-assert.deepEqual(plain(materializerRecipeResult), { success: true, data: { invoked: true }, error: null })
+assert.deepEqual(plain(materializerRecipeResult), {
+  schema: "wp-codebox/materialization-result/v1",
+  success: true,
+  task: "example/run",
+  result: { success: true, theme_slug: "example" },
+  report: null,
+  response: { success: true, response: { success: true, theme_slug: "example" }, error: null },
+  error: null,
+})
+
+let failedMaterializerRuns = 0
+const failedMaterializerResult = await api.v1.methods.runRecipe({
+  run: async () => {
+    failedMaterializerRuns += 1
+    return JSON.stringify(failedMaterializerRuns === 1
+      ? { success: true, data: null, error: null }
+      : {
+          success: true,
+          response: {
+            success: false,
+            error: { code: "quality_gate_failed", message: "Fallback blocks remain." },
+            diagnostics: [ { code: "fallback_blocks", count: 2 } ],
+          },
+          error: null,
+        })
+  },
+}, {
+  browser: { task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json" },
+  workflow: { steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ] },
+}, { materializer: { task: "example/run" } })
+assert.equal(failedMaterializerResult.success, false)
+assert.equal(failedMaterializerResult.error.code, "quality_gate_failed")
+assert.deepEqual(plain(failedMaterializerResult.result.diagnostics), [ { code: "fallback_blocks", count: 2 } ])
 
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
