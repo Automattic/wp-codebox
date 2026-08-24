@@ -213,7 +213,7 @@ test("the preview proxy returns a connected client from the packaged Playground 
   }
 })
 
-test("the browser SDK replaces a packaged Playground preview in one slot", { timeout: 120_000 }, async () => {
+test("the browser SDK retains two packaged Playground preview handles across A-B-A", { timeout: 120_000 }, async () => {
   const app = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" })
     response.end("<!doctype html><title>Playground replacement integration</title><iframe></iframe>")
@@ -241,6 +241,7 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
     const result = await page.evaluate(async ({ remoteUrl }) => {
       const { startPlaygroundWeb } = await import("https://playground.wordpress.net/client/index.js")
       const iframe = document.querySelector("iframe")
+      const workspace = window.wpCodeboxBrowser.v1.createBrowserPreviewWorkspace({ iframe, maxHandles: 2 })
       const phases: string[] = []
       const heavyBlueprint = (marker: string) => ({
         steps: [
@@ -263,14 +264,13 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
       }
       try {
         phases.push("a:starting")
-        const first = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+        const first = await workspace.open("site-a@revision-1", {
           schema: "wp-codebox/browser-preview-boot-config/v1",
           session_id: "replacement-a",
           remote_url: remoteUrl,
           scope: "replacement-a",
           blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-a", hydratable: true },
         }, {
-          iframe,
           startupTimeoutMs: 45_000,
           hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-a") }),
           startPlaygroundWeb,
@@ -282,15 +282,14 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
         })
         phases.push("a:started")
         const firstMarkers = await markerEvidence(first.client)
-        const firstIframe = document.querySelector("iframe")
-        const second = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+        const firstIframe = first.iframe
+        const second = await workspace.open("site-b@revision-1", {
           schema: "wp-codebox/browser-preview-boot-config/v1",
           session_id: "replacement-b",
           remote_url: remoteUrl,
           scope: "replacement-b",
           blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-b", hydratable: true },
         }, {
-          iframe,
           startupTimeoutMs: 45_000,
           hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-b") }),
           startPlaygroundWeb,
@@ -302,15 +301,14 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
         })
         phases.push("b:started")
         const secondMarkers = await markerEvidence(second.client)
-        const secondIframe = document.querySelector("iframe")
-        const third = await window.wpCodeboxBrowser.v1.startBrowserPreview({
+        const secondIframe = second.iframe
+        const third = await workspace.open("site-a@revision-1", {
           schema: "wp-codebox/browser-preview-boot-config/v1",
           session_id: "replacement-a-return",
           remote_url: remoteUrl,
           scope: "replacement-a",
           blueprint_ref: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:replacement-a-return", hydratable: true },
         }, {
-          iframe,
           startupTimeoutMs: 45_000,
           hydrateBlueprintRef: async () => ({ blueprint: heavyBlueprint("marker-a") }),
           startPlaygroundWeb,
@@ -322,16 +320,16 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
         })
         phases.push("a-return:started")
         const thirdMarkers = await markerEvidence(third.client)
-        const thirdIframe = document.querySelector("iframe")
-        await third.dispose()
+        const thirdIframe = third.iframe
+        await workspace.dispose()
         return {
           success: true,
           phases,
           firstMarkers,
           secondMarkers,
           thirdMarkers,
-          slotReplacedAB: firstIframe !== secondIframe,
-          slotReplacedBA: secondIframe !== thirdIframe,
+          distinctHandlesAB: firstIframe !== secondIframe,
+          reusedHandleA: firstIframe === thirdIframe,
         }
       } catch (error) {
         return { success: false, phases, error: { name: error?.name, code: error?.code, message: error?.message, data: error?.data } }
@@ -347,15 +345,13 @@ test("the browser SDK replaces a packaged Playground preview in one slot", { tim
       "replacement-b:client-connected",
       "replacement-b:blueprint-validated",
       "b:started",
-      "replacement-a-return:client-connected",
-      "replacement-a-return:blueprint-validated",
       "a-return:started",
     ])
     assert.deepEqual(result.firstMarkers, { a: true, b: false })
     assert.deepEqual(result.secondMarkers, { a: false, b: true })
     assert.deepEqual(result.thirdMarkers, { a: true, b: false })
-    assert.equal(result.slotReplacedAB, true)
-    assert.equal(result.slotReplacedBA, true)
+    assert.equal(result.distinctHandlesAB, true)
+    assert.equal(result.reusedHandleA, true)
     assert.deepEqual(pageErrors, [])
   } finally {
     await browser.close()
