@@ -216,18 +216,22 @@ async function archiveCheck(options: DoctorOptions): Promise<HealthCheck> {
   const roots = unique([...options.archiveRoots, ...defaultArchiveRoots()].map((root) => resolve(root)))
   const existingRoots = roots.filter((root) => existsSync(root))
   let checked = 0
+  let skipped = 0
   const invalid: Array<{ path: string; size: number; reason: string; deleted: boolean; error?: string }> = []
 
   for (const root of existingRoots) {
     for await (const archivePath of walkArchiveFiles(root)) {
       checked++
-      const archiveStat = await stat(archivePath)
-      const reason = await invalidZipReason(archivePath, archiveStat.size)
-      if (!reason) {
+      const inspection = await inspectArchivePath(archivePath)
+      if (!inspection) {
+        skipped++
+        continue
+      }
+      if (!inspection.reason) {
         continue
       }
 
-      const row = { path: archivePath, size: archiveStat.size, reason, deleted: false }
+      const row = { path: archivePath, size: inspection.size, reason: inspection.reason, deleted: false }
       if (options.cleanup) {
         try {
           await unlink(archivePath)
@@ -242,16 +246,16 @@ async function archiveCheck(options: DoctorOptions): Promise<HealthCheck> {
   }
 
   if (existingRoots.length === 0) {
-    return { id: "wp-codebox.archives", status: "ok", message: "no known WP Codebox/Playground archive roots found", details: { roots, existingRoots, checked: 0, invalid: [] } }
+    return { id: "wp-codebox.archives", status: "ok", message: "no known WP Codebox/Playground archive roots found", details: { roots, existingRoots, checked: 0, skipped: 0, invalid: [] } }
   }
   if (invalid.length === 0) {
-    return { id: "wp-codebox.archives", status: "ok", message: `checked ${checked} archive(s); no invalid archives found`, details: { roots, existingRoots, checked, invalid } }
+    return { id: "wp-codebox.archives", status: "ok", message: `checked ${checked} archive(s); no invalid archives found`, details: { roots, existingRoots, checked, skipped, invalid } }
   }
   return {
     id: "wp-codebox.archives",
     status: options.cleanup && invalid.every((row) => row.deleted) ? "ok" : "warning",
     message: options.cleanup ? `removed ${invalid.filter((row) => row.deleted).length}/${invalid.length} invalid archive(s)` : `${invalid.length} invalid archive(s) found`,
-    details: { roots, existingRoots, checked, invalid },
+    details: { roots, existingRoots, checked, skipped, invalid },
   }
 }
 
@@ -303,10 +307,7 @@ function isRecipeRunCommand(command: string): boolean {
 }
 
 async function* walkArchiveFiles(root: string): AsyncGenerator<string> {
-  const entries = await opendir(root).catch(() => undefined)
-  if (!entries) {
-    return
-  }
+  const entries = await opendir(root)
   for await (const entry of entries) {
     const path = join(root, entry.name)
     if (entry.isDirectory()) {
@@ -314,6 +315,16 @@ async function* walkArchiveFiles(root: string): AsyncGenerator<string> {
     } else if (entry.isFile() && (entry.name.endsWith(".zip") || entry.name.endsWith(".zip.tmp"))) {
       yield path
     }
+  }
+}
+
+export async function inspectArchivePath(path: string): Promise<{ size: number; reason?: string } | undefined> {
+  try {
+    const archiveStat = await stat(path)
+    return { size: archiveStat.size, reason: await invalidZipReason(path, archiveStat.size) }
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined
+    throw error
   }
 }
 
@@ -337,6 +348,10 @@ function unique(values: string[]): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
 }
 
 function execFile(command: string, args: string[], options: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
