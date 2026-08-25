@@ -1,0 +1,38 @@
+{
+  "schema": "wp-codebox/fuzz-suite/v1",
+  "id": "data-machine-style-relative-runtime-requirements",
+  "metadata": {
+    "runtime_requirements": {
+      "extra_plugins": [
+        {
+          "slug": "fuzz-relative-plugin",
+          "source": "../..",
+          "path": "../..",
+          "loadAs": "plugin",
+          "activate": true
+        }
+      ],
+      "component_contracts": [
+        {
+          "slug": "fuzz-relative-plugin",
+          "path": "../..",
+          "loadAs": "plugin",
+          "activate": true
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "runtime-command",
+      "target": {
+        "kind": "runtime",
+        "id": "wordpress.rest-route-inventory",
+        "entrypoint": "wordpress.rest-route-inventory"
+      },
+      "input": {
+        "args": []
+      }
+    }
+  ]
+}

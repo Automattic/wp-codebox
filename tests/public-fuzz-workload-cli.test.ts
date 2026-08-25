@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { runCli } from "../packages/cli/src/cli-entry.js"
 
@@ -145,35 +146,18 @@ return static function ( array $input, array $args ): array {
   const typedWorkloads = JSON.parse(typedWorkloadsJson.replace(/^workloads-json=/, ""))
   assert.deepEqual(typedWorkloads[0].run, [{ type: "php", code: "return array('ok' => true);" }])
 
-  const nestedSuiteDirectory = join(directory, "repository", "tests", "fuzz")
-  const siblingPluginSource = join(directory, "repository", "plugins", "sibling-plugin")
-  await mkdir(nestedSuiteDirectory, { recursive: true })
-  await mkdir(siblingPluginSource, { recursive: true })
-  await writeFile(join(siblingPluginSource, "sibling-plugin.php"), "<?php\n/* Plugin Name: Sibling Plugin */\n", "utf8")
-  const nestedRuntimeFuzzInput = join(nestedSuiteDirectory, "suite.json")
-  await writeFile(nestedRuntimeFuzzInput, JSON.stringify({
-    schema: "wp-codebox/fuzz-suite/v1",
-    id: "portable-relative-runtime-requirements",
-    metadata: {
-      runtime_requirements: {
-        extra_plugins: [{ slug: "sibling-plugin", source: "../../plugins/sibling-plugin", originalSource: "../../plugins/sibling-plugin", loadAs: "plugin", activate: true }],
-        component_contracts: [{ slug: "sibling-plugin", path: "../../plugins/sibling-plugin", original_source: "../../plugins/sibling-plugin", loadAs: "plugin", activate: true }],
-      },
-    },
-    cases: [{
-      id: "portable-relative-plugin",
-      target: { kind: "runtime", id: "wordpress.rest-route-inventory", entrypoint: "wordpress.rest-route-inventory" },
-      input: { args: [] },
-    }],
-  }), "utf8")
+  const nestedRuntimeFuzzInput = fileURLToPath(new URL("./fixtures/fuzz-relative-plugin/tests/fuzz/pipeline-builder-runtime.json", import.meta.url))
+  const nestedPluginSource = fileURLToPath(new URL("./fixtures/fuzz-relative-plugin", import.meta.url))
   const nestedRuntimeFuzzOutput = await captureStdout(async () => {
     assert.equal(await runCli(["run-fuzz-suite", "--input-file", nestedRuntimeFuzzInput, "--format=json", "--dry-run"]), 0)
   })
   const nestedRuntimeFuzzJson = JSON.parse(nestedRuntimeFuzzOutput)
   const nestedRuntimePlan = nestedRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan
-  assert.deepEqual(nestedRuntimePlan.extra_plugins.map((plugin: { source: string; slug: string; activate: boolean }) => ({ source: plugin.source, slug: plugin.slug, activate: plugin.activate })), [{ source: siblingPluginSource, slug: "sibling-plugin", activate: true }])
-  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.extra_plugins[0].originalSource, "../../plugins/sibling-plugin")
-  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.component_contracts[0].original_source, "../../plugins/sibling-plugin")
+  assert.deepEqual(nestedRuntimePlan.extra_plugins.map((plugin: { source: string; slug: string; activate: boolean }) => ({ source: plugin.source, slug: plugin.slug, activate: plugin.activate })), [{ source: nestedPluginSource, slug: "fuzz-relative-plugin", activate: true }])
+  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.extra_plugins[0].originalSource, "../..")
+  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.component_contracts[0].originalSource, "../..")
+  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.extra_plugins[0].source, nestedPluginSource)
+  assert.equal(nestedRuntimePlan.metadata.runtime_requirements.component_contracts[0].path, nestedPluginSource)
   const nestedRuntimeExecutionOutput = await captureStdout(async () => {
     assert.equal(await runCli(["run-fuzz-suite", "--input-file", nestedRuntimeFuzzInput, "--format=json", "--runner-mode=runtime-backed"]), 0)
   })
@@ -181,6 +165,11 @@ return static function ( array $input, array $args ): array {
   assert.equal(nestedRuntimeExecution.status, "passed")
   assert.equal(nestedRuntimeExecution.cases[0].status, "passed")
 
+  const nestedSuiteDirectory = join(directory, "repository", "tests", "fuzz")
+  const siblingPluginSource = join(directory, "repository", "plugins", "sibling-plugin")
+  await mkdir(nestedSuiteDirectory, { recursive: true })
+  await mkdir(siblingPluginSource, { recursive: true })
+  await writeFile(join(siblingPluginSource, "sibling-plugin.php"), "<?php\n/* Plugin Name: Sibling Plugin */\n", "utf8")
   const componentOnlyFuzzInput = join(nestedSuiteDirectory, "component-suite.json")
   await writeFile(componentOnlyFuzzInput, JSON.stringify({
     schema: "wp-codebox/fuzz-suite/v1",
