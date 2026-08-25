@@ -53,6 +53,9 @@ await withTempDir("wp-codebox-explicit-composer-plugin-", async (recipeDirectory
     config: { "allow-plugins": { "example/malicious-plugin": true } },
     extra: { "installer-paths": { "packages/{$name}": ["example/runtime-package"] } },
   }, null, 2)}\n`)
+  await mkdir(join(source, "vendor", "composer"), { recursive: true })
+  await writeFile(join(source, "vendor", "autoload.php"), "<?php require __DIR__ . '/composer/autoload_files.php';\n")
+  await writeFile(join(source, "vendor", "composer", "autoload_files.php"), "<?php require __DIR__ . '/../../removed-fixture.php';\n")
   await writeFile(join(source, "source-plugin.php"), "<?php\n/* Plugin Name: Source Plugin */\n")
   await writeFile(join(pathPackage, "composer.json"), `${JSON.stringify({ name: "example/runtime-package", type: "wordpress-plugin" })}\n`)
   await writeFile(join(pathPackage, "src", "Package.php"), "<?php namespace Example\\RuntimePackage; final class Package {}\n")
@@ -92,13 +95,14 @@ printf '<?php return array();\n' > vendor/composer/autoload_classmap.php
   }
 
   assert.ok(plugin)
-  assert.notEqual(plugin.source, source, "explicit Composer preparation must use a staged copy")
+  assert.notEqual(plugin.source, source, "explicit Composer preparation must replace an existing stale vendor tree in a staged copy")
   assert.equal(await pathExists(join(plugin.source, "vendor", "autoload.php")), true)
+  assert.equal(await pathExists(join(plugin.source, "vendor", "composer", "autoload_files.php")), false, "stale generated autoload files must not survive preparation")
   assert.match(await readFile(join(plugin.source, "vendor", "autoload_packages.php"), "utf8"), /require_once __DIR__ \. '\/autoload\.php';/)
   assert.equal(await pathExists(join(plugin.source, "packages", "runtime-package", "src", "Package.php")), true, "Composer must install the WordPress package at its declared runtime path")
   await execFile("php", ["-r", `define('ABSPATH', ${JSON.stringify(`${plugin.source}/`)}); require ${JSON.stringify(join(plugin.source, "vendor", "autoload_packages.php"))}; if (!class_exists('Example\\\\RuntimePackage\\\\Package')) { exit(1); }`])
   assert.equal(await pathExists(pluginExecuted), false, "recipe-authorized Composer plugins must remain disabled during host hydration")
-  assert.equal(await pathExists(join(source, "vendor")), false, "explicit preparation must not mutate the caller source")
+  assert.match(await readFile(join(source, "vendor", "composer", "autoload_files.php"), "utf8"), /removed-fixture/, "explicit preparation must not mutate the caller source")
   assert.equal(plugin.provenance.localPathCategory, "temporary-composer-autoload")
   await cleanupRecipePreparedSources([], [plugin])
 })

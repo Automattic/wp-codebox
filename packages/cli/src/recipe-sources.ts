@@ -325,18 +325,13 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
     return prepared
   }
 
-  try {
-    const autoload = await stat(join(prepared.source, "vendor", "autoload.php"))
-    if (autoload.isFile()) {
-      return prepared
-    }
-  } catch {
-    // Prepare a temporary copy below.
-  }
-
   const stagingRoot = await mkdtemp(join(tmpdir(), `wp-codebox-plugin-${slug}-`))
-  const stagedRoot = join(stagingRoot, slug)
-  await cp(copyRoot, stagedRoot, { recursive: true })
+  const stagedRoot = prepareLocalSourceStageSync({
+    source: copyRoot,
+    targetRoot: stagingRoot,
+    targetName: slug,
+    cleanupRoot: false,
+  }).source
   const sourceSubpath = relative(copyRoot, prepared.source).replace(/\\/g, "/")
   const stagedSource = sourceSubpath ? join(stagedRoot, sourceSubpath) : stagedRoot
   try {
