@@ -4,7 +4,9 @@
   "changelog_target": "CHANGELOG.md",
   "extensions": {
     "nodejs": {
-      "release_package_script": "release:package"
+      "settings": {
+        "release_package_script": "release:package"
+      }
     }
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
