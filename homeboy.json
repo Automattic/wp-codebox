@@ -3,7 +3,9 @@
   "remote_url": "https://github.com/Automattic/wp-codebox.git",
   "changelog_target": "CHANGELOG.md",
   "extensions": {
-    "nodejs": {}
+    "nodejs": {
+      "release_package_script": "release:package"
+    }
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
   "deployment_provider": {
@@ -72,7 +74,7 @@
   ],
   "scripts": {
     "build": [
-      "npm run release:package"
+      "npm run package:wordpress-plugin"
     ],
     "lint": [
       "npm run build"
