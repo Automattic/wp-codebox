@@ -1910,7 +1910,8 @@ export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, 
 
 export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
   const explicitSubpath = plugin.sourceSubdir ?? plugin.sourceSubpath
-  if (explicitSubpath) {
+  const declaredSourceRoot = plugin.sourcePath ?? plugin.sourceRoot
+  if (explicitSubpath && declaredSourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, declaredSourceRoot, recipeDirectory)) {
     return normalizeRecipeExtraPluginSourceSubpath(explicitSubpath)
   }
 
