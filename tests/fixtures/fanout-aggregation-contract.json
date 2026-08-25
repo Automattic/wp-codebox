@@ -136,6 +136,128 @@
       }
     },
     {
+      "name": "success-with-no-op-required-dependency",
+      "input": {
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifactNamespace": "workers/alpha"
+            },
+            {
+              "id": "beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "artifactNamespace": "workers/beta"
+            }
+          ]
+        },
+        "policy": "fail",
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "no_op",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/report.json",
+                "finalPath": "reports/alpha.json"
+              }
+            ]
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ]
+      },
+      "expectedOutput": {
+        "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+        "status": "succeeded",
+        "policy": "fail",
+        "plan": {
+          "id": "fanout-contract-fixture",
+          "workers": [
+            {
+              "id": "alpha",
+              "artifactNamespace": "workers/alpha",
+              "dependsOn": [],
+              "required": true
+            },
+            {
+              "id": "beta",
+              "dependsOn": [
+                "alpha"
+              ],
+              "artifactNamespace": "workers/beta",
+              "required": true
+            }
+          ]
+        },
+        "aggregator": {
+          "agent": "generic-aggregator",
+          "outputNamespace": "aggregate/final"
+        },
+        "workerResultRefs": [
+          {
+            "workerId": "alpha",
+            "status": "no_op",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/alpha/report.json",
+                "workerId": "alpha",
+                "finalPath": "reports/alpha.json"
+              }
+            ]
+          },
+          {
+            "workerId": "beta",
+            "status": "succeeded",
+            "required": true,
+            "artifactRefs": [
+              {
+                "path": "fanout/workers/beta/report.json",
+                "workerId": "beta",
+                "finalPath": "reports/beta.json"
+              }
+            ]
+          }
+        ],
+        "rawWorkerArtifactRefs": [
+          {
+            "path": "fanout/workers/alpha/report.json",
+            "workerId": "alpha",
+            "finalPath": "reports/alpha.json"
+          },
+          {
+            "path": "fanout/workers/beta/report.json",
+            "workerId": "beta",
+            "finalPath": "reports/beta.json"
+          }
+        ],
+        "finalArtifactRefs": [
+          {
+            "path": "aggregate/final/result.json",
+            "kind": "fanout-aggregate-output",
+            "contentType": "application/json"
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
       "name": "duplicate-final-path-partial-policy",
       "input": {
         "plan": {
