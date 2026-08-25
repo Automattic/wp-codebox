@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { watch } from "node:fs"
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -19,16 +20,19 @@ const readwriteSource = join(root, "readwrite.bin")
 const stagedBinarySource = join(root, "staged-binary.bin")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
+const childTempRoot = join(root, "child-tmp")
 const originalConfig = "<?php return 'parent';\n"
 const overlayConfig = "<?php return 'overlay';\n"
 const readonlyBytes = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 const overwrittenBytes = Buffer.from([128, 127, 3, 2, 1, 255, 0])
 const stagedBinaryBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x80, 0xfe])
-const stagingDirectoriesBefore = await readonlyStagingDirectories()
+const disappearingExternalFixture = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-external-before-"))
+let appearingExternalFixture: string | undefined
 
 try {
   await mkdir(projectSource)
   await mkdir(readonlyProjectSource)
+  await mkdir(childTempRoot)
   await writeFile(projectConfigSource, originalConfig)
   await writeFile(overlaySource, overlayConfig)
   await writeFile(readonlyProjectConfigSource, originalConfig)
@@ -60,7 +64,12 @@ try {
     },
   })}\n`)
 
-  const output = await runRecipe()
+  const successfulRun = await runRecipeWithOwnedStaging(async () => {
+    await rm(disappearingExternalFixture, { recursive: true, force: true })
+    appearingExternalFixture = await mkdtemp(join(tmpdir(), "wp-codebox-readonly-mounts-external-after-"))
+  })
+  const output = successfulRun.output
+  await assert.rejects(access(successfulRun.stagingPath), /ENOENT/, "successful recipe teardown must remove its owned readonly mount staging")
   if (output) {
     assert.equal(output.success, true, JSON.stringify(output))
     assert.equal(sha256(await readFile(readonlySource)), sha256(readonlyBytes), "readonly host bytes must survive an actual Playground PHP overwrite")
@@ -70,9 +79,20 @@ try {
     assert.equal(await readFile(readonlyProjectOverlaySource, "utf8"), overlayConfig, "an overlay nested beneath a readonly parent must remain isolated")
     assert.equal(await readFile(readonlyProjectConfigSource, "utf8"), originalConfig, "a readonly parent source must not receive nested overlay writes")
     assert.equal(await readFile(join(projectSource, "mutated.txt"), "utf8"), "parent mutation", "parent readwrite mutations must still materialize")
-    assert.deepEqual(await readonlyStagingDirectories(), stagingDirectoriesBefore, "recipe-run cleanup must remove readonly mount staging")
+
+    const failingRecipe = JSON.parse(await readFile(recipePath, "utf8")) as { workflow: { steps: Array<{ args: string[] }> } }
+    failingRecipe.workflow.steps[0].args = ["code=fwrite(STDERR, 'expected readonly mount integration failure'); exit(1);"]
+    await writeFile(recipePath, `${JSON.stringify(failingRecipe)}\n`)
+    const failedRun = await runRecipeWithOwnedStaging(undefined, true)
+    assert.equal(failedRun.output?.success, false, JSON.stringify(failedRun.output))
+    assert.equal(failedRun.output?.phaseEvidence?.some((phase) => phase.name === "run_workloads" && phase.status === "failed"), true, "the failure fixture must reach the workload phase")
+    await assert.rejects(access(failedRun.stagingPath), /ENOENT/, "failed recipe teardown must remove its owned readonly mount staging")
   }
 } finally {
+  await rm(disappearingExternalFixture, { recursive: true, force: true })
+  if (appearingExternalFixture) {
+    await rm(appearingExternalFixture, { recursive: true, force: true })
+  }
   await rm(root, { recursive: true, force: true })
 }
 
@@ -96,14 +116,35 @@ function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
-async function readonlyStagingDirectories(): Promise<string[]> {
-  return (await readdir(tmpdir())).filter((entry) => entry.startsWith("wp-codebox-readonly-mounts-")).sort()
+async function runRecipeWithOwnedStaging(onStagingCreated?: () => Promise<void>, allowFailure = false): Promise<{ output: RecipeRunOutput | undefined; stagingPath: string }> {
+  let resolveStagingPath!: (path: string) => void
+  const stagingPathCreated = new Promise<string>((resolve) => {
+    resolveStagingPath = resolve
+  })
+  const watcher = watch(childTempRoot, (_event, filename) => {
+    if (filename?.startsWith("wp-codebox-readonly-mounts-")) {
+      resolveStagingPath(join(childTempRoot, filename))
+    }
+  })
+  const outputPromise = runRecipe(allowFailure)
+  try {
+    const stagingPath = await Promise.race([
+      stagingPathCreated,
+      outputPromise.then(() => Promise.reject(new Error("recipe run did not create owned readonly mount staging"))),
+    ])
+    await access(stagingPath)
+    await onStagingCreated?.()
+    return { output: await outputPromise, stagingPath }
+  } finally {
+    watcher.close()
+  }
 }
 
-async function runRecipe(): Promise<RecipeRunOutput | undefined> {
+async function runRecipe(allowFailure: boolean): Promise<RecipeRunOutput | undefined> {
   try {
     const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", artifactsPath, "--json"], {
       cwd: process.cwd(),
+      env: { ...process.env, TMPDIR: childTempRoot, TMP: childTempRoot, TEMP: childTempRoot },
       timeout: 300_000,
       maxBuffer: 2 * 1024 * 1024,
     })
@@ -112,6 +153,10 @@ async function runRecipe(): Promise<RecipeRunOutput | undefined> {
     if (isUnavailableWordPressRuntimeSource(error)) {
       console.log("playground readonly mount integration skipped: WordPress runtime source was unavailable before runtime startup")
       return undefined
+    }
+    const output = recipeRunOutput(error && typeof error === "object" && "stdout" in error ? error.stdout : undefined)
+    if (allowFailure && output?.schema === "wp-codebox/recipe-run/v1") {
+      return output
     }
     throw error
   }
