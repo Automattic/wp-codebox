@@ -128,7 +128,7 @@ async function prepareReadonlyDirectory(mount: MountSpec, mountIndex: number, so
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
 
   let mode: ReadonlyMountPreparation["mode"] = "cache-hit"
-  await withPlaygroundArchiveCacheLock(cacheRoot, `readonly-mount-${generation.fingerprint}`, async () => {
+  await withPlaygroundArchiveCacheLock(cacheRoot, "readonly-mount-cache", async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!await directoryExists(cachePath)) {
         mode = "cache-miss"
