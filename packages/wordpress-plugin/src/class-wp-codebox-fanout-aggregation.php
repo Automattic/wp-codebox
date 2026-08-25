@@ -264,11 +264,12 @@ final class WP_Codebox_Fanout_Aggregation {
 
 	/** @param array<string,mixed> $plan Plan. @param array<int,array<string,mixed>> $worker_results Worker results. @return array<int,array<string,mixed>> */
 	private function worker_dependency_conflicts( array $plan, array $worker_results ): array {
+		$successful_statuses = array( 'succeeded', 'no_op' );
 		$conflicts = array();
 		$by_worker = array();
 		foreach ( $worker_results as $result ) {
 			$by_worker[ (string) ( $result['workerId'] ?? '' ) ] = $result;
-			if ( false !== ( $result['required'] ?? true ) && 'succeeded' !== (string) ( $result['status'] ?? '' ) ) {
+			if ( false !== ( $result['required'] ?? true ) && ! in_array( (string) ( $result['status'] ?? '' ), $successful_statuses, true ) ) {
 				$conflicts[] = array_filter(
 					array(
 						'type'         => 'failed-worker',
@@ -297,7 +298,7 @@ final class WP_Codebox_Fanout_Aggregation {
 				}
 
 				$dependency = $by_worker[ $dependency_id ];
-				if ( 'succeeded' !== (string) ( $dependency['status'] ?? '' ) ) {
+				if ( ! in_array( (string) ( $dependency['status'] ?? '' ), $successful_statuses, true ) ) {
 					$conflicts[] = array(
 						'type'         => 'failed-worker-dependency',
 						'severity'     => 'error',

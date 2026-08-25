@@ -44,6 +44,16 @@ const vectors = [
     input: successfulInput,
   },
   {
+    name: "success-with-no-op-required-dependency",
+    input: {
+      ...successfulInput,
+      workerResultRefs: [
+        { workerId: "alpha", status: "no_op", artifactRefs: [{ path: "fanout/workers/alpha/report.json", finalPath: "reports/alpha.json" }] },
+        { workerId: "beta", status: "succeeded", artifactRefs: [{ path: "fanout/workers/beta/report.json", finalPath: "reports/beta.json" }] },
+      ],
+    },
+  },
+  {
     name: "duplicate-final-path-partial-policy",
     input: {
       ...successfulInput,

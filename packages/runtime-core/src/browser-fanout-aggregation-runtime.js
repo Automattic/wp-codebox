@@ -1,5 +1,6 @@
 const fanoutAggregationInputSchema = 'wp-codebox/agent-fanout-aggregation-input/v1';
 const fanoutAggregationOutputSchema = 'wp-codebox/agent-fanout-aggregation-output/v1';
+const fanoutSuccessfulWorkerStatuses = new Set( [ 'succeeded', 'no_op' ] );
 
 const stableJson = ( value ) => {
 	if ( value === null || typeof value !== 'object' ) {
@@ -127,7 +128,7 @@ const fanoutAggregationConflicts = ( input ) => {
 
 	const resultByWorker = new Map( input.workerResultRefs.map( ( result ) => [ result.workerId, result ] ) );
 	for ( const result of input.workerResultRefs ) {
-		if ( result.required && result.status !== 'succeeded' ) {
+		if ( result.required && ! fanoutSuccessfulWorkerStatuses.has( result.status ) ) {
 			conflicts.push( {
 				type: 'failed-worker',
 				severity: 'error',
@@ -149,7 +150,7 @@ const fanoutAggregationConflicts = ( input ) => {
 					workerIds: [ worker.id ],
 					dependencyId,
 				} );
-			} else if ( dependency.status !== 'succeeded' ) {
+			} else if ( ! fanoutSuccessfulWorkerStatuses.has( dependency.status ) ) {
 				conflicts.push( {
 					type: 'failed-worker-dependency',
 					severity: 'error',
