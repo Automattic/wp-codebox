@@ -438,7 +438,7 @@ function resolveFuzzSuiteRuntimeRequirementPaths(input: Record<string, unknown>,
   const requirements = objectOption(metadata?.runtime_requirements)
   if (!metadata || !requirements) return input
 
-  const resolvePath = (value: unknown): unknown => typeof value === "string" && value.trim() && !/^https?:\/\//i.test(value) ? resolve(inputDirectory, value) : value
+  const resolvePath = (value: unknown): unknown => typeof value === "string" && value.trim() && !/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? resolve(inputDirectory, value) : value
   const resolvePluginPaths = (entries: unknown): unknown => Array.isArray(entries)
     ? entries.map((entry) => {
       const plugin = objectOption(entry)
@@ -446,6 +446,10 @@ function resolveFuzzSuiteRuntimeRequirementPaths(input: Record<string, unknown>,
       const resolved = { ...plugin }
       for (const key of ["source", "path", "sourceRoot", "source_root"]) {
         if (key in plugin) resolved[key] = resolvePath(plugin[key])
+      }
+      const originalSource = stringValue(plugin.source) ?? stringValue(plugin.path)
+      if (originalSource && resolvePath(originalSource) !== originalSource && plugin.originalSource === undefined && plugin.original_source === undefined) {
+        resolved.originalSource = originalSource
       }
       return resolved
     })
