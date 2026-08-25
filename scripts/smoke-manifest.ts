@@ -68,6 +68,7 @@ export const smokeGroups = {
       npmScript("test:runtime-preset-registry"),
       npmScript("test:provider-runtime-contracts"),
       tsxSmoke("discovery-command-smoke"),
+      npmScript("test:doctor-archive-inspection"),
       tsxSmoke("doctor-command-smoke"),
       tsxSmoke("cli-json-failure-smoke"),
       tsxSmoke("source-checkout-entrypoint-smoke"),
