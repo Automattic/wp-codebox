@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import vm from "node:vm"
 
-import { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, validateFanoutAggregationOutput } from "../packages/runtime-core/src/index.js"
+import * as core from "@automattic/wp-codebox-core"
 import { executeAgentFanoutRequest } from "../packages/cli/src/agent-fanout.js"
-import { FANOUT_REQUEST_SCHEMA } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
+
+const { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, validateFanoutAggregationOutput, FANOUT_REQUEST_SCHEMA } = core
 
 const root = new URL("../", import.meta.url)
 const fixture = JSON.parse(await readFile(new URL("fixtures/fanout-aggregation-contract.json", import.meta.url), "utf8"))
@@ -13,12 +14,33 @@ const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 assert.equal(fixture.generatedBy, "scripts/generate-fanout-aggregation-contract-fixture.ts", "fanout fixture must declare its runtime-core generator")
 assert.ok(Array.isArray(fixture.vectors) && fixture.vectors.length > 1, "fanout fixture must cover multiple aggregation vectors")
+assert.equal(typeof core.aggregateFanoutOutputs, "function", "the public core package must export the fanout aggregation contract")
 
 for (const vector of fixture.vectors) {
   const runtimeOutput = plain(aggregateFanoutOutputs(vector.input))
   assert.deepEqual(plain(validateFanoutAggregationOutput(runtimeOutput)), vector.expectedOutput, `${vector.name}: canonical fanout output fixture must validate`)
   assert.deepEqual(runtimeOutput, vector.expectedOutput, `${vector.name}: runtime-core aggregation output must match the generated fixture`)
 }
+
+const explicitFinalArtifactRefs = [{ path: "aggregate/final/report.json", kind: "aggregate-report" }]
+assert.deepEqual(
+  aggregateFanoutOutputs(fixture.vectors[0].input, { finalArtifactRefs: explicitFinalArtifactRefs }).finalArtifactRefs,
+  explicitFinalArtifactRefs,
+  "caller-supplied final artifact refs must be preserved",
+)
+
+const normalizedNoOp = core.normalizeFanoutAggregationInput({
+  plan: { id: "no-op-normalization", workers: [{ id: "worker" }] },
+  workerResultRefs: [{ workerId: "worker", status: "no_op", artifactRefs: [] }],
+})
+assert.equal(normalizedNoOp.workerResultRefs[0].status, "no_op", "no_op worker statuses must survive normalization")
+
+const aggregationFailure = aggregateFanoutOutputs(fixture.vectors[0].input, {
+  aggregationError: { code: "aggregate-exit", message: "Aggregator failed to merge worker outputs." },
+})
+assert.equal(aggregationFailure.status, "failed")
+assert.deepEqual(aggregationFailure.finalArtifactRefs, [])
+assert.ok(aggregationFailure.conflicts.some((conflict) => conflict.type === "aggregation-failure" && conflict.details?.code === "aggregate-exit"), "aggregation errors must be classified as aggregation failures")
 
 const runtimeOutput = plain(aggregateFanoutOutputs(fixture.vectors[0].input))
 assert.throws(() => validateFanoutAggregationOutput({ ...runtimeOutput, workerResultRefs: undefined }), /workerResultRefs/, "canonical fanout output requires worker result refs")
