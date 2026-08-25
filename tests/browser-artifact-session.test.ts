@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { resolve } from "node:path"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
-import { browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
+import { browserManifestFiles, browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { browserWebSocketPayloadBytes, createBrowserWebSocketRecord } from "../packages/runtime-playground/src/browser-capture-session.js"
 import { browserProbeWebSocketArtifact, browserRequestCoverageArtifact } from "../packages/runtime-playground/src/browser-probe-support.js"
 import { assertJsonFile, assertTextFile, withTempDir } from "../scripts/test-kit.js"
@@ -20,6 +20,8 @@ await session.writeJson("waterfall", "waterfall.json", { schema: "wp-codebox/bro
 await session.writeJson("websocket", "websocket.json", { schema: "wp-codebox/browser-websocket/v1", summary: { sockets: 0 } })
 await session.writeJson("summary", "summary.json", { schema: "wp-codebox/browser-probe/v1", ok: true })
 await session.writeBuffer("screenshot", "screenshot.png", Buffer.from([0, 1, 2]))
+await session.writeBuffer("screenshots", "screenshot-before-save.png", Buffer.from([3, 4, 5]))
+await session.writeBuffer("screenshots", "accessibility-000.png", Buffer.from([6, 7, 8]))
 
 await assertTextFile(resolve(artifactRoot, "files/browser/snapshot.html"), "<html><body>secret</body></html>")
 await assertTextFile(resolve(artifactRoot, "files/browser/console.jsonl"), '{"type":"log","text":"visible"}\n')
@@ -55,6 +57,24 @@ assert.equal(files.get("files/browser/websocket.json")?.redaction?.policy, "requ
 assert.equal(files.get("files/browser/screenshot.png")?.kind, "browser-screenshot")
 assert.equal(files.get("files/browser/screenshot.png")?.contentType, "image/png")
 assert.deepEqual(files.get("files/browser/screenshot.png")?.redaction, { policy: "none", sensitive: false })
+
+const manifestScreenshots = browserManifestFiles(artifactRoot, [{
+  artifactType: "actions",
+  requestedUrl: "https://example.test/",
+  url: "https://example.test/",
+  preview: { requestedMode: "local", effectiveMode: "local", localOrigin: "https://example.test", effectiveOrigin: "https://example.test", diagnostics: [] },
+  files: {
+    screenshot: "files/browser/screenshot.png",
+    screenshots: ["files/browser/screenshot-before-save.png", "files/browser/accessibility-000.png"],
+    summary: "files/browser/summary.json",
+  },
+  summary: { actions: 0, steps: 0, consoleMessages: 0, errors: 0, finalUrl: "https://example.test/", htmlSnapshot: false, networkEvents: 0, replayability: "partial", screenshot: true, viewport: null },
+} satisfies BrowserArtifact]).filter((file) => file.kind === "browser-screenshot")
+assert.deepEqual(manifestScreenshots.map((file) => file.path).sort(), [
+  resolve(artifactRoot, "files/browser/accessibility-000.png"),
+  resolve(artifactRoot, "files/browser/screenshot-before-save.png"),
+  resolve(artifactRoot, "files/browser/screenshot.png"),
+])
 
 const visualSession = new BrowserArtifactSession(artifactRoot, "files/browser/visual-compare/mobile", { source: "wordpress.visual-compare", operation: "visual-compare" })
 await visualSession.writeJson("visualDiff", "visual-diff.json", { schema: "wp-codebox/visual-compare/v1", status: "different" })

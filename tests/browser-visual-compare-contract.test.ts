@@ -44,7 +44,7 @@ async function visualCompareRun(artifactRoot: string, args: string[]) {
   })
 }
 
-const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[], capture = { reducedMotion: true, animations: "freeze", animatedMedia: "allow", injectedStyleBytes: 0, externalRequests: "block" }) => ({
+const expectedOptions = (maxExplanationElements: number, maxExplanationCandidates: number, explainSelectors?: string[], capture = { reducedMotion: true, animations: "freeze", animatedMedia: "allow", injectedStyleBytes: 0, externalRequests: "block", requiredReadinessRecords: [] }) => ({
   waitFor: "domcontentloaded",
   durationMs: 0,
   timeoutMs: 120_000,
@@ -80,7 +80,7 @@ await withTempDir("wp-codebox-visual-compare-contract-", async (artifactRoot) =>
     "capture-style=body{color:red}",
     "block-external-requests=false",
   ])).output)
-  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"], { reducedMotion: false, animations: "allow", animatedMedia: "allow", frozenTime: "2020-01-01T00:00:00.000Z", injectedStyleBytes: 15, externalRequests: "allow" }))
+  assert.deepEqual(pair.options, expectedOptions(40, 240, ["main", "body"], { reducedMotion: false, animations: "allow", animatedMedia: "allow", frozenTime: "2020-01-01T00:00:00.000Z", injectedStyleBytes: 15, externalRequests: "allow", requiredReadinessRecords: [] }))
   assert.equal(pair.schema, "wp-codebox/visual-compare/v1")
   assert.equal(pair.command, "wordpress.visual-compare")
   assert.equal(pair.status, "identical")

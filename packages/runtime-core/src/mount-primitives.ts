@@ -26,6 +26,12 @@ export function normalizeSharedMount(mount: WorkspaceRecipeMount, index = 0, opt
   if (mount.captureArtifacts !== undefined) {
     normalized.captureArtifacts = mount.captureArtifacts
   }
+  if (mount.phase !== undefined) {
+    if (mount.phase !== "pre-install" && mount.phase !== "post-install") {
+      throw new Error(`${label} ${index} phase must be pre-install or post-install`)
+    }
+    normalized.phase = mount.phase
+  }
   if (mount.metadata !== undefined) {
     normalized.metadata = mount.metadata
   }

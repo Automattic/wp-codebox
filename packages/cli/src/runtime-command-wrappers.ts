@@ -8,7 +8,7 @@ import { defaultPolicy, runPolicy } from "./recipe-validation.js"
 export const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 
 export interface RunOptions {
-  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; captureArtifacts?: boolean; metadata?: Record<string, unknown> }>
+  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; captureArtifacts?: boolean; phase?: MountSpec["phase"]; metadata?: Record<string, unknown> }>
   command: string
   args: string[]
   wpVersion?: string

@@ -3,7 +3,11 @@
   "remote_url": "https://github.com/Automattic/wp-codebox.git",
   "changelog_target": "CHANGELOG.md",
   "extensions": {
-    "nodejs": {}
+    "nodejs": {
+      "settings": {
+        "release_package_script": "release:package"
+      }
+    }
   },
   "build_artifact": "packages/wordpress-plugin/dist/wp-codebox.zip",
   "deployment_provider": {
@@ -58,6 +62,10 @@
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
+      "file": "npm-shrinkwrap.json",
+      "pattern": "(?s)\"name\":\\s*\"(?:wp-codebox-workspace|@automattic/wp-codebox-(?:cli|core|playground))\",\\s*\"version\":\\s*\"([0-9.]+)\""
+    },
+    {
       "file": "packages/wordpress-plugin/wp-codebox.php",
       "pattern": "Version:\\s*([0-9.]+)"
     },
@@ -75,8 +83,10 @@
     ],
     "test": [
       "npm run smoke -- --group package",
-      "npm run test:release-package-coverage",
-      "npm run release:package"
+      "npm run test:release-target",
+      "npm run test:sharp-release-runtime",
+      "npm run test:prepare-declaration-rebuild",
+      "npm run test:release-package-coverage"
     ]
   }
 }

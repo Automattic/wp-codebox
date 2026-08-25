@@ -24,6 +24,7 @@ import {
   type WorkspaceRecipeStep,
 } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { negotiateWordPressServerClock, wordpressServerClockCleanupAction, wordpressServerClockScheduleAction, type WordPressServerClockNegotiation } from "@automattic/wp-codebox-playground"
 
 import type { InputMountPathMapping } from "./input-mount-paths.js"
 import { recipeAdversarialCapabilities } from "./recipe-validation.js"
@@ -37,6 +38,7 @@ export interface RecipeAdversarialCampaignOutput {
     available: string[]
     required: string[]
     optional: Array<{ id: string; available: boolean }>
+    clock?: WordPressServerClockNegotiation
   }
   evidence?: Awaited<ReturnType<typeof writeAdversarialEvidenceBundle>>
 }
@@ -63,6 +65,7 @@ interface RunRecipeAdversarialCampaignsOptions {
   signal?: AbortSignal
   executions: RecipeExecutionResult[]
   provenance?: Record<string, unknown>
+  managedServices?: { resetSmtpSink(serviceId: string): Promise<unknown> }
 }
 
 export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversarialCampaignsOptions): Promise<RecipeAdversarialCampaignOutput[]> {
@@ -79,6 +82,15 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
       await options.runtime.createCheckpoint({ name: checkpointName, metadata: { campaignId: declaration.id, immutableBaseline: true } })
     }
     const templates = new Map(declaration.caseTemplates.map((template) => [template.id, template]))
+    const clockTransitions = declaration.corpus.flatMap(({ actions }) => actions.flatMap((action) => action.clock ?? []))
+    const runtimeInfo = clockTransitions.length > 0 ? await options.runtime.info() : undefined
+    if (clockTransitions.length > 0 && runtimeInfo?.backend !== "wordpress-playground") {
+      throw new Error(`Recipe adversarial campaign ${declaration.id} requires server clock transitions, but runtime backend ${runtimeInfo?.backend ?? "unknown"} does not provide the WordPress Playground clock adapter.`)
+    }
+    const clockNegotiation = clockTransitions.length > 0 ? negotiateWordPressServerClock(clockTransitions) : undefined
+    if (clockNegotiation && !clockNegotiation.supported) {
+      throw new Error(`Recipe adversarial campaign ${declaration.id} has unsupported clock transitions: ${clockNegotiation.unsupported.map(({ surface, operation, reason }) => `${surface}.${operation} (${reason})`).join(", ")}`)
+    }
     const campaign = adversarialCampaign({
       id: declaration.id,
       seed: declaration.seed,
@@ -100,8 +112,27 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
     const campaignExecutions: RecipeExecutionResult[] = []
     const campaignOptions = { ...options, executions: campaignExecutions }
     const execute = async (plan: AdversarialCasePlan, signal: AbortSignal) => {
-      if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
-      return executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions)
+      const smtpSinkResets: unknown[] = []
+      if (checkpointName) {
+        await options.runtime.restoreCheckpoint!(checkpointName)
+        // Runtime checkpoints do not include host-side sinks. Resetting declared
+        // SMTP sinks keeps every checkpointed case independently replayable.
+        for (const service of options.recipe.inputs?.services?.filter((candidate) => candidate.kind === "smtp") ?? []) {
+          const reset = await options.managedServices?.resetSmtpSink(service.id)
+          if (reset) smtpSinkResets.push(reset)
+        }
+      }
+      try {
+        return await executeRecipeAdversarialCase(declaration, templates, plan, signal, campaignOptions, smtpSinkResets)
+      } finally {
+        if (plan.actions.some((action) => action.clock?.length)) {
+          const cleanup = wordpressServerClockCleanupAction()
+          const execution = await options.runtime.execute(cleanup)
+          campaignExecutions.push(execution)
+        }
+        // Checkpoints isolate all runtime state when they are available.
+        if (checkpointName) await options.runtime.restoreCheckpoint!(checkpointName)
+      }
     }
     const result = replay
       ? await runRecipeAdversarialReplay(campaign, declaration, templates, replay, execute, options.signal)
@@ -120,6 +151,7 @@ export async function runRecipeAdversarialCampaigns(options: RunRecipeAdversaria
         available: capabilities,
         required: declaration.requiredCapabilities ?? [],
         optional: (declaration.optionalCapabilities ?? []).map((id) => ({ id, available: capabilities.includes(id) })),
+        ...(clockNegotiation ? { clock: clockNegotiation } : {}),
       },
     })
   }
@@ -208,6 +240,7 @@ async function executeRecipeAdversarialCase(
   plan: AdversarialCasePlan,
   signal: AbortSignal,
   options: RunRecipeAdversarialCampaignsOptions,
+  smtpSinkResets: unknown[] = [],
 ): Promise<AdversarialExecutionObservation> {
   if (signal.aborted) return { status: "error", diagnostics: [{ code: "campaign-case-interrupted", message: "Case was interrupted before execution." }] }
   const phases = materializeCasePhases(plan, templates)
@@ -222,27 +255,38 @@ async function executeRecipeAdversarialCase(
       phases,
       metadata: { adversarialCase: true },
     }],
-    metadata: { adversarialCampaignId: declaration.id, faultSchedule: declaration.faultSchedule },
+    metadata: { adversarialCampaignId: declaration.id, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }
   const execution = await executeRecipeWorkflowStep(options.runtime, {
     phase: "adversarial:action",
     index: plan.iteration,
     step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(suite)}`], metadata: { campaignId: declaration.id, caseId: plan.caseId } },
-  }, options.recipeDirectory, options.sandboxWorkspace, options.artifactRoot, options.runOptions, options.inputMountPathMap)
+  }, options.recipeDirectory, options.sandboxWorkspace, options.artifactRoot, options.runOptions, options.inputMountPathMap, undefined, signal)
   const parsed = parseObject(execution.stdout)
   const fuzzCase = Array.isArray(parsed?.cases) ? parseObjectValue(parsed.cases[0]) : undefined
   const diagnostics = Array.isArray(fuzzCase?.diagnostics) ? fuzzCase.diagnostics.flatMap((item) => {
     const diagnostic = parseObjectValue(item)
-    return diagnostic ? [{ code: String(diagnostic.code ?? "fuzz-suite-diagnostic"), message: String(diagnostic.message ?? "Fuzz suite diagnostic"), severity: typeof diagnostic.severity === "string" ? diagnostic.severity : undefined }] : []
+    if (!diagnostic) return []
+    const message = String(diagnostic.message ?? "Fuzz suite diagnostic")
+    return [{ code: adaptiveBrowserDiagnosticCode(String(diagnostic.code ?? "fuzz-suite-diagnostic"), message), message, severity: typeof diagnostic.severity === "string" ? diagnostic.severity : undefined }]
   }) : []
   const artifactRefs = Array.isArray(fuzzCase?.artifactRefs) ? fuzzCase.artifactRefs.flatMap((item) => {
     const ref = parseObjectValue(item)
     return ref && typeof ref.path === "string" ? [{ path: ref.path, kind: String(ref.kind ?? "fuzz-artifact"), bytes: typeof ref.bytes === "number" ? ref.bytes : undefined, sha256: typeof ref.sha256 === "string" ? ref.sha256 : undefined }] : []
   }) : []
-  const status = fuzzCase?.status === "passed" && execution.exitCode === 0 ? "passed" : fuzzCase?.status === "failed" ? "failed" : "error"
+  const incompleteAdaptive = findIncompleteAdaptiveExploration(fuzzCase)
+  if (incompleteAdaptive) diagnostics.unshift({
+    code: "adaptive-exploration-incomplete",
+    message: incompleteAdaptive.budgetExhausted
+      ? `Adaptive browser exploration stopped at the ${incompleteAdaptive.budgetExhausted} bound and retained partial evidence.`
+      : "Adaptive browser exploration retained partial evidence but did not complete coverage.",
+    severity: "warning",
+  })
+  const status = incompleteAdaptive ? "resource-exhausted" : fuzzCase?.status === "passed" && execution.exitCode === 0 ? "passed" : fuzzCase?.status === "failed" ? "failed" : "error"
   options.executions.push(execution)
   const signals = [
     `status:${status}`,
+    ...(smtpSinkResets.length > 0 ? [`smtp-sink-reset:${smtpSinkResets.length}`] : []),
     ...diagnostics.map((diagnostic) => `diagnostic:${diagnostic.code}`),
     ...diagnostics.map((diagnostic) => `diagnostic-message:${createHash("sha256").update(stableAdversarialDiagnosticMessage(diagnostic.message, plan.caseId)).digest("hex").slice(0, 16)}`),
     ...(typeof fuzzCase?.skipReason === "string" ? [`skip:${fuzzCase.skipReason}`] : []),
@@ -253,8 +297,36 @@ async function executeRecipeAdversarialCase(
     diagnostics,
     artifacts: artifactRefs,
     stateDigest: createHash("sha256").update(JSON.stringify({ campaignId: declaration.id, status, signals, matrix: plan.matrix })).digest("hex"),
-    metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule },
+    metadata: { fuzzSuite: parsed, resetPolicy: declaration.resetPolicy ?? { mode: "none" }, faultSchedule: declaration.faultSchedule, ...(smtpSinkResets.length > 0 ? { smtpSinkResets } : {}) },
   }) as AdversarialExecutionObservation
+}
+
+function adaptiveBrowserDiagnosticCode(code: string, message: string): string {
+  if (/Adaptive browser exploration found \d+ reproducible oracle failure/i.test(message)) return "adaptive-browser-oracle-failure"
+  if (/Target page, context or browser has been closed|browser (?:has been |is )?closed/i.test(message)) return "adaptive-browser-runtime-closed"
+  if (/browser[^\n]*(?:cancelled|canceled|aborted)|(?:cancelled|canceled|aborted)[^\n]*browser/i.test(message)) return "adaptive-browser-cancelled"
+  return code
+}
+
+function findIncompleteAdaptiveExploration(value: unknown): { budgetExhausted?: string } | undefined {
+  if (!value || typeof value !== "object") return undefined
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const result = findIncompleteAdaptiveExploration(item)
+      if (result) return result
+    }
+    return undefined
+  }
+  const record = value as Record<string, unknown>
+  if (record.schema === "wp-codebox/browser-adaptive-exploration/v1" && record.status === "incomplete") {
+    const summary = parseObjectValue(record.summary)
+    return { budgetExhausted: typeof record.budgetExhausted === "string" ? record.budgetExhausted : typeof summary?.budgetExhausted === "string" ? summary.budgetExhausted : undefined }
+  }
+  for (const item of Object.values(record)) {
+    const result = findIncompleteAdaptiveExploration(item)
+    if (result) return result
+  }
+  return undefined
 }
 
 function stableAdversarialDiagnosticMessage(message: string, caseId: string): string {
@@ -272,8 +344,20 @@ function stableAdversarialDiagnosticMessage(message: string, caseId: string): st
 
 function materializeCasePhases(plan: AdversarialCasePlan, templates: Map<string, WorkspaceRecipeAdversarialCampaign["caseTemplates"][number]>): Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>> {
   const phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>> = {}
-  for (const phase of ["setup", "action", "assert", "teardown"] as const) {
-    phases[phase] = plan.actions.flatMap((action) => (templates.get(action.type)?.phases[phase] ?? []).map((step) => materializeStep(step, plan, action.input)))
+  for (const action of plan.actions) {
+    const template = templates.get(action.type)
+    if (action.clock?.length && (template?.phases.action?.length ?? 0) === 0) {
+      throw new Error(`Clock transition for adversarial action ${action.type} requires at least one action-phase step.`)
+    }
+    for (const phase of ["setup", "action", "assert", "teardown"] as const) {
+      const steps = (template?.phases[phase] ?? []).map((step) => materializeStep(step, plan, action.input))
+      if (phase === "action" && action.clock?.length) {
+        const transition = wordpressServerClockScheduleAction(action.clock)
+        phases[phase] = [...(phases[phase] ?? []), { command: transition.command, args: transition.args, metadata: transition.metadata }, ...steps]
+      } else {
+        phases[phase] = [...(phases[phase] ?? []), ...steps]
+      }
+    }
   }
   return phases
 }

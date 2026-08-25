@@ -3,6 +3,7 @@ import { commandRegistry, type CommandDefinition } from "@automattic/wp-codebox-
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput, printRuntimeDescriptorHumanOutput } from "../output.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../runtime-backends.js"
 import { nativeMariaDbHostReadiness } from "../runtime-services.js"
+import { playwrightBrowserReadiness } from "@automattic/wp-codebox-playground"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -111,5 +112,5 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
 }
 
 async function runtimeDescriptorOutput(): Promise<RuntimeDescriptor> {
-  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness() })
+  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness(), browserRuntime: await playwrightBrowserReadiness() })
 }

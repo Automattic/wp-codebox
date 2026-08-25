@@ -95,6 +95,21 @@ startup and remains distinguishable as `browser_preview_aborted`; an accepted
 start result exposes idempotent async `dispose()` cleanup without changing its
 `client` field or result envelope.
 
+`window.wpCodeboxBrowser.v1.captureViewportScreenshot()` is the generic visual
+evidence primitive. It accepts a prepared client, an absolute route, viewport
+width and height, and a bounded `timeout_ms`. By default, Codebox exports the
+prepared client with the matching Playground module's `zipWpContent`, replays
+that archive through the Codebox-owned Playwright runtime, and persists the
+returned PNG bytes through `wp-codebox/persist-browser-artifact`. It returns
+the canonical immutable bundle/file ref and SHA-256. An optional `browserInvoker`
+receives `wp-codebox/browser-invocation-request/v1` with operation
+`viewport-screenshot` and remains an explicit test or extensibility seam.
+The resulting `wp-codebox/browser-viewport-screenshot/v1` envelope reports
+`captured` or a non-passing `failed` state with diagnostics. Consumers call
+`verifyViewportScreenshot(evidence)` before use; it calls the Codebox-owned
+`wp-codebox/inspect-artifact` server-side verifier, which confirms the artifact
+bundle and exact file SHA-256. Explicit adapters are optional test seams.
+
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
 should call directly.
@@ -178,6 +193,11 @@ path `wp-codebox run-fuzz-suite --runner-mode=runtime-backed`. Targets that
 require the runtime command, browser, editor, or page-load executors return
 `status: "skipped"`, a case-level `skipReason`, and a warning diagnostic in
 permissive PHP mode rather than silently passing without exercising the target.
+For the Node CLI `--input-file` path, local `metadata.runtime_requirements`
+`wordpress_directory`, `extra_plugins`, and `component_contracts` paths resolve
+relative to the input file before WP Codebox materializes its temporary recipe.
+Absolute paths remain unchanged; `sourceSubpath` and `sourceSubdir` remain
+bounded relative plugin-internal paths.
 Public suite builders declare
 `metadata.requiredRunnerCapabilities`, and the PHP ability also infers required
 target/runtime-action capabilities from suite targets, so callers can choose
@@ -281,8 +301,10 @@ WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `runtime descriptor`, `run-runtime-task`, `run-wordpress-workload`,
 `run-runtime-package`, `resolve-runtime-requirements`, `run-fuzz-suite`, and
 artifact inspection/apply commands. The WP-CLI wrappers parse JSON payloads from
-`--input-json` or `--input-file` and delegate through
-`WP_Codebox_API` rather than backend internals.
+`--input-json` or `--input-file`. Most delegate through `WP_Codebox_API`;
+`run-wordpress-workload` and `run-fuzz-suite` invoke their owning PHP runners
+directly because WP-CLI is a trusted operator transport. Their Ability and
+`WP_Codebox_API` surfaces retain the raw-execution input guard.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,

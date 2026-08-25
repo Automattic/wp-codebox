@@ -28,6 +28,7 @@ import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
+import { installHostHttpTransportRoute } from "./host-http-transport.js"
 import { wordpressActionAuthNoncePhpCode, wordpressFixtureUserWithoutPassword, wordpressUserSessionFromCommandArgs, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 import type {
   ArtifactBundle,
@@ -233,6 +234,10 @@ export interface PlaygroundRuntimeBackendOptions {
   cliModule?: PlaygroundCliModule
 }
 
+export function materializePlaygroundRunResponse(response: PlaygroundRunResponse): PlaygroundRunResponse {
+  return { ...response, text: response.text }
+}
+
 class PlaygroundRuntime implements Runtime {
   private status: RuntimeInfo["status"] = "created"
   private readonly runtimeId = id("runtime")
@@ -381,9 +386,14 @@ class PlaygroundRuntime implements Runtime {
         const executeCommand = async () => spec.processIdentity
           ? await this.requestWorkerExecutions.run(spec.environment ?? {}, async () => await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController))
           : await timeoutPlaygroundCommand(executePlaygroundCommand(this, executionSpec, this.hostTools), spec, abortController)
-        return spec.command === "wordpress.phpunit"
-          ? await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
-          : await executeCommand()
+        // A php.wasm trap is a property of the runtime, not of the command that
+        // happened to be running: it leaves the interpreter unusable, and the
+        // rejection arrives out of band on the process rather than through the
+        // command's own promise. Scoping this to wordpress.phpunit left every
+        // other command able to hang forever on the identical fault — a trap in
+        // wordpress.run-php wedged a recipe-run for its whole 1500s budget and
+        // reported only a timeout.
+        return await terminalizeOnPhpWasmRuntimeRejection(executeCommand, () => abortController.abort())
       })
       const finishedAt = now()
       const envelope = typeof output === "string"
@@ -920,7 +930,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserActionsCommand>>
     try {
-      result = await runBrowserActionsCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
+      result = await runBrowserActionsCommand({ abortSignal: this.executionSignals.getStore(), artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -1788,7 +1798,8 @@ class PlaygroundRuntime implements Runtime {
         const response = await this.executeRequestWorker(server, options.code, requestWorkerEnvironment, this.executionSignals.getStore())
         return { text: response.text, exitCode: response.ok ? 0 : 1, ...(!response.ok ? { errors: response.text } : {}) }
       }
-      return await abortable(server.playground.run(options), this.executionSignals.getStore())
+      const response = await abortable(server.playground.run(options), this.executionSignals.getStore())
+      return materializePlaygroundRunResponse(response)
     } catch (error) {
       const payload = "code" in options ? options.code : options.scriptPath
       throw new PlaygroundCommandCrashError(command, error, {
@@ -1863,10 +1874,12 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
   }
 
   private async startPlayground(): Promise<PlaygroundCliServer> {
-    return startPlaygroundCliServer(this.spec, this.mounts, {
+    const server = await startPlaygroundCliServer(this.spec, this.mounts, {
       onProgress: (event) => this.recordBrowserStartupProgress(event),
       cliModule: this.backendOptions.cliModule,
     })
+    server.hostHttpTransport = installHostHttpTransportRoute(server, this.spec.policy.network)
+    return server
   }
 
   private recordBrowserStartupProgress(event: BrowserStartupProgressEvent): void {

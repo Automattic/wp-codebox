@@ -103,6 +103,8 @@ assert.equal(validateWorkspaceRecipeJsonSchema({
 assert.deepEqual(normalizeRecipeMounts([{ source: "/host/plugin", target: "//wordpress//wp-content/plugins/plugin" }]), [{ source: "/host/plugin", target: "/wordpress/wp-content/plugins/plugin", mode: "readwrite" }])
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "wordpress/wp-content/plugins/plugin" }]), /absolute target/)
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "/wordpress/../escape" }]), /parent-directory/)
+assert.deepEqual(normalizeSharedMounts([{ source: "/host/site.zip", target: "/wordpress/site.zip", phase: "pre-install" }]), [{ source: "/host/site.zip", target: "/wordpress/site.zip", mode: "readwrite", phase: "pre-install" }])
+assert.throws(() => normalizeSharedMounts([{ source: "/host/site.zip", target: "/wordpress/site.zip", phase: "before-install" as "pre-install" }]), /phase must be pre-install or post-install/)
 
 await withTempDir("wp-codebox-artifact-part-", async (artifactRoot) => {
   const part = await writeArtifactPart({

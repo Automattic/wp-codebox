@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment, type TransportFaultCapability } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary, type BrowserAdaptiveExplorationResult, type BrowserEnvironment, type BrowserEnvironmentCapabilityResult, type BrowserGeolocation, type ResolvedBrowserEnvironment, type TransportFaultCapability } from "@automattic/wp-codebox-core"
 import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
@@ -83,6 +83,7 @@ export interface BrowserArtifactFiles {
   performance?: string
   review?: string
   screenshot?: string
+  screenshots?: string[]
   traces?: string[]
   domSnapshots?: string[]
   verifierResults?: string[]
@@ -141,6 +142,7 @@ export interface BrowserArtifactSummary {
   editorValidity?: BrowserEditorValiditySummary
   editorValidateBlocks?: BrowserEditorValidateBlocksSummary
   editorReadiness?: BrowserEditorReadinessSummary
+  editorPresentation?: BrowserEditorPresentationSummary
   editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
   editorCapabilities?: { clipboard: "unsupported" }
@@ -179,6 +181,7 @@ export interface BrowserArtifactSummary {
     states: number
     transitions: number
     findings: number
+    budgetExhausted?: BrowserAdaptiveExplorationResult["summary"]["budgetExhausted"]
     artifact: string
   }
   networkPolicy?: BrowserProbeNetworkPolicySummary
@@ -285,6 +288,16 @@ export interface BrowserEditorReadinessSummary {
   blockTypesRegistered?: number
   postId?: number
   postType?: string
+}
+
+export interface BrowserEditorPresentationSummary {
+  schema: "wp-codebox/editor-presentation/v1"
+  canvasDocumentType: "iframe" | "parent"
+  iframeCount: number
+  iframeStylesheetUrlCount: number
+  iframeStylesheetUrls: string[]
+  generatedPresentationIdentityCount: number
+  generatedPresentationIdentities: string[]
 }
 
 export interface BrowserEditorSaveSummary {
@@ -1168,6 +1181,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
+  screenshots: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   traces: { kind: "browser-trace", contentType: "application/zip", redact: true },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
   verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },

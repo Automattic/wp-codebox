@@ -189,11 +189,30 @@ assert.match(browserPreviewReadinessError(unsupportedCanonicalTopology.preview)?
 
 let activeUpstreamRequests = 0
 let maxActiveUpstreamRequests = 0
-const targetServer = createServer(async (_request, response) => {
+let forwardedServiceWorkerHeaders: { serviceWorker?: string | string[]; destination?: string | string[] } | undefined
+const targetServer = createServer(async (request, response) => {
   activeUpstreamRequests += 1
   maxActiveUpstreamRequests = Math.max(maxActiveUpstreamRequests, activeUpstreamRequests)
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
   activeUpstreamRequests -= 1
+  if (request.url?.startsWith("/service-worker-redirect")) {
+    forwardedServiceWorkerHeaders = { serviceWorker: request.headers["service-worker"], destination: request.headers["sec-fetch-dest"] }
+    response.writeHead(302, { location: `${targetServerUrl}/login?token=PRIVATE_REDIRECT_TOKEN` })
+    response.end()
+    return
+  }
+  if (request.url === "/canceled-service-worker-redirect") {
+    response.writeHead(302, { location: `${targetServerUrl}/login?token=PRIVATE_CANCELED_TOKEN` })
+    response.flushHeaders()
+    setTimeout(() => response.end(), 100)
+    return
+  }
+  if (request.url === "/truncated-service-worker") {
+    response.writeHead(200, { "content-type": "application/javascript" })
+    response.flushHeaders()
+    response.socket?.destroy()
+    return
+  }
   response.end("ok")
 })
 const targetServerUrl = await listenLocalHttpServer(targetServer)
@@ -208,16 +227,98 @@ const proxied = await withPreviewProxy({
 try {
   assert.equal(proxied.wordpressUrl, targetServerUrl)
   assert.notEqual(proxied.serverUrl, proxied.wordpressUrl)
-  assert.deepEqual(proxied.previewProxyDiagnostics, {
+  const initialProxyDiagnostics = proxied.previewProxyDiagnostics
+  assert.deepEqual(initialProxyDiagnostics, {
     schema: "wp-codebox/preview-proxy-diagnostics/v1",
     upstreamConcurrency: "serialized",
     maxConcurrentUpstreamRequests: 1,
     queue: "fifo",
     bind: "127.0.0.1",
     targetOrigin: new URL(targetServerUrl).origin,
+    requestTrace: { scope: "service-worker-and-failed-script", capacity: 64, total: 0, dropped: 0, entries: [] },
   })
   await Promise.all([fetch(proxied.serverUrl), fetch(proxied.serverUrl)])
   assert.equal(maxActiveUpstreamRequests, 1)
+  await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_ORDINARY_NONCE`, { redirect: "manual" })
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 0, "ordinary redirects remain outside the service-worker trace")
+  await fetch(`${proxied.serverUrl}/sw.js`)
+  const serviceWorkerResponse = proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1)
+  assert.deepEqual(serviceWorkerResponse, {
+    sequence: 1,
+    method: "GET",
+    path: "/sw.js",
+    destination: null,
+    serviceWorker: false,
+    outcome: "response",
+    status: 200,
+    contentLength: "2",
+    serviceWorkerAllowed: "/",
+    bodyRewritten: false,
+  })
+  assert.equal(serviceWorkerResponse?.contentLength, "2", "the trace preserves the normalized response content length")
+  assert.equal(serviceWorkerResponse?.serviceWorkerAllowed, "/", "the trace exposes the worker's allowed root scope")
+  assert.equal(serviceWorkerResponse?.bodyRewritten, false, "the trace reports that an untyped worker body was not rewritten")
+  const redirectResponse = await fetch(`${proxied.serverUrl}/service-worker-redirect?nonce=PRIVATE_REQUEST_NONCE`, {
+    headers: { "service-worker": "script", "sec-fetch-dest": "serviceworker" },
+    redirect: "manual",
+  })
+  assert.equal(redirectResponse.status, 302)
+  assert.deepEqual(forwardedServiceWorkerHeaders, { serviceWorker: undefined, destination: undefined })
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 2)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.dropped, 0)
+  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+    sequence: 2,
+    method: "GET",
+    path: "/service-worker-redirect?nonce=[redacted]",
+    destination: "serviceworker",
+    serviceWorker: true,
+    outcome: "response",
+    status: 302,
+    bodyRewritten: false,
+    upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
+    visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
+  })
+  assert.equal(initialProxyDiagnostics?.requestTrace.total, 0, "completed diagnostics snapshots do not mutate with later proxy requests")
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_REQUEST_NONCE|PRIVATE_REDIRECT_TOKEN/)
+  const canceledRedirect = new AbortController()
+  const canceledRedirectResponse = await fetch(`${proxied.serverUrl}/canceled-service-worker-redirect`, { headers: { "service-worker": "script" }, redirect: "manual", signal: canceledRedirect.signal })
+  assert.equal(canceledRedirectResponse.status, 302)
+  canceledRedirect.abort()
+  await canceledRedirectResponse.body?.cancel().catch(() => undefined)
+  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+    sequence: 3,
+    method: "GET",
+    path: "/canceled-service-worker-redirect",
+    destination: null,
+    serviceWorker: true,
+    outcome: "response",
+    status: 302,
+    bodyRewritten: false,
+    upstreamLocation: `${targetServerUrl}/login?token=[redacted]`,
+    visibleLocation: `${proxied.serverUrl}/login?token=[redacted]`,
+  })
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_CANCELED_TOKEN/)
+  await fetch(`${proxied.serverUrl}/truncated-service-worker`, { headers: { "service-worker": "script" }, redirect: "manual" }).then((response) => response.text()).catch(() => undefined)
+  assert.deepEqual(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1), {
+    sequence: 4,
+    method: "GET",
+    path: "/truncated-service-worker",
+    destination: null,
+    serviceWorker: true,
+    outcome: "upstream-error",
+    status: 200,
+    contentType: "application/javascript",
+    bodyRewritten: true,
+  })
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_TRUNCATED_TOKEN/)
+  await Promise.all(Array.from({ length: 64 }, (_, index) => fetch(`${proxied.serverUrl}/bounded-trace/${index}`, { headers: { "service-worker": "script", ...(index === 0 ? { "sec-fetch-dest": "PRIVATE_DESTINATION" } : {}) } })))
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.total, 68)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.dropped, 4)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries.length, 64)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries[0]?.sequence, 5)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries[0]?.destination, null)
+  assert.equal(proxied.previewProxyDiagnostics?.requestTrace.entries.at(-1)?.sequence, 68)
+  assert.doesNotMatch(JSON.stringify(proxied.previewProxyDiagnostics), /PRIVATE_DESTINATION/)
 } finally {
   await proxied[Symbol.asyncDispose]()
   await closeHttpServer(targetServer)
@@ -244,10 +345,14 @@ const abortableProxy = await withPreviewProxy({
 } satisfies PlaygroundCliServer, 0)
 try {
   const controller = new AbortController()
-  const abortedRequest = fetch(`${abortableProxy.serverUrl}/hang`, { signal: controller.signal }).catch((error) => error)
+  const abortedRequest = fetch(`${abortableProxy.serverUrl}/hang`, { headers: { "service-worker": "script" }, signal: controller.signal }).catch((error) => error)
   await hangingRequest
   controller.abort()
   await abortedRequest
+  for (let attempt = 0; attempt < 50 && abortableProxy.previewProxyDiagnostics?.requestTrace.total === 0; attempt += 1) {
+    await wait(10)
+  }
+  assert.equal(abortableProxy.previewProxyDiagnostics?.requestTrace.entries.at(-1)?.outcome, "client-canceled")
 
   const nextRequest = await Promise.race([
     fetch(`${abortableProxy.serverUrl}/ok`).then((response) => response.text()),
@@ -257,6 +362,73 @@ try {
 } finally {
   await abortableProxy[Symbol.asyncDispose]()
   await closeHttpServer(hangingTargetServer)
+}
+
+let releaseFirstQueuedRequest: (() => void) | undefined
+let firstQueuedRequestReached: (() => void) | undefined
+const firstQueuedRequest = new Promise<void>((resolve) => {
+  firstQueuedRequestReached = resolve
+})
+const queuedTargetRequests: string[] = []
+const queuedTargetServer = createServer((request, response) => {
+  queuedTargetRequests.push(request.url ?? "")
+  if (request.url === "/first") {
+    firstQueuedRequestReached?.()
+    new Promise<void>((resolve) => {
+      releaseFirstQueuedRequest = resolve
+    }).then(() => response.end("first"))
+    return
+  }
+  response.end("third")
+})
+const queuedTargetServerUrl = await listenLocalHttpServer(queuedTargetServer)
+const queuedAbortProxy = await withPreviewProxy({
+  playground: { async run() { return { text: "" } } },
+  serverUrl: queuedTargetServerUrl,
+  async [Symbol.asyncDispose]() {},
+} satisfies PlaygroundCliServer, 0)
+let secondQueuedRequestReached: (() => void) | undefined
+const secondQueuedRequest = new Promise<void>((resolve) => {
+  secondQueuedRequestReached = resolve
+})
+let secondQueuedRequestCanceled: (() => void) | undefined
+const secondQueuedCancellation = new Promise<void>((resolve) => {
+  secondQueuedRequestCanceled = resolve
+})
+const stopObservingQueuedRequest = queuedAbortProxy.previewRoutes?.add((request, response) => {
+  if (request.url === "/second") {
+    secondQueuedRequestReached?.()
+    response.once("close", () => secondQueuedRequestCanceled?.())
+  }
+  return false
+})
+try {
+  const firstRequest = fetch(`${queuedAbortProxy.serverUrl}/first`)
+  await firstQueuedRequest
+
+  const controller = new AbortController()
+  const canceledRequest = fetch(`${queuedAbortProxy.serverUrl}/second`, { headers: { "sec-fetch-dest": "serviceworker" }, signal: controller.signal }).catch((error) => error)
+  await secondQueuedRequest
+  controller.abort()
+  await canceledRequest
+  await secondQueuedCancellation
+
+  releaseFirstQueuedRequest?.()
+  assert.equal(await (await firstRequest).text(), "first")
+  assert.equal(await (await fetch(`${queuedAbortProxy.serverUrl}/third`)).text(), "third")
+  assert.deepEqual(queuedTargetRequests, ["/first", "/third"], "a canceled queued request must not open an upstream request")
+  assert.deepEqual(queuedAbortProxy.previewProxyDiagnostics?.requestTrace.entries, [{
+    sequence: 1,
+    method: "GET",
+    path: "/second",
+    destination: "serviceworker",
+    serviceWorker: true,
+    outcome: "canceled-before-upstream",
+  }])
+} finally {
+  stopObservingQueuedRequest?.()
+  await queuedAbortProxy[Symbol.asyncDispose]()
+  await closeHttpServer(queuedTargetServer)
 }
 
 const phase = materializationPhaseResult({

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { Buffer } from "node:buffer"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -209,6 +209,37 @@ try {
   assert(Buffer.byteLength(await readFile(join(artifactRoot, "logs", "commands.log"), "utf8")) <= COMMAND_ARTIFACT_STRING_MAX_BYTES + 1024)
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
+}
+
+const partialBrowserArtifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-partial-browser-artifact-"))
+try {
+  await mkdir(join(partialBrowserArtifactRoot, "files/browser"), { recursive: true })
+  await writeFile(join(partialBrowserArtifactRoot, "files/browser/summary.json"), "{}\n")
+  const partialBrowserBundle = await collectPlaygroundArtifacts({
+    artifactRoot: partialBrowserArtifactRoot,
+    browserProbes: [{
+      artifactType: "actions",
+      requestedUrl: "http://127.0.0.1:9400/",
+      url: "http://127.0.0.1:9400/",
+      preview: { requestedMode: "local", mode: "local", requestedOrigin: "http://127.0.0.1:9400", localOrigin: "http://127.0.0.1:9400", effectiveOrigin: "http://127.0.0.1:9400", secureContext: false, capabilities: [], fallbacks: [] },
+      files: { summary: "files/browser/summary.json", screenshot: "files/browser/screenshot.png" },
+      summary: { actions: 1, steps: 1, consoleMessages: 0, errors: 1, networkEvents: 0, screenshot: true, finalUrl: "http://127.0.0.1:9400/", viewport: null, replayability: "partial" },
+    }],
+    commands: [], createdAt: "2026-07-21T19:59:00.000Z", events: [],
+    info: async () => ({ id: "partial-browser", backend: "playground", status: "ready", environment: { version: "latest" } }),
+    mounts: [], observations: [{ type: "adversarial-finding", data: { diagnostics: [{ severity: "error", message: "navigation blocked" }] } }], pluginChecks: [],
+    previewInfo: async () => undefined, recordArtifactsCollected: () => {}, runtimeId: "partial-browser", snapshots: [], spec: { environment: { blueprint: {} } }, themeChecks: [],
+  })
+  const diagnostics = JSON.parse(await readFile(join(partialBrowserArtifactRoot, "files/diagnostics.json"), "utf8"))
+  assert.equal(diagnostics.diagnostics.some((diagnostic: { message?: string }) => diagnostic.message === "navigation blocked"), true)
+  assert.equal(diagnostics.diagnostics.some((diagnostic: { code?: string }) => diagnostic.code === "browser-capture-not-materialized"), true)
+  const review = JSON.parse(await readFile(partialBrowserBundle.reviewPath, "utf8"))
+  assert.equal(review.browser.probes[0].screenshot, undefined)
+  const manifest = JSON.parse(await readFile(partialBrowserBundle.manifestPath, "utf8"))
+  assert.equal(manifest.files.some((file: { path?: string }) => file.path === "files/browser/screenshot.png"), false)
+  assert.equal(manifest.files.some((file: { path?: string }) => file.path === "files/browser/summary.json"), true)
+} finally {
+  await rm(partialBrowserArtifactRoot, { recursive: true, force: true })
 }
 
 const collectionCause = Object.assign(new RangeError("Invalid string length"), {

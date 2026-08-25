@@ -16,6 +16,8 @@
 		'runtime-task:run',
 		'browser-preview:start',
 		'browser-preview:lifecycle',
+		'browser-preview:double-buffer',
+		'browser-preview:navigation',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
@@ -30,6 +32,8 @@
 		'filesystem:ensure-directory',
 		'review:write-file',
 		'contract:probe',
+		'browser-viewport:capture',
+		'browser-viewport:verify',
 	] );
 
 	const safeName = ( name ) => String( name || 'task' ).replace( /[^a-z0-9_-]/gi, '-' ).toLowerCase();
@@ -235,6 +239,263 @@
 				data: null,
 				error: normalizeBrowserSdkError( error ),
 			};
+		}
+	};
+
+	const viewportScreenshotSchema = 'wp-codebox/browser-viewport-screenshot/v1';
+	const viewportScreenshotVerificationSchema = 'wp-codebox/browser-viewport-screenshot-verification/v1';
+	const viewportScreenshotMaxTimeoutMs = 180000;
+	const viewportScreenshotMaxBytes = 5242880;
+
+	const viewportScreenshotDiagnostics = ( code, message, phase, metadata = undefined ) => [ Object.fromEntries( Object.entries( {
+		code,
+		message,
+		severity: 'error',
+		phase,
+		metadata,
+	} ).filter( ( [ , value ] ) => value !== undefined ) ) ];
+
+	const viewportScreenshotFailure = ( input, code, message, phase, metadata = undefined ) => ( {
+		schema: viewportScreenshotSchema,
+		success: false,
+		status: 'failed',
+		route: typeof input?.route === 'string' ? input.route : null,
+		viewport: isPlainObject( input?.viewport ) ? input.viewport : null,
+		artifact: null,
+		sha256: null,
+		diagnostics: viewportScreenshotDiagnostics( code, message, phase, metadata ),
+	} );
+
+	const viewportScreenshotInput = ( input ) => {
+		if ( ! isPlainObject( input ) || typeof input.route !== 'string' || ! input.route.startsWith( '/' ) || input.route.startsWith( '//' ) ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_route_invalid', 'Viewport capture requires a safe absolute route.' );
+		}
+		const viewport = isPlainObject( input.viewport ) ? input.viewport : {};
+		const width = Number( viewport.width );
+		const height = Number( viewport.height );
+		if ( ! Number.isInteger( width ) || ! Number.isInteger( height ) || width < 1 || height < 1 || width > 10000 || height > 10000 ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_viewport_invalid', 'Viewport capture requires width and height between 1 and 10000.' );
+		}
+		const timeoutMs = input.timeout_ms === undefined ? 30000 : Number( input.timeout_ms );
+		if ( ! Number.isInteger( timeoutMs ) || timeoutMs < 1 || timeoutMs > viewportScreenshotMaxTimeoutMs ) {
+			throw runtimeError( 'viewport_capture_validate', 'viewport_capture_timeout_invalid', `Viewport capture timeout_ms must be between 1 and ${ viewportScreenshotMaxTimeoutMs }.` );
+		}
+		return { route: input.route, viewport: { width, height }, timeout_ms: timeoutMs };
+	};
+
+	const withViewportScreenshotTimeout = async ( operation, timeoutMs ) => {
+		const controller = typeof AbortController === 'function' ? new AbortController() : null;
+		let timeout;
+		try {
+			return await Promise.race( [
+				operation( controller?.signal ),
+				new Promise( ( resolve, reject ) => {
+					timeout = setTimeout( () => {
+						controller?.abort();
+						reject( runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.', { timeout_ms: timeoutMs } ) );
+					}, timeoutMs );
+				} ),
+			] );
+		} finally {
+			clearTimeout( timeout );
+		}
+	};
+
+	const viewportScreenshotBytes = ( capture ) => {
+		const value = capture?.png_base64 ?? capture?.pngBase64 ?? capture?.data;
+		if ( typeof value !== 'string' || ! value ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_missing', 'Viewport capture did not return PNG bytes.' );
+		}
+		let binary;
+		try {
+			binary = atob( value );
+		} catch ( error ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_invalid', 'Viewport capture returned invalid base64 PNG bytes.' );
+		}
+		if ( binary.length < 8 || binary.length > viewportScreenshotMaxBytes || binary.charCodeAt( 0 ) !== 137 || binary.slice( 1, 4 ) !== 'PNG' ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_png_invalid', 'Viewport capture did not return a bounded PNG artifact.' );
+		}
+		return { base64: value, bytes: binary.length };
+	};
+
+	const viewportScreenshotArtifact = ( persisted ) => {
+		const persistedBundle = isPlainObject( persisted?.artifact_ref ) ? persisted : ( isPlainObject( persisted?.data ) ? persisted.data : null );
+		if ( persistedBundle?.artifact_ref && Array.isArray( persistedBundle.files ) ) {
+			const file = persistedBundle.files.find( ( item ) => isPlainObject( item ) && typeof item.sha256?.value === 'string' && typeof item.artifact_path === 'string' );
+			if ( ! file || typeof persistedBundle.artifact_ref.artifact_id !== 'string' || ! persistedBundle.artifact_ref.artifact_id ) {
+				throw runtimeError( 'viewport_persist', 'viewport_capture_artifact_invalid', 'Codebox artifact persistence did not return a canonical screenshot ref.' );
+			}
+			return {
+				schema: persistedBundle.artifact_ref.schema || 'wp-codebox/browser-artifact-ref/v1',
+				artifact_id: persistedBundle.artifact_ref.artifact_id,
+				content_digest: persistedBundle.artifact_ref.content_digest,
+				artifacts_path: persistedBundle.artifact_ref.artifacts_path,
+				path: file.artifact_path,
+				kind: file.kind || 'browser-screenshot',
+				contentType: file.mime_type || 'image/png',
+				sha256: file.sha256.value.toLowerCase(),
+			};
+		}
+		const artifact = isPlainObject( persisted?.artifact ) ? persisted.artifact : persisted;
+		const sha256 = artifact?.sha256?.value || artifact?.sha256 || artifact?.digest?.value || artifact?.digest;
+		if ( ! isPlainObject( artifact ) || typeof artifact.id !== 'string' || ! artifact.id || typeof artifact.path !== 'string' || ! artifact.path || typeof sha256 !== 'string' || ! /^[a-f0-9]{64}$/i.test( sha256 ) ) {
+			throw runtimeError( 'viewport_persist', 'viewport_capture_artifact_invalid', 'Artifact persistence must return an immutable artifact id, path, and SHA-256 checksum.' );
+		}
+		return {
+			id: artifact.id,
+			path: artifact.path,
+			kind: typeof artifact.kind === 'string' && artifact.kind ? artifact.kind : 'browser-viewport-screenshot',
+			contentType: artifact.contentType || artifact.content_type || 'image/png',
+			sha256: sha256.toLowerCase(),
+		};
+	};
+
+	const executeBrowserSdkAbility = async ( ability, input, options = {} ) => {
+		const request = { path: abilityRestPath( ability ), method: 'POST', data: input, ...( options.signal ? { signal: options.signal } : {} ) };
+		if ( window.wp?.apiFetch ) {
+			return await window.wp.apiFetch( request );
+		}
+		if ( typeof fetch !== 'function' ) {
+			throw runtimeError( 'ability', 'browser_sdk_ability_fetch_unavailable', 'Browser fetch or wp.apiFetch is required to call a Codebox ability.' );
+		}
+		const response = await fetch( abilityRestEndpoint( ability ), { method: 'POST', credentials: 'same-origin', headers: codeboxRestHeaders(), body: JSON.stringify( input ), ...( options.signal ? { signal: options.signal } : {} ) } );
+		const json = await response.json().catch( () => null );
+		if ( ! response.ok || ! isPlainObject( json ) ) {
+			throw runtimeError( 'ability', 'browser_sdk_ability_failed', 'Codebox ability request failed.', { ability, status: response.status, response: json } );
+		}
+		return json;
+	};
+
+	const persistViewportScreenshot = async ( request, png, capture, options ) => {
+		if ( typeof options.persistArtifact === 'function' ) {
+			return await options.persistArtifact( request );
+		}
+		return await executeBrowserSdkAbility( 'wp-codebox/persist-browser-artifact', {
+			session_id: typeof options.session?.session_id === 'string' ? options.session.session_id : undefined,
+			caller_schema: viewportScreenshotSchema,
+			caller_kind: 'browser-viewport-screenshot',
+			caller_metadata: { route: request.route, viewport: request.viewport, diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ) },
+			entrypoint: 'screenshot.png',
+			files: [ { path: 'screenshot.png', content_base64: png.base64, encoding: 'base64', mime_type: 'image/png', kind: 'browser-screenshot' } ],
+		} );
+	};
+
+	const viewportReplayArchiveBase64 = async ( archive ) => {
+		const buffer = archive instanceof ArrayBuffer
+			? archive
+			: ( ArrayBuffer.isView( archive )
+				? archive.buffer.slice( archive.byteOffset, archive.byteOffset + archive.byteLength )
+				: ( typeof archive?.arrayBuffer === 'function' ? await archive.arrayBuffer() : null ) );
+		if ( ! buffer || buffer.byteLength < 4 || buffer.byteLength > 26214400 ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_archive_invalid', 'Prepared browser preview export did not return a bounded ZIP archive.' );
+		}
+		const bytes = new Uint8Array( buffer );
+		if ( bytes[ 0 ] !== 80 || bytes[ 1 ] !== 75 || bytes[ 2 ] !== 3 || bytes[ 3 ] !== 4 ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_archive_invalid', 'Prepared browser preview export did not return a ZIP archive.' );
+		}
+		let binary = '';
+		for ( let offset = 0; offset < bytes.length; offset += 32768 ) {
+			binary += String.fromCharCode( ...bytes.subarray( offset, offset + 32768 ) );
+		}
+		return btoa( binary );
+	};
+
+	const replayBrowserViewport = async ( request, signal ) => {
+		const replay = browserPreviewReplaySources.get( request.client );
+		if ( ! replay || typeof replay.zipWpContent !== 'function' ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_replay_unavailable', 'The prepared browser preview does not expose a replay archive exporter.' );
+		}
+		if ( signal?.aborted ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.' );
+		}
+		const archive = await replay.zipWpContent( request.client );
+		if ( signal?.aborted ) {
+			throw runtimeError( 'viewport_capture', 'viewport_capture_timeout', 'Viewport screenshot capture timed out.' );
+		}
+		const preferredVersions = isPlainObject( replay.blueprint?.preferredVersions ) ? replay.blueprint.preferredVersions : {};
+		return executeBrowserSdkAbility( 'wp-codebox/replay-browser-viewport', {
+			archive_base64: await viewportReplayArchiveBase64( archive ),
+			route: request.route,
+			viewport: request.viewport,
+			timeout_ms: request.timeout_ms,
+			wp_version: typeof preferredVersions.wp === 'string' ? preferredVersions.wp : undefined,
+			php_version: typeof preferredVersions.php === 'string' ? preferredVersions.php : undefined,
+		}, { signal } );
+	};
+
+	const captureViewportScreenshot = async ( client, input = {}, options = {} ) => {
+		let request;
+		try {
+			request = viewportScreenshotInput( input );
+		} catch ( error ) {
+			return viewportScreenshotFailure( input, error.code || 'viewport_capture_invalid', error.message, error.phase || 'viewport_capture_validate', error.data );
+		}
+		try {
+			const browserInvoker = typeof options.browserInvoker === 'function' ? options.browserInvoker : replayBrowserViewport;
+			if ( typeof options.browserInvoker !== 'function' && request.timeout_ms < 5000 ) {
+				throw runtimeError( 'viewport_capture_validate', 'viewport_capture_timeout_invalid', 'Viewport replay requires timeout_ms between 5000 and 180000.' );
+			}
+			const deadline = Date.now() + request.timeout_ms;
+			const remaining = () => Math.max( 1, deadline - Date.now() );
+			const capture = await withViewportScreenshotTimeout( ( signal ) => browserInvoker( {
+				schema: 'wp-codebox/browser-invocation-request/v1',
+				operation: 'viewport-screenshot',
+				client,
+				...request,
+			}, signal ), remaining() );
+			const png = viewportScreenshotBytes( capture );
+			const persistenceRequest = {
+				schema: 'wp-codebox/browser-viewport-screenshot-persistence-request/v1',
+				route: request.route,
+				viewport: request.viewport,
+				content_type: 'image/png',
+				content_base64: png.base64,
+				bytes: png.bytes,
+				diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ),
+			};
+			const persisted = await withViewportScreenshotTimeout( () => persistViewportScreenshot( persistenceRequest, png, capture, options ), remaining() );
+			const artifact = viewportScreenshotArtifact( persisted );
+			return {
+				schema: viewportScreenshotSchema,
+				success: true,
+				status: 'captured',
+				route: request.route,
+				viewport: request.viewport,
+				artifact,
+				sha256: artifact.sha256,
+				diagnostics: normalizeBrowserRunDiagnostics( capture?.diagnostics ),
+			};
+		} catch ( error ) {
+			return viewportScreenshotFailure( request, error.code || 'viewport_capture_failed', error.message || 'Viewport screenshot capture failed.', error.phase || 'viewport_capture', error.data );
+		}
+	};
+
+	const verifyViewportScreenshot = async ( evidence, options = {} ) => {
+		const failure = ( code, message, metadata = undefined ) => ( {
+			schema: viewportScreenshotVerificationSchema,
+			success: false,
+			status: 'failed',
+			evidence: evidence || null,
+			diagnostics: viewportScreenshotDiagnostics( code, message, 'viewport_verify', metadata ),
+		} );
+		if ( evidence?.schema !== viewportScreenshotSchema || evidence?.status !== 'captured' || evidence?.success !== true || ! evidence?.artifact || typeof evidence.sha256 !== 'string' ) {
+			return failure( 'viewport_capture_evidence_invalid', 'Viewport evidence must be a successful captured evidence envelope.' );
+		}
+		try {
+			const verification = typeof options.verifyArtifact === 'function'
+				? await options.verifyArtifact( { schema: viewportScreenshotVerificationSchema, artifact: evidence.artifact, sha256: evidence.sha256 } )
+				: await executeBrowserSdkAbility( 'wp-codebox/inspect-artifact', { artifact_id: evidence.artifact.artifact_id } );
+			const verificationFile = Array.isArray( verification?.artifact?.changed_files?.files )
+				? verification.artifact.changed_files.files.find( ( file ) => file?.artifactPath === evidence.artifact.path )
+				: null;
+			const verificationSha256 = verification?.sha256 || verificationFile?.sha256?.value || verificationFile?.sha256;
+			const verificationSuccess = typeof options.verifyArtifact === 'function' ? verification?.success === true && verification?.exists === true : verification?.success === true && verification?.verification?.valid === true && !! verificationFile;
+			if ( ! verificationSuccess || verificationSha256 !== evidence.sha256 ) {
+				return failure( verification?.exists === false ? 'viewport_capture_artifact_missing' : 'viewport_capture_checksum_mismatch', 'Server-side artifact verification did not confirm the captured SHA-256 checksum.', verification || null );
+			}
+			return { schema: viewportScreenshotVerificationSchema, success: true, status: 'verified', evidence, diagnostics: normalizeBrowserRunDiagnostics( verification.diagnostics ) };
+		} catch ( error ) {
+			return failure( error?.code || 'viewport_capture_verification_failed', error?.message || 'Server-side artifact verification failed.', error?.data );
 		}
 	};
 
@@ -684,9 +945,9 @@
 		return blueprint;
 	};
 
-	const resolveStartPlaygroundWeb = async ( boot, options = {} ) => {
+	const resolvePlaygroundClientModule = async ( boot, options = {} ) => {
 		if ( typeof options.startPlaygroundWeb === 'function' ) {
-			return options.startPlaygroundWeb;
+			return { startPlaygroundWeb: options.startPlaygroundWeb, zipWpContent: options.zipWpContent, disposePlaygroundClient: options.disposePlaygroundClient };
 		}
 
 		const moduleUrl = String( options.clientModuleUrl || boot.client_module_url || '' );
@@ -700,10 +961,14 @@
 			throw runtimeError( 'browser_preview_start', 'browser_preview_start_unavailable', 'Codebox browser preview client module does not export startPlaygroundWeb.' );
 		}
 
-		return module.startPlaygroundWeb;
+		return { startPlaygroundWeb: module.startPlaygroundWeb, zipWpContent: module.zipWpContent, disposePlaygroundClient: module.disposePlaygroundClient };
 	};
 
 	const browserPreviewLifecycles = new Map();
+	const browserPreviewSlotRoots = new WeakMap();
+	const browserPreviewSlotIframes = new WeakMap();
+	const browserPreviewSlotLifecycles = new WeakMap();
+	const browserPreviewReplaySources = new WeakMap();
 	const defaultBrowserPreviewStartupTimeoutMs = 30000;
 	const browserPreviewAbortError = () => runtimeError( 'browser_preview_start', 'browser_preview_aborted', 'Browser preview start was aborted.' );
 	const browserPreviewReplacedError = () => runtimeError( 'browser_preview_start', 'browser_preview_replaced', 'Browser preview start was replaced by a newer preview for the same scope.' );
@@ -730,9 +995,44 @@
 			cleanup: null,
 		}
 	);
-
-	const resetBrowserPreviewIframe = ( iframe ) => {
+	const browserPreviewSlot = ( iframe ) => {
+		if ( ! iframe || ( typeof iframe !== 'object' && typeof iframe !== 'function' ) ) return null;
+		const slot = browserPreviewSlotRoots.get( iframe ) || iframe;
+		browserPreviewSlotRoots.set( iframe, slot );
+		if ( ! browserPreviewSlotIframes.has( slot ) ) browserPreviewSlotIframes.set( slot, iframe );
+		return slot;
+	};
+	const currentBrowserPreviewIframe = ( slot, fallback ) => slot ? ( browserPreviewSlotIframes.get( slot ) || fallback ) : fallback;
+	const resetBrowserPreviewIframe = async ( iframe, slot ) => {
 		if ( iframe && typeof iframe === 'object' && 'src' in iframe ) {
+			if ( iframe.parentNode && typeof iframe.cloneNode === 'function' && typeof iframe.parentNode.replaceChild === 'function' ) {
+				const replacement = iframe.cloneNode( false );
+				replacement.src = 'about:blank';
+				iframe.parentNode.replaceChild( replacement, iframe );
+				if ( slot ) {
+					browserPreviewSlotRoots.set( replacement, slot );
+					browserPreviewSlotIframes.set( slot, replacement );
+				}
+				return true;
+			}
+			if ( typeof iframe.addEventListener === 'function' && typeof iframe.removeEventListener === 'function' ) {
+				await new Promise( ( resolve ) => {
+					let settled = false;
+					const finish = () => {
+						if ( settled ) {
+							return;
+						}
+						settled = true;
+						iframe.removeEventListener( 'load', finish );
+						clearTimeout( timeout );
+						resolve();
+					};
+					const timeout = setTimeout( finish, 5000 );
+					iframe.addEventListener( 'load', finish, { once: true } );
+					iframe.src = 'about:blank';
+				} );
+				return true;
+			}
 			iframe.src = 'about:blank';
 			return true;
 		}
@@ -744,27 +1044,31 @@
 		if ( typeof value === 'boolean' ) {
 			return {
 				client_released: value,
+				runtime_termination_requested: false,
 				runtime_terminated: false,
 				client_release_evidence: null,
 			};
 		}
 		if ( value && typeof value === 'object' && ! Array.isArray( value ) ) {
 			const client_released = value.client_released === true;
+			const runtime_termination_requested = value.runtime_termination_requested === true;
 			const runtime_terminated = value.runtime_terminated === true;
 			return {
 				client_released,
+				runtime_termination_requested,
 				runtime_terminated,
-				client_release_evidence: Object.freeze( { client_released, runtime_terminated } ),
+				client_release_evidence: Object.freeze( { client_released, runtime_termination_requested, runtime_terminated } ),
 			};
 		}
 		return {
 			client_released: false,
+			runtime_termination_requested: false,
 			runtime_terminated: false,
 			client_release_evidence: null,
 		};
 	};
 
-	const createBrowserPreviewLifecycle = ( scope, iframe, signal, disposeClient ) => {
+	const createBrowserPreviewLifecycle = ( scope, slot, iframe, signal, disposeClient ) => {
 		let active = true;
 		let cancelled = false;
 		let client;
@@ -777,6 +1081,9 @@
 		} );
 		const lifecycle = {
 			isActive: () => active,
+			setDisposeClient: ( nextDisposeClient ) => {
+				if ( typeof nextDisposeClient === 'function' ) disposeClient = nextDisposeClient;
+			},
 			wait: ( promise ) => Promise.race( [ promise, cancellation ] ),
 			ownClient: ( nextClient ) => {
 				if ( ! active ) {
@@ -819,9 +1126,12 @@
 					if ( scope && browserPreviewLifecycles.get( scope ) === lifecycle ) {
 						browserPreviewLifecycles.delete( scope );
 					}
-					const iframe_reset = resetBrowserPreviewIframe( iframe );
+					if ( slot && browserPreviewSlotLifecycles.get( slot ) === lifecycle ) {
+						browserPreviewSlotLifecycles.delete( slot );
+					}
 					let client_release_requested = false;
 					let client_released = false;
+					let runtime_termination_requested = false;
 					let runtime_terminated = false;
 					let client_release_evidence = null;
 					let client_release_error = null;
@@ -829,11 +1139,13 @@
 						const clientRelease = await lifecycle.releaseClient();
 						client_release_requested = clientRelease.requested;
 						client_released = clientRelease.client_released;
+						runtime_termination_requested = clientRelease.runtime_termination_requested;
 						runtime_terminated = clientRelease.runtime_terminated;
 						client_release_evidence = clientRelease.client_release_evidence;
 					} catch ( error ) {
 						client_release_error = error?.message || 'Browser preview client cleanup failed.';
 					}
+					const iframe_reset = await resetBrowserPreviewIframe( iframe, slot );
 					return Object.freeze( {
 						schema: 'wp-codebox/browser-preview-dispose-result/v1',
 						success: true,
@@ -849,6 +1161,7 @@
 						client_release_error,
 						client_release_evidence,
 						runtime_release_requested: iframe_reset,
+						runtime_termination_requested,
 						runtime_terminated,
 						lifecycle_released: true,
 					} );
@@ -880,21 +1193,26 @@
 			throw browserPreviewAbortError();
 		}
 		const boot = browserPreviewBootConfig( input );
-		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const requestedIframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const slot = browserPreviewSlot( requestedIframe );
+		let iframe = currentBrowserPreviewIframe( slot, requestedIframe );
 		const scope = String( boot.scope || '' );
 		const startupTimeoutMs = browserPreviewStartupTimeoutMs( options );
 		let lifecycle;
 		let startupTimeout;
-		if ( startupTimeoutMs !== null ) {
-			startupTimeout = setTimeout( () => {
-				lifecycle?.cancel( browserPreviewStartupTimeoutError( boot, scope, startupTimeoutMs ) );
-			}, startupTimeoutMs );
-		}
 		const previousLifecycle = scope ? browserPreviewLifecycles.get( scope ) : null;
 		if ( previousLifecycle ) {
 			previousLifecycle.cancel( browserPreviewReplacedError() );
 		}
-		lifecycle = createBrowserPreviewLifecycle( scope, iframe, options.signal, options.disposeClient );
+		const previousSlotLifecycle = slot ? browserPreviewSlotLifecycles.get( slot ) : null;
+		if ( previousSlotLifecycle && previousSlotLifecycle !== previousLifecycle ) {
+			previousSlotLifecycle.cancel( browserPreviewReplacedError() );
+		}
+		if ( previousSlotLifecycle ) {
+			await previousSlotLifecycle.dispose();
+			iframe = currentBrowserPreviewIframe( slot, iframe );
+		}
+		lifecycle = createBrowserPreviewLifecycle( scope, slot, iframe, options.signal, options.disposeClient );
 		if ( options.signal?.aborted ) {
 			await lifecycle.dispose();
 			throw browserPreviewAbortError();
@@ -902,9 +1220,18 @@
 		if ( scope ) {
 			browserPreviewLifecycles.set( scope, lifecycle );
 		}
+		if ( slot ) {
+			browserPreviewSlotLifecycles.set( slot, lifecycle );
+		}
+		if ( startupTimeoutMs !== null ) {
+			startupTimeout = setTimeout( () => {
+				lifecycle.cancel( browserPreviewStartupTimeoutError( boot, scope, startupTimeoutMs ) );
+			}, startupTimeoutMs );
+		}
 
 		try {
-			const startPlaygroundWeb = await lifecycle.wait( resolveStartPlaygroundWeb( boot, options ) );
+			const playgroundModule = await lifecycle.wait( resolvePlaygroundClientModule( boot, options ) );
+			if ( typeof options.disposeClient !== 'function' ) lifecycle.setDisposeClient( playgroundModule.disposePlaygroundClient );
 			const blueprint = await lifecycle.wait( hydrateBrowserPreviewBlueprint( boot, options ) );
 			const startOptions = options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {};
 			const guardedStartOptions = { ...startOptions };
@@ -921,8 +1248,11 @@
 				...( boot.scope ? { scope: boot.scope } : {} ),
 				blueprint,
 			};
-			const start = Promise.resolve( startPlaygroundWeb( request ) ).then( ( client ) => lifecycle.ownClient( client ) );
+			const start = Promise.resolve( playgroundModule.startPlaygroundWeb( request ) ).then( ( client ) => lifecycle.ownClient( client ) );
 			const client = await lifecycle.wait( start );
+			if ( client && ( typeof client === 'object' || typeof client === 'function' ) ) {
+				browserPreviewReplaySources.set( client, { zipWpContent: playgroundModule.zipWpContent, blueprint } );
+			}
 
 			if ( lifecycle.isActive() && typeof options.onClientConnected === 'function' ) {
 				options.onClientConnected( client );
@@ -958,14 +1288,159 @@
 		}
 	};
 
+	const createBrowserPreviewBuffer = ( options = {} ) => {
+		const templateIframe = options.iframe;
+		const container = options.container || templateIframe?.parentNode;
+		if ( ! templateIframe || typeof templateIframe.cloneNode !== 'function' || ! container || typeof container.appendChild !== 'function' ) {
+			throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_mount_invalid', 'A browser preview buffer requires an iframe template in an appendable container.' );
+		}
+
+		const slots = new Map();
+		const releasedSlots = new Map();
+		const activeAttribute = typeof options.activeAttribute === 'string' && options.activeAttribute ? options.activeAttribute : '';
+		let activeSlot = '';
+		let operationQueue = Promise.resolve();
+		templateIframe.style.display = 'none';
+		templateIframe.setAttribute?.( 'aria-hidden', 'true' );
+		if ( activeAttribute ) templateIframe.removeAttribute?.( activeAttribute );
+
+		const enqueue = ( operation ) => {
+			const result = operationQueue.then( operation );
+			operationQueue = result.catch( () => {} );
+			return result;
+		};
+		const setSlotVisible = ( slot, visible ) => {
+			slot.iframe.style.display = visible ? '' : 'none';
+			slot.iframe.setAttribute?.( 'aria-hidden', visible ? 'false' : 'true' );
+			if ( activeAttribute ) {
+				if ( visible ) slot.iframe.setAttribute?.( activeAttribute, '' );
+				else slot.iframe.removeAttribute?.( activeAttribute );
+			}
+		};
+		const activateSlot = ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
+			}
+			for ( const candidate of slots.values() ) {
+				setSlotVisible( candidate, candidate === slot );
+			}
+			activeSlot = slot.id;
+			return slot;
+		};
+		const navigateSlot = ( slot, path = '/', navigateOptions = {} ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
+			}
+			if ( typeof path !== 'string' || ! path.startsWith( '/' ) || path.startsWith( '//' ) ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_path_invalid', 'Browser preview navigation requires a safe absolute path.' );
+			}
+			if ( typeof slot.client?.goTo !== 'function' ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_unavailable', 'The browser preview client does not support navigation.' );
+			}
+			const navigation = Promise.resolve( slot.client.goTo( path ) );
+			void navigation.catch( ( error ) => navigateOptions.onError?.( error ) );
+			return Object.freeze( {
+				schema: 'wp-codebox/browser-preview-navigation-result/v1',
+				success: true,
+				status: 'requested',
+				slot: slot.id,
+				path,
+			} );
+		};
+		const releaseSlot = async ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				return slot?.releaseResult || null;
+			}
+			slots.delete( slot.id );
+			if ( activeSlot === slot.id ) activeSlot = '';
+			const slotRoot = browserPreviewSlot( slot.iframe );
+			const lifecycle = await slot.preview.dispose();
+			const currentIframe = currentBrowserPreviewIframe( slotRoot, slot.iframe );
+			currentIframe?.remove?.();
+			if ( currentIframe !== slot.iframe ) slot.iframe.remove?.();
+			slot.releaseResult = Object.freeze( {
+				schema: 'wp-codebox/browser-preview-slot-release-result/v1',
+				success: true,
+				status: 'released',
+				slot: slot.id,
+				lifecycle,
+			} );
+			releasedSlots.set( slot.id, slot.releaseResult );
+			if ( releasedSlots.size > 2 ) releasedSlots.delete( releasedSlots.keys().next().value );
+			return slot.releaseResult;
+		};
+		const buffer = {
+			has: ( id ) => slots.has( String( id || '' ) ),
+			prepare: ( id, input, previewOptions = {} ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				if ( ! slotId ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_id_required', 'Browser preview slots require an ID.' );
+				}
+				const existing = slots.get( slotId );
+				if ( existing ) return existing;
+				if ( slots.size >= 2 ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_full', 'Both browser preview slots are already prepared.' );
+				}
+				const iframe = templateIframe.cloneNode( false );
+				iframe.src = 'about:blank';
+				iframe.loading = 'eager';
+				setSlotVisible( { iframe }, false );
+				container.appendChild( iframe );
+				let preview;
+				try {
+					preview = await startBrowserPreview( input, { ...previewOptions, iframe } );
+				} catch ( error ) {
+					iframe.remove?.();
+					throw error;
+				}
+				const slot = {
+					schema: 'wp-codebox/browser-preview-slot/v1',
+					id: slotId,
+					iframe,
+					client: preview.client,
+					preview,
+					activate: () => buffer.activate( slotId ),
+					navigate: ( path = '/', navigateOptions = {} ) => enqueue( () => navigateSlot( slot, path, navigateOptions ) ),
+					release: () => buffer.release( slotId ),
+				};
+				slots.set( slotId, slot );
+				releasedSlots.delete( slotId );
+				return slot;
+			} ),
+			activate: ( id ) => enqueue( async () => activateSlot( slots.get( String( id || '' ) ) ) ),
+			release: ( id ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				return slots.has( slotId ) ? releaseSlot( slots.get( slotId ) ) : ( releasedSlots.get( slotId ) || null );
+			} ),
+			dispose: () => enqueue( async () => {
+				const results = [];
+				for ( const slot of [ ...slots.values() ] ) results.push( await releaseSlot( slot ) );
+				templateIframe.style.display = '';
+				templateIframe.setAttribute?.( 'aria-hidden', 'false' );
+				if ( activeAttribute ) templateIframe.setAttribute?.( activeAttribute, '' );
+				return Object.freeze( { schema: 'wp-codebox/browser-preview-buffer-dispose-result/v1', success: true, status: 'disposed', slots: results } );
+			} ),
+			get activeSlot() {
+				return activeSlot;
+			},
+			get size() {
+				return slots.size;
+			},
+		};
+
+		return Object.freeze( buffer );
+	};
+
 	const browserSdkContract = Object.freeze( [
 		{ name: 'activateTheme' },
 		{ name: 'browserSessionRecipe' },
+		{ name: 'captureViewportScreenshot', topLevelOrder: 20.5, topLevel: ( api ) => ( client, input = {}, options = {} ) => api.captureViewportScreenshot( client, input, options ) },
 		{ name: 'createBrowserConnectorRequest', topLevelOrder: 16, topLevel: ( api ) => api.createBrowserConnectorRequest },
 		{ name: 'executeBrowserConnectorRequest', topLevelOrder: 17, topLevel: ( api ) => api.executeBrowserConnectorRequest },
 		{ name: 'executeBrowserProviderProxyRequest' },
 		{ name: 'consumeContainedSiteSync', topLevelOrder: 1, topLevel: ( api ) => ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ) },
 		{ name: 'openOrCreateBrowserContainedSite', topLevelOrder: 2, topLevel: ( api ) => ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ) },
+		{ name: 'createBrowserPreviewBuffer', topLevelOrder: 2.5, topLevel: ( api ) => ( options = {} ) => api.createBrowserPreviewBuffer( options ) },
 		{ name: 'startBrowserPreview', topLevelOrder: 3, topLevel: ( api ) => ( input, options = {} ) => api.startBrowserPreview( input, options ) },
 		{ name: 'bootExecutableBrowserSession', topLevelOrder: 14, topLevel: ( api ) => async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ) },
 		{ name: 'createParentToolRequest', topLevelOrder: 18, topLevel: ( api ) => api.createParentToolRequest },
@@ -990,6 +1465,7 @@
 		{ name: 'runWordPressOperation' },
 		{ name: 'selectPreparedBrowserBlueprint' },
 		{ name: 'setFrontendAdminBarVisible', topLevelOrder: 22, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.setFrontendAdminBarVisible( client, args, options ) },
+		{ name: 'verifyViewportScreenshot', topLevelOrder: 20.6, topLevel: ( api ) => ( evidence, options = {} ) => api.verifyViewportScreenshot( evidence, options ) },
 		{ name: 'writeFile', topLevelOrder: 7, topLevel: ( api ) => ( client, args = {}, options = {} ) => api.writeFile( client, args, options ) },
 		{ name: 'writeReviewFile' },
 	] );
@@ -1076,7 +1552,7 @@
 		throw runtimeError(
 			phase,
 			`playground_${ method }_failed`,
-			`Playground ${ method } failed during ${ phase }.`,
+			`Playground ${ method } failed during ${ phase }: ${ lastError?.message || 'unknown error' }`,
 			{
 				last_error: lastError ? errorDetails( lastError ) : null,
 				attempts: failedAttempts,
@@ -2299,6 +2775,7 @@ try {
 	// BEGIN generated fanout aggregation runtime. Run `npm run generate:browser-fanout-aggregation-runtime`.
 	const fanoutAggregationInputSchema = 'wp-codebox/agent-fanout-aggregation-input/v1';
 	const fanoutAggregationOutputSchema = 'wp-codebox/agent-fanout-aggregation-output/v1';
+	const fanoutSuccessfulWorkerStatuses = new Set( [ 'succeeded', 'no_op' ] );
 
 	const stableJson = ( value ) => {
 		if ( value === null || typeof value !== 'object' ) {
@@ -2426,7 +2903,7 @@ try {
 
 		const resultByWorker = new Map( input.workerResultRefs.map( ( result ) => [ result.workerId, result ] ) );
 		for ( const result of input.workerResultRefs ) {
-			if ( result.required && result.status !== 'succeeded' ) {
+			if ( result.required && ! fanoutSuccessfulWorkerStatuses.has( result.status ) ) {
 				conflicts.push( {
 					type: 'failed-worker',
 					severity: 'error',
@@ -2448,7 +2925,7 @@ try {
 						workerIds: [ worker.id ],
 						dependencyId,
 					} );
-				} else if ( dependency.status !== 'succeeded' ) {
+				} else if ( ! fanoutSuccessfulWorkerStatuses.has( dependency.status ) ) {
 					conflicts.push( {
 						type: 'failed-worker-dependency',
 						severity: 'error',
@@ -2900,6 +3377,24 @@ echo wp_json_encode( array(
 		};
 	};
 
+	const materializationResultEnvelope = ( task, execution ) => {
+		const abilityResult = execution?.response && typeof execution.response === 'object' ? execution.response : execution;
+		const success = execution?.success === true && abilityResult?.success !== false;
+		const result = success && abilityResult?.result && typeof abilityResult.result === 'object' ? abilityResult.result : abilityResult;
+		return {
+			schema: 'wp-codebox/materialization-result/v1',
+			success,
+			task,
+			result,
+			report: abilityResult?.import_report_summary || result?.import_report_summary || result?.report || null,
+			response: execution,
+			error: success ? null : ( abilityResult?.error || execution?.error || {
+				code: 'materialization_failed',
+				message: 'Materialization failed.',
+			} ),
+		};
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -2926,7 +3421,10 @@ echo wp_json_encode( array(
 		}
 
 		let lastResult = null;
-		const removeProviderProxy = installBrowserProviderProxy( client );
+		const invocationType = String( recipe?.browser?.invocation?.type || '' );
+		const materializerTask = String( taskPayload?.materializer?.task || '' );
+		const localInvocation = invocationType === 'ability' || !! materializerTask;
+		const removeProviderProxy = localInvocation ? null : installBrowserProviderProxy( client );
 		try {
 			for ( const step of steps ) {
 				if ( step?.command === 'wp-codebox.agent-fanout-aggregate' ) {
@@ -2951,7 +3449,7 @@ echo wp_json_encode( array(
 					code: markBrowserPlaygroundRunner( withBrowserRunnerPrelude( codeArg.slice( 5 ), recipe ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
-					forceRequest: true,
+					forceRequest: ! localInvocation,
 				} );
 				if ( ! lastResult.success ) {
 					throw runtimeError( 'recipe_step_php', lastResult?.error?.code || 'browser_recipe_step_failed', lastResult?.error?.message || 'WP Codebox browser recipe step failed.', lastResult?.error?.data ?? null );
@@ -2961,7 +3459,7 @@ echo wp_json_encode( array(
 			await removeProviderProxy?.();
 		}
 
-		return lastResult;
+		return materializerTask ? materializationResultEnvelope( materializerTask, lastResult ) : lastResult;
 	};
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
@@ -3327,9 +3825,11 @@ echo wp_json_encode( array(
 		activateTheme,
 		aggregateFanoutOutputs,
 		browserSessionRecipe,
+		captureViewportScreenshot,
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
 		openOrCreateBrowserContainedSite,
+		createBrowserPreviewBuffer,
 		createBrowserConnectorRequest: browserConnectorRequest,
 		executeBrowserConnectorRequest,
 		executeBrowserProviderProxyRequest,
@@ -3350,6 +3850,7 @@ echo wp_json_encode( array(
 		runWordPressOperation,
 		selectPreparedBrowserBlueprint,
 		setFrontendAdminBarVisible,
+		verifyViewportScreenshot,
 		startBrowserPreview,
 		validateBrowserRuntimeMaterialization,
 		writeFile,

@@ -140,8 +140,8 @@ export function validateSandboxToolPolicySnapshot(input: unknown): SandboxToolPo
   if (input.version !== SANDBOX_TOOL_POLICY_VERSION) {
     issues.push({ code: "invalid-policy", field: "version", message: `sandbox_tool_policy.version must be ${SANDBOX_TOOL_POLICY_VERSION}.` })
   }
-  if (!Array.isArray(input.tools) || input.tools.length === 0) {
-    issues.push({ code: "invalid-policy", field: "tools", message: "sandbox_tool_policy.tools must be a non-empty array." })
+  if (!Array.isArray(input.tools)) {
+    issues.push({ code: "invalid-policy", field: "tools", message: "sandbox_tool_policy.tools must be an array." })
   }
 
   const seen = new Set<string>()

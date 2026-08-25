@@ -114,6 +114,8 @@ export interface WorkspaceRecipeMount {
   target: string
   mode?: "readonly" | "readwrite"
   captureArtifacts?: boolean
+  /** Selects when a Playground mount becomes available relative to installation. */
+  phase?: "pre-install" | "post-install"
   metadata?: Record<string, unknown>
 }
 
@@ -293,10 +295,30 @@ export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
   timeoutMs?: number
+  continuation?: WorkspaceRecipeStepContinuation
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean
   advisory?: boolean
+}
+
+export interface WorkspaceRecipeStepContinuation {
+  maxIterations: number
+  while: WorkspaceRecipeStepContinuationPredicate
+  inputMappings: WorkspaceRecipeStepContinuationInputMapping[]
+}
+
+export interface WorkspaceRecipeStepContinuationPredicate {
+  pointer: string
+  equals: unknown
+}
+
+export interface WorkspaceRecipeStepContinuationInputMapping {
+  from: string
+  to: {
+    arg: string
+    pointer: string
+  }
 }
 
 export interface RuntimeCommandDiagnosticsCaptureSpec {
@@ -348,7 +370,7 @@ export interface WorkspaceRecipeAdversarialCampaign {
   seed: string
   corpus: Array<{
     id: string
-    actions: Array<{ type: string; input?: unknown; metadata?: Record<string, unknown> }>
+    actions: Array<{ type: string; input?: unknown; clock?: import("./adversarial-campaign.js").AdversarialClockScheduleEntry[]; metadata?: Record<string, unknown> }>
     input?: unknown
     signals?: string[]
     metadata?: Record<string, unknown>
@@ -782,6 +804,8 @@ export interface MountSpec {
   target: string
   mode: "readonly" | "readwrite"
   captureArtifacts?: boolean
+  /** Selects when a Playground mount becomes available relative to installation. */
+  phase?: "pre-install" | "post-install"
   metadata?: Record<string, unknown>
 }
 

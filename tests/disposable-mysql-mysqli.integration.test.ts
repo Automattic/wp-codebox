@@ -117,7 +117,7 @@ require_once ABSPATH . 'wp-settings.php';
       pluginSource: plugin,
       services: [{ id: "phpunit-mariadb", kind: "mysql", configuration: { engine: "mariadb", rootAuthentication: "empty-password" }, outputs: { port: "TC_MYSQL_PORT", password: "DB_PASSWORD" } }],
       mounts: [
-        { source: wpConfig, target: "/wordpress/wp-config.php", mode: "readonly" },
+        { source: wpConfig, target: "/wordpress/wp-config.php", mode: "readonly", phase: "pre-install" },
         { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },
       ],
       autoloadFile: "/wp-codebox-vendor/autoload.php",
@@ -126,6 +126,7 @@ require_once ABSPATH . 'wp-settings.php';
       phpunitXml: "/wordpress/wp-content/plugins/bounded-phpunit-fixture/phpunit.xml",
       bootstrapMode: "project",
     })
+    assert.equal(boundedRecipe.inputs.mounts?.find((mount) => mount.target === "/wordpress/wp-config.php")?.phase, "pre-install")
     const phpunitArgv = ["wordpress.phpunit", ...(boundedRecipe.workflow.steps[0]?.args ?? [])]
     boundedRecipe.workflow.steps = [{
       command: "wp-codebox.bounded-runtime-plan",

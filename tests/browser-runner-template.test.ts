@@ -51,9 +51,25 @@ $runner_php = $method->invoke( null, array(
 	'mime_type' => 'application/json',
 	'max_bytes' => 2048,
 ) ) );
+$lint_path = tempnam( sys_get_temp_dir(), 'wp-codebox-browser-runner-' );
+file_put_contents( $lint_path, $runner_php );
+$lint_output = array();
+$lint_status = 1;
+exec( escapeshellarg( PHP_BINARY ) . ' -l ' . escapeshellarg( $lint_path ) . ' 2>&1', $lint_output, $lint_status );
+unlink( $lint_path );
+$lint_text = implode( "\n", $lint_output );
+$lint_line = preg_match( '/line (\\d+)/', $lint_text, $lint_match ) ? (int) $lint_match[1] : 0;
+$runner_lines = explode( "\n", $runner_php );
 
 echo json_encode( array(
 	'sha256' => hash( 'sha256', $runner_php ),
+	'lint' => array(
+		'status' => $lint_status,
+		'output' => $lint_text,
+		'line_count' => count( $runner_lines ),
+		'open_tag_lines' => array_values( array_keys( array_filter( $runner_lines, static fn( $line ) => str_contains( $line, '<?php' ) ) ) ),
+		'context' => $lint_line > 0 ? array_slice( $runner_lines, max( 0, $lint_line - 4 ), 7 ) : array(),
+	),
 	'function_counts' => array(
 		'event_sink' => substr_count( $runner_php, 'function wp_codebox_browser_runtime_event_sink' ),
 		'capture_file' => substr_count( $runner_php, 'function wp_codebox_browser_capture_file' ),
@@ -80,6 +96,7 @@ assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
 assert.match(result.sha256, /^[a-f0-9]{64}$/)
+assert.equal(result.lint.status, 0, JSON.stringify(result.lint, null, 2))
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,

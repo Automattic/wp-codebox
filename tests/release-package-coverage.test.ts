@@ -1,11 +1,14 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
+
+import { normalizeReleasePlatform, releaseTargetMatchesHost } from "../scripts/lib/release-target.ts"
+import { sharpRuntimePackageNames } from "../scripts/lib/materialize-sharp-release-runtime.ts"
 
 const execFileAsync = promisify(execFile)
 const repositoryRoot = resolve(import.meta.dirname, "..")
@@ -19,8 +22,19 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
   source_roots: [pluginRoot],
   archive_root: "wp-codebox",
 }])
+assert.deepEqual(homeboy.extensions?.nodejs, { settings: { release_package_script: "release:package" } }, "the Node release provider must receive the project artifact manifest setting")
+assert.deepEqual(homeboy.scripts?.build, ["npm run package:wordpress-plugin"], "component builds retain singular WordPress deploy-artifact ownership")
+assert.deepEqual(homeboy.scripts?.test, [
+  "npm run smoke -- --group package",
+  "npm run test:release-target",
+  "npm run test:sharp-release-runtime",
+  "npm run test:prepare-declaration-rebuild",
+  "npm run test:release-package-coverage",
+])
 
 await execFileAsync("npm", ["run", "build"], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 * 10 })
+const releasePlatform = normalizeReleasePlatform(process.platform)
+const releaseArch = process.arch
 const staleDistPath = resolve(repositoryRoot, "packages/runtime-playground/dist/mount-materialization.js")
 const currentDist = await readFile(staleDistPath)
 await writeFile(staleDistPath, "export const staleBuild = true\n")
@@ -31,8 +45,8 @@ try {
     cwd: repositoryRoot,
     env: {
       ...process.env,
-      WP_CODEBOX_RELEASE_PLATFORM: "linux",
-      WP_CODEBOX_RELEASE_ARCH: "x64",
+      WP_CODEBOX_RELEASE_PLATFORM: releasePlatform,
+      WP_CODEBOX_RELEASE_ARCH: releaseArch,
     },
     maxBuffer: 1024 * 1024 * 20,
   }))
@@ -50,6 +64,10 @@ const cliArtifact = cliArtifacts[0] as { path: string, platform: string }
 assert.match(cliArtifact.path, /^dist\/wp-codebox-cli-[^/]+\.tar\.gz$/)
 assert.match(cliArtifact.platform, /^[a-z0-9]+-[a-z0-9]+$/)
 assert.equal(cliArtifact.path, `dist/wp-codebox-cli-${cliArtifact.platform}.tar.gz`)
+const canExecuteReleaseTarget = releaseTargetMatchesHost(cliArtifact.platform, process.platform, process.arch)
+if (!canExecuteReleaseTarget) {
+  console.log(`Skipping packaged CLI execution because release target ${cliArtifact.platform} does not match host ${process.platform}-${process.arch}.`)
+}
 
 const { stdout: tracked } = await execFileAsync("git", ["ls-files", "-z", "--", `${pluginRoot}/**`], { cwd: repositoryRoot })
 const mappedFiles = tracked
@@ -89,13 +107,18 @@ try {
   const pluginCliRoot = join(pluginExtraction, "wp-codebox", "vendor", "wp-codebox-cli")
   const tarCliRoot = join(cliExtraction, "wp-codebox-cli")
   for (const root of [pluginCliRoot, tarCliRoot]) {
+    const cliBuildProvenance = JSON.parse(await readFile(join(root, "packages", "cli", "dist", "cli-build-provenance.json"), "utf8"))
+    assert.equal(cliBuildProvenance.schema, "wp-codebox/cli-build-provenance/v1")
+    assert.equal(cliBuildProvenance.package.version, JSON.parse(await readFile(join(root, "packages", "cli", "package.json"), "utf8")).version)
+    assert.match(cliBuildProvenance.source.sha256, /^[a-f0-9]{64}$/)
+    assert.match(cliBuildProvenance.dist.sha256, /^[a-f0-9]{64}$/)
     const browserProvenance = JSON.parse(await readFile(join(root, "browser-provenance.json"), "utf8"))
     assert.equal(browserProvenance.schema, "wp-codebox/playwright-browser-provenance/v1")
     assert.equal(browserProvenance.playwrightVersion, "1.61.1")
     assert.equal(browserProvenance.chromiumRevision, "1228")
     assert.equal(browserProvenance.chromiumVersion, "149.0.7827.55")
-    assert.equal(browserProvenance.platform, "linux")
-    assert.equal(browserProvenance.arch, "x64")
+    assert.equal(browserProvenance.platform, releasePlatform)
+    assert.equal(browserProvenance.arch, releaseArch)
     assert.equal(browserProvenance.dependencyManifestSha256, createHash("sha256").update(await readFile(join(root, "npm-shrinkwrap.json"))).digest("hex"))
     for (const packageName of ["wp-codebox-cli", "wp-codebox-core", "wp-codebox-playground"]) {
       const packagePath = join(root, "node_modules", "@automattic", packageName)
@@ -104,17 +127,23 @@ try {
       assert.equal(packageStat.isSymbolicLink(), false, `${packagePath} must not depend on archive symlinks`)
       await lstat(join(packagePath, "package.json"))
     }
-
+    await assertPinnedPhpWasmOverlay(root, join(root, "php-wasm-overlay-provenance.json"))
     const cliEntrypoint = join(root, "packages", "cli", "dist", "index.js")
     assert.equal((await lstat(cliEntrypoint)).mode & 0o777, 0o755, `${cliEntrypoint} must be executable after extraction`)
     assert.deepEqual(
       (await readdir(join(root, "node_modules", "@img"))).filter((name) => name.startsWith("sharp-")).sort(),
-      ["sharp-libvips-linux-x64", "sharp-linux-x64"],
+      sharpRuntimePackageNames(releasePlatform, releaseArch).map((packageName) => packageName.slice("@img/".length)).sort(),
       "release package must contain only the Sharp native runtime for its declared target",
     )
-    const { stdout: version } = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
-    assert.match(version, /^\d+\.\d+\.\d+\s*$/)
-    await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+    let version = ""
+    if (canExecuteReleaseTarget) {
+      await execFileAsync(process.execPath, ["--input-type=module", "--eval", "await import('sharp')"], { cwd: root })
+      const cliVersion = await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
+      version = cliVersion.stdout
+      assert.match(version, /^\d+\.\d+\.\d+\s*$/)
+      await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+      await assertCliStartsWithoutSharpRuntime(root, cliEntrypoint)
+    }
     const descriptorModule = await import(pathToFileURL(join(root, "packages", "runtime-core", "dist", "runtime-contract-manifest.js")).href) as { runtimeDescriptor(): { capabilities: string[]; packageCapabilities: string[]; runtimeServices: { nativeMariaDb: { status: string } }; contractManifest: { capabilities: { runtimeServices: { packageCapabilities: string[] } } } } }
     const descriptor = descriptorModule.runtimeDescriptor()
     assert.equal(descriptor.capabilities.includes("runtime-service:mysql:native:mariadb"), false, "package support must not claim unknown host readiness")
@@ -122,11 +151,13 @@ try {
     assert.equal(descriptor.runtimeServices.nativeMariaDb.status, "unknown")
     assert.deepEqual(descriptor.contractManifest.capabilities.runtimeServices.packageCapabilities, ["runtime-service:mysql:native:mariadb"])
 
-    const wrapper = join(root, "bin", "wp-codebox")
-    const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
-      env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
-    })
-    assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+    if (canExecuteReleaseTarget) {
+      const wrapper = join(root, "bin", "wp-codebox")
+      const { stdout: wrapperVersion } = await execFileAsync(wrapper, ["--version"], {
+        env: { ...process.env, WP_CODEBOX_NODE_BIN: "" },
+      })
+      assert.equal(wrapperVersion, version, "wrapper must fall back to host Node when bundled Node is incompatible")
+    }
 
     await assertPackagedReadonlyMaterialization(root)
   }
@@ -169,6 +200,12 @@ try {
     cwd: consumerRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  const installedPackage = join(installRoot, "lib", "node_modules", "wp-codebox-workspace")
+  const pinnedPhpWasm = join(installedPackage, "node_modules", "@php-wasm", "node-8-3")
+  assert.equal((await stat(pinnedPhpWasm)).isDirectory(), true, "consumer install must materialize the pinned php-wasm overlay")
+  assert.ok((await realpath(pinnedPhpWasm)).startsWith(`${await realpath(installedPackage)}/`), "installed php-wasm overlay must resolve inside the consumer package")
+  assert.equal(JSON.parse(await readFile(join(pinnedPhpWasm, "package.json"), "utf8")).version, "3.1.46")
+  await assertPinnedPhpWasmOverlay(installedPackage, join(installedPackage, "runtime-overlays", "provenance.json"), true)
   const installedCli = join(installRoot, "bin", "wp-codebox")
   const { stdout: installedVersion } = await execFileAsync(installedCli, ["--version"])
   assert.match(installedVersion, /^\d+\.\d+\.\d+\s*$/)
@@ -178,6 +215,56 @@ try {
 }
 
 console.log("release package coverage passed")
+
+async function assertCliStartsWithoutSharpRuntime(root: string, cliEntrypoint: string): Promise<void> {
+  const nativePackages = sharpRuntimePackageNames(releasePlatform, releaseArch)
+  const disabledPackages: string[] = []
+  try {
+    for (const packageName of nativePackages) {
+      const packagePath = join(root, "node_modules", ...packageName.split("/"))
+      await rename(packagePath, `${packagePath}.disabled`)
+      disabledPackages.push(packagePath)
+    }
+    await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
+    await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+  } finally {
+    for (const packagePath of disabledPackages.reverse()) {
+      await rename(`${packagePath}.disabled`, packagePath)
+    }
+  }
+}
+
+async function assertPinnedPhpWasmOverlay(root: string, provenancePath: string, allowInternalSymlink = false): Promise<void> {
+  const overlay = join(root, "node_modules", "@php-wasm", "node-8-3")
+  const overlayStat = await lstat(overlay)
+  if (!allowInternalSymlink) {
+    assert.equal(overlayStat.isDirectory(), true, "pinned php-wasm overlay must be a materialized directory")
+    assert.equal(overlayStat.isSymbolicLink(), false, "release artifacts must not retain a staging symlink")
+  }
+  const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as { artifact?: { tree_sha256?: string } }
+  assert.equal(await digestDirectory(overlay), provenance.artifact?.tree_sha256, "pinned php-wasm overlay does not match provenance")
+  assert.ok(Object.keys(await import(pathToFileURL(join(overlay, "index.js")).href)).length > 0, "pinned php-wasm overlay must be importable")
+}
+
+async function digestDirectory(root: string): Promise<string> {
+  const files: string[] = []
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await walk(path)
+      else files.push(path)
+    }
+  }
+  await walk(root)
+  const hash = createHash("sha256")
+  for (const path of files.sort()) {
+    hash.update(relative(root, path).split("\\").join("/"))
+    hash.update("\0")
+    hash.update(await readFile(path))
+    hash.update("\0")
+  }
+  return hash.digest("hex")
+}
 
 async function assertPackagedReadonlyMaterialization(root: string): Promise<void> {
   const modulePath = join(root, "packages", "runtime-playground", "dist", "mount-materialization.js")

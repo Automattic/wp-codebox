@@ -10,7 +10,26 @@ const success = normalizeRecipeRunSummary({
   run: { runId: "run-ok", status: "succeeded" },
   artifacts: { directory: "/tmp/artifacts/run-ok" },
   executions: [{ command: "wordpress.wp-cli option get siteurl", exitCode: 0, durationMs: 12, recipePhase: "run_workloads", recipeStepIndex: 0 }],
+  adversarialCampaigns: [{
+    declaration: { id: "adaptive-browser" },
+    evidence: { path: "files/adversarial/adaptive-browser" },
+    result: {
+      campaignId: "adaptive-browser",
+      status: "findings",
+      summary: { generated: 2, executed: 2, findings: 1 },
+      findings: [{ fingerprint: "oracle-fingerprint", status: "failed", oracleIds: ["runtime-status"], artifactRefs: [{ path: "files/browser/adaptive-exploration.json", kind: "browser-adaptive-exploration", bytes: 2048 }] }],
+    },
+  }],
 })
+
+assert.equal(success.status, "succeeded", "retained adversarial findings remain advisory")
+assert.deepEqual(success.metadata.adversarial_campaigns, [{
+  campaign_id: "adaptive-browser",
+  status: "findings",
+  summary: { generated: 2, executed: 2, findings: 1 },
+  evidence_ref: "files/adversarial/adaptive-browser",
+  findings: [{ fingerprint: "oracle-fingerprint", status: "failed", oracle_ids: ["runtime-status"], artifact_refs: [{ path: "files/browser/adaptive-exploration.json", kind: "browser-adaptive-exploration" }] }],
+}])
 
 const successHuman = await captureStdout(() => writeRecipeSummaryHumanOutput(success))
 assert.match(successHuman, /WP Codebox recipe summary/)

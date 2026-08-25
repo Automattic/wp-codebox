@@ -3,18 +3,20 @@ import { createHash } from "node:crypto"
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { arch, platform } from "node:os"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { createRequire } from "node:module"
+import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 
 import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
 import { materializeSharpReleaseRuntime, sharpRuntimePackageNames } from "./lib/materialize-sharp-release-runtime.ts"
+import { normalizeReleasePlatform } from "./lib/release-target.ts"
 
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 const releaseRoot = resolve(repoRoot, "dist", "release")
 const stagingReleaseRoot = await mkdtemp(join(tmpdir(), "wp-codebox-release-"))
 const packageRoot = join(stagingReleaseRoot, "wp-codebox-cli")
-const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizePlatform(platform())
+const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizeReleasePlatform(platform())
 const archName = process.env.WP_CODEBOX_RELEASE_ARCH ?? normalizeArch(arch())
 sharpRuntimePackageNames(platformName, archName)
 const nodeRuntimeVersion = process.env.WP_CODEBOX_NODE_RUNTIME_VERSION ?? "24.16.0"
@@ -32,6 +34,7 @@ try {
   await cp(resolve(repoRoot, "patches"), join(packageRoot, "patches"), { recursive: true })
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
   await cp(resolve(repoRoot, "npm-shrinkwrap.json"), join(packageRoot, "npm-shrinkwrap.json"))
+  await cp(resolve(repoRoot, "runtime-overlays"), join(packageRoot, "runtime-overlays"), { recursive: true })
   await mkdir(join(packageRoot, "scripts"), { recursive: true })
   await cp(resolve(repoRoot, "scripts", "apply-development-patches.mjs"), join(packageRoot, "scripts", "apply-development-patches.mjs"))
 
@@ -50,6 +53,7 @@ try {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
   })
+  await materializePinnedPhpWasmOverlay(packageRoot)
   await materializeSharpReleaseRuntime(packageRoot, join(packageRoot, "npm-shrinkwrap.json"), platformName, archName)
   await execFileAsync(process.execPath, [resolve(repoRoot, "node_modules", "patch-package", "index.js")], {
     cwd: packageRoot,
@@ -121,6 +125,15 @@ async function copyIfPresent(relativePath: string): Promise<void> {
   }
 }
 
+async function materializePinnedPhpWasmOverlay(root: string): Promise<void> {
+  const source = join(root, "runtime-overlays", "php-wasm-node-8-3")
+  const target = join(root, "node_modules", "@php-wasm", "node-8-3")
+  await rm(target, recursiveRmOptions)
+  await cp(source, target, { recursive: true })
+  await cp(join(root, "runtime-overlays", "provenance.json"), join(root, "php-wasm-overlay-provenance.json"))
+  await rm(join(root, "runtime-overlays"), recursiveRmOptions)
+}
+
 async function materializeWorkspacePackages(root: string): Promise<void> {
   const automatticModules = join(root, "node_modules", "@automattic")
   await mkdir(automatticModules, { recursive: true })
@@ -138,8 +151,9 @@ async function materializeWorkspacePackages(root: string): Promise<void> {
 }
 
 async function writeBrowserProvenance(root: string): Promise<void> {
-  const playwright = JSON.parse(await readFile(join(root, "node_modules", "playwright", "package.json"), "utf8")) as { version: string }
-  const browsers = JSON.parse(await readFile(join(root, "node_modules", "playwright-core", "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
+  const packageRequire = createRequire(join(root, "package.json"))
+  const playwright = packageRequire("playwright/package.json") as { version: string }
+  const browsers = JSON.parse(await readFile(join(dirname(packageRequire.resolve("playwright-core")), "browsers.json"), "utf8")) as { browsers: Array<{ name: string; revision: string; browserVersion?: string }> }
   const chromium = browsers.browsers.find((browser) => browser.name === "chromium")
   if (!chromium?.browserVersion) throw new Error("Installed Playwright package has no Chromium browser provenance.")
   const dependencyManifest = await readFile(join(root, "npm-shrinkwrap.json"))
@@ -179,7 +193,7 @@ async function bundleNodeRuntime(root: string, platformName: string, archName: s
     } finally {
       await rm(tempRoot, recursiveRmOptions)
     }
-  } else if (platformName === normalizePlatform(platform()) && archName === normalizeArch(arch())) {
+  } else if (platformName === normalizeReleasePlatform(platform()) && archName === normalizeArch(arch())) {
     await cp(process.execPath, join(runtimeRoot, "bin", "node"))
     await chmod(join(runtimeRoot, "bin", "node"), 0o755)
   } else {
@@ -196,16 +210,6 @@ function nodeRuntimePackageName(platformName: string, archName: string): string 
   }
 
   return null
-}
-
-function normalizePlatform(value: NodeJS.Platform): string {
-  if (value === "darwin") {
-    return "macos"
-  }
-  if (value === "win32") {
-    return "windows"
-  }
-  return value
 }
 
 function normalizeArch(value: string): string {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -8,6 +8,8 @@ import { promisify } from "node:util"
 const execFileAsync = promisify(execFile)
 const secret = "sk-abcdefghijklmnopqrstuvwxyz"
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-bootstrap-failure-"))
+const pluginFixture = join(root, "bootstrap-failure-fixture")
+const harnessFixture = join(root, "harness")
 const fatalMuPlugin = join(root, "fatal-bootstrap.php")
 const recipePath = join(root, "recipe.json")
 const artifactsPath = join(root, "artifacts")
@@ -15,19 +17,38 @@ const exitArtifactsPath = join(root, "exit-artifacts")
 const parseArtifactsPath = join(root, "parse-artifacts")
 
 try {
+  await mkdir(join(pluginFixture, "tests"), { recursive: true })
+  await cp("tests/fixtures/phpunit-playground-harness", harnessFixture, { recursive: true })
+  await execFileAsync("composer", ["install", "--no-interaction", "--prefer-dist"], { cwd: harnessFixture, timeout: 300_000, maxBuffer: 2 * 1024 * 1024 })
+  await writeFile(join(pluginFixture, "bootstrap-failure-fixture.php"), "<?php\n/** Plugin Name: Bootstrap Failure Fixture */\n")
   await writeFile(fatalMuPlugin, `<?php\ntrigger_error('PHPUnit bootstrap fixture token: ${secret}', E_USER_ERROR);\n`)
   await writeFile(recipePath, `${JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { backend: "wordpress-playground", wp: "6.5", blueprint: { steps: [] } },
     inputs: {
       mounts: [{
+        source: pluginFixture,
+        target: "/wordpress/wp-content/plugins/bootstrap-failure-fixture",
+        mode: "readonly",
+      }, {
+        source: join(harnessFixture, "vendor"),
+        target: "/wp-codebox-vendor",
+        mode: "readonly",
+      }, {
         source: fatalMuPlugin,
         target: "/wordpress/wp-content/mu-plugins/wp-codebox-bootstrap-failure.php",
         mode: "readonly",
       }],
     },
     workflow: {
-      steps: [{ command: "wordpress.phpunit", args: ["plugin-slug=bootstrap-failure-fixture"] }],
+      steps: [{
+        command: "wordpress.phpunit",
+        args: [
+          "plugin-slug=bootstrap-failure-fixture",
+          "autoload-file=/wp-codebox-vendor/autoload.php",
+          "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+        ],
+      }],
     },
   })}\n`)
 
@@ -46,7 +67,11 @@ try {
   const artifactDirectory = join(artifactsPath, runtimeDirectory)
   const diagnostic = await readFile(join(artifactDirectory, "files", "phpunit", ".pg-test-result.txt"), "utf8")
   const commandLog = await readFile(join(artifactDirectory, "logs", "commands.log"), "utf8")
-  assert.match(diagnostic, /STAGE_FATAL:bootstrap:PHPUnit bootstrap fixture token: \[redacted\]/)
+  assert.match(diagnostic, /^STAGE_BEGIN:install$/m)
+  assert.match(diagnostic, /NOTICE:E_256: PHPUnit bootstrap fixture token: \[redacted\].*context=stage=install/)
+  assert.match(diagnostic, /STAGE_DIE:install:WP_CODEBOX_PHP_FATAL_DIAGNOSTIC:/)
+  assert.match(diagnostic, /"schema":"wp-codebox\/php-fatal-diagnostic\/v1"/)
+  assert.match(diagnostic, /"message":"PHPUnit bootstrap fixture token: \[redacted\]"/)
   assert.doesNotMatch(diagnostic, new RegExp(secret))
   assert.match(commandLog, /wordpress\.phpunit structured diagnostics/)
   assert.match(commandLog, /PHPUnit bootstrap fixture token: \[redacted\]/)
@@ -64,13 +89,19 @@ try {
   const exitRuntimeDirectory = exitLatest.paths?.runtimeDirectory
   assert.ok(exitRuntimeDirectory, "terminated recipe must retain a runtime artifact directory")
   const exitDiagnostic = await readFile(join(exitArtifactsPath, exitRuntimeDirectory, "files", "phpunit", ".pg-test-result.txt"), "utf8")
-  assert.match(exitDiagnostic, /STAGE_DIE:bootstrap:PHPUnit bootstrap exit fixture token: \[redacted\]/)
+  assert.match(exitDiagnostic, /STAGE_DIE:install:PHPUnit bootstrap exit fixture token: \[redacted\]/)
   assert.doesNotMatch(exitDiagnostic, new RegExp(secret))
 
   await writeFile(recipePath, `${JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { backend: "wordpress-playground", wp: "6.5", blueprint: { steps: [] } },
-    inputs: { mounts: [] },
+    inputs: {
+      mounts: [{
+        source: pluginFixture,
+        target: "/wordpress/wp-content/plugins/bootstrap-failure-fixture",
+        mode: "readonly",
+      }],
+    },
     workflow: {
       steps: [{ command: "wordpress.phpunit", args: ["plugin-slug=bootstrap-failure-fixture", "code=<?php function malformed("] }],
     },

@@ -1,7 +1,7 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
-import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { requiresManagedMysqlMultisitePreinstall } from "@automattic/wp-codebox-playground"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -174,6 +174,7 @@ export async function applyRecipeRuntimeSetup(args: {
       target,
       mode: mount.mode ?? "readwrite",
       ...(mount.captureArtifacts !== undefined ? { captureArtifacts: mount.captureArtifacts } : {}),
+      ...(mount.phase !== undefined ? { phase: mount.phase } : {}),
       metadata,
     }
     inputMounts.push(inputMount)
@@ -207,6 +208,13 @@ export async function applyRecipeRuntimeSetup(args: {
   if (materializableMounts.length > 0 && canMaterializeStagedInputs) {
     await awaitRecipe("input.materialize", () => runtime.materializeStagedInputs ? runtime.materializeStagedInputs(materializableMounts) : runtime.materializeMounts!(materializableMounts))
     interruption?.throwIfInterrupted()
+  }
+
+  // Discovery inventories mounted files only. Running setup PHP here would
+  // activate dependencies before the discovery command can enforce its
+  // no-bootstrap boundary.
+  if (recipeHasPhpunitDiscoveryOnly(recipe)) {
+    return { executions }
   }
 
   const isolateManagedMultisitePreinstall = recipeHasManagedMysqlMultisitePhpunit(recipe, runtimeSpec)
@@ -269,6 +277,16 @@ function managedPhpunitDeferredPluginFiles(recipe: WorkspaceRecipe, runtimeSpec:
 function recipeHasManagedMysqlMultisitePhpunit(recipe: WorkspaceRecipe, runtimeSpec: Pick<RuntimeCreateSpec, "environment" | "runtimeEnv">): boolean {
   return [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
     .some((step) => step.command === "wordpress.phpunit" && requiresManagedMysqlMultisitePreinstall(step.args ?? [], runtimeSpec))
+}
+
+export function recipeHasPhpunitDiscoveryOnly(recipe: WorkspaceRecipe): boolean {
+  const steps = [...(recipe.workflow.before ?? []), ...recipe.workflow.steps, ...(recipe.workflow.after ?? [])]
+  const discoverySteps = steps.filter((step) => step.command === "wordpress.phpunit" && booleanCommandArg(step.args ?? [], "discovery-only"))
+  if (discoverySteps.length === 0) return false
+  if (steps.length !== 1 || discoverySteps.length !== 1) {
+    throw new Error("wordpress.phpunit discovery-only must be the recipe's sole workflow step")
+  }
+  return true
 }
 
 export async function cleanupInputMountBaselines(paths: string[]): Promise<void> {
@@ -558,11 +576,12 @@ register_shutdown_function(static function () use ($plugin, $plugin_file): void 
     ), JSON_UNESCAPED_SLASHES) . "\n";
 });
 wp_codebox_activate_plugin_preload_recipe_plugin($plugin, false, 'activation-recipe-plugin', 'recipe-runtime-setup activate_plugin');
-if (is_plugin_active($plugin_file)) {
-    deactivate_plugins($plugin_file, true, false);
+$network_wide = is_multisite() && is_network_only_plugin($plugin_file);
+if (is_plugin_active($plugin_file) || is_plugin_active_for_network($plugin_file)) {
+    deactivate_plugins($plugin_file, true, $network_wide);
 }
 $lifecycle = wp_codebox_activate_plugin_component_lifecycle_replay_prepare();
-$result = activate_plugin($plugin_file, '', false, false);
+$result = activate_plugin($plugin_file, '', $network_wide, false);
 wp_codebox_activate_plugin_component_lifecycle_replay_complete($lifecycle);
 if (is_wp_error($result)) {
     throw new RuntimeException('Failed to activate extra plugin ' . $plugin_file . ': ' . $result->get_error_message());

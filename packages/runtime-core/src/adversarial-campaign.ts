@@ -12,10 +12,22 @@ export const DIFFERENTIAL_RESULT_SCHEMA = "wp-codebox/differential-result/v1" as
 
 export type AdversarialMutationKind = "scalar" | "structured" | "binary" | "sequence"
 export type AdversarialCaseStatus = "passed" | "failed" | "error" | "timed-out" | "resource-exhausted"
+export type AdversarialClockSurface = "runtime" | "wordpress" | "scheduler" | "database"
+export type AdversarialClockOperation = "freeze" | "advance" | "skew" | "restore"
+
+/** A portable, normalized clock instruction. Runtime adapters negotiate its fidelity. */
+export interface AdversarialClockScheduleEntry {
+  surface: AdversarialClockSurface
+  operation: AdversarialClockOperation
+  time?: number
+  milliseconds?: number
+}
 
 export interface AdversarialAction {
   type: string
   input?: unknown
+  /** Transitions applied immediately before this action's first declared phase. */
+  clock?: AdversarialClockScheduleEntry[]
   metadata?: Record<string, unknown>
 }
 
@@ -158,6 +170,8 @@ export interface AdversarialCampaignRunnerOptions {
   signal?: AbortSignal
   retainNovelty?: boolean
   minimize?: boolean
+  /** Grace to wait for a cancelled case before terminalizing the campaign. */
+  abortSettleGraceMs?: number
 }
 
 export interface DifferentialCell {
@@ -230,6 +244,16 @@ export async function runAdversarialCampaign(campaignInput: AdversarialCampaign,
       const observation = observations[index] as AdversarialExecutionObservation
       executed += 1
       if (observation.status === "timed-out") timedOut += 1
+      if (observation.status === "resource-exhausted") {
+        incomplete = true
+        diagnostics.push({ code: "campaign-case-resource-exhausted", message: observation.diagnostics?.[0]?.message ?? `Campaign stopped because ${plan.caseId} exhausted a runtime resource before coverage completed.` })
+        break
+      }
+      if (observation.diagnostics?.some(({ code }) => code === "case-timeout-unsettled")) {
+        incomplete = true
+        diagnostics.push({ code: "campaign-timeout-unsettled", message: `Campaign stopped because ${plan.caseId} did not settle after cancellation. The runtime must be torn down before further work.` })
+        break
+      }
       artifactBytes += (observation.artifacts ?? []).reduce((total, artifact) => total + (artifact.bytes ?? 0), 0)
       if (artifactBytes > campaign.budgets.maxArtifactBytes) { incomplete = true; diagnostics.push({ code: "campaign-artifact-budget-exhausted", message: "Campaign stopped before artifact evidence exceeded its byte budget." }); break }
 
@@ -301,10 +325,19 @@ async function executeBoundedCase(campaign: AdversarialCampaign, plan: Adversari
   options.signal?.addEventListener("abort", abort, { once: true })
   let timer: NodeJS.Timeout | undefined
   try {
-    return await Promise.race([
-      options.execute(plan, controller.signal),
-      new Promise<AdversarialExecutionObservation>((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({ status: "timed-out", diagnostics: [{ code: "case-time-budget-exhausted", message: `Case exceeded ${campaign.budgets.maxCaseTimeMs}ms.` }] }) }, campaign.budgets.maxCaseTimeMs) }),
+    const execution = options.execute(plan, controller.signal)
+    const completed = await Promise.race([
+      execution.then((observation) => ({ kind: "completed" as const, observation })),
+      new Promise<{ kind: "timed-out" }>((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({ kind: "timed-out" }) }, campaign.budgets.maxCaseTimeMs) }),
     ])
+    if (completed.kind === "completed") return completed.observation
+    // Do not start another case while a timed-out case can still mutate shared state.
+    const settled = await Promise.race([
+      execution.then(() => true, () => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), boundedInteger(options.abortSettleGraceMs, 1_000, 1, 60_000))),
+    ])
+    if (!settled) return { status: "timed-out", diagnostics: [{ code: "case-timeout-unsettled", message: `Case exceeded ${campaign.budgets.maxCaseTimeMs}ms and did not settle during the abort grace period. Further cases require runtime teardown.` }], metadata: { cancellation: "runtime-teardown-required" } }
+    return { status: "timed-out", diagnostics: [{ code: "case-time-budget-exhausted", message: `Case exceeded ${campaign.budgets.maxCaseTimeMs}ms and settled after cancellation.` }] }
   } catch (error) {
     return { status: "error", diagnostics: [{ code: "case-execution-error", message: error instanceof Error ? error.message : String(error) }] }
   } finally {
@@ -391,6 +424,21 @@ function createFinding(campaign: AdversarialCampaign, plan: AdversarialCasePlan,
   }
 }
 
+export function normalizeAdversarialClockSchedule(entries: readonly AdversarialClockScheduleEntry[]): AdversarialClockScheduleEntry[] {
+  return entries.map((entry, index) => {
+    if (!entry || !["runtime", "wordpress", "scheduler", "database"].includes(entry.surface)) throw new Error(`Clock schedule entry ${index} has an invalid surface.`)
+    if (!entry || !["freeze", "advance", "skew", "restore"].includes(entry.operation)) throw new Error(`Clock schedule entry ${index} has an invalid operation.`)
+    if ((entry.operation === "freeze" || entry.operation === "skew") && (!Number.isSafeInteger(entry.time) || (entry.time as number) < 0)) throw new Error(`Clock schedule ${entry.operation} entry ${index} requires a non-negative Unix millisecond time.`)
+    if (entry.operation === "advance" && (!Number.isSafeInteger(entry.milliseconds) || (entry.milliseconds as number) < 0)) throw new Error(`Clock schedule advance entry ${index} requires non-negative milliseconds.`)
+    if (entry.operation === "restore" && (entry.time !== undefined || entry.milliseconds !== undefined)) throw new Error(`Clock schedule restore entry ${index} cannot include time values.`)
+    return entry.operation === "advance"
+      ? { surface: entry.surface, operation: entry.operation, milliseconds: entry.milliseconds }
+      : entry.operation === "freeze" || entry.operation === "skew"
+        ? { surface: entry.surface, operation: entry.operation, time: entry.time }
+        : { surface: entry.surface, operation: entry.operation }
+  })
+}
+
 function defaultOracleResults(observation: AdversarialExecutionObservation): AdversarialOracleResult[] {
   return observation.status === "passed" ? [] : [{ oracleId: "runtime-status", failed: true, code: observation.status, message: observation.diagnostics?.[0]?.message ?? `Runtime status was ${observation.status}.` }]
 }
@@ -418,7 +466,7 @@ function normalizeBudgets(input: Partial<AdversarialResourceBudget> | undefined)
 }
 
 function normalizeCorpusEntry(entry: AdversarialCorpusEntry): AdversarialCorpusEntry {
-  return stripUndefined({ ...entry, actions: entry.actions.map((action) => ({ ...action, input: cloneJsonValue(action.input) })), input: cloneJsonValue(entry.input), signals: entry.signals ? [...new Set(entry.signals)].sort() : undefined })
+  return stripUndefined({ ...entry, actions: entry.actions.map((action) => stripUndefined({ ...action, input: cloneJsonValue(action.input), clock: action.clock ? normalizeAdversarialClockSchedule(action.clock) : undefined })), input: cloneJsonValue(entry.input), signals: entry.signals ? [...new Set(entry.signals)].sort() : undefined })
 }
 
 function mutateActionSequence(actions: AdversarialAction[], seed: string, maximum: number): AdversarialAction[] {

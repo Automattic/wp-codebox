@@ -392,11 +392,15 @@ private static function browser_trusted_url( string $url, string $field, string 
 	}
 
 	$scheme = strtolower( (string) $parts['scheme'] );
-	if ( 'https' !== $scheme ) {
+	$host   = strtolower( (string) $parts['host'] );
+	if ( 'https' !== $scheme && ( 'http' !== $scheme || ! self::is_loopback_host( $host ) ) ) {
 		return new WP_Error( 'wp_codebox_browser_url_insecure', 'Browser Playground URL must use https://.', array( 'status' => 400, 'field' => $field ) );
 	}
 
-	$origin  = self::url_origin( $parts );
+	$origin = self::url_origin( $parts );
+	if ( self::is_loopback_host( $host ) ) {
+		$default_allowed_origins[] = $origin;
+	}
 	$allowed = self::normalized_origins( apply_filters( $filter, $default_allowed_origins, $field, $url ) );
 	if ( ! in_array( $origin, $allowed, true ) ) {
 		return new WP_Error( 'wp_codebox_browser_origin_not_allowed', 'Browser Playground URL origin is not allowed.', array( 'status' => 400, 'field' => $field, 'origin' => $origin ) );
@@ -405,7 +409,7 @@ private static function browser_trusted_url( string $url, string $field, string 
 	return array(
 		'url'    => $url,
 		'origin' => $origin,
-		'host'   => strtolower( (string) $parts['host'] ),
+		'host'   => $host,
 	);
 }
 

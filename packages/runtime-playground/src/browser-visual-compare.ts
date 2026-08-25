@@ -4,7 +4,6 @@ import type { ExecutionSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-co
 import { errorMessage, now, sha256 } from "@automattic/wp-codebox-core/internals"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
-import sharp from "sharp"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import type { BrowserArtifact, BrowserProbeViewport } from "./browser-artifacts.js"
 import { launchChromiumBrowser } from "./browser-capture-session.js"
@@ -173,9 +172,10 @@ export interface VisualCompareCaptureDiagnostics {
     frozenTime?: string
     injectedStyleBytes: number
     externalRequests: "block" | "allow"
+    requiredReadinessRecords: string[]
     animatedMedia: VisualCompareAnimatedMediaEvidence
     requests: { total: number; blockedTotal: number; blockedTruncated: boolean; blocked: Array<{ url: string; resourceType: string }>; failedTotal: number; failedTruncated: boolean; failed: Array<{ url: string; resourceType: string; error: string }> }
-    readiness: { durationMs: number; fonts: "ready" | "timeout" | "unavailable" }
+    readiness: { durationMs: number; fonts: "ready" | "timeout" | "unavailable"; records: VisualCompareReadinessRecord[] }
     postScrollStability: VisualComparePostScrollStability
   }
   assets: {
@@ -203,6 +203,13 @@ export interface VisualCompareCaptureDiagnostics {
     focusedElement: boolean
     focusedElementTag?: string
   }
+}
+
+export interface VisualCompareReadinessRecord {
+  selector: string
+  expectedStatus: string
+  observedStatus: string
+  status: "ready" | "missing" | "invalid" | "timeout"
 }
 
 export interface VisualComparePostScrollStability {
@@ -517,6 +524,9 @@ async function runVisualComparePairCommand({
   const animatedMedia = visualCompareAnimatedMediaArg(args)
   const frozenTime = visualCompareFrozenTimeArg(args)
   const captureStyle = visualCompareCaptureStyleArg(args)
+  const requiredReadinessRecords = visualCompareRequiredReadinessRecords(args)
+  const sourceRequiredReadinessRecords = visualCompareRequiredReadinessRecords(args, "source-required-readiness-record")
+  const candidateRequiredReadinessRecords = visualCompareRequiredReadinessRecords(args, "candidate-required-readiness-record")
   // Disposable WP Codebox sandboxes have no outbound network egress. A captured
   // page that references external resources (Google Fonts, CDNs, analytics) would
   // otherwise leave those requests hanging until the navigation/screenshot hits
@@ -526,7 +536,7 @@ async function runVisualComparePairCommand({
   // fast. On by default; `block-external-requests=false` opts back into the live
   // (egress-dependent) behavior.
   const blockExternalRequests = strictBooleanArg(args, "block-external-requests", true)
-  const captureOptions = { reducedMotion, animations, animatedMedia, ...(frozenTime ? { frozenTime } : {}), injectedStyleBytes: Buffer.byteLength(captureStyle), externalRequests: blockExternalRequests ? "block" as const : "allow" as const }
+  const captureOptions = { reducedMotion, animations, animatedMedia, ...(frozenTime ? { frozenTime } : {}), injectedStyleBytes: Buffer.byteLength(captureStyle), externalRequests: blockExternalRequests ? "block" as const : "allow" as const, requiredReadinessRecords }
 
   if (threshold < 0 || threshold > 1) {
     throw new Error("threshold must be between 0 and 1")
@@ -603,7 +613,7 @@ async function runVisualComparePairCommand({
           sourceCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "source-capture",
-            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, captureStyle }, requestTracker, animatedMediaTracker),
+            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, requiredReadinessRecords: [...requiredReadinessRecords, ...sourceRequiredReadinessRecords], captureStyle }, requestTracker, animatedMediaTracker),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -619,7 +629,7 @@ async function runVisualComparePairCommand({
           candidateCapture = await withBrowserCommandLiveness({
             command: "wordpress.visual-compare",
             phase: "candidate-capture",
-            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, captureStyle }, requestTracker, animatedMediaTracker),
+            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxFullPageHeight, maxExplanationCandidates, explainSelectors, visualTimeoutMs, { ...captureOptions, requiredReadinessRecords: [...requiredReadinessRecords, ...candidateRequiredReadinessRecords], captureStyle }, requestTracker, animatedMediaTracker),
             policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
           })
         })
@@ -1482,6 +1492,8 @@ function visualCompareMatrixArgs(record: Record<string, unknown>): string[] {
     ["max-regions", ["max-regions", "maxRegions"]],
     ["max-explanation-elements", ["max-explanation-elements", "maxExplanationElements"]],
     ["max-explanation-candidates", ["max-explanation-candidates", "maxExplanationCandidates"]],
+    ["required-readiness-record", ["required-readiness-record", "requiredReadinessRecord", "requiredReadinessRecords"]],
+    ["candidate-required-readiness-record", ["candidate-required-readiness-record", "candidateRequiredReadinessRecord"]],
   ]
   const args = fields.flatMap(([argName, keys]) => {
     const value = visualCompareMatrixValue(record, keys)
@@ -1764,6 +1776,23 @@ function visualCompareExplainSelectors(args: string[]): string[] {
   return [...selectors]
 }
 
+// A readiness record is a page-owned JSON element with a top-level `status` field.
+// Capture keeps the rendered artifacts but records an incomplete prerequisite instead
+// of treating a fallback rendering as conclusive visual evidence.
+function visualCompareRequiredReadinessRecords(args: string[], key = "required-readiness-record"): string[] {
+  const prefix = `${key}=`
+  const selectors = [...new Set(args.flatMap((arg) => arg.startsWith(prefix) ? [arg.slice(prefix.length).trim()] : []))]
+  if (selectors.length > 8) {
+    throw new Error("required-readiness-record supports at most 8 selectors")
+  }
+  for (const selector of selectors) {
+    if (!selector || selector.length > 512) {
+      throw new Error("required-readiness-record selectors must be non-empty and at most 512 characters")
+    }
+  }
+  return selectors
+}
+
 function visualCompareAnimationsArg(args: string[]): "freeze" | "allow" {
   const value = argValue(args, "animations")?.trim() || "freeze"
   if (value === "freeze" || value === "allow") {
@@ -1874,6 +1903,7 @@ function visualCompareAnimatedMediaCandidate(body: Buffer): boolean {
 // the response first and reuse one static PNG buffer for identical content, so
 // URL, navigation timing, and capture order cannot affect the selected frame.
 async function installVisualCompareAnimatedMediaNormalization(page: Page, policy: "allow" | "first-frame", previewOrigin: string): Promise<VisualCompareAnimatedMediaTracker> {
+  const { default: sharp } = await import("sharp")
   let observed = 0
   let normalized = 0
   let failed = 0
@@ -2182,7 +2212,7 @@ export async function settleVisualComparePageForCapture(page: Page): Promise<Vis
   })()`)
 }
 
-export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number): Promise<{ durationMs: number; fonts: "ready" | "timeout" | "unavailable" }> {
+export async function waitForVisualComparePaintReady(page: Page, timeoutMs: number, requiredRecords: string[] = []): Promise<{ durationMs: number; fonts: "ready" | "timeout" | "unavailable"; records: VisualCompareReadinessRecord[] }> {
   const startedAt = Date.now()
   const readinessTimeoutMs = Math.max(1_000, Math.min(10_000, timeoutMs))
   await page.waitForLoadState("load", { timeout: readinessTimeoutMs }).catch(() => undefined)
@@ -2235,7 +2265,27 @@ export async function waitForVisualComparePaintReady(page: Page, timeoutMs: numb
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
     return fonts
   }, readinessTimeoutMs).catch(() => "timeout" as const)
-  return { durationMs: Date.now() - startedAt, fonts }
+  const records = requiredRecords.length === 0 ? [] : await page.evaluate(async ({ selectors, timeout }) => {
+    const until = performance.now() + timeout
+    const inspect = () => selectors.map((selector) => {
+      const record = document.querySelector(selector)
+      if (!record) return { selector, expectedStatus: "loaded", observedStatus: "", status: "missing" as const }
+      try {
+        const payload = JSON.parse(record.textContent || "") as { status?: unknown }
+        const observedStatus = typeof payload.status === "string" ? payload.status : ""
+        return { selector, expectedStatus: "loaded", observedStatus, status: observedStatus === "loaded" ? "ready" as const : "invalid" as const }
+      } catch {
+        return { selector, expectedStatus: "loaded", observedStatus: "", status: "invalid" as const }
+      }
+    })
+    let records = inspect()
+    while (records.some((record) => record.status === "missing") && performance.now() < until) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, Math.max(0, until - performance.now()))))
+      records = inspect()
+    }
+    return records.map((record) => record.status === "missing" && performance.now() >= until ? { ...record, status: "timeout" as const } : record)
+  }, { selectors: requiredRecords, timeout: readinessTimeoutMs }).catch(() => requiredRecords.map((selector) => ({ selector, expectedStatus: "loaded", observedStatus: "", status: "timeout" as const })))
+  return { durationMs: Date.now() - startedAt, fonts, records }
 }
 
 export interface VisualCompareNavigationPolicy {
@@ -2517,10 +2567,16 @@ async function captureVisualCompareDiagnostics(page: Page, effectiveCapture: Vis
       },
     }
   })
-  return { ...diagnostics, effectiveCapture, readiness: visualCompareCaptureReadiness({ ...diagnostics, postScrollStability: effectiveCapture.postScrollStability }) }
+  const readiness = visualCompareCaptureReadiness({ ...diagnostics, postScrollStability: effectiveCapture.postScrollStability })
+  const requiredRecordFailures = effectiveCapture.readiness.records.filter((record) => record.status !== "ready")
+  if (requiredRecordFailures.length === 0) {
+    return { ...diagnostics, effectiveCapture, readiness }
+  }
+  const reasons = [...readiness.reasons, ...requiredRecordFailures.map((record) => `required readiness record ${record.selector} is ${record.status}${record.observedStatus ? ` (observed ${record.observedStatus})` : ""}`)]
+  return { ...diagnostics, effectiveCapture, readiness: { status: "warning", confidence: "low", afterSettle: true, reasons } }
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number, capture: { reducedMotion: boolean; animations: "freeze" | "allow"; animatedMedia: "allow" | "first-frame"; frozenTime?: string; injectedStyleBytes: number; externalRequests: "block" | "allow"; captureStyle: string }, requestTracker: VisualCompareRequestTracker, animatedMediaTracker: VisualCompareAnimatedMediaTracker): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxFullPageHeight: number, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number, capture: { reducedMotion: boolean; animations: "freeze" | "allow"; animatedMedia: "allow" | "first-frame"; frozenTime?: string; injectedStyleBytes: number; externalRequests: "block" | "allow"; requiredReadinessRecords: string[]; captureStyle: string }, requestTracker: VisualCompareRequestTracker, animatedMediaTracker: VisualCompareAnimatedMediaTracker): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot; captureDiagnostics: VisualCompareCaptureDiagnostics }> {
   requestTracker.reset()
   animatedMediaTracker.reset()
   if (waitFor === "duration") {
@@ -2545,7 +2601,7 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   if (capture.captureStyle) {
     await page.addStyleTag({ content: capture.captureStyle })
   }
-  const readiness = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  const readiness = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "paint-ready", operation: waitForVisualComparePaintReady(page, timeoutMs, capture.requiredReadinessRecords), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
   if (capture.animations === "freeze") {
     await page.evaluate(() => document.getAnimations().forEach((animation) => { animation.currentTime = 0; animation.pause() }))
   }

@@ -111,8 +111,29 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
       recipe_path: stringValue(result.recipePath),
       package_provenance: objectOrUndefined(objectValue(result.provenance).packages),
       managed_runtime_services: result.managedRuntimeServices === undefined ? undefined : arrayObjects(result.managedRuntimeServices),
+      adversarial_campaigns: adversarialCampaignFindingSummaries(result.adversarialCampaigns),
     }),
   }) as RecipeRunSummary
+}
+
+function adversarialCampaignFindingSummaries(value: unknown): Array<Record<string, unknown>> | undefined {
+  const campaigns = arrayObjects(value).filter((campaign) => stringValue(objectValue(campaign.result).status) === "findings")
+  if (campaigns.length === 0) return undefined
+  return campaigns.map((campaign) => {
+    const result = objectValue(campaign.result)
+    return stripUndefined({
+      campaign_id: stringValue(result.campaignId) || stringValue(objectValue(campaign.declaration).id),
+      status: "findings",
+      summary: objectOrUndefined(result.summary),
+      evidence_ref: stringValue(objectValue(campaign.evidence).path),
+      findings: arrayObjects(result.findings).slice(0, 10).map((finding) => stripUndefined({
+        fingerprint: stringValue(finding.fingerprint),
+        status: stringValue(finding.status),
+        oracle_ids: Array.isArray(finding.oracleIds) ? finding.oracleIds.filter((id): id is string => typeof id === "string") : undefined,
+        artifact_refs: arrayObjects(finding.artifactRefs).map((ref) => stripUndefined({ path: stringValue(ref.path), kind: stringValue(ref.kind) })),
+      })),
+    })
+  })
 }
 
 function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {

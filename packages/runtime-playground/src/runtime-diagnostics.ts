@@ -4,6 +4,15 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
 import { PHPUNIT_COMPLETED_RESULT_PREFIX, parsePhpunitCompletedResult, type PhpunitCompletedResult } from "./phpunit-test-results.js"
 
+export interface PhpunitDiscoveryResult {
+  schema: "wp-codebox/phpunit-discovery/v1"
+  plugin_slug: string
+  phpunit_xml: string
+  test_root: string
+  selected_testsuites: string[]
+  files: string[]
+}
+
 export async function persistPluginPhpunitResult(server: PlaygroundCliServer, vfsPath: string, artifactRoot: string, namespace?: string): Promise<void> {
   await persistPhpunitResult(server, vfsPath, join(artifactRoot, "files", "phpunit", ...(namespace ? [namespace] : []), ".pg-test-result.txt"))
 }
@@ -55,6 +64,26 @@ export async function readPluginPhpunitDiagnostic(server: PlaygroundCliServer, v
 export async function readPluginPhpunitCompletedResult(server: PlaygroundCliServer, vfsPath: string): Promise<PhpunitCompletedResult | undefined> {
   const contents = await readPhpunitResult(server, vfsPath)
   return contents ? parsePhpunitCompletedResult(contents) : undefined
+}
+
+export async function readPluginPhpunitDiscoveryResult(server: PlaygroundCliServer, vfsPath: string): Promise<PhpunitDiscoveryResult | undefined> {
+  const contents = await readPhpunitResult(server, vfsPath)
+  const line = contents?.split("\n").find((entry) => entry.startsWith("DISCOVERY_RESULT_JSON:"))
+  if (!line) return undefined
+  try {
+    const value = JSON.parse(line.slice("DISCOVERY_RESULT_JSON:".length)) as Partial<PhpunitDiscoveryResult>
+    if (value.schema !== "wp-codebox/phpunit-discovery/v1"
+      || typeof value.plugin_slug !== "string"
+      || typeof value.phpunit_xml !== "string"
+      || typeof value.test_root !== "string"
+      || !Array.isArray(value.selected_testsuites) || value.selected_testsuites.some((entry) => typeof entry !== "string")
+      || !Array.isArray(value.files) || value.files.length === 0 || value.files.some((entry) => typeof entry !== "string" || entry === "")) {
+      return undefined
+    }
+    return value as PhpunitDiscoveryResult
+  } catch {
+    return undefined
+  }
 }
 
 export async function readCorePhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {

@@ -72,11 +72,11 @@ try {
   assert.match(changed.get("delete-me.txt")?.beforeSha256 ?? "", /^[a-f0-9]{64}$/)
   assert.equal(changed.get("delete-me.txt")?.afterSha256, undefined)
   assert.equal(changed.get("delete-me.txt")?.beforeMode, "100644")
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/generated\.txt b\/workspace\/plugin\/generated\.txt/)
+  assert.match(result.patch, /diff --git a\/generated\.txt b\/generated\.txt/)
   assert.match(result.patch, /\+cooked/)
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/plugin\.php b\/workspace\/plugin\/plugin\.php/)
+  assert.match(result.patch, /diff --git a\/plugin\.php b\/plugin\.php/)
   assert.match(result.patch, /\+\/\/ after/)
-  assert.match(result.patch, /diff --git a\/workspace\/plugin\/script\.sh b\/workspace\/plugin\/script\.sh/)
+  assert.match(result.patch, /diff --git a\/script\.sh b\/script\.sh/)
   assert.match(result.patch, /@@ -39,7 \+39,7 @@/)
   assert.match(result.patch, /-line 042 before/)
   assert.match(result.patch, /\+line 042 after/)
@@ -148,7 +148,7 @@ try {
   assert.equal(gitChanged.get("AGENT_WROTE_THIS.md")?.status, "added")
   assert.equal(gitChanged.get("committed.php")?.status, "modified")
   assert.equal(gitChanged.get("remove-me.txt")?.status, "deleted")
-  assert.match(gitResult.patch, /diff --git a\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md b\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md/)
+  assert.match(gitResult.patch, /diff --git a\/AGENT_WROTE_THIS\.md b\/AGENT_WROTE_THIS\.md/)
   assert.match(gitResult.patch, /\+cooked by the agent/)
   assert.match(gitResult.patch, /\+\/\/ edited by agent/)
   assert.match(gitResult.patch, /deleted file mode 100644/)
@@ -195,7 +195,7 @@ try {
 
   // The real agent change is captured.
   assert.equal(excludeChanged.get("docs/README.md")?.status, "modified")
-  assert.match(excludeResult.patch, /diff --git a\/workspace\/build-with-wordpress\/docs\/README\.md b\/workspace\/build-with-wordpress\/docs\/README\.md/)
+  assert.match(excludeResult.patch, /diff --git a\/docs\/README\.md b\/docs\/README\.md/)
   assert.match(excludeResult.patch, /\+after the agent edit/)
   // None of the runner's `.ci/**` materialization leaks into the change set.
   for (const relativePath of excludeChanged.keys()) {
@@ -212,6 +212,7 @@ try {
   await execFileAsync("git", ["-C", vfsBackedRepo, "config", "user.name", "wp-codebox smoke"])
   await writeFile(join(vfsBackedRepo, "committed.php"), "<?php\n// committed\n")
   await writeFile(join(vfsBackedRepo, "remove-me.txt"), "delete this\n")
+  await writeFile(join(vfsBackedRepo, "preserve-me.txt"), "preserve this\n")
   await execFileAsync("git", ["-C", vfsBackedRepo, "add", "."])
   await execFileAsync("git", ["-C", vfsBackedRepo, "commit", "-q", "-m", "baseline"])
 
@@ -277,7 +278,7 @@ try {
         contentsBase64: "",
       },
       {
-        relativePath: "remove-me.txt",
+        relativePath: "preserve-me.txt",
         sha256: "unused",
       },
       {
@@ -293,15 +294,22 @@ try {
     ],
   }])
   assert.equal(emptyAndUnsafePathMaterialized.materialized, 1)
-  assert.equal(emptyAndUnsafePathMaterialized.deleted, 1)
+  assert.equal(emptyAndUnsafePathMaterialized.deleted, 0)
   assert.equal(emptyAndUnsafePathMaterialized.skipped, 2)
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.schema, "wp-codebox/materialization-phase-result/v1")
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.phase, "playground-vfs-mount-materialization")
   assert.equal(emptyAndUnsafePathMaterialized.phaseResult.status, "completed")
   assert.equal((await stat(join(vfsBackedRepo, "empty.txt"))).size, 0)
+  assert.equal(await readFile(join(vfsBackedRepo, "committed.php"), "utf8"), "<?php\n// committed\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "remove-me.txt"), "utf8"), "delete this\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "preserve-me.txt"), "utf8"), "preserve this\n")
   await assert.rejects(() => stat(join(root, "escaped.txt")))
 
-  const materialized = await applyVfsMountSnapshots(vfsMounts, [{
+  const deletionMounts: MountSpec[] = [{
+    ...vfsMounts[0],
+    metadata: { ...vfsMounts[0].metadata, materializeDeletes: true },
+  }]
+  const materialized = await applyVfsMountSnapshots(deletionMounts, [{
     mountIndex: 0,
     target: "/workspace/vfs-backed-repo",
     files: [
@@ -315,10 +323,20 @@ try {
         sha256: "unused",
         contentsBase64: Buffer.from("created inside playground\n").toString("base64"),
       },
+      {
+        relativePath: "preserve-me.txt",
+        sha256: "unused",
+      },
     ],
   }])
   assert.equal(materialized.materialized, 2)
   assert.equal(materialized.deleted, 2)
+  assert.equal(materialized.skipped, 0)
+  assert.equal(await readFile(join(vfsBackedRepo, "committed.php"), "utf8"), "<?php\n// edited inside playground\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "AGENT_WROTE_THIS.md"), "utf8"), "created inside playground\n")
+  assert.equal(await readFile(join(vfsBackedRepo, "preserve-me.txt"), "utf8"), "preserve this\n")
+  await assert.rejects(() => stat(join(vfsBackedRepo, "empty.txt")))
+  await assert.rejects(() => stat(join(vfsBackedRepo, "remove-me.txt")))
 
   const vfsResult = await captureMountDiffs(artifactRoot, filesDirectory, vfsMounts, new ArtifactRedactor())
   const vfsChanged = new Map(vfsResult.changedFiles.files.map((file) => [file.relativePath, file]))

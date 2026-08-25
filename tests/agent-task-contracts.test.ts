@@ -607,6 +607,8 @@ try {
   assert.equal(genericRecipe.inputs?.runtimeEnv?.PROFILE_ENV, "1")
   assert.equal(genericRecipe.runtime?.overlays?.some((overlay) => overlay.slug === "profile-overlay"), true)
   const genericSandboxStepArgs = genericRecipe.workflow.steps.find((step) => step.command === "wp-codebox.agent-sandbox-run")?.args ?? []
+  const genericSandboxPolicyArg = genericSandboxStepArgs.find((arg) => arg.startsWith("sandbox-tool-policy-json=")) ?? "sandbox-tool-policy-json={}"
+  assert.deepEqual(JSON.parse(genericSandboxPolicyArg.slice("sandbox-tool-policy-json=".length)).tools, [])
   const genericRuntimeComponentsArg = genericSandboxStepArgs.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
   const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "wordpress-plugin"), true)

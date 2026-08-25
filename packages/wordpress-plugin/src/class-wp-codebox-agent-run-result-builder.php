@@ -76,16 +76,30 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 
 	/** @param array<string,mixed> $worker Worker metadata. @param array<string,mixed> $result Worker result. @return array<string,mixed> */
 	public function fanout_worker_success_result( array $worker, array $result, float $started_at, float $ended_at ): array {
-		$session   = is_array( $result['session'] ?? null ) ? $result['session'] : array();
-		$artifacts = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+		$session         = is_array( $result['session'] ?? null ) ? $result['session'] : array();
+		$artifacts       = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+		$exit_code       = (int) ( $result['exit_code'] ?? 0 );
+		$result_status   = (string) ( $result['status'] ?? '' );
+		$session_status  = (string) ( $session['status'] ?? '' );
+		$failed_statuses = array( 'failed', 'skipped', 'cancelled', 'timed_out', 'timeout', 'provider_error', 'unable_to_remediate' );
+		$success         = ( ! array_key_exists( 'success', $result ) || true === $result['success'] )
+			&& 0 === $exit_code
+			&& ! in_array( $result_status, $failed_statuses, true )
+			&& ! in_array( $session_status, $failed_statuses, true );
+		$status = 'completed';
+		if ( ! $success ) {
+			$status = in_array( $result_status, array( 'skipped', 'cancelled', 'timed_out', 'timeout' ), true )
+				? $result_status
+				: ( in_array( $session_status, array( 'skipped', 'cancelled', 'timed_out', 'timeout' ), true ) ? $session_status : 'failed' );
+		}
 
-		return array(
+		$worker_result = array(
 			'worker_id'          => (string) $worker['id'],
 			'index'              => (int) $worker['index'],
-			'success'            => true,
-			'status'             => 'completed',
+			'success'            => $success,
+			'status'             => $status,
 			'agent'              => (string) ( $worker['prepared']['input']['agent'] ?? '' ),
-			'exit_code'          => (int) ( $result['exit_code'] ?? 0 ),
+			'exit_code'          => $exit_code,
 			'session'            => $session,
 			'artifacts'          => array_merge( $artifacts, array( 'namespace' => (string) $worker['id'], 'result' => 'result.json' ) ),
 			'diagnostics'        => is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array(),
@@ -93,6 +107,11 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 			'completion_outcome' => is_array( $result['completion_outcome'] ?? null ) ? $result['completion_outcome'] : array(),
 			'timings'            => $this->timings( $started_at, $ended_at ),
 		);
+		if ( is_array( $result['error'] ?? null ) ) {
+			$worker_result['error'] = $result['error'];
+		}
+
+		return $worker_result;
 	}
 
 	/** @param array<string,mixed> $worker Worker metadata. @return array<string,mixed> */

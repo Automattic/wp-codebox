@@ -149,7 +149,23 @@ export type RecipeExecutionResult = ExecutionResult & {
   fuzzCaseIndex?: number
   fuzzPhase?: WorkspaceRecipeFuzzCasePhase
   fuzzStepIndex?: number
+  continuationEvidence?: RecipeContinuationEvidence
 }
+
+export interface RecipeContinuationEvidence {
+  schema: "wp-codebox/recipe-continuation-evidence/v1"
+  policy: {
+    maxIterations: number
+    while: { pointer: string; equalsBytes: number; equalsSha256: string; equals?: unknown; equalsTruncated?: boolean }
+    inputMappings: Array<{ from: string; to: { arg: string; pointer: string } }>
+  }
+  status: "completed" | "failed" | "exhausted"
+  iterations: number
+  executions: Array<{ iteration: number; exitCode: number; argsSha256: string; resultBytes: number; resultSha256: string; result?: unknown; resultTruncated?: boolean }>
+  diagnostics?: { code: string; message: string }
+}
+
+export type RecipeContinuationProgress = Pick<RecipeContinuationEvidence, "schema" | "policy" | "iterations" | "executions">
 
 export interface RecipeWorkflowArgsEvidence {
   schema: "wp-codebox/recipe-workflow-args/v1"
@@ -229,6 +245,7 @@ export interface RecipeAdvisoryFailure {
   command: string
   status: "failed"
   error: RunOutput["error"]
+  continuationEvidence?: RecipeContinuationEvidence
 }
 
 export interface RecipeStepFailure {
@@ -243,6 +260,7 @@ export interface RecipeStepFailure {
   classification: "timeout" | "error"
   timeoutMs?: number
   error: RunOutput["error"]
+  continuationEvidence?: RecipeContinuationEvidence
 }
 
 export interface RecipeBrowserEvidenceFileRef {

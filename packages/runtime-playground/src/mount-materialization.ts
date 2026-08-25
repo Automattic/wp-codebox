@@ -128,7 +128,7 @@ async function prepareReadonlyDirectory(mount: MountSpec, mountIndex: number, so
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
 
   let mode: ReadonlyMountPreparation["mode"] = "cache-hit"
-  await withPlaygroundArchiveCacheLock(cacheRoot, `readonly-mount-${generation.fingerprint}`, async () => {
+  await withPlaygroundArchiveCacheLock(cacheRoot, "readonly-mount-cache", async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!await directoryExists(cachePath)) {
         mode = "cache-miss"
@@ -369,24 +369,43 @@ export async function materializePlaygroundStagedFiles(server: PlaygroundCliServ
   for (const mount of mounts) {
     if (mount.type !== "file") continue
 
-    const handle = await open(mount.source, "r")
+    // The target can be a writable NodeFS mount of mount.source. The first
+    // truncating write would otherwise shorten the file being streamed.
+    const snapshotDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-staged-file-"))
+    const snapshot = join(snapshotDirectory, basename(mount.source) || "staged-file")
     try {
-      const buffer = Buffer.allocUnsafe(STAGED_FILE_CHUNK_SIZE)
-      let position = 0
-      let append = false
-      do {
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
-        const response = await server.playground.run({ code: stagedFileWritePhp(mount.target, buffer.subarray(0, bytesRead).toString("base64"), append) })
-        const result = JSON.parse(response.text || "{}") as { schema?: string; written?: number }
-        if (result.schema !== "wp-codebox/staged-file-write/v1" || result.written !== bytesRead) {
-          throw new Error(`Could not materialize staged file at ${mount.target}`)
+      await cp(mount.source, snapshot)
+      const handle = await open(snapshot, "r")
+      try {
+        const buffer = Buffer.allocUnsafe(STAGED_FILE_CHUNK_SIZE)
+        const hash = createHash("sha256")
+        let position = 0
+        let append = false
+        do {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
+          const contents = buffer.subarray(0, bytesRead)
+          hash.update(contents)
+          const response = await server.playground.run({ code: stagedFileWritePhp(mount.target, contents.toString("base64"), append) })
+          const result = JSON.parse(response.text || "{}") as { schema?: string; written?: number }
+          if (result.schema !== "wp-codebox/staged-file-write/v1" || result.written !== bytesRead) {
+            throw new Error(`Could not materialize staged file at ${mount.target}`)
+          }
+          position += bytesRead
+          append = true
+          if (bytesRead === 0 || bytesRead < buffer.length) break
+        } while (true)
+
+        const response = await server.playground.run({ code: stagedFileVerificationPhp(mount.target) })
+        const result = JSON.parse(response.text || "{}") as { schema?: string; bytes?: number; sha256?: string }
+        const expectedSha256 = hash.digest("hex")
+        if (result.schema !== "wp-codebox/staged-file-verification/v1" || result.bytes !== position || result.sha256 !== expectedSha256) {
+          throw new Error(`Staged file verification failed at ${mount.target}: expected ${position} bytes sha256 ${expectedSha256}, received ${typeof result.bytes === "number" ? result.bytes : "unknown"} bytes sha256 ${typeof result.sha256 === "string" ? result.sha256 : "unknown"}`)
         }
-        position += bytesRead
-        append = true
-        if (bytesRead === 0 || bytesRead < buffer.length) break
-      } while (true)
+      } finally {
+        await handle.close()
+      }
     } finally {
-      await handle.close()
+      await rm(snapshotDirectory, { recursive: true, force: true })
     }
     materialized++
   }
@@ -407,6 +426,25 @@ if ('' !== $target && !str_contains($target, "\0") && false !== $contents) {
     }
 }
 echo json_encode(array('schema' => 'wp-codebox/staged-file-write/v1', 'written' => false === $written ? -1 : $written), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function stagedFileVerificationPhp(target: string): string {
+  const payload = JSON.stringify(JSON.stringify({ target }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$target = (string) ($payload['target'] ?? '');
+$bytes = -1;
+$sha256 = '';
+if ('' !== $target && !str_contains($target, "\0") && is_file($target)) {
+    $size = filesize($target);
+    $hash = hash_file('sha256', $target);
+    if (false !== $size && false !== $hash) {
+        $bytes = $size;
+        $sha256 = $hash;
+    }
+}
+echo json_encode(array('schema' => 'wp-codebox/staged-file-verification/v1', 'bytes' => $bytes, 'sha256' => $sha256), JSON_UNESCAPED_SLASHES);
 `
 }
 

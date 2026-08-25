@@ -14,7 +14,9 @@ const plugin = join(root, "plugin")
 const dependency = join(root, "dependency")
 const harness = join(root, "harness")
 const recipePath = join(root, "recipe.json")
+const discoveryRecipePath = join(root, "discovery-recipe.json")
 const artifactsPath = join(root, "artifacts")
+const discoveryArtifactsPath = join(root, "discovery-artifacts")
 const failingArtifactsPath = join(root, "failing-artifacts")
 const sentinel = Buffer.from([0, 255, 1, 2, 3, 127, 128])
 
@@ -46,6 +48,45 @@ try {
     ],
   })
   await writeFile(recipePath, `${JSON.stringify(recipe)}\n`)
+
+  const discoveryRecipe = buildWordPressPhpunitRecipe({
+    pluginSlug: "readonly-phpunit-fixture",
+    multisite: true,
+    discoveryOnly: true,
+    phpunitXml: "/wordpress/wp-content/plugins/readonly-phpunit-fixture/phpunit.discovery.xml",
+    extra_plugins: [{
+      source: plugin,
+      slug: "readonly-phpunit-fixture",
+      activate: false,
+    }, {
+      source: dependency,
+      slug: "activation-dependency",
+      activate: true,
+    }],
+    dependencyMounts: ["/wordpress/wp-content/plugins/readonly-phpunit-fixture", "/wordpress/wp-content/plugins/activation-dependency"],
+    mounts: [
+      { source: join(harness, "vendor"), target: "/wp-codebox-vendor", mode: "readonly" },
+    ],
+  })
+  await writeFile(discoveryRecipePath, `${JSON.stringify(discoveryRecipe)}\n`)
+  const discoveryResult = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", discoveryRecipePath, "--artifacts", discoveryArtifactsPath, "--json"], {
+    cwd: process.cwd(),
+    timeout: 300_000,
+    maxBuffer: 2 * 1024 * 1024,
+  })
+  assert.equal((JSON.parse(discoveryResult.stdout) as { success?: boolean }).success, true, discoveryResult.stdout)
+  assert.doesNotMatch(discoveryResult.stdout, /extra-plugin\.(?:activate|install)|install-composer-autoloaders/, "discovery recipe setup must remain mount-only")
+  const discoveryRuntime = JSON.parse(await readFile(join(discoveryArtifactsPath, "latest-runtime.json"), "utf8")) as { paths?: { runtimeDirectory?: string } }
+  const discoveryDiagnostic = await readFile(join(discoveryArtifactsPath, discoveryRuntime.paths?.runtimeDirectory ?? "", "files/phpunit/.pg-test-result.txt"), "utf8")
+  const discoveryLine = discoveryDiagnostic.split("\n").find((line) => line.startsWith("DISCOVERY_RESULT_JSON:"))
+  assert.ok(discoveryLine)
+  const discovery = JSON.parse(discoveryLine.slice("DISCOVERY_RESULT_JSON:".length)) as { schema?: string, files?: string[] }
+  assert.equal(discovery.schema, "wp-codebox/phpunit-discovery/v1")
+  assert.deepEqual(discovery.files, [
+    "/wordpress/wp-content/plugins/readonly-phpunit-fixture/specs/ConfiguredSpec.php",
+    "/wordpress/wp-content/plugins/readonly-phpunit-fixture/tests/ExplicitCase.php",
+  ], "discovery-only must honor custom suffixes, explicit files, and exclusions")
+  assert.doesNotMatch(discoveryDiagnostic, /^STAGE_BEGIN:boot|^STAGE_BEGIN:project_bootstrap|^STAGE_BEGIN:load_component|^STAGE_BEGIN:load_tests|^STAGE_BEGIN:run_tests/m, "discovery-only mode must not bootstrap WordPress, the component, or test files")
 
   const result = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "recipe-run", "--recipe", recipePath, "--artifacts", artifactsPath, "--json"], {
     cwd: process.cwd(),
@@ -99,16 +140,21 @@ async function readTestResults(artifactPath: string, runtimeDirectory?: string):
 
 async function writeFixture(): Promise<void> {
   await mkdir(join(plugin, "tests"), { recursive: true })
+  await mkdir(join(plugin, "specs"), { recursive: true })
   await mkdir(dependency, { recursive: true })
   await writeFile(join(plugin, "readonly-phpunit-fixture.php"), "<?php\n/**\n * Plugin Name: Readonly PHPUnit Fixture\n */\nadd_action('init', static function (): void { update_option('wp_codebox_parent_init_ran', 1); add_action('init', static function (): void { update_option('wp_codebox_nested_init_ran', 1); }, 15); }, 0);\n")
   await writeFile(join(plugin, "phpunit.xml.dist"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<phpunit><testsuites><testsuite name=\"readonly-cache\"><directory>tests</directory></testsuite></testsuites></phpunit>\n")
+  await writeFile(join(plugin, "phpunit.discovery.xml"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<phpunit><testsuites><testsuite name=\"discovery\"><directory suffix=\"Spec.php\">specs</directory><file>tests/ExplicitCase.php</file><exclude>specs/ExcludedSpec.php</exclude></testsuite></testsuites></phpunit>\n")
   await writeFile(join(plugin, "source-sentinel.bin"), sentinel)
   await writeFile(join(plugin, "tests", "ReadonlyCacheTest.php"), "<?php\nclass ReadonlyCacheTest extends WP_UnitTestCase { public function test_multisite_runtime_is_active(): void { $this->assertTrue(is_multisite()); } public function test_nested_init_callbacks_run_in_priority_order(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_parent_init_ran\')); $this->assertSame(1, (int) get_option(\'wp_codebox_nested_init_ran\')); } public function test_sentinel_is_available(): void { $this->assertGreaterThan(0, filesize(dirname(__DIR__) . \'/source-sentinel.bin\')); } public function test_dependency_activation_runs_after_install(): void { $this->assertGreaterThanOrEqual(1, get_option(\'wp_codebox_dependency_activation_users\')); } public function test_dependency_plugins_loaded_runs_once(): void { $this->assertSame(1, (int) get_option(\'wp_codebox_dependency_plugins_loaded_count\')); } public function test_wp_cli_namespaced_stdout_is_available(): void { $this->assertTrue(eval(\'namespace cli; return is_resource(STDOUT);\')); } }\n")
+  await writeFile(join(plugin, "tests", "ExplicitCase.php"), "<?php\nclass ExplicitCase extends WP_UnitTestCase {}\n")
+  await writeFile(join(plugin, "specs", "ConfiguredSpec.php"), "<?php\nclass ConfiguredSpec extends WP_UnitTestCase {}\n")
+  await writeFile(join(plugin, "specs", "ExcludedSpec.php"), "<?php\nclass ExcludedSpec extends WP_UnitTestCase {}\n")
   await writeFile(join(dependency, "activation-dependency.php"), "<?php\n/**\n * Plugin Name: Activation Dependency\n */\nadd_action('plugins_loaded', static function (): void { update_option('wp_codebox_dependency_plugins_loaded_count', (int) get_option('wp_codebox_dependency_plugins_loaded_count', 0) + 1); });\nregister_activation_hook(__FILE__, static function (): void { update_option('wp_codebox_dependency_activation_users', count(get_users(array('number' => 1)))); });\n")
 }
 
 async function digestTree(directory: string): Promise<string> {
-  const files = ["readonly-phpunit-fixture.php", "phpunit.xml.dist", "source-sentinel.bin", "tests/ReadonlyCacheTest.php"]
+  const files = ["readonly-phpunit-fixture.php", "phpunit.xml.dist", "phpunit.discovery.xml", "source-sentinel.bin", "tests/ReadonlyCacheTest.php", "tests/ExplicitCase.php", "specs/ConfiguredSpec.php", "specs/ExcludedSpec.php"]
   const hash = createHash("sha256")
   for (const file of files) {
     hash.update(file)

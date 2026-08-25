@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { adversarialCampaign, adversarialFindingFingerprint, classifyDifferentialResult, runAdversarialCampaign, type AdversarialCasePlan, type AdversarialExecutionObservation } from "../packages/runtime-core/src/adversarial-campaign.js"
+import { adversarialCampaign, adversarialFindingFingerprint, classifyDifferentialResult, normalizeAdversarialClockSchedule, runAdversarialCampaign, type AdversarialCasePlan, type AdversarialExecutionObservation } from "../packages/runtime-core/src/adversarial-campaign.js"
 import { writeAdversarialEvidenceBundle } from "../packages/runtime-core/src/adversarial-artifacts.js"
 import { verifyArtifactBundle } from "../packages/runtime-core/src/artifact-bundle-verifier.js"
 
@@ -70,6 +70,28 @@ test("finding fingerprints deduplicate equivalent failures independently of payl
   assert.equal(left, right)
 })
 
+test("action-bound clock transitions preserve expiry boundaries in replay evidence", async () => {
+  const clockSchedule = normalizeAdversarialClockSchedule([
+    { surface: "scheduler", operation: "freeze", time: 1_900_000_000_000 },
+    { surface: "scheduler", operation: "advance", milliseconds: 1_000 },
+  ])
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "expiry-boundary",
+    seed: "expiry-boundary-seed",
+    corpus: [{ id: "expiry", actions: [
+      { type: "assert-before-expiry", clock: [clockSchedule[0]!] },
+      { type: "assert-after-expiry", clock: [clockSchedule[1]!] },
+    ] }],
+    mutationKinds: ["scalar"],
+    budgets: { maxCases: 1, maxCaseTimeMs: 1_000, maxWallTimeMs: 5_000 },
+  }), {
+    minimize: false,
+    execute: async () => ({ status: "failed", diagnostics: [{ code: "expired-at-boundary", message: "The supported scheduler seam observed expiry after 1000ms." }] }),
+  })
+  assert.deepEqual(result.findings[0]?.replay.actions.map((action) => action.clock), clockSchedule.map((entry) => [entry]))
+  assert.throws(() => normalizeAdversarialClockSchedule([{ surface: "scheduler", operation: "advance", milliseconds: -1 }]), /non-negative/)
+})
+
 test("differential matrices classify regressions and platform differences", () => {
   assert.equal(classifyDifferentialResult([
     { id: "php-83-base", role: "base", status: "passed" },
@@ -106,7 +128,8 @@ test("campaign interruption stops scheduling and returns bounded partial evidenc
   const result = await runAdversarialCampaign(adversarialCampaign({
     id: "interrupted",
     seed: "interrupted-seed",
-    corpus: [{ id: "seed", actions: [{ type: "observe" }] }],
+    corpus: [{ id: "seed", actions: [{ type: "observe", input: {} }] }],
+    mutationKinds: ["scalar"],
     budgets: { maxCases: 100, workers: 2, maxCaseTimeMs: 1000, maxWallTimeMs: 10000, maxArtifactBytes: 1024 },
   }), {
     signal: controller.signal,
@@ -123,6 +146,65 @@ test("campaign interruption stops scheduling and returns bounded partial evidenc
   assert(result.summary.generated <= 2, "no later round is scheduled after interruption")
   assert(result.resourceUsage.artifactBytes <= 1024)
   assert(result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-interrupted"))
+})
+
+test("a timed-out case settles before the next case starts", async () => {
+  const starts: string[] = []
+  const settled: string[] = []
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "timeout-isolation",
+    seed: "timeout-isolation-seed",
+    corpus: [{ id: "seed", actions: [{ type: "observe", input: {} }] }],
+    mutationKinds: ["scalar"],
+    budgets: { maxCases: 2, workers: 1, maxCaseTimeMs: 5, maxWallTimeMs: 1_000 },
+  }), {
+    execute: async (plan, signal) => {
+      starts.push(plan.caseId)
+      await new Promise<void>((resolve) => signal.addEventListener("abort", resolve, { once: true }))
+      settled.push(plan.caseId)
+      return { status: "passed" }
+    },
+  })
+  assert.equal(result.summary.timedOut, 2)
+  assert.deepEqual(starts, settled, "the next case cannot begin while the timed-out case remains active")
+})
+
+test("an uncooperative timed-out case terminalizes the campaign without starting another case", async () => {
+  let started = 0
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "timeout-unsettled",
+    seed: "timeout-unsettled-seed",
+    corpus: [{ id: "seed", actions: [{ type: "observe", input: {} }] }],
+    mutationKinds: ["scalar"],
+    budgets: { maxCases: 2, workers: 1, maxCaseTimeMs: 5, maxWallTimeMs: 1_000 },
+  }), {
+    abortSettleGraceMs: 10,
+    execute: async () => {
+      started += 1
+      await new Promise(() => {})
+      return { status: "passed" }
+    },
+  })
+  assert.equal(started, 1)
+  assert.equal(result.status, "incomplete")
+  assert(result.diagnostics.some(({ code }) => code === "campaign-timeout-unsettled"))
+})
+
+test("resource-exhausted cases make coverage incomplete without creating findings", async () => {
+  const result = await runAdversarialCampaign(adversarialCampaign({
+    id: "partial-coverage",
+    seed: "partial-coverage-seed",
+    corpus: [{ id: "seed", actions: [{ type: "explore" }] }],
+    mutationKinds: ["sequence"],
+    budgets: { maxCases: 2, workers: 1, maxCaseTimeMs: 1_000, maxWallTimeMs: 5_000 },
+    oracles: [{ schema: "wp-codebox/adversarial-oracle/v1", id: "runtime-status", severity: "high" }],
+  }), {
+    execute: async () => ({ status: "resource-exhausted", diagnostics: [{ code: "adaptive-exploration-incomplete", message: "Adaptive browser exploration stopped at the maxDurationMs bound and retained partial evidence." }], artifacts: [{ path: "adaptive-exploration.json", kind: "browser-adaptive-exploration" }] }),
+  })
+  assert.equal(result.status, "incomplete")
+  assert.equal(result.summary.executed, 1)
+  assert.equal(result.findings.length, 0)
+  assert(result.diagnostics.some((diagnostic) => diagnostic.code === "campaign-case-resource-exhausted" && diagnostic.message.includes("maxDurationMs")))
 })
 
 test("minimization preserves the exact oracle and state fingerprint", async () => {

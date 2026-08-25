@@ -29,6 +29,30 @@ assert.equal(containsSecretLikeValue("token sk-abcdefghijklmnopqrstuvwxyz"), tru
 assert.equal(containsSecretLikeValue("token [redacted]"), false)
 assert.equal(redactString("token sk-abcdefghijklmnopqrstuvwxyz"), "token [redacted]")
 
+const proseCases: Array<[string, string]> = [
+  ["Local wp-admin auth fixture user could not be loaded.", "Local wp-admin auth fixture user could not be loaded."],
+  ["The token validation fixture passed.", "The token validation fixture passed."],
+  ["Apply the cookie policy to this session state.", "Apply the cookie policy to this session state."],
+  ["    at <anonymous> (/workspace/auth-fixture.ts:7:21)", "    at <anonymous> (/workspace/auth-fixture.ts:7:21)"],
+]
+
+for (const [input, expected] of proseCases) {
+  assert.equal(redactString(input), expected, `ordinary prose should survive: ${input}`)
+}
+
+const secretContextCases: Array<[string, string]> = [
+  ["Local wp-admin auth: fixture-password user could not be loaded.", "Local wp-admin auth: [redacted] user could not be loaded."],
+  ["The token=fixture-token validation failed.", "The token=[redacted] validation failed."],
+  ["Authorization: Bearer fixture-auth-token", "Authorization: [redacted]"],
+  ["Bearer fixture-auth-token", "Bearer [redacted]"],
+  ["Cookie: wordpress_logged_in=fixture-cookie", "Cookie: [redacted]"],
+  ['{"username":"fixture","password":"fixture-password"}', '{"username":"fixture","password":"[redacted]"}'],
+]
+
+for (const [input, expected] of secretContextCases) {
+  assert.equal(redactString(input), expected, `secret context should redact: ${input}`)
+}
+
 assert.deepEqual(
   redactJsonValue({ token: "abc", nested: { api_key: "def", visible: "ok" }, list: [{ password: "secret" }] }, { redactStrings: false }),
   { token: "[redacted]", nested: { api_key: "[redacted]", visible: "ok" }, list: [{ password: "[redacted]" }] },

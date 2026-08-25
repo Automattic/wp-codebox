@@ -83,6 +83,22 @@ final class WP_Codebox_Abilities {
 	}
 }
 
+final class WP_Codebox_WordPress_Workload_Runner {
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public function run( array $input ): array {
+		$GLOBALS['wp_codebox_runner_calls'][] = array( 'runner' => 'wordpress-workload', 'input' => $input );
+		return array( 'success' => true, 'runner' => 'wordpress-workload', 'input' => $input );
+	}
+}
+
+final class WP_Codebox_Fuzz_Suite_Runner {
+	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public function run( array $input ): array {
+		$GLOBALS['wp_codebox_runner_calls'][] = array( 'runner' => 'fuzz-suite', 'input' => $input );
+		return array( 'success' => true, 'runner' => 'fuzz-suite', 'input' => $input );
+	}
+}
+
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-api.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
@@ -155,10 +171,42 @@ expect( 'run_runtime_package' === $runtime_package['call']['method'], 'Runtime p
 expect( 'package' === $runtime_package['call']['input']['goal'], 'input-json payload should be preserved.' );
 expect( 'wp-codebox/runtime-package/v1' === $runtime_package['call']['input']['package']['schema'], 'package flag should decode as JSON object.' );
 
-$fuzz_suite = run_cli_command( 'codebox run-fuzz-suite', array(), array( 'suite' => '{"id":"php-in-process-suite"}', 'cases' => '[{"id":"rest-status"}]' ) );
-expect( 'run_fuzz_suite' === $fuzz_suite['call']['method'], 'Fuzz suite command must dispatch through public API.' );
-expect( 'php-in-process-suite' === $fuzz_suite['call']['input']['suite']['id'], 'suite flag should decode as JSON object.' );
-expect( 'rest-status' === $fuzz_suite['call']['input']['cases'][0]['id'], 'cases flag should decode as JSON array.' );
+$GLOBALS['wp_codebox_runner_calls'] = array();
+WP_CLI::$lines = array();
+WP_Codebox_Abilities::$calls = array();
+$fuzz_suite_input = array(
+	'schema' => 'wp-codebox/fuzz-suite/v1',
+	'id'     => 'trusted-cli-suite',
+	'cases'  => array(
+		array(
+			'id'     => 'workload',
+			'target' => array( 'kind' => 'runtime', 'id' => 'wordpress.run-workload', 'entrypoint' => 'wordpress.run-workload' ),
+			'input'  => array(
+				'schema' => 'wp-codebox/wordpress-workload-run/v1',
+				'steps'  => array( array( 'command' => 'wordpress.wp-cli', 'args' => array( 'command=wp user list' ) ) ),
+			),
+		),
+	),
+);
+WP_CLI::$commands['codebox run-fuzz-suite']( array(), array( 'input-json' => wp_json_encode( $fuzz_suite_input ), 'suite' => '{"id":"php-in-process-suite"}' ) );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Trusted fuzz suite WP-CLI command must not dispatch through the Ability facade.' );
+expect( 1 === count( $GLOBALS['wp_codebox_runner_calls'] ), 'Trusted fuzz suite WP-CLI command must invoke its owning runner.' );
+expect( 'fuzz-suite' === $GLOBALS['wp_codebox_runner_calls'][0]['runner'], 'Fuzz suite WP-CLI command must use the fuzz suite runner.' );
+expect( 'php-in-process-suite' === $GLOBALS['wp_codebox_runner_calls'][0]['input']['suite']['id'], 'Fuzz suite flag should decode as a JSON object.' );
+expect( 'wordpress.wp-cli' === $GLOBALS['wp_codebox_runner_calls'][0]['input']['cases'][0]['input']['steps'][0]['command'], 'Fuzz suite WP-CLI command must preserve schema-owned workload command fields.' );
+
+$GLOBALS['wp_codebox_runner_calls'] = array();
+WP_CLI::$lines = array();
+WP_Codebox_Abilities::$calls = array();
+$workload_input = array(
+	'schema' => 'wp-codebox/wordpress-workload-run/v1',
+	'steps'  => array( array( 'command' => 'wordpress.wp-cli', 'args' => array( 'command=wp option get home' ) ) ),
+);
+WP_CLI::$commands['codebox run-wordpress-workload']( array(), array( 'input-json' => wp_json_encode( $workload_input ) ) );
+expect( 0 === count( WP_Codebox_Abilities::$calls ), 'Trusted workload WP-CLI command must not dispatch through the Ability facade.' );
+expect( 1 === count( $GLOBALS['wp_codebox_runner_calls'] ), 'Trusted workload WP-CLI command must invoke its owning runner.' );
+expect( 'wordpress-workload' === $GLOBALS['wp_codebox_runner_calls'][0]['runner'], 'Workload WP-CLI command must use the workload runner.' );
+expect( 'wordpress.wp-cli' === $GLOBALS['wp_codebox_runner_calls'][0]['input']['steps'][0]['command'], 'Workload WP-CLI command must preserve schema-owned command fields.' );
 
 $requirements = run_cli_command( 'codebox resolve-runtime-requirements', array(), array( 'runtime-provider' => 'local', 'capabilities' => 'php-in-process,rest' ) );
 expect( 'resolve_runtime_requirements' === $requirements['call']['method'], 'Requirements command must dispatch through public API.' );

@@ -1,4 +1,4 @@
-import { playgroundRuntimeBlueprint } from "./blueprint.js"
+import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
@@ -14,7 +14,6 @@ import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheDiagnostic, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
-import { playgroundSiteSeedPrimaryUrl } from "./site-seed-multisite.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -98,8 +97,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       materialization: readonlyMountStaging.phaseResult,
     })
     const stagedMounts = readonlyMountStaging.mounts
-    const preinstallMounts = stagedMounts.filter((mount) => mount.target === "/wordpress/wp-config.php")
-    const postinstallMounts = stagedMounts.filter((mount) => mount.target !== "/wordpress/wp-config.php")
+    const preinstallMounts = stagedMounts.filter((mount) => mount.phase === "pre-install")
+    const postinstallMounts = stagedMounts.filter((mount) => mount.phase !== "pre-install")
     if (usesArchiveCache) {
       const maintenance = await automaticPlaygroundCustomArchiveCacheMaintenance()
       cacheMaintenance = maintenance.result
@@ -155,7 +154,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           quiet: true,
           verbosity: "quiet",
           skipBrowser: true,
-          workers: spec.environment.workers ?? 6,
+          // Mutable runtime state must stay on one VFS unless callers explicitly opt into worker concurrency.
+          workers: spec.environment.workers ?? 1,
           mount: [
             ...postinstallMounts.map((mount) => ({
               hostPath: mount.source,
@@ -177,7 +177,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           ...playgroundBundledExtensionOptions(spec),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
           phpEnv: runtimePhpEnvironment(spec),
-          "site-url": playgroundSiteSeedPrimaryUrl(spec) ?? spec.preview?.siteUrl,
+          "site-url": playgroundRuntimeSiteUrl(spec),
           blueprint: playgroundCliBlueprint(spec),
         })
       } finally {
@@ -199,6 +199,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     })
     return {
       ...proxiedServer,
+      get previewProxyDiagnostics() {
+        return proxiedServer.previewProxyDiagnostics
+      },
       async [Symbol.asyncDispose]() {
         try {
           await proxiedServer[Symbol.asyncDispose]()
@@ -258,6 +261,9 @@ async function withPreviewLeaseProvider(server: PlaygroundCliServer, spec: Runti
 
   return {
     ...server,
+    get previewProxyDiagnostics() {
+      return server.previewProxyDiagnostics
+    },
     previewLease: lease,
     async [Symbol.asyncDispose]() {
       try {

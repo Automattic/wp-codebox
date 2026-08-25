@@ -1,0 +1,21 @@
+{
+  "schema": "wp-codebox/php-wasm-overlay-provenance/v1",
+  "upstream": {
+    "repository": "WordPress/wordpress-playground",
+    "revision": "581c7c172428159eb4e6c5309054a568cd39a97a"
+  },
+  "patch": {
+    "revision": "d746c930477eae3d726f754753eb92692ad30855",
+    "sha256": "f42ffb44f21e736c3fbf6e504e01e4a07207f8d764c38ce1f9c81db80d614a04",
+    "files": [
+      "packages/php-wasm/compile/php/Dockerfile",
+      "packages/php-wasm/compile/php/php_wasm.c"
+    ]
+  },
+  "artifact": {
+    "directory": "php-wasm-node-8-3",
+    "source_archive": "php-wasm-node-8-3-3.1.46.tgz",
+    "sha256": "109c079c958e1ab35ebcd098bdd895b080e2c5405b147f93ecb04e768c723553",
+    "tree_sha256": "f5f4bdb2e77fbe2a20a6a9872e21bf0f812326012c24e3b1ce92963162c1c3c4"
+  }
+}

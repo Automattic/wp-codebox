@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { test } from "node:test"
-import { playwrightBrowserProvenance } from "../packages/runtime-playground/src/playwright-browser-provenance.js"
+import { playwrightBrowserProvenance, playwrightBrowserReadiness } from "../packages/runtime-playground/src/playwright-browser-provenance.js"
 
 test("reports the lock-resolved Playwright Chromium provenance", async () => {
   const provenance = await playwrightBrowserProvenance()
@@ -17,4 +17,15 @@ test("reports the lock-resolved Playwright Chromium provenance", async () => {
   assert.equal(provenance.platform, process.platform)
   assert.equal(provenance.arch, process.arch)
   assert.equal(provenance.dependencyManifestSha256, createHash("sha256").update(await readFile(resolve(import.meta.dirname, "..", "npm-shrinkwrap.json"))).digest("hex"))
+})
+
+test("reports missing and present browser revisions without using the ambient cache", async () => {
+  const provenance = await playwrightBrowserProvenance()
+  const missing = await playwrightBrowserReadiness({ executableExists: () => false })
+  assert.equal(missing.status, "unavailable")
+  assert.match(missing.reason ?? "", new RegExp(`revision ${provenance.chromiumRevision}`))
+  assert.doesNotMatch(missing.reason ?? "", /\/home\/|\\Users\\|node_modules.*cache/)
+
+  const present = await playwrightBrowserReadiness({ executableExists: () => true })
+  assert.deepEqual(present, { status: "ready" })
 })

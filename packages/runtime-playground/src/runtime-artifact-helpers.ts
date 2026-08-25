@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises"
 import { join } from "node:path"
 import { artifactManifestFile } from "@automattic/wp-codebox-core"
 import { normalizeJsonValue } from "@automattic/wp-codebox-core/internals"
@@ -55,6 +56,7 @@ export async function collectPlaygroundArtifacts({
   spec: RuntimeCreateSpec
   themeChecks: ThemeCheckArtifact[]
 }, artifactSpec: ArtifactSpec = {}): Promise<ArtifactBundle> {
+  const { probes, missing } = await availableBrowserArtifacts(artifactRoot, browserProbes)
   return new ArtifactBundleBuilder({
     artifactRoot,
     runtimeId,
@@ -67,14 +69,15 @@ export async function collectPlaygroundArtifacts({
     events,
     info,
     previewInfo,
-    browserReviewSummary: () => browserArtifactReviewSummary(browserProbes),
-    browserArtifacts: () => browserProbes,
+    browserReviewSummary: () => browserArtifactReviewSummary(probes),
+    browserArtifacts: () => probes,
+    additionalArtifactDiagnostics: () => missing,
     captureMountedFiles: (filesDirectory, redactor) => captureMountedFiles(filesDirectory, mounts, redactor),
     captureMountDiffs: (filesDirectory, redactor) => captureMountDiffs(artifactRoot, filesDirectory, mounts, redactor),
-    redactBrowserArtifacts: (redactor) => redactBrowserArtifacts(artifactRoot, browserProbes, redactor),
+    redactBrowserArtifacts: (redactor) => redactBrowserArtifacts(artifactRoot, probes, redactor),
     redactPluginCheckArtifacts: (redactor) => redactPluginCheckArtifacts(artifactRoot, pluginChecks, redactor),
     redactThemeCheckArtifacts: (redactor) => redactThemeCheckArtifacts(artifactRoot, themeChecks, redactor),
-    browserManifestFiles: () => browserArtifactManifestFiles(artifactRoot, browserProbes),
+    browserManifestFiles: () => browserArtifactManifestFiles(artifactRoot, probes),
     pluginCheckArtifactPaths: () => pluginChecks.map((check) => check.files.normalized),
     themeCheckArtifactPaths: () => themeChecks.map((check) => check.files.normalized),
     observationManifestFiles: () => observationManifestFiles(artifactRoot, observations),
@@ -84,6 +87,50 @@ export async function collectPlaygroundArtifacts({
     formatCommandsLog: (artifactCommands) => formatCommandsLog(artifactCommands),
     recordArtifactsCollected,
   }).build(artifactSpec)
+}
+
+async function availableBrowserArtifacts(artifactRoot: string, probes: BrowserArtifact[]): Promise<{ probes: BrowserArtifact[]; missing: unknown[] }> {
+  const available: BrowserArtifact[] = []
+  const missing: unknown[] = []
+  for (const probe of probes) {
+    const files = { ...probe.files }
+    const fileRecord = files as Record<string, unknown>
+    for (const [key, value] of Object.entries(probe.files)) {
+      const paths = Array.isArray(value) ? value : typeof value === "string" ? [value] : []
+      const existing: string[] = []
+      for (const path of paths) {
+        try {
+          await access(join(artifactRoot, path))
+          existing.push(path)
+        } catch (error) {
+          if (!isMissingFileError(error)) throw error
+          missing.push({
+            type: "artifact-missing",
+            severity: "warning",
+            code: "browser-capture-not-materialized",
+            message: `Optional browser capture was not materialized: ${path}`,
+            source: "browser-artifact-collection",
+            path,
+            details: { browserArtifactType: probe.artifactType, field: key },
+          })
+        }
+      }
+      if (Array.isArray(value)) {
+        if (existing.length > 0) fileRecord[key] = existing
+        else delete fileRecord[key]
+      } else if (existing.length > 0) {
+        fileRecord[key] = existing[0]
+      } else {
+        delete fileRecord[key]
+      }
+    }
+    available.push({ ...probe, files, summary: { ...probe.summary, screenshot: Boolean(files.screenshot) } } as BrowserArtifact)
+  }
+  return { probes: available, missing }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT")
 }
 
 export function formatRuntimeLog(events: LifecycleEvent[]): string {

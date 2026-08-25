@@ -3,6 +3,7 @@ import { createRuntime } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { PlaygroundCommandCrashError, PlaygroundCommandError } from "../packages/runtime-playground/src/playground-command-errors.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundCliModule } from "../packages/runtime-playground/src/index.js"
+import { wordpressRuntimeSpec } from "./test-kit.js"
 
 const hiddenFatal = new Error("PHP.run() failed with exit code 255") as Error & {
   httpStatusCode?: number
@@ -157,17 +158,7 @@ const fakeCliModule: PlaygroundCliModule = {
   }),
 }
 
-const runtime = await createRuntime({
-  backend: "wordpress-playground",
-  environment: { kind: "wordpress", name: "hidden-fatal-smoke", version: "7.0", blueprint: { steps: [] } },
-  policy: {
-    network: "deny",
-    filesystem: "sandbox",
-    commands: ["wordpress.run-php"],
-    secrets: "none",
-    approvals: "never",
-  },
-}, createPlaygroundRuntimeBackend({ cliModule: fakeCliModule }))
+const runtime = await createRuntime(wordpressRuntimeSpec({ commands: ["wordpress.run-php"], environment: { name: "hidden-fatal-smoke", version: "7.0", blueprint: { steps: [] } } }), createPlaygroundRuntimeBackend({ cliModule: fakeCliModule }))
 
 await assert.rejects(
   () => runtime.execute({
@@ -202,11 +193,7 @@ const phpunitFailureCliModule: PlaygroundCliModule = {
   }),
 }
 
-const phpunitFailureRuntime = await createRuntime({
-  backend: "wordpress-playground",
-  environment: { kind: "wordpress", name: "phpunit-bootstrap-failure", version: "7.0", blueprint: { steps: [] } },
-  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.phpunit"], secrets: "none", approvals: "never" },
-}, createPlaygroundRuntimeBackend({ cliModule: phpunitFailureCliModule }))
+const phpunitFailureRuntime = await createRuntime(wordpressRuntimeSpec({ commands: ["wordpress.phpunit"], environment: { name: "phpunit-bootstrap-failure", version: "7.0", blueprint: { steps: [] } } }), createPlaygroundRuntimeBackend({ cliModule: phpunitFailureCliModule }))
 
 await assert.rejects(
   () => phpunitFailureRuntime.execute({ command: "wordpress.phpunit", args: ["plugin-slug=demo"] }),
@@ -234,11 +221,7 @@ const workerFailureCliModule: PlaygroundCliModule = {
   }),
 }
 
-const workerFailureRuntime = await createRuntime({
-  backend: "wordpress-playground",
-  environment: { kind: "wordpress", name: "phpunit-worker-failure", version: "7.0", blueprint: { steps: [] } },
-  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.phpunit"], secrets: "none", approvals: "never" },
-}, createPlaygroundRuntimeBackend({ cliModule: workerFailureCliModule }))
+const workerFailureRuntime = await createRuntime(wordpressRuntimeSpec({ commands: ["wordpress.phpunit"], environment: { name: "phpunit-worker-failure", version: "7.0", blueprint: { steps: [] } } }), createPlaygroundRuntimeBackend({ cliModule: workerFailureCliModule }))
 
 await assert.rejects(
   () => workerFailureRuntime.execute({ command: "wordpress.phpunit", args: ["plugin-slug=demo"] }),
@@ -258,7 +241,9 @@ await assert.rejects(
 )
 await workerFailureRuntime.destroy()
 
-const bootstrappedRunPhp = bootstrapPhpCode({ kind: "wordpress", name: "fatal-diagnostic", version: "7.0", blueprint: { steps: [] } }, "throw new RuntimeException('boom');", [])
+const fatalDiagnosticRuntimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.run-php"], environment: { name: "fatal-diagnostic", version: "7.0", blueprint: { steps: [] } } })
+
+const bootstrappedRunPhp = bootstrapPhpCode(fatalDiagnosticRuntimeSpec, "throw new RuntimeException('boom');", [])
 assert.match(bootstrappedRunPhp, /register_shutdown_function/)
 assert.match(bootstrappedRunPhp, /WP_CODEBOX_PHP_FATAL_DIAGNOSTIC/)
 assert.match(bootstrappedRunPhp, /wp-codebox\/php-fatal-diagnostic\/v1/)

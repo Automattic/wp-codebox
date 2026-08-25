@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
+const runtimeDescriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-ability-descriptors.php", "utf8")
 const apiPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-api.php", "utf8")
 const executionPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php", "utf8")
 const registryPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runtime-provider-registry.php", "utf8")
@@ -9,7 +10,9 @@ const bridgePhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox
 const connectorPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-connector-credential-resolvers.php", "utf8")
 
 assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/resolve-runtime-requirements'/)
-assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'resolve_runtime_requirements'\s*\)/)
+assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/resolve-runtime-requirements'\s*,\s*WP_Codebox_Runtime_Ability_Descriptors::resolve_runtime_requirements\(\)\s*\)/)
+assert.match(runtimeDescriptorsPhp, /public static function resolve_runtime_requirements\(\): array/)
+assert.match(runtimeDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'resolve_runtime_requirements'\s*\)/)
 assert.match(apiPhp, /'wp-codebox\/resolve-runtime-requirements'\s*=>\s*'resolve_runtime_requirements'/)
 assert.match(executionPhp, /function resolve_runtime_requirements\( array \$input \)/)
 assert.match(registryPhp, /'schema'\s*=>\s*'wp-codebox\/runtime-requirements-readiness\/v1'/)

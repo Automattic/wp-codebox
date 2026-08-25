@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn, type ChildProcess } from "node:child_process"
-import { lstat, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -8,6 +8,7 @@ import { maintainPlaygroundCustomArchiveCache } from "../packages/runtime-playgr
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-playground-cache-process-"))
 const fixture = join(process.cwd(), "tests/fixtures/playground-cache-lease-child.ts")
+const lockFixture = join(process.cwd(), "tests/fixtures/playground-cache-lock-child.ts")
 const tsx = join(process.cwd(), "node_modules/.bin/tsx")
 const children: ChildProcess[] = []
 
@@ -37,6 +38,33 @@ try {
   assert.ok(afterExpiry.removedCount >= 1, JSON.stringify(afterExpiry))
   assert.ok(!await exists(archivePath), "expired crashed-process lease must become reclaimable")
 
+  const lockArchivePath = join(root, "7.0.3.zip")
+  const firstLockChild = await startLockChild("first-lock-child", "7.0.3", lockArchivePath, 300)
+  const secondLockChild = await startLockChild("second-lock-child", "7.0.3", lockArchivePath, 300)
+  await Promise.all([writeFile(firstLockChild.startPath, "start"), writeFile(secondLockChild.startPath, "start")])
+  const lockResults = await Promise.all([firstLockChild.result, secondLockChild.result])
+  assert.deepEqual(lockResults.map((result) => result.code), [0, 0], lockResults.map((result) => result.output).join("\n"))
+  assert.match(await readFile(lockArchivePath, "utf8"), /^\d+\n$/, "exactly one lock owner must materialize the archive")
+
+  const staleVersion = "7.0.4"
+  const staleLockPath = join(root, `${staleVersion}.zip.lock`)
+  await mkdir(staleLockPath)
+  await writeFile(join(staleLockPath, "owner.json"), JSON.stringify({
+    schema: "wp-codebox/playground-cache-lease/v1",
+    token: "crashed-owner",
+    hostname: "test-host",
+    bootId: "test-boot",
+    pid: 1,
+    processStart: "0",
+    createdAt: new Date(0).toISOString(),
+    heartbeatAt: new Date(0).toISOString(),
+    expiresAt: new Date(0).toISOString(),
+  }))
+  const staleChild = await startLockChild("stale-lock-child", staleVersion, join(root, `${staleVersion}.zip`), 1)
+  await writeFile(staleChild.startPath, "start")
+  const staleResult = await staleChild.result
+  assert.equal(staleResult.code, 0, staleResult.output)
+
   console.log("playground custom archive separate-process leases passed")
 } finally {
   for (const child of children) {
@@ -64,6 +92,25 @@ async function startChild(name: string, archivePath: string): Promise<{ child: C
 async function stopChild(entry: { child: ChildProcess; stopPath: string }): Promise<void> {
   await writeFile(entry.stopPath, "stop")
   await childExit(entry.child)
+}
+
+async function startLockChild(name: string, version: string, archivePath: string, iterations: number): Promise<{ startPath: string; result: Promise<{ code: number | null; output: string }> }> {
+  const readyPath = join(root, `${name}.ready`)
+  const startPath = join(root, `${name}.start`)
+  let child!: ChildProcess
+  const result = new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    child = spawn(tsx, [lockFixture, root, version, archivePath, String(iterations), readyPath, startPath], {
+      env: { ...process.env, WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_LEASE_MS: "300" },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let output = ""
+    child.stdout?.on("data", (chunk) => { output += String(chunk) })
+    child.stderr?.on("data", (chunk) => { output += String(chunk) })
+    child.once("error", reject)
+    child.once("close", (code) => resolve({ code, output }))
+  })
+  await waitForPath(readyPath, child)
+  return { startPath, result }
 }
 
 async function waitForPath(path: string, child: ChildProcess): Promise<void> {

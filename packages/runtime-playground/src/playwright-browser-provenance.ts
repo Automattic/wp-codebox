@@ -16,6 +16,11 @@ export interface PlaywrightBrowserProvenance {
   dependencyManifestSha256?: string
 }
 
+export interface PlaywrightBrowserReadiness {
+  status: "ready" | "unavailable"
+  reason?: string
+}
+
 export async function playwrightBrowserProvenance(): Promise<PlaywrightBrowserProvenance> {
   const { chromium } = await import("playwright")
   const playwright = packageRequire("playwright/package.json") as { version: string }
@@ -38,9 +43,19 @@ export async function playwrightBrowserProvenance(): Promise<PlaywrightBrowserPr
 export async function assertPlaywrightBrowserReady(): Promise<PlaywrightBrowserProvenance> {
   const provenance = await playwrightBrowserProvenance()
   if (!existsSync(provenance.executablePath)) {
-    throw new Error(`Playwright Chromium ${provenance.chromiumVersion} (revision ${provenance.chromiumRevision}) is missing at ${provenance.executablePath}. Install the browser owned by this WP Codebox package with: node ./node_modules/playwright/cli.js install chromium`)
+    throw new Error(playwrightBrowserUnavailableReason(provenance))
   }
   return provenance
+}
+
+export async function playwrightBrowserReadiness(options: { executableExists?: (path: string) => boolean } = {}): Promise<PlaywrightBrowserReadiness> {
+  const provenance = await playwrightBrowserProvenance()
+  if ((options.executableExists ?? existsSync)(provenance.executablePath)) return { status: "ready" }
+  return { status: "unavailable", reason: playwrightBrowserUnavailableReason(provenance) }
+}
+
+function playwrightBrowserUnavailableReason(provenance: PlaywrightBrowserProvenance): string {
+  return `Required Playwright Chromium ${provenance.chromiumVersion} (revision ${provenance.chromiumRevision}) is unavailable. Install the browser owned by this WP Codebox package with: node ./node_modules/playwright/cli.js install chromium`
 }
 
 function dependencyManifestSha256(): string | undefined {

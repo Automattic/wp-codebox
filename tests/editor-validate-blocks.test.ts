@@ -28,6 +28,8 @@ assert.deepEqual(flattened.map((entry) => entry.name), ["core/columns", "core/co
 // A post with valid blocks: every block isValid, zero invalid.
 const validResult = summarizeBlockValidation({
   validationProvider: "wordpress-block-editor",
+  contentSource: "edited-post-content",
+  blockTypesRegistered: 42,
   nodes: [
     { name: "core/heading", isValid: true, issues: [] },
     { name: "core/paragraph", isValid: true, issues: [], innerBlocks: [] },
@@ -43,6 +45,8 @@ assert.ok(validResult.results.every((entry) => entry.isValid === true))
 // A post with a deliberately corrupted (nested) block: counted invalid, keeps name + issues.
 const corruptedResult = summarizeBlockValidation({
   validationProvider: "wordpress-block-editor",
+  contentSource: "edited-post-content",
+  blockTypesRegistered: 42,
   nodes: [
     { name: "core/group", isValid: true, issues: [], innerBlocks: [
       { name: "core/paragraph", isValid: false, issues: ["Block validation failed: expected <p> but found <div>"] },
@@ -75,6 +79,8 @@ assert.equal(evaluated.result.validation_method, "wp.blocks.validateBlock")
 assert.equal(evaluated.result.total_blocks, 2)
 assert.equal(evaluated.result.valid_blocks, 1)
 assert.equal(evaluated.result.invalid_blocks, 1)
+assert.equal(evaluated.result.content_source, "argument")
+assert.equal(evaluated.result.block_types_registered, 42)
 assert.equal(evaluated.contentSource, "argument")
 assert.equal(evaluated.blockTypesRegistered, 42)
 

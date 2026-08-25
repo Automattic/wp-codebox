@@ -3,7 +3,7 @@
  * Plugin Name: WP Codebox
  * Plugin URI: https://github.com/Automattic/wp-codebox
  * Description: Secure coding environments inside WordPress. WordPress ability surface for launching disposable WP Codebox Playground sandboxes that can't touch your host site.
- * Version: 0.19.0
+ * Version: 0.24.5
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Automattic
@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'WP_CODEBOX_PLUGIN_VERSION', '0.19.0' );
+define( 'WP_CODEBOX_PLUGIN_VERSION', '0.24.5' );
 define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -63,6 +63,8 @@ require_once __DIR__ . '/src/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
+require_once __DIR__ . '/src/class-wp-codebox-zip-archive-validator.php';
+require_once __DIR__ . '/src/class-wp-codebox-browser-viewport-replay.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-auth-strategies.php';
 require_once __DIR__ . '/src/class-wp-codebox-php-ai-client-browser-provider-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';

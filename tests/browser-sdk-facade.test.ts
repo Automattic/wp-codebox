@@ -11,6 +11,7 @@ const previewFixture = JSON.parse(await readFile(new URL("contracts/browser-prod
 const sandbox = {
   window: { dispatchEvent: () => true } as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any>, wp?: Record<string, any>, dispatchEvent?: (event: any) => boolean },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
+  atob: (value: string) => Buffer.from(value, "base64").toString("binary"),
   CustomEvent: class CustomEvent {
     type: string
     detail: unknown
@@ -49,6 +50,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "runtime-task:run",
     "browser-preview:start",
     "browser-preview:lifecycle",
+    "browser-preview:double-buffer",
+    "browser-preview:navigation",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
@@ -63,6 +66,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "filesystem:ensure-directory",
     "review:write-file",
     "contract:probe",
+    "browser-viewport:capture",
+    "browser-viewport:verify",
   ],
   globals: {
     name: "wpCodeboxBrowser",
@@ -84,6 +89,7 @@ const expectedV1TopLevelKeys = [
   "runRuntimeTask",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "aggregateFanoutOutputs",
   "validateBrowserRuntimeMaterialization",
@@ -105,6 +111,8 @@ const expectedV1TopLevelKeys = [
   "createParentToolRequest",
   "dispatchParentTool",
   "runBrowserSessionRecipe",
+  "captureViewportScreenshot",
+  "verifyViewportScreenshot",
   "setFrontendAdminBarVisible",
   "methods",
 ] as const
@@ -113,11 +121,13 @@ assert.deepEqual(Object.keys(api.v1), expectedV1TopLevelKeys, "wpCodeboxBrowser.
 const expectedV1MethodKeys = [
   "activateTheme",
   "browserSessionRecipe",
+  "captureViewportScreenshot",
   "createBrowserConnectorRequest",
   "executeBrowserConnectorRequest",
   "executeBrowserProviderProxyRequest",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "bootExecutableBrowserSession",
   "createParentToolRequest",
@@ -142,6 +152,7 @@ const expectedV1MethodKeys = [
   "runWordPressOperation",
   "selectPreparedBrowserBlueprint",
   "setFrontendAdminBarVisible",
+  "verifyViewportScreenshot",
   "writeFile",
   "writeReviewFile",
 ] as const
@@ -166,13 +177,17 @@ assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateB
 assert.equal(typeof api.v1.setFrontendAdminBarVisible, "function")
 assert.equal(api.v1.methods.setFrontendAdminBarVisible, api.setFrontendAdminBarVisible)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
+assert.equal(typeof api.v1.captureViewportScreenshot, "function")
+assert.equal(typeof api.v1.verifyViewportScreenshot, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
+assert.equal(typeof api.v1.createBrowserPreviewBuffer, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.openOrCreateBrowserContainedSite, "function")
 const studioNativeConsumedTopLevelMethods = [
   "consumeContainedSiteSync",
   "ensureDirectory",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "runBrowserSessionRecipe",
   "runRecipe",
   "setFrontendAdminBarVisible",
@@ -191,6 +206,88 @@ assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
 assert.equal(typeof api.v1.createRuntimeTaskRequest, "function")
 assert.equal(typeof api.v1.runRuntimeTask, "function")
+
+const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")
+let viewportInvocation: Record<string, unknown> | undefined
+const captured = await api.v1.captureViewportScreenshot({}, {
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  timeout_ms: 50,
+}, {
+  browserInvoker: async (request: Record<string, unknown>) => {
+    viewportInvocation = request
+    return { png_base64: png, diagnostics: [{ code: "browser_ready", message: "Browser is ready.", severity: "info" }] }
+  },
+  persistArtifact: async () => ({ artifact: { id: "viewport-1", path: "files/browser/example.png", sha256: "a".repeat(64) } }),
+})
+assert.deepEqual(plain(viewportInvocation), {
+  schema: "wp-codebox/browser-invocation-request/v1",
+  operation: "viewport-screenshot",
+  client: {},
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  timeout_ms: 50,
+})
+assert.deepEqual(plain(captured), {
+  schema: "wp-codebox/browser-viewport-screenshot/v1",
+  success: true,
+  status: "captured",
+  route: "/example",
+  viewport: { width: 1440, height: 900 },
+  artifact: { id: "viewport-1", path: "files/browser/example.png", kind: "browser-viewport-screenshot", contentType: "image/png", sha256: "a".repeat(64) },
+  sha256: "a".repeat(64),
+  diagnostics: [{ code: "browser_ready", message: "Browser is ready.", severity: "info" }],
+})
+const verified = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: true, exists: true, sha256: "a".repeat(64) }),
+})
+assert.equal(verified.status, "verified")
+assert.equal(verified.success, true)
+
+const routeFailure = await api.v1.captureViewportScreenshot({}, { route: "https://example.test", viewport: { width: 375, height: 667 } }, {})
+assert.equal(routeFailure.status, "failed")
+assert.equal(routeFailure.diagnostics[0].code, "viewport_capture_route_invalid")
+const timeoutFailure = await api.v1.captureViewportScreenshot({}, { route: "/slow", viewport: { width: 375, height: 667 }, timeout_ms: 1 }, {
+  browserInvoker: async () => await new Promise(() => undefined),
+  persistArtifact: async () => ({ artifact: { id: "unused", path: "unused.png", sha256: "a".repeat(64) } }),
+})
+assert.equal(timeoutFailure.status, "failed")
+assert.equal(timeoutFailure.diagnostics[0].code, "viewport_capture_timeout")
+const missingArtifact = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: false, exists: false, sha256: "a".repeat(64) }),
+})
+assert.equal(missingArtifact.status, "failed")
+assert.equal(missingArtifact.diagnostics[0].code, "viewport_capture_artifact_missing")
+const checksumMismatch = await api.v1.verifyViewportScreenshot(captured, {
+  verifyArtifact: async () => ({ success: true, exists: true, sha256: "b".repeat(64) }),
+})
+assert.equal(checksumMismatch.status, "failed")
+assert.equal(checksumMismatch.diagnostics[0].code, "viewport_capture_checksum_mismatch")
+const previousViewportAbilityWp = sandbox.window.wp
+const viewportAbilityRequests: any[] = []
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    viewportAbilityRequests.push(request)
+    if (request.path === "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run") {
+      return {
+        schema: "wp-codebox/browser-persisted-artifact-bundle/v1",
+        artifact_ref: { schema: "wp-codebox/browser-artifact-ref/v1", artifact_id: "bundle-1", content_digest: "c".repeat(64), artifacts_path: "/artifacts/bundle-1" },
+        files: [{ artifact_path: "files/browser/screenshot.png", kind: "browser-screenshot", mime_type: "image/png", sha256: { algorithm: "sha256", value: "c".repeat(64) } }],
+      }
+    }
+    return { success: true, artifact: { changed_files: { files: [{ artifactPath: "files/browser/screenshot.png", sha256: { algorithm: "sha256", value: "c".repeat(64) } }] } }, verification: { valid: true } }
+  },
+}
+const ownedCapture = await api.v1.captureViewportScreenshot({}, { route: "/owned", viewport: { width: 375, height: 667 } }, { browserInvoker: async () => ({ png_base64: png }) })
+assert.equal(ownedCapture.success, true)
+assert.equal(ownedCapture.artifact.artifact_id, "bundle-1")
+assert.equal(ownedCapture.artifact.sha256, "c".repeat(64))
+assert.equal((await api.v1.verifyViewportScreenshot(ownedCapture)).status, "verified")
+assert.deepEqual(plain(viewportAbilityRequests.map((request) => request.path)), [
+  "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run",
+  "/wp-abilities/v1/abilities/wp-codebox/inspect-artifact/run",
+])
+sandbox.window.wp = previousViewportAbilityWp
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
   code: "demo_error",
@@ -244,6 +341,91 @@ await assert.rejects(
     return true
   },
 )
+
+const failedRequestClient = {
+  writeFile: async () => undefined,
+  request: async () => {
+    throw Object.assign(new Error("PHP endpoint returned 500"), { code: "http_500" })
+  },
+}
+await assert.rejects(
+  () => api.v1.methods.runPhpRequest(failedRequestClient, {
+    code: "<?php throw new Exception( 'broken' );",
+    forceRequest: true,
+  }),
+  (error: any) => {
+    assert.equal(error.code, "playground_request_failed")
+    assert.match(error.message, /PHP endpoint returned 500/)
+    assert.equal(error.data.last_error.code, "http_500")
+    assert.equal(error.data.attempts.length, 2)
+    return true
+  },
+)
+
+let providerProxyInstallations = 0
+let materializerDirectRuns = 0
+let materializerRequests = 0
+const materializerRecipeClient = {
+  run: async () => {
+    materializerDirectRuns += 1
+    return JSON.stringify(materializerDirectRuns === 1
+      ? { success: true, data: null, error: null }
+      : { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null })
+  },
+  writeFile: async () => undefined,
+  request: async () => {
+    materializerRequests += 1
+    throw new Error("materializer recipes must run directly")
+  },
+  onMessage: () => {
+    providerProxyInstallations += 1
+    throw new Error("materializer recipes must not install the provider proxy")
+  },
+}
+const materializerRecipeResult = await api.v1.methods.runRecipe(materializerRecipeClient, {
+  browser: {
+    task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json",
+  },
+  workflow: {
+    steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ],
+  },
+}, { materializer: { task: "example/run" } })
+assert.equal(providerProxyInstallations, 0)
+assert.equal(materializerDirectRuns, 2)
+assert.equal(materializerRequests, 0)
+assert.deepEqual(plain(materializerRecipeResult), {
+  schema: "wp-codebox/materialization-result/v1",
+  success: true,
+  task: "example/run",
+  result: { theme_slug: "example" },
+  report: null,
+  response: { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null },
+  error: null,
+})
+
+let failedMaterializerRuns = 0
+const failedMaterializerResult = await api.v1.methods.runRecipe({
+  run: async () => {
+    failedMaterializerRuns += 1
+    return JSON.stringify(failedMaterializerRuns === 1
+      ? { success: true, data: null, error: null }
+      : {
+          success: true,
+          response: {
+            success: false,
+            error: { code: "quality_gate_failed", message: "Fallback blocks remain." },
+            diagnostics: [ { code: "fallback_blocks", count: 2 } ],
+          },
+          error: null,
+        })
+  },
+}, {
+  browser: { task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json" },
+  workflow: { steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ] },
+}, { materializer: { task: "example/run" } })
+assert.equal(failedMaterializerResult.success, false)
+assert.equal(failedMaterializerResult.error.code, "quality_gate_failed")
+assert.deepEqual(plain(failedMaterializerResult.result.diagnostics), [ { code: "fallback_blocks", count: 2 } ])
 
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
@@ -541,6 +723,7 @@ assert.equal(booted.success, true)
 assert.deepEqual(plain(blueprintRuns), [{ blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }])
 
 const previewStarts: any[] = []
+const previewArchive = new Uint8Array([80, 75, 3, 4, 0])
 const previewStart = await api.v1.startBrowserPreview(previewFixture.response.preview_boot, {
   iframe: { tagName: "IFRAME" },
   hydrateBlueprintRef: async (request: any) => {
@@ -552,6 +735,7 @@ const previewStart = await api.v1.startBrowserPreview(previewFixture.response.pr
     previewStarts.push(request)
     return { client: "playground" }
   },
+  zipWpContent: async () => previewArchive,
 })
 assert.equal(previewStart.schema, "wp-codebox/browser-preview-start-result/v1")
 assert.equal(previewStart.success, true)
@@ -560,6 +744,43 @@ assert.equal(previewStart.session_id, "preview-session-1")
 assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
 assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
 assert.equal(typeof previewStart.dispose, "function", "successful previews expose async disposal without changing the result envelope")
+const replayAbilityRequests: any[] = []
+sandbox.window.wp = {
+  apiFetch: async (request: any) => {
+    replayAbilityRequests.push(request)
+    if (request.path === "/wp-abilities/v1/abilities/wp-codebox/replay-browser-viewport/run") {
+      return { success: true, schema: "wp-codebox/browser-viewport-replay-result/v1", status: "captured", png_base64: png }
+    }
+    return { artifact: { id: "viewport-replay", path: "files/browser/screenshot.png", sha256: "d".repeat(64) } }
+  },
+}
+const replayCapture = await api.v1.captureViewportScreenshot(previewStart.client, { route: "/replayed", viewport: { width: 390, height: 844 }, timeout_ms: 5000 })
+assert.equal(replayCapture.success, true)
+assert.equal(replayCapture.artifact.id, "viewport-replay")
+assert.deepEqual(plain(replayAbilityRequests.map(({ signal: _signal, ...request }: any) => request)), [
+  {
+    path: "/wp-abilities/v1/abilities/wp-codebox/replay-browser-viewport/run",
+    method: "POST",
+    data: {
+      archive_base64: Buffer.from(previewArchive).toString("base64"),
+      route: "/replayed",
+      viewport: { width: 390, height: 844 },
+      timeout_ms: 5000,
+    },
+  },
+  {
+    path: "/wp-abilities/v1/abilities/wp-codebox/persist-browser-artifact/run",
+    method: "POST",
+    data: {
+      caller_schema: "wp-codebox/browser-viewport-screenshot/v1",
+      caller_kind: "browser-viewport-screenshot",
+      caller_metadata: { route: "/replayed", viewport: { width: 390, height: 844 }, diagnostics: [] },
+      entrypoint: "screenshot.png",
+      files: [{ path: "screenshot.png", content_base64: png, encoding: "base64", mime_type: "image/png", kind: "browser-screenshot" }],
+    },
+  },
+])
+delete sandbox.window.wp
 const apiFetchRequests: any[] = []
 const restRelativePreviewBoot = {
   ...previewFixture.response.preview_boot,
@@ -690,6 +911,7 @@ await assert.rejects(
         client_release_error: null,
         client_release_evidence: null,
         runtime_release_requested: true,
+        runtime_termination_requested: false,
         runtime_terminated: false,
         lifecycle_released: true,
       },
@@ -828,7 +1050,7 @@ const lifecyclePreview = await api.v1.startBrowserPreview(lifecycleBoot, {
     assert.equal(client.client, "lifecycle-playground")
     lifecycleClientReleased = true
     releasedClients += 1
-    return { client_released: true, runtime_terminated: false }
+    return { client_released: true, runtime_termination_requested: false, runtime_terminated: false }
   },
 })
 lifecycleCallbacks.onBlueprintStepCompleted()
@@ -849,8 +1071,9 @@ assert.deepEqual(plain(disposed), {
   client_release_requested: true,
   client_released: true,
   client_release_error: null,
-  client_release_evidence: { client_released: true, runtime_terminated: false },
+  client_release_evidence: { client_released: true, runtime_termination_requested: false, runtime_terminated: false },
   runtime_release_requested: true,
+  runtime_termination_requested: false,
   runtime_terminated: false,
   lifecycle_released: true,
 })
@@ -873,6 +1096,25 @@ assert.equal(defaultDispose.client_release_requested, false, "default disposal d
 assert.equal(defaultDispose.client_released, false, "default disposal does not verify a client release")
 assert.equal(defaultDispose.runtime_release_requested, true, "iframe reset requests runtime release")
 assert.equal(defaultDispose.runtime_terminated, false, "default disposal does not verify runtime termination")
+
+let moduleDisposedClient: unknown
+const moduleDisposePreview = await api.v1.startBrowserPreview({ ...lifecycleBoot, client_module_url: "https://playground.example/client/index.js", scope: "preview-module-dispose-test" }, {
+  iframe: { src: "https://playground.example/remote.html" },
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  importModule: async () => ({
+    startPlaygroundWeb: async () => lifecycleClient,
+    disposePlaygroundClient: async (client: unknown) => {
+      moduleDisposedClient = client
+      return { client_released: true, runtime_termination_requested: true, runtime_terminated: false }
+    },
+  }),
+})
+const moduleDisposeResult = await moduleDisposePreview.dispose()
+assert.equal(moduleDisposedClient, lifecycleClient, "default disposal delegates runtime teardown to the imported Playground module")
+assert.equal(moduleDisposeResult.client_release_requested, true, "module-owned runtime teardown is reported as requested")
+assert.equal(moduleDisposeResult.client_released, true, "module-owned client release evidence is preserved")
+assert.equal(moduleDisposeResult.runtime_termination_requested, true, "module-owned runtime termination request evidence is preserved")
+assert.equal(moduleDisposeResult.runtime_terminated, false, "module-owned teardown does not overstate confirmed runtime termination")
 
 let replacementReleased = 0
 const replacementCallbacks: Record<string, () => unknown> = {}
@@ -908,6 +1150,102 @@ for (let index = 0; index < 8; index += 1) {
   await Promise.all([preview.dispose(), preview.dispose()])
 }
 assert.equal(repeatedReleases, 8, "repeated preview disposal remains bounded and idempotent")
+
+const workspaceChildren: any[] = []
+const workspaceContainer = {
+	attach(iframe: any) {
+		iframe.parentNode = this
+		iframe.remove = () => {
+			const index = workspaceChildren.indexOf(iframe)
+			if (index >= 0) workspaceChildren.splice(index, 1)
+			iframe.parentNode = null
+		}
+	},
+  appendChild(iframe: any) {
+	this.attach(iframe)
+    workspaceChildren.push(iframe)
+  },
+	replaceChild(next: any, previous: any) {
+		const index = workspaceChildren.indexOf(previous)
+		assert.notEqual(index, -1)
+		previous.parentNode = null
+		this.attach(next)
+		workspaceChildren[index] = next
+	},
+}
+const createWorkspaceIframe = () => ({
+  src: "about:blank",
+  loading: "lazy",
+  style: { display: "" },
+  attributes: {} as Record<string, string>,
+  setAttribute(name: string, value: string) { this.attributes[name] = value },
+  removeAttribute(name: string) { delete this.attributes[name] },
+  cloneNode() { return createWorkspaceIframe() },
+})
+const workspaceTemplate: any = createWorkspaceIframe()
+workspaceTemplate.parentNode = workspaceContainer
+const workspaceStarts: string[] = []
+const workspaceReleases: string[] = []
+const workspaceNavigations: string[] = []
+const workspaceNavigationErrors: string[] = []
+const previewBuffer = api.v1.createBrowserPreviewBuffer({ iframe: workspaceTemplate, activeAttribute: "data-preview-active" })
+const workspaceBoot = (key: string) => ({ ...lifecycleBoot, scope: `workspace-${key}` })
+const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.prepare(slot, workspaceBoot(key), {
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async (request: any) => {
+	assert.equal(request.iframe.style.display, "none", "prepared standby runtimes remain invisible")
+	assert.equal(request.iframe.loading, "eager", "Codebox owns startup instead of deferring to iframe lazy loading")
+    workspaceStarts.push(key)
+    return {
+      client: key,
+      goTo: async (path: string) => {
+        workspaceNavigations.push(`${key}:${path}`)
+        if (key === "blank-replenishment") throw new Error("late navigation failure")
+      },
+    }
+  },
+  disposeClient: async () => {
+    workspaceReleases.push(key)
+    return true
+  },
+})
+const workspaceA = await prepareWorkspacePreview("slot-a", "site-a@revision-1")
+await previewBuffer.activate("slot-a")
+assert.deepEqual(plain(await workspaceA.navigate("/site-a")), {
+  schema: "wp-codebox/browser-preview-navigation-result/v1",
+  success: true,
+  status: "requested",
+  slot: "slot-a",
+  path: "/site-a",
+})
+const workspaceB = await prepareWorkspacePreview("slot-b", "site-b@revision-1")
+assert.equal(previewBuffer.has("slot-a"), true)
+assert.equal(await previewBuffer.prepare("slot-a", workspaceBoot("unused")), workspaceA, "preparing an occupied slot returns it without replacing its runtime")
+assert.deepEqual(workspaceStarts, ["site-a@revision-1", "site-b@revision-1"], "preparing the double buffer starts exactly two runtimes")
+assert.equal(previewBuffer.activeSlot, "slot-a")
+assert.equal(previewBuffer.size, 2)
+assert.equal(workspaceA.iframe.style.display, "")
+assert.equal(workspaceB.iframe.style.display, "none")
+assert.equal(workspaceA.iframe.attributes["data-preview-active"], "")
+assert.equal(workspaceB.iframe.attributes["data-preview-active"], undefined)
+await assert.rejects(() => prepareWorkspacePreview("slot-c", "site-c@revision-1"), (error: any) => error.code === "browser_preview_buffer_full")
+await previewBuffer.activate("slot-b")
+assert.equal(workspaceA.iframe.style.display, "none", "activation atomically hides the old active iframe")
+assert.equal(workspaceB.iframe.style.display, "")
+const releasedWorkspaceA = await previewBuffer.release("slot-a")
+assert.equal(await previewBuffer.release("slot-a"), releasedWorkspaceA, "releasing a slot is idempotent and retains its lifecycle receipt")
+assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old active runtime is explicit")
+assert.equal(workspaceChildren.length, 1, "release removes the lifecycle replacement iframe instead of leaking an about:blank browsing context")
+const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
+assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
+assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
+assert.equal((await replenishedA.navigate("/slow", { onError: (error: Error) => workspaceNavigationErrors.push(error.message) })).status, "requested")
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.deepEqual(workspaceNavigations, ["site-a@revision-1:/site-a", "blank-replenishment:/slow"])
+assert.deepEqual(workspaceNavigationErrors, ["late navigation failure"], "navigation dispatch reports asynchronous client failures without blocking readiness")
+await previewBuffer.dispose()
+assert.deepEqual(workspaceReleases, ["site-a@revision-1", "site-b@revision-1", "blank-replenishment"])
+assert.equal(workspaceTemplate.style.display, "", "workspace disposal restores the caller's template iframe")
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

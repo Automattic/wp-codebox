@@ -53,12 +53,13 @@ import {
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs, splitLeadingStrictTypesDeclare } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, completedPlaygroundCommandError, playgroundCommandDiagnosticText, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
+import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
+import { executeHostHttpTransportRequest, parseHostHttpTransportMessage } from "./host-http-transport.js"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
@@ -94,9 +95,9 @@ export async function runPhpCommand({
   const commandCode = diagnosticsCapture && marker ? runPhpCommandDiagnosticsPhp(code, marker, diagnosticsCapture.maxItems ?? 50, diagnosticsCapture.maxBytes ?? 64 * 1024) : code
   const bridge = argValue(spec.args ?? [], "wp-cli-bridge") === "1" ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
-  const removeProviderProxy = installBrowserProviderProxy(server)
+  const removeProviderProxy = installPhpMessageBridges(server, runtimeSpec.policy.network)
   try {
-    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, commandCode, bootstrapArgs, bridge) })
+    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, commandCode, bootstrapArgs, bridge, undefined, server.hostHttpTransport) })
     assertPlaygroundResponseOk("wordpress.run-php", response)
   } finally {
     await removeProviderProxy?.()
@@ -292,12 +293,23 @@ async function writeCommandDiagnosticsArtifact(artifactRoot: string, diagnostics
   }
 }
 
-function installBrowserProviderProxy(server: PlaygroundCliServer): (() => Promise<void>) | undefined {
+function installPhpMessageBridges(server: PlaygroundCliServer, networkPolicy: RuntimeCreateSpec["policy"]["network"]): (() => Promise<void>) | undefined {
   if (!server.playground.onMessage) {
     return undefined
   }
 
+  const activeHostRequests = new Set<AbortController>()
   const remove = server.playground.onMessage(async (data) => {
+    const hostHttpMessage = parseHostHttpTransportMessage(data)
+    if (hostHttpMessage) {
+      const controller = new AbortController()
+      activeHostRequests.add(controller)
+      try {
+        return JSON.stringify(await executeHostHttpTransportRequest(hostHttpMessage, networkPolicy, { signal: controller.signal }))
+      } finally {
+        activeHostRequests.delete(controller)
+      }
+    }
     const message = parseBrowserProviderProxyMessage(data)
     if (!message) {
       return undefined
@@ -307,6 +319,7 @@ function installBrowserProviderProxy(server: PlaygroundCliServer): (() => Promis
   })
 
   return async () => {
+    for (const controller of activeHostRequests) controller.abort(new Error("The runtime command ended before the host HTTP request completed."))
     const cleanup = await remove
     if (typeof cleanup === "function") {
       await cleanup()
@@ -657,7 +670,13 @@ export async function runAbilityCommand({
     throw new Error("wordpress.ability accepts either user/session or principal, not both")
   }
   const expectedResultSchema = expectedAbilityResultSchemaFromArgs(spec.args ?? [])
-  const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode({ name, input, userSession, principal })) })
+  const removeMessageBridges = installPhpMessageBridges(server, runtimeSpec.policy.network)
+  let response: PlaygroundRunResponse
+  try {
+    response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode({ name, input, userSession, principal }), server.hostHttpTransport) })
+  } finally {
+    await removeMessageBridges?.()
+  }
   assertPlaygroundResponseOk("wordpress.ability", response)
   return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input, expectedResultSchema)
 }
@@ -913,6 +932,13 @@ export async function runPhpunitCommand({
   const phpunitXmlArg = argValue(args, "phpunit-xml")
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
+  const discoveryOnly = booleanArg(args, "discovery-only")
+  const changedTestFiles = changedTestFilesArg(args)
+  const selectedTestFile = argValue(args, "test-file")?.trim() || ""
+  const phpunitArgs = jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string")
+  if (discoveryOnly && (explicitCode || selectedTestFile || changedTestFiles.length > 0 || phpunitArgs.length > 0)) {
+    throw new Error("wordpress.phpunit discovery-only cannot be combined with code overrides, test selectors, or PHPUnit arguments")
+  }
   const { bootstrapMode, databaseType, externalDatabase, multisite } = phpunitExecutionSemantics(args, runtimeSpec)
   const declaredDatabaseType = argValue(args, "database-type")?.trim()
   if (databaseType === "mysql" && !externalDatabase) {
@@ -924,7 +950,7 @@ export async function runPhpunitCommand({
   const autoloadFile = argValue(args, "autoload-file")?.trim() || (bootstrapMode === "project" ? "" : "/wp-codebox-vendor/autoload.php")
   const autoloadFileRole = argValue(args, "autoload-file-role")?.trim() === "harness" ? "harness" : undefined
   const processIdentity = boundedProcessIdentity(spec.processIdentity)
-  const managedMultisitePreinstalled = !explicitCode && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
+  const managedMultisitePreinstalled = !explicitCode && !discoveryOnly && requiresManagedMysqlMultisitePreinstall(args, runtimeSpec)
   const resultFile = processIdentity ? `/tmp/wp-codebox-phpunit-result-${processIdentity}.txt` : PLUGIN_PHPUNIT_RESULT_FILE
   const diagnosticHostFile = `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result${processIdentity ? `-${processIdentity}` : ""}.txt`
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit", false) : phpunitRunCode({
@@ -937,9 +963,10 @@ export async function runPhpunitCommand({
     testRoot: argValue(args, "test-root")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/tests`,
     phpunitXml: phpunitXmlArg?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
     phpunitXmlIsDefault: phpunitXmlArg === undefined || booleanArg(args, "phpunit-xml-default"),
-    selectedTestFile: argValue(args, "test-file")?.trim() || "",
-    changedTestFiles: changedTestFilesArg(args),
-    phpunitArgs: jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string"),
+    selectedTestFile,
+    changedTestFiles,
+    discoveryOnly,
+    phpunitArgs,
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
@@ -1008,6 +1035,12 @@ export async function runPhpunitCommand({
       throw attachPlaygroundDiagnostics(error, "wordpress.phpunit structured diagnostics", structured)
     }
     throw error
+  }
+
+  if (discoveryOnly) {
+    const discovery = await readPluginPhpunitDiscoveryResult(server, resultFile)
+    if (!discovery) throw new Error("wordpress.phpunit discovery-only completed without a valid discovery result")
+    return `${JSON.stringify(discovery)}\n`
   }
 
   return response.text

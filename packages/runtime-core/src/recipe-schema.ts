@@ -570,6 +570,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
           captureArtifacts: { type: "boolean" },
+          phase: { enum: ["pre-install", "post-install"] },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
@@ -1222,6 +1223,28 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         type: "object",
         additionalProperties: false,
         required: ["command"],
+        allOf: [
+          {
+            if: {
+              properties: {
+                command: {
+                  enum: [
+                    "wordpress.collect-workload-result",
+                    "wordpress.run-workload",
+                    "wp-codebox.agent-fanout",
+                    "wp-codebox.bounded-runtime-plan",
+                    "wp-codebox.checkpoint-create",
+                    "wp-codebox.checkpoint-restore",
+                    "wp-codebox.checkpoint-list",
+                    "wp-codebox/run-fuzz-suite",
+                  ],
+                },
+              },
+              required: ["command"],
+            },
+            then: { not: { required: ["continuation"] } },
+          },
+        ],
         properties: {
           command: commandSchema,
           args: {
@@ -1229,11 +1252,56 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             items: { type: "string" },
           },
           timeoutMs: { type: "integer", minimum: 1 },
+          continuation: { $ref: "#/$defs/stepContinuation" },
           diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           metadata: { $ref: "#/$defs/metadata" },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
         },
+      },
+      stepContinuation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["maxIterations", "while", "inputMappings"],
+        properties: {
+          maxIterations: { type: "integer", minimum: 2, maximum: 1000 },
+          while: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pointer", "equals"],
+            properties: {
+              pointer: { $ref: "#/$defs/jsonPointer" },
+              equals: {},
+            },
+          },
+          inputMappings: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["from", "to"],
+              properties: {
+                from: { $ref: "#/$defs/jsonPointer" },
+                to: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["arg", "pointer"],
+                  properties: {
+                    arg: { type: "string", minLength: 1, maxLength: 256 },
+                    pointer: { $ref: "#/$defs/jsonPointer" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      jsonPointer: {
+        type: "string",
+        maxLength: 1024,
+        pattern: "^(|/(?:[^~/]|~[01])*)*$",
       },
       commandDiagnosticsCapture: {
         type: "object",
@@ -1345,7 +1413,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         type: "object",
         additionalProperties: false,
         required: ["type"],
-        properties: { type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }, input: {}, metadata: { $ref: "#/$defs/metadata" } },
+        properties: { type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }, input: {}, clock: { type: "array", minItems: 1, maxItems: 32, items: { $ref: "#/$defs/adversarialClockScheduleEntry" } }, metadata: { $ref: "#/$defs/metadata" } },
       },
       adversarialCaseTemplate: {
         type: "object",
@@ -1399,6 +1467,27 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           snapshotRef: { type: "string" },
           fixtureRefs: { type: "array", items: { type: "string" } },
           metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      adversarialClockScheduleEntry: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surface", "operation"],
+        allOf: [{
+          if: { properties: { operation: { enum: ["freeze", "skew"] } }, required: ["operation"] },
+          then: { required: ["time"] },
+        }, {
+          if: { properties: { operation: { const: "advance" } }, required: ["operation"] },
+          then: { required: ["milliseconds"] },
+        }, {
+          if: { properties: { operation: { const: "restore" } }, required: ["operation"] },
+          then: { not: { anyOf: [{ required: ["time"] }, { required: ["milliseconds"] }] } },
+        }],
+        properties: {
+          surface: { enum: ["runtime", "wordpress", "scheduler", "database"] },
+          operation: { enum: ["freeze", "advance", "skew", "restore"] },
+          time: { type: "integer", minimum: 0 },
+          milliseconds: { type: "integer", minimum: 0 },
         },
       },
       transportFaultModel: {

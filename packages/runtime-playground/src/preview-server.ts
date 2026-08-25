@@ -1,7 +1,9 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
+import { request as httpsRequest } from "node:https"
 import { createServer as createNetServer } from "node:net"
 import { Transform } from "node:stream"
 import type { PreviewLease } from "@automattic/wp-codebox-core"
+import { createPreviewProxyRequestTrace, isPreviewProxyServiceWorkerRegistrationRequest, isPreviewProxyServiceWorkerRequest, recordPreviewProxyRequest, snapshotPreviewProxyRequestTrace, type PlaygroundPreviewProxyRequestOutcome, type PlaygroundPreviewProxyRequestTrace } from "./preview-proxy-request-trace.js"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -23,6 +25,7 @@ export interface PlaygroundCliServer {
   previewLease?: PreviewLease
   previewRoutes?: PlaygroundPreviewRouteRegistry
   previewProxyDiagnostics?: PlaygroundPreviewProxyDiagnostics
+  hostHttpTransport?: { url: string; token: string }
   [Symbol.asyncDispose](): Promise<void>
 }
 
@@ -33,6 +36,7 @@ export interface PlaygroundPreviewProxyDiagnostics {
   queue: "fifo"
   bind: string
   targetOrigin: string
+  requestTrace: PlaygroundPreviewProxyRequestTrace
 }
 
 export interface PlaygroundPreviewRouteRegistry {
@@ -44,7 +48,7 @@ export type PlaygroundPreviewRouteHandler = (incoming: IncomingMessage, outgoing
 interface PlaygroundPreviewProxy {
   serverUrl: string
   previewRoutes: PlaygroundPreviewRouteRegistry
-  diagnostics: PlaygroundPreviewProxyDiagnostics
+  diagnostics(): PlaygroundPreviewProxyDiagnostics
   dispose(): Promise<void>
 }
 
@@ -73,7 +77,9 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
     serverUrl: proxy.serverUrl,
     wordpressUrl: server.wordpressUrl ?? server.serverUrl,
     previewRoutes: proxy.previewRoutes,
-    previewProxyDiagnostics: proxy.diagnostics,
+    get previewProxyDiagnostics() {
+      return proxy?.diagnostics()
+    },
     async [Symbol.asyncDispose]() {
       await proxy.dispose()
       await server[Symbol.asyncDispose]()
@@ -84,15 +90,19 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
 async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
   const routes = createPreviewRouteRegistry()
-  const proxy = previewProxyServer(target, routes)
+  const requestTrace = createPreviewProxyRequestTrace()
+  const upstreamQueue = createPreviewProxyQueue()
+  const proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
+  const address = proxy.address()
+  const resolvedPort = address && typeof address === "object" ? address.port : port
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target, routes)
+    const ipv6Proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
     try {
-      await listenPreviewProxy(ipv6Proxy, port, "::1")
+      await listenPreviewProxy(ipv6Proxy, resolvedPort, "::1")
       servers.push(ipv6Proxy)
     } catch (error) {
       if (!errorHasCode(error, "EADDRNOTAVAIL")) {
@@ -102,20 +112,21 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
     }
   }
 
-  const address = proxy.address()
-  const resolvedPort = address && typeof address === "object" ? address.port : port
   const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
 
   return {
     serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
     previewRoutes: routes,
-    diagnostics: {
-      schema: "wp-codebox/preview-proxy-diagnostics/v1",
-      upstreamConcurrency: "serialized",
-      maxConcurrentUpstreamRequests: 1,
-      queue: "fifo",
-      bind,
-      targetOrigin: target.origin,
+    diagnostics() {
+      return {
+        schema: "wp-codebox/preview-proxy-diagnostics/v1",
+        upstreamConcurrency: "serialized",
+        maxConcurrentUpstreamRequests: 1,
+        queue: "fifo",
+        bind,
+        targetOrigin: target.origin,
+        requestTrace: snapshotPreviewProxyRequestTrace(requestTrace),
+      }
     },
     async dispose() {
       await closePreviewProxyServers(servers)
@@ -123,9 +134,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   }
 }
 
-function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): PreviewProxyServer {
-  const upstreamQueue = createPreviewProxyQueue()
-
+function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace, upstreamQueue: ReturnType<typeof createPreviewProxyQueue>): PreviewProxyServer {
   return createHttpServer(async (incoming, outgoing) => {
     try {
       if (await routes.handle(incoming, outgoing)) {
@@ -136,7 +145,19 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): 
       return
     }
 
-    upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
+    upstreamQueue(
+      () => proxyPreviewRequest(target, incoming, outgoing, requestTrace),
+      () => incoming.aborted || incoming.destroyed || outgoing.destroyed,
+      (cancel) => {
+        incoming.once("aborted", cancel)
+        outgoing.once("close", cancel)
+        return () => {
+          incoming.off("aborted", cancel)
+          outgoing.off("close", cancel)
+        }
+      },
+      () => recordPreviewProxyRequest(requestTrace, incoming, incoming.url ?? "/", { outcome: "canceled-before-upstream" }),
+    ).catch((error: Error) => writeProxyError(outgoing, error))
   })
 }
 
@@ -162,11 +183,22 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
   }
 }
 
-function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
+function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse, requestTrace: PlaygroundPreviewProxyRequestTrace): Promise<void> {
   return new Promise((resolve) => {
     const requestTarget = previewProxyRequestTarget(incoming, target)
+    const serviceWorkerRegistration = isPreviewProxyServiceWorkerRegistrationRequest(incoming)
     let settled = false
+    let clientCanceled = false
     let targetResponse: IncomingMessage | undefined
+    let targetRequest: ReturnType<typeof httpRequest> | undefined
+    let serviceWorkerRedirectRetries = 0
+    let outcomeRecorded = false
+    const recordOutcome = (outcome: PlaygroundPreviewProxyRequestOutcome) => {
+      if (!outcomeRecorded) {
+        outcomeRecorded = true
+        recordPreviewProxyRequest(requestTrace, incoming, requestTarget.path, outcome)
+      }
+    }
     const settle = () => {
       if (settled) {
         return
@@ -175,24 +207,62 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
       resolve()
     }
     const abortUpstream = () => {
-      targetRequest.destroy()
+      clientCanceled = true
+      recordOutcome({ outcome: "client-canceled" })
+      targetRequest?.destroy()
       targetResponse?.destroy()
       settle()
     }
-
-    const targetRequest = httpRequest(
-      {
+    const sendUpstreamRequest = () => {
+      const request = target.protocol === "https:" ? httpsRequest : httpRequest
+      targetRequest = request({
         protocol: target.protocol,
         hostname: target.hostname,
         port: target.port,
         method: incoming.method,
         path: requestTarget.path,
         headers: proxyRequestHeaders(incoming.headers, requestTarget),
-      },
-      (response) => {
+      }, (response) => {
         targetResponse = response
         const headers = proxyResponseHeaders(response.headers, requestTarget, target)
         const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
+        const responseOutcome: PlaygroundPreviewProxyRequestOutcome = {
+          outcome: "response",
+          status: response.statusCode ?? 502,
+          contentType: headerValue(headers["content-type"]),
+          contentLength: headerValue(headers["content-length"]),
+          serviceWorkerAllowed: headerValue(headers["service-worker-allowed"]),
+          bodyRewritten: Boolean(bodyTransform),
+          upstreamLocation: headerValue(response.headers.location),
+          visibleLocation: headerValue(headers.location),
+        }
+        if (serviceWorkerRegistration && responseOutcome.status !== undefined && responseOutcome.status >= 300 && responseOutcome.status < 400 && serviceWorkerRedirectRetries < 2) {
+          // The runtime can redirect its worker script while it warms up. Chromium rejects
+          // registration scripts that see a redirect, so retry the same bounded request upstream.
+          serviceWorkerRedirectRetries += 1
+          response.resume()
+          response.once("end", () => {
+            if (!clientCanceled) {
+              sendUpstreamRequest()
+            }
+          })
+          response.once("error", (error) => {
+            recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+            outgoing.destroy(error)
+            settle()
+          })
+          response.once("close", () => {
+            if (!response.complete && !clientCanceled) {
+              recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+              settle()
+            }
+          })
+          return
+        }
+        if (isPreviewProxyServiceWorkerRequest(incoming, requestTarget.path) && responseOutcome.status !== undefined && responseOutcome.status >= 300 && responseOutcome.status < 400) {
+          // Browsers reject and cancel redirected service-worker scripts as soon as headers arrive.
+          recordOutcome(responseOutcome)
+        }
         if (bodyTransform) {
           delete headers["content-length"]
           delete headers["content-md5"]
@@ -200,7 +270,18 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         }
         outgoing.writeHead(response.statusCode ?? 502, response.statusMessage, headers)
         response.on("error", (error) => {
+          recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
           outgoing.destroy(error)
+          settle()
+        })
+        response.on("end", () => {
+          recordOutcome(responseOutcome)
+          settle()
+        })
+        response.on("close", () => {
+          if (!response.complete && !clientCanceled) {
+            recordOutcome({ ...responseOutcome, outcome: "upstream-error" })
+          }
           settle()
         })
         outgoing.on("finish", settle)
@@ -211,19 +292,27 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         } else {
           response.pipe(outgoing)
         }
-      },
-    )
+      })
 
-    targetRequest.on("error", (error) => {
-      writeProxyError(outgoing, error)
-      settle()
-    })
+      targetRequest.on("error", (error) => {
+        if (!clientCanceled) {
+          recordOutcome({ outcome: "upstream-error" })
+        }
+        writeProxyError(outgoing, error)
+        settle()
+      })
+      if (serviceWorkerRedirectRetries > 0) {
+        targetRequest.end()
+      }
+    }
+    incoming.on("aborted", abortUpstream)
     incoming.on("error", () => {
       abortUpstream()
     })
     outgoing.on("error", abortUpstream)
     outgoing.on("close", abortUpstream)
-    incoming.pipe(targetRequest)
+    sendUpstreamRequest()
+    incoming.pipe(targetRequest!)
   })
 }
 
@@ -258,37 +347,86 @@ function previewProxyRequestTarget(incoming: IncomingMessage, target: URL): Prev
   return { upstreamHost: target.host, visibleHost: authority.host, path: rawUrl, port: authority.port || "80", protocol: "http:", rewriteTargetOrigin: true }
 }
 
-function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
+function createPreviewProxyQueue(): (
+  task: () => Promise<void>,
+  isCanceled: () => boolean,
+  observeCancellation: (cancel: () => void) => () => void,
+  onCanceledBeforeRun: () => void,
+) => Promise<void> {
   let active = false
-  const pending: Array<() => void> = []
-
-  const acquire = async () => {
-    if (!active) {
-      active = true
-      return
-    }
-
-    await new Promise<void>((resolve) => pending.push(resolve))
+  interface PendingRequest {
+    task: () => Promise<void>
+    isCanceled: () => boolean
+    stopObservingCancellation: () => void
+    onCanceledBeforeRun: () => void
+    resolve: () => void
+    reject: (error: unknown) => void
   }
+  const pending: PendingRequest[] = []
 
-  const release = () => {
-    const next = pending.shift()
-    if (next) {
-      next()
-      return
+  function release(): void {
+    let next = pending.shift()
+    while (next) {
+      next.stopObservingCancellation()
+      if (!next.isCanceled()) {
+        run(next)
+        return
+      }
+      next.onCanceledBeforeRun()
+      next.resolve()
+      next = pending.shift()
     }
-
     active = false
   }
 
-  return async (task) => {
-    await acquire()
-    try {
-      await task()
-    } finally {
+  function run(request: PendingRequest): void {
+    request.stopObservingCancellation()
+    if (request.isCanceled()) {
+      request.onCanceledBeforeRun()
+      request.resolve()
       release()
+      return
     }
+    let task: Promise<void>
+    try {
+      task = request.task()
+    } catch (error) {
+      request.reject(error)
+      release()
+      return
+    }
+    task.then(request.resolve, request.reject).finally(release)
   }
+
+  return (task, isCanceled, observeCancellation, onCanceledBeforeRun) => new Promise<void>((resolve, reject) => {
+    const request: PendingRequest = {
+      task,
+      isCanceled,
+      stopObservingCancellation: () => {},
+      onCanceledBeforeRun,
+      resolve,
+      reject,
+    }
+    const cancel = () => {
+      const index = pending.indexOf(request)
+      if (index === -1) {
+        return
+      }
+      pending.splice(index, 1)
+      request.stopObservingCancellation()
+      request.onCanceledBeforeRun()
+      resolve()
+    }
+    request.stopObservingCancellation = observeCancellation(cancel)
+
+    if (active) {
+      pending.push(request)
+      return
+    }
+
+    active = true
+    run(request)
+  })
 }
 
 async function listenPreviewProxy(proxy: PreviewProxyServer, port: number, bind: string): Promise<void> {
@@ -323,6 +461,16 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
   delete forwarded["x-forwarded-host"]
   delete forwarded["x-forwarded-port"]
   delete forwarded["x-forwarded-proto"]
+  if (headers["service-worker"] === "script" || headers["sec-fetch-dest"] === "serviceworker") {
+    delete forwarded["service-worker"]
+    delete forwarded["sec-fetch-dest"]
+  }
+  if (isCredentiallessPlaygroundWorkerAssetRequest(headers, requestTarget)) {
+    // The CLI's auto-login bootstrap cookie is required by worker requests that Chromium
+    // sends without its browsing-context cookie jar. Keep this stateless and narrow so
+    // normal browser authentication and Set-Cookie responses remain browser-owned.
+    forwarded.cookie = "playground_auto_login_already_happened=1"
+  }
   if (requestTarget.rewriteTargetOrigin) {
     forwarded["accept-encoding"] = "identity"
   }
@@ -336,10 +484,29 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
   }
 }
 
+function isCredentiallessPlaygroundWorkerAssetRequest(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget): boolean {
+  if (!requestTarget.rewriteTargetOrigin || headerValue(headers.cookie)) {
+    return false
+  }
+
+  const destination = headerValue(headers["sec-fetch-dest"])?.toLowerCase()
+  if (headers["service-worker"] !== "script" && destination !== "serviceworker" && destination !== "worker" && destination !== "sharedworker" && destination !== "script") {
+    // Requests without a fetch destination are not correlated to a worker safely.
+    return false
+  }
+
+  const path = new URL(requestTarget.path, "http://localhost").pathname
+  return path.endsWith("/sw.js") || /(?:^|\/)assets\/[^/]+\.(?:m?js|wasm)$/i.test(path)
+}
+
 function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
+
+  if (new URL(requestTarget.path, "http://localhost").pathname.endsWith("/sw.js")) {
+    forwarded["service-worker-allowed"] = "/"
+  }
 
   if (typeof forwarded.location === "string") {
     try {
