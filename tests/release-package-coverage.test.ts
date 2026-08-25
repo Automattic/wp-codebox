@@ -22,6 +22,7 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
   source_roots: [pluginRoot],
   archive_root: "wp-codebox",
 }])
+assert.deepEqual(homeboy.scripts?.build, ["npm run release:package"], "Homeboy releases must consume the release artifact manifest")
 assert.deepEqual(homeboy.scripts?.test, [
   "npm run smoke -- --group package",
   "npm run test:release-target",

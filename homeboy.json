@@ -72,7 +72,7 @@
   ],
   "scripts": {
     "build": [
-      "npm run package:wordpress-plugin"
+      "npm run release:package"
     ],
     "lint": [
       "npm run build"
