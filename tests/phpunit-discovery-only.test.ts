@@ -4,6 +4,7 @@ import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe
 import { phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
 import { recipeHasPhpunitDiscoveryOnly } from "../packages/cli/src/commands/recipe-runtime-setup.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 test("wordpress.phpunit discovery-only returns canonical files before execution", () => {
   const recipe = buildWordPressPhpunitRecipe({
@@ -55,7 +56,7 @@ test("discovery-only rejects selectors before starting a runtime", async () => {
       invoked = true
       return { exitCode: 0, errors: "", text: "" }
     },
-    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
     server: {} as never,
     spec: { command: "wordpress.phpunit", args: ["plugin-slug=fixture", "discovery-only=1", "test-file=tests/FixtureTest.php"] },
   }), /discovery-only cannot be combined/)
@@ -75,7 +76,7 @@ test("discovery-only returns its schema-bound result directly", async () => {
     artifactRoot: "/tmp/artifacts",
     mounts: [],
     runPlaygroundCommand: async () => ({ exitCode: 0, errors: "", text: "private runtime output" }),
-    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
     server: { playground: { readFileAsText: async () => `DISCOVERY_RESULT_JSON:${JSON.stringify(payload)}\n` } } as never,
     spec: { command: "wordpress.phpunit", args: ["plugin-slug=fixture", "discovery-only=1"] },
   })

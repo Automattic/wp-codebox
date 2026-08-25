@@ -5,9 +5,10 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { mkdtempSync } from "node:fs"
 import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
-import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction, type RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
+import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode, phpCodeFromArgs } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { phpEnvAssignmentFunction, phpEnvAssignments } from "../packages/runtime-playground/src/php-snippets.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const environmentSnippet = phpEnvAssignments({ EXAMPLE_RUNTIME_ENV: "available" })
 const environmentOutput = execFileSync(
@@ -116,21 +117,7 @@ assert.deepEqual(JSON.parse(actionOutput), {
   contained_runtime_abilities_ready: 1,
 })
 
-const runtimeSpec: RuntimeCreateSpec = {
-  backend: "wordpress-playground",
-  environment: {
-    kind: "wordpress",
-    version: "latest",
-    blueprint: {},
-  },
-  policy: {
-    network: "deny",
-    filesystem: "readwrite-mounts",
-    commands: ["wordpress.run-php"],
-    secrets: "none",
-    approvals: "never",
-  },
-}
+const runtimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.run-php"], policy: { filesystem: "readwrite-mounts" } })
 
 const bootstrappedRunPhp = bootstrapPhpCode({
   ...runtimeSpec,

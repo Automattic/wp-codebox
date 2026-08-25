@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
+import type { RuntimeCreateSpec } from "../packages/runtime-core/src/runtime-contracts.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -14,6 +15,27 @@ export const cliPath = resolve(repoRoot, "packages/cli/dist/index.js")
 export interface CommandOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
+}
+
+export interface WordPressRuntimeSpecOptions {
+  commands: string[]
+  environment?: Partial<RuntimeCreateSpec["environment"]>
+  policy?: Partial<Omit<RuntimeCreateSpec["policy"], "commands">>
+  runtimeEnv?: Record<string, string>
+  metadata?: Record<string, unknown>
+  artifactsDirectory?: string
+}
+
+export function wordpressRuntimeSpec(options: WordPressRuntimeSpecOptions): RuntimeCreateSpec {
+  const { commands, environment, policy, runtimeEnv, metadata, artifactsDirectory } = options
+  return {
+    backend: "wordpress-playground",
+    environment: { kind: "wordpress", name: "test", version: "latest", blueprint: {}, ...environment },
+    policy: { network: "deny", filesystem: "sandbox", commands, secrets: "none", approvals: "never", ...policy },
+    ...(runtimeEnv ? { runtimeEnv } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(artifactsDirectory ? { artifactsDirectory } : {}),
+  }
 }
 
 export async function runCliJson<T>(args: string[]): Promise<T> {

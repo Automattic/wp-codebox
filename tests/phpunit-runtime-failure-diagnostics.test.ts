@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PLUGIN_PHPUNIT_RESULT_FILE } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-phpunit-runtime-diagnostics-"))
 const secret = "sk-abcdefghijklmnopqrstuvwxyz"
@@ -17,7 +18,7 @@ await assert.rejects(
       submittedCode = input.code
       return { exitCode: 1, errors: "", text: "" }
     },
-    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
     server: {
       playground: {
         readFileAsText: async (path: string) => {
