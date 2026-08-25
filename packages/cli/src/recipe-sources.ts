@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
+import { copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, normalizeReviewerSafePath, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
@@ -15,14 +15,9 @@ export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloa
 const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
 const PHP_SCOPER_DOWNLOAD_ATTEMPTS = 3
 const PHP_SCOPER_DOWNLOAD_TIMEOUT_MS = 120_000
-const RECIPE_PLUGIN_COMPOSER_INSTALL_ARGS = [
-  "install",
-  "--no-dev",
-  "--prefer-dist",
-  "--no-interaction",
-  "--no-progress",
-  "--no-scripts",
-]
+const MAX_COMPOSER_INSTALLER_PATHS = 64
+const MAX_COMPOSER_INSTALLER_PACKAGES = 256
+const MAX_COMPOSER_PACKAGE_TREE_ENTRIES = 100_000
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -349,13 +344,11 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       ...composerManagedHostCommandConfig({
         cwd: stagedSource,
         allowedCwdRoots: [stagingRoot],
-        // Explicit plugin preparation must honor project-authorized installers
-        // so WordPress packages reach their declared paths before activation.
-        args: RECIPE_PLUGIN_COMPOSER_INSTALL_ARGS,
         label: "prepare Composer autoload for recipe extra plugin",
       }),
       cwd: stagedSource,
     })
+    await materializeComposerPathRepositoryPackages(stagedSource, stagedRoot)
     await writeComposerInstalledPackageAutoloader(stagedSource)
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
@@ -372,6 +365,189 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       localPathCategory: "temporary-composer-autoload",
     },
   }
+}
+
+export async function materializeComposerPathRepositoryPackages(pluginSource: string, stagedSourceRoot: string): Promise<void> {
+  const composer = await readBoundedComposerJson(join(pluginSource, "composer.json"), "root composer.json")
+  const installerPaths = composer.extra && typeof composer.extra === "object" && !Array.isArray(composer.extra)
+    ? (composer.extra as { "installer-paths"?: unknown })["installer-paths"]
+    : undefined
+  if (installerPaths === undefined) return
+  if (!installerPaths || typeof installerPaths !== "object" || Array.isArray(installerPaths)) {
+    throw new Error("Composer extra.installer-paths must be an object")
+  }
+
+  const declarations = Object.entries(installerPaths)
+  if (declarations.length > MAX_COMPOSER_INSTALLER_PATHS) {
+    throw new Error(`Composer extra.installer-paths exceeds ${MAX_COMPOSER_INSTALLER_PATHS} declarations`)
+  }
+
+  const pathRepositories = composerPathRepositorySources(composer.repositories, pluginSource, stagedSourceRoot)
+  const installedJsonPath = join(pluginSource, "vendor", "composer", "installed.json")
+  const installed = composerInstalledPackages(await readBoundedJson(installedJsonPath, "Composer installed.json"))
+  if (installed.length > MAX_COMPOSER_INSTALLER_PACKAGES) {
+    throw new Error(`Composer installed.json exceeds ${MAX_COMPOSER_INSTALLER_PACKAGES} packages`)
+  }
+  const installedByName = new Map(installed.map((pkg) => [pkg.name, pkg]))
+  const destinations = new Set<string>()
+  let selectedPackages = 0
+
+  for (const [template, selectors] of declarations) {
+    if (!Array.isArray(selectors) || selectors.length > MAX_COMPOSER_INSTALLER_PACKAGES) {
+      throw new Error(`Composer installer path ${template} must select a bounded package-name array`)
+    }
+    for (const selector of selectors) {
+      selectedPackages++
+      if (selectedPackages > MAX_COMPOSER_INSTALLER_PACKAGES) {
+        throw new Error(`Composer extra.installer-paths exceeds ${MAX_COMPOSER_INSTALLER_PACKAGES} selected packages`)
+      }
+      if (typeof selector !== "string" || !isComposerPackageName(selector)) {
+        throw new Error(`Composer installer path ${template} may only select exact safe package names`)
+      }
+      const pkg = installedByName.get(selector)
+      if (!pkg) throw new Error(`Composer installer path package is not installed: ${selector}`)
+      if (pkg.type !== "wordpress-plugin") throw new Error(`Composer installer path package must be type wordpress-plugin: ${selector}`)
+      if (pkg.dist?.type !== "path" || typeof pkg.dist.url !== "string") {
+        throw new Error(`Composer installer path package must come from a path repository: ${selector}`)
+      }
+
+      const repositorySource = composerPathSource(pkg.dist.url, pluginSource, stagedSourceRoot, `package ${selector}`)
+      if (!pathRepositories.has(repositorySource)) {
+        throw new Error(`Composer installed path package does not match a declared root path repository: ${selector}`)
+      }
+      const source = composerInstalledPackageSource(pkg, installedJsonPath, join(pluginSource, "vendor"))
+      await assertCopyableComposerPackageTree(source)
+      await assertCopyableComposerPackageTree(repositorySource)
+      await assertComposerPackageMetadata(source, selector, "wordpress-plugin")
+      await assertComposerPackageMetadata(repositorySource, selector, "wordpress-plugin")
+
+      const destination = composerInstallerDestination(pluginSource, template, selector, pkg.type)
+      if (destinations.has(destination)) throw new Error(`Composer installer paths resolve to a duplicate destination: ${destination}`)
+      destinations.add(destination)
+      await assertComposerDestinationParents(pluginSource, dirname(destination))
+      if (await pathExists(destination)) throw new Error(`Composer installer destination already exists: ${destination}`)
+      await mkdir(dirname(destination), { recursive: true })
+      await cp(source, destination, { recursive: true, errorOnExist: true, force: false })
+    }
+  }
+}
+
+async function readBoundedComposerJson(path: string, label: string): Promise<Record<string, unknown>> {
+  const parsed = await readBoundedJson(path, label)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${label} must contain a JSON object`)
+  return parsed as Record<string, unknown>
+}
+
+async function readBoundedJson(path: string, label: string): Promise<unknown> {
+  const metadata = await stat(path)
+  if (!metadata.isFile() || metadata.size > 10 * 1024 * 1024) throw new Error(`${label} must be a bounded JSON file`)
+  return JSON.parse(await readFile(path, "utf8")) as unknown
+}
+
+function composerPathRepositorySources(repositories: unknown, pluginSource: string, stagedSourceRoot: string): Set<string> {
+  if (!Array.isArray(repositories) || repositories.length > MAX_COMPOSER_INSTALLER_PACKAGES) {
+    throw new Error("Composer path package materialization requires a bounded repositories array")
+  }
+  const sources = new Set<string>()
+  for (const repository of repositories) {
+    if (!repository || typeof repository !== "object" || Array.isArray(repository)) continue
+    const record = repository as { type?: unknown; url?: unknown; options?: { symlink?: unknown } }
+    if (record.type !== "path") continue
+    if (typeof record.url !== "string" || record.options?.symlink === true) {
+      throw new Error("Composer path repositories must use mirrored relative sources")
+    }
+    sources.add(composerPathSource(record.url, pluginSource, stagedSourceRoot, "root repository"))
+  }
+  return sources
+}
+
+function composerPathSource(sourceRef: string, pluginSource: string, stagedSourceRoot: string, label: string): string {
+  if (!sourceRef || sourceRef.length > 1024 || isAbsolute(sourceRef) || /^[A-Za-z]:[\\/]/.test(sourceRef) || /[*?\0]/.test(sourceRef)) {
+    throw new Error(`Composer ${label} path must be a bounded relative path`)
+  }
+  const source = resolve(pluginSource, sourceRef)
+  if (!pathIsInside(stagedSourceRoot, source)) throw new Error(`Composer ${label} path escapes the staged source root`)
+  return source
+}
+
+function composerInstalledPackageSource(pkg: ComposerInstalledPackage, installedJsonPath: string, vendorRoot: string): string {
+  const installPath = pkg["install-path"]
+  if (typeof installPath !== "string" || !installPath || installPath.length > 1024 || isAbsolute(installPath) || /^[A-Za-z]:[\\/]/.test(installPath)) {
+    throw new Error(`Composer installed package has an unsafe install-path: ${pkg.name}`)
+  }
+  const source = resolve(dirname(installedJsonPath), installPath)
+  if (!pathIsInside(vendorRoot, source) || source === resolve(vendorRoot)) {
+    throw new Error(`Composer installed package path escapes vendor: ${pkg.name}`)
+  }
+  return source
+}
+
+function composerInstallerDestination(pluginSource: string, template: string, packageName: string, packageType: string): string {
+  if (!template || template.length > 1024 || isAbsolute(template) || /^[A-Za-z]:[\\/]/.test(template) || template.startsWith("\\")) {
+    throw new Error(`Composer installer destination must be a bounded relative path: ${template}`)
+  }
+  const [vendor, name] = packageName.split("/")
+  const expanded = template
+    .replaceAll("{$vendor}", vendor)
+    .replaceAll("{$name}", name)
+    .replaceAll("{$type}", packageType)
+  if (/\{\$[^}]+\}/.test(expanded)) throw new Error(`Composer installer destination uses an unsupported placeholder: ${template}`)
+  let safePath: string
+  try {
+    safePath = normalizeReviewerSafePath(expanded)
+  } catch {
+    throw new Error(`Composer installer destination must be a safe relative path: ${template}`)
+  }
+  const destination = resolve(pluginSource, safePath)
+  if (!pathIsInside(pluginSource, destination) || destination === resolve(pluginSource)) {
+    throw new Error(`Composer installer destination escapes the staged plugin root: ${template}`)
+  }
+  return destination
+}
+
+async function assertComposerPackageMetadata(source: string, name: string, type: string): Promise<void> {
+  const metadata = await readBoundedComposerJson(join(source, "composer.json"), `Composer package metadata for ${name}`)
+  if (metadata.name !== name || metadata.type !== type) throw new Error(`Composer package metadata does not match installed package: ${name}`)
+}
+
+async function assertCopyableComposerPackageTree(source: string): Promise<void> {
+  const sourceMetadata = await lstat(source)
+  if (sourceMetadata.isSymbolicLink() || !sourceMetadata.isDirectory()) {
+    throw new Error(`Composer path package source is not a safe directory: ${source}`)
+  }
+  const pending = [source]
+  let entries = 0
+  while (pending.length > 0) {
+    const directory = pending.pop()!
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      entries++
+      if (entries > MAX_COMPOSER_PACKAGE_TREE_ENTRIES) throw new Error("Composer path package exceeds the materialization file limit")
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+        throw new Error(`Composer path package contains an unsafe filesystem entry: ${entry.name}`)
+      }
+      if (entry.isDirectory()) pending.push(join(directory, entry.name))
+    }
+  }
+}
+
+async function assertComposerDestinationParents(root: string, destinationParent: string): Promise<void> {
+  const relativeParent = relative(resolve(root), resolve(destinationParent))
+  let current = resolve(root)
+  for (const segment of relativeParent.split("/").filter(Boolean)) {
+    current = join(current, segment)
+    try {
+      const metadata = await lstat(current)
+      if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error(`Composer installer destination parent is unsafe: ${current}`)
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return
+      throw error
+    }
+  }
+}
+
+function pathIsInside(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate))
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath))
 }
 
 async function writeComposerInstalledPackageAutoloader(pluginSource: string): Promise<void> {
@@ -1313,6 +1489,8 @@ function escapeRegExp(value: string): string {
 
 interface ComposerInstalledPackage {
   name: string
+  type?: string
+  dist?: { type?: string; url?: string }
   "install-path"?: string
   autoload?: { "psr-4"?: Record<string, string | string[]>; classmap?: string | string[] }
 }
