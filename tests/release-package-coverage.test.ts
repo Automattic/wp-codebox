@@ -22,7 +22,7 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
   source_roots: [pluginRoot],
   archive_root: "wp-codebox",
 }])
-assert.deepEqual(homeboy.extensions?.nodejs, { release_package_script: "release:package" }, "the Node release provider must consume the project artifact manifest")
+assert.deepEqual(homeboy.extensions?.nodejs, { settings: { release_package_script: "release:package" } }, "the Node release provider must receive the project artifact manifest setting")
 assert.deepEqual(homeboy.scripts?.build, ["npm run package:wordpress-plugin"], "component builds retain singular WordPress deploy-artifact ownership")
 assert.deepEqual(homeboy.scripts?.test, [
   "npm run smoke -- --group package",
