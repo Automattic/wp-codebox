@@ -5,18 +5,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import type { RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
 import { runBrowserActionsCommand, runBrowserScenarioCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
 import { runBrowserProbeCommand } from "../packages/runtime-playground/src/browser-probe-runner.js"
 import type { BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
-const runtimeSpec: RuntimeCreateSpec = {
-  backend: "wordpress-playground",
-  environment: {},
-  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.browser-actions", "wordpress.browser-actions.evaluate", "wordpress.browser-probe", "wordpress.browser-scenario"], secrets: "none", approvals: "never" },
-}
+const runtimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.browser-actions", "wordpress.browser-actions.evaluate", "wordpress.browser-probe", "wordpress.browser-scenario"] })
 
 test("standalone probes use the shared environment context adapter", async () => {
   const fixture = await browserFixture()

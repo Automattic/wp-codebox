@@ -3,6 +3,7 @@ import { commandRegistry } from "../packages/runtime-core/src/command-registry.j
 import { pluginStateInputFromArgs, pluginStatePhpCode } from "../packages/runtime-playground/src/plugin-state-command-handlers.js"
 import { materializePlaygroundRunResponse } from "../packages/runtime-playground/src/playground-runtime.js"
 import { runPluginStateCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const command = commandRegistry.find((definition) => definition.id === "wordpress.plugin-state")
 const ensureCommand = commandRegistry.find((definition) => definition.id === "wordpress.ensure-plugin-active")
@@ -53,7 +54,7 @@ assert.deepEqual(JSON.parse(materializedResponse.text), JSON.parse(pluginStateJs
 
 const pluginStateOutput = await runPluginStateCommand({
   runPlaygroundCommand: async () => materializedResponse,
-  runtimeSpec: { environment: { kind: "wordpress" } } as never,
+  runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.plugin-state"] }),
   server: {} as never,
   spec: { command: "wordpress.plugin-state", args: ["plugin=example"] } as never,
 })

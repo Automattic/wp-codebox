@@ -7,6 +7,7 @@ import { PlaygroundCommandCrashError } from "../packages/runtime-playground/src/
 import { PLUGIN_PHPUNIT_RESULT_FILE } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { buildPhpunitTestResults, parsePhpunitCompletedResult } from "../packages/runtime-playground/src/phpunit-test-results.js"
 import { runPhpunitCommand } from "../packages/runtime-playground/src/wordpress-command-runners.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const passedLog = completedLog({ status: "passed", total: 3, passed: 3, failed: 0, skipped: 0, assertions: 3, failures: 0, errors: 0 })
 const failedLog = completedLog({ status: "failed", total: 4, passed: 1, failed: 2, skipped: 1, assertions: 2, failures: 1, errors: 1 })
@@ -59,7 +60,7 @@ function runPhpunitWith(error: Error, log: string, artifactRoot: string): Promis
     artifactRoot,
     mounts: [],
     runPlaygroundCommand: async () => { throw error },
-    runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+    runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
     server: { playground: { readFileAsText: async (path: string) => {
       assert.equal(path, PLUGIN_PHPUNIT_RESULT_FILE)
       return log

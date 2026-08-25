@@ -5,17 +5,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { browserAdaptiveExplorationContract, type RuntimeCreateSpec } from "../packages/runtime-core/src/index.js"
+import { browserAdaptiveExplorationContract } from "../packages/runtime-core/src/index.js"
 import { runBrowserActionsCommand } from "../packages/runtime-playground/src/browser-actions-runner.js"
 import { captureBrowserPageHtml, trackBrowserNavigation, type BrowserNavigationTracker } from "../packages/runtime-playground/src/browser-capture-session.js"
 import { browserEnvironmentCell, resolvePlaywrightBrowserEnvironment } from "../packages/runtime-playground/src/browser-environment-matrix.js"
 import { chromium } from "playwright"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
-const runtimeSpec: RuntimeCreateSpec = {
-  backend: "wordpress-playground",
-  environment: {},
-  policy: { network: "deny", filesystem: "sandbox", commands: ["wordpress.browser-actions"], secrets: "none", approvals: "never" },
-}
+const runtimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.browser-actions"] })
 
 test("HTML capture remains unchanged when no navigation is active", async () => {
   const browser = await chromium.launch({ headless: true })

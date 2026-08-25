@@ -11,12 +11,10 @@ import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } fr
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
 import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
+import { wordpressRuntimeSpec } from "../scripts/test-kit.js"
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
-const phpunitRuntimeSpec = {
-  environment: { kind: "wordpress", name: "test", version: "latest" },
-  runtimeEnv: { TC_MYSQL_PORT: "3306" },
-} as never
+const phpunitRuntimeSpec = wordpressRuntimeSpec({ commands: ["wordpress.phpunit"], runtimeEnv: { TC_MYSQL_PORT: "3306" } })
 
 function phpunitRecipeArgs(options: Omit<Parameters<typeof buildWordPressPhpunitRecipe>[0], "pluginSlug">): string[] {
   return buildWordPressPhpunitRecipe({ pluginSlug: "demo-plugin", ...options }).workflow.steps[0].args
@@ -708,11 +706,11 @@ await runPhpunitCommand({
     capturedMysqlCode = input.code
     return { text: "ok", exitCode: 0 }
   },
-  runtimeSpec: {
-    environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+  runtimeSpec: wordpressRuntimeSpec({
+    commands: ["wordpress.phpunit"],
+    environment: { databaseSetup: "external" },
     runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
-    policy: { commands: ["wordpress.phpunit"] },
-  } as never,
+  }),
   server: { playground: {} } as never,
   spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
 })
@@ -755,12 +753,12 @@ await runPhpunitCommand({
     mysqlMultisiteInvocations.push(decodedBootstrapWrapper(input.code))
     return { text: "ok", exitCode: 0 }
   },
-  runtimeSpec: {
-    environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+  runtimeSpec: wordpressRuntimeSpec({
+    commands: ["wordpress.phpunit"],
+    environment: { databaseSetup: "external" },
     runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
-    policy: { commands: ["wordpress.phpunit"] },
     metadata: { recipe: { inputs: { extra_plugins: [{ slug: "preinstall-sensitive", pluginFile: "preinstall-sensitive/bootstrap.php", target: "/wordpress/wp-content/plugins/preinstall-sensitive", activate: true, loadAs: "plugin" }] } } },
-  } as never,
+  }),
   server: { playground: {} } as never,
   spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql", "multisite=1"] },
 })
@@ -780,11 +778,11 @@ await assert.rejects(
       failedPreinstallInvocations.push(decodedBootstrapWrapper(input.code))
       return { text: "preinstall failed", exitCode: 1 }
     },
-    runtimeSpec: {
-      environment: { kind: "wordpress", name: "test", version: "latest", databaseSetup: "external" },
+    runtimeSpec: wordpressRuntimeSpec({
+      commands: ["wordpress.phpunit"],
+      environment: { databaseSetup: "external" },
       runtimeEnv: { DB_HOST: "127.0.0.1", DB_PORT: "3307", DB_NAME: "runtime", DB_USER: "runtime", DB_PASSWORD: "secret" },
-      policy: { commands: ["wordpress.phpunit"] },
-    } as never,
+    }),
     server: {
       playground: {
         readFileAsText: async () => "STAGE_FAIL:preinstall:RuntimeException: network install failed",
@@ -804,7 +802,7 @@ await assert.rejects(runPhpunitCommand({
   artifactRoot: mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-mysql-reject-")),
   mounts: [],
   runPlaygroundCommand: async () => { throw new Error("workload must not execute") },
-  runtimeSpec: { environment: { kind: "wordpress", name: "test", version: "latest" }, policy: { commands: ["wordpress.phpunit"] } } as never,
+  runtimeSpec: wordpressRuntimeSpec({ commands: ["wordpress.phpunit"] }),
   server: { playground: {} } as never,
   spec: { command: "wordpress.phpunit", args: ["plugin-slug=demo-plugin", "database-type=mysql"] },
 }), /requires a managed external database service.*refusing to substitute SQLite/)
