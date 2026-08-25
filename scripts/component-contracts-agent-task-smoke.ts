@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildAgentTaskRecipe } from "../packages/runtime-core/src/agent-task-recipe.js"
 import { normalizeTaskInput } from "../packages/runtime-core/src/task-input.js"
-import { prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.js"
+import { cleanupRecipePreparedSources, prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.js"
 import { runRecipeRunCommand } from "../packages/cli/src/commands/recipe-run.js"
 
 const root = mkdtempSync(join(tmpdir(), "wp-codebox-component-contracts-smoke-"))
@@ -91,6 +91,13 @@ try {
   const preparedPlugins = await prepareRecipeExtraPlugins(preparedMonorepoRecipe, root)
   const preparedMonorepoPlugin = preparedPlugins.find((plugin) => plugin.slug === "monorepo-component")
   assert.equal(preparedMonorepoPlugin?.source, monorepoComponent?.source, "prepared monorepo plugin sources should remain authoritative")
+  const preparedMonorepoEntrypoint = join(String(preparedMonorepoPlugin?.source), "monorepo-component.php")
+  const preparedMonorepoContract = join(String(preparedMonorepoPlugin?.source), "..", "..", "packages", "php", "shared", "composer.json")
+  assert.equal(existsSync(preparedMonorepoEntrypoint), true, "prepared monorepo plugin sources should retain their entrypoint")
+  assert.equal(existsSync(preparedMonorepoContract), true, "prepared monorepo plugin sources should retain source-root contract files")
+  await cleanupRecipePreparedSources([], preparedPlugins)
+  assert.equal(existsSync(preparedMonorepoEntrypoint), true, "cleanup should not remove an authoritative prepared plugin entrypoint")
+  assert.equal(existsSync(preparedMonorepoContract), true, "cleanup should not remove authoritative source-root contract files")
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")
