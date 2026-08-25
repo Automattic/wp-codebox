@@ -22,7 +22,7 @@ await assert.rejects(
       playground: {
         readFileAsText: async (path: string) => {
           assert.equal(path, PLUGIN_PHPUNIT_RESULT_FILE)
-          return `STAGE_FATAL:bootstrap:Bootstrap failed with token: ${secret} ${"x".repeat(25_000)}`
+          return `STAGE_FATAL:install:Bootstrap failed with token: ${secret} ${"x".repeat(25_000)}`
         },
       },
     } as never,
@@ -42,11 +42,12 @@ const captured = await readFile(join(artifactRoot, "files", "phpunit", ".pg-test
 assert.match(captured, /Bootstrap failed with token: \[redacted\]/)
 assert.doesNotMatch(captured, new RegExp(secret))
 
-const encodedBootstrap = submittedCode.match(/base64_decode\("([A-Za-z0-9+/=]+)"\)/)?.[1]
-assert.ok(encodedBootstrap, "PHPUnit payload must execute inside the bootstrap diagnostic wrapper")
-const decodedBootstrap = Buffer.from(encodedBootstrap, "base64").toString("utf8")
-const preBootstrapRecorder = decodedBootstrap.indexOf("STAGE_FATAL:bootstrap:")
-const wordpressBootstrap = decodedBootstrap.indexOf("require_once '/wordpress/wp-load.php';")
-assert.ok(preBootstrapRecorder >= 0 && preBootstrapRecorder < wordpressBootstrap, "fatal diagnostics must be recorded before the WordPress bootstrap boundary")
+assert.doesNotMatch(submittedCode, /eval\('\?>' \. base64_decode\(/, "runtime-only PHPUnit must not duplicate the outer bootstrap wrapper")
+assert.match(submittedCode, /'schema' => 'wp-codebox\/php-fatal-diagnostic\/v1'/)
+const diagnosticRegistration = submittedCode.indexOf("pg_install_diagnostics_handlers();")
+const installStage = submittedCode.lastIndexOf("pg_run_install_stage(array(")
+assert.ok(diagnosticRegistration >= 0 && diagnosticRegistration < installStage, "managed PHPUnit diagnostics must be installed before the runtime-owned WordPress bootstrap stage")
+assert.match(submittedCode, /pg_log\('STAGE_DIE:' \. \$current_stage \. ':' \. \$buffered\)/)
+assert.match(submittedCode, /pg_log\('STAGE_FATAL:' \. \$current_stage/)
 
 console.log("phpunit runtime failure diagnostics ok")
