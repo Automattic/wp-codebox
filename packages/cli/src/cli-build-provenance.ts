@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
-import { readFile, readdir, writeFile } from "node:fs/promises"
+import { readFile, readdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 
 export const CLI_BUILD_PROVENANCE_FILE = "cli-build-provenance.json"
@@ -150,6 +150,8 @@ async function readPackageMetadata(packageRoot: string): Promise<{ name: string;
 }
 
 async function sourceIdentity(repositoryRoot: string, packageRoot: string): Promise<FileIdentity> {
+  repositoryRoot = await realpath(repositoryRoot)
+  packageRoot = await realpath(packageRoot)
   const files = [
     ...(await recursiveFiles(join(packageRoot, "src"))),
     join(packageRoot, "package.json"),
