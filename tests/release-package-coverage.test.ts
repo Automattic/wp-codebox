@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join, relative, resolve } from "node:path"
@@ -140,6 +140,7 @@ try {
       version = cliVersion.stdout
       assert.match(version, /^\d+\.\d+\.\d+\s*$/)
       await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+      await assertCliStartsWithoutSharpRuntime(root, cliEntrypoint)
     }
     const descriptorModule = await import(pathToFileURL(join(root, "packages", "runtime-core", "dist", "runtime-contract-manifest.js")).href) as { runtimeDescriptor(): { capabilities: string[]; packageCapabilities: string[]; runtimeServices: { nativeMariaDb: { status: string } }; contractManifest: { capabilities: { runtimeServices: { packageCapabilities: string[] } } } } }
     const descriptor = descriptorModule.runtimeDescriptor()
@@ -212,6 +213,24 @@ try {
 }
 
 console.log("release package coverage passed")
+
+async function assertCliStartsWithoutSharpRuntime(root: string, cliEntrypoint: string): Promise<void> {
+  const nativePackages = sharpRuntimePackageNames(releasePlatform, releaseArch)
+  const disabledPackages: string[] = []
+  try {
+    for (const packageName of nativePackages) {
+      const packagePath = join(root, "node_modules", ...packageName.split("/"))
+      await rename(packagePath, `${packagePath}.disabled`)
+      disabledPackages.push(packagePath)
+    }
+    await execFileAsync(process.execPath, [cliEntrypoint, "--version"])
+    await execFileAsync(process.execPath, [cliEntrypoint, "commands"])
+  } finally {
+    for (const packagePath of disabledPackages.reverse()) {
+      await rename(`${packagePath}.disabled`, packagePath)
+    }
+  }
+}
 
 async function assertPinnedPhpWasmOverlay(root: string, provenancePath: string, allowInternalSymlink = false): Promise<void> {
   const overlay = join(root, "node_modules", "@php-wasm", "node-8-3")

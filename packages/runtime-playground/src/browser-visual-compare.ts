@@ -4,7 +4,6 @@ import type { ExecutionSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-co
 import { errorMessage, now, sha256 } from "@automattic/wp-codebox-core/internals"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
-import sharp from "sharp"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import type { BrowserArtifact, BrowserProbeViewport } from "./browser-artifacts.js"
 import { launchChromiumBrowser } from "./browser-capture-session.js"
@@ -1904,6 +1903,7 @@ function visualCompareAnimatedMediaCandidate(body: Buffer): boolean {
 // the response first and reuse one static PNG buffer for identical content, so
 // URL, navigation timing, and capture order cannot affect the selected frame.
 async function installVisualCompareAnimatedMediaNormalization(page: Page, policy: "allow" | "first-frame", previewOrigin: string): Promise<VisualCompareAnimatedMediaTracker> {
+  const { default: sharp } = await import("sharp")
   let observed = 0
   let normalized = 0
   let failed = 0
