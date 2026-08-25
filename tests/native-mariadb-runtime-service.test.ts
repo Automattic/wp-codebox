@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { createServer } from "node:net"
 import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -41,6 +41,12 @@ assert.throws(() => assertNativeMariaDbFilesystemGeometry(1, 1, 256 * 1024 * 102
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 257 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_097), /geometry/)
 assert.doesNotThrow(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_096))
+assert.throws(() => assertNativeMariaDbFilesystemOwnership(1001, 1000, 1000, 1000), /ownership/)
+assert.doesNotThrow(() => assertNativeMariaDbFilesystemOwnership(1000, 1000, 1000, 1000))
+assert.doesNotThrow(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native\\040db rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/datadir.ext4 rw", "/tmp/native db", "/tmp/datadir.ext4"))
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/wrong.ext4 rw", "/tmp/native", "/tmp/datadir.ext4"), /identity/)
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev - fuse.fuse2fs image rw", "/tmp/native"), /options/)
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 8:1 / /tmp/native rw,nosuid,nodev,noexec - ext4 image rw", "/tmp/native"), /identity/)
 assert.doesNotThrow(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tNO\tOutbound\nMEMORY\tYES\tMemory\n"))
 assert.throws(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tYES\tOutbound\n"), /outbound-capable/)
 assert.throws(() => assertNativeMariaDbEngines("InnoDB\tNO\tTransactional\n"), /cannot be proven/)
@@ -114,10 +120,30 @@ try {
     },
   }
 
-  assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
+  const [firstReadiness, concurrentReadiness] = await Promise.all([nativeMariaDbHostReadiness(dependencies), nativeMariaDbHostReadiness(dependencies)])
+  assert.deepEqual(firstReadiness, { status: "ready" })
+  assert.deepEqual(concurrentReadiness, { status: "ready" })
   assert.ok(calls.some((call) => call.stdin?.includes("CREATE DATABASE")), "readiness provisions a disposable database instead of only writing a mount marker")
   assert.ok(calls.some((call) => call.stdin === "SHOW ENGINES;\n"), "readiness proves the daemon storage-engine policy")
+  const readinessAllocations = calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, readinessAllocations, "repeated and concurrent descriptor probes share one full lifecycle")
   assert.equal(calls.every((call) => call.env?.PATH === "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), true, "native commands ignore the caller PATH")
+
+  const failedProbeRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, async verifyNativeFilesystem() { throw new Error("mount is not writable by caller") } }), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !failedProbeRoots.has(name)), [], "an incompatible mount cannot produce false-ready or leak its root")
+
+  const failedInitializerScript = `${nodeShebang}
+if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
+process.exit(1);
+`
+  await writeFile(join(fixture, "mariadb-install-db"), failedInitializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
+  assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies }), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !failedProbeRoots.has(name)), [], "initializer failure cannot produce false-ready or leak its root")
+  await writeFile(join(fixture, "mariadb-install-db"), initializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
   const provisioned = await provisionRuntimeServices([service], { dependencies })

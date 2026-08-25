@@ -13,11 +13,14 @@ const service = (id: string, prefix = "DB"): WorkspaceRecipeRuntimeService => ({
   configuration: { provider: "native", engine: "mariadb" },
   outputs: { host: `${prefix}_HOST`, port: `${prefix}_PORT`, username: `${prefix}_USER`, password: `${prefix}_SECRET`, database: `${prefix}_NAME` },
 })
+const rootsBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
 const readiness = await nativeMariaDbHostReadiness()
 if (readiness.status !== "ready") {
+  assert.ok(["unprivileged-host-required", "trusted-containment-tools-unavailable", "bounded-filesystem-unavailable", "containment-probe-cleanup-failed"].includes(readiness.reason ?? ""), "native discovery must return a stable fail-closed reason")
+  const leakedRoots = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !rootsBefore.has(name))
+  assert.deepEqual(leakedRoots, [], "failed native discovery must not leak private roots")
   console.log(`native MariaDB runtime service integration skipped: ${readiness.reason ?? "host-unavailable"}`)
 } else {
-const rootsBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
 const concurrentProvisioning = await Promise.allSettled([provisionRuntimeServices([service("native-one")]), provisionRuntimeServices([service("native-two", "SECOND_DB")])])
 const successfulPeers = concurrentProvisioning.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof provisionRuntimeServices>>> => result.status === "fulfilled").map((result) => result.value)
 const rejectedPeer = concurrentProvisioning.find((result): result is PromiseRejectedResult => result.status === "rejected")
