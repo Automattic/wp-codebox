@@ -50,6 +50,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "runtime-task:run",
     "browser-preview:start",
     "browser-preview:lifecycle",
+    "browser-preview:double-buffer",
+    "browser-preview:navigation",
     "browser-contained-site-sync:consume",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
@@ -87,6 +89,7 @@ const expectedV1TopLevelKeys = [
   "runRuntimeTask",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "aggregateFanoutOutputs",
   "validateBrowserRuntimeMaterialization",
@@ -124,6 +127,7 @@ const expectedV1MethodKeys = [
   "executeBrowserProviderProxyRequest",
   "consumeContainedSiteSync",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "startBrowserPreview",
   "bootExecutableBrowserSession",
   "createParentToolRequest",
@@ -176,12 +180,14 @@ assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.equal(typeof api.v1.captureViewportScreenshot, "function")
 assert.equal(typeof api.v1.verifyViewportScreenshot, "function")
 assert.equal(typeof api.v1.startBrowserPreview, "function")
+assert.equal(typeof api.v1.createBrowserPreviewBuffer, "function")
 assert.equal(typeof api.v1.consumeContainedSiteSync, "function")
 assert.equal(typeof api.v1.openOrCreateBrowserContainedSite, "function")
 const studioNativeConsumedTopLevelMethods = [
   "consumeContainedSiteSync",
   "ensureDirectory",
   "openOrCreateBrowserContainedSite",
+  "createBrowserPreviewBuffer",
   "runBrowserSessionRecipe",
   "runRecipe",
   "setFrontendAdminBarVisible",
@@ -335,6 +341,91 @@ await assert.rejects(
     return true
   },
 )
+
+const failedRequestClient = {
+  writeFile: async () => undefined,
+  request: async () => {
+    throw Object.assign(new Error("PHP endpoint returned 500"), { code: "http_500" })
+  },
+}
+await assert.rejects(
+  () => api.v1.methods.runPhpRequest(failedRequestClient, {
+    code: "<?php throw new Exception( 'broken' );",
+    forceRequest: true,
+  }),
+  (error: any) => {
+    assert.equal(error.code, "playground_request_failed")
+    assert.match(error.message, /PHP endpoint returned 500/)
+    assert.equal(error.data.last_error.code, "http_500")
+    assert.equal(error.data.attempts.length, 2)
+    return true
+  },
+)
+
+let providerProxyInstallations = 0
+let materializerDirectRuns = 0
+let materializerRequests = 0
+const materializerRecipeClient = {
+  run: async () => {
+    materializerDirectRuns += 1
+    return JSON.stringify(materializerDirectRuns === 1
+      ? { success: true, data: null, error: null }
+      : { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null })
+  },
+  writeFile: async () => undefined,
+  request: async () => {
+    materializerRequests += 1
+    throw new Error("materializer recipes must run directly")
+  },
+  onMessage: () => {
+    providerProxyInstallations += 1
+    throw new Error("materializer recipes must not install the provider proxy")
+  },
+}
+const materializerRecipeResult = await api.v1.methods.runRecipe(materializerRecipeClient, {
+  browser: {
+    task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json",
+  },
+  workflow: {
+    steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ],
+  },
+}, { materializer: { task: "example/run" } })
+assert.equal(providerProxyInstallations, 0)
+assert.equal(materializerDirectRuns, 2)
+assert.equal(materializerRequests, 0)
+assert.deepEqual(plain(materializerRecipeResult), {
+  schema: "wp-codebox/materialization-result/v1",
+  success: true,
+  task: "example/run",
+  result: { theme_slug: "example" },
+  report: null,
+  response: { success: true, response: { success: true, result: { theme_slug: "example" }, diagnostics: [] }, error: null },
+  error: null,
+})
+
+let failedMaterializerRuns = 0
+const failedMaterializerResult = await api.v1.methods.runRecipe({
+  run: async () => {
+    failedMaterializerRuns += 1
+    return JSON.stringify(failedMaterializerRuns === 1
+      ? { success: true, data: null, error: null }
+      : {
+          success: true,
+          response: {
+            success: false,
+            error: { code: "quality_gate_failed", message: "Fallback blocks remain." },
+            diagnostics: [ { code: "fallback_blocks", count: 2 } ],
+          },
+          error: null,
+        })
+  },
+}, {
+  browser: { task_path: "/wordpress/wp-content/uploads/wp-codebox/task.json" },
+  workflow: { steps: [ { command: "wordpress.run-php", args: [ "code=<?php echo '{}';" ] } ] },
+}, { materializer: { task: "example/run" } })
+assert.equal(failedMaterializerResult.success, false)
+assert.equal(failedMaterializerResult.error.code, "quality_gate_failed")
+assert.deepEqual(plain(failedMaterializerResult.result.diagnostics), [ { code: "fallback_blocks", count: 2 } ])
 
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
@@ -1059,6 +1150,102 @@ for (let index = 0; index < 8; index += 1) {
   await Promise.all([preview.dispose(), preview.dispose()])
 }
 assert.equal(repeatedReleases, 8, "repeated preview disposal remains bounded and idempotent")
+
+const workspaceChildren: any[] = []
+const workspaceContainer = {
+	attach(iframe: any) {
+		iframe.parentNode = this
+		iframe.remove = () => {
+			const index = workspaceChildren.indexOf(iframe)
+			if (index >= 0) workspaceChildren.splice(index, 1)
+			iframe.parentNode = null
+		}
+	},
+  appendChild(iframe: any) {
+	this.attach(iframe)
+    workspaceChildren.push(iframe)
+  },
+	replaceChild(next: any, previous: any) {
+		const index = workspaceChildren.indexOf(previous)
+		assert.notEqual(index, -1)
+		previous.parentNode = null
+		this.attach(next)
+		workspaceChildren[index] = next
+	},
+}
+const createWorkspaceIframe = () => ({
+  src: "about:blank",
+  loading: "lazy",
+  style: { display: "" },
+  attributes: {} as Record<string, string>,
+  setAttribute(name: string, value: string) { this.attributes[name] = value },
+  removeAttribute(name: string) { delete this.attributes[name] },
+  cloneNode() { return createWorkspaceIframe() },
+})
+const workspaceTemplate: any = createWorkspaceIframe()
+workspaceTemplate.parentNode = workspaceContainer
+const workspaceStarts: string[] = []
+const workspaceReleases: string[] = []
+const workspaceNavigations: string[] = []
+const workspaceNavigationErrors: string[] = []
+const previewBuffer = api.v1.createBrowserPreviewBuffer({ iframe: workspaceTemplate, activeAttribute: "data-preview-active" })
+const workspaceBoot = (key: string) => ({ ...lifecycleBoot, scope: `workspace-${key}` })
+const prepareWorkspacePreview = (slot: string, key: string) => previewBuffer.prepare(slot, workspaceBoot(key), {
+  hydrateBlueprintRef: async () => ({ blueprint: { steps: [] } }),
+  startPlaygroundWeb: async (request: any) => {
+	assert.equal(request.iframe.style.display, "none", "prepared standby runtimes remain invisible")
+	assert.equal(request.iframe.loading, "eager", "Codebox owns startup instead of deferring to iframe lazy loading")
+    workspaceStarts.push(key)
+    return {
+      client: key,
+      goTo: async (path: string) => {
+        workspaceNavigations.push(`${key}:${path}`)
+        if (key === "blank-replenishment") throw new Error("late navigation failure")
+      },
+    }
+  },
+  disposeClient: async () => {
+    workspaceReleases.push(key)
+    return true
+  },
+})
+const workspaceA = await prepareWorkspacePreview("slot-a", "site-a@revision-1")
+await previewBuffer.activate("slot-a")
+assert.deepEqual(plain(await workspaceA.navigate("/site-a")), {
+  schema: "wp-codebox/browser-preview-navigation-result/v1",
+  success: true,
+  status: "requested",
+  slot: "slot-a",
+  path: "/site-a",
+})
+const workspaceB = await prepareWorkspacePreview("slot-b", "site-b@revision-1")
+assert.equal(previewBuffer.has("slot-a"), true)
+assert.equal(await previewBuffer.prepare("slot-a", workspaceBoot("unused")), workspaceA, "preparing an occupied slot returns it without replacing its runtime")
+assert.deepEqual(workspaceStarts, ["site-a@revision-1", "site-b@revision-1"], "preparing the double buffer starts exactly two runtimes")
+assert.equal(previewBuffer.activeSlot, "slot-a")
+assert.equal(previewBuffer.size, 2)
+assert.equal(workspaceA.iframe.style.display, "")
+assert.equal(workspaceB.iframe.style.display, "none")
+assert.equal(workspaceA.iframe.attributes["data-preview-active"], "")
+assert.equal(workspaceB.iframe.attributes["data-preview-active"], undefined)
+await assert.rejects(() => prepareWorkspacePreview("slot-c", "site-c@revision-1"), (error: any) => error.code === "browser_preview_buffer_full")
+await previewBuffer.activate("slot-b")
+assert.equal(workspaceA.iframe.style.display, "none", "activation atomically hides the old active iframe")
+assert.equal(workspaceB.iframe.style.display, "")
+const releasedWorkspaceA = await previewBuffer.release("slot-a")
+assert.equal(await previewBuffer.release("slot-a"), releasedWorkspaceA, "releasing a slot is idempotent and retains its lifecycle receipt")
+assert.deepEqual(workspaceReleases, ["site-a@revision-1"], "releasing the old active runtime is explicit")
+assert.equal(workspaceChildren.length, 1, "release removes the lifecycle replacement iframe instead of leaking an about:blank browsing context")
+const replenishedA = await prepareWorkspacePreview("slot-a", "blank-replenishment")
+assert.notEqual(replenishedA.iframe, workspaceA.iframe, "replenishment uses a fresh iframe and runtime")
+assert.equal(workspaceB.iframe.style.display, "", "the active site remains visible while standby replenishes")
+assert.equal((await replenishedA.navigate("/slow", { onError: (error: Error) => workspaceNavigationErrors.push(error.message) })).status, "requested")
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.deepEqual(workspaceNavigations, ["site-a@revision-1:/site-a", "blank-replenishment:/slow"])
+assert.deepEqual(workspaceNavigationErrors, ["late navigation failure"], "navigation dispatch reports asynchronous client failures without blocking readiness")
+await previewBuffer.dispose()
+assert.deepEqual(workspaceReleases, ["site-a@revision-1", "site-b@revision-1", "blank-replenishment"])
+assert.equal(workspaceTemplate.style.display, "", "workspace disposal restores the caller's template iframe")
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

@@ -16,6 +16,8 @@
 		'runtime-task:run',
 		'browser-preview:start',
 		'browser-preview:lifecycle',
+		'browser-preview:double-buffer',
+		'browser-preview:navigation',
 		'browser-contained-site-sync:consume',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
@@ -993,7 +995,6 @@
 			cleanup: null,
 		}
 	);
-
 	const browserPreviewSlot = ( iframe ) => {
 		if ( ! iframe || ( typeof iframe !== 'object' && typeof iframe !== 'function' ) ) return null;
 		const slot = browserPreviewSlotRoots.get( iframe ) || iframe;
@@ -1287,6 +1288,149 @@
 		}
 	};
 
+	const createBrowserPreviewBuffer = ( options = {} ) => {
+		const templateIframe = options.iframe;
+		const container = options.container || templateIframe?.parentNode;
+		if ( ! templateIframe || typeof templateIframe.cloneNode !== 'function' || ! container || typeof container.appendChild !== 'function' ) {
+			throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_mount_invalid', 'A browser preview buffer requires an iframe template in an appendable container.' );
+		}
+
+		const slots = new Map();
+		const releasedSlots = new Map();
+		const activeAttribute = typeof options.activeAttribute === 'string' && options.activeAttribute ? options.activeAttribute : '';
+		let activeSlot = '';
+		let operationQueue = Promise.resolve();
+		templateIframe.style.display = 'none';
+		templateIframe.setAttribute?.( 'aria-hidden', 'true' );
+		if ( activeAttribute ) templateIframe.removeAttribute?.( activeAttribute );
+
+		const enqueue = ( operation ) => {
+			const result = operationQueue.then( operation );
+			operationQueue = result.catch( () => {} );
+			return result;
+		};
+		const setSlotVisible = ( slot, visible ) => {
+			slot.iframe.style.display = visible ? '' : 'none';
+			slot.iframe.setAttribute?.( 'aria-hidden', visible ? 'false' : 'true' );
+			if ( activeAttribute ) {
+				if ( visible ) slot.iframe.setAttribute?.( activeAttribute, '' );
+				else slot.iframe.removeAttribute?.( activeAttribute );
+			}
+		};
+		const activateSlot = ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
+			}
+			for ( const candidate of slots.values() ) {
+				setSlotVisible( candidate, candidate === slot );
+			}
+			activeSlot = slot.id;
+			return slot;
+		};
+		const navigateSlot = ( slot, path = '/', navigateOptions = {} ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_slot_released', 'The browser preview slot is not prepared.' );
+			}
+			if ( typeof path !== 'string' || ! path.startsWith( '/' ) || path.startsWith( '//' ) ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_path_invalid', 'Browser preview navigation requires a safe absolute path.' );
+			}
+			if ( typeof slot.client?.goTo !== 'function' ) {
+				throw runtimeError( 'browser_preview_navigation', 'browser_preview_navigation_unavailable', 'The browser preview client does not support navigation.' );
+			}
+			const navigation = Promise.resolve( slot.client.goTo( path ) );
+			void navigation.catch( ( error ) => navigateOptions.onError?.( error ) );
+			return Object.freeze( {
+				schema: 'wp-codebox/browser-preview-navigation-result/v1',
+				success: true,
+				status: 'requested',
+				slot: slot.id,
+				path,
+			} );
+		};
+		const releaseSlot = async ( slot ) => {
+			if ( ! slot || slots.get( slot.id ) !== slot ) {
+				return slot?.releaseResult || null;
+			}
+			slots.delete( slot.id );
+			if ( activeSlot === slot.id ) activeSlot = '';
+			const slotRoot = browserPreviewSlot( slot.iframe );
+			const lifecycle = await slot.preview.dispose();
+			const currentIframe = currentBrowserPreviewIframe( slotRoot, slot.iframe );
+			currentIframe?.remove?.();
+			if ( currentIframe !== slot.iframe ) slot.iframe.remove?.();
+			slot.releaseResult = Object.freeze( {
+				schema: 'wp-codebox/browser-preview-slot-release-result/v1',
+				success: true,
+				status: 'released',
+				slot: slot.id,
+				lifecycle,
+			} );
+			releasedSlots.set( slot.id, slot.releaseResult );
+			if ( releasedSlots.size > 2 ) releasedSlots.delete( releasedSlots.keys().next().value );
+			return slot.releaseResult;
+		};
+		const buffer = {
+			has: ( id ) => slots.has( String( id || '' ) ),
+			prepare: ( id, input, previewOptions = {} ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				if ( ! slotId ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_slot_id_required', 'Browser preview slots require an ID.' );
+				}
+				const existing = slots.get( slotId );
+				if ( existing ) return existing;
+				if ( slots.size >= 2 ) {
+					throw runtimeError( 'browser_preview_buffer', 'browser_preview_buffer_full', 'Both browser preview slots are already prepared.' );
+				}
+				const iframe = templateIframe.cloneNode( false );
+				iframe.src = 'about:blank';
+				iframe.loading = 'eager';
+				setSlotVisible( { iframe }, false );
+				container.appendChild( iframe );
+				let preview;
+				try {
+					preview = await startBrowserPreview( input, { ...previewOptions, iframe } );
+				} catch ( error ) {
+					iframe.remove?.();
+					throw error;
+				}
+				const slot = {
+					schema: 'wp-codebox/browser-preview-slot/v1',
+					id: slotId,
+					iframe,
+					client: preview.client,
+					preview,
+					activate: () => buffer.activate( slotId ),
+					navigate: ( path = '/', navigateOptions = {} ) => enqueue( () => navigateSlot( slot, path, navigateOptions ) ),
+					release: () => buffer.release( slotId ),
+				};
+				slots.set( slotId, slot );
+				releasedSlots.delete( slotId );
+				return slot;
+			} ),
+			activate: ( id ) => enqueue( async () => activateSlot( slots.get( String( id || '' ) ) ) ),
+			release: ( id ) => enqueue( async () => {
+				const slotId = String( id || '' );
+				return slots.has( slotId ) ? releaseSlot( slots.get( slotId ) ) : ( releasedSlots.get( slotId ) || null );
+			} ),
+			dispose: () => enqueue( async () => {
+				const results = [];
+				for ( const slot of [ ...slots.values() ] ) results.push( await releaseSlot( slot ) );
+				templateIframe.style.display = '';
+				templateIframe.setAttribute?.( 'aria-hidden', 'false' );
+				if ( activeAttribute ) templateIframe.setAttribute?.( activeAttribute, '' );
+				return Object.freeze( { schema: 'wp-codebox/browser-preview-buffer-dispose-result/v1', success: true, status: 'disposed', slots: results } );
+			} ),
+			get activeSlot() {
+				return activeSlot;
+			},
+			get size() {
+				return slots.size;
+			},
+		};
+
+		return Object.freeze( buffer );
+	};
+
 	const browserSdkContract = Object.freeze( [
 		{ name: 'activateTheme' },
 		{ name: 'browserSessionRecipe' },
@@ -1296,6 +1440,7 @@
 		{ name: 'executeBrowserProviderProxyRequest' },
 		{ name: 'consumeContainedSiteSync', topLevelOrder: 1, topLevel: ( api ) => ( client, delegation, options = {} ) => api.consumeContainedSiteSync( client, delegation, options ) },
 		{ name: 'openOrCreateBrowserContainedSite', topLevelOrder: 2, topLevel: ( api ) => ( input = {}, options = {} ) => api.openOrCreateBrowserContainedSite( input, options ) },
+		{ name: 'createBrowserPreviewBuffer', topLevelOrder: 2.5, topLevel: ( api ) => ( options = {} ) => api.createBrowserPreviewBuffer( options ) },
 		{ name: 'startBrowserPreview', topLevelOrder: 3, topLevel: ( api ) => ( input, options = {} ) => api.startBrowserPreview( input, options ) },
 		{ name: 'bootExecutableBrowserSession', topLevelOrder: 14, topLevel: ( api ) => async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ) },
 		{ name: 'createParentToolRequest', topLevelOrder: 18, topLevel: ( api ) => api.createParentToolRequest },
@@ -1407,7 +1552,7 @@
 		throw runtimeError(
 			phase,
 			`playground_${ method }_failed`,
-			`Playground ${ method } failed during ${ phase }.`,
+			`Playground ${ method } failed during ${ phase }: ${ lastError?.message || 'unknown error' }`,
 			{
 				last_error: lastError ? errorDetails( lastError ) : null,
 				attempts: failedAttempts,
@@ -3231,6 +3376,24 @@ echo wp_json_encode( array(
 		};
 	};
 
+	const materializationResultEnvelope = ( task, execution ) => {
+		const abilityResult = execution?.response && typeof execution.response === 'object' ? execution.response : execution;
+		const success = execution?.success === true && abilityResult?.success !== false;
+		const result = success && abilityResult?.result && typeof abilityResult.result === 'object' ? abilityResult.result : abilityResult;
+		return {
+			schema: 'wp-codebox/materialization-result/v1',
+			success,
+			task,
+			result,
+			report: abilityResult?.import_report_summary || result?.import_report_summary || result?.report || null,
+			response: execution,
+			error: success ? null : ( abilityResult?.error || execution?.error || {
+				code: 'materialization_failed',
+				message: 'Materialization failed.',
+			} ),
+		};
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -3257,7 +3420,10 @@ echo wp_json_encode( array(
 		}
 
 		let lastResult = null;
-		const removeProviderProxy = installBrowserProviderProxy( client );
+		const invocationType = String( recipe?.browser?.invocation?.type || '' );
+		const materializerTask = String( taskPayload?.materializer?.task || '' );
+		const localInvocation = invocationType === 'ability' || !! materializerTask;
+		const removeProviderProxy = localInvocation ? null : installBrowserProviderProxy( client );
 		try {
 			for ( const step of steps ) {
 				if ( step?.command === 'wp-codebox.agent-fanout-aggregate' ) {
@@ -3282,7 +3448,7 @@ echo wp_json_encode( array(
 					code: markBrowserPlaygroundRunner( withBrowserRunnerPrelude( codeArg.slice( 5 ), recipe ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
-					forceRequest: true,
+					forceRequest: ! localInvocation,
 				} );
 				if ( ! lastResult.success ) {
 					throw runtimeError( 'recipe_step_php', lastResult?.error?.code || 'browser_recipe_step_failed', lastResult?.error?.message || 'WP Codebox browser recipe step failed.', lastResult?.error?.data ?? null );
@@ -3292,7 +3458,7 @@ echo wp_json_encode( array(
 			await removeProviderProxy?.();
 		}
 
-		return lastResult;
+		return materializerTask ? materializationResultEnvelope( materializerTask, lastResult ) : lastResult;
 	};
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
@@ -3662,6 +3828,7 @@ echo wp_json_encode( array(
 		bootExecutableBrowserSession,
 		consumeContainedSiteSync,
 		openOrCreateBrowserContainedSite,
+		createBrowserPreviewBuffer,
 		createBrowserConnectorRequest: browserConnectorRequest,
 		executeBrowserConnectorRequest,
 		executeBrowserProviderProxyRequest,
