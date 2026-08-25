@@ -15,6 +15,14 @@ export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloa
 const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
 const PHP_SCOPER_DOWNLOAD_ATTEMPTS = 3
 const PHP_SCOPER_DOWNLOAD_TIMEOUT_MS = 120_000
+const RECIPE_PLUGIN_COMPOSER_INSTALL_ARGS = [
+  "install",
+  "--no-dev",
+  "--prefer-dist",
+  "--no-interaction",
+  "--no-progress",
+  "--no-scripts",
+]
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -341,6 +349,9 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       ...composerManagedHostCommandConfig({
         cwd: stagedSource,
         allowedCwdRoots: [stagingRoot],
+        // Explicit plugin preparation must honor project-authorized installers
+        // so WordPress packages reach their declared paths before activation.
+        args: RECIPE_PLUGIN_COMPOSER_INSTALL_ARGS,
         label: "prepare Composer autoload for recipe extra plugin",
       }),
       cwd: stagedSource,

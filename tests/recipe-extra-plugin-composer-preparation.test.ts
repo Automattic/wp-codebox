@@ -1,10 +1,14 @@
 import assert from "node:assert/strict"
+import { execFile as execFileCallback } from "node:child_process"
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { promisify } from "node:util"
 
 import { cleanupRecipePreparedSources, prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.js"
 import { assertWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
+
+const execFile = promisify(execFileCallback)
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -42,7 +46,16 @@ await withTempDir("wp-codebox-explicit-composer-plugin-", async (recipeDirectory
   await writeFile(join(source, "composer.json"), `${JSON.stringify({ name: "example/source-plugin", autoload: { classmap: ["src/"] } }, null, 2)}\n`)
   await writeFile(join(source, "source-plugin.php"), "<?php\n/* Plugin Name: Source Plugin */\n")
   const composer = join(bin, "composer")
-  await writeFile(composer, "#!/bin/sh\nmkdir -p vendor/composer\nprintf '<?php\\n' > vendor/autoload.php\nprintf '[]\\n' > vendor/composer/installed.json\nprintf '<?php return array();\\n' > vendor/composer/autoload_classmap.php\n")
+  await writeFile(composer, `#!/bin/sh
+case " $* " in
+  *" --no-plugins "*) exit 64 ;;
+esac
+mkdir -p vendor/composer packages/runtime-package/src
+printf '%s\n' '<?php require_once dirname(__DIR__) . "/packages/runtime-package/src/Package.php";' > vendor/autoload.php
+printf '%s\n' '<?php namespace Example\\RuntimePackage; final class Package {}' > packages/runtime-package/src/Package.php
+printf '[]\n' > vendor/composer/installed.json
+printf '<?php return array();\n' > vendor/composer/autoload_classmap.php
+`)
   await chmod(composer, 0o755)
 
   const recipe: WorkspaceRecipe = {
@@ -65,6 +78,8 @@ await withTempDir("wp-codebox-explicit-composer-plugin-", async (recipeDirectory
   assert.notEqual(plugin.source, source, "explicit Composer preparation must use a staged copy")
   assert.equal(await pathExists(join(plugin.source, "vendor", "autoload.php")), true)
   assert.match(await readFile(join(plugin.source, "vendor", "autoload_packages.php"), "utf8"), /require_once __DIR__ \. '\/autoload\.php';/)
+  assert.equal(await pathExists(join(plugin.source, "packages", "runtime-package", "src", "Package.php")), true, "Composer must install the WordPress package at its declared runtime path")
+  await execFile("php", ["-r", `define('ABSPATH', ${JSON.stringify(`${plugin.source}/`)}); require ${JSON.stringify(join(plugin.source, "vendor", "autoload_packages.php"))}; if (!class_exists('Example\\\\RuntimePackage\\\\Package')) { exit(1); }`])
   assert.equal(await pathExists(join(source, "vendor")), false, "explicit preparation must not mutate the caller source")
   assert.equal(plugin.provenance.localPathCategory, "temporary-composer-autoload")
   await cleanupRecipePreparedSources([], [plugin])
