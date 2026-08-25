@@ -171,6 +171,16 @@ try {
   assert.ok((await Promise.all(concurrent.map(async (entry) => await readFile(join(entry.mounts[0].source, "value.txt"), "utf8") === "concurrent"))).every(Boolean), "concurrent snapshots are complete")
   await Promise.all(concurrent.map((entry) => entry[Symbol.asyncDispose]()))
 
+  const parallelSources = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
+    const source = join(root, `parallel-source-${index}`)
+    await mkdir(source)
+    await writeFile(join(source, "value.txt"), `parallel-${index}`)
+    return source
+  }))
+  const parallel = await stageReadonlyPlaygroundMounts(parallelSources.map((source, index) => ({ source, target: `/parallel-${index}`, mode: "readonly" })))
+  assert.ok((await Promise.all(parallel.mounts.map(async (mount, index) => await readFile(join(mount.source, "value.txt"), "utf8") === `parallel-${index}`))).every(Boolean), "parallel unique snapshots survive cache retention")
+  await parallel[Symbol.asyncDispose]()
+
   const nestedParent = join(root, "nested-parent")
   const nestedOverlay = join(root, "nested-overlay")
   await mkdir(nestedParent)
