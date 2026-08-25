@@ -161,7 +161,7 @@ export const smokeGroups = {
       phpSmoke("php-run-plan-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("component-contracts-agent-task-smoke"),
-      tsxSmoke("fanout-aggregation-contract-smoke"),
+      npmScript("test:fanout-aggregation-contract-parity"),
       tsxSmoke("agent-fanout-execution-smoke"),
     ],
   },
