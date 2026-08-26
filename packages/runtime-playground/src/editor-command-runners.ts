@@ -999,9 +999,13 @@ async function captureEditorPresentationMatch(input: {
     const editor = canvas.locator(editorSelector).first()
     const editorBox = await editor.boundingBox()
     if (!editorBox || editorBox.width <= 0 || editorBox.height <= 0) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "editor presentation surface has no visible bounds" }
-    const frontend = await input.page.context().newPage()
+    const browser = input.page.context().browser()
+    if (!browser) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "browser context is not available for frontend capture" }
+    const frontendContext = await browser.newContext({
+      viewport: { width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) },
+    })
+    const frontend = await frontendContext.newPage()
     try {
-      await frontend.setViewportSize({ width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) })
       await frontend.goto(input.topology.resolveUrl(presentationUrl), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
       const source = frontend.locator(frontendSelector).first()
       if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `frontend presentation selector is not visible: ${frontendSelector}` }
@@ -1022,7 +1026,7 @@ async function captureEditorPresentationMatch(input: {
       const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
       const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
       return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef }
-    } finally { await frontend.close() }
+    } finally { await frontendContext.close() }
   } catch (error) {
     return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: error instanceof Error ? error.message : String(error) }
   }
@@ -1057,26 +1061,30 @@ async function presentationSurfaceEvidence(surface: import("playwright").Page | 
 }
 
 export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {
-  await page.evaluate(() => {
-    const selectors = [
-      ".components-guide__finish-button",
-      '.components-guide .components-button[aria-label="Close"]',
-      '.components-guide .components-button[aria-label="Dismiss"]',
-      '.components-modal__header .components-button[aria-label="Close"]',
-      '.components-modal__header .components-button[aria-label="Dismiss"]',
-      '.components-modal__header button',
-      ".welcome-panel-close",
-    ]
-    const dismissed = new Set<Element>()
-    for (const selector of selectors) {
-      for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
-        if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
-          dismissed.add(control)
-          control.click()
+  // Gutenberg can mount the guide shortly after the editor first reports ready.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.evaluate(() => {
+      const selectors = [
+        ".components-guide__finish-button",
+        '.components-guide .components-button[aria-label="Close"]',
+        '.components-guide .components-button[aria-label="Dismiss"]',
+        '.components-modal__header .components-button[aria-label="Close"]',
+        '.components-modal__header .components-button[aria-label="Dismiss"]',
+        '.components-modal__header button',
+        ".welcome-panel-close",
+      ]
+      const dismissed = new Set<Element>()
+      for (const selector of selectors) {
+        for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+          if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
+            dismissed.add(control)
+            control.click()
+          }
         }
       }
-    }
-  })
+    })
+    await page.waitForTimeout(150)
+  }
 }
 
 export function editorOpenArtifactError(stepCount: number, error: Error, artifact: BrowserArtifact): BrowserCommandArtifactError {
