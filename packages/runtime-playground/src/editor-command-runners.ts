@@ -940,7 +940,7 @@ async function captureExpectedEditorPresentationIdentities(
   const response = await runPlaygroundCommand("wordpress.editor-open.capture-presentation-contract", server, {
     code: bootstrapPhpCode(runtimeSpec, `
 $post = get_post(${target.postId});
-if ( ! $post instanceof WP_Post ) { WP_CLI::error( 'Editor target post is unavailable.' ); }
+if ( ! $post instanceof WP_Post ) { throw new RuntimeException( 'Editor target post is unavailable.' ); }
 $settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
 $identities = array();
 foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
@@ -951,7 +951,7 @@ foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
 }
 $identities = array_values( array_unique( $identities ) );
 sort( $identities, SORT_STRING );
-WP_CLI::line( wp_json_encode( array( 'identities' => $identities, 'complete' => true ) ) );
+echo wp_json_encode( array( 'identities' => $identities, 'complete' => true ) );
 `, []),
   })
   assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
