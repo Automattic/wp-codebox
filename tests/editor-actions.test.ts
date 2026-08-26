@@ -101,12 +101,18 @@ const idleCanvas = await captureEditorIdleCanvas({
     const globals = globalThis as typeof globalThis & { document?: unknown; getComputedStyle?: unknown }
     const document = globals.document
     const getComputedStyle = globals.getComputedStyle
-    globals.document = { querySelectorAll: (selector: string) => selector === ".components-guide" ? [{ id: "guide" }] : [] }
+    const guide = { matches: (selector: string) => selector === ".components-guide", tagName: "DIV", className: "components-guide", getAttribute: () => null, innerText: "Welcome", querySelectorAll: () => [] }
+    globals.document = { querySelectorAll: (selector: string) => selector === ".components-guide" ? [guide] : [] }
     globals.getComputedStyle = () => ({ display: "block", visibility: "visible", opacity: "1" })
     try { return callback() } finally { globals.document = document; globals.getComputedStyle = getComputedStyle }
   },
 } as never)
-assert.deepEqual(idleCanvas, { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", onboardingModalCount: 1 })
+assert.deepEqual(idleCanvas, {
+  schema: "wp-codebox/editor-idle-canvas/v1",
+  status: "captured",
+  onboardingModalCount: 1,
+  onboardingModals: [{ selectors: [".components-guide"], tag: "div", className: "components-guide", text: "Welcome", controls: [] }],
+})
 
 const unavailableIdleCanvas = await captureEditorIdleCanvas({
   evaluate: async () => { throw new Error("page detached") },

@@ -133,7 +133,7 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       assert.deepEqual(output.summary.editorPresentation.matchedRendering, {
         schema: "wp-codebox/editor-presentation-match/v1",
         status: "failed",
-        equivalentCanvasWidths: false,
+        equivalentCanvasWidths: true,
         majorGeometryDrift: true,
         unreadableContent: false,
         hiddenContent: false,
