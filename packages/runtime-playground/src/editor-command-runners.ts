@@ -1128,7 +1128,7 @@ async function presentationSurfaceGeometry(surface: import("playwright").Page | 
         return {
           path: path.join("."),
           tag: descendant.tagName.toLowerCase(),
-          className: descendant.className.slice(0, 256),
+          className: (typeof descendant.className === "string" ? descendant.className : descendant.getAttribute("class") || "").slice(0, 256),
           text: (descendant.innerText || "").trim().replace(/\s+/g, " ").slice(0, 96),
           top: Math.round((descendantRect.top - rect.top) * 100) / 100,
           left: Math.round((descendantRect.left - rect.left) * 100) / 100,
