@@ -22,6 +22,7 @@ const REPLACED_CANVAS_PRESENTATION_IDENTITY = "d".repeat(64)
 const DELAYED_CANVAS_PRESENTATION_IDENTITY = "e".repeat(64)
 const PARENT_CANVAS_PRESENTATION_IDENTITY = "f".repeat(64)
 const SLOW_PRESENTATION_IDENTITY = "1".repeat(64)
+const matchedPresentationMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:400px;background:linear-gradient(#123,#abc);color:white;padding:12px}</style><div class="block-editor-block-list__layout">Matched presentation</div>`
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
 console.log('normal console text; inspect ${PUBLIC_URL}')
@@ -39,6 +40,8 @@ window.wp = {
 }
 </script><main>Editor fixture</main>`
 const editorHtml = `${editorShell}<iframe name="unrelated" srcdoc="<style>/* blocks-engine-presentation:${UNRELATED_PRESENTATION_IDENTITY} */<\/style>"></iframe><iframe name="editor-canvas" srcdoc="<script>globalThis.__name = (value) => value;setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${CANVAS_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 400)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
+const onboardingEditorHtml = `${editorShell}<div class="components-guide">Undismissed guide without controls</div><script>wp.data.dispatch = (store) => store === 'core/preferences' ? { set: (scope, feature, value) => { if (scope === 'core/edit-post' && feature === 'welcomeGuide' && value === false) document.querySelector('.components-guide')?.remove() } } : ({})<\/script><iframe name="editor-canvas" srcdoc="<div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
+const matchedPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:80px" srcdoc="${matchedPresentationMarkup.replaceAll('"', '&quot;')}"></iframe>`
 const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentation:${PARENT_CANVAS_PRESENTATION_IDENTITY} */</style><div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
 const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
@@ -51,6 +54,12 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       ? "<main>Broken editor fixture</main>"
       : request.url?.startsWith("/presentation")
         ? "<main>Deliberately different frontend fixture</main>"
+      : request.url?.startsWith("/matched-frontend")
+        ? matchedPresentationMarkup
+      : request.url?.startsWith("/matched-editor")
+        ? matchedPresentationEditorHtml
+      : request.url?.startsWith("/onboarding-editor")
+        ? onboardingEditorHtml
       : request.url?.startsWith("/parent-canvas")
         ? parentCanvasEditorHtml
         : request.url?.startsWith("/replacing-canvas")
@@ -134,6 +143,30 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         diffScreenshot: "files/browser/presentation-diff.png",
       })
       await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/presentation-frontend.png", "files/browser/presentation-editor.png", "files/browser/presentation-diff.png"])
+    })
+
+    await withTempDir("wp-codebox-editor-presentation-iframe-viewport-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: ["url=http://routed.test/matched-editor", "presentation-url=/matched-frontend", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string } } } }
+      assert.equal(output.summary.editorPresentation.matchedRendering.status, "passed")
+    })
+
+    await withTempDir("wp-codebox-editor-onboarding-preference-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: ["url=http://routed.test/onboarding-editor", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { idleCanvas: { onboardingModalCount: number } } } }
+      assert.equal(output.summary.editorPresentation.idleCanvas.onboardingModalCount, 0)
     })
 
     await withTempDir("wp-codebox-real-editor-parent-canvas-security-", async (artifactRoot) => {

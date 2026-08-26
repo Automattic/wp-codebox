@@ -1006,7 +1006,9 @@ async function captureEditorPresentationMatch(input: {
       viewport: { width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) },
     })
     const frontend = await frontendContext.newPage()
+    let restoreEditorCanvasViewport = async () => {}
     try {
+      if (frame) restoreEditorCanvasViewport = await expandEditorCanvasViewport(frame, editorBox.height)
       await frontend.goto(input.topology.resolveUrl(presentationUrl), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
       const source = frontend.locator(frontendSelector).first()
       if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `frontend presentation selector is not visible: ${frontendSelector}` }
@@ -1027,9 +1029,30 @@ async function captureEditorPresentationMatch(input: {
       const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
       const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
       return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef }
-    } finally { await frontendContext.close() }
+    } finally {
+      await restoreEditorCanvasViewport()
+      await frontendContext.close()
+    }
   } catch (error) {
     return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function expandEditorCanvasViewport(frame: import("playwright").Frame, contentHeight: number): Promise<() => Promise<void>> {
+  const frameElement = await frame.frameElement()
+  const previousStyle = await frameElement.evaluate((element) => (element as HTMLElement).getAttribute("style"))
+  await frameElement.evaluate((element, height) => {
+    const iframe = element as HTMLElement
+    iframe.style.setProperty("height", `${Math.ceil(height)}px`, "important")
+    iframe.style.setProperty("min-height", `${Math.ceil(height)}px`, "important")
+    iframe.style.setProperty("max-height", "none", "important")
+  }, contentHeight)
+  return async () => {
+    await frameElement.evaluate((element, style) => {
+      const iframe = element as HTMLElement
+      if (style === null) iframe.removeAttribute("style")
+      else iframe.setAttribute("style", style)
+    }, previousStyle).catch(() => undefined)
   }
 }
 
@@ -1068,9 +1091,12 @@ export async function dismissWordPressOnboardingDialogs(page: import("playwright
       const wp = (globalThis as typeof globalThis & {
         wp?: { data?: {
           select?: (store: string) => { isFeatureActive?: (feature: string) => boolean }
-          dispatch?: (store: string) => { toggleFeature?: (feature: string) => void }
+          dispatch?: (store: string) => { set?: (scope: string, feature: string, value: boolean) => void; toggleFeature?: (feature: string) => void }
         } }
       }).wp
+      const preferences = wp?.data?.dispatch?.("core/preferences")
+      preferences?.set?.("core/edit-post", "welcomeGuide", false)
+      preferences?.set?.("core/edit-post", "welcomeGuideTemplate", false)
       if (wp?.data?.select?.("core/edit-post")?.isFeatureActive?.("welcomeGuide")) {
         wp.data.dispatch?.("core/edit-post")?.toggleFeature?.("welcomeGuide")
       }
