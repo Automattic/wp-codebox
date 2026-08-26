@@ -1095,7 +1095,7 @@ async function presentationSurfaceGeometry(surface: import("playwright").Page | 
       width: Math.round(rect.width * 100) / 100,
       height: Math.round(rect.height * 100) / 100,
       childCount: element.children.length,
-      presentationResetPresent: Array.from(document.querySelectorAll("style")).some((node) => (node.textContent || "").includes(".block-editor-block-list__layout.is-root-container > .wp-block")),
+      presentationResetPresent: Array.from(document.querySelectorAll("style")).some((node) => (node.textContent || "").includes(".block-editor-block-list__layout > .wp-block")),
       style: { display: style.display, marginTop: style.marginTop, marginBottom: style.marginBottom, maxWidth: style.maxWidth, minHeight: style.minHeight, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom },
       children: Array.from(element.children).slice(0, 16).map((child) => {
         const childElement = child as HTMLElement
