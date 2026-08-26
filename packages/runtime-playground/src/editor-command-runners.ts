@@ -964,17 +964,48 @@ echo wp_json_encode( array( 'identities' => $identities, 'complete' => true ) );
 }
 
 export async function captureEditorIdleCanvas(page: import("playwright").Page): Promise<BrowserEditorIdleCanvasSummary> {
-  const onboardingModalCount = await page.evaluate(() => {
+  const idleCanvas = await page.evaluate(() => {
     const selectors = [".components-guide", ".welcome-panel", ".components-modal__frame"]
     const elements = new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector))))
-    return Array.from(elements).filter((element) => {
+    const visibleElements = Array.from(elements).filter((element) => {
       const style = getComputedStyle(element)
       return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0
-    }).length
+    })
+    const onboardingModals = visibleElements.slice(0, 4).map((element) => ({
+      selectors: selectors.filter((selector) => element.matches(selector)),
+      tag: element.tagName.toLowerCase(),
+      className: element.className.slice(0, 256),
+      ...(element.getAttribute("role") ? { role: element.getAttribute("role")! } : {}),
+      ...(element.getAttribute("aria-label") ? { ariaLabel: element.getAttribute("aria-label")! } : {}),
+      text: (element.innerText || "").trim().replace(/\s+/g, " ").slice(0, 256),
+      controls: Array.from(element.querySelectorAll<HTMLElement>("button,[role='button']")).slice(0, 8).map((control) => ({
+        tag: control.tagName.toLowerCase(),
+        className: control.className.slice(0, 256),
+        ...(control.getAttribute("aria-label") ? { ariaLabel: control.getAttribute("aria-label")! } : {}),
+        text: (control.innerText || "").trim().replace(/\s+/g, " ").slice(0, 128),
+        disabled: control.hasAttribute("disabled"),
+      })),
+    }))
+    const wp = (globalThis as typeof globalThis & { wp?: { data?: { select?: (store: string) => { get?: (scope: string, name: string) => unknown; isFeatureActive?: (feature: string) => boolean } } } }).wp
+    const preferenceStore = wp?.data?.select?.("core/preferences")
+    const editPostStore = wp?.data?.select?.("core/edit-post")
+    const welcomeGuide = preferenceStore?.get?.("core/edit-post", "welcomeGuide")
+    const welcomeGuideTemplate = preferenceStore?.get?.("core/edit-post", "welcomeGuideTemplate")
+    const editPostWelcomeGuideActive = editPostStore?.isFeatureActive?.("welcomeGuide")
+    const preferences = {
+      ...(typeof welcomeGuide === "boolean" ? { welcomeGuide } : {}),
+      ...(typeof welcomeGuideTemplate === "boolean" ? { welcomeGuideTemplate } : {}),
+      ...(typeof editPostWelcomeGuideActive === "boolean" ? { editPostWelcomeGuideActive } : {}),
+    }
+    return {
+      onboardingModalCount: visibleElements.length,
+      ...(onboardingModals.length > 0 ? { onboardingModals } : {}),
+      ...(Object.keys(preferences).length > 0 ? { preferences } : {}),
+    }
   }).catch(() => undefined)
-  return onboardingModalCount === undefined
+  return idleCanvas === undefined
     ? { schema: "wp-codebox/editor-idle-canvas/v1", status: "unavailable" }
-    : { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", onboardingModalCount }
+    : { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", ...idleCanvas }
 }
 
 async function captureEditorPresentationMatch(input: {

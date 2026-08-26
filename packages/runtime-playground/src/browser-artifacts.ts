@@ -294,6 +294,20 @@ export interface BrowserEditorIdleCanvasSummary {
   schema: "wp-codebox/editor-idle-canvas/v1"
   status: "captured" | "unavailable"
   onboardingModalCount?: number
+  onboardingModals?: Array<{
+    selectors: string[]
+    tag: string
+    className: string
+    role?: string
+    ariaLabel?: string
+    text: string
+    controls: Array<{ tag: string; className: string; ariaLabel?: string; text: string; disabled: boolean }>
+  }>
+  preferences?: {
+    welcomeGuide?: boolean
+    welcomeGuideTemplate?: boolean
+    editPostWelcomeGuideActive?: boolean
+  }
 }
 
 export interface BrowserEditorPresentationMatchSummary {
