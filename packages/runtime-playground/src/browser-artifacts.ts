@@ -322,6 +322,20 @@ export interface BrowserEditorPresentationMatchSummary {
   frontendScreenshot?: string
   editorScreenshot?: string
   diffScreenshot?: string
+  geometry?: {
+    frontend: BrowserEditorPresentationSurfaceGeometry
+    liveEditor: BrowserEditorPresentationSurfaceGeometry
+    isolatedEditor: BrowserEditorPresentationSurfaceGeometry
+  }
+}
+
+export interface BrowserEditorPresentationSurfaceGeometry {
+  width: number
+  height: number
+  childCount: number
+  presentationResetPresent: boolean
+  style: { display: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }
+  children: Array<{ tag: string; className: string; blockType?: string; top: number; width: number; height: number; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }>
 }
 
 export interface BrowserEditorPresentationSummary {

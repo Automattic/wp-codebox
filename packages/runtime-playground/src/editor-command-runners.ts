@@ -1054,7 +1054,13 @@ async function captureEditorPresentationMatch(input: {
       const editorSurface = editorSnapshot ?? canvas
       const editor = editorSurface.locator(editorSelector).first()
       if (!await editor.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `editor presentation selector is not visible in the isolated canvas: ${editorSelector}` }
-      const [frontendEvidence, editorEvidence] = await Promise.all([presentationSurfaceEvidence(frontend, frontendSelector), presentationSurfaceEvidence(editorSurface, editorSelector)])
+      const [frontendEvidence, editorEvidence, frontendGeometry, liveEditorGeometry, isolatedEditorGeometry] = await Promise.all([
+        presentationSurfaceEvidence(frontend, frontendSelector),
+        presentationSurfaceEvidence(editorSurface, editorSelector),
+        presentationSurfaceGeometry(frontend, frontendSelector),
+        presentationSurfaceGeometry(canvas, editorSelector),
+        presentationSurfaceGeometry(editorSurface, editorSelector),
+      ])
       await input.artifactSession.writeGenerated("screenshot", "presentation-frontend.png", async (path) => { await source.screenshot({ path, timeout: input.waitTimeoutMs }); })
       await input.artifactSession.writeGenerated("screenshot", "presentation-editor.png", async (path) => { await editor.screenshot({ path, timeout: input.waitTimeoutMs }); })
       let comparison: Awaited<ReturnType<typeof comparePngFiles>> | undefined
@@ -1070,13 +1076,48 @@ async function captureEditorPresentationMatch(input: {
       const hiddenContent = !frontendEvidence.visible || !editorEvidence.visible
       const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
       const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
-      return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef }
+      return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef, geometry: { frontend: frontendGeometry, liveEditor: liveEditorGeometry, isolatedEditor: isolatedEditorGeometry } }
     } finally {
       await frontendContext.close()
     }
   } catch (error) {
     return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: error instanceof Error ? error.message : String(error) }
   }
+}
+
+async function presentationSurfaceGeometry(surface: import("playwright").Page | import("playwright").Frame, selector: string): Promise<import("./browser-artifacts.js").BrowserEditorPresentationSurfaceGeometry> {
+  return surface.evaluate((selector) => {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (!element) throw new Error(`presentation geometry selector is unavailable: ${selector}`)
+    const rect = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return {
+      width: Math.round(rect.width * 100) / 100,
+      height: Math.round(rect.height * 100) / 100,
+      childCount: element.children.length,
+      presentationResetPresent: Array.from(document.querySelectorAll("style")).some((node) => (node.textContent || "").includes(".block-editor-block-list__layout.is-root-container > .wp-block")),
+      style: { display: style.display, marginTop: style.marginTop, marginBottom: style.marginBottom, maxWidth: style.maxWidth, minHeight: style.minHeight, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom },
+      children: Array.from(element.children).slice(0, 16).map((child) => {
+        const childElement = child as HTMLElement
+        const childRect = childElement.getBoundingClientRect()
+        const childStyle = getComputedStyle(childElement)
+        return {
+          tag: childElement.tagName.toLowerCase(),
+          className: childElement.className.slice(0, 256),
+          ...(childElement.dataset.type ? { blockType: childElement.dataset.type } : {}),
+          top: Math.round((childRect.top - rect.top) * 100) / 100,
+          width: Math.round(childRect.width * 100) / 100,
+          height: Math.round(childRect.height * 100) / 100,
+          marginTop: childStyle.marginTop,
+          marginBottom: childStyle.marginBottom,
+          maxWidth: childStyle.maxWidth,
+          minHeight: childStyle.minHeight,
+          paddingTop: childStyle.paddingTop,
+          paddingBottom: childStyle.paddingBottom,
+        }
+      }),
+    }
+  }, selector)
 }
 
 function boundedPresentationSelector(args: string[], name: string, fallback: string): string {

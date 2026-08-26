@@ -130,7 +130,8 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         spec: { command: "wordpress.editor-open", args: [`url=${PUBLIC_URL}`, "presentation-url=/presentation", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
       })
       const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string; frontendScreenshot: string; editorScreenshot: string; diffScreenshot: string; equivalentCanvasWidths: boolean; majorGeometryDrift: boolean; unreadableContent: boolean; hiddenContent: boolean; unresolvedAssetCount: number } } } }
-      assert.deepEqual(output.summary.editorPresentation.matchedRendering, {
+      const { geometry, ...matchedRendering } = output.summary.editorPresentation.matchedRendering as typeof output.summary.editorPresentation.matchedRendering & { geometry: { frontend: { childCount: number }; liveEditor: { childCount: number }; isolatedEditor: { childCount: number } } }
+      assert.deepEqual(matchedRendering, {
         schema: "wp-codebox/editor-presentation-match/v1",
         status: "failed",
         equivalentCanvasWidths: true,
@@ -142,6 +143,9 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         editorScreenshot: "files/browser/presentation-editor.png",
         diffScreenshot: "files/browser/presentation-diff.png",
       })
+      assert.equal(geometry.frontend.childCount, 1)
+      assert.equal(geometry.liveEditor.childCount, 1)
+      assert.equal(geometry.isolatedEditor.childCount, 1)
       await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/presentation-frontend.png", "files/browser/presentation-editor.png", "files/browser/presentation-diff.png"])
     })
 
