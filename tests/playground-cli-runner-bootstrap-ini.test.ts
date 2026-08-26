@@ -174,6 +174,34 @@ try {
   assert.equal(shouldUseProgrammaticPlaygroundRunner(defaultRuntimeIniSpec), true)
 
   calls.length = 0
+  const customDropInServer = await startPlaygroundCliServer({
+    ...defaultRuntimeIniSpec,
+    environment: {
+      ...defaultRuntimeIniSpec.environment,
+      databaseSetup: "custom-drop-in",
+      blueprint: { steps: [{ step: "defineWpConfigConsts", consts: { MARKDOWN_DB_BACKEND: "mdi-native", WP_DEBUG: true, RETRY_LIMIT: 3 } }] },
+    },
+  }, [
+    { type: "directory", source: wordpressDevelopDirectory, target: "/wordpress/wp-content/custom-db", mode: "readonly", phase: "pre-install" },
+    { type: "directory", source: wordpressDevelopDirectory, target: "/wordpress/wp-content/post-install", mode: "readonly" },
+  ], { cliModule })
+  await customDropInServer[Symbol.asyncDispose]()
+  assert.equal(calls[0]?.skipSqliteSetup, true)
+  assert.equal(calls[0]?.phpEnv, undefined, "custom drop-ins do not inherit external database bindings")
+  const customDropInWpConfigPath = calls[0]?.["mount-before-install"]?.find((mount) => mount.vfsPath === "/wordpress/wp-config.php")?.hostPath
+  assert.equal(typeof customDropInWpConfigPath, "string")
+  assert.match(await readFile(customDropInWpConfigPath as string, "utf8"), /define\('DB_NAME', 'custom_drop_in'\)/)
+  assert.equal(calls[0]?.["mount-before-install"]?.some((mount) => mount.vfsPath === "/wordpress/wp-content/custom-db"), true)
+  assert.equal(calls[0]?.mount?.some((mount) => mount.vfsPath === "/wordpress/wp-content/post-install"), true)
+  assert.deepEqual(calls[0]?.define, { MARKDOWN_DB_BACKEND: "mdi-native" })
+  assert.deepEqual(calls[0]?.["define-bool"], { WP_DEBUG: true })
+  assert.deepEqual(calls[0]?.["define-number"], { RETRY_LIMIT: 3 })
+  assert.equal(shouldUseProgrammaticPlaygroundRunner({
+    ...defaultRuntimeIniSpec,
+    environment: { ...defaultRuntimeIniSpec.environment, databaseSetup: "custom-drop-in" },
+  }), false)
+
+  calls.length = 0
   const downloadedWordPressSpec: RuntimeCreateSpec = {
     ...defaultRuntimeIniSpec,
     environment: {
@@ -195,6 +223,14 @@ try {
   assert.equal(calls[0].wordpressInstallMode, undefined)
   assert.equal(calls[0].workers, 1)
   assert.equal(shouldUseProgrammaticPlaygroundRunner(downloadedWordPressSpec), false)
+
+  calls.length = 0
+  const unmanagedInstallServer = await startPlaygroundCliServer({
+    ...downloadedWordPressSpec,
+    environment: { ...downloadedWordPressSpec.environment, databaseSetup: "custom-drop-in" },
+  }, [], { cliModule })
+  await unmanagedInstallServer[Symbol.asyncDispose]()
+  assert.equal(calls[0]?.wordpressInstallMode, "do-not-attempt-installing")
 
   calls.length = 0
   const distributionOnlySpec: RuntimeCreateSpec = {

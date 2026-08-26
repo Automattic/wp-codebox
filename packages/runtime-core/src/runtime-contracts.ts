@@ -680,6 +680,7 @@ export interface WorkspaceRecipe {
     phpVersion?: string
     workers?: RuntimeWorkerCount
     wordpressInstallMode?: RuntimeWordPressInstallMode
+    databaseSetup?: RuntimeWordPressDatabaseSetup
     blueprint?: unknown
     preview?: RuntimePreviewSpec
     assets?: RuntimeAssetSpec

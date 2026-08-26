@@ -65,6 +65,21 @@ export function playgroundRuntimeBlueprint(spec: RuntimeCreateSpec): unknown {
   }
 }
 
+export function playgroundWpConfigConstants(blueprint: unknown): Record<string, string | number | boolean | null> {
+  const constants: Record<string, string | number | boolean | null> = {}
+  for (const step of normalizeBlueprint(blueprint).steps) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue
+    const candidate = step as { step?: unknown; consts?: unknown }
+    if (candidate.step !== "defineWpConfigConsts" || !candidate.consts || typeof candidate.consts !== "object" || Array.isArray(candidate.consts)) continue
+    for (const [name, value] of Object.entries(candidate.consts)) {
+      if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+        constants[name] = value as string | number | boolean | null
+      }
+    }
+  }
+  return constants
+}
+
 export function playgroundRuntimeSiteUrl(spec: RuntimeCreateSpec | undefined): string | undefined {
   const declaredSiteUrl = playgroundSiteSeedPrimaryUrl(spec) ?? spec?.preview?.siteUrl
   if (declaredSiteUrl || !spec || !blueprintNeedsPortlessMultisiteUrl(spec.environment.blueprint)) {

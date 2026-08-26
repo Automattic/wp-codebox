@@ -1,4 +1,4 @@
-import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl } from "./blueprint.js"
+import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl, playgroundWpConfigConstants } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
@@ -14,6 +14,7 @@ import { resolveWordPressRelease } from "@wp-playground/wordpress"
 import { phpEnvAssignments, phpLiteral, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { stageReadonlyPlaygroundMounts, type ReadonlyMountStaging } from "./mount-materialization.js"
 import { acquirePlaygroundArchiveReference, isCustomPlaygroundWordPressArchive, maintainPlaygroundCustomArchiveCache, playgroundWordPressArchiveCacheDirectory, withPlaygroundArchiveCacheLock, type PlaygroundArchiveReference, type PlaygroundCustomArchiveCacheDiagnostic, type PlaygroundCustomArchiveCacheMaintenance } from "./playground-wordpress-archive-cache.js"
+import { databaseBootstrapWpConfig } from "./database-bootstrap.js"
 
 const DEFAULT_RUNTIME_PHP_INI_ENTRIES = { memory_limit: "512M" }
 
@@ -32,6 +33,9 @@ export interface PlaygroundCliModule {
     workers?: number | "auto"
     wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
     skipSqliteSetup?: boolean
+    define?: Record<string, string>
+    "define-bool"?: Record<string, boolean>
+    "define-number"?: Record<string, number>
     "site-url"?: string
     phpIniEntries?: Record<string, string>
     phpEnv?: Record<string, string>
@@ -83,14 +87,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       wordpressVersion: spec.environment.version,
     })
     const wordpressDirectory = spec.environment.assets?.wordpressDirectory
-    const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
+    const wordpressInstallMode = spec.environment.wordpressInstallMode
+      ?? (spec.environment.databaseSetup === "custom-drop-in" ? "do-not-attempt-installing" : "install-from-existing-files")
     const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
-    const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
-    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
-      route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
-      token: randomBytes(32).toString("base64url"),
-      payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
-    }
     usesArchiveCache = !wordpressDirectory && !spec.environment.assets?.wordpressZip
     readonlyMountStaging = await stageReadonlyPlaygroundMounts(mounts)
     emitProgress("preview:materializing-mounts", "complete", "Prepared mounted inputs", {
@@ -105,6 +104,12 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       cacheMaintenanceDiagnostics = maintenance.diagnostics
     }
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
+    const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options, Boolean(wordpressStartupAsset?.localPath || wordpressStartupAsset?.wp))
+    const requestWorkerEndpoint = useProgrammaticRunner ? undefined : {
+      route: `/wp-codebox-execute-${randomBytes(12).toString("hex")}.php`,
+      token: randomBytes(32).toString("base64url"),
+      payloadDirectory: join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared"),
+    }
     archiveReference = wordpressStartupAsset?.archiveReference
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
@@ -137,16 +142,19 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           port,
         },
       }, stagedMounts, {
-        bootstrapIniEntries: bootstrapIniEntries!,
+        bootstrapIniEntries: bootstrapIniEntries ?? {},
         phpIniEntries: pluginRuntimePhpIniEntries(spec),
-        wordpressDirectory: wordpressDirectory!,
+        wordpressDirectory,
+        wordpressArchivePath: wordpressStartupAsset?.localPath,
+        wordpressArchiveUrl: wordpressStartupAsset?.wp,
         wordpressInstallMode,
-        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!, "/internal/wp-codebox/auto_prepend_file.php"),
+        sharedPhpIniContent: phpIniContent(bootstrapIniEntries ?? {}, "/internal/wp-codebox/auto_prepend_file.php"),
       })
     }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
       const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
       const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
       const bootstrapSharedMounts = await pluginRuntimeBootstrapSharedMounts(spec, requestWorkerEndpoint)
+      const customDropInDefines = customDropInBootstrapDefines(spec)
       try {
         return await runCLI({
           command: "server",
@@ -169,10 +177,11 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
               ...(wordpressDirectory ? [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }] : []),
             ],
           } : {}),
-          ...(wordpressDirectory ? { wordpressInstallMode } : {}),
+          ...(wordpressDirectory || spec.environment.databaseSetup === "custom-drop-in" ? { wordpressInstallMode } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
-          skipSqliteSetup: spec.environment.databaseSetup === "external",
+          skipSqliteSetup: spec.environment.databaseSetup === "external" || spec.environment.databaseSetup === "custom-drop-in",
+          ...customDropInDefines,
           ...(spec.environment.extensions?.length ? { phpExtension: spec.environment.extensions.map((extension) => extension.manifest) } : {}),
           ...playgroundBundledExtensionOptions(spec),
           phpIniEntries: pluginRuntimePhpIniEntries(spec),
@@ -229,6 +238,28 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
 
     throw error
+  }
+}
+
+function customDropInBootstrapDefines(spec: RuntimeCreateSpec): Pick<Parameters<PlaygroundCliModule["runCLI"]>[0], "define" | "define-bool" | "define-number"> {
+  if (spec.environment.databaseSetup !== "custom-drop-in") {
+    return {}
+  }
+
+  const constants = playgroundWpConfigConstants(spec.environment.blueprint)
+  const define: Record<string, string> = {}
+  const defineBool: Record<string, boolean> = {}
+  const defineNumber: Record<string, number> = {}
+  for (const [name, value] of Object.entries(constants ?? {})) {
+    if (typeof value === "boolean") defineBool[name] = value
+    else if (typeof value === "number") defineNumber[name] = value
+    else if (typeof value === "string") define[name] = value
+  }
+
+  return {
+    ...(Object.keys(define).length > 0 ? { define } : {}),
+    ...(Object.keys(defineBool).length > 0 ? { "define-bool": defineBool } : {}),
+    ...(Object.keys(defineNumber).length > 0 ? { "define-number": defineNumber } : {}),
   }
 }
 
@@ -318,10 +349,10 @@ class PreviewLeaseProbeError extends Error {
   }
 }
 
-export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}): boolean {
-  return !options.cliModule
-    && spec.environment.databaseSetup !== "external"
-    && Boolean(spec.environment.assets?.wordpressDirectory)
+export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}, hasWordPressArchive = false): boolean {
+  if (options.cliModule || spec.environment.databaseSetup === "external") return false
+  if (spec.environment.databaseSetup === "custom-drop-in") return hasWordPressArchive
+  return Boolean(spec.environment.assets?.wordpressDirectory)
     && (Boolean(runtimeBootstrapPhpIniEntries(spec)) || Boolean(spec.environment.extensions?.length))
 }
 
@@ -338,8 +369,8 @@ async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, reque
     await writeFile(join(directory, "wp-codebox-auto-prepend.php"), runtimeAutoPrependPhp(spec), "utf8")
   }
   if (requestWorkerEndpoint) await writeFile(join(directory, "request-worker.php"), requestWorkerPhp(requestWorkerEndpoint.token), "utf8")
-  const externalWpConfig = externalDatabaseWpConfig(spec)
-  if (externalWpConfig) await writeFile(join(directory, "wp-config.php"), externalWpConfig, "utf8")
+  const wpConfig = databaseBootstrapWpConfig(spec)
+  if (wpConfig) await writeFile(join(directory, "wp-config.php"), wpConfig, "utf8")
 
   return [
     ...(iniEntries ? [
@@ -350,7 +381,7 @@ async function pluginRuntimeBootstrapSharedMounts(spec: RuntimeCreateSpec, reque
       { hostPath: directory, vfsPath: "/internal/wp-codebox" },
       { hostPath: join(directory, "request-worker.php"), vfsPath: `/wordpress${requestWorkerEndpoint.route}` },
     ] : []),
-    ...(externalWpConfig ? [{ hostPath: join(directory, "wp-config.php"), vfsPath: "/wordpress/wp-config.php" }] : []),
+    ...(wpConfig ? [{ hostPath: join(directory, "wp-config.php"), vfsPath: "/wordpress/wp-config.php" }] : []),
   ]
 }
 
@@ -514,29 +545,6 @@ if (!$wpcb_db_diagnostic['transport']['stream_socket_client'] || !$wpcb_db_diagn
 $wpcb_db_target = strpos($wpcb_db_host, ':') !== false ? 'tcp://[' . $wpcb_db_host . ']:' . $wpcb_db_port : 'tcp://' . $wpcb_db_host . ':' . $wpcb_db_port;
 $wpcb_db_diagnostic['tcp']['attempted'] = true; $wpcb_db_socket = @stream_socket_client($wpcb_db_target, $wpcb_db_tcp_errno, $wpcb_db_tcp_error, 2, STREAM_CLIENT_CONNECT); if (!$wpcb_db_socket) { $wpcb_db_diagnostic['tcp']['error_code'] = (int) $wpcb_db_tcp_errno; $wpcb_db_fail('endpoint_unreachable', 'Verify runtime network access to the managed database endpoint.'); } fclose($wpcb_db_socket); $wpcb_db_diagnostic['tcp']['connected'] = true;
 $wpcb_db_diagnostic['mysqli']['attempted'] = true; $wpcb_db = @mysqli_init(); if (!$wpcb_db) $wpcb_db_fail('transport_unavailable', 'The mysqli client could not initialize in this runtime.'); @mysqli_options($wpcb_db, MYSQLI_OPT_CONNECT_TIMEOUT, 2); $wpcb_db_user = getenv('DB_USER') ?: 'root'; $wpcb_db_name = getenv('DB_NAME') ?: 'runtime'; $wpcb_db_connected = @mysqli_real_connect($wpcb_db, $wpcb_db_host, $wpcb_db_user, getenv('DB_PASSWORD'), $wpcb_db_name, (int) $wpcb_db_port); if (!$wpcb_db_connected) { $wpcb_db_errno = (int) mysqli_connect_errno(); $wpcb_db_diagnostic['mysqli']['error_code'] = $wpcb_db_errno; $wpcb_db_fail($wpcb_db_errno === 1045 ? 'authentication_failed' : ($wpcb_db_errno === 1049 ? 'database_missing' : 'endpoint_unreachable'), 'Verify the managed database credentials and selected database.'); } mysqli_close($wpcb_db); $wpcb_db_diagnostic['mysqli']['connected'] = true;
-`
-}
-
-function externalDatabaseWpConfig(spec: RuntimeCreateSpec): string | undefined {
-  if (spec.environment.databaseSetup !== "external") return undefined
-  const host = spec.runtimeEnv?.DB_HOST
-  if (!host) return undefined
-  const port = spec.runtimeEnv?.DB_PORT
-  const values = {
-    DB_NAME: spec.runtimeEnv?.DB_NAME ?? "runtime",
-    DB_USER: spec.runtimeEnv?.DB_USER ?? "root",
-    DB_HOST: port ? `${host}:${port}` : host,
-  }
-  return `<?php
-define('DB_NAME', ${phpLiteral(values.DB_NAME)});
-define('DB_USER', ${phpLiteral(values.DB_USER)});
-define('DB_PASSWORD', (string) getenv('DB_PASSWORD'));
-define('DB_HOST', ${phpLiteral(values.DB_HOST)});
-define('DB_CHARSET', 'utf8mb4');
-define('DB_COLLATE', '');
-$table_prefix = 'wp_';
-if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
-require_once ABSPATH . 'wp-settings.php';
 `
 }
 

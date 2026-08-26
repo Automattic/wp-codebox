@@ -60,7 +60,7 @@ export interface BackendNeutralEnvironmentSpec {
 }
 
 export type RuntimeWordPressInstallModeContract = "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
-export type RuntimeWordPressDatabaseSetupContract = "runtime-managed" | "external"
+export type RuntimeWordPressDatabaseSetupContract = "runtime-managed" | "external" | "custom-drop-in"
 export type RuntimeWorkerCount = number | "auto"
 
 export interface RuntimeWordPressAssetSpec extends BackendNeutralRuntimeAssetSpec {

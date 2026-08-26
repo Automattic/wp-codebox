@@ -3,11 +3,13 @@ import { compileBlueprint } from "@wp-playground/blueprints"
 import { bootWordPressAndRequestHandler } from "@wp-playground/wordpress"
 import type { MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
-import { dirname } from "node:path"
-import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl } from "./blueprint.js"
+import { readFile } from "node:fs/promises"
+import { basename, dirname } from "node:path"
+import { playgroundRuntimeBlueprint, playgroundRuntimeSiteUrl, playgroundWpConfigConstants } from "./blueprint.js"
 import { assertPhpWasmExternalExtensionsSupported } from "./php-wasm-preflight.js"
 import { phpEnvAssignments } from "./php-snippets.js"
 import type { PlaygroundCliServer, PlaygroundServerRunResponse } from "./preview-server.js"
+import { databaseBootstrapWpConfig } from "./database-bootstrap.js"
 
 const { createNodeFsMountHandler, loadNodeRuntime } = PHPWasmNode as unknown as {
   createNodeFsMountHandler(localPath: string): unknown
@@ -36,7 +38,9 @@ interface ProgrammaticPHPResponse {
 export interface ProgrammaticPlaygroundStartupOptions {
   bootstrapIniEntries: Record<string, string>
   phpIniEntries?: Record<string, string>
-  wordpressDirectory: string
+  wordpressDirectory?: string
+  wordpressArchivePath?: string
+  wordpressArchiveUrl?: string
   wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
   sharedPhpIniContent: string
 }
@@ -51,6 +55,8 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
   }
   const preinstallMounts = mounts.filter((mount) => mount.phase === "pre-install")
   const postinstallMounts = mounts.filter((mount) => mount.phase !== "pre-install")
+  const wpConfig = databaseBootstrapWpConfig(spec)
+  const wordPressZip = await wordpressArchiveFile(options)
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime: () => loadNodeRuntime(phpVersion, programmaticNodeRuntimeOptions(spec, nextProcessId++)),
     maxPhpInstances: 1,
@@ -59,16 +65,21 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     documentRoot: "/wordpress",
     sapiName: "cli",
     wordpressInstallMode: options.wordpressInstallMode ?? "install-from-existing-files",
+    ...(wordPressZip ? { wordPressZip } : {}),
+    constants: playgroundWpConfigConstants(spec.environment.blueprint),
     phpIniEntries,
     createFiles: {
       "/internal/shared/php.ini": options.sharedPhpIniContent,
       "/internal/wp-codebox/auto_prepend_file.php": autoPrependPhp(spec),
       "/internal/shared/mu-plugins/.keep": "",
       "/internal/shared/preload/.keep": "",
+      ...(wpConfig ? { "/wordpress/wp-config.php": wpConfig } : {}),
     },
     async onPHPInstanceCreated(php: unknown) {
       const programmaticPhp = php as ProgrammaticPHP
-      await mountHostDirectory(programmaticPhp, "/wordpress", options.wordpressDirectory)
+      if (options.wordpressDirectory) {
+        await mountHostDirectory(programmaticPhp, "/wordpress", options.wordpressDirectory)
+      }
       for (const mount of preinstallMounts) {
         await mountHostDirectory(programmaticPhp, mount.target, mount.source)
       }
@@ -109,6 +120,16 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
       await requestHandler[Symbol.asyncDispose]()
     },
   }
+}
+
+async function wordpressArchiveFile(options: ProgrammaticPlaygroundStartupOptions): Promise<File | undefined> {
+  if (options.wordpressArchivePath) {
+    return new File([await readFile(options.wordpressArchivePath)], basename(options.wordpressArchivePath))
+  }
+  if (!options.wordpressArchiveUrl) return undefined
+  const response = await fetch(options.wordpressArchiveUrl)
+  if (!response.ok) throw new Error(`Failed to fetch WordPress archive: HTTP ${response.status} ${response.statusText}`.trim())
+  return new File([await response.arrayBuffer()], basename(new URL(options.wordpressArchiveUrl).pathname) || "wordpress.zip")
 }
 
 export function programmaticNodeRuntimeOptions(spec: RuntimeCreateSpec, processId: number): { followSymlinks: true; emscriptenOptions: { processId: number }; extensions?: Array<string | { source: { format: "manifest"; manifestUrl: string } }> } {
