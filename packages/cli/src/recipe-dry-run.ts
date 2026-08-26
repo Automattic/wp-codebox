@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path"
-import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimeWordPressDatabaseSetup, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./commands/recipe-run-artifacts-mount-guard.js"
@@ -56,6 +56,7 @@ export interface RecipePlan {
     phpVersion?: string
     workers?: number | "auto"
     wordpressInstallMode?: RuntimeWordPressInstallMode
+    databaseSetup?: RuntimeWordPressDatabaseSetup
     assets?: RuntimeAssetSpec
     blueprint: unknown
     extensions?: Array<{ manifest: string }>
@@ -132,6 +133,7 @@ interface RecipeDryRunMount {
   source?: string
   target: string
   mode: "readonly" | "readwrite"
+  phase?: MountSpec["phase"]
   metadata?: Record<string, unknown>
   planned?: "existing" | "generated"
 }
@@ -367,6 +369,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       source,
       target: mount.target,
       mode: mount.mode ?? "readwrite" as const,
+      ...(mount.phase !== undefined ? { phase: mount.phase } : {}),
       ...(mount.metadata ? { metadata: mount.metadata } : {}),
       planned: "existing" as const,
     }
@@ -469,6 +472,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       ...(recipe.runtime?.phpVersion ? { phpVersion: recipe.runtime.phpVersion } : {}),
       ...(recipe.runtime?.workers !== undefined ? { workers: recipe.runtime.workers } : {}),
       ...(recipe.runtime?.wordpressInstallMode ? { wordpressInstallMode: recipe.runtime.wordpressInstallMode } : {}),
+      ...(recipe.runtime?.databaseSetup ? { databaseSetup: recipe.runtime.databaseSetup } : {}),
       ...(recipe.runtime?.assets ? { assets: recipe.runtime.assets } : {}),
       ...(recipe.runtime?.extensions ? { extensions: recipe.runtime.extensions } : {}),
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
