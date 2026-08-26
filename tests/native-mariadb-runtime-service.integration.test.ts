@@ -16,7 +16,7 @@ const service = (id: string, prefix = "DB"): WorkspaceRecipeRuntimeService => ({
 const rootsBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
 const readiness = await nativeMariaDbHostReadiness()
 if (readiness.status !== "ready") {
-  assert.ok(["unprivileged-host-required", "trusted-containment-tools-unavailable", "bounded-filesystem-unavailable", "containment-probe-cleanup-failed"].includes(readiness.reason ?? ""), "native discovery must return a stable fail-closed reason")
+  assert.ok(["unprivileged-host-required", "trusted-containment-tools-unavailable", "bounded-filesystem-unavailable", "containment-probe-cleanup-failed", "containment-probe-interrupted"].includes(readiness.reason ?? ""), "native discovery must return a stable fail-closed reason")
   const leakedRoots = (await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !rootsBefore.has(name))
   assert.deepEqual(leakedRoots, [], "failed native discovery must not leak private roots")
   console.log(`native MariaDB runtime service integration skipped: ${readiness.reason ?? "host-unavailable"}`)

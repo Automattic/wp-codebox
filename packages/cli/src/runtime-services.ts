@@ -110,6 +110,7 @@ export interface RuntimeServiceDependencies {
   signalNativeProcess?: (child: ChildProcess, signal: NodeJS.Signals) => boolean
   verifyNativeFilesystem?: (root: string, datadir: string) => Promise<void>
   request?: (url: string, options: { method: "GET" | "DELETE"; signal?: AbortSignal }) => Promise<{ status: number; body?: string }>
+  nativeIdentity?: () => NativeMariaDbHostIdentity
 }
 
 export interface RuntimeServiceProvider {
@@ -126,6 +127,8 @@ interface RuntimeServiceProvisionContext {
   externalServices: WorkspaceRecipeExternalServiceBoundary[]
   externalServiceWritesApproved: boolean
   nextSmtpServiceOrdinal(): number
+  nativeIdentity?: NativeMariaDbHostIdentity
+  retainNativeCleanup?: (release: () => Promise<void>, evidence: RuntimeServiceEvidence) => void
 }
 
 export interface ProvisionRuntimeServicesOptions {
@@ -380,9 +383,21 @@ const NATIVE_MARIADB_CPU_SECONDS = 300
 const NATIVE_MARIADB_OPEN_FILES = 512
 const NATIVE_MARIADB_PROCESSES = 512
 const nativeOwnedProcesses = new Set<OwnedNativeProcess>()
-const nativeMariaDbReadinessProbes = new WeakMap<RuntimeServiceDependencies, Promise<NativeMariaDbHostReadiness>>()
+const nativeMariaDbReadinessStates = new WeakMap<RuntimeServiceDependencies, NativeMariaDbReadinessState>()
 
 type NativeMariaDbHostReadiness = { status: "ready" | "unavailable"; reason?: string }
+
+export interface NativeMariaDbHostIdentity {
+  uid: number
+  euid: number
+  gid: number
+  egid: number
+}
+
+interface NativeMariaDbReadinessState {
+  active?: Promise<NativeMariaDbHostReadiness>
+  retained?: { release: () => Promise<void>; evidence: RuntimeServiceEvidence }
+}
 
 interface NativeMariaDbBinaries {
   server: string
@@ -455,10 +470,11 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     })
     return cleanupPromise
   }
+  context.retainNativeCleanup?.(cleanup, evidence)
 
   try {
     assertNativeMariaDbConfiguration(service)
-    assertNativeMariaDbUnprivilegedHost()
+    const identity = context.nativeIdentity ?? nativeMariaDbHostIdentity(dependencies)
     throwIfAborted(signal)
     const binaries = await resolveNativeMariaDbBinaries(dependencies, signal)
     binariesForCleanup = binaries
@@ -469,8 +485,8 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     const storageEnvironment = nativeMariaDbEnvironment(root.path)
     // MariaDB otherwise selects its package service account, which cannot write
     // through a FUSE filesystem owned by the unprivileged provider caller.
-    const userArgument = [`--user=${nativeMariaDbCallerUser()}`]
-    storage = await provisionNativeMariaDbStorage(binaries, root, storageRoot, dependencies, storageEnvironment, signal)
+    const userArgument = [`--user=${nativeMariaDbCallerUser(identity)}`]
+    storage = await provisionNativeMariaDbStorage(binaries, root, storageRoot, identity, dependencies, storageEnvironment, signal)
     const datadir = join(storageRoot, "database")
     const runtimeDirectory = join(storageRoot, "runtime")
     const temporaryDirectory = join(storageRoot, "tmp")
@@ -586,29 +602,53 @@ export function assertNativeMariaDbEngines(output: string): void {
   if (!enabled.has("innodb")) throw new Error("Native MariaDB engine isolation cannot be proven")
 }
 
-export function assertNativeMariaDbUnprivilegedHost(uid = typeof process.getuid === "function" ? process.getuid() : undefined): void {
-  if (uid === undefined || uid === 0) throw new Error("Native MariaDB requires a provably unprivileged host identity")
+export function assertNativeMariaDbUnprivilegedHost(identity: Partial<NativeMariaDbHostIdentity>): asserts identity is NativeMariaDbHostIdentity {
+  const values = [identity.uid, identity.euid, identity.gid, identity.egid]
+  if (values.some((value) => value === undefined || !Number.isSafeInteger(value) || value < 0) || values.some((value) => value === 0) || identity.uid !== identity.euid || identity.gid !== identity.egid) {
+    throw new Error("Native MariaDB requires a stable unprivileged host identity")
+  }
 }
 
-export async function nativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies = defaultDependencies): Promise<NativeMariaDbHostReadiness> {
-  const active = nativeMariaDbReadinessProbes.get(dependencies)
-  if (active) return await active
-  const probe = probeNativeMariaDbHostReadiness(dependencies)
-  nativeMariaDbReadinessProbes.set(dependencies, probe)
-  const result = await probe
-  if (result.reason === "containment-probe-cleanup-failed") nativeMariaDbReadinessProbes.delete(dependencies)
-  return result
-}
-
-async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies): Promise<NativeMariaDbHostReadiness> {
+export async function nativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies = defaultDependencies, signal?: AbortSignal): Promise<NativeMariaDbHostReadiness> {
+  let state = nativeMariaDbReadinessStates.get(dependencies)
+  if (!state) {
+    state = {}
+    nativeMariaDbReadinessStates.set(dependencies, state)
+  }
+  if (state.active) return await state.active
+  const probe = probeNativeMariaDbHostReadiness(dependencies, state, signal)
+  state.active = probe
   try {
-    assertNativeMariaDbUnprivilegedHost()
+    return await probe
+  } finally {
+    if (state.active === probe) state.active = undefined
+    if (!state.retained) nativeMariaDbReadinessStates.delete(dependencies)
+  }
+}
+
+async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies, state: NativeMariaDbReadinessState, signal?: AbortSignal): Promise<NativeMariaDbHostReadiness> {
+  if (state.retained) {
+    const retained = state.retained
+    try {
+      await retained.release()
+      state.retained = undefined
+      if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
+      return retained.evidence.readiness === "ready" ? { status: "ready" } : { status: "unavailable", reason: "bounded-filesystem-unavailable" }
+    } catch {
+      return { status: "unavailable", reason: "containment-probe-cleanup-failed" }
+    }
+  }
+  if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
+  let identity: NativeMariaDbHostIdentity
+  try {
+    identity = nativeMariaDbHostIdentity(dependencies)
   } catch {
     return { status: "unavailable", reason: "unprivileged-host-required" }
   }
   try {
-    await resolveNativeMariaDbBinaries(dependencies)
+    await resolveNativeMariaDbBinaries(dependencies, signal)
   } catch {
+    if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
     return { status: "unavailable", reason: "trusted-containment-tools-unavailable" }
   }
   const evidence: RuntimeServiceEvidence[] = []
@@ -618,22 +658,42 @@ async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDepen
       kind: "mysql",
       configuration: { provider: "native", engine: "mariadb" },
       outputs: {},
-    }, dependencies, { externalServices: [], externalServiceWritesApproved: false, nextSmtpServiceOrdinal: () => 1 }, evidence)
+    }, dependencies, {
+      externalServices: [],
+      externalServiceWritesApproved: false,
+      nextSmtpServiceOrdinal: () => 1,
+      nativeIdentity: identity,
+      retainNativeCleanup: (release, retainedEvidence) => { state.retained = { release, evidence: retainedEvidence } },
+      signal,
+    }, evidence)
     await managed.release()
+    state.retained = undefined
     return { status: "ready" }
   } catch (error) {
+    if (signal?.aborted && !state.retained) return { status: "unavailable", reason: "containment-probe-interrupted" }
     if (evidence.some((entry) => entry.teardown === "failed") || runtimeServiceEvidenceFromError(error)?.some((entry) => entry.teardown === "failed")) {
       return { status: "unavailable", reason: "containment-probe-cleanup-failed" }
     }
+    state.retained = undefined
+    if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
     return { status: "unavailable", reason: "bounded-filesystem-unavailable" }
   }
 }
 
-function nativeMariaDbCallerUser(): string {
+function nativeMariaDbHostIdentity(dependencies: RuntimeServiceDependencies): NativeMariaDbHostIdentity {
+  const identity = dependencies.nativeIdentity?.() ?? {
+    uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+    euid: typeof process.geteuid === "function" ? process.geteuid() : undefined,
+    gid: typeof process.getgid === "function" ? process.getgid() : undefined,
+    egid: typeof process.getegid === "function" ? process.getegid() : undefined,
+  }
+  assertNativeMariaDbUnprivilegedHost(identity)
+  return identity
+}
+
+function nativeMariaDbCallerUser(identity: NativeMariaDbHostIdentity): string {
   const caller = userInfo()
-  const uid = process.getuid?.()
-  const gid = process.getgid?.()
-  if (!caller.username || caller.username.includes("\0") || caller.uid !== uid || caller.gid !== gid) throw new Error("Native MariaDB caller identity cannot be proven")
+  if (!caller.username || caller.username.includes("\0") || caller.uid !== identity.uid || caller.gid !== identity.gid) throw new Error("Native MariaDB caller identity cannot be proven")
   return caller.username
 }
 
@@ -750,18 +810,15 @@ async function executeOwnedNativeLimited(dependencies: RuntimeServiceDependencie
   }
 }
 
-async function provisionNativeMariaDbStorage(binaries: NativeMariaDbBinaries, root: OwnedNativeRoot, datadir: string, dependencies: RuntimeServiceDependencies, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<NativeMariaDbStorage> {
+async function provisionNativeMariaDbStorage(binaries: NativeMariaDbBinaries, root: OwnedNativeRoot, datadir: string, identity: NativeMariaDbHostIdentity, dependencies: RuntimeServiceDependencies, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<NativeMariaDbStorage> {
   const image = ownedNativePath(root, "datadir.ext4")
   const storageLimits = nativeMariaDbLimitArguments(NATIVE_MARIADB_DATADIR_BYTES)
-  const uid = process.getuid?.()
-  const gid = process.getgid?.()
-  if (uid === undefined || gid === undefined || uid === 0) throw new Error("Native MariaDB bounded filesystem requires an unprivileged POSIX identity")
   await dependencies.execute(binaries.limiter, [...storageLimits, "--", binaries.truncate, "--size", String(NATIVE_MARIADB_DATADIR_BYTES), image], { env: environment, signal, timeout: 10_000, maxOutputBytes: NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES })
-  await dependencies.execute(binaries.limiter, [...storageLimits, "--", binaries.mkfs, "-q", "-F", "-N", String(NATIVE_MARIADB_DATADIR_INODES), "-E", `root_owner=${uid}:${gid}`, image], { env: environment, signal, timeout: 30_000, maxOutputBytes: NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES })
+  await dependencies.execute(binaries.limiter, [...storageLimits, "--", binaries.mkfs, "-q", "-F", "-N", String(NATIVE_MARIADB_DATADIR_INODES), "-E", `root_owner=${identity.uid}:${identity.gid}`, image], { env: environment, signal, timeout: 30_000, maxOutputBytes: NATIVE_MARIADB_PROCESS_OUTPUT_LIMIT_BYTES })
   const processState = spawnOwnedNativeMariaDb(binaries.limiter, [...storageLimits, "--", binaries.fuse, "-f", "-o", "rw,nosuid,nodev,noexec", image, datadir], environment)
   try {
     if (dependencies.verifyNativeFilesystem) await dependencies.verifyNativeFilesystem(root.path, datadir)
-    else await waitForNativeFilesystemContainment(root, datadir, image, processState, signal)
+    else await waitForNativeFilesystemContainment(root, datadir, image, identity, processState, signal)
     return { process: processState, datadir }
   } catch (error) {
     try {
@@ -777,7 +834,7 @@ async function provisionNativeMariaDbStorage(binaries: NativeMariaDbBinaries, ro
   }
 }
 
-async function waitForNativeFilesystemContainment(root: OwnedNativeRoot, datadir: string, image: string, state: OwnedNativeProcess, signal?: AbortSignal): Promise<void> {
+async function waitForNativeFilesystemContainment(root: OwnedNativeRoot, datadir: string, image: string, identity: NativeMariaDbHostIdentity, state: OwnedNativeProcess, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     throwIfAborted(signal)
@@ -786,7 +843,7 @@ async function waitForNativeFilesystemContainment(root: OwnedNativeRoot, datadir
       const [directory, filesystem] = await Promise.all([stat(datadir), statfs(datadir)])
       const bytes = filesystem.blocks * filesystem.bsize
       assertNativeMariaDbFilesystemGeometry(directory.dev, root.device, bytes, filesystem.files)
-      assertNativeMariaDbFilesystemOwnership(directory.uid, directory.gid)
+      assertNativeMariaDbFilesystemOwnership(directory.uid, directory.gid, identity)
       if (process.platform !== "linux") throw new Error("Native MariaDB FUSE mount identity cannot be proven")
       assertNativeMariaDbMountInfo(await readFile("/proc/self/mountinfo", "utf8"), datadir, image)
       return
@@ -804,8 +861,8 @@ export function assertNativeMariaDbFilesystemGeometry(device: number, rootDevice
   }
 }
 
-export function assertNativeMariaDbFilesystemOwnership(uid: number, gid: number, expectedUid = process.getuid?.(), expectedGid = process.getgid?.()): void {
-  if (expectedUid === undefined || expectedGid === undefined || expectedUid === 0 || uid !== expectedUid || gid !== expectedGid) {
+export function assertNativeMariaDbFilesystemOwnership(uid: number, gid: number, identity: NativeMariaDbHostIdentity): void {
+  if (uid !== identity.uid || gid !== identity.gid) {
     throw new Error("Native MariaDB bounded filesystem ownership is unavailable")
   }
 }

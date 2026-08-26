@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
 import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { withRuntimeDescriptorInterruption } from "../packages/cli/src/commands/discovery.ts"
+import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -35,14 +37,18 @@ assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-r
 const forbiddenConfiguration = { ...service, configuration: { ...service.configuration, hostEnv: "PRODUCTION_DB_HOST", image: "mariadb:latest" } }
 const forbiddenIssues = await validateWorkspaceRecipeSemantics({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [forbiddenConfiguration] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }, "recipe.json")
 assert.equal(forbiddenIssues.filter((issue) => issue.code === "unsupported-native-runtime-service-option").length, 2)
-assert.throws(() => assertNativeMariaDbUnprivilegedHost(0), /unprivileged/)
-assert.doesNotThrow(() => assertNativeMariaDbUnprivilegedHost(1000))
+const hostIdentity: NativeMariaDbHostIdentity = { uid: process.getuid!(), euid: process.geteuid!(), gid: process.getgid!(), egid: process.getegid!() }
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 0, gid: 1000, egid: 1000 }), /unprivileged/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1001, gid: 1000, egid: 1000 }), /stable/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1000, gid: 1000, egid: 1001 }), /stable/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1000, gid: 1000 }), /stable/)
+assert.doesNotThrow(() => assertNativeMariaDbUnprivilegedHost(hostIdentity))
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(1, 1, 256 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 257 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_097), /geometry/)
 assert.doesNotThrow(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_096))
-assert.throws(() => assertNativeMariaDbFilesystemOwnership(1001, 1000, 1000, 1000), /ownership/)
-assert.doesNotThrow(() => assertNativeMariaDbFilesystemOwnership(1000, 1000, 1000, 1000))
+assert.throws(() => assertNativeMariaDbFilesystemOwnership(hostIdentity.uid + 1, hostIdentity.gid, hostIdentity), /ownership/)
+assert.doesNotThrow(() => assertNativeMariaDbFilesystemOwnership(hostIdentity.uid, hostIdentity.gid, hostIdentity))
 assert.doesNotThrow(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native\\040db rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/datadir.ext4 rw", "/tmp/native db", "/tmp/datadir.ext4"))
 assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/wrong.ext4 rw", "/tmp/native", "/tmp/datadir.ext4"), /identity/)
 assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev - fuse.fuse2fs image rw", "/tmp/native"), /options/)
@@ -120,14 +126,28 @@ try {
     },
   }
 
+  const identityProbeRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  for (const identity of [
+    { ...hostIdentity, euid: 0 },
+    { ...hostIdentity, egid: 0 },
+    { ...hostIdentity, euid: hostIdentity.uid + 1 },
+    { ...hostIdentity, egid: hostIdentity.gid + 1 },
+  ]) {
+    const callsBeforeIdentityProbe = calls.length
+    assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, nativeIdentity: () => identity }), { status: "unavailable", reason: "unprivileged-host-required" })
+    assert.equal(calls.length, callsBeforeIdentityProbe, "invalid effective identity must execute zero host commands")
+  }
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !identityProbeRoots.has(name)), [], "invalid effective identity must allocate zero private roots")
+
   const [firstReadiness, concurrentReadiness] = await Promise.all([nativeMariaDbHostReadiness(dependencies), nativeMariaDbHostReadiness(dependencies)])
   assert.deepEqual(firstReadiness, { status: "ready" })
   assert.deepEqual(concurrentReadiness, { status: "ready" })
   assert.ok(calls.some((call) => call.stdin?.includes("CREATE DATABASE")), "readiness provisions a disposable database instead of only writing a mount marker")
   assert.ok(calls.some((call) => call.stdin === "SHOW ENGINES;\n"), "readiness proves the daemon storage-engine policy")
   const readinessAllocations = calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  assert.equal(readinessAllocations, 1, "concurrent descriptor probes share one in-flight allocation")
   assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
-  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, readinessAllocations, "repeated and concurrent descriptor probes share one full lifecycle")
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, readinessAllocations + 1, "settled descriptor readiness is not cached")
   assert.equal(calls.every((call) => call.env?.PATH === "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), true, "native commands ignore the caller PATH")
 
   const failedProbeRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
@@ -144,6 +164,44 @@ process.exit(1);
   assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !failedProbeRoots.has(name)), [], "initializer failure cannot produce false-ready or leak its root")
   await writeFile(join(fixture, "mariadb-install-db"), initializerScript)
   await chmod(join(fixture, "mariadb-install-db"), 0o700)
+
+  let transientMountFailure = true
+  const transientDependencies: RuntimeServiceDependencies = { ...dependencies, async verifyNativeFilesystem() {
+    if (transientMountFailure) throw new Error("temporary mount policy failure")
+  } }
+  assert.deepEqual(await nativeMariaDbHostReadiness(transientDependencies), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  transientMountFailure = false
+  assert.deepEqual(await nativeMariaDbHostReadiness(transientDependencies), { status: "ready" }, "temporary unavailable readiness must recover on the next probe")
+
+  const cleanupRetryRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  let readinessRemovalAttempts = 0
+  const cleanupRetryDependencies: RuntimeServiceDependencies = { ...dependencies, async removeNativeRoot(root) {
+    readinessRemovalAttempts += 1
+    if (readinessRemovalAttempts === 1) throw new Error("temporary descriptor cleanup failure")
+    await rm(root, { recursive: true, force: false })
+  } }
+  const allocationsBeforeCleanupRetry = calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  assert.deepEqual(await nativeMariaDbHostReadiness(cleanupRetryDependencies), { status: "unavailable", reason: "containment-probe-cleanup-failed" })
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, allocationsBeforeCleanupRetry + 1)
+  assert.deepEqual(await nativeMariaDbHostReadiness(cleanupRetryDependencies), { status: "ready" })
+  assert.equal(readinessRemovalAttempts, 2, "readiness retries the retained cleanup closure")
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, allocationsBeforeCleanupRetry + 1, "cleanup retry must not create a second readiness allocation")
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !cleanupRetryRoots.has(name)), [], "retained readiness cleanup eventually removes its exact root")
+
+  const interruptedRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  const descriptorAbort = new AbortController()
+  const interruptedDependencies: RuntimeServiceDependencies = { ...dependencies, async verifyNativeFilesystem(root, datadir) {
+    await dependencies.verifyNativeFilesystem?.(root, datadir)
+    descriptorAbort.abort()
+  } }
+  assert.deepEqual(await nativeMariaDbHostReadiness(interruptedDependencies, descriptorAbort.signal), { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !interruptedRoots.has(name)), [], "interrupted descriptor discovery releases all native roots")
+
+  const signalTarget = new EventEmitter()
+  const interruptedDescriptor = withRuntimeDescriptorInterruption(async (signal) => await new Promise<boolean>((resolve) => signal.addEventListener("abort", () => resolve(signal.aborted), { once: true })), signalTarget, 10_000)
+  signalTarget.emit("SIGTERM", "SIGTERM")
+  assert.equal(await interruptedDescriptor, true)
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signalTarget.listenerCount(signal), 0, `descriptor removes its ${signal} cleanup handler`)
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
   const provisioned = await provisionRuntimeServices([service], { dependencies })

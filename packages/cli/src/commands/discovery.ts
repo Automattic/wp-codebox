@@ -5,6 +5,14 @@ import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCli
 import { nativeMariaDbHostReadiness } from "../runtime-services.js"
 import { playwrightBrowserReadiness } from "@automattic/wp-codebox-playground"
 
+const RUNTIME_DESCRIPTOR_TIMEOUT_MS = 120_000
+const RUNTIME_DESCRIPTOR_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"]
+
+interface RuntimeDescriptorSignalTarget {
+  on(signal: NodeJS.Signals, handler: (signal: NodeJS.Signals) => void): unknown
+  off(signal: NodeJS.Signals, handler: (signal: NodeJS.Signals) => void): unknown
+}
+
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
   commands: Array<Omit<CommandDefinition, "handler">>
@@ -42,7 +50,7 @@ export async function runRecipeSchemaCommand(args: string[]): Promise<number> {
 
 export async function runRuntimeDescriptorCommand(args: string[]): Promise<number> {
   const json = parseDiscoveryJsonOption(args)
-  const output = await runtimeDescriptorOutput()
+  const output = await withRuntimeDescriptorInterruption((signal) => runtimeDescriptorOutput(signal))
   if (!json) {
     printRuntimeDescriptorHumanOutput(output)
     return 0
@@ -50,6 +58,20 @@ export async function runRuntimeDescriptorCommand(args: string[]): Promise<numbe
 
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   return 0
+}
+
+export async function withRuntimeDescriptorInterruption<T>(run: (signal: AbortSignal) => Promise<T>, target: RuntimeDescriptorSignalTarget = process, timeoutMs = RUNTIME_DESCRIPTOR_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController()
+  const interrupt = () => controller.abort()
+  for (const signal of RUNTIME_DESCRIPTOR_SIGNALS) target.on(signal, interrupt)
+  const timer = setTimeout(interrupt, timeoutMs)
+  timer.unref()
+  try {
+    return await run(controller.signal)
+  } finally {
+    clearTimeout(timer)
+    for (const signal of RUNTIME_DESCRIPTOR_SIGNALS) target.off(signal, interrupt)
+  }
 }
 
 function parseDiscoveryJsonOption(args: string[]): boolean {
@@ -111,6 +133,6 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
   }
 }
 
-async function runtimeDescriptorOutput(): Promise<RuntimeDescriptor> {
-  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness(), browserRuntime: await playwrightBrowserReadiness() })
+async function runtimeDescriptorOutput(signal: AbortSignal): Promise<RuntimeDescriptor> {
+  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness(undefined, signal), browserRuntime: await playwrightBrowserReadiness() })
 }
