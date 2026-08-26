@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { getEventListeners } from "node:events"
 import { test } from "node:test"
 import { playwrightBrowserProvenance, playwrightBrowserReadiness } from "../packages/runtime-playground/src/playwright-browser-provenance.js"
 
@@ -28,4 +29,14 @@ test("reports missing and present browser revisions without using the ambient ca
 
   const present = await playwrightBrowserReadiness({ executableExists: () => true })
   assert.deepEqual(present, { status: "ready" })
+})
+
+test("browser readiness aborts a pending provenance lookup and removes its listener", async () => {
+  const controller = new AbortController()
+  const pending = new Promise<never>(() => undefined)
+  const readiness = playwrightBrowserReadiness({ signal: controller.signal, provenance: () => pending })
+  assert.equal(getEventListeners(controller.signal, "abort").length, 1)
+  controller.abort()
+  await assert.rejects(readiness, /interrupted/)
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0)
 })

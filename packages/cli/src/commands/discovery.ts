@@ -2,8 +2,25 @@ import { createWorkspaceRecipeJsonSchema, runtimeDescriptor, type RuntimeDescrip
 import { commandRegistry, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput, printRuntimeDescriptorHumanOutput } from "../output.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../runtime-backends.js"
-import { nativeMariaDbHostReadiness } from "../runtime-services.js"
+import { nativeMariaDbHostReadiness, settleNativeMariaDbHostReadiness } from "../runtime-services.js"
 import { playwrightBrowserReadiness } from "@automattic/wp-codebox-playground"
+
+const RUNTIME_DESCRIPTOR_TIMEOUT_MS = 120_000
+const RUNTIME_DESCRIPTOR_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"]
+
+interface RuntimeDescriptorSignalTarget {
+  on(signal: NodeJS.Signals, handler: () => void): unknown
+  off(signal: NodeJS.Signals, handler: () => void): unknown
+}
+
+type RuntimeDescriptorInterruption = NodeJS.Signals | "timeout"
+
+export class RuntimeDescriptorInterruptedError extends Error {
+  constructor(readonly interruption: RuntimeDescriptorInterruption, readonly exitCode: number) {
+    super(interruption === "timeout" ? "Runtime descriptor discovery timed out" : `Runtime descriptor discovery interrupted by ${interruption}`)
+    this.name = "RuntimeDescriptorInterruptedError"
+  }
+}
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -40,9 +57,15 @@ export async function runRecipeSchemaCommand(args: string[]): Promise<number> {
   return 0
 }
 
-export async function runRuntimeDescriptorCommand(args: string[]): Promise<number> {
+export async function runRuntimeDescriptorCommand(args: string[], options: { descriptorOutput?: (signal: AbortSignal) => Promise<RuntimeDescriptor>; signalTarget?: RuntimeDescriptorSignalTarget; timeoutMs?: number } = {}): Promise<number> {
   const json = parseDiscoveryJsonOption(args)
-  const output = await runtimeDescriptorOutput()
+  let output: RuntimeDescriptor
+  try {
+    output = await withRuntimeDescriptorInterruption(options.descriptorOutput ?? runtimeDescriptorOutput, options.signalTarget, options.timeoutMs)
+  } catch (error) {
+    if (error instanceof RuntimeDescriptorInterruptedError) return error.exitCode
+    throw error
+  }
   if (!json) {
     printRuntimeDescriptorHumanOutput(output)
     return 0
@@ -50,6 +73,32 @@ export async function runRuntimeDescriptorCommand(args: string[]): Promise<numbe
 
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   return 0
+}
+
+export async function withRuntimeDescriptorInterruption<T>(run: (signal: AbortSignal) => Promise<T>, target: RuntimeDescriptorSignalTarget = process, timeoutMs = RUNTIME_DESCRIPTOR_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController()
+  let interruption: RuntimeDescriptorInterruption | undefined
+  const interrupt = (signal: NodeJS.Signals) => { interruption ??= signal; controller.abort() }
+  const timeout = () => { interruption ??= "timeout"; controller.abort() }
+  const handlers = new Map(RUNTIME_DESCRIPTOR_SIGNALS.map((signal) => [signal, () => interrupt(signal)] as const))
+  for (const [signal, handler] of handlers) target.on(signal, handler)
+  const timer = setTimeout(timeout, timeoutMs)
+  try {
+    const result = await run(controller.signal)
+    if (interruption) throw runtimeDescriptorInterruptedError(interruption)
+    return result
+  } catch (error) {
+    if (interruption) throw runtimeDescriptorInterruptedError(interruption)
+    throw error
+  } finally {
+    clearTimeout(timer)
+    for (const [signal, handler] of handlers) target.off(signal, handler)
+  }
+}
+
+function runtimeDescriptorInterruptedError(interruption: RuntimeDescriptorInterruption): RuntimeDescriptorInterruptedError {
+  const signalExitCodes: Record<NodeJS.Signals, number> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as Record<NodeJS.Signals, number>
+  return new RuntimeDescriptorInterruptedError(interruption, interruption === "timeout" ? 124 : signalExitCodes[interruption])
 }
 
 function parseDiscoveryJsonOption(args: string[]): boolean {
@@ -111,6 +160,13 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
   }
 }
 
-async function runtimeDescriptorOutput(): Promise<RuntimeDescriptor> {
-  return runtimeDescriptor({ nativeMariaDb: await nativeMariaDbHostReadiness(), browserRuntime: await playwrightBrowserReadiness() })
+async function runtimeDescriptorOutput(signal: AbortSignal): Promise<RuntimeDescriptor> {
+  const nativeMariaDb = await nativeMariaDbHostReadiness(undefined, signal)
+  if (signal.aborted) {
+    await settleNativeMariaDbHostReadiness()
+    throw new Error("Runtime descriptor discovery interrupted")
+  }
+  const browserRuntime = await playwrightBrowserReadiness({ signal })
+  if (signal.aborted) throw new Error("Runtime descriptor discovery interrupted")
+  return runtimeDescriptor({ nativeMariaDb, browserRuntime })
 }

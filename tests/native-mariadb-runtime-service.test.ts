@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
+import { EventEmitter, getEventListeners } from "node:events"
 import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
-import { tmpdir } from "node:os"
+import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { runRuntimeDescriptorCommand, RuntimeDescriptorInterruptedError, withRuntimeDescriptorInterruption } from "../packages/cli/src/commands/discovery.ts"
+import { abortableDelay, assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, settleNativeMariaDbHostReadiness, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { playwrightBrowserReadiness } from "../packages/runtime-playground/src/playwright-browser-provenance.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -35,12 +38,22 @@ assert.equal(validateWorkspaceRecipeJsonSchema({ schema: "wp-codebox/workspace-r
 const forbiddenConfiguration = { ...service, configuration: { ...service.configuration, hostEnv: "PRODUCTION_DB_HOST", image: "mariadb:latest" } }
 const forbiddenIssues = await validateWorkspaceRecipeSemantics({ schema: "wp-codebox/workspace-recipe/v1", inputs: { services: [forbiddenConfiguration] }, workflow: { steps: [{ command: "wordpress.run-php" }] } }, "recipe.json")
 assert.equal(forbiddenIssues.filter((issue) => issue.code === "unsupported-native-runtime-service-option").length, 2)
-assert.throws(() => assertNativeMariaDbUnprivilegedHost(0), /unprivileged/)
-assert.doesNotThrow(() => assertNativeMariaDbUnprivilegedHost(1000))
+const hostIdentity: NativeMariaDbHostIdentity = { uid: process.getuid!(), euid: process.geteuid!(), gid: process.getgid!(), egid: process.getegid!() }
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 0, gid: 1000, egid: 1000 }), /unprivileged/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1001, gid: 1000, egid: 1000 }), /stable/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1000, gid: 1000, egid: 1001 }), /stable/)
+assert.throws(() => assertNativeMariaDbUnprivilegedHost({ uid: 1000, euid: 1000, gid: 1000 }), /stable/)
+assert.doesNotThrow(() => assertNativeMariaDbUnprivilegedHost(hostIdentity))
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(1, 1, 256 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 257 * 1024 * 1024, 4_096), /geometry/)
 assert.throws(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_097), /geometry/)
 assert.doesNotThrow(() => assertNativeMariaDbFilesystemGeometry(2, 1, 256 * 1024 * 1024, 4_096))
+assert.throws(() => assertNativeMariaDbFilesystemOwnership(hostIdentity.uid + 1, hostIdentity.gid, hostIdentity), /ownership/)
+assert.doesNotThrow(() => assertNativeMariaDbFilesystemOwnership(hostIdentity.uid, hostIdentity.gid, hostIdentity))
+assert.doesNotThrow(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native\\040db rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/datadir.ext4 rw", "/tmp/native db", "/tmp/datadir.ext4"))
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev,noexec - fuse.fuse2fs /tmp/wrong.ext4 rw", "/tmp/native", "/tmp/datadir.ext4"), /identity/)
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 0:45 / /tmp/native rw,nosuid,nodev - fuse.fuse2fs image rw", "/tmp/native"), /options/)
+assert.throws(() => assertNativeMariaDbMountInfo("31 22 8:1 / /tmp/native rw,nosuid,nodev,noexec - ext4 image rw", "/tmp/native"), /identity/)
 assert.doesNotThrow(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tNO\tOutbound\nMEMORY\tYES\tMemory\n"))
 assert.throws(() => assertNativeMariaDbEngines("InnoDB\tDEFAULT\tTransactional\nFEDERATED\tYES\tOutbound\n"), /outbound-capable/)
 assert.throws(() => assertNativeMariaDbEngines("InnoDB\tNO\tTransactional\n"), /cannot be proven/)
@@ -114,8 +127,183 @@ try {
     },
   }
 
+  const identityProbeRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  for (const identity of [
+    { ...hostIdentity, euid: 0 },
+    { ...hostIdentity, egid: 0 },
+    { ...hostIdentity, euid: hostIdentity.uid + 1 },
+    { ...hostIdentity, egid: hostIdentity.gid + 1 },
+  ]) {
+    const callsBeforeIdentityProbe = calls.length
+    assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, nativeIdentity: () => identity }), { status: "unavailable", reason: "unprivileged-host-required" })
+    assert.equal(calls.length, callsBeforeIdentityProbe, "invalid effective identity must execute zero host commands")
+  }
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !identityProbeRoots.has(name)), [], "invalid effective identity must allocate zero private roots")
+
+  const [firstReadiness, concurrentReadiness] = await Promise.all([nativeMariaDbHostReadiness(dependencies), nativeMariaDbHostReadiness(dependencies)])
+  assert.deepEqual(firstReadiness, { status: "ready" })
+  assert.deepEqual(concurrentReadiness, { status: "ready" })
+  assert.ok(calls.some((call) => call.stdin?.includes("CREATE DATABASE")), "readiness provisions a disposable database instead of only writing a mount marker")
+  assert.ok(calls.some((call) => call.stdin === "SHOW ENGINES;\n"), "readiness proves the daemon storage-engine policy")
+  const readinessAllocations = calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  assert.equal(readinessAllocations, 1, "concurrent descriptor probes share one in-flight allocation")
   assert.deepEqual(await nativeMariaDbHostReadiness(dependencies), { status: "ready" })
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, readinessAllocations + 1, "settled descriptor readiness is not cached")
   assert.equal(calls.every((call) => call.env?.PATH === "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), true, "native commands ignore the caller PATH")
+
+  const failedProbeRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies, async verifyNativeFilesystem() { throw new Error("mount is not writable by caller") } }), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !failedProbeRoots.has(name)), [], "an incompatible mount cannot produce false-ready or leak its root")
+
+  const failedInitializerScript = `${nodeShebang}
+if (process.argv.includes('--help')) { console.log('Usage: mariadb-install-db --auth-root-authentication-method --skip-test-db'); process.exit(0); }
+process.exit(1);
+`
+  await writeFile(join(fixture, "mariadb-install-db"), failedInitializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
+  assert.deepEqual(await nativeMariaDbHostReadiness({ ...dependencies }), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !failedProbeRoots.has(name)), [], "initializer failure cannot produce false-ready or leak its root")
+  await writeFile(join(fixture, "mariadb-install-db"), initializerScript)
+  await chmod(join(fixture, "mariadb-install-db"), 0o700)
+
+  let transientMountFailure = true
+  const transientDependencies: RuntimeServiceDependencies = { ...dependencies, async verifyNativeFilesystem() {
+    if (transientMountFailure) throw new Error("temporary mount policy failure")
+  } }
+  assert.deepEqual(await nativeMariaDbHostReadiness(transientDependencies), { status: "unavailable", reason: "bounded-filesystem-unavailable" })
+  transientMountFailure = false
+  assert.deepEqual(await nativeMariaDbHostReadiness(transientDependencies), { status: "ready" }, "temporary unavailable readiness must recover on the next probe")
+
+  const cleanupRetryRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  let readinessRemovalAttempts = 0
+  const cleanupRetryDependencies: RuntimeServiceDependencies = { ...dependencies, async removeNativeRoot(root) {
+    readinessRemovalAttempts += 1
+    if (readinessRemovalAttempts === 1) throw new Error("temporary descriptor cleanup failure")
+    await rm(root, { recursive: true, force: false })
+  } }
+  const allocationsBeforeCleanupRetry = calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  assert.deepEqual(await nativeMariaDbHostReadiness(cleanupRetryDependencies), { status: "unavailable", reason: "containment-probe-cleanup-failed" })
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, allocationsBeforeCleanupRetry + 1)
+  assert.deepEqual(await nativeMariaDbHostReadiness(cleanupRetryDependencies), { status: "ready" })
+  assert.equal(readinessRemovalAttempts, 2, "readiness retries the retained cleanup closure")
+  assert.equal(calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length, allocationsBeforeCleanupRetry + 1, "cleanup retry must not create a second readiness allocation")
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !cleanupRetryRoots.has(name)), [], "retained readiness cleanup eventually removes its exact root")
+
+  const interruptedRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  const descriptorAbort = new AbortController()
+  const interruptedDependencies: RuntimeServiceDependencies = { ...dependencies, async verifyNativeFilesystem(root, datadir) {
+    await dependencies.verifyNativeFilesystem?.(root, datadir)
+    descriptorAbort.abort()
+  } }
+  assert.deepEqual(await nativeMariaDbHostReadiness(interruptedDependencies, descriptorAbort.signal), { status: "unavailable", reason: "containment-probe-interrupted" })
+  await settleNativeMariaDbHostReadiness(interruptedDependencies)
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !interruptedRoots.has(name)), [], "interrupted descriptor discovery releases all native roots")
+
+  const signalTarget = new EventEmitter()
+  const interruptedDescriptor = withRuntimeDescriptorInterruption(async (signal) => await new Promise<boolean>((resolve) => signal.addEventListener("abort", () => resolve(signal.aborted), { once: true })), signalTarget, 10_000)
+  signalTarget.emit("SIGTERM")
+  await assert.rejects(interruptedDescriptor, (error: unknown) => error instanceof RuntimeDescriptorInterruptedError && error.exitCode === 143)
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signalTarget.listenerCount(signal), 0, `descriptor removes its ${signal} cleanup handler`)
+
+  const timeoutTarget = new EventEmitter()
+  await assert.rejects(withRuntimeDescriptorInterruption(async (signal) => await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })), timeoutTarget, 1), (error: unknown) => error instanceof RuntimeDescriptorInterruptedError && error.exitCode === 124)
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(timeoutTarget.listenerCount(signal), 0, `timed-out descriptor removes its ${signal} handler`)
+
+  let descriptorOutput = ""
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout)
+  process.stdout.write = ((chunk: string | Uint8Array) => { descriptorOutput += chunk.toString(); return true }) as typeof process.stdout.write
+  try {
+    const commandSignalTarget = new EventEmitter()
+    const command = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: commandSignalTarget,
+      descriptorOutput: async (signal) => await new Promise((resolve) => signal.addEventListener("abort", () => resolve({} as never), { once: true })),
+    })
+    commandSignalTarget.emit("SIGINT")
+    assert.equal(await command, 130)
+    assert.equal(descriptorOutput, "", "interrupted descriptor command suppresses normal output")
+
+    const timeoutCommand = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: new EventEmitter(),
+      timeoutMs: 1,
+      descriptorOutput: async (signal) => await new Promise((resolve) => signal.addEventListener("abort", () => resolve({} as never), { once: true })),
+    })
+    assert.equal(await timeoutCommand, 124)
+    assert.equal(descriptorOutput, "", "timed-out descriptor command suppresses normal output")
+
+    const browserSignalTarget = new EventEmitter()
+    const browserCommand = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: browserSignalTarget,
+      descriptorOutput: async (signal) => {
+        await playwrightBrowserReadiness({ signal, provenance: async () => await new Promise<never>(() => undefined) })
+        return {} as never
+      },
+    })
+    browserSignalTarget.emit("SIGHUP")
+    assert.equal(await browserCommand, 129)
+    assert.equal(descriptorOutput, "", "browser-readiness interruption suppresses normal descriptor output")
+  } finally {
+    process.stdout.write = originalStdoutWrite
+  }
+
+  const delayController = new AbortController()
+  for (let iteration = 0; iteration < 20; iteration += 1) await abortableDelay(0, delayController.signal)
+  assert.equal(getEventListeners(delayController.signal, "abort").length, 0, "resolved abortable delays remove abort listeners")
+
+  const singleFlightAllocations = () => calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  const secondAbortFirst = new AbortController()
+  const secondAbortSecond = new AbortController()
+  const beforeSecondAbort = singleFlightAllocations()
+  const secondAbortFirstResult = nativeMariaDbHostReadiness(dependencies, secondAbortFirst.signal)
+  const secondAbortSecondResult = nativeMariaDbHostReadiness(dependencies, secondAbortSecond.signal)
+  secondAbortSecond.abort()
+  assert.deepEqual(await secondAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.equal(await Promise.race([settleNativeMariaDbHostReadiness(dependencies).then(() => "settled"), abortableDelay(50).then(() => "blocked")]), "settled", "an interrupted descriptor does not wait behind another live caller")
+  assert.deepEqual(await secondAbortFirstResult, { status: "ready" })
+  assert.equal(singleFlightAllocations(), beforeSecondAbort + 1, "aborting the second waiter does not cancel the first caller's allocation")
+  assert.equal(getEventListeners(secondAbortFirst.signal, "abort").length + getEventListeners(secondAbortSecond.signal, "abort").length, 0)
+
+  const firstAbortFirst = new AbortController()
+  const firstAbortSecond = new AbortController()
+  const beforeFirstAbort = singleFlightAllocations()
+  const firstAbortFirstResult = nativeMariaDbHostReadiness(dependencies, firstAbortFirst.signal)
+  const firstAbortSecondResult = nativeMariaDbHostReadiness(dependencies, firstAbortSecond.signal)
+  firstAbortFirst.abort()
+  assert.deepEqual(await firstAbortFirstResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.deepEqual(await firstAbortSecondResult, { status: "ready" })
+  assert.equal(singleFlightAllocations(), beforeFirstAbort + 1, "aborting the first waiter does not cancel the second caller's allocation")
+
+  const allAbortRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  const allAbortFirst = new AbortController()
+  const allAbortSecond = new AbortController()
+  const beforeAllAbort = singleFlightAllocations()
+  const allAbortFirstResult = nativeMariaDbHostReadiness(dependencies, allAbortFirst.signal)
+  const allAbortSecondResult = nativeMariaDbHostReadiness(dependencies, allAbortSecond.signal)
+  while (singleFlightAllocations() === beforeAllAbort) await abortableDelay(10)
+  allAbortFirst.abort()
+  allAbortSecond.abort()
+  assert.deepEqual(await allAbortFirstResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.deepEqual(await allAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  await settleNativeMariaDbHostReadiness(dependencies)
+  assert.equal(singleFlightAllocations(), beforeAllAbort + 1, "all aborted waiters cancel only one underlying allocation")
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !allAbortRoots.has(name)), [], "all-waiter abort cleans the underlying allocation")
+  assert.equal(getEventListeners(allAbortFirst.signal, "abort").length + getEventListeners(allAbortSecond.signal, "abort").length, 0)
+
+  let releaseRaceEntered!: () => void
+  let releaseRaceContinue!: () => void
+  const releaseEntered = new Promise<void>((resolve) => { releaseRaceEntered = resolve })
+  const releaseContinue = new Promise<void>((resolve) => { releaseRaceContinue = resolve })
+  const teardownRaceDependencies: RuntimeServiceDependencies = { ...dependencies, async removeNativeRoot(root) {
+    releaseRaceEntered()
+    await releaseContinue
+    await rm(root, { recursive: true, force: false })
+  } }
+  const teardownRaceAbort = new AbortController()
+  const teardownRaceResult = nativeMariaDbHostReadiness(teardownRaceDependencies, teardownRaceAbort.signal)
+  await releaseEntered
+  teardownRaceAbort.abort()
+  assert.deepEqual(await teardownRaceResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  releaseRaceContinue()
+  await settleNativeMariaDbHostReadiness(teardownRaceDependencies)
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
   const provisioned = await provisionRuntimeServices([service], { dependencies })
@@ -136,6 +324,7 @@ try {
   const initializerArgs = (await readFile(join(dirname(datadir), "tmp", "initializer-args"), "utf8")).trim().split("\n")
   assert.ok(initializerArgs.includes("--no-defaults"))
   assert.ok(initializerArgs.some((arg) => arg === `--datadir=${datadir}`))
+  assert.ok(initializerArgs.includes(`--user=${userInfo().username}`), "the initializer runs as the unprivileged FUSE mount owner")
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("truncate")) && call.args.includes("268435456")), "the provider creates a fixed 256 MiB backing image")
   assert.ok(calls.some((call) => call.args.some((arg) => arg.endsWith("mkfs.ext4")) && call.args.includes("-N") && call.args.includes("4096")), "the provider creates a fixed 4096-inode filesystem")
   assert.ok(daemonArgs.includes("--as=2147483648"))
@@ -145,6 +334,7 @@ try {
   assert.ok(daemonArgs.includes("--nproc=512"))
   assert.ok(daemonArgs.includes(`--plugin-dir=${join(dirname(datadir), "plugins")}`))
   assert.ok(daemonArgs.includes(`--secure-file-priv=${join(dirname(datadir), "files")}`))
+  assert.ok(daemonArgs.includes(`--user=${userInfo().username}`), "the daemon runs as the unprivileged FUSE mount owner")
   assert.ok(daemonArgs.every((arg) => !arg.startsWith("--socket=") || arg.startsWith(`--socket=${dirname(datadir)}/runtime/`)))
   assert.equal(daemonArgs.includes(password), false)
   const createUser = calls.find((call) => call.stdin?.includes("CREATE USER"))
