@@ -290,6 +290,25 @@ export interface BrowserEditorReadinessSummary {
   postType?: string
 }
 
+export interface BrowserEditorIdleCanvasSummary {
+  schema: "wp-codebox/editor-idle-canvas/v1"
+  status: "captured" | "unavailable"
+  onboardingModalCount?: number
+}
+
+export interface BrowserEditorPresentationMatchSummary {
+  schema: "wp-codebox/editor-presentation-match/v1"
+  status: "passed" | "failed" | "unavailable"
+  equivalentCanvasWidths?: boolean
+  majorGeometryDrift?: boolean
+  unreadableContent?: boolean
+  hiddenContent?: boolean
+  unresolvedAssetCount?: number
+  frontendScreenshot?: string
+  editorScreenshot?: string
+  diffScreenshot?: string
+}
+
 export interface BrowserEditorPresentationSummary {
   schema: "wp-codebox/editor-presentation/v1"
   canvasDocumentType: "iframe" | "parent"
@@ -298,6 +317,10 @@ export interface BrowserEditorPresentationSummary {
   iframeStylesheetUrls: string[]
   generatedPresentationIdentityCount: number
   generatedPresentationIdentities: string[]
+  expectedGeneratedPresentationIdentities?: string[]
+  expectedGeneratedPresentationIdentitiesComplete?: boolean
+  idleCanvas?: BrowserEditorIdleCanvasSummary
+  matchedRendering?: BrowserEditorPresentationMatchSummary
 }
 
 export interface BrowserEditorSaveSummary {

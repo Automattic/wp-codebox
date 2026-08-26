@@ -3,18 +3,21 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorIdleCanvasSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget } from "./editor-actions.js"
-import type { PlaygroundRunResponse } from "./playground-command-errors.js"
+import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget, type EditorOpenTarget } from "./editor-actions.js"
+import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { fileSha256, installWordPressAdminAuthCookies } from "./browser-probe-support.js"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { cleanWpCliOutput } from "./wp-cli-command-handlers.js"
+import { comparePngFiles } from "./browser-visual-compare.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -644,7 +647,21 @@ export async function runEditorOpenCommand({
     }
 
     if (editorReadiness) {
+      await dismissWordPressOnboardingDialogs(page)
       editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
+      if (editorPresentation) {
+        const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
+        const idleCanvas = await captureEditorIdleCanvas(page)
+        editorPresentation = {
+          ...editorPresentation,
+          ...(expected ? {
+            expectedGeneratedPresentationIdentities: expected.identities,
+            expectedGeneratedPresentationIdentitiesComplete: expected.complete,
+          } : {}),
+          idleCanvas,
+          matchedRendering: await captureEditorPresentationMatch({ args, artifactSession, page, topology, waitTimeoutMs }),
+        }
+      }
     }
 
     if (capture.has("editor-state")) {
@@ -701,7 +718,12 @@ export async function runEditorOpenCommand({
       ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...topology.origins,
-      files: editorOpenArtifactFilesForCapture(capture, artifactPathPrefix),
+      files: {
+        ...editorOpenArtifactFilesForCapture(capture, artifactPathPrefix),
+        ...(editorPresentation?.matchedRendering?.frontendScreenshot && editorPresentation.matchedRendering.editorScreenshot && editorPresentation.matchedRendering.diffScreenshot
+          ? { screenshots: [editorPresentation.matchedRendering.frontendScreenshot, editorPresentation.matchedRendering.editorScreenshot, editorPresentation.matchedRendering.diffScreenshot] }
+          : {}),
+      },
       summary: {
         steps: stepRecords.length,
         consoleMessages: consoleMessages.length,
@@ -903,6 +925,134 @@ export async function captureEditorPresentation(page: import("playwright").Page,
   }
 
   return undefined
+}
+
+// Ask WordPress for the same filtered editor settings used to construct the
+// canvas. This is independent of the rendered iframe, so a missing style is
+// observable rather than certified from the observed set itself.
+async function captureExpectedEditorPresentationIdentities(
+  target: EditorOpenTarget,
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>,
+  runtimeSpec: RuntimeCreateSpec,
+  server: PlaygroundCliServer,
+): Promise<{ identities: string[]; complete: boolean } | undefined> {
+  if (target.kind !== "post" || !target.postId) return undefined
+  const response = await runPlaygroundCommand("wordpress.editor-open.capture-presentation-contract", server, {
+    code: bootstrapPhpCode(runtimeSpec, `
+$post = get_post(${target.postId});
+if ( ! $post instanceof WP_Post ) { WP_CLI::error( 'Editor target post is unavailable.' ); }
+$settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
+$identities = array();
+foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
+  if ( ! is_array( $style ) || ! is_string( $style['css'] ?? null ) ) { continue; }
+  if ( preg_match_all( '/--blocks-engine-presentation:([a-f0-9]{64})/i', $style['css'], $matches ) ) {
+    foreach ( $matches[1] as $identity ) { $identities[] = strtolower( $identity ); }
+  }
+}
+$identities = array_values( array_unique( $identities ) );
+sort( $identities, SORT_STRING );
+WP_CLI::line( wp_json_encode( array( 'identities' => $identities, 'complete' => true ) ) );
+`, []),
+  })
+  assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
+  const value = JSON.parse(cleanWpCliOutput(response.text)) as { identities?: unknown; complete?: unknown }
+  if (!Array.isArray(value.identities) || value.complete !== true || !value.identities.every((identity) => typeof identity === "string" && /^[a-f0-9]{64}$/.test(identity))) {
+    throw new Error("wordpress.editor-open presentation contract returned an invalid identity set")
+  }
+  return { identities: [...new Set(value.identities)].sort(), complete: true }
+}
+
+export async function captureEditorIdleCanvas(page: import("playwright").Page): Promise<BrowserEditorIdleCanvasSummary> {
+  const onboardingModalCount = await page.evaluate(() => {
+    const selectors = [".components-guide", ".welcome-panel", ".components-modal__frame"]
+    return selectors.reduce((count, selector) => count + Array.from(document.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+      const style = getComputedStyle(element)
+      return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0
+    }).length, 0)
+  }).catch(() => undefined)
+  return onboardingModalCount === undefined
+    ? { schema: "wp-codebox/editor-idle-canvas/v1", status: "unavailable" }
+    : { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", onboardingModalCount }
+}
+
+async function captureEditorPresentationMatch(input: {
+  args: string[]
+  artifactSession: BrowserArtifactSession
+  page: import("playwright").Page
+  topology: ReturnType<typeof editorCommandPreviewTopology>
+  waitTimeoutMs: number
+}): Promise<NonNullable<BrowserEditorPresentationSummary["matchedRendering"]>> {
+  const presentationUrl = argValue(input.args, "presentation-url")?.trim()
+  if (!presentationUrl) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+  const frontendSelector = boundedPresentationSelector(input.args, "presentation-frontend-selector", "body")
+  const editorSelector = boundedPresentationSelector(input.args, "presentation-editor-selector", EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR)
+  const threshold = presentationThreshold(input.args)
+  const frontendPath = input.artifactSession.absolutePath("presentation-frontend.png")
+  const editorPath = input.artifactSession.absolutePath("presentation-editor.png")
+  const frontendRef = input.artifactSession.path("presentation-frontend.png")
+  const editorRef = input.artifactSession.path("presentation-editor.png")
+  const diffRef = input.artifactSession.path("presentation-diff.png")
+  try {
+    const frame = await resolveEditorCanvasFrame(input.page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+    const canvas = frame ?? input.page
+    const editor = canvas.locator(editorSelector).first()
+    const editorBox = await editor.boundingBox()
+    if (!editorBox || editorBox.width <= 0 || editorBox.height <= 0) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+    const frontend = await input.page.context().newPage()
+    try {
+      await frontend.setViewportSize({ width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) })
+      await frontend.goto(input.topology.resolveUrl(presentationUrl), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
+      const source = frontend.locator(frontendSelector).first()
+      if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "failed" }
+      const [frontendEvidence, editorEvidence] = await Promise.all([presentationSurfaceEvidence(frontend, frontendSelector), presentationSurfaceEvidence(canvas, editorSelector)])
+      await input.artifactSession.writeGenerated("screenshot", "presentation-frontend.png", async (path) => { await source.screenshot({ path, timeout: input.waitTimeoutMs }); })
+      await input.artifactSession.writeGenerated("screenshot", "presentation-editor.png", async (path) => { await editor.screenshot({ path, timeout: input.waitTimeoutMs }); })
+      let comparison: Awaited<ReturnType<typeof comparePngFiles>> | undefined
+      await input.artifactSession.writeGenerated("screenshot", "presentation-diff.png", async (path) => {
+        comparison = await comparePngFiles(frontendPath, editorPath, path, { threshold, includeAA: false, maxRegions: 8 })
+      })
+      if (!comparison) throw new Error("Presentation comparison did not produce metrics")
+      const equivalentCanvasWidths = comparison.source.width === comparison.candidate.width
+      // The same bounded threshold applies to canvas extent and the shared
+      // visual region; equal widths alone must not certify different renders.
+      const majorGeometryDrift = comparison.dimensionDeltaRatio > threshold || comparison.overlapMismatchRatio > threshold
+      const unreadableContent = !frontendEvidence.readable || !editorEvidence.readable
+      const hiddenContent = !frontendEvidence.visible || !editorEvidence.visible
+      const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
+      const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
+      return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef }
+    } finally { await frontend.close() }
+  } catch {
+    return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+  }
+}
+
+function boundedPresentationSelector(args: string[], name: string, fallback: string): string {
+  const selector = argValue(args, name)?.trim() || fallback
+  if (selector.length > 512) throw new Error(`wordpress.editor-open ${name} must be at most 512 characters`)
+  return selector
+}
+
+function presentationThreshold(args: string[]): number {
+  const raw = argValue(args, "presentation-threshold")?.trim()
+  if (!raw) return 0.02
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`wordpress.editor-open presentation-threshold must be between 0 and 1: ${raw}`)
+  return value
+}
+
+async function presentationSurfaceEvidence(surface: import("playwright").Page | import("playwright").Frame, selector: string): Promise<{ visible: boolean; readable: boolean; unresolvedAssets: number }> {
+  return surface.evaluate((selector) => {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (!element) return { visible: false, readable: false, unresolvedAssets: 0 }
+    const style = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    const visible = style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0 && rect.width > 0 && rect.height > 0
+    const readable = visible && (element.innerText || "").trim().length > 0
+    const unresolvedAssets = Array.from(element.querySelectorAll<HTMLImageElement>("img")).filter((image) => image.src && (!image.complete || image.naturalWidth === 0)).length
+      + Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')).filter((link) => !link.disabled && !link.sheet).length
+    return { visible, readable, unresolvedAssets }
+  }, selector)
 }
 
 export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {

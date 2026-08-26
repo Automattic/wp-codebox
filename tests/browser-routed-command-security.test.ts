@@ -49,6 +49,8 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
     response.setHeader("content-type", "text/html")
     response.end(request.url?.startsWith("/broken")
       ? "<main>Broken editor fixture</main>"
+      : request.url?.startsWith("/presentation")
+        ? "<main>Deliberately different frontend fixture</main>"
       : request.url?.startsWith("/parent-canvas")
         ? parentCanvasEditorHtml
         : request.url?.startsWith("/replacing-canvas")
@@ -105,7 +107,33 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         iframeStylesheetUrls: [],
         generatedPresentationIdentityCount: 1,
         generatedPresentationIdentities: [CANVAS_PRESENTATION_IDENTITY],
+        idleCanvas: { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", onboardingModalCount: 0 },
+        matchedRendering: { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" },
       })
+    })
+
+    await withTempDir("wp-codebox-editor-presentation-match-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=${PUBLIC_URL}`, "presentation-url=/presentation", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string; frontendScreenshot: string; editorScreenshot: string; diffScreenshot: string; equivalentCanvasWidths: boolean; majorGeometryDrift: boolean; unreadableContent: boolean; hiddenContent: boolean; unresolvedAssetCount: number } } } }
+      assert.deepEqual(output.summary.editorPresentation.matchedRendering, {
+        schema: "wp-codebox/editor-presentation-match/v1",
+        status: "failed",
+        equivalentCanvasWidths: false,
+        majorGeometryDrift: true,
+        unreadableContent: false,
+        hiddenContent: false,
+        unresolvedAssetCount: 0,
+        frontendScreenshot: "files/browser/presentation-frontend.png",
+        editorScreenshot: "files/browser/presentation-editor.png",
+        diffScreenshot: "files/browser/presentation-diff.png",
+      })
+      await assertCommandSurfacesSafe(result, artifactRoot, ["files/browser/presentation-frontend.png", "files/browser/presentation-editor.png", "files/browser/presentation-diff.png"])
     })
 
     await withTempDir("wp-codebox-real-editor-parent-canvas-security-", async (artifactRoot) => {
