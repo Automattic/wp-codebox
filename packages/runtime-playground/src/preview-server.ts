@@ -66,7 +66,7 @@ export class PlaygroundPreviewPortUnavailableError extends Error {
 export async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1"): Promise<PlaygroundCliServer> {
   let proxy: PlaygroundPreviewProxy | undefined
   try {
-    proxy = await startPreviewProxy(server.serverUrl, port, bind)
+    proxy = await startPreviewProxy(server.serverUrl, port, bind, server.wordpressUrl)
   } catch (error) {
     await server[Symbol.asyncDispose]()
     throw error
@@ -87,12 +87,16 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   }
 }
 
-async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
+async function startPreviewProxy(targetUrl: string, port: number, bind: string, wordpressUrl?: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
+  const wordpressOrigin = {
+    declared: Boolean(wordpressUrl),
+    value: wordpressUrl ? new URL(wordpressUrl).origin : target.origin,
+  }
   const routes = createPreviewRouteRegistry()
   const requestTrace = createPreviewProxyRequestTrace()
   const upstreamQueue = createPreviewProxyQueue()
-  const proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
+  const proxy = previewProxyServer(target, wordpressOrigin, routes, requestTrace, upstreamQueue)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
@@ -100,7 +104,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   const resolvedPort = address && typeof address === "object" ? address.port : port
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target, routes, requestTrace, upstreamQueue)
+    const ipv6Proxy = previewProxyServer(target, wordpressOrigin, routes, requestTrace, upstreamQueue)
     try {
       await listenPreviewProxy(ipv6Proxy, resolvedPort, "::1")
       servers.push(ipv6Proxy)
@@ -134,7 +138,12 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   }
 }
 
-function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace, upstreamQueue: ReturnType<typeof createPreviewProxyQueue>): PreviewProxyServer {
+interface PlaygroundWordPressOrigin {
+  declared: boolean
+  value: string
+}
+
+function previewProxyServer(target: URL, wordpressOrigin: PlaygroundWordPressOrigin, routes: InternalPreviewRouteRegistry, requestTrace: PlaygroundPreviewProxyRequestTrace, upstreamQueue: ReturnType<typeof createPreviewProxyQueue>): PreviewProxyServer {
   return createHttpServer(async (incoming, outgoing) => {
     try {
       if (await routes.handle(incoming, outgoing)) {
@@ -146,7 +155,7 @@ function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry, r
     }
 
     upstreamQueue(
-      () => proxyPreviewRequest(target, incoming, outgoing, requestTrace),
+      () => proxyPreviewRequest(target, wordpressOrigin, incoming, outgoing, requestTrace),
       () => incoming.aborted || incoming.destroyed || outgoing.destroyed,
       (cancel) => {
         incoming.once("aborted", cancel)
@@ -183,7 +192,7 @@ function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
   }
 }
 
-function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse, requestTrace: PlaygroundPreviewProxyRequestTrace): Promise<void> {
+function proxyPreviewRequest(target: URL, wordpressOrigin: PlaygroundWordPressOrigin, incoming: IncomingMessage, outgoing: ServerResponse, requestTrace: PlaygroundPreviewProxyRequestTrace): Promise<void> {
   return new Promise((resolve) => {
     const requestTarget = previewProxyRequestTarget(incoming, target)
     const serviceWorkerRegistration = isPreviewProxyServiceWorkerRegistrationRequest(incoming)
@@ -221,11 +230,12 @@ function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: S
         port: target.port,
         method: incoming.method,
         path: requestTarget.path,
-        headers: proxyRequestHeaders(incoming.headers, requestTarget),
+        headers: proxyRequestHeaders(incoming.headers, requestTarget, new URL(wordpressOrigin.value).host),
       }, (response) => {
         targetResponse = response
-        const headers = proxyResponseHeaders(response.headers, requestTarget, target)
-        const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target)
+        learnWordPressOrigin(response.headers.location, target, wordpressOrigin)
+        const headers = proxyResponseHeaders(response.headers, requestTarget, target, wordpressOrigin.value)
+        const bodyTransform = previewProxyResponseBodyTransform(headers, requestTarget, target, wordpressOrigin.value)
         const responseOutcome: PlaygroundPreviewProxyRequestOutcome = {
           outcome: "response",
           status: response.statusCode ?? 502,
@@ -452,7 +462,7 @@ function formatPreviewHost(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
-function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget): IncomingHttpHeaders {
+function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, wordpressHost: string): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
@@ -477,7 +487,7 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
 
   return {
     ...forwarded,
-    host: requestTarget.upstreamHost,
+    host: requestTarget.rewriteTargetOrigin ? wordpressHost : requestTarget.upstreamHost,
     "x-forwarded-host": requestTarget.visibleHost,
     "x-forwarded-port": requestTarget.port,
     "x-forwarded-proto": requestTarget.protocol.slice(0, -1),
@@ -499,7 +509,7 @@ function isCredentiallessPlaygroundWorkerAssetRequest(headers: IncomingHttpHeade
   return path.endsWith("/sw.js") || /(?:^|\/)assets\/[^/]+\.(?:m?js|wasm)$/i.test(path)
 }
 
-function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): IncomingHttpHeaders {
+function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL, wordpressOrigin: string): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
   delete forwarded["transfer-encoding"]
@@ -511,7 +521,7 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: Previ
   if (typeof forwarded.location === "string") {
     try {
       const location = new URL(forwarded.location, target)
-      if (location.origin === target.origin) {
+      if (location.origin === target.origin || location.origin === wordpressOrigin) {
         location.protocol = requestTarget.protocol
         const visible = new URL(`${requestTarget.protocol}//${requestTarget.visibleHost}`)
         location.hostname = visible.hostname
@@ -526,7 +536,7 @@ function proxyResponseHeaders(headers: IncomingHttpHeaders, requestTarget: Previ
   return forwarded
 }
 
-function previewProxyResponseBodyTransform(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL): Transform | undefined {
+function previewProxyResponseBodyTransform(headers: IncomingHttpHeaders, requestTarget: PreviewProxyRequestTarget, target: URL, wordpressOrigin: string): Transform | undefined {
   if (!requestTarget.rewriteTargetOrigin || requestTarget.visibleHost === target.host || !previewProxyTextResponse(headers)) {
     return undefined
   }
@@ -537,9 +547,29 @@ function previewProxyResponseBodyTransform(headers: IncomingHttpHeaders, request
   }
 
   return originRewriteTransform(
-    [target.origin, `${target.protocol}//${target.hostname}`],
+    [target.origin, `${target.protocol}//${target.hostname}`, wordpressOrigin],
     `${requestTarget.protocol}//${requestTarget.visibleHost}`,
   )
+}
+
+function learnWordPressOrigin(locationHeader: string | string[] | undefined, target: URL, wordpressOrigin: PlaygroundWordPressOrigin): void {
+  if (wordpressOrigin.declared) {
+    return
+  }
+
+  const locationValue = headerValue(locationHeader)
+  if (!locationValue) {
+    return
+  }
+
+  try {
+    const location = new URL(locationValue, target)
+    if (location.protocol === target.protocol && location.hostname === target.hostname && location.origin !== target.origin) {
+      wordpressOrigin.value = location.origin
+    }
+  } catch {
+    // Preserve the current origin when WordPress emits a malformed redirect.
+  }
 }
 
 function previewProxyTextResponse(headers: IncomingHttpHeaders): boolean {
