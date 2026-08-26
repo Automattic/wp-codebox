@@ -487,7 +487,7 @@ function proxyRequestHeaders(headers: IncomingHttpHeaders, requestTarget: Previe
 
   return {
     ...forwarded,
-    host: wordpressHost,
+    host: requestTarget.rewriteTargetOrigin ? wordpressHost : requestTarget.upstreamHost,
     "x-forwarded-host": requestTarget.visibleHost,
     "x-forwarded-port": requestTarget.port,
     "x-forwarded-proto": requestTarget.protocol.slice(0, -1),
