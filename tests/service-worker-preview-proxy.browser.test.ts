@@ -7,6 +7,44 @@ import { chromium } from "playwright"
 
 import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
+test("the preview proxy aligns a custom database drop-in's canonical WordPress origin", async () => {
+  let canonicalOrigin = ""
+  const upstreamHosts: Array<string | undefined> = []
+  const upstream = createServer((request, response) => {
+    upstreamHosts.push(request.headers.host)
+    if (request.headers.host !== new URL(canonicalOrigin).host) {
+      response.writeHead(302, { location: `${canonicalOrigin}${request.url}` })
+      response.end()
+      return
+    }
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: `${canonicalOrigin}/destination` })
+      response.end()
+      return
+    }
+    response.writeHead(200, { "content-type": "text/html" })
+    response.end(`<a href="${canonicalOrigin}/destination">destination</a>`)
+  })
+  const upstreamUrl = await listenLocalHttpServer(upstream)
+  canonicalOrigin = `${new URL(upstreamUrl).protocol}//${new URL(upstreamUrl).hostname}`
+  const proxy = await withPreviewProxy({
+    playground: { async run() { return { text: "", exitCode: 0 } } },
+    serverUrl: upstreamUrl,
+    async [Symbol.asyncDispose]() {},
+  } satisfies PlaygroundCliServer, 0)
+  try {
+    const page = await fetch(proxy.serverUrl)
+    assert.deepEqual(upstreamHosts.slice(0, 2), [new URL(upstreamUrl).host, new URL(canonicalOrigin).host])
+    assert.equal(await page.text(), `<a href="${proxy.serverUrl}/destination">destination</a>`)
+
+    const redirect = await fetch(`${proxy.serverUrl}/redirect`, { redirect: "manual" })
+    assert.equal(redirect.headers.get("location"), `${proxy.serverUrl}/destination`)
+  } finally {
+    await proxy[Symbol.asyncDispose]()
+    await closeHttpServer(upstream)
+  }
+})
+
 test("the preview proxy registers a service worker after transient upstream redirects", async () => {
   const workerPath = "/runtime/version/sw.js"
   let workerRequests = 0
