@@ -651,6 +651,7 @@ export async function runEditorOpenCommand({
       editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
       if (editorPresentation) {
         const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
+        await dismissWordPressOnboardingDialogs(page)
         const idleCanvas = await captureEditorIdleCanvas(page)
         editorPresentation = {
           ...editorPresentation,
