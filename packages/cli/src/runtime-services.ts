@@ -395,8 +395,15 @@ export interface NativeMariaDbHostIdentity {
 }
 
 interface NativeMariaDbReadinessState {
-  active?: Promise<NativeMariaDbHostReadiness>
+  active?: NativeMariaDbActiveProbe
   retained?: { release: () => Promise<void>; evidence: RuntimeServiceEvidence }
+}
+
+interface NativeMariaDbActiveProbe {
+  controller: AbortController
+  promise: Promise<NativeMariaDbHostReadiness>
+  waiters: Set<symbol>
+  settled: boolean
 }
 
 interface NativeMariaDbBinaries {
@@ -615,15 +622,18 @@ export async function nativeMariaDbHostReadiness(dependencies: RuntimeServiceDep
     state = {}
     nativeMariaDbReadinessStates.set(dependencies, state)
   }
-  if (state.active) return await state.active
-  const probe = probeNativeMariaDbHostReadiness(dependencies, state, signal)
-  state.active = probe
-  try {
-    return await probe
-  } finally {
-    if (state.active === probe) state.active = undefined
-    if (!state.retained) nativeMariaDbReadinessStates.delete(dependencies)
+  let active = state.active
+  if (!active) {
+    const controller = new AbortController()
+    active = { controller, promise: Promise.resolve({ status: "unavailable" }), waiters: new Set(), settled: false }
+    state.active = active
+    active.promise = probeNativeMariaDbHostReadiness(dependencies, state, controller.signal).finally(() => {
+      active!.settled = true
+      if (state.active === active) state.active = undefined
+      if (!state.retained) nativeMariaDbReadinessStates.delete(dependencies)
+    })
   }
+  return await waitForNativeMariaDbProbe(active, signal)
 }
 
 async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies, state: NativeMariaDbReadinessState, signal?: AbortSignal): Promise<NativeMariaDbHostReadiness> {
@@ -668,6 +678,7 @@ async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDepen
     }, evidence)
     await managed.release()
     state.retained = undefined
+    if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
     return { status: "ready" }
   } catch (error) {
     if (signal?.aborted && !state.retained) return { status: "unavailable", reason: "containment-probe-interrupted" }
@@ -678,6 +689,38 @@ async function probeNativeMariaDbHostReadiness(dependencies: RuntimeServiceDepen
     if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
     return { status: "unavailable", reason: "bounded-filesystem-unavailable" }
   }
+}
+
+async function waitForNativeMariaDbProbe(active: NativeMariaDbActiveProbe, signal?: AbortSignal): Promise<NativeMariaDbHostReadiness> {
+  const waiter = Symbol("native-mariadb-readiness-waiter")
+  active.waiters.add(waiter)
+  let abort: (() => void) | undefined
+  try {
+    if (signal?.aborted) return { status: "unavailable", reason: "containment-probe-interrupted" }
+    if (!signal) return await active.promise
+    return await Promise.race([
+      active.promise,
+      new Promise<NativeMariaDbHostReadiness>((resolve) => {
+        abort = () => resolve({ status: "unavailable", reason: "containment-probe-interrupted" })
+        signal.addEventListener("abort", abort, { once: true })
+      }),
+    ])
+  } finally {
+    if (abort) signal?.removeEventListener("abort", abort)
+    active.waiters.delete(waiter)
+    if (!active.settled && active.waiters.size === 0) active.controller.abort()
+  }
+}
+
+export async function settleNativeMariaDbHostReadiness(dependencies: RuntimeServiceDependencies = defaultDependencies): Promise<void> {
+  const state = nativeMariaDbReadinessStates.get(dependencies)
+  if (!state) return
+  if (state.active && !state.active.controller.signal.aborted) return
+  await state.active?.promise
+  if (!state.retained) return
+  await state.retained.release()
+  state.retained = undefined
+  nativeMariaDbReadinessStates.delete(dependencies)
 }
 
 function nativeMariaDbHostIdentity(dependencies: RuntimeServiceDependencies): NativeMariaDbHostIdentity {
@@ -1901,10 +1944,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error("Managed runtime service provisioning interrupted")
 }
 
-function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+export function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new Error("Managed runtime service provisioning interrupted"))
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds)
-    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("Managed runtime service provisioning interrupted")) }, { once: true })
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(new Error("Managed runtime service provisioning interrupted")) }
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve() }, milliseconds)
+    signal?.addEventListener("abort", abort, { once: true })
   })
 }
 

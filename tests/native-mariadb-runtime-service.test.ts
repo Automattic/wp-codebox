@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
+import { EventEmitter, getEventListeners } from "node:events"
 import { chmod, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir, userInfo } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { withRuntimeDescriptorInterruption } from "../packages/cli/src/commands/discovery.ts"
-import { assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { runRuntimeDescriptorCommand, RuntimeDescriptorInterruptedError, withRuntimeDescriptorInterruption } from "../packages/cli/src/commands/discovery.ts"
+import { abortableDelay, assertNativeMariaDbEngines, assertNativeMariaDbFilesystemGeometry, assertNativeMariaDbFilesystemOwnership, assertNativeMariaDbMountInfo, assertNativeMariaDbUnprivilegedHost, nativeMariaDbHostReadiness, provisionRuntimeServices, RuntimeServiceProvisionError, runtimeServicePlan, settleNativeMariaDbHostReadiness, type NativeMariaDbHostIdentity, type RuntimeServiceDependencies } from "../packages/cli/src/runtime-services.ts"
+import { playwrightBrowserReadiness } from "../packages/runtime-playground/src/playwright-browser-provenance.ts"
 import { validateWorkspaceRecipeSemantics } from "../packages/cli/src/recipe-validation.ts"
 import { validateWorkspaceRecipeJsonSchema, type WorkspaceRecipeRuntimeService } from "../packages/runtime-core/src/index.ts"
 
@@ -195,13 +196,114 @@ process.exit(1);
     descriptorAbort.abort()
   } }
   assert.deepEqual(await nativeMariaDbHostReadiness(interruptedDependencies, descriptorAbort.signal), { status: "unavailable", reason: "containment-probe-interrupted" })
+  await settleNativeMariaDbHostReadiness(interruptedDependencies)
   assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !interruptedRoots.has(name)), [], "interrupted descriptor discovery releases all native roots")
 
   const signalTarget = new EventEmitter()
   const interruptedDescriptor = withRuntimeDescriptorInterruption(async (signal) => await new Promise<boolean>((resolve) => signal.addEventListener("abort", () => resolve(signal.aborted), { once: true })), signalTarget, 10_000)
-  signalTarget.emit("SIGTERM", "SIGTERM")
-  assert.equal(await interruptedDescriptor, true)
+  signalTarget.emit("SIGTERM")
+  await assert.rejects(interruptedDescriptor, (error: unknown) => error instanceof RuntimeDescriptorInterruptedError && error.exitCode === 143)
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signalTarget.listenerCount(signal), 0, `descriptor removes its ${signal} cleanup handler`)
+
+  const timeoutTarget = new EventEmitter()
+  await assert.rejects(withRuntimeDescriptorInterruption(async (signal) => await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })), timeoutTarget, 1), (error: unknown) => error instanceof RuntimeDescriptorInterruptedError && error.exitCode === 124)
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(timeoutTarget.listenerCount(signal), 0, `timed-out descriptor removes its ${signal} handler`)
+
+  let descriptorOutput = ""
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout)
+  process.stdout.write = ((chunk: string | Uint8Array) => { descriptorOutput += chunk.toString(); return true }) as typeof process.stdout.write
+  try {
+    const commandSignalTarget = new EventEmitter()
+    const command = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: commandSignalTarget,
+      descriptorOutput: async (signal) => await new Promise((resolve) => signal.addEventListener("abort", () => resolve({} as never), { once: true })),
+    })
+    commandSignalTarget.emit("SIGINT")
+    assert.equal(await command, 130)
+    assert.equal(descriptorOutput, "", "interrupted descriptor command suppresses normal output")
+
+    const timeoutCommand = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: new EventEmitter(),
+      timeoutMs: 1,
+      descriptorOutput: async (signal) => await new Promise((resolve) => signal.addEventListener("abort", () => resolve({} as never), { once: true })),
+    })
+    assert.equal(await timeoutCommand, 124)
+    assert.equal(descriptorOutput, "", "timed-out descriptor command suppresses normal output")
+
+    const browserSignalTarget = new EventEmitter()
+    const browserCommand = runRuntimeDescriptorCommand(["--json"], {
+      signalTarget: browserSignalTarget,
+      descriptorOutput: async (signal) => {
+        await playwrightBrowserReadiness({ signal, provenance: async () => await new Promise<never>(() => undefined) })
+        return {} as never
+      },
+    })
+    browserSignalTarget.emit("SIGHUP")
+    assert.equal(await browserCommand, 129)
+    assert.equal(descriptorOutput, "", "browser-readiness interruption suppresses normal descriptor output")
+  } finally {
+    process.stdout.write = originalStdoutWrite
+  }
+
+  const delayController = new AbortController()
+  for (let iteration = 0; iteration < 20; iteration += 1) await abortableDelay(0, delayController.signal)
+  assert.equal(getEventListeners(delayController.signal, "abort").length, 0, "resolved abortable delays remove abort listeners")
+
+  const singleFlightAllocations = () => calls.filter((call) => call.stdin?.includes("CREATE DATABASE")).length
+  const secondAbortFirst = new AbortController()
+  const secondAbortSecond = new AbortController()
+  const beforeSecondAbort = singleFlightAllocations()
+  const secondAbortFirstResult = nativeMariaDbHostReadiness(dependencies, secondAbortFirst.signal)
+  const secondAbortSecondResult = nativeMariaDbHostReadiness(dependencies, secondAbortSecond.signal)
+  secondAbortSecond.abort()
+  assert.deepEqual(await secondAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.equal(await Promise.race([settleNativeMariaDbHostReadiness(dependencies).then(() => "settled"), abortableDelay(50).then(() => "blocked")]), "settled", "an interrupted descriptor does not wait behind another live caller")
+  assert.deepEqual(await secondAbortFirstResult, { status: "ready" })
+  assert.equal(singleFlightAllocations(), beforeSecondAbort + 1, "aborting the second waiter does not cancel the first caller's allocation")
+  assert.equal(getEventListeners(secondAbortFirst.signal, "abort").length + getEventListeners(secondAbortSecond.signal, "abort").length, 0)
+
+  const firstAbortFirst = new AbortController()
+  const firstAbortSecond = new AbortController()
+  const beforeFirstAbort = singleFlightAllocations()
+  const firstAbortFirstResult = nativeMariaDbHostReadiness(dependencies, firstAbortFirst.signal)
+  const firstAbortSecondResult = nativeMariaDbHostReadiness(dependencies, firstAbortSecond.signal)
+  firstAbortFirst.abort()
+  assert.deepEqual(await firstAbortFirstResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.deepEqual(await firstAbortSecondResult, { status: "ready" })
+  assert.equal(singleFlightAllocations(), beforeFirstAbort + 1, "aborting the first waiter does not cancel the second caller's allocation")
+
+  const allAbortRoots = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
+  const allAbortFirst = new AbortController()
+  const allAbortSecond = new AbortController()
+  const beforeAllAbort = singleFlightAllocations()
+  const allAbortFirstResult = nativeMariaDbHostReadiness(dependencies, allAbortFirst.signal)
+  const allAbortSecondResult = nativeMariaDbHostReadiness(dependencies, allAbortSecond.signal)
+  while (singleFlightAllocations() === beforeAllAbort) await abortableDelay(10)
+  allAbortFirst.abort()
+  allAbortSecond.abort()
+  assert.deepEqual(await allAbortFirstResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  assert.deepEqual(await allAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  await settleNativeMariaDbHostReadiness(dependencies)
+  assert.equal(singleFlightAllocations(), beforeAllAbort + 1, "all aborted waiters cancel only one underlying allocation")
+  assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !allAbortRoots.has(name)), [], "all-waiter abort cleans the underlying allocation")
+  assert.equal(getEventListeners(allAbortFirst.signal, "abort").length + getEventListeners(allAbortSecond.signal, "abort").length, 0)
+
+  let releaseRaceEntered!: () => void
+  let releaseRaceContinue!: () => void
+  const releaseEntered = new Promise<void>((resolve) => { releaseRaceEntered = resolve })
+  const releaseContinue = new Promise<void>((resolve) => { releaseRaceContinue = resolve })
+  const teardownRaceDependencies: RuntimeServiceDependencies = { ...dependencies, async removeNativeRoot(root) {
+    releaseRaceEntered()
+    await releaseContinue
+    await rm(root, { recursive: true, force: false })
+  } }
+  const teardownRaceAbort = new AbortController()
+  const teardownRaceResult = nativeMariaDbHostReadiness(teardownRaceDependencies, teardownRaceAbort.signal)
+  await releaseEntered
+  teardownRaceAbort.abort()
+  assert.deepEqual(await teardownRaceResult, { status: "unavailable", reason: "containment-probe-interrupted" })
+  releaseRaceContinue()
+  await settleNativeMariaDbHostReadiness(teardownRaceDependencies)
 
   const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-")))
   const provisioned = await provisionRuntimeServices([service], { dependencies })

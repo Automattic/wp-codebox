@@ -48,10 +48,28 @@ export async function assertPlaywrightBrowserReady(): Promise<PlaywrightBrowserP
   return provenance
 }
 
-export async function playwrightBrowserReadiness(options: { executableExists?: (path: string) => boolean } = {}): Promise<PlaywrightBrowserReadiness> {
-  const provenance = await playwrightBrowserProvenance()
+export async function playwrightBrowserReadiness(options: { executableExists?: (path: string) => boolean; signal?: AbortSignal; provenance?: () => Promise<PlaywrightBrowserProvenance> } = {}): Promise<PlaywrightBrowserReadiness> {
+  throwIfAborted(options.signal)
+  const provenance = await abortable(options.provenance?.() ?? playwrightBrowserProvenance(), options.signal)
+  throwIfAborted(options.signal)
   if ((options.executableExists ?? existsSync)(provenance.executablePath)) return { status: "ready" }
   return { status: "unavailable", reason: playwrightBrowserUnavailableReason(provenance) }
+}
+
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(new Error("Playwright browser readiness interrupted")) }
+    signal.addEventListener("abort", abort, { once: true })
+    void promise.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value) },
+      (error) => { signal.removeEventListener("abort", abort); reject(error) },
+    )
+  })
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Playwright browser readiness interrupted")
 }
 
 function playwrightBrowserUnavailableReason(provenance: PlaywrightBrowserProvenance): string {
