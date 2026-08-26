@@ -1065,6 +1065,15 @@ export async function dismissWordPressOnboardingDialogs(page: import("playwright
   // Gutenberg can mount the guide shortly after the editor first reports ready.
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await page.evaluate(() => {
+      const wp = (globalThis as typeof globalThis & {
+        wp?: { data?: {
+          select?: (store: string) => { isFeatureActive?: (feature: string) => boolean }
+          dispatch?: (store: string) => { toggleFeature?: (feature: string) => void }
+        } }
+      }).wp
+      if (wp?.data?.select?.("core/edit-post")?.isFeatureActive?.("welcomeGuide")) {
+        wp.data.dispatch?.("core/edit-post")?.toggleFeature?.("welcomeGuide")
+      }
       const selectors = [
         ".components-guide__finish-button",
         ".components-guide__close",
