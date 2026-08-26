@@ -334,6 +334,7 @@ export interface BrowserEditorPresentationSurfaceGeometry {
   height: number
   childCount: number
   presentationResetPresent: boolean
+  marginRules: Array<{ selector: string; declaration: string; origin: string }>
   style: { display: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }
   children: Array<{ tag: string; className: string; blockType?: string; top: number; width: number; height: number; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }>
   descendants: Array<{ path: string; tag: string; className: string; text: string; top: number; left: number; width: number; height: number; display: string; position: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string; gap: string; gridTemplateColumns: string; fontSize: string; lineHeight: string }>

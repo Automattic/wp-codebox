@@ -1096,6 +1096,54 @@ async function presentationSurfaceGeometry(surface: import("playwright").Page | 
       height: Math.round(rect.height * 100) / 100,
       childCount: element.children.length,
       presentationResetPresent: Array.from(document.querySelectorAll("style")).some((node) => (node.textContent || "").includes(".block-editor-block-list__layout > .wp-block")),
+      marginRules: (() => {
+        const rows: Array<{ selector: string; declaration: string; origin: string }> = []
+        const descendants = Array.from(element.querySelectorAll<HTMLElement>("*")).slice(0, 128)
+        const targets = [element, ...descendants]
+        for (const sheet of Array.from(document.styleSheets)) {
+          const origin = (sheet.href || "inline").slice(0, 120)
+          const pending: CSSRule[] = []
+          try {
+            pending.push(...Array.from(sheet.cssRules || []))
+          } catch {
+            rows.push({ selector: "(unreadable stylesheet)", declaration: "", origin })
+            continue
+          }
+          while (pending.length > 0 && rows.length < 60) {
+            const rule = pending.shift() as CSSRule
+            const styleRule = rule as CSSStyleRule
+            const grouping = rule as CSSRule & { cssRules?: CSSRuleList }
+            if (!styleRule.selectorText && grouping.cssRules) {
+              pending.unshift(...Array.from(grouping.cssRules))
+              continue
+            }
+            if (!styleRule.selectorText || !styleRule.style) continue
+            const declaration = ["margin-top", "margin-block-start", "margin-bottom", "margin-block-end", "margin"]
+              .map((property) => {
+                const value = styleRule.style.getPropertyValue(property)
+                return value ? property + ":" + value : ""
+              })
+              .filter(Boolean)
+              .join(";")
+            if (!declaration) continue
+            let matched = false
+            for (const target of targets) {
+              try {
+                if (target.matches(styleRule.selectorText)) {
+                  matched = true
+                  break
+                }
+              } catch {
+                matched = false
+              }
+            }
+            if (!matched) continue
+            rows.push({ selector: styleRule.selectorText.slice(0, 180), declaration: declaration.slice(0, 120), origin })
+          }
+          if (rows.length >= 60) break
+        }
+        return rows
+      })(),
       style: { display: style.display, marginTop: style.marginTop, marginBottom: style.marginBottom, maxWidth: style.maxWidth, minHeight: style.minHeight, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom },
       children: Array.from(element.children).slice(0, 16).map((child) => {
         const childElement = child as HTMLElement
