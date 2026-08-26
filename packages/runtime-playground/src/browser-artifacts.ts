@@ -336,6 +336,7 @@ export interface BrowserEditorPresentationSurfaceGeometry {
   presentationResetPresent: boolean
   style: { display: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }
   children: Array<{ tag: string; className: string; blockType?: string; top: number; width: number; height: number; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }>
+  descendants: Array<{ path: string; tag: string; className: string; text: string; top: number; left: number; width: number; height: number; display: string; position: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string; gap: string; gridTemplateColumns: string; fontSize: string; lineHeight: string }>
 }
 
 export interface BrowserEditorPresentationSummary {

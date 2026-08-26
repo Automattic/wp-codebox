@@ -1116,6 +1116,38 @@ async function presentationSurfaceGeometry(surface: import("playwright").Page | 
           paddingBottom: childStyle.paddingBottom,
         }
       }),
+      descendants: Array.from(element.querySelectorAll<HTMLElement>("*")).slice(0, 128).map((descendant) => {
+        const descendantRect = descendant.getBoundingClientRect()
+        const descendantStyle = getComputedStyle(descendant)
+        const path: number[] = []
+        let cursor: HTMLElement | null = descendant
+        while (cursor && cursor !== element) {
+          path.unshift(Array.prototype.indexOf.call(cursor.parentElement?.children || [], cursor))
+          cursor = cursor.parentElement
+        }
+        return {
+          path: path.join("."),
+          tag: descendant.tagName.toLowerCase(),
+          className: descendant.className.slice(0, 256),
+          text: (descendant.innerText || "").trim().replace(/\s+/g, " ").slice(0, 96),
+          top: Math.round((descendantRect.top - rect.top) * 100) / 100,
+          left: Math.round((descendantRect.left - rect.left) * 100) / 100,
+          width: Math.round(descendantRect.width * 100) / 100,
+          height: Math.round(descendantRect.height * 100) / 100,
+          display: descendantStyle.display,
+          position: descendantStyle.position,
+          marginTop: descendantStyle.marginTop,
+          marginBottom: descendantStyle.marginBottom,
+          maxWidth: descendantStyle.maxWidth,
+          minHeight: descendantStyle.minHeight,
+          paddingTop: descendantStyle.paddingTop,
+          paddingBottom: descendantStyle.paddingBottom,
+          gap: descendantStyle.gap,
+          gridTemplateColumns: descendantStyle.gridTemplateColumns,
+          fontSize: descendantStyle.fontSize,
+          lineHeight: descendantStyle.lineHeight,
+        }
+      }),
     }
   }, selector)
 }
