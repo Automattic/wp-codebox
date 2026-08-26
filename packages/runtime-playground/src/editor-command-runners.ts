@@ -1002,6 +1002,7 @@ async function captureEditorPresentationMatch(input: {
     const browser = input.page.context().browser()
     if (!browser) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "browser context is not available for frontend capture" }
     const frontendContext = await browser.newContext({
+      ...input.topology.contextOptions(),
       viewport: { width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) },
     })
     const frontend = await frontendContext.newPage()
@@ -1066,6 +1067,8 @@ export async function dismissWordPressOnboardingDialogs(page: import("playwright
     await page.evaluate(() => {
       const selectors = [
         ".components-guide__finish-button",
+        ".components-guide__close",
+        '.components-guide button[aria-label^="Close"]',
         '.components-guide .components-button[aria-label="Close"]',
         '.components-guide .components-button[aria-label="Dismiss"]',
         '.components-modal__header .components-button[aria-label="Close"]',
