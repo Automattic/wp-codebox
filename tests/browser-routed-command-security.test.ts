@@ -108,7 +108,7 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         generatedPresentationIdentityCount: 1,
         generatedPresentationIdentities: [CANVAS_PRESENTATION_IDENTITY],
         idleCanvas: { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", onboardingModalCount: 0 },
-        matchedRendering: { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" },
+        matchedRendering: { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "presentation-url was not supplied" },
       })
     })
 

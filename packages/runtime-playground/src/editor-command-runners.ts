@@ -965,10 +965,11 @@ echo wp_json_encode( array( 'identities' => $identities, 'complete' => true ) );
 export async function captureEditorIdleCanvas(page: import("playwright").Page): Promise<BrowserEditorIdleCanvasSummary> {
   const onboardingModalCount = await page.evaluate(() => {
     const selectors = [".components-guide", ".welcome-panel", ".components-modal__frame"]
-    return selectors.reduce((count, selector) => count + Array.from(document.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+    const elements = new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector))))
+    return Array.from(elements).filter((element) => {
       const style = getComputedStyle(element)
       return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0
-    }).length, 0)
+    }).length
   }).catch(() => undefined)
   return onboardingModalCount === undefined
     ? { schema: "wp-codebox/editor-idle-canvas/v1", status: "unavailable" }
@@ -983,7 +984,7 @@ async function captureEditorPresentationMatch(input: {
   waitTimeoutMs: number
 }): Promise<NonNullable<BrowserEditorPresentationSummary["matchedRendering"]>> {
   const presentationUrl = argValue(input.args, "presentation-url")?.trim()
-  if (!presentationUrl) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+  if (!presentationUrl) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "presentation-url was not supplied" }
   const frontendSelector = boundedPresentationSelector(input.args, "presentation-frontend-selector", "body")
   const editorSelector = boundedPresentationSelector(input.args, "presentation-editor-selector", EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR)
   const threshold = presentationThreshold(input.args)
@@ -997,13 +998,13 @@ async function captureEditorPresentationMatch(input: {
     const canvas = frame ?? input.page
     const editor = canvas.locator(editorSelector).first()
     const editorBox = await editor.boundingBox()
-    if (!editorBox || editorBox.width <= 0 || editorBox.height <= 0) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+    if (!editorBox || editorBox.width <= 0 || editorBox.height <= 0) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "editor presentation surface has no visible bounds" }
     const frontend = await input.page.context().newPage()
     try {
       await frontend.setViewportSize({ width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) })
       await frontend.goto(input.topology.resolveUrl(presentationUrl), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
       const source = frontend.locator(frontendSelector).first()
-      if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "failed" }
+      if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `frontend presentation selector is not visible: ${frontendSelector}` }
       const [frontendEvidence, editorEvidence] = await Promise.all([presentationSurfaceEvidence(frontend, frontendSelector), presentationSurfaceEvidence(canvas, editorSelector)])
       await input.artifactSession.writeGenerated("screenshot", "presentation-frontend.png", async (path) => { await source.screenshot({ path, timeout: input.waitTimeoutMs }); })
       await input.artifactSession.writeGenerated("screenshot", "presentation-editor.png", async (path) => { await editor.screenshot({ path, timeout: input.waitTimeoutMs }); })
@@ -1022,8 +1023,8 @@ async function captureEditorPresentationMatch(input: {
       const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
       return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef }
     } finally { await frontend.close() }
-  } catch {
-    return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable" }
+  } catch (error) {
+    return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -1061,6 +1062,9 @@ export async function dismissWordPressOnboardingDialogs(page: import("playwright
       ".components-guide__finish-button",
       '.components-guide .components-button[aria-label="Close"]',
       '.components-guide .components-button[aria-label="Dismiss"]',
+      '.components-modal__header .components-button[aria-label="Close"]',
+      '.components-modal__header .components-button[aria-label="Dismiss"]',
+      '.components-modal__header button',
       ".welcome-panel-close",
     ]
     const dismissed = new Set<Element>()

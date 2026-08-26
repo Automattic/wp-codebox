@@ -299,6 +299,7 @@ export interface BrowserEditorIdleCanvasSummary {
 export interface BrowserEditorPresentationMatchSummary {
   schema: "wp-codebox/editor-presentation-match/v1"
   status: "passed" | "failed" | "unavailable"
+  diagnostic?: string
   equivalentCanvasWidths?: boolean
   majorGeometryDrift?: boolean
   unreadableContent?: boolean
