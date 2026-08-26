@@ -1095,9 +1095,10 @@ export async function dismissWordPressOnboardingDialogs(page: import("playwright
         } }
       }).wp
       const preferences = wp?.data?.dispatch?.("core/preferences")
-      preferences?.set?.("core/edit-post", "welcomeGuide", false)
-      preferences?.set?.("core/edit-post", "welcomeGuideTemplate", false)
-      if (wp?.data?.select?.("core/edit-post")?.isFeatureActive?.("welcomeGuide")) {
+      if (preferences?.set) {
+        preferences.set("core/edit-post", "welcomeGuide", false)
+        preferences.set("core/edit-post", "welcomeGuideTemplate", false)
+      } else if (wp?.data?.select?.("core/edit-post")?.isFeatureActive?.("welcomeGuide")) {
         wp.data.dispatch?.("core/edit-post")?.toggleFeature?.("welcomeGuide")
       }
       const selectors = [
