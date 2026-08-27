@@ -3,18 +3,21 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorIdleCanvasSummary, BrowserEditorPresentationSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewCleanupErrorIsFatal, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewReadinessError, browserPreviewSecureContextError, browserPreviewTopology, closeBrowserAndDrainPreviewRoutes, createBrowserPreviewRouteTracker, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget } from "./editor-actions.js"
-import type { PlaygroundRunResponse } from "./playground-command-errors.js"
+import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget, type EditorOpenTarget } from "./editor-actions.js"
+import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { fileSha256, installWordPressAdminAuthCookies } from "./browser-probe-support.js"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { cleanWpCliOutput } from "./wp-cli-command-handlers.js"
+import { comparePngFiles } from "./browser-visual-compare.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -644,7 +647,22 @@ export async function runEditorOpenCommand({
     }
 
     if (editorReadiness) {
+      await dismissWordPressOnboardingDialogs(page)
       editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
+      if (editorPresentation) {
+        const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
+        await dismissWordPressOnboardingDialogs(page)
+        const idleCanvas = await captureEditorIdleCanvas(page)
+        editorPresentation = {
+          ...editorPresentation,
+          ...(expected ? {
+            expectedGeneratedPresentationIdentities: expected.identities,
+            expectedGeneratedPresentationIdentitiesComplete: expected.complete,
+          } : {}),
+          idleCanvas,
+          matchedRendering: await captureEditorPresentationMatch({ args, artifactSession, page, topology, waitTimeoutMs }),
+        }
+      }
     }
 
     if (capture.has("editor-state")) {
@@ -701,7 +719,12 @@ export async function runEditorOpenCommand({
       ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...topology.origins,
-      files: editorOpenArtifactFilesForCapture(capture, artifactPathPrefix),
+      files: {
+        ...editorOpenArtifactFilesForCapture(capture, artifactPathPrefix),
+        ...(editorPresentation?.matchedRendering?.frontendScreenshot && editorPresentation.matchedRendering.editorScreenshot && editorPresentation.matchedRendering.diffScreenshot
+          ? { screenshots: [editorPresentation.matchedRendering.frontendScreenshot, editorPresentation.matchedRendering.editorScreenshot, editorPresentation.matchedRendering.diffScreenshot] }
+          : {}),
+      },
       summary: {
         steps: stepRecords.length,
         consoleMessages: consoleMessages.length,
@@ -905,24 +928,346 @@ export async function captureEditorPresentation(page: import("playwright").Page,
   return undefined
 }
 
+// Ask WordPress for the same filtered editor settings used to construct the
+// canvas. This is independent of the rendered iframe, so a missing style is
+// observable rather than certified from the observed set itself.
+async function captureExpectedEditorPresentationIdentities(
+  target: EditorOpenTarget,
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>,
+  runtimeSpec: RuntimeCreateSpec,
+  server: PlaygroundCliServer,
+): Promise<{ identities: string[]; complete: boolean } | undefined> {
+  if (target.kind !== "post" || !target.postId) return undefined
+  const response = await runPlaygroundCommand("wordpress.editor-open.capture-presentation-contract", server, {
+    code: bootstrapPhpCode(runtimeSpec, `
+$post = get_post(${target.postId});
+if ( ! $post instanceof WP_Post ) { throw new RuntimeException( 'Editor target post is unavailable.' ); }
+$settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
+$identities = array();
+foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
+  if ( ! is_array( $style ) || ! is_string( $style['css'] ?? null ) ) { continue; }
+  if ( preg_match_all( '/--blocks-engine-presentation:([a-f0-9]{64})/i', $style['css'], $matches ) ) {
+    foreach ( $matches[1] as $identity ) { $identities[] = strtolower( $identity ); }
+  }
+}
+$identities = array_values( array_unique( $identities ) );
+sort( $identities, SORT_STRING );
+echo wp_json_encode( array( 'identities' => $identities, 'complete' => true ) );
+`, []),
+  })
+  assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
+  const value = JSON.parse(cleanWpCliOutput(response.text)) as { identities?: unknown; complete?: unknown }
+  if (!Array.isArray(value.identities) || value.complete !== true || !value.identities.every((identity) => typeof identity === "string" && /^[a-f0-9]{64}$/.test(identity))) {
+    throw new Error("wordpress.editor-open presentation contract returned an invalid identity set")
+  }
+  return { identities: [...new Set(value.identities)].sort(), complete: true }
+}
+
+export async function captureEditorIdleCanvas(page: import("playwright").Page): Promise<BrowserEditorIdleCanvasSummary> {
+  const idleCanvas = await page.evaluate(() => {
+    const selectors = [".components-guide", ".welcome-panel", ".components-modal__frame"]
+    const elements = new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector))))
+    const visibleElements = Array.from(elements).filter((element) => {
+      const style = getComputedStyle(element)
+      return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0
+    })
+    const onboardingModals = visibleElements.slice(0, 4).map((element) => ({
+      selectors: selectors.filter((selector) => element.matches(selector)),
+      tag: element.tagName.toLowerCase(),
+      className: element.className.slice(0, 256),
+      ...(element.getAttribute("role") ? { role: element.getAttribute("role")! } : {}),
+      ...(element.getAttribute("aria-label") ? { ariaLabel: element.getAttribute("aria-label")! } : {}),
+      text: (element.innerText || "").trim().replace(/\s+/g, " ").slice(0, 256),
+      controls: Array.from(element.querySelectorAll<HTMLElement>("button,[role='button']")).slice(0, 8).map((control) => ({
+        tag: control.tagName.toLowerCase(),
+        className: control.className.slice(0, 256),
+        ...(control.getAttribute("aria-label") ? { ariaLabel: control.getAttribute("aria-label")! } : {}),
+        text: (control.innerText || "").trim().replace(/\s+/g, " ").slice(0, 128),
+        disabled: control.hasAttribute("disabled"),
+      })),
+    }))
+    const wp = (globalThis as typeof globalThis & { wp?: { data?: { select?: (store: string) => { get?: (scope: string, name: string) => unknown; isFeatureActive?: (feature: string) => boolean } } } }).wp
+    const preferenceStore = wp?.data?.select?.("core/preferences")
+    const editPostStore = wp?.data?.select?.("core/edit-post")
+    const welcomeGuide = preferenceStore?.get?.("core/edit-post", "welcomeGuide")
+    const welcomeGuideTemplate = preferenceStore?.get?.("core/edit-post", "welcomeGuideTemplate")
+    const editPostWelcomeGuideActive = editPostStore?.isFeatureActive?.("welcomeGuide")
+    const preferences = {
+      ...(typeof welcomeGuide === "boolean" ? { welcomeGuide } : {}),
+      ...(typeof welcomeGuideTemplate === "boolean" ? { welcomeGuideTemplate } : {}),
+      ...(typeof editPostWelcomeGuideActive === "boolean" ? { editPostWelcomeGuideActive } : {}),
+    }
+    return {
+      onboardingModalCount: visibleElements.length,
+      ...(onboardingModals.length > 0 ? { onboardingModals } : {}),
+      ...(Object.keys(preferences).length > 0 ? { preferences } : {}),
+    }
+  }).catch(() => undefined)
+  return idleCanvas === undefined
+    ? { schema: "wp-codebox/editor-idle-canvas/v1", status: "unavailable" }
+    : { schema: "wp-codebox/editor-idle-canvas/v1", status: "captured", ...idleCanvas }
+}
+
+async function captureEditorPresentationMatch(input: {
+  args: string[]
+  artifactSession: BrowserArtifactSession
+  page: import("playwright").Page
+  topology: ReturnType<typeof editorCommandPreviewTopology>
+  waitTimeoutMs: number
+}): Promise<NonNullable<BrowserEditorPresentationSummary["matchedRendering"]>> {
+  const presentationUrl = argValue(input.args, "presentation-url")?.trim()
+  if (!presentationUrl) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "presentation-url was not supplied" }
+  const frontendSelector = boundedPresentationSelector(input.args, "presentation-frontend-selector", "body")
+  const editorSelector = boundedPresentationSelector(input.args, "presentation-editor-selector", EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR)
+  const threshold = presentationThreshold(input.args)
+  const frontendPath = input.artifactSession.absolutePath("presentation-frontend.png")
+  const editorPath = input.artifactSession.absolutePath("presentation-editor.png")
+  const frontendRef = input.artifactSession.path("presentation-frontend.png")
+  const editorRef = input.artifactSession.path("presentation-editor.png")
+  const diffRef = input.artifactSession.path("presentation-diff.png")
+  try {
+    const frame = await resolveEditorCanvasFrame(input.page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
+    const canvas = frame ?? input.page
+    const liveEditor = canvas.locator(editorSelector).first()
+    const editorBox = await liveEditor.boundingBox()
+    if (!editorBox || editorBox.width <= 0 || editorBox.height <= 0) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "editor presentation surface has no visible bounds" }
+    const browser = input.page.context().browser()
+    if (!browser) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "browser context is not available for frontend capture" }
+    const frontendContext = await browser.newContext({
+      ...input.topology.contextOptions(),
+      viewport: { width: Math.round(editorBox.width), height: Math.max(1, Math.round(editorBox.height)) },
+    })
+    const frontend = await frontendContext.newPage()
+    let editorSnapshot: import("playwright").Page | undefined
+    try {
+      if (frame) {
+        editorSnapshot = await frontendContext.newPage()
+        const baseUrl = frame.url().startsWith("http") ? frame.url() : input.page.url()
+        const html = await frame.content()
+        const base = `<base href="${baseUrl.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}">`
+        await editorSnapshot.setContent(html.replace(/<head(\s[^>]*)?>/i, (head) => `${head}${base}`), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
+        await editorSnapshot.evaluate(() => document.fonts?.ready)
+      }
+      await frontend.goto(input.topology.resolveUrl(presentationUrl), { waitUntil: "networkidle", timeout: input.waitTimeoutMs })
+      const source = frontend.locator(frontendSelector).first()
+      if (!await source.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `frontend presentation selector is not visible: ${frontendSelector}` }
+      const editorSurface = editorSnapshot ?? canvas
+      const editor = editorSurface.locator(editorSelector).first()
+      if (!await editor.isVisible()) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: `editor presentation selector is not visible in the isolated canvas: ${editorSelector}` }
+      const [frontendEvidence, editorEvidence, frontendGeometry, liveEditorGeometry, isolatedEditorGeometry] = await Promise.all([
+        presentationSurfaceEvidence(frontend, frontendSelector),
+        presentationSurfaceEvidence(editorSurface, editorSelector),
+        presentationSurfaceGeometry(frontend, frontendSelector),
+        presentationSurfaceGeometry(canvas, editorSelector),
+        presentationSurfaceGeometry(editorSurface, editorSelector),
+      ])
+      await input.artifactSession.writeGenerated("screenshot", "presentation-frontend.png", async (path) => { await source.screenshot({ path, timeout: input.waitTimeoutMs }); })
+      await input.artifactSession.writeGenerated("screenshot", "presentation-editor.png", async (path) => { await editor.screenshot({ path, timeout: input.waitTimeoutMs }); })
+      let comparison: Awaited<ReturnType<typeof comparePngFiles>> | undefined
+      await input.artifactSession.writeGenerated("screenshot", "presentation-diff.png", async (path) => {
+        comparison = await comparePngFiles(frontendPath, editorPath, path, { threshold, includeAA: false, maxRegions: 8 })
+      })
+      if (!comparison) throw new Error("Presentation comparison did not produce metrics")
+      const equivalentCanvasWidths = comparison.source.width === comparison.candidate.width
+      // The same bounded threshold applies to canvas extent and the shared
+      // visual region; equal widths alone must not certify different renders.
+      const majorGeometryDrift = comparison.dimensionDeltaRatio > threshold || comparison.overlapMismatchRatio > threshold
+      const unreadableContent = !frontendEvidence.readable || !editorEvidence.readable
+      const hiddenContent = !frontendEvidence.visible || !editorEvidence.visible
+      const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
+      const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
+      return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef, geometry: { frontend: frontendGeometry, liveEditor: liveEditorGeometry, isolatedEditor: isolatedEditorGeometry } }
+    } finally {
+      await frontendContext.close()
+    }
+  } catch (error) {
+    return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function presentationSurfaceGeometry(surface: import("playwright").Page | import("playwright").Frame, selector: string): Promise<import("./browser-artifacts.js").BrowserEditorPresentationSurfaceGeometry> {
+  return surface.evaluate((selector) => {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (!element) throw new Error(`presentation geometry selector is unavailable: ${selector}`)
+    const rect = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return {
+      width: Math.round(rect.width * 100) / 100,
+      height: Math.round(rect.height * 100) / 100,
+      childCount: element.children.length,
+      presentationResetPresent: Array.from(document.querySelectorAll("style")).some((node) => (node.textContent || "").includes(".block-editor-block-list__layout > .wp-block")),
+      marginRules: (() => {
+        const rows: Array<{ selector: string; declaration: string; origin: string }> = []
+        const descendants = Array.from(element.querySelectorAll<HTMLElement>("*")).slice(0, 128)
+        const targets = [element, ...descendants]
+        for (const sheet of Array.from(document.styleSheets)) {
+          const origin = (sheet.href || "inline").slice(0, 120)
+          const pending: CSSRule[] = []
+          try {
+            pending.push(...Array.from(sheet.cssRules || []))
+          } catch {
+            rows.push({ selector: "(unreadable stylesheet)", declaration: "", origin })
+            continue
+          }
+          while (pending.length > 0 && rows.length < 60) {
+            const rule = pending.shift() as CSSRule
+            const styleRule = rule as CSSStyleRule
+            const grouping = rule as CSSRule & { cssRules?: CSSRuleList }
+            if (!styleRule.selectorText && grouping.cssRules) {
+              pending.unshift(...Array.from(grouping.cssRules))
+              continue
+            }
+            if (!styleRule.selectorText || !styleRule.style) continue
+            const declaration = ["margin-top", "margin-block-start", "margin-bottom", "margin-block-end", "margin"]
+              .map((property) => {
+                const value = styleRule.style.getPropertyValue(property)
+                return value ? property + ":" + value : ""
+              })
+              .filter(Boolean)
+              .join(";")
+            if (!declaration) continue
+            let matched = false
+            for (const target of targets) {
+              try {
+                if (target.matches(styleRule.selectorText)) {
+                  matched = true
+                  break
+                }
+              } catch {
+                matched = false
+              }
+            }
+            if (!matched) continue
+            rows.push({ selector: styleRule.selectorText.slice(0, 180), declaration: declaration.slice(0, 120), origin })
+          }
+          if (rows.length >= 60) break
+        }
+        return rows
+      })(),
+      style: { display: style.display, marginTop: style.marginTop, marginBottom: style.marginBottom, maxWidth: style.maxWidth, minHeight: style.minHeight, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom },
+      children: Array.from(element.children).slice(0, 16).map((child) => {
+        const childElement = child as HTMLElement
+        const childRect = childElement.getBoundingClientRect()
+        const childStyle = getComputedStyle(childElement)
+        return {
+          tag: childElement.tagName.toLowerCase(),
+          className: childElement.className.slice(0, 256),
+          ...(childElement.dataset.type ? { blockType: childElement.dataset.type } : {}),
+          top: Math.round((childRect.top - rect.top) * 100) / 100,
+          width: Math.round(childRect.width * 100) / 100,
+          height: Math.round(childRect.height * 100) / 100,
+          marginTop: childStyle.marginTop,
+          marginBottom: childStyle.marginBottom,
+          maxWidth: childStyle.maxWidth,
+          minHeight: childStyle.minHeight,
+          paddingTop: childStyle.paddingTop,
+          paddingBottom: childStyle.paddingBottom,
+        }
+      }),
+      descendants: Array.from(element.querySelectorAll<HTMLElement>("*")).slice(0, 128).map((descendant) => {
+        const descendantRect = descendant.getBoundingClientRect()
+        const descendantStyle = getComputedStyle(descendant)
+        const path: number[] = []
+        let cursor: HTMLElement | null = descendant
+        while (cursor && cursor !== element) {
+          path.unshift(Array.prototype.indexOf.call(cursor.parentElement?.children || [], cursor))
+          cursor = cursor.parentElement
+        }
+        return {
+          path: path.join("."),
+          tag: descendant.tagName.toLowerCase(),
+          className: (typeof descendant.className === "string" ? descendant.className : descendant.getAttribute("class") || "").slice(0, 256),
+          text: (descendant.innerText || "").trim().replace(/\s+/g, " ").slice(0, 96),
+          top: Math.round((descendantRect.top - rect.top) * 100) / 100,
+          left: Math.round((descendantRect.left - rect.left) * 100) / 100,
+          width: Math.round(descendantRect.width * 100) / 100,
+          height: Math.round(descendantRect.height * 100) / 100,
+          display: descendantStyle.display,
+          position: descendantStyle.position,
+          marginTop: descendantStyle.marginTop,
+          marginBottom: descendantStyle.marginBottom,
+          maxWidth: descendantStyle.maxWidth,
+          minHeight: descendantStyle.minHeight,
+          paddingTop: descendantStyle.paddingTop,
+          paddingBottom: descendantStyle.paddingBottom,
+          gap: descendantStyle.gap,
+          gridTemplateColumns: descendantStyle.gridTemplateColumns,
+          fontSize: descendantStyle.fontSize,
+          lineHeight: descendantStyle.lineHeight,
+        }
+      }),
+    }
+  }, selector)
+}
+
+function boundedPresentationSelector(args: string[], name: string, fallback: string): string {
+  const selector = argValue(args, name)?.trim() || fallback
+  if (selector.length > 512) throw new Error(`wordpress.editor-open ${name} must be at most 512 characters`)
+  return selector
+}
+
+function presentationThreshold(args: string[]): number {
+  const raw = argValue(args, "presentation-threshold")?.trim()
+  if (!raw) return 0.02
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`wordpress.editor-open presentation-threshold must be between 0 and 1: ${raw}`)
+  return value
+}
+
+async function presentationSurfaceEvidence(surface: import("playwright").Page | import("playwright").Frame, selector: string): Promise<{ visible: boolean; readable: boolean; unresolvedAssets: number }> {
+  return surface.evaluate((selector) => {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (!element) return { visible: false, readable: false, unresolvedAssets: 0 }
+    const style = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    const visible = style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0 && rect.width > 0 && rect.height > 0
+    const readable = visible && (element.innerText || "").trim().length > 0
+    const unresolvedAssets = Array.from(element.querySelectorAll<HTMLImageElement>("img")).filter((image) => image.src && (!image.complete || image.naturalWidth === 0)).length
+      + Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')).filter((link) => !link.disabled && !link.sheet).length
+    return { visible, readable, unresolvedAssets }
+  }, selector)
+}
+
 export async function dismissWordPressOnboardingDialogs(page: import("playwright").Page): Promise<void> {
-  await page.evaluate(() => {
-    const selectors = [
-      ".components-guide__finish-button",
-      '.components-guide .components-button[aria-label="Close"]',
-      '.components-guide .components-button[aria-label="Dismiss"]',
-      ".welcome-panel-close",
-    ]
-    const dismissed = new Set<Element>()
-    for (const selector of selectors) {
-      for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
-        if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
-          dismissed.add(control)
-          control.click()
+  // Gutenberg can mount the guide shortly after the editor first reports ready.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.evaluate(() => {
+      const wp = (globalThis as typeof globalThis & {
+        wp?: { data?: {
+          select?: (store: string) => { isFeatureActive?: (feature: string) => boolean }
+          dispatch?: (store: string) => { set?: (scope: string, feature: string, value: boolean) => void; toggleFeature?: (feature: string) => void }
+        } }
+      }).wp
+      const preferences = wp?.data?.dispatch?.("core/preferences")
+      if (preferences?.set) {
+        preferences.set("core/edit-post", "welcomeGuide", false)
+        preferences.set("core/edit-post", "welcomeGuideTemplate", false)
+      } else if (wp?.data?.select?.("core/edit-post")?.isFeatureActive?.("welcomeGuide")) {
+        wp.data.dispatch?.("core/edit-post")?.toggleFeature?.("welcomeGuide")
+      }
+      const selectors = [
+        ".components-guide__finish-button",
+        ".components-guide__close",
+        '.components-guide button[aria-label^="Close"]',
+        '.components-guide .components-button[aria-label="Close"]',
+        '.components-guide .components-button[aria-label="Dismiss"]',
+        '.components-modal__header .components-button[aria-label="Close"]',
+        '.components-modal__header .components-button[aria-label="Dismiss"]',
+        '.components-modal__header button',
+        ".welcome-panel-close",
+      ]
+      const dismissed = new Set<Element>()
+      for (const selector of selectors) {
+        for (const control of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+          if (!dismissed.has(control) && !control.hasAttribute("disabled")) {
+            dismissed.add(control)
+            control.click()
+          }
         }
       }
-    }
-  })
+    })
+    await page.waitForTimeout(150)
+  }
 }
 
 export function editorOpenArtifactError(stepCount: number, error: Error, artifact: BrowserArtifact): BrowserCommandArtifactError {

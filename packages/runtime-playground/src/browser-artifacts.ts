@@ -290,6 +290,56 @@ export interface BrowserEditorReadinessSummary {
   postType?: string
 }
 
+export interface BrowserEditorIdleCanvasSummary {
+  schema: "wp-codebox/editor-idle-canvas/v1"
+  status: "captured" | "unavailable"
+  onboardingModalCount?: number
+  onboardingModals?: Array<{
+    selectors: string[]
+    tag: string
+    className: string
+    role?: string
+    ariaLabel?: string
+    text: string
+    controls: Array<{ tag: string; className: string; ariaLabel?: string; text: string; disabled: boolean }>
+  }>
+  preferences?: {
+    welcomeGuide?: boolean
+    welcomeGuideTemplate?: boolean
+    editPostWelcomeGuideActive?: boolean
+  }
+}
+
+export interface BrowserEditorPresentationMatchSummary {
+  schema: "wp-codebox/editor-presentation-match/v1"
+  status: "passed" | "failed" | "unavailable"
+  diagnostic?: string
+  equivalentCanvasWidths?: boolean
+  majorGeometryDrift?: boolean
+  unreadableContent?: boolean
+  hiddenContent?: boolean
+  unresolvedAssetCount?: number
+  frontendScreenshot?: string
+  editorScreenshot?: string
+  diffScreenshot?: string
+  geometry?: {
+    frontend: BrowserEditorPresentationSurfaceGeometry
+    liveEditor: BrowserEditorPresentationSurfaceGeometry
+    isolatedEditor: BrowserEditorPresentationSurfaceGeometry
+  }
+}
+
+export interface BrowserEditorPresentationSurfaceGeometry {
+  width: number
+  height: number
+  childCount: number
+  presentationResetPresent: boolean
+  marginRules: Array<{ selector: string; declaration: string; origin: string }>
+  style: { display: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }
+  children: Array<{ tag: string; className: string; blockType?: string; top: number; width: number; height: number; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string }>
+  descendants: Array<{ path: string; tag: string; className: string; text: string; top: number; left: number; width: number; height: number; display: string; position: string; marginTop: string; marginBottom: string; maxWidth: string; minHeight: string; paddingTop: string; paddingBottom: string; gap: string; gridTemplateColumns: string; fontSize: string; lineHeight: string }>
+}
+
 export interface BrowserEditorPresentationSummary {
   schema: "wp-codebox/editor-presentation/v1"
   canvasDocumentType: "iframe" | "parent"
@@ -298,6 +348,10 @@ export interface BrowserEditorPresentationSummary {
   iframeStylesheetUrls: string[]
   generatedPresentationIdentityCount: number
   generatedPresentationIdentities: string[]
+  expectedGeneratedPresentationIdentities?: string[]
+  expectedGeneratedPresentationIdentitiesComplete?: boolean
+  idleCanvas?: BrowserEditorIdleCanvasSummary
+  matchedRendering?: BrowserEditorPresentationMatchSummary
 }
 
 export interface BrowserEditorSaveSummary {

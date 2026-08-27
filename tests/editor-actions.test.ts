@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { assertEditorMutationPostcondition, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, summarizeEditorPresentation, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { assertEditorMutationPostcondition, captureEditorIdleCanvas, captureEditorState, captureEditorValidity, editorCommandWordPressUrl, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, executeEditorActionStep, summarizeEditorPresentation, type EditorStateSnapshot, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
@@ -95,6 +95,29 @@ assert.deepEqual(summarizeEditorPresentation({ canvasDocumentType: "parent", ifr
   generatedPresentationIdentityCount: 0,
   generatedPresentationIdentities: [],
 })
+
+const idleCanvas = await captureEditorIdleCanvas({
+  evaluate: async (callback: () => unknown) => {
+    const globals = globalThis as typeof globalThis & { document?: unknown; getComputedStyle?: unknown }
+    const document = globals.document
+    const getComputedStyle = globals.getComputedStyle
+    const guide = { matches: (selector: string) => selector === ".components-guide", tagName: "DIV", className: "components-guide", getAttribute: () => null, innerText: "Welcome", querySelectorAll: () => [] }
+    globals.document = { querySelectorAll: (selector: string) => selector === ".components-guide" ? [guide] : [] }
+    globals.getComputedStyle = () => ({ display: "block", visibility: "visible", opacity: "1" })
+    try { return callback() } finally { globals.document = document; globals.getComputedStyle = getComputedStyle }
+  },
+} as never)
+assert.deepEqual(idleCanvas, {
+  schema: "wp-codebox/editor-idle-canvas/v1",
+  status: "captured",
+  onboardingModalCount: 1,
+  onboardingModals: [{ selectors: [".components-guide"], tag: "div", className: "components-guide", text: "Welcome", controls: [] }],
+})
+
+const unavailableIdleCanvas = await captureEditorIdleCanvas({
+  evaluate: async () => { throw new Error("page detached") },
+} as never)
+assert.deepEqual(unavailableIdleCanvas, { schema: "wp-codebox/editor-idle-canvas/v1", status: "unavailable" })
 
 // Runner mutations use only the generic data/block APIs, resolve nested paths,
 // and fail closed when the required store action is unavailable.
