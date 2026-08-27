@@ -11,6 +11,10 @@ const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024
 const DEFAULT_MAX_COUNT = 20
 const DEFAULT_LEASE_MS = 120_000
 const DEFAULT_STALE_LOCK_MS = 10 * 60 * 1_000
+// A lock directory is briefly empty between its creation and its first lease
+// file. Protecting that window for the full stale-lock horizon outlives the
+// acquisition timeout, so an owner that dies in between blocks every waiter.
+const EMPTY_LOCK_GRACE_MS = 5_000
 
 const CACHE_DIRECTORY_ENV = "WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR"
 const CACHE_MAX_AGE_MS_ENV = "WP_CODEBOX_PLAYGROUND_CUSTOM_ARCHIVE_MAX_AGE_MS"
@@ -501,7 +505,7 @@ async function cacheLockIsActive(lockPath: string, now: number, policy: Pick<Pla
         active = true
       }
     }
-    if (names.length === 0 && now - lockStat.mtimeMs <= policy.staleLockMs) active = true
+    if (names.length === 0 && now - lockStat.mtimeMs <= Math.min(policy.staleLockMs, EMPTY_LOCK_GRACE_MS)) active = true
     inspectionComplete = true
   } finally {
     if (removeStale && !active && inspectionComplete) await removeLeaseDirectoryIfCurrent(directory)
