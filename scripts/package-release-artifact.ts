@@ -7,7 +7,6 @@ import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 
-import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.ts"
 import { materializeSharpReleaseRuntime, sharpRuntimePackageNames } from "./lib/materialize-sharp-release-runtime.ts"
 import { normalizeReleasePlatform } from "./lib/release-target.ts"
 
@@ -100,10 +99,12 @@ exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
   })
 
   // The deployable artifact is the WordPress plugin zip declared by homeboy.json
-  // (build_artifact: packages/wordpress-plugin/dist/wp-codebox.zip). It bundles
-  // the CLI release tree staged above, so build it here and surface it in the
+  // (build_artifact: packages/wordpress-plugin/dist/wp-codebox.zip). The component
+  // build script already assembles it, and `assembleWordpressPluginZip` stages the
+  // packages it bundles itself rather than reading the CLI tree staged above, so
+  // rebuilding it here produced a second set of bytes at the same path and made
+  // the release asset's authority ambiguous. Surface the built artifact in the
   // manifest so the release pipeline uploads it as a GitHub Release asset.
-  await assembleWordpressPluginZip(repoRoot)
 
   process.stdout.write(
     JSON.stringify([
