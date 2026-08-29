@@ -210,16 +210,21 @@ function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: stri
 export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions): WorkspaceRecipe {
   const pluginSlug = requiredPluginSlug(options.pluginSlug, "buildWordPressBenchRecipe")
   const componentId = options.componentId?.trim() || pluginSlug
+  const mounts = normalizeRecipeMounts(options.mounts, { defaultMode: "readonly" })
+  const hasCustomDatabaseDropIn = mounts.some((mount) => mount.type === "file"
+    && mount.phase === "pre-install"
+    && mount.target === "/wordpress/wp-content/db.php")
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: {
       wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
+      ...(hasCustomDatabaseDropIn ? { databaseSetup: "custom-drop-in" as const } : {}),
       blueprint: blueprintWithWpConfigDefines(options.blueprint ?? {}, options.wpConfigDefines ?? {}),
     },
     inputs: {
       extra_plugins: normalizeExtraPlugins(options.extra_plugins),
-      mounts: normalizeRecipeMounts(options.mounts, { defaultMode: "readonly" }),
+      mounts,
     },
     workflow: {
       ...(options.prepareSteps && options.prepareSteps.length > 0 ? { before: normalizeRecipeSteps(options.prepareSteps, "prepareSteps") } : {}),

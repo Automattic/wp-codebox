@@ -32,5 +32,29 @@ assert.deepEqual(recipe.inputs.extra_plugins?.[0], {
   originalSource: "/tmp/monorepo/plugins/fixture-plugin",
   slug: "fixture-plugin",
 })
+assert.equal(recipe.runtime.databaseSetup, undefined)
+
+const customDropInRecipe = buildWordPressBenchRecipe({
+  pluginSlug: "fixture-plugin",
+  mounts: [{
+    type: "file",
+    source: "/tmp/db.php",
+    target: "//wordpress//wp-content//db.php",
+    phase: "pre-install",
+  }],
+})
+assert.equal(customDropInRecipe.runtime.databaseSetup, "custom-drop-in")
+assert.equal(customDropInRecipe.inputs.mounts?.[0]?.target, "/wordpress/wp-content/db.php")
+
+const postInstallDropInRecipe = buildWordPressBenchRecipe({
+  pluginSlug: "fixture-plugin",
+  mounts: [{
+    type: "file",
+    source: "/tmp/db.php",
+    target: "/wordpress/wp-content/db.php",
+    phase: "post-install",
+  }],
+})
+assert.equal(postInstallDropInRecipe.runtime.databaseSetup, undefined)
 
 console.log("recipe builder bench steps ok")
