@@ -56,6 +56,9 @@ export const DISCOVERY_SERIAL: readonly string[] = [
   "tests/playground-phpunit-bootstrap-failure.integration.test.ts",
   "tests/browser-actions-navigation-capture.browser.test.ts",
   "tests/editor-actions-save.integration.test.ts",
+  // Boots a runtime and asserts step counts, so contention flips it rather
+  // than slowing it. Passed 3 of 3 standalone after failing once under load.
+  "tests/recipe-step-continuation.integration.test.ts",
   // Asserts cancellation timing, so it fails when starved rather than slowed.
   "tests/browser-adaptive-exploration.test.ts",
 ]
