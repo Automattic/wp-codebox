@@ -59,6 +59,8 @@ export const DISCOVERY_SERIAL: readonly string[] = [
   "tests/playground-phpunit-bootstrap-failure.integration.test.ts",
   "tests/browser-actions-navigation-capture.browser.test.ts",
   "tests/editor-actions-save.integration.test.ts",
+  // Asserts cancellation timing, so it fails when starved rather than slowed.
+  "tests/browser-adaptive-exploration.test.ts",
 ]
 
 const excluded = new Set(DISCOVERY_EXCLUSIONS.map((entry) => entry.file))
