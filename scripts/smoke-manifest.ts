@@ -17,192 +17,29 @@ function npmScript(name: string): SmokeCommand {
   }
 }
 
-function tsxSmoke(name: string, script = name): SmokeCommand {
-  return {
-    name,
-    command: "tsx",
-    args: [`scripts/${script}.ts`],
-  }
-}
-
-function phpSmoke(name: string, script = name): SmokeCommand {
-  return {
-    name,
-    command: "php",
-    args: [`scripts/${script}.php`],
-  }
-}
-
+/*
+ * Test files are not registered here. `scripts/smoke-discovery.ts` finds
+ * tests/*.test.{ts,mjs} and scripts/*-smoke.{ts,php} by convention, and
+ * `npm run check` runs them after the commands below.
+ *
+ * This group is only for work that is not a single test file: compilation and
+ * typechecking. Everything else belongs in a discovered file.
+ */
 export const smokeGroups = {
-  core: {
-    description: "Build and core command contract smoke checks.",
+  declared: {
+    description: "Build and typecheck work that file discovery cannot express.",
     commands: [
+      // tsc -b for runtime-core/runtime-playground/cli, plus the CLI bin
+      // permission and build-provenance steps.
       npmScript("build"),
+      // These chains order their member files deliberately, and some of those
+      // files depend on earlier ones having run. Discovery cannot express that,
+      // so the chains stay and their members are excluded from discovery via
+      // CHAIN_OWNED_FILES in smoke-discovery.ts.
       npmScript("test:generic-primitives"),
-      npmScript("test:php-json-codec"),
-      npmScript("test:primitive-contract-parity"),
-      npmScript("test:php-primitive-contract-parity"),
-      npmScript("test:browser-task-builder"),
-      npmScript("test:host-recipe-builder"),
-      npmScript("test:browser-runner-template"),
-      npmScript("test:browser-runtime-file-ops"),
-      npmScript("test:browser-prepared-runtime-filesystem-overlays"),
-      npmScript("test:browser-provider-bridge-inheritance"),
-      npmScript("test:host-http-transport"),
-      npmScript("test:browser-preview-routing"),
-      npmScript("test:browser-routed-command-security"),
-      tsxSmoke("runtime-backend-registry-smoke"),
-      tsxSmoke("backend-package-adapter-registry-smoke"),
-      tsxSmoke("command-registry-smoke"),
-      tsxSmoke("browser-probe-contract-smoke"),
-      tsxSmoke("command-codecs-smoke"),
-      tsxSmoke("command-args-smoke"),
-      tsxSmoke("host-tool-registry-smoke"),
-      tsxSmoke("host-command-tool-smoke"),
-      tsxSmoke("runtime-env-smoke"),
-      tsxSmoke("task-input-contract-smoke"),
-      tsxSmoke("status-taxonomy-smoke"),
-      npmScript("test:schema-parity"),
-      npmScript("test:recipe-validation-descriptors"),
-      npmScript("test:recipe-runtime-backend-normalization"),
-      npmScript("test:runtime-preset-registry"),
-      npmScript("test:provider-runtime-contracts"),
-      tsxSmoke("discovery-command-smoke"),
-      npmScript("test:doctor-archive-inspection"),
-      tsxSmoke("doctor-command-smoke"),
-      tsxSmoke("cli-json-failure-smoke"),
-      tsxSmoke("source-checkout-entrypoint-smoke"),
-      tsxSmoke("cli-unsettled-command-smoke"),
-      tsxSmoke("php-snippets-smoke"),
-      tsxSmoke("agent-runtime-failure-smoke"),
-      tsxSmoke("recipe-run-terminal-phase-failure-smoke"),
-    ],
-  },
-  policy: {
-    description: "Workspace and runtime policy smoke checks.",
-    commands: [
-      tsxSmoke("file-tree-policy-smoke"),
-      tsxSmoke("policy-validation-smoke"),
-      tsxSmoke("workspace-policy-smoke"),
-      phpSmoke("php-runner-workspace-tools-smoke"),
-      phpSmoke("php-runner-workspace-executor-dispatch-smoke"),
-      tsxSmoke("source-policy-smoke"),
-      tsxSmoke("overlay-preparer-registry-smoke"),
-    ],
-  },
-  artifact: {
-    description: "Artifact contract and normalization smoke checks.",
-    commands: [
-      tsxSmoke("artifact-bundle-verifier-smoke"),
-      tsxSmoke("artifact-layout-writer-smoke"),
-      tsxSmoke("artifact-apply-adapter-smoke"),
-      tsxSmoke("transfer-proof-smoke"),
-      tsxSmoke("artifact-redaction-smoke"),
-      tsxSmoke("artifact-patch-git-apply-smoke"),
-      tsxSmoke("artifact-reference-normalization-smoke"),
-      tsxSmoke("artifact-diagnostics-normalizer-smoke"),
-      tsxSmoke("typed-artifacts-smoke"),
-      tsxSmoke("tool-call-artifacts-smoke"),
-      tsxSmoke("artifact-browser-error-collection-smoke"),
-      tsxSmoke("browser-artifact-persistence-idempotency-smoke"),
-      tsxSmoke("executable-browser-dto-smoke"),
-      tsxSmoke("partial-artifact-discovery-smoke"),
-      tsxSmoke("mounted-workspace-diff-smoke"),
-      npmScript("test:mount-artifact-capture-policy"),
-      tsxSmoke("replay-export-blueprint-smoke"),
-      tsxSmoke("replay-export-manifest-integrity-smoke"),
-      tsxSmoke("materialize-replay-package-smoke"),
-    ],
-  },
-  runtime: {
-    description: "Runtime state, action, reference, and WordPress command smoke checks.",
-    commands: [
-      tsxSmoke("run-registry-smoke"),
-      tsxSmoke("wordpress-state-contract-smoke"),
-      tsxSmoke("playground-command-errors-smoke"),
-      tsxSmoke("runtime-command-result-envelope-smoke"),
-      tsxSmoke("playground-command-timeout-smoke"),
-      tsxSmoke("replay-export-snapshot-scoping-smoke"),
-      tsxSmoke("runtime-overlay-validation-smoke"),
-      npmScript("test:runtime-php-snippets"),
-      npmScript("test:wp-cli-temporary-script"),
-      npmScript("test:php-runtime-provider-registry"),
-      tsxSmoke("composer-backed-source-hydration-smoke"),
-      tsxSmoke("composer-package-overlay-autoload-layout-smoke"),
-      tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),
-      tsxSmoke("runtime-component-lifecycle-replay-smoke"),
-    ],
-  },
-  package: {
-    description: "Package build contract smoke checks.",
-    commands: [
-      npmScript("build"),
-      npmScript("test:cli-build-freshness"),
       npmScript("test:runtime-services"),
-      npmScript("test:runtime-services-lifecycle"),
-      npmScript("test:disposable-mysql-mysqli-e2e"),
-    ],
-  },
-  agent: {
-    description: "Agent task, fanout, and delegation contract smoke checks.",
-    commands: [
-      tsxSmoke("agent-runtime-signal-smoke"),
-      tsxSmoke("agent-runtime-ability-lifecycle-smoke"),
-      tsxSmoke("agent-runtime-ability-tools-smoke"),
-      tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
-      phpSmoke("php-public-api-facade-smoke"),
-      npmScript("test:agent-no-data-machine-loop"),
-      tsxSmoke("recipe-run-summary-smoke"),
-      tsxSmoke("fanout-contract-smoke"),
-      phpSmoke("php-agents-api-execution-targets-smoke"),
-      npmScript("test:php-agents-api-adapter-contract"),
-      npmScript("test:php-sandbox-workspace-executor"),
-      phpSmoke("php-browser-runtime-agent-substrate-smoke"),
-      phpSmoke("php-browser-runtime-url-policy-smoke"),
-      phpSmoke("php-run-plan-contract-smoke"),
-      tsxSmoke("host-delegation-contract-smoke"),
-      tsxSmoke("component-contracts-agent-task-smoke"),
-      npmScript("test:fanout-aggregation-contract-parity"),
-      tsxSmoke("agent-fanout-execution-smoke"),
-    ],
-  },
-  "wordpress-plugin": {
-    description: "WordPress plugin PHP contract smoke checks.",
-    commands: [
-      npmScript("test:php-wasm-extension-manifests"),
-      npmScript("test:php-host-run-result-normalizer"),
-      npmScript("test:php-agent-outcome-classifier"),
-      npmScript("test:php-agent-runtime-execution"),
-      npmScript("test:php-browser-provider-auth-strategy"),
-      npmScript("test:php-browser-preview-only-session"),
-      npmScript("test:php-managed-host-command"),
-      npmScript("test:php-worker-runner"),
-      npmScript("test:php-tool-policy-normalization"),
-      npmScript("test:php-runner-workspace-backend-contract"),
-      npmScript("test:php-browser-callback-contracts"),
-      npmScript("test:php-runtime-package-public-contract"),
-      npmScript("test:php-runtime-package-canonical-importer"),
-      npmScript("test:php-runtime-task-runner"),
-      npmScript("test:php-fuzz-suite-runner"),
-      npmScript("test:php-browser-contained-site-contract"),
-      npmScript("test:php-artifact-import-idempotency"),
-      npmScript("test:php-browser-runtime-local-package"),
-      npmScript("test:php-fanout-aggregation-contract"),
-      npmScript("test:php-cli-command"),
-      npmScript("test:php-patch-approval-filter"),
-      npmScript("test:php-path-policy-parity"),
-      npmScript("test:php-provider-credential-boundary"),
-    ],
-  },
-  cloudflare: {
-    description: "Cloudflare runtime contract smoke checks and package typecheck.",
-    commands: [
-      // test:cloudflare-runtime also typechecks the package and is a superset of
-      // test:cloudflare-{queue,administrator-claim,principal-credentials,
-      // remote-principal-credential-gate}, which stay as narrow debug entrypoints.
+      // Also carries `tsc -p packages/runtime-cloudflare --noEmit`.
       npmScript("test:cloudflare-runtime"),
-      npmScript("test:cloudflare-wordpress-auth"),
-      npmScript("test:cloudflare-wordpress-archive-corpus"),
     ],
   },
 } satisfies Record<string, SmokeGroupDefinition>
@@ -210,7 +47,7 @@ export const smokeGroups = {
 export const smokeManifest = {
   groups: smokeGroups,
   aggregateGroups: {
-    check: ["core", "policy", "artifact", "runtime", "package", "agent", "wordpress-plugin", "cloudflare"],
+    check: ["declared"],
   },
 } as const
 

@@ -158,7 +158,7 @@ After the target npm scope and repository URL are confirmed:
 - Rebuild generated `dist` output with `npm run build` so compiled imports match
   the source package names.
 - Rebuild the WordPress plugin zip with `npm run package:wordpress-plugin`.
-- Run `npm run smoke -- --group package` to verify npm packing and plugin zip
+- Run `npm run check` to verify npm packing and plugin zip
   contents after the rename.
 - Run `npm run check` before publishing or tagging a release candidate.
 
