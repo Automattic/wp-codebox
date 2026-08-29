@@ -603,6 +603,24 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     }
 
     await validateRecipeStepArgs(step, path, addIssue, recipeDirectory)
+    if (step.pluginInput) {
+      const artifact = (recipe.artifacts?.typed ?? []).find((candidate) => candidate.name === step.pluginInput?.artifact)
+      if (!artifact) {
+        addIssue("unknown-phased-plugin-artifact", `${path}.pluginInput.artifact`, `Phased plugin input must reference a declared typed artifact: ${step.pluginInput.artifact}`)
+      } else {
+        if (artifact.required === false || artifact.parseJson !== true || artifact.contentType !== "application/json") {
+          addIssue("invalid-phased-plugin-artifact", `${path}.pluginInput.artifact`, "Phased plugin input artifacts must be required JSON artifacts with parseJson=true and contentType=application/json.")
+        }
+        if (artifact.payloadSchema === undefined) addIssue("missing-phased-plugin-schema", `${path}.pluginInput.artifact`, "Phased plugin input artifacts must declare their consumer-owned payload schema.")
+      }
+      const resolver = step.pluginInput.packages.resolver ?? "immutable-archive"
+      const map = step.pluginInput.packages.map
+      if (resolver === "immutable-archive" && (!map.source || !map.sha256)) addIssue("incomplete-phased-plugin-projection", `${path}.pluginInput.packages.map`, "Immutable archive projections must map source and sha256.")
+      if (resolver === "wordpress.org-latest-stable" && (map.source || map.sha256)) addIssue("ambiguous-phased-plugin-projection", `${path}.pluginInput.packages.map`, "WordPress.org projections are resolved from slug on the host and must not map guest-supplied source or sha256 fields.")
+      if (step.allowFailure === true || step.advisory === true) {
+        addIssue("optional-phased-plugin-step", `${path}.pluginInput`, "A phased plugin input step must be required so later workflow steps cannot run without its packages.")
+      }
+    }
   }
 
   for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {

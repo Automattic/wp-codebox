@@ -32,13 +32,13 @@ export function isSha256(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value)
 }
 
-export function evaluateSourcePolicy(source: ExternalSourcePolicyInput, expectedSha256?: string): SourcePolicyIssue[] {
+export function evaluateSourcePolicy(source: ExternalSourcePolicyInput, expectedSha256?: string, options: { networkDownloadsAllowed?: boolean } = {}): SourcePolicyIssue[] {
   if (source.type === "local") {
     return []
   }
 
   const issues: SourcePolicyIssue[] = []
-  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
+  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1" && options.networkDownloadsAllowed !== true) {
     issues.push({
       code: "network-downloads-disabled",
       message: `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,

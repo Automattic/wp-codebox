@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 
 import { captureStdout } from "../packages/cli/src/output.js"
@@ -52,6 +52,12 @@ await withTempDir("wp-codebox-recipe-artifacts-mount-guard-", async (recipeDirec
   assert.equal(output.error.conflict.artifactsDirectory, resolve(conflictingArtifacts))
   assert.equal(output.error.conflict.mountSource, resolve(mountedSource))
   assert.equal(await pathExists(conflictingArtifacts), false)
+
+  const outputPath = join(recipeDirectory, "results", "recipe-run.json")
+  const fileRun = await captureStdout(async () => await runRecipeRunCommand(["--recipe", recipePath, "--artifacts", conflictingArtifacts, "--output", outputPath, "--json"]))
+  assert.equal(fileRun.result, 1)
+  assert.deepEqual(fileRun.logs, [])
+  assert.deepEqual(JSON.parse(await readFile(outputPath, "utf8")), output)
 })
 
 console.log("recipe run artifacts mount guard ok")

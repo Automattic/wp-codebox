@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { normalizeRecipeRunSummary } from "@automattic/wp-codebox-core"
 import { writeRecipeJsonOutput, writeRecipeSummaryHumanOutput } from "../packages/cli/src/commands/recipe-run-output.js"
 
@@ -69,6 +72,11 @@ assert.equal(parsed.schema, "wp-codebox/recipe-run-summary/v1")
 assert.equal(parsed.status, "failed")
 assert.equal(parsed.failed_phase, "run_workloads")
 assert.equal(parsed.commands[0].exit_code, 1)
+
+const outputPath = join(tmpdir(), `wp-codebox-recipe-run-output-${process.pid}`, "summary.json")
+const fileStdout = await captureStdout(() => writeRecipeJsonOutput(failure, outputPath))
+assert.equal(fileStdout, "")
+assert.deepEqual(JSON.parse(await readFile(outputPath, "utf8")), parsed)
 
 async function captureStdout(callback: () => Promise<void>): Promise<string> {
   const originalWrite = process.stdout.write.bind(process.stdout)

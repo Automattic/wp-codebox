@@ -26,9 +26,10 @@ import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from 
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput, writeRecipeSummaryHumanOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
+import { collectPhasedPluginArtifact, projectPhasedPluginPackages, RecipePhasedPluginInputError, resolvePhasedPluginPackages } from "./recipe-phased-plugin-input.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
-import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
+import { applyPhasedRecipePlugins, applyRecipeRuntimeSetup, cleanupInputMountBaselines, preparePhasedRecipePlugins, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
 import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { executeSmtpSinkRecipeOperation, isSmtpSinkRecipeOperation } from "../smtp-sink-recipe-operations.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
@@ -49,13 +50,15 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
   interruption?.install()
   const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
+  const outputHeartbeat = options.outputPath && options.json ? setInterval(() => process.stderr.write("WP Codebox recipe-run active\n"), 30_000) : undefined
+  outputHeartbeat?.unref()
 
   try {
     if (options.summary) {
       const { result } = await captureStdout(execute)
       const output = interruptedRecipeOutput(result, interruption)
       const summary = normalizeRecipeRunSummary(output)
-      if (options.json) await writeRecipeJsonOutput(summary)
+      if (options.json) await writeRecipeJsonOutput(summary, options.outputPath)
       else await writeRecipeSummaryHumanOutput(summary)
       interruption?.propagateIfInterrupted()
       exitAfterRecipeRunTimeout(output)
@@ -77,7 +80,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     const { result, logs } = await captureStdout(execute)
     const interruptedResult = interruptedRecipeOutput(result, interruption)
     const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
-    await writeRecipeJsonOutput(output)
+    await writeRecipeJsonOutput(output, options.outputPath)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
     exitAfterRecipeRunTimeout(output)
@@ -85,6 +88,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     exitAfterTerminalRecipePhaseFailure(output)
     return output.success ? 0 : 1
   } finally {
+    if (outputHeartbeat) clearInterval(outputHeartbeat)
     interruption?.dispose()
   }
 }
@@ -327,6 +331,27 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
               ? (() => executeSmtpSinkRecipeOperation(workflowStep.step, managedServices!).then(({ execution, evidenceArgs }) => withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(evidenceArgs, evidenceArgs), workflowStep.step.metadata)))()
             : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap, (progress) => { continuationProgress = progress }), workflowStep.step.timeoutMs)
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
+          if (workflowStep.step.pluginInput) {
+            const pluginInput = workflowStep.step.pluginInput
+            const phasedArtifact = await phaseTracker.run("collect_phased_plugin_input", { artifact: pluginInput.artifact }, () => awaitRecipe(`${operation}.plugin-input.collect`, () => collectPhasedPluginArtifact(recipe, workflowStep.step, runtime!)))
+            const descriptors = await phaseTracker.run("project_phased_plugin_input", { artifact: pluginInput.artifact, resolver: pluginInput.packages.resolver ?? "immutable-archive" }, async () => projectPhasedPluginPackages(phasedArtifact.parsedJson, pluginInput.packages))
+            const preparedPlugins = await phaseTracker.run("resolve_phased_plugin_input", { count: descriptors.length, resolver: pluginInput.packages.resolver ?? "immutable-archive" }, async () => {
+              const projectedPlugins = await resolvePhasedPluginPackages(descriptors, pluginInput.packages)
+              return await preparePhasedRecipePlugins(projectedPlugins, recipeDirectory, { allowWordPressOrgDownloads: pluginInput.packages.resolver === "wordpress.org-latest-stable" })
+            })
+            const existingSlugs = new Set(extraPlugins.map((plugin) => plugin.slug))
+            const duplicate = preparedPlugins.find((plugin) => existingSlugs.has(plugin.slug))
+            if (duplicate) throw new RecipePhasedPluginInputError(`Phased plugin input duplicates an already mounted plugin: ${duplicate.slug}.`, "resolve", { slug: duplicate.slug })
+            extraPlugins.push(...preparedPlugins)
+            executions.push(...await awaitRecipe(`${operation}.plugin-input.apply`, () => applyPhasedRecipePlugins({
+              plugins: preparedPlugins,
+              runtime: runtime!,
+              phaseExecutor,
+              interruption,
+              recipePhase: workflowStep.phase,
+              recipeStepIndex: workflowStep.index,
+            })))
+          }
           interruption?.throwIfInterrupted()
         } catch (error) {
           const failure = recipeStepFailure(workflowStep, error, stepStartedAtMs, Date.now(), continuationProgress)
@@ -808,6 +833,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     switch (name) {
       case "--recipe":
         options.recipePath = value
+        break
+      case "--output":
+        options.outputPath = value
         break
       case "--artifacts":
         options.artifactsDirectory = value

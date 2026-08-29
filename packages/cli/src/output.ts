@@ -343,7 +343,7 @@ export function printHelp(): void {
 Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --options <path>    Recipe builder options JSON file for recipe build.
-  --output <path>     Recipe build output JSON path, or materialize-replay-package output directory.
+  --output <path>     Recipe build/run output JSON path, or materialize-replay-package output directory.
   --input-file <path> Input JSON for public workload/fuzz commands or agent-task-run.
   --result-file <path> Atomically write the final agent-task-run JSON result to a caller-owned file.
   --format=json       Emit machine-readable JSON; accepted by public workload/fuzz commands.
