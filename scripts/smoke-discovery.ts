@@ -24,6 +24,11 @@ export const DISCOVERY_EXCLUSIONS: readonly Exclusion[] = [
   { file: "tests/mysqli-poll.integration.test.ts", reason: "requires Docker; runs in the agent-task-contracts workflow" },
   { file: "tests/runtime-sources-playground-integration.test.ts", reason: "exceeds the per-file budget; runs in the agent-task-contracts workflow" },
   { file: "tests/release-package-coverage.test.ts", reason: "needs the 427 MB plugin zip from package:wordpress-plugin; runs in the Homeboy gate" },
+  {
+    file: "tests/prepare-declaration-rebuild.test.ts",
+    reason:
+      "destructive to shared state: deletes packages/runtime-core/dist and runs npm install at the repository root, which breaks every concurrent import of @automattic/wp-codebox-core; runs in the Homeboy gate",
+  },
 
   // Known-failing and unmaintained. Tracked for triage; see the discovery audit
   // in issue #2402. These were added in June 2026, never wired to a gate, and
@@ -41,9 +46,10 @@ export const DISCOVERY_EXCLUSIONS: readonly Exclusion[] = [
 ]
 
 /*
- * These contend on the shared Playground WordPress archive cache and fail when
- * run alongside each other. They are correct in isolation, so they run in a
- * serial phase after the parallel one rather than being excluded.
+ * These contend on the shared Playground WordPress archive cache, or boot a
+ * full browser and WordPress runtime and time out when starved of CPU. They are
+ * correct in isolation, so they run in a serial phase after the parallel one
+ * rather than being excluded.
  */
 export const DISCOVERY_SERIAL: readonly string[] = [
   "scripts/doctor-command-smoke.ts",
@@ -51,6 +57,8 @@ export const DISCOVERY_SERIAL: readonly string[] = [
   "tests/phpunit-runtime-rejection.test.ts",
   "tests/playground-readonly-mounts.test.ts",
   "tests/playground-phpunit-bootstrap-failure.integration.test.ts",
+  "tests/browser-actions-navigation-capture.browser.test.ts",
+  "tests/editor-actions-save.integration.test.ts",
 ]
 
 const excluded = new Set(DISCOVERY_EXCLUSIONS.map((entry) => entry.file))
