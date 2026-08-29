@@ -1,6 +1,16 @@
 <?php
 declare( strict_types=1 );
 
+/*
+ * ZIP stores DOS date/time fields in local time, so `setMtimeName( $path, 0 )`
+ * below encodes a different value per builder timezone and the archive digest
+ * stops being reproducible. libzip converts through libc, which reads the TZ
+ * environment variable rather than PHP's own timezone setting, so pin both.
+ * This keeps `archiveSha256` meaning the same thing on every machine and in CI.
+ */
+putenv( 'TZ=UTC' );
+date_default_timezone_set( 'UTC' );
+
 const MDI_REVISION = 'bf6d434d1673fdd86d777501f7eaec292d32ad1f';
 const REQUIRED_PATHS = array(
 	'_options/siteurl.json', '_options/home.json', '_tables/users.json', '_tables/usermeta.json',
