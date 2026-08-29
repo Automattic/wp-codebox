@@ -361,6 +361,63 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+### Phased Plugin Inputs
+
+A required workflow step may declare `pluginInput` to consume one named artifact
+from `artifacts.typed` before later steps continue. WP Codebox collects the JSON
+inside the live runtime, applies the declared JSON Pointer projection, resolves
+packages on the host, mounts and activates them in the same runtime, verifies
+plugin readiness, and then resumes the workflow.
+
+```json
+{
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.wp-cli",
+        "args": ["command=example plan --output=/tmp/provider-plan.json"],
+        "pluginInput": {
+          "artifact": "provider-plan",
+          "packages": {
+            "resolver": "wordpress.org-latest-stable",
+            "items": "/entries",
+            "map": {
+              "slug": "/slug",
+              "pluginFile": "/plugin_entrypoint"
+            }
+          }
+        }
+      },
+      { "command": "wordpress.wp-cli", "args": ["command=example import"] }
+    ]
+  },
+  "artifacts": {
+    "typed": [
+      {
+        "name": "provider-plan",
+        "type": "example/provider-plan",
+        "path": "/tmp/provider-plan.json",
+        "required": true,
+        "parseJson": true,
+        "contentType": "application/json",
+        "payloadSchema": "example/provider-plan/v1"
+      }
+    ]
+  }
+}
+```
+
+`immutable-archive` is the default resolver and requires `source`, `sha256`, and
+`slug` pointer mappings. `wordpress.org-latest-stable` accepts `slug` and an
+optional `pluginFile`, resolves the exact current version through the
+WordPress.org API on the host, and accepts packages only from
+`downloads.wordpress.org`. This explicit resolver authorizes that bounded host
+download without enabling network access inside WordPress. Typed artifact
+identity, projected package count, resolver, resolved source/version/digest,
+mount, activation, readiness, and failures remain visible in recipe evidence.
+Local paths, Composer execution, MU-plugin loading, ambient stdout, and inferred
+key-name mappings are not accepted from phased artifacts.
+
 ## Fuzz Case Runs
 
 Recipes may declare a bounded, deterministic fuzz case skeleton with

@@ -276,35 +276,43 @@ export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspace
 }
 
 export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedExtraPlugin[]> {
-  const plugins: PreparedExtraPlugin[] = []
-  for (const plugin of recipeExtraPlugins(recipe)) {
-    const slug = recipeExtraPluginSlug(plugin)
-    const sourceRef = recipeExtraPluginSource(plugin)
-    const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
-    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
-    const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256)
-    const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
-    const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
-    const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, plugin.composer, resolved.source)
-    await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), sourceRef)
-    plugins.push({
-      source: prepared.source,
-      slug,
-      target: pluginTarget(slug, loadAs),
-      pluginFile,
-      activate: plugin.activate !== false,
-      loadAs,
-      cleanupPaths: prepared.cleanupPaths,
-      provenance: prepared.provenance,
-      metadata: {
-        ...(plugin.metadata ?? {}),
-        ...(sourceSubpath ? { sourceRoot: sourceRootRef, sourceSubpath } : {}),
-      },
-    })
-  }
+  return prepareExtraPlugins(recipeExtraPlugins(recipe), recipeDirectory)
+}
 
-  return plugins
+export async function prepareExtraPlugins(plugins: readonly WorkspaceRecipeExtraPlugin[], recipeDirectory: string, options: { allowWordPressOrgDownloads?: boolean } = {}): Promise<PreparedExtraPlugin[]> {
+  const preparedPlugins: PreparedExtraPlugin[] = []
+  try {
+    for (const plugin of plugins) {
+      const slug = recipeExtraPluginSlug(plugin)
+      const sourceRef = recipeExtraPluginSource(plugin)
+      const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+      const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+      const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256, options)
+      const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
+      const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
+      const loadAs = plugin.loadAs ?? "plugin"
+      const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, sourceRef, plugin.composer, resolved.source)
+      await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), sourceRef)
+      preparedPlugins.push({
+        source: prepared.source,
+        slug,
+        target: pluginTarget(slug, loadAs),
+        pluginFile,
+        activate: plugin.activate !== false,
+        loadAs,
+        cleanupPaths: prepared.cleanupPaths,
+        provenance: prepared.provenance,
+        metadata: {
+          ...(plugin.metadata ?? {}),
+          ...(sourceSubpath ? { sourceRoot: sourceRootRef, sourceSubpath } : {}),
+        },
+      })
+    }
+    return preparedPlugins
+  } catch (error) {
+    await Promise.all(preparedPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
+    throw error
+  }
 }
 
 async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, strategy: WorkspaceRecipeExtraPlugin["composer"], copyRoot = prepared.source): Promise<PreparedExternalSource> {
@@ -1621,7 +1629,7 @@ async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFil
   throw new Error(`Recipe extra plugin source did not contain expected plugin file ${pluginFileRelativeToSource}: ${sourceRef}`)
 }
 
-async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string, expectedSha256?: string): Promise<PreparedExternalSource> {
+async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string, expectedSha256?: string, options: { allowWordPressOrgDownloads?: boolean } = {}): Promise<PreparedExternalSource> {
   const source = recipeSource(sourceRef, expectedSha256)
   if (source.type === "local") {
     const localPath = resolve(recipeDirectory, sourceRef)
@@ -1647,7 +1655,7 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
     }
   }
 
-  const [policyIssue] = evaluateRecipeSourcePolicy(source, expectedSha256)
+  const [policyIssue] = evaluateSourcePolicy(source, expectedSha256, { networkDownloadsAllowed: options.allowWordPressOrgDownloads === true && source.type === "wporg_plugin_zip" })
   if (policyIssue) {
     throw new Error(policyIssue.message)
   }

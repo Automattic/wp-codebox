@@ -296,10 +296,29 @@ export interface WorkspaceRecipeStep {
   args?: string[]
   timeoutMs?: number
   continuation?: WorkspaceRecipeStepContinuation
+  pluginInput?: WorkspaceRecipeStepPluginInput
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   metadata?: Record<string, unknown>
   allowFailure?: boolean
   advisory?: boolean
+}
+
+export interface WorkspaceRecipeStepPluginInput {
+  artifact: string
+  packages: WorkspaceRecipePluginPackageProjection
+}
+
+export interface WorkspaceRecipePluginPackageProjection {
+  resolver?: "immutable-archive" | "wordpress.org-latest-stable"
+  items: string
+  map: {
+    source?: string
+    sha256?: string
+    slug: string
+    pluginFile?: string
+    activate?: string
+    loadAs?: string
+  }
 }
 
 export interface WorkspaceRecipeStepContinuation {
@@ -521,6 +540,16 @@ export interface WorkspaceRecipeExtraPlugin {
   sha256?: string
   loadAs?: "plugin" | "mu-plugin"
   composer?: "install"
+  metadata?: Record<string, unknown>
+}
+
+export interface ProjectedPluginPackageDescriptor {
+  source?: string
+  sha256?: string
+  slug: string
+  pluginFile?: string
+  activate?: boolean
+  loadAs?: "plugin" | "mu-plugin"
   metadata?: Record<string, unknown>
 }
 

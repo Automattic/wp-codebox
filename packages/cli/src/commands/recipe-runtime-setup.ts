@@ -1,16 +1,16 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
-import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { booleanCommandArg, phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type RuntimeCreateSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { requiresManagedMysqlMultisitePreinstall } from "@automattic/wp-codebox-playground"
-import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareExtraPlugins, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { recipeExecutionSpec } from "../agent-sandbox.js"
 import { recipeInputMountPathMap, type InputMountPathMapping } from "../input-mount-paths.js"
 import type { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
-import type { RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence } from "./recipe-run-types.js"
+import type { RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName } from "./recipe-run-types.js"
 
 export { assertResolvedInputMountPathArgs, recipeInputMountPathMap, rewriteInputMountPath, rewriteInputMountPathArgs, type InputMountPathMapping } from "../input-mount-paths.js"
 
@@ -27,6 +27,50 @@ export interface PreparedRecipeRuntimeSetup {
 
 export interface RecipeRuntimeSetupResult {
   executions: RecipeExecutionResult[]
+}
+
+export async function preparePhasedRecipePlugins(plugins: WorkspaceRecipeExtraPlugin[], recipeDirectory: string, options: { allowWordPressOrgDownloads?: boolean } = {}): Promise<PreparedExtraPlugin[]> {
+  return prepareExtraPlugins(plugins, recipeDirectory, options)
+}
+
+export async function applyPhasedRecipePlugins(args: {
+  plugins: PreparedExtraPlugin[]
+  runtime: Runtime
+  phaseExecutor: RecipeRunPhaseExecutor
+  interruption?: RecipeInterruptionController
+  recipePhase: RecipeWorkflowPhase
+  recipeStepIndex: number
+}): Promise<RecipeExecutionResult[]> {
+  const { plugins, runtime, phaseExecutor, interruption, recipePhase, recipeStepIndex } = args
+  const executions: RecipeExecutionResult[] = []
+  const mounts = preparedExtraPluginMounts(plugins)
+  await mountPreparedExtraPlugins(runtime, plugins, mounts, phaseExecutor, interruption, "mount_phased_plugins")
+  if (mounts.length > 0) {
+    await phaseExecutor.operation("phased-plugin.materialize", () => materializePreparedMounts(runtime, mounts))
+    interruption?.throwIfInterrupted()
+  }
+  const activatedPlugins = plugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
+  executions.push(...await installPreparedExtraPluginRuntime({
+    runtime,
+    plugins,
+    activatedPlugins,
+    phaseExecutor,
+    interruption,
+    recipePhase,
+    loaderStepIndex: recipeStepIndex,
+    activationStepIndex: recipeStepIndex,
+    activationPhase: "activate_phased_plugins",
+  }))
+  if (activatedPlugins.length > 0) {
+    await phaseExecutor.tracker.run("phased_plugin_readiness", { count: activatedPlugins.length, plugins: activatedPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile })) }, async () => {
+      for (const plugin of activatedPlugins) {
+        const probe = pluginRuntimeHealthProbeStep({ name: `phased-plugin-active:${plugin.pluginFile}`, type: "plugin-active", pluginFile: plugin.pluginFile })
+        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: probe.command, args: probe.args ?? [] }), recipePhase, recipeStepIndex, `phased-plugin.readiness:${plugin.pluginFile}`))
+        interruption?.throwIfInterrupted()
+      }
+    })
+  }
+  return executions
 }
 
 export async function prepareRecipeRuntimeSetup(recipe: WorkspaceRecipe, recipeDirectory: string, runtimeBackend: string): Promise<PreparedRecipeRuntimeSetup> {
@@ -129,23 +173,8 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
-  const extraPluginMounts: MountSpec[] = extraPlugins.map((plugin) => ({
-    type: "directory",
-    source: plugin.source,
-    target: plugin.target,
-    mode: "readonly",
-    metadata: {
-      kind: "extra-plugin",
-      slug: plugin.slug,
-      source: plugin.provenance,
-    },
-  }))
-  await phaseTracker.run("mount_plugins", phasePluginMountData(extraPlugins), async () => {
-    for (const [index, plugin] of extraPlugins.entries()) {
-      await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime.mount(extraPluginMounts[index]))
-      interruption?.throwIfInterrupted()
-    }
-  })
+  const extraPluginMounts = preparedExtraPluginMounts(extraPlugins)
+  await mountPreparedExtraPlugins(runtime, extraPlugins, extraPluginMounts, phaseExecutor, interruption, "mount_plugins")
 
   for (const overlay of overlayCopies) {
     executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(copyRuntimeOverlayCode(overlay.source, overlay.target)) }), "setup", -3, `runtime.overlay.copy:${overlay.target}`))
@@ -204,9 +233,8 @@ export async function applyRecipeRuntimeSetup(args: {
       metadata: stagedFile.metadata,
     })),
   ]
-  const canMaterializeStagedInputs = typeof runtime.materializeStagedInputs === "function" || typeof runtime.materializeMounts === "function"
-  if (materializableMounts.length > 0 && canMaterializeStagedInputs) {
-    await awaitRecipe("input.materialize", () => runtime.materializeStagedInputs ? runtime.materializeStagedInputs(materializableMounts) : runtime.materializeMounts!(materializableMounts))
+  if (materializableMounts.length > 0 && canMaterializeMounts(runtime)) {
+    await awaitRecipe("input.materialize", () => materializePreparedMounts(runtime, materializableMounts))
     interruption?.throwIfInterrupted()
   }
 
@@ -218,31 +246,19 @@ export async function applyRecipeRuntimeSetup(args: {
   }
 
   const isolateManagedMultisitePreinstall = recipeHasManagedMysqlMultisitePhpunit(recipe, runtimeSpec)
-  const muPluginInstallCode = isolateManagedMultisitePreinstall ? null : installMuPluginsCode(extraPlugins)
-  if (muPluginInstallCode) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(muPluginInstallCode) }), "setup", -2, "extra-plugin.install-mu-loader"))
-  }
-
-  const composerAutoloaderInstallCode = isolateManagedMultisitePreinstall ? null : installPluginComposerAutoloadersCode(extraPlugins)
-  if (composerAutoloaderInstallCode) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(composerAutoloaderInstallCode) }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
-  }
-
   const deferredPluginFiles = managedPhpunitDeferredPluginFiles(recipe, runtimeSpec)
   const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false && !deferredPluginFiles.has(plugin.pluginFile))
-  if (activatedPlugins.length > 0) {
-    const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
-      for (const plugin of activatedPlugins) {
-        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(activateExtraPluginCode(plugin)) }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
-        interruption?.throwIfInterrupted()
-      }
-      return await activePlugins(runtime)
-    })
-    const activationPhase = [...phaseTracker.list()].reverse().find((phase: RecipePhaseEvidence) => phase.name === "activate_plugins")
-    if (activationPhase?.data) {
-      activationPhase.data.activePlugins = activePluginsAfterActivation
-    }
-  }
+  executions.push(...await installPreparedExtraPluginRuntime({
+    runtime,
+    plugins: isolateManagedMultisitePreinstall ? [] : extraPlugins,
+    activatedPlugins,
+    phaseExecutor,
+    interruption,
+    recipePhase: "setup",
+    loaderStepIndex: -2,
+    activationStepIndex: -1,
+    activationPhase: "activate_plugins",
+  }))
 
   for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
     executions.push(await awaitRecipe(`plugin-runtime.setup[${index}]`, executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index, inputMountPathMap)))
@@ -429,6 +445,74 @@ foreach ($iterator as $item) {
     }
 }
 echo wp_json_encode(array('source' => $source, 'target' => $target, 'copied' => true));`;
+}
+
+function preparedExtraPluginMounts(plugins: PreparedExtraPlugin[]): MountSpec[] {
+  return plugins.map((plugin) => ({
+    type: "directory",
+    source: plugin.source,
+    target: plugin.target,
+    mode: "readonly",
+    metadata: {
+      kind: "extra-plugin",
+      slug: plugin.slug,
+      source: plugin.provenance,
+    },
+  }))
+}
+
+async function mountPreparedExtraPlugins(runtime: Runtime, plugins: PreparedExtraPlugin[], mounts: MountSpec[], phaseExecutor: RecipeRunPhaseExecutor, interruption: RecipeInterruptionController | undefined, phaseName: RecipePhaseName): Promise<void> {
+  await phaseExecutor.tracker.run(phaseName, phasePluginMountData(plugins), async () => {
+    for (const [index, plugin] of plugins.entries()) {
+      await phaseExecutor.operation(`extra-plugin.mount:${plugin.slug}`, runtime.mount(mounts[index]))
+      interruption?.throwIfInterrupted()
+    }
+  })
+}
+
+function canMaterializeMounts(runtime: Runtime): boolean {
+  return typeof runtime.materializeStagedInputs === "function" || typeof runtime.materializeMounts === "function"
+}
+
+async function materializePreparedMounts(runtime: Runtime, mounts: MountSpec[]): Promise<unknown> {
+  if (runtime.materializeStagedInputs) return runtime.materializeStagedInputs(mounts)
+  if (runtime.materializeMounts) return runtime.materializeMounts(mounts)
+  return undefined
+}
+
+async function installPreparedExtraPluginRuntime(args: {
+  runtime: Runtime
+  plugins: PreparedExtraPlugin[]
+  activatedPlugins: PreparedExtraPlugin[]
+  phaseExecutor: RecipeRunPhaseExecutor
+  interruption?: RecipeInterruptionController
+  recipePhase: RecipeWorkflowPhase
+  loaderStepIndex: number
+  activationStepIndex: number
+  activationPhase: RecipePhaseName
+}): Promise<RecipeExecutionResult[]> {
+  const { runtime, plugins, activatedPlugins, phaseExecutor, interruption, recipePhase, loaderStepIndex, activationStepIndex, activationPhase } = args
+  const executions: RecipeExecutionResult[] = []
+  const muPluginInstallCode = installMuPluginsCode(plugins)
+  if (muPluginInstallCode) {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(muPluginInstallCode) }), recipePhase, loaderStepIndex, "extra-plugin.install-mu-loader"))
+  }
+  const composerAutoloaderInstallCode = installPluginComposerAutoloadersCode(plugins)
+  if (composerAutoloaderInstallCode) {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(composerAutoloaderInstallCode) }), recipePhase, loaderStepIndex, "extra-plugin.install-composer-autoloaders"))
+  }
+  if (activatedPlugins.length === 0) return executions
+
+  const activePluginsAfterActivation = await phaseExecutor.tracker.run(activationPhase, phasePluginActivationData(activatedPlugins), async () => {
+    for (const plugin of activatedPlugins) {
+      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(activateExtraPluginCode(plugin)) }), recipePhase, activationStepIndex, `extra-plugin.activate:${plugin.pluginFile}`))
+      interruption?.throwIfInterrupted()
+    }
+    return activePlugins(runtime)
+  })
+  const activationEvidence = [...phaseExecutor.tracker.list()].reverse().find((phase: RecipePhaseEvidence) => phase.name === activationPhase)
+  if (activationEvidence?.data) activationEvidence.data.activePlugins = activePluginsAfterActivation
+  return executions
 }
 
 function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<string, unknown> {

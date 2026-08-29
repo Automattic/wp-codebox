@@ -59,7 +59,7 @@ async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: Workspa
   }
 }
 
-async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number, effectivePath: string): Promise<RecipeRunDeclaredArtifact> {
+export async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number, effectivePath = artifact.path, options: { redact?: boolean } = {}): Promise<RecipeRunDeclaredArtifact> {
   try {
     const execution = await runtime.execute({
       command: "wordpress.run-php",
@@ -78,7 +78,7 @@ async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceR
       type: collected.type,
       size: collected.size,
       sha256: collected.sha256,
-      parsedJson: collected.parsedJson === undefined ? undefined : redactJsonValue(collected.parsedJson),
+      parsedJson: collected.parsedJson === undefined ? undefined : options.redact === false ? collected.parsedJson : redactJsonValue(collected.parsedJson),
       typedArtifact: {
         name: artifact.name,
         type: artifact.type,

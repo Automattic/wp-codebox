@@ -1,4 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises"
+import { mkdir, writeFile } from "node:fs/promises"
+import { dirname } from "node:path"
 import type { ExecutionResult, RecipeRunSummary, RuntimeRunRecord } from "@automattic/wp-codebox-core"
 import { boundedExecutionResultsForArtifacts } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "../output.js"
@@ -95,8 +97,15 @@ function hasTerminalRecipePhaseFailure(output: RecipeRunOutput): boolean {
   return output.phaseEvidence?.some((phase) => phase.status === "failed" && hasSerializedErrorCode(phase.error, "recipe-phase-failed")) ?? false
 }
 
-export async function writeRecipeJsonOutput(output: unknown): Promise<void> {
-  await writeStdout(`${JSON.stringify(boundedRecipeJsonOutput(output), null, 2)}\n`)
+export async function writeRecipeJsonOutput(output: unknown, outputPath?: string): Promise<void> {
+  const json = `${JSON.stringify(boundedRecipeJsonOutput(output), null, 2)}\n`
+  if (outputPath) {
+    await mkdir(dirname(outputPath), { recursive: true })
+    await writeFile(outputPath, json)
+    return
+  }
+
+  await writeStdout(json)
 }
 
 export function boundedRecipeJsonOutput(output: unknown): unknown {

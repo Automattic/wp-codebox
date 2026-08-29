@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -9,6 +9,7 @@ const repoRoot = dirname(scriptDirectory)
 const distEntrypoint = join(repoRoot, "packages/cli/dist/index.js")
 const nodeModules = join(repoRoot, "node_modules")
 const packageLock = join(repoRoot, "package-lock.json")
+const packageJson = join(repoRoot, "package.json")
 const callerCwd = process.cwd()
 
 function run(command, args, options = {}) {
@@ -51,5 +52,7 @@ if (!existsSync(nodeModules)) {
   run("npm", [existsSync(packageLock) ? "ci" : "install"], { failureContext: "install source checkout dependencies" })
 }
 
-run("npm", ["run", "build"], { failureContext: "build the source checkout" })
+const scripts = JSON.parse(readFileSync(packageJson, "utf8")).scripts ?? {}
+const buildScript = distIsAbsent && scripts["build:release"] ? "build:release" : "build"
+run("npm", ["run", buildScript], { failureContext: "build the source checkout" })
 run(process.execPath, [distEntrypoint, ...process.argv.slice(2)], { cwd: callerCwd, delegate: true })
