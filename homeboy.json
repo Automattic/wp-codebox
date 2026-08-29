@@ -82,7 +82,7 @@
       "npm run build"
     ],
     "test": [
-      "npm run smoke -- --group package",
+      "npm run check",
       "npm run test:release-target",
       "npm run test:sharp-release-runtime",
       "npm run test:prepare-declaration-rebuild",

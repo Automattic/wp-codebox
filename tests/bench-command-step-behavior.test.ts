@@ -398,7 +398,22 @@ assert.equal(restDbQueryProfilerPayload.artifacts["rest-db-query-profile"].summa
 assert.equal(restDbQueryProfilerPayload.artifacts["rest-db-query-profile"].cases[0].case_id, "posts-list")
 assert.equal(restDbQueryProfilerPayload.artifacts["rest-db-query-profile"].cases[0].samples.length, 1)
 assert.equal(restDbQueryProfilerPayload.artifacts["rest-db-query-profile"].cases[0].samples[0].sql, "SELECT * FROM wp_posts WHERE post_title = '?' AND ID = ?")
-assert.doesNotMatch(JSON.stringify(restDbQueryProfilerPayload), /private title|secret|123/)
+// Scan only string content. Stringifying the whole payload also captures
+// nondeterministic timing floats, where a bare `123` matches digit substrings
+// such as `"duration_ms":0.1235`.
+const collectStringContent = (value: unknown): string[] => {
+  if (typeof value === "string") {
+    return [value]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(collectStringContent)
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, entry]) => [key, ...collectStringContent(entry)])
+  }
+  return []
+}
+assert.doesNotMatch(collectStringContent(restDbQueryProfilerPayload).join("\n"), /private title|secret|\b123\b/)
 assert.equal(restDbQueryProfilerPayload.metrics.rest_db_query_profile_cases_count, 1)
 assert.equal(restDbQueryProfilerPayload.metrics.rest_db_query_profile_queries_count, 2)
 assert.equal(restDbQueryProfilerPayload.steps[0].type, "rest-db-query-profiler")
