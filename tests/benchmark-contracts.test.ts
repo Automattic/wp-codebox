@@ -60,6 +60,9 @@ assert.ok(workloadStepDefinition.properties?.helperPath, "workload steps should 
 assert.ok(workloadStepDefinition.properties?.inputArtifactRoot, "workload steps should expose artifact-postprocess inputArtifactRoot")
 assert.ok(workloadStepDefinition.properties?.outputArtifactPath, "workload steps should expose artifact-postprocess outputArtifactPath")
 assert.ok(workloadStepDefinition.properties?.expectedOutputSchema, "workload steps should expose artifact-postprocess expectedOutputSchema")
+assert.ok(workloadStepDefinition.properties?.requestCount, "workload steps should expose external HTTP requestCount")
+assert.ok(workloadStepDefinition.properties?.concurrency, "workload steps should expose external HTTP concurrency")
+assert.ok(workloadStepDefinition.properties?.expectedStatuses, "workload steps should expose external HTTP expectedStatuses")
 assert.deepEqual(routeDefinition.anyOf, [{ required: ["path"] }, { required: ["route"] }])
 assert.deepEqual(restCaseDefinition.anyOf, [{ required: ["path"] }, { required: ["route"] }])
 

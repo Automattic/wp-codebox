@@ -153,6 +153,7 @@
     "test:native-agent-task-interruption": "node tests/execute-native-agent-task-interruption.test.mjs",
     "test:native-agent-task-playground-e2e": "tsx tests/execute-native-agent-task-playground-e2e.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
+    "test:external-http-load-integration": "npm run build && tsx tests/external-http-load.integration.test.ts",
     "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:browser-canonical-preview-origin && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
     "test:temp-runtime-cleanup": "tsx tests/temp-runtime-cleanup.test.ts",
     "smoke:cli-version": "tsx scripts/cli-version-smoke.ts",
