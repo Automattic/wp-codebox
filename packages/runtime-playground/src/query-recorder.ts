@@ -77,7 +77,7 @@ export function wordpressQueryRecorderPhp(): string {
     }
 
     function wp_codebox_query_recorder_operation( $fingerprint ) {
-        $operation = strtolower( strtok( trim( (string) $fingerprint ), " \t\n\r\0\x0B" ) ?: '' );
+        $operation = strtolower( strtok( trim( (string) $fingerprint ), " \\t\\n\\r\\0\\x0B" ) ?: '' );
         return in_array( $operation, array( 'select', 'insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'truncate' ), true ) ? $operation : 'other';
     }
 
