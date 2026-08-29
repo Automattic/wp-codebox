@@ -63,7 +63,37 @@ export const DISCOVERY_SERIAL: readonly string[] = [
   "tests/browser-adaptive-exploration.test.ts",
 ]
 
-const excluded = new Set(DISCOVERY_EXCLUSIONS.map((entry) => entry.file))
+/*
+ * Files owned by the declared chains in smoke-manifest.ts. The chains order
+ * them deliberately and some depend on an earlier member having run, so they are
+ * executed there rather than discovered independently.
+ */
+export const CHAIN_OWNED_FILES: readonly string[] = [
+  "tests/artifact-path-primitives.test.ts",
+  "tests/bench-command-step-behavior.test.ts",
+  "tests/browser-callback-materialization-contracts.test.ts",
+  "tests/browser-canonical-preview-origin.test.ts",
+  "tests/cloudflare-allocation-lifecycle.test.ts",
+  "tests/cloudflare-coordinator-site-partitioning.test.ts",
+  "tests/cloudflare-d1-operation-repository.test.ts",
+  "tests/cloudflare-d1-provisioner.test.mjs",
+  "tests/cloudflare-phase-trace.test.ts",
+  "tests/cloudflare-principal-credential-operator.test.mjs",
+  "tests/cloudflare-principal-credential-repository.test.ts",
+  "tests/cloudflare-provisioning-api.test.ts",
+  "tests/cloudflare-public-reader.test.ts",
+  "tests/cloudflare-queue-batch.test.ts",
+  "tests/cloudflare-remote-principal-credential-gate.test.mjs",
+  "tests/cloudflare-runtime.test.ts",
+  "tests/cloudflare-site-context.test.ts",
+  "tests/external-mysql-runtime-service.test.ts",
+  "tests/generic-ability-runtime-run.test.ts",
+  "tests/native-mariadb-runtime-service.test.ts",
+  "tests/runtime-services.test.ts",
+  "tests/source-package-compiler-primitives.test.ts",
+]
+
+const excluded = new Set([...DISCOVERY_EXCLUSIONS.map((entry) => entry.file), ...CHAIN_OWNED_FILES])
 const serial = new Set(DISCOVERY_SERIAL)
 
 function listFiles(root: string, directory: string, pattern: RegExp): string[] {

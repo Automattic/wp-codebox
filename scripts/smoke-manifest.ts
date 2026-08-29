@@ -32,8 +32,13 @@ export const smokeGroups = {
       // tsc -b for runtime-core/runtime-playground/cli, plus the CLI bin
       // permission and build-provenance steps.
       npmScript("build"),
-      // Carries `tsc -p packages/runtime-cloudflare --noEmit`. The test files it
-      // chains are also discovered; the typecheck is the reason it stays.
+      // These chains order their member files deliberately, and some of those
+      // files depend on earlier ones having run. Discovery cannot express that,
+      // so the chains stay and their members are excluded from discovery via
+      // CHAIN_OWNED_FILES in smoke-discovery.ts.
+      npmScript("test:generic-primitives"),
+      npmScript("test:runtime-services"),
+      // Also carries `tsc -p packages/runtime-cloudflare --noEmit`.
       npmScript("test:cloudflare-runtime"),
     ],
   },
