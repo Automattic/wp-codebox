@@ -166,12 +166,51 @@ export const smokeGroups = {
       tsxSmoke("agent-fanout-execution-smoke"),
     ],
   },
+  "wordpress-plugin": {
+    description: "WordPress plugin PHP contract smoke checks.",
+    commands: [
+      npmScript("test:php-wasm-extension-manifests"),
+      npmScript("test:php-host-run-result-normalizer"),
+      npmScript("test:php-agent-outcome-classifier"),
+      npmScript("test:php-agent-runtime-execution"),
+      npmScript("test:php-browser-provider-auth-strategy"),
+      npmScript("test:php-browser-preview-only-session"),
+      npmScript("test:php-managed-host-command"),
+      npmScript("test:php-worker-runner"),
+      npmScript("test:php-tool-policy-normalization"),
+      npmScript("test:php-runner-workspace-backend-contract"),
+      npmScript("test:php-browser-callback-contracts"),
+      npmScript("test:php-runtime-package-public-contract"),
+      npmScript("test:php-runtime-package-canonical-importer"),
+      npmScript("test:php-runtime-task-runner"),
+      npmScript("test:php-fuzz-suite-runner"),
+      npmScript("test:php-browser-contained-site-contract"),
+      npmScript("test:php-artifact-import-idempotency"),
+      npmScript("test:php-browser-runtime-local-package"),
+      npmScript("test:php-fanout-aggregation-contract"),
+      npmScript("test:php-cli-command"),
+      npmScript("test:php-patch-approval-filter"),
+      npmScript("test:php-path-policy-parity"),
+      npmScript("test:php-provider-credential-boundary"),
+    ],
+  },
+  cloudflare: {
+    description: "Cloudflare runtime contract smoke checks and package typecheck.",
+    commands: [
+      // test:cloudflare-runtime also typechecks the package and is a superset of
+      // test:cloudflare-{queue,administrator-claim,principal-credentials,
+      // remote-principal-credential-gate}, which stay as narrow debug entrypoints.
+      npmScript("test:cloudflare-runtime"),
+      npmScript("test:cloudflare-wordpress-auth"),
+      npmScript("test:cloudflare-wordpress-archive-corpus"),
+    ],
+  },
 } satisfies Record<string, SmokeGroupDefinition>
 
 export const smokeManifest = {
   groups: smokeGroups,
   aggregateGroups: {
-    check: ["core", "policy", "artifact", "runtime", "package", "agent"],
+    check: ["core", "policy", "artifact", "runtime", "package", "agent", "wordpress-plugin", "cloudflare"],
   },
 } as const
 
