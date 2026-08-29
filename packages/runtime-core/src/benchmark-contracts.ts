@@ -105,7 +105,7 @@ export interface BenchResults {
 }
 
 export interface BenchmarkDefinitionWorkloadStep {
-  type: "php" | "wp-cli" | "rest-request" | "rest-db-query-profiler" | "db-inventory" | "external-http-guardrail" | "artifact-postprocess" | "ability" | (string & {})
+  type: "php" | "wp-cli" | "rest-request" | "rest-db-query-profiler" | "db-inventory" | "external-http-guardrail" | "external-http-load" | "artifact-postprocess" | "ability" | (string & {})
   action?: "install" | "collect" | "reset" | (string & {})
   code?: string
   file?: string
@@ -115,6 +115,14 @@ export interface BenchmarkDefinitionWorkloadStep {
   blockNetwork?: boolean
   redactUrls?: boolean
   blockResponse?: { code?: number; message?: string; body?: string }
+  url?: string
+  method?: string
+  headers?: Record<string, unknown>
+  body?: unknown
+  requestCount?: number
+  concurrency?: number
+  expectedStatus?: number
+  expectedStatuses?: number[]
   sampleLimit?: number
   queryLengthLimit?: number
   helper?: string
@@ -303,6 +311,7 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
           enum: [
             "wp-codebox/wordpress-db-inventory/v1",
             "wp-codebox/wordpress-external-http-guardrail/v1",
+            "wp-codebox/wordpress-external-http-load/v1",
             "wp-codebox/wordpress-rest-db-query-profile/v1",
           ],
         },
@@ -458,6 +467,14 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
             body: { type: "string" },
           },
         },
+        url: { type: "string", minLength: 1 },
+        method: { type: "string", minLength: 1 },
+        headers: { type: "object", additionalProperties: true },
+        body: true,
+        requestCount: { type: "integer", minimum: 1, maximum: 100 },
+        concurrency: { type: "integer", minimum: 1, maximum: 20 },
+        expectedStatus: { type: "integer", minimum: 100, maximum: 599 },
+        expectedStatuses: { type: "array", minItems: 1, uniqueItems: true, items: { type: "integer", minimum: 100, maximum: 599 } },
         sampleLimit: { type: "integer", minimum: 0 },
         queryLengthLimit: { type: "integer", minimum: 80 },
         helper: { type: "string", minLength: 1 },
