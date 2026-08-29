@@ -177,7 +177,7 @@
     "@cloudflare/workers-types": "^5.20260718.1",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.0",
-    "wrangler": "^4.112.0"
+    "wrangler": "^4.127.1"
   },
   "description": "**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely — every sandbox is a disposable WordPress Playground that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.",
   "main": "index.js",
