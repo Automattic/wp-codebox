@@ -56,6 +56,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitCompletedResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitCompletedResult, readPluginPhpunitDiagnostic, readPluginPhpunitDiscoveryResult } from "./runtime-diagnostics.js"
 import { phpunitExecutionSemantics, requiresManagedMysqlMultisitePreinstall } from "./phpunit-command-semantics.js"
 import { parsePhpunitOutput } from "./phpunit-test-results.js"
+import { runRuntimeExternalHttpLoad, type RuntimeExternalHttpLoadResult } from "./external-http-load.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
@@ -897,11 +898,14 @@ export async function runBenchCommand({
   const scenarioIds = jsonArrayArg(args, "scenario-ids-json").filter((id): id is string => typeof id === "string" && id.trim() !== "").map((id) => id.trim())
   const lifecycle = jsonObjectArg(args, "lifecycle-json")
   const resetPolicy = jsonObjectArg(args, "reset-policy-json")
-  const bridge = benchWorkloadsUseWpCli([workloads, lifecycle]) ? await createRuntimeWpCliBridge(server) : undefined
+  const externalHttpLoadPlans = benchExternalHttpLoadPlans(workloads)
+    .filter((plan) => scenarioIds.length === 0 || scenarioIds.includes(plan.scenarioId))
+  const runtimeWorkloads = benchReplaceExternalHttpLoadSteps(workloads)
+  const bridge = benchWorkloadsUseWpCli([runtimeWorkloads, lifecycle]) ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
   try {
     response = await runPlaygroundCommand("wordpress.bench", server, {
-      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, bootstrapFiles, workloads, scenarioIds, lifecycle, resetPolicy, wpCliBridge: bridge }), []),
+      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, bootstrapFiles, workloads: runtimeWorkloads, scenarioIds, lifecycle, resetPolicy, wpCliBridge: bridge }), []),
     })
     assertPlaygroundResponseOk("wordpress.bench", response)
   } finally {
@@ -910,7 +914,13 @@ export async function runBenchCommand({
     }
   }
 
-  return promoteBrowserMetricsToBenchResults(response.text, browserProbes)
+  const withExternalHttpLoad = await benchMergeExternalHttpLoadResults(response.text, externalHttpLoadPlans, {
+    baseUrl: runtimeSpec.preview?.publicUrl ?? server.serverUrl,
+    iterations,
+    warmupIterations,
+    workloads,
+  })
+  return promoteBrowserMetricsToBenchResults(withExternalHttpLoad, browserProbes)
 }
 
 export async function runPhpunitCommand({
@@ -1112,6 +1122,196 @@ export async function runCorePhpunitCommand({
   assertPlaygroundResponseOk("wordpress.core-phpunit", response)
 
   return response.text
+}
+
+interface BenchExternalHttpLoadPlan {
+  scenarioId: string
+  stepIndex: number
+  step: Record<string, unknown>
+}
+
+function benchExternalHttpLoadPlans(workloads: unknown[]): BenchExternalHttpLoadPlan[] {
+  const plans: BenchExternalHttpLoadPlan[] = []
+  workloads.forEach((workload, workloadIndex) => {
+    if (!workload || typeof workload !== "object" || Array.isArray(workload)) {
+      return
+    }
+    const record = workload as Record<string, unknown>
+    const scenarioId = typeof record.id === "string" && record.id.trim() !== "" ? record.id : `configured-${workloadIndex}`
+    const steps = Array.isArray(record.run) ? record.run : (Array.isArray(record.steps) ? record.steps : [])
+    steps.forEach((step, stepIndex) => {
+      if (step && typeof step === "object" && !Array.isArray(step) && (step as Record<string, unknown>).type === "external-http-load") {
+        plans.push({ scenarioId, stepIndex, step: step as Record<string, unknown> })
+      }
+    })
+  })
+  return plans
+}
+
+function benchReplaceExternalHttpLoadSteps(workloads: unknown[]): unknown[] {
+  return workloads.map((workload) => {
+    if (!workload || typeof workload !== "object" || Array.isArray(workload)) {
+      return workload
+    }
+    const record = workload as Record<string, unknown>
+    const field = Array.isArray(record.run) ? "run" : (Array.isArray(record.steps) ? "steps" : undefined)
+    if (!field) {
+      return workload
+    }
+    return {
+      ...record,
+      [field]: (record[field] as unknown[]).map((step) => step && typeof step === "object" && !Array.isArray(step) && (step as Record<string, unknown>).type === "external-http-load"
+        ? { type: "php", code: "return array();" }
+        : step),
+    }
+  })
+}
+
+async function benchMergeExternalHttpLoadResults(
+  text: string,
+  plans: BenchExternalHttpLoadPlan[],
+  options: { baseUrl: string; iterations: number; warmupIterations: number; workloads: unknown[] },
+): Promise<string> {
+  if (plans.length === 0) {
+    return text
+  }
+
+  const results = JSON.parse(text) as { schema?: string; scenarios?: Array<Record<string, any>>; provenance?: Record<string, any> }
+  if (results.schema !== "wp-codebox/bench-results/v1" || !Array.isArray(results.scenarios)) {
+    throw new Error("external-http-load could not merge into an invalid wordpress.bench result")
+  }
+  if (results.provenance?.definition && typeof results.provenance.definition === "object") {
+    results.provenance.definition.workloads = options.workloads
+  }
+
+  for (const plan of plans) {
+    const scenario = results.scenarios.find((candidate) => candidate.id === plan.scenarioId)
+    if (!scenario) {
+      throw new Error(`external-http-load scenario result is missing: ${plan.scenarioId}`)
+    }
+
+    const measured: RuntimeExternalHttpLoadResult[] = []
+    for (let iteration = 0; iteration < options.warmupIterations + options.iterations; iteration++) {
+      const result = await runRuntimeExternalHttpLoad(plan.step, options.baseUrl)
+      if (!result.success) {
+        throw new Error(`external-http-load assertions failed. diagnostic=${JSON.stringify({
+          schema: "wp-codebox/bench-external-http-load-diagnostic/v1",
+          scenarioId: plan.scenarioId,
+          stepIndex: plan.stepIndex,
+          requestCount: result.requestCount,
+          completedCount: result.completedCount,
+          failureCount: result.failureCount,
+          statusDistribution: result.statusDistribution,
+          diagnostics: result.diagnostics,
+        })}`)
+      }
+      if (iteration >= options.warmupIterations) {
+        measured.push(result)
+      }
+    }
+
+    const prefix = benchExternalHttpMetricPrefix(plan.step)
+    scenario.metrics ??= {}
+    const metricValues: Record<string, { unit: "count" | "ms"; values: number[] }> = {
+      [`${prefix}_request_count`]: { unit: "count", values: measured.map((result) => result.requestCount) },
+      [`${prefix}_completed_count`]: { unit: "count", values: measured.map((result) => result.completedCount) },
+      [`${prefix}_success_count`]: { unit: "count", values: measured.map((result) => result.successCount) },
+      [`${prefix}_failure_count`]: { unit: "count", values: measured.map((result) => result.failureCount) },
+      [`${prefix}_max_observed_concurrency_count`]: { unit: "count", values: measured.map((result) => result.maxObservedConcurrency) },
+      [`${prefix}_latency_mean_ms`]: { unit: "ms", values: measured.map((result) => result.latency.mean) },
+      [`${prefix}_latency_p50_ms`]: { unit: "ms", values: measured.map((result) => result.latency.p50) },
+      [`${prefix}_latency_p95_ms`]: { unit: "ms", values: measured.map((result) => result.latency.p95) },
+      [`${prefix}_latency_p99_ms`]: { unit: "ms", values: measured.map((result) => result.latency.p99) },
+    }
+    for (const [name, metric] of Object.entries(metricValues)) {
+      scenario.metrics[name] = benchExternalHttpMetric(metric.values, metric.unit)
+    }
+    scenario.metrics.duration = benchExternalHttpMetric(measured.map((result) => result.durationMs), "ms")
+
+    const artifact = benchAggregateExternalHttpLoadResults(measured)
+    const artifactName = plans.filter((candidate) => candidate.scenarioId === plan.scenarioId).length === 1
+      ? "external-http-load"
+      : `external-http-load-${plan.stepIndex}`
+    scenario.artifacts ??= {}
+    scenario.artifacts[artifactName] = artifact
+    scenario.steps ??= []
+    scenario.steps.push({
+      schema: "wp-codebox/bench-command-step/v1",
+      type: "external-http-load",
+      requestCount: artifact.requestCount,
+      concurrency: artifact.concurrency,
+      maxObservedConcurrency: artifact.maxObservedConcurrency,
+      iterations: measured.length,
+      provenance: artifact.provenance,
+    })
+    scenario.provenance = {
+      ...(scenario.provenance ?? {}),
+      external_http_load: [...(Array.isArray(scenario.provenance?.external_http_load) ? scenario.provenance.external_http_load : []), {
+        artifact: artifactName,
+        ...artifact.provenance,
+      }],
+    }
+  }
+
+  return `${JSON.stringify(results, null, 2)}\n`
+}
+
+function benchExternalHttpMetricPrefix(step: Record<string, unknown>): string {
+  const value = typeof step["metric-prefix"] === "string" ? step["metric-prefix"] : "external_http_load"
+  return value.trim().replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "external_http_load"
+}
+
+function benchExternalHttpMetric(values: number[], unit: "count" | "ms"): Record<string, unknown> {
+  return { unit, samples: benchNumericSummary(values) }
+}
+
+function benchNumericSummary(values: number[]): Record<string, number | number[]> {
+  const sorted = [...values].sort((left, right) => left - right)
+  const count = sorted.length
+  const mean = count > 0 ? sorted.reduce((sum, value) => sum + value, 0) / count : 0
+  const variance = count > 0 ? sorted.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / count : 0
+  const standardDeviation = Math.sqrt(variance)
+  const percentile = (fraction: number): number => count > 0 ? sorted[Math.max(0, Math.ceil(fraction * count) - 1)] : 0
+  return {
+    count,
+    mean,
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    p99: percentile(0.99),
+    min: count > 0 ? sorted[0] : 0,
+    max: count > 0 ? sorted[count - 1] : 0,
+    standard_deviation: standardDeviation,
+    relative_standard_deviation: mean !== 0 ? standardDeviation / Math.abs(mean) : 0,
+    values: sorted,
+  }
+}
+
+function benchAggregateExternalHttpLoadResults(results: RuntimeExternalHttpLoadResult[]): Record<string, any> {
+  const statusDistribution: Record<string, number> = {}
+  const latenciesMs: number[] = []
+  for (const result of results) {
+    for (const [status, count] of Object.entries(result.statusDistribution as Record<string, number>)) {
+      statusDistribution[status] = (statusDistribution[status] ?? 0) + count
+    }
+    latenciesMs.push(...result.latenciesMs)
+  }
+  const first = results[0] ?? {}
+  return {
+    schema: "wp-codebox/wordpress-external-http-load/v1",
+    requestCount: first.requestCount ?? 0,
+    concurrency: first.concurrency ?? 0,
+    maxObservedConcurrency: Math.max(0, ...results.map((result) => result.maxObservedConcurrency)),
+    completedCount: results.reduce((sum, result) => sum + result.completedCount, 0),
+    successCount: results.reduce((sum, result) => sum + result.successCount, 0),
+    failureCount: results.reduce((sum, result) => sum + result.failureCount, 0),
+    statusDistribution,
+    durationMs: results.reduce((sum, result) => sum + result.durationMs, 0),
+    latenciesMs,
+    latency: benchNumericSummary(latenciesMs),
+    runs: results,
+    diagnostics: results.flatMap((result) => result.diagnostics),
+    provenance: first.provenance ?? {},
+  }
 }
 
 function benchWorkloadsUseWpCli(value: unknown): boolean {
