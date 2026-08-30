@@ -630,7 +630,7 @@ export async function runEditorOpenCommand({
       const waitStartedAt = now()
       const waitStartedAtMs = Date.now()
       try {
-        const readiness = await waitForEditorOpenReadiness(page, target.waitSelector, waitTimeoutMs)
+        const readiness = await waitForEditorOpenReadiness(page, target, target.waitSelector, waitTimeoutMs)
         editorReadiness = readiness.editorReadiness
         editorCanvasReadiness = readiness.editorCanvasReadiness
         finalUrl = page.url()
@@ -812,8 +812,8 @@ export function editorOpenArtifactFilesForCapture(capture: ReadonlySet<string>, 
   }
 }
 
-export async function waitForEditorOpenReadiness(page: import("playwright").Page, waitSelector: string | undefined, timeoutMs: number): Promise<{ editorReadiness: BrowserEditorReadinessSummary; editorCanvasReadiness?: BrowserEditorCanvasProbeSummary }> {
-  const editorReadiness = await waitForEditorSemanticReadiness(page, timeoutMs)
+export async function waitForEditorOpenReadiness(page: import("playwright").Page, target: EditorOpenTarget, waitSelector: string | undefined, timeoutMs: number): Promise<{ editorReadiness: BrowserEditorReadinessSummary; editorCanvasReadiness?: BrowserEditorCanvasProbeSummary }> {
+  const editorReadiness = await waitForEditorSemanticReadiness(page, target, timeoutMs)
   if (!waitSelector) {
     return { editorReadiness }
   }
@@ -1777,8 +1777,8 @@ async function waitForEditorReadiness(page: import("playwright").Page, timeoutMs
 
 // Opening and validating an editor require the block-editor data store. Global
 // block APIs and save availability are stricter, separate capabilities.
-async function waitForEditorSemanticReadiness(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorReadinessSummary> {
-  return page.waitForFunction(() => {
+async function waitForEditorSemanticReadiness(page: import("playwright").Page, target: EditorOpenTarget, timeoutMs: number): Promise<BrowserEditorReadinessSummary> {
+  return page.waitForFunction((expectedPostId) => {
     const win = window as unknown as {
       wp?: {
         blocks?: { parse?: unknown; getBlockTypes?: () => unknown[] }
@@ -1800,16 +1800,20 @@ async function waitForEditorSemanticReadiness(page: import("playwright").Page, t
     const dispatch = win.wp?.data?.dispatch
     const editor = select("core/editor")
     const editorDispatch = typeof dispatch === "function" ? dispatch("core/editor") : undefined
+    const postId = typeof editor?.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined
+    if (expectedPostId !== null && Number(postId) !== expectedPostId) {
+      return false
+    }
     return {
       schema: "wp-codebox/editor-readiness/v1",
       status: "ready",
       storesAvailable: Boolean(editor && blockEditor),
       canSave: typeof editorDispatch?.savePost === "function",
       ...(Array.isArray(blockTypes) ? { blockTypesRegistered: blockTypes.length } : {}),
-      postId: typeof editor?.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
+      postId,
       postType: typeof editor?.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
     }
-  }, undefined, { timeout: timeoutMs }).then(async (handle) => {
+  }, target.kind === "post" && target.postId ? target.postId : null, { timeout: timeoutMs }).then(async (handle) => {
     const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
     if (!readiness) {
       throw new Error("wp-codebox-editor-readiness-timeout: Gutenberg block runtime did not become available")

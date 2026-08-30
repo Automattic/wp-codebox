@@ -461,7 +461,7 @@ const semanticReadyPage = {
       },
     }
     try {
-      const readiness = predicate()
+      const readiness = predicate(selector)
       assert.ok(readiness)
       return { jsonValue: async () => readiness }
     } finally {
@@ -469,15 +469,16 @@ const semanticReadyPage = {
     }
   },
 } as never
-const semanticReadiness = await waitForEditorOpenReadiness(semanticReadyPage, undefined, 1)
+const genericEditorTarget = { kind: "url", url: "/wp-admin/site-editor.php" } as const
+const semanticReadiness = await waitForEditorOpenReadiness(semanticReadyPage, genericEditorTarget, undefined, 1)
 assert.equal(semanticReadiness.editorReadiness.blockTypesRegistered, undefined)
 assert.equal(semanticReadiness.editorReadiness.storesAvailable, false)
 assert.equal(semanticReadiness.editorReadiness.canSave, false)
 await assert.rejects(
-  () => waitForEditorOpenReadiness(semanticReadyPage, ".legacy-editor-shell", 1),
+  () => waitForEditorOpenReadiness(semanticReadyPage, genericEditorTarget, ".legacy-editor-shell", 1),
   /Timed out waiting for \.legacy-editor-shell/,
 )
-assert.deepEqual(readinessCalls, [undefined, undefined, ".legacy-editor-shell"])
+assert.deepEqual(readinessCalls, [null, null, ".legacy-editor-shell"])
 
 const retainedArtifact = {
   artifactType: "editor-open",
