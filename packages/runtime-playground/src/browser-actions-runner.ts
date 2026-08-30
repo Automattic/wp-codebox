@@ -474,16 +474,16 @@ export async function runBrowserActionsCommand({
       try {
         const screenshotCaptureBudgetMs = adaptiveCaptureNavigationUnsettled ? Math.min(adaptiveCaptureBudgetMs, livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)) : 0
         if (adaptiveCaptureNavigationUnsettled && screenshotCaptureBudgetMs <= 0) throw new Error("Adaptive screenshot capture budget was exhausted before capture started.")
-        const screenshotCapture = artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
         if (adaptiveCaptureNavigationUnsettled) {
-          await withBrowserCommandLiveness({
+          const screenshot = await withBrowserCommandLiveness({
             command: "wordpress.browser-actions",
             phase: "adaptive partial screenshot capture",
-            operation: screenshotCapture,
+            operation: page.screenshot({ fullPage: true }),
             policy: { wallTimeoutMs: screenshotCaptureBudgetMs, idleTimeoutMs: 0 },
           })
+          await artifactSession.writeBuffer("screenshot", "screenshot.png", screenshot)
         } else {
-          await screenshotCapture
+          await artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
         }
         screenshotSha256 = await fileSha256(screenshotPath)
         if (capture.has("dom-snapshot")) {

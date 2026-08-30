@@ -133,7 +133,15 @@ test("adaptive capture classifies unresolved navigation and retains partial evid
     assert(Date.now() - startedAt < 1_500, "capture settlement must remain inside the command budget")
     await access(join(artifactRoot, "files/browser/steps.jsonl"))
     await access(join(artifactRoot, "files/browser/network.jsonl"))
-    await access(join(artifactRoot, "files/browser/screenshot.png"))
+    const screenshotPath = join(artifactRoot, "files/browser/screenshot.png")
+    const screenshotUnavailable = adaptive.result.diagnostics.some(({ code }: { code: string }) => code === "browser_adaptive_capture_screenshot_unavailable")
+    if (result.artifact.summary.screenshot) {
+      assert.equal(screenshotUnavailable, false)
+      await access(screenshotPath)
+    } else {
+      assert.equal(screenshotUnavailable, true)
+      await assert.rejects(access(screenshotPath))
+    }
     await assert.rejects(access(join(artifactRoot, "files/browser/snapshot.html")))
   } finally {
     await context.close()
