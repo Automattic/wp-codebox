@@ -7,11 +7,13 @@ import { assembleWordpressPluginZip } from "./lib/assemble-wordpress-plugin-zip.
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 
-await execFileAsync("npm", ["run", "release:package"], {
+const releasePackage = await execFileAsync("npm", ["run", "release:package"], {
 	cwd: repoRoot,
 	env: process.env,
 	maxBuffer: 1024 * 1024 * 20,
 })
+process.stdout.write(releasePackage.stdout)
+process.stderr.write(releasePackage.stderr)
 
 const outputZip = await assembleWordpressPluginZip(repoRoot)
 console.log(`Built ${outputZip}`)
