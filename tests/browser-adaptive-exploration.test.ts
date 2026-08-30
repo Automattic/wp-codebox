@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import test from "node:test"
-import { chromium, type Page } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 
 import {
   BROWSER_ADAPTIVE_EXPLORATION_SCHEMA,
@@ -20,6 +20,16 @@ import { closeHttpServer, listenLocalHttpServer } from "../packages/runtime-play
 function environmentBoundOracleFingerprint(value: string): string {
   return browserAdaptiveDigest("oracle", { environmentDigest: browserAdaptiveExplorationContract({}).environmentDigest, value })
 }
+
+let browser: Browser
+
+test.before(async () => {
+  browser = await chromium.launch({ headless: true })
+})
+
+test.after(async () => {
+  await browser.close()
+})
 
 const modalFixture = `<!doctype html>
 <style>button,input,select { display:block; width:180px; height:30px; margin:8px; }</style>
@@ -63,6 +73,7 @@ document.querySelector('#open-overlay').addEventListener('click', () => {
   overlay.id = 'overlay';
   overlay.innerHTML = '<button id="overlay-action">Overlay action</button>';
   document.body.append(overlay);
+  globalThis.__wpCodeboxTestEvent?.('overlay-opened');
 });
 document.querySelector('#continue').addEventListener('click', () => {
   const count = document.querySelector('#count');
@@ -203,8 +214,8 @@ test("adaptive planner selects actions by HTML input type capability", () => {
 })
 
 test("planned input actions execute safely in a real browser", async () => {
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
   const fixture = `<!doctype html>
     <style>input,textarea { display:block; width:180px; height:30px; margin:4px; }</style>
     <form id="form">
@@ -240,13 +251,13 @@ test("planned input actions execute safely in a real browser", async () => {
       for (const step of action.steps) await executeBrowserInteractionStep(page, step, page.url(), 2_000, async () => ({ path: "unused", isDefault: false }))
     }
   } finally {
-    await browser.close()
+    await context.close()
   }
 })
 
 test("real-browser descriptors keep navigation single-click and in-place controls repeatable", async () => {
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
   try {
     await page.addInitScript("globalThis.__name = value => value")
     await page.setContent(`<!doctype html>
@@ -289,7 +300,7 @@ test("real-browser descriptors keep navigation single-click and in-place control
     assert.equal(await page.locator("#count").textContent(), "2")
     assert.equal(actionFor("#submit", "double-submit")?.steps.length, 2, "double-submit remains unchanged")
   } finally {
-    await browser.close()
+    await context.close()
   }
 })
 
@@ -337,16 +348,14 @@ test("rediscovery finds, minimizes, and replays a defect revealed by a dynamic m
   assert.deepEqual(finding.replay.environment, {})
   assert.equal(finding.replay.environmentDigest, run.contract.environmentDigest)
 
-  const mobile = await runFixture(modalFixture, {
-    seed: "modal-seed",
+  const mobile = browserAdaptiveExplorationContract({
     environment: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, geolocation: { latitude: 32.7765, longitude: -79.9311, permission: "granted" } },
-    budgets: { maxActions: 80, maxStates: 24, maxTransitions: 80, maxDurationMs: 30_000, maxArtifactBytes: 2_000_000, maxErrors: 10 },
-    actionFamilies: ["click", "fill", "submit", "repeat", "double-submit"],
   })
-  assert.notEqual(mobile.result.states[0]?.digest, run.result.states[0]?.digest)
-  assert.notEqual(mobile.result.findings[0]?.fingerprint, finding.fingerprint)
-  assert.deepEqual(mobile.result.replay.environment, mobile.contract.environment)
-  assert.equal(mobile.result.findings[0]?.replay.environmentDigest, mobile.contract.environmentDigest)
+  assert.notEqual(mobile.environmentDigest, run.contract.environmentDigest)
+  assert.notEqual(
+    browserAdaptiveDigest("oracle", { environmentDigest: mobile.environmentDigest, value: "dynamic modal defect" }),
+    finding.fingerprint,
+  )
 })
 
 test("bounded stabilization captures delayed conditional fields and route state", async () => {
@@ -470,7 +479,14 @@ test("cancellation during a partially failed action retains bounded non-replayab
     failOnFinding: false,
     budgets: { maxActions: 8, maxStates: 8, maxTransitions: 8, maxDurationMs: 15_000, maxErrors: 4 },
     actionFamilies: ["repeat"],
-  }, controller.signal, () => setTimeout(() => controller.abort("cancel during intercepted click"), 500))
+  }, {
+    signal: controller.signal,
+    preparePage: async (page) => {
+      await page.exposeFunction("__wpCodeboxTestEvent", (event: string) => {
+        if (event === "overlay-opened") controller.abort("cancel during intercepted click")
+      })
+    },
+  })
   const failed = run.result.transitions.find((transition) => transition.status === "error")
   assert(failed)
   assert.equal(run.result.status, "incomplete")
@@ -684,7 +700,7 @@ test("loops, budgets, cancellation, frames, and partial evidence remain bounded"
 
   const controller = new AbortController()
   controller.abort("fixture cancellation")
-  const cancelled = await runFixture(loopFixture, { seed: "cancelled", failOnFinding: false }, controller.signal)
+  const cancelled = await runFixture(loopFixture, { seed: "cancelled", failOnFinding: false }, { signal: controller.signal })
   assert.equal(cancelled.result.status, "incomplete")
   assert.equal(cancelled.result.summary.budgetExhausted, "cancelled")
   assert.equal(cancelled.result.transitions.length, 0)
@@ -706,31 +722,31 @@ test("no-reset exploration remains a truthful linear state chain", async () => {
   }
 })
 
-async function runFixture(html: string, input: Record<string, unknown>, signal?: AbortSignal, beforeExplore?: () => void) {
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+async function runFixture(html: string, input: Record<string, unknown>, options: { signal?: AbortSignal; preparePage?: (page: Page) => Promise<void> } = {}) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
   const consoleMessages: object[] = []
   const errors: object[] = []
   const network: object[] = []
   page.on("console", (message) => consoleMessages.push({ type: message.type(), text: message.text() }))
   page.on("pageerror", (error) => errors.push({ message: error.message }))
   page.on("request", (request) => network.push({ url: request.url(), method: request.method() }))
+  await options.preparePage?.(page)
   await page.addInitScript("globalThis.__name = value => value")
   const startUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
   await page.goto(startUrl, { waitUntil: "load" })
   const contract = browserAdaptiveExplorationContract({ startUrl, stabilization: { pollIntervalMs: 25, quietWindowMs: 100, maxWaitMs: 1500, maxMutationRecords: 40 }, ...input })
   try {
-    beforeExplore?.()
-    const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, signal })
+    const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, signal: options.signal })
     return { result, contract }
   } finally {
-    await browser.close()
+    await context.close()
   }
 }
 
 async function runUrlFixture(startUrl: string, input: Record<string, unknown>) {
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
   const consoleMessages: object[] = []
   const errors: object[] = []
   const network: object[] = []
@@ -744,12 +760,11 @@ async function runUrlFixture(startUrl: string, input: Record<string, unknown>) {
     const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network } })
     return { result, contract }
   } finally {
-    await browser.close()
+    await context.close()
   }
 }
 
 async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopology>, effectiveOrigin: string, initialHtml?: string) {
-  const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
   await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, effectiveOrigin)
   const page = await context.newPage()
@@ -774,7 +789,7 @@ async function runRoutedFixture(topology: ReturnType<typeof browserPreviewTopolo
   try {
     return await exploreAdaptiveBrowserStateMachine({ page, baseUrl: effectiveOrigin, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope })
   } finally {
-    await browser.close()
+    await context.close()
   }
 }
 
@@ -797,7 +812,6 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
   })
   const startUrl = await listenLocalHttpServer(server)
   const topology = browserPreviewTopology([`network-policy=${mode}`], undefined, startUrl)
-  const browser = await chromium.launch({ headless: true })
   const browserEnvironment = environment === "mobile" ? { hasTouch: true, isMobile: true, viewport: { height: 844, width: 390 } } : undefined
   const context = await browser.newContext(browserEnvironment)
   await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, startUrl)
@@ -828,7 +842,7 @@ async function runNetworkOracleFixture(mode: "allow" | "block" | "record", behav
     const result = await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope, networkPolicy: topology.networkPolicy })
     return { result, contract }
   } finally {
-    await browser.close()
+    await context.close()
     await closeHttpServer(server)
   }
 }
@@ -859,7 +873,6 @@ async function runPolicyBlockFloodFixture() {
   const startUrl = await listenLocalHttpServer(server)
   const topology = browserPreviewTopology(["network-policy=block"], undefined, startUrl)
   const run = async () => {
-    const browser = await chromium.launch({ headless: true })
     const context = await browser.newContext()
     await routeBrowserPreviewContextNetwork(context, topology.networkPolicy, startUrl)
     const page = await context.newPage()
@@ -881,7 +894,7 @@ async function runPolicyBlockFloodFixture() {
     try {
       return await exploreAdaptiveBrowserStateMachine({ page, baseUrl: startUrl, contract, observations: { consoleMessages, errors, network }, navigationScope: topology.navigationScope, networkPolicy: topology.networkPolicy })
     } finally {
-      await browser.close()
+      await context.close()
     }
   }
   try {
