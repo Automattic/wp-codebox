@@ -23,6 +23,7 @@ const DELAYED_CANVAS_PRESENTATION_IDENTITY = "e".repeat(64)
 const PARENT_CANVAS_PRESENTATION_IDENTITY = "f".repeat(64)
 const SLOW_PRESENTATION_IDENTITY = "1".repeat(64)
 const PENDING_STYLES_PRESENTATION_IDENTITY = "2".repeat(64)
+const GROWING_PRESENTATION_IDENTITIES = ["3".repeat(64), "4".repeat(64)]
 const matchedPresentationMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:400px;background:linear-gradient(#123,#abc);color:white;padding:12px}</style><div class="block-editor-block-list__layout">Matched presentation</div>`
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
@@ -48,11 +49,14 @@ const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" sr
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
 const slowPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<script>setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${SLOW_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 3500)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='slow'>Slow</div></div>"></iframe>`
 const pendingStylesEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<link rel='stylesheet' href='http://127.0.0.1:9/unavailable.css'><style>/* blocks-engine-presentation:${PENDING_STYLES_PRESENTATION_IDENTITY} */<\/style><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='pending'>Pending</div></div>"></iframe>`
+const growingPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[0]} */<\/style><script>let identity = 0; setInterval(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:' + (identity++).toString(16).padStart(64, '9') + ' */'; document.head.append(style) }, 100); setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[1]} */'; document.head.append(style) }, 4100)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='growing'>Growing</div></div>"></iframe>`
 
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
     response.setHeader("content-type", "text/html")
-    response.end(request.url?.startsWith("/broken")
+    response.end(request.url?.startsWith("/wp-admin/post.php")
+      ? growingPresentationEditorHtml
+      : request.url?.startsWith("/broken")
       ? "<main>Broken editor fixture</main>"
       : request.url?.startsWith("/presentation")
         ? "<main>Deliberately different frontend fixture</main>"
@@ -88,7 +92,12 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       },
     },
   } as RuntimeCreateSpec
-  const runPlaygroundCommand = async () => ({ text: "[]", exitCode: 0 })
+  const runPlaygroundCommand = async (command: string) => ({
+    text: command === "wordpress.editor-open.capture-presentation-contract"
+      ? JSON.stringify({ identities: GROWING_PRESENTATION_IDENTITIES, complete: true })
+      : "[]",
+    exitCode: 0,
+  })
 
   try {
     await withTempDir("wp-codebox-real-browser-actions-security-", async (artifactRoot) => {
@@ -237,6 +246,20 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       })
       const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
       assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [PENDING_STYLES_PRESENTATION_IDENTITY])
+    })
+
+    await withTempDir("wp-codebox-real-editor-growing-presentation-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: ["post-id=1", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[]; expectedGeneratedPresentationIdentities: string[]; expectedGeneratedPresentationIdentitiesComplete: boolean } } }
+      assert.deepEqual(output.summary.editorPresentation.expectedGeneratedPresentationIdentities, GROWING_PRESENTATION_IDENTITIES)
+      assert.equal(output.summary.editorPresentation.expectedGeneratedPresentationIdentitiesComplete, true)
+      assert.equal(GROWING_PRESENTATION_IDENTITIES.every((identity) => output.summary.editorPresentation.generatedPresentationIdentities.includes(identity)), true)
     })
 
     await withTempDir("wp-codebox-real-editor-canvas-security-", async (artifactRoot) => {
