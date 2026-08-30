@@ -41,7 +41,7 @@ await writeFile(staleDistPath, "export const staleBuild = true\n")
 
 let stdout = ""
 try {
-  ({ stdout } = await execFileAsync("npm", ["run", "release:package"], {
+  ({ stdout } = await execFileAsync("npm", ["run", "package:wordpress-plugin"], {
     cwd: repositoryRoot,
     env: {
       ...process.env,
@@ -53,7 +53,9 @@ try {
 } finally {
   await writeFile(staleDistPath, currentDist)
 }
-const artifacts = JSON.parse(stdout.trim().split("\n").at(-1) ?? "[]")
+const artifactManifest = stdout.split("\n").find((line) => line.startsWith('[{"path":'))
+assert.ok(artifactManifest, "production package command did not emit its artifact manifest")
+const artifacts = JSON.parse(artifactManifest)
 assert.equal(artifacts.length, 2, "release package emitted unexpected artifacts")
 assert.deepEqual(artifacts.filter((artifact: { type: string }) => artifact.type === "wordpress-plugin-zip"), [
   { path: pluginArtifact, type: "wordpress-plugin-zip" },
