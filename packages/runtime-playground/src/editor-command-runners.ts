@@ -648,9 +648,9 @@ export async function runEditorOpenCommand({
 
     if (editorReadiness) {
       await dismissWordPressOnboardingDialogs(page)
-      editorPresentation = await captureEditorPresentation(page, waitTimeoutMs)
+      const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
+      editorPresentation = await captureEditorPresentation(page, waitTimeoutMs, expected?.complete ? expected.identities : [])
       if (editorPresentation) {
-        const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
         await dismissWordPressOnboardingDialogs(page)
         const idleCanvas = await captureEditorIdleCanvas(page)
         editorPresentation = {
@@ -861,7 +861,7 @@ export function summarizeEditorPresentation(capture: EditorPresentationCapture):
   }
 }
 
-export async function captureEditorPresentation(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorPresentationSummary | undefined> {
+export async function captureEditorPresentation(page: import("playwright").Page, timeoutMs: number, expectedIdentities: string[] = []): Promise<BrowserEditorPresentationSummary | undefined> {
   const startedAtMs = Date.now()
   const deadlineMs = startedAtMs + Math.min(timeoutMs, EDITOR_PRESENTATION_MAX_CAPTURE_MS)
   let previousFingerprint: string | undefined
@@ -902,7 +902,13 @@ export async function captureEditorPresentation(page: import("playwright").Page,
       const summary = summarizeEditorPresentation(capture)
       const fingerprint = `${capture.documentIdentity}\n${JSON.stringify(summary)}`
       const observedAtMs = Date.now()
-      if (fingerprint === previousFingerprint) {
+      const expectedIdentitiesObserved = expectedIdentities.length > 0
+        && expectedIdentities.every((identity) => summary.generatedPresentationIdentities.includes(identity))
+      const summarySettled = fingerprint === previousFingerprint
+        && stableSinceMs !== undefined
+        && observedAtMs - stableSinceMs >= EDITOR_PRESENTATION_SETTLE_MS
+      if ((expectedIdentitiesObserved || summarySettled)
+        && capture.documentAgeMs >= EDITOR_PRESENTATION_MIN_OBSERVATION_MS) {
         const currentDocumentIdentity = capture.canvasDocumentType === "iframe"
           ? await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
               .then(async (currentFrame) => currentFrame && currentFrame === frame ? await currentFrame.evaluate(() => `${location.href}\n${performance.timeOrigin}`) : undefined)
@@ -910,13 +916,11 @@ export async function captureEditorPresentation(page: import("playwright").Page,
           : await resolveEditorCanvasFrame(page, EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR)
               .then(async (currentFrame) => currentFrame ? undefined : await page.evaluate(() => `${location.href}\n${performance.timeOrigin}`))
               .catch(() => undefined)
-        if (stableSinceMs !== undefined
-          && observedAtMs - stableSinceMs >= EDITOR_PRESENTATION_SETTLE_MS
-          && capture.documentAgeMs >= EDITOR_PRESENTATION_MIN_OBSERVATION_MS
-          && currentDocumentIdentity === capture.documentIdentity) {
+        if (currentDocumentIdentity === capture.documentIdentity) {
           return summary
         }
-      } else {
+      }
+      if (fingerprint !== previousFingerprint) {
         previousFingerprint = fingerprint
         stableSinceMs = observedAtMs
       }
