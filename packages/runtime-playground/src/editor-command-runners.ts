@@ -887,9 +887,8 @@ export async function captureEditorPresentation(page: import("playwright").Page,
     if (!canvas) continue
     if (frame) sawCanvas = true
     const capture = await canvas.evaluate(({ canvasDocumentType, iframeCount }) => {
-      if (document.readyState !== "complete" || document.fonts?.status === "loading") return null
+      if (document.readyState !== "complete") return null
       const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]'))
-      if (stylesheets.some((stylesheet) => !stylesheet.disabled && !stylesheet.sheet)) return null
       return {
         documentIdentity: `${location.href}\n${performance.timeOrigin}`,
         documentAgeMs: performance.now(),

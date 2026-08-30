@@ -22,6 +22,7 @@ const REPLACED_CANVAS_PRESENTATION_IDENTITY = "d".repeat(64)
 const DELAYED_CANVAS_PRESENTATION_IDENTITY = "e".repeat(64)
 const PARENT_CANVAS_PRESENTATION_IDENTITY = "f".repeat(64)
 const SLOW_PRESENTATION_IDENTITY = "1".repeat(64)
+const PENDING_STYLES_PRESENTATION_IDENTITY = "2".repeat(64)
 const matchedPresentationMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:400px;background:linear-gradient(#123,#abc);color:white;padding:12px}</style><div class="block-editor-block-list__layout">Matched presentation</div>`
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
@@ -46,6 +47,7 @@ const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentati
 const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
 const slowPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<script>setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${SLOW_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 3500)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='slow'>Slow</div></div>"></iframe>`
+const pendingStylesEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<link rel='stylesheet' href='http://127.0.0.1:9/unavailable.css'><style>/* blocks-engine-presentation:${PENDING_STYLES_PRESENTATION_IDENTITY} */<\/style><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='pending'>Pending</div></div>"></iframe>`
 
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
@@ -68,6 +70,8 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
             ? delayedCanvasEditorHtml
             : request.url?.startsWith("/slow-presentation")
               ? slowPresentationEditorHtml
+              : request.url?.startsWith("/pending-styles")
+                ? pendingStylesEditorHtml
               : editorHtml)
   })
   const serverUrl = await listenLocalHttpServer(httpServer)
@@ -221,6 +225,18 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       })
       const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
       assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [SLOW_PRESENTATION_IDENTITY])
+    })
+
+    await withTempDir("wp-codebox-real-editor-pending-styles-security-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/pending-styles?token=${TOKEN}`, "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { generatedPresentationIdentities: string[] } } }
+      assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [PENDING_STYLES_PRESENTATION_IDENTITY])
     })
 
     await withTempDir("wp-codebox-real-editor-canvas-security-", async (artifactRoot) => {
