@@ -1,12 +1,16 @@
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import test from "node:test"
+import { promisify } from "node:util"
 
 import { promoteValidatedDirectory } from "../scripts/derive-cloudflare-core-contract.mjs"
 
-for (const faultPoint of ["validation", "after-validation", "after-live-backup", "after-promotion"]) {
+const execFileAsync = promisify(execFile)
+
+for (const faultPoint of ["validation", "after-validation", "before-promotion", "after-promotion"]) {
   test(`derivation preserves the live tree after ${faultPoint} failure`, async () => {
     const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-promotion-"))
     const destinationRoot = join(root, "live")
@@ -28,7 +32,6 @@ for (const faultPoint of ["validation", "after-validation", "after-live-backup",
         /injected/,
       )
       assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "previous")
-      assert.deepEqual((await readdir(root)).filter((entry) => entry.includes(".backup-")), [])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -58,6 +61,32 @@ test("derivation promotes a fully validated staged tree", async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+for (const faultPoint of ["after-validation", "before-promotion", "after-promotion"]) {
+  test(`abrupt termination at ${faultPoint} leaves a complete live tree`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-interruption-"))
+    const destinationRoot = join(root, "live")
+    const stagedRoot = join(root, "staged")
+    try {
+      await writeTree(destinationRoot, "previous")
+      await writeTree(stagedRoot, "replacement")
+      const source = `
+        import { promoteValidatedDirectory } from ${JSON.stringify(resolve(import.meta.dirname, "../scripts/derive-cloudflare-core-contract.mjs"))}
+        await promoteValidatedDirectory({
+          stagedRoot: process.argv[1],
+          destinationRoot: process.argv[2],
+          validate: async () => {},
+          fault: async (point) => { if (point === process.argv[3]) process.kill(process.pid, "SIGKILL") },
+        })
+      `
+      await assert.rejects(execFileAsync(process.execPath, ["--input-type=module", "--eval", source, stagedRoot, destinationRoot, faultPoint]))
+      const live = await readFile(join(destinationRoot, "contract.js"), "utf8")
+      assert.equal(live, faultPoint === "after-promotion" ? "replacement" : "previous")
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
 
 async function writeTree(root, contents) {
   await mkdir(root)

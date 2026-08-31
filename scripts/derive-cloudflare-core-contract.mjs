@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -80,23 +80,27 @@ export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, v
   await validate(stagedRoot)
   await fault("after-validation")
 
-  const backupRoot = `${destinationRoot}.backup-${process.pid}-${Date.now()}`
-  let movedLive = false
-  let promoted = false
+  await fault("before-promotion")
+  await atomicExchangeDirectories(stagedRoot, destinationRoot)
   try {
-    await rename(destinationRoot, backupRoot)
-    movedLive = true
-    await fault("after-live-backup")
-    await rename(stagedRoot, destinationRoot)
-    promoted = true
     await fault("after-promotion")
   } catch (error) {
-    if (promoted) await rm(destinationRoot, { recursive: true, force: true })
-    if (movedLive) await rename(backupRoot, destinationRoot)
+    await atomicExchangeDirectories(stagedRoot, destinationRoot)
     throw error
   }
 
-  await rm(backupRoot, { recursive: true, force: true })
+  await rm(stagedRoot, { recursive: true, force: true })
+}
+
+async function atomicExchangeDirectories(left, right) {
+  const helperRoot = await mkdtemp(join(tmpdir(), "wp-codebox-atomic-exchange-"))
+  const helper = resolve(helperRoot, "atomic-directory-exchange")
+  try {
+    await execFileAsync("cc", [resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
+    await execFileAsync(helper, [left, right])
+  } finally {
+    await rm(helperRoot, { recursive: true, force: true })
+  }
 }
 
 async function assertContractTree(candidateRoot, generatedRoot, generatedFiles, version, tag) {
