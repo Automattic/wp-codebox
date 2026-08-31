@@ -1666,6 +1666,7 @@ function wp_codebox_bench_assert_required_observations(array $workload, array $p
 }
 
 function wp_codebox_bench_run_configured_workload(array $workload, string $plugin_path) {
+    static $php_file_results = array();
     $steps = wp_codebox_bench_workload_run_steps($workload);
     $payload = array('metrics' => array(), 'metadata' => array(), 'artifacts' => array(), 'steps' => array(), 'diagnostics' => array());
     if (isset($workload['metadata']) && is_array($workload['metadata'])) {
@@ -1679,7 +1680,10 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
         if ($type === 'php') {
             if (isset($step['file']) && is_string($step['file'])) {
                 $file = $plugin_path . '/' . ltrim($step['file'], '/');
-                $callable = require $file;
+                if (!array_key_exists($file, $php_file_results)) {
+                    $php_file_results[$file] = require $file;
+                }
+                $callable = $php_file_results[$file];
                 $result = is_callable($callable) ? $callable() : $callable;
             } else {
                 $result = null;
