@@ -9,7 +9,7 @@ import { runBrowserActionsCommand, runBrowserScenarioCommand } from "../packages
 import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { runBrowserMultiActorScenarioCommand } from "../packages/runtime-playground/src/browser-multi-actor-scenario-runner.js"
 import { runBrowserProbeCommand } from "../packages/runtime-playground/src/browser-probe-runner.js"
-import { runEditorCanvasProbeCommand, runEditorOpenCommand } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { parseEditorPresentationContract, runEditorCanvasProbeCommand, runEditorOpenCommand } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { closeHttpServer, listenLocalHttpServer, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
@@ -25,6 +25,7 @@ const SLOW_PRESENTATION_IDENTITY = "1".repeat(64)
 const PENDING_STYLES_PRESENTATION_IDENTITY = "2".repeat(64)
 const GROWING_PRESENTATION_IDENTITIES = ["3".repeat(64), "4".repeat(64)]
 const DELAYED_POST_PRESENTATION_IDENTITY = "5".repeat(64)
+const EDITOR_PRESENTATION_CONTRACT_MARKER = "WP_CODEBOX_EDITOR_PRESENTATION_CONTRACT:"
 const matchedPresentationMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:400px;background:linear-gradient(#123,#abc);color:white;padding:12px}</style><div class="block-editor-block-list__layout">Matched presentation</div>`
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
@@ -45,13 +46,24 @@ window.wp = {
 const editorHtml = `${editorShell}<iframe name="unrelated" srcdoc="<style>/* blocks-engine-presentation:${UNRELATED_PRESENTATION_IDENTITY} */<\/style>"></iframe><iframe name="editor-canvas" srcdoc="<script>globalThis.__name = (value) => value;setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${CANVAS_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 400)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
 const onboardingEditorHtml = `${editorShell}<script>setTimeout(() => document.body.insertAdjacentHTML('afterbegin', '<div class=components-guide>Late guide without controls</div>'), 1000); const fixtureSelect = wp.data.select; wp.data.select = (store) => store === 'core/edit-post' ? { isFeatureActive: () => true } : fixtureSelect(store); wp.data.dispatch = (store) => store === 'core/preferences' ? { set: (scope, feature, value) => { if (scope === 'core/edit-post' && feature === 'welcomeGuide' && value === false) document.querySelector('.components-guide')?.remove() } } : store === 'core/edit-post' ? { toggleFeature: () => { document.body.insertAdjacentHTML('afterbegin', '<div class=components-guide>Retoggled guide</div>') } } : ({})<\/script><iframe name="editor-canvas" srcdoc="<div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
 const matchedPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:80px" srcdoc="${matchedPresentationMarkup.replaceAll('"', '&quot;')}"></iframe>`
-const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentation:${PARENT_CANVAS_PRESENTATION_IDENTITY} */</style><div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
+const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentation:${PARENT_CANVAS_PRESENTATION_IDENTITY} */</style><div class="block-editor-block-list__layout" hidden>Hidden duplicate</div><div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
 const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
 const slowPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<script>setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${SLOW_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 3500)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='slow'>Slow</div></div>"></iframe>`
 const pendingStylesEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<link rel='stylesheet' href='http://127.0.0.1:9/unavailable.css'><style>/* blocks-engine-presentation:${PENDING_STYLES_PRESENTATION_IDENTITY} */<\/style><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='pending'>Pending</div></div>"></iframe>`
 const delayedPostEditorHtml = `${editorShell}<script>const fixtureSelect = wp.data.select; let currentPostId = null; wp.data.select = (store) => store === 'core/editor' ? { getCurrentPostId: () => currentPostId, getCurrentPostType: () => currentPostId ? 'page' : null } : fixtureSelect(store); setTimeout(() => { currentPostId = 4; const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = "<style>/* blocks-engine-presentation:${DELAYED_POST_PRESENTATION_IDENTITY} */<\\/style><div class='block-editor-block-list__layout'>Hydrated post</div>"; document.body.append(iframe) }, 1500)<\/script>`
 const growingPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[0]} */<\/style><script>let identity = 0; setInterval(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:' + (identity++).toString(16).padStart(64, '9') + ' */'; document.head.append(style) }, 100); setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[1]} */'; document.head.append(style) }, 4100)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='growing'>Growing</div></div>"></iframe>`
+
+function editorPresentationContractOutput(value: unknown): string {
+  return `${EDITOR_PRESENTATION_CONTRACT_MARKER}${Buffer.from(JSON.stringify(value)).toString("base64")}\n`
+}
+
+test("editor presentation contract isolates framed JSON from PHP diagnostics", () => {
+  const warning = '<br />\n<b>Warning</b>: Undefined array key "css" in <b>/wordpress/wp-includes/block-editor.php</b> on line <b>123</b><br />\n'
+  const value = { identities: GROWING_PRESENTATION_IDENTITIES, complete: true }
+  assert.deepEqual(parseEditorPresentationContract(`${warning}${editorPresentationContractOutput(value)}`), value)
+  assert.throws(() => parseEditorPresentationContract(warning), /Undefined array key "css"/)
+})
 
 test("real browser commands sanitize console, artifacts, stdout, and failure stderr", async () => {
   const httpServer = createServer((request, response) => {
@@ -98,7 +110,7 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
   } as RuntimeCreateSpec
   const runPlaygroundCommand = async (command: string) => ({
     text: command === "wordpress.editor-open.capture-presentation-contract"
-      ? JSON.stringify({ identities: GROWING_PRESENTATION_IDENTITIES, complete: true })
+      ? editorPresentationContractOutput({ identities: GROWING_PRESENTATION_IDENTITIES, complete: true })
       : "[]",
     exitCode: 0,
   })
@@ -257,7 +269,7 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         artifactRoot,
         runPlaygroundCommand: async (command) => ({
           text: command.includes("capture-presentation-contract")
-            ? JSON.stringify({ identities: [DELAYED_POST_PRESENTATION_IDENTITY], complete: true })
+            ? editorPresentationContractOutput({ identities: [DELAYED_POST_PRESENTATION_IDENTITY], complete: true })
             : "[]",
           exitCode: 0,
         }),

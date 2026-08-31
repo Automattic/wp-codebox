@@ -11,7 +11,7 @@ import { browserCommandResult } from "./browser-result-sanitization.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
 import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep, type EditorBlockSpec, type EditorBlockTarget, type EditorOpenTarget } from "./editor-actions.js"
-import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { assertPlaygroundResponseOk, attachPlaygroundDiagnostics, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
 import { fileSha256, installWordPressAdminAuthCookies } from "./browser-probe-support.js"
@@ -30,6 +30,7 @@ const EDITOR_PRESENTATION_MIN_OBSERVATION_MS = 4_000
 const EDITOR_PRESENTATION_POLL_MS = 50
 const EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS = 1_000
 const EDITOR_PRESENTATION_MAX_CAPTURE_MS = 10_000
+const EDITOR_PRESENTATION_CONTRACT_MARKER = "WP_CODEBOX_EDITOR_PRESENTATION_CONTRACT:"
 const EDITOR_VALIDITY_WARNING_SELECTORS = [
   ".block-editor-warning",
   ".block-editor-block-list__block.is-invalid",
@@ -873,7 +874,8 @@ export async function captureEditorPresentation(page: import("playwright").Page,
     let canvas: import("playwright").Page | import("playwright").Frame | undefined = frame ?? undefined
     let canvasDocumentType: "iframe" | "parent" = "iframe"
     if (!frame) {
-      const hasParentDocumentCanvas = await page.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().isVisible().catch(() => false)
+      const parentDocumentCanvases = await page.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).all()
+      const hasParentDocumentCanvas = (await Promise.all(parentDocumentCanvases.map((candidate) => candidate.isVisible().catch(() => false)))).some(Boolean)
       if (sawCanvas || !hasParentDocumentCanvas || Date.now() - startedAtMs < EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS) {
         previousFingerprint = undefined
         stableSinceMs = undefined
@@ -945,6 +947,8 @@ async function captureExpectedEditorPresentationIdentities(
     code: bootstrapPhpCode(runtimeSpec, `
 $post = get_post(${target.postId});
 if ( ! $post instanceof WP_Post ) { throw new RuntimeException( 'Editor target post is unavailable.' ); }
+wp_styles();
+wp_scripts();
 $settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
 $identities = array();
 foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
@@ -955,15 +959,29 @@ foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
 }
 $identities = array_values( array_unique( $identities ) );
 sort( $identities, SORT_STRING );
-echo wp_json_encode( array( 'identities' => $identities, 'complete' => true ) );
+echo PHP_EOL . '${EDITOR_PRESENTATION_CONTRACT_MARKER}' . base64_encode( (string) wp_json_encode( array( 'identities' => $identities, 'complete' => true ) ) ) . PHP_EOL;
 `, []),
   })
   assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
-  const value = JSON.parse(cleanWpCliOutput(response.text)) as { identities?: unknown; complete?: unknown }
+  const value = parseEditorPresentationContract(response.text) as { identities?: unknown; complete?: unknown }
   if (!Array.isArray(value.identities) || value.complete !== true || !value.identities.every((identity) => typeof identity === "string" && /^[a-f0-9]{64}$/.test(identity))) {
     throw new Error("wordpress.editor-open presentation contract returned an invalid identity set")
   }
   return { identities: [...new Set(value.identities)].sort(), complete: true }
+}
+
+export function parseEditorPresentationContract(output: string): unknown {
+  const text = cleanWpCliOutput(output)
+  const payload = text.match(new RegExp(`${EDITOR_PRESENTATION_CONTRACT_MARKER}([A-Za-z0-9+/=]+)`))?.[1]
+  if (!payload) {
+    throw attachPlaygroundDiagnostics(new Error("wordpress.editor-open presentation contract did not emit framed JSON"), "PHP output", text)
+  }
+
+  try {
+    return JSON.parse(Buffer.from(payload, "base64").toString("utf8"))
+  } catch (error) {
+    throw attachPlaygroundDiagnostics(new Error(`wordpress.editor-open presentation contract emitted invalid framed JSON: ${error instanceof Error ? error.message : String(error)}`), "PHP output", text)
+  }
 }
 
 export async function captureEditorIdleCanvas(page: import("playwright").Page): Promise<BrowserEditorIdleCanvasSummary> {
