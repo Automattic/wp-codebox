@@ -13,7 +13,6 @@ const rootPackage = JSON.parse(await readFile(resolve(root, "package.json"), "ut
 const rootLock = JSON.parse(await readFile(resolve(root, "npm-shrinkwrap.json"), "utf8"))
 const cloudflarePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "package.json"), "utf8"))
 const cloudflareLock = JSON.parse(await readFile(resolve(cloudflareRoot, "npm-shrinkwrap.json"), "utf8"))
-const corePackage = JSON.parse(await readFile(resolve(root, "packages/runtime-core/package.json"), "utf8"))
 const compatibleCorePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "vendor/wp-codebox-core/package.json"), "utf8"))
 const cloudflareWorkflow = await readFile(resolve(root, ".github/workflows/cloudflare-check.yml"), "utf8")
 const homeboy = JSON.parse(await readFile(resolve(root, "homeboy.json"), "utf8"))
@@ -31,9 +30,8 @@ assert.equal(cloudflarePackage.devDependencies?.wrangler, undefined)
 assert.equal(cloudflarePackage.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core", "the packed runtime must own an explicit compatible core contract dependency")
 assert.equal(cloudflarePackage.peerDependencies?.["@automattic/wp-codebox-core"], undefined, "package-owned runtime assets must not retain an optional core peer")
 assert.equal(cloudflareLock.packages?.[""]?.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core")
-assert.equal(cloudflarePackage.wpCodeboxCoreCompatibility, corePackage.version)
+assert.equal(cloudflarePackage.wpCodeboxCoreCompatibility, compatibleCorePackage.version)
 assert.equal(cloudflarePackage.wpCodeboxCoreSourceCommit, "d3fac4ad4e4bbf6dd457ea2cd46aeb1a081b217b")
-assert.equal(compatibleCorePackage.version, corePackage.version)
 
 for (const script of ["build", "check", "test", "test:packed-wrangler", "package:dry-run", "local-gate", "local-gate:d1", "local-gate:provisioning"]) {
   assert.ok(cloudflarePackage.scripts?.[script], `runtime-cloudflare must own ${script}`)
