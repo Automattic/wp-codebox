@@ -12,11 +12,13 @@ const temporaryRoot = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-pack-"
 const tarballRoot = join(temporaryRoot, "tarballs")
 const installRoot = join(temporaryRoot, "install")
 const productionRoot = join(temporaryRoot, "production-install")
+const unsupportedRoot = join(temporaryRoot, "unsupported-production-install")
 
 try {
   await mkdir(tarballRoot)
   await mkdir(installRoot)
   await mkdir(productionRoot)
+  await mkdir(unsupportedRoot)
   const { stdout } = await execFileAsync("npm", ["pack", ".", "--json", "--workspaces=false", "--pack-destination", tarballRoot], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
@@ -25,10 +27,14 @@ try {
   const tarball = resolve(tarballRoot, packed.filename)
   await execFileAsync("tar", ["-xzf", tarball, "-C", installRoot])
   await execFileAsync("tar", ["-xzf", tarball, "-C", productionRoot])
+  await execFileAsync("tar", ["-xzf", tarball, "-C", unsupportedRoot])
 
   const installedPackage = join(installRoot, "package")
   assert.equal(installedPackage.startsWith(`${repositoryRoot}${sep}`), false, "packed runtime must be extracted outside the repository")
   const shrinkwrap = JSON.parse(await readFile(join(installedPackage, "npm-shrinkwrap.json"), "utf8"))
+  const packedPackage = JSON.parse(await readFile(join(installedPackage, "package.json"), "utf8"))
+  assert.equal(packedPackage.engines?.node, ">=22.0.0", "the packed production runtime must retain its Node engine")
+  assert.deepEqual(shrinkwrap.packages?.[""]?.engines, packedPackage.engines, "the packed production lock must retain the Node engine")
   assert.equal(shrinkwrap.packages?.[""]?.dependencies?.wrangler, "4.127.1", "the packed artifact must carry Wrangler as an exact production dependency")
   await execFileAsync("npm", ["ci", "--include=dev", "--workspaces=false"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   await execFileAsync("npm", ["ls", "--omit=dev"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
@@ -62,7 +68,7 @@ try {
   }
 
   const productionPackage = join(productionRoot, "package")
-  await execFileAsync("npm", ["ci", "--omit=dev", "--workspaces=false"], {
+  await execFileAsync("npm", ["ci", "--omit=dev", "--engine-strict", "--workspaces=false"], {
     cwd: productionPackage,
     env: { ...process.env, NODE_ENV: "production" },
     maxBuffer: 1024 * 1024 * 20,
@@ -81,6 +87,14 @@ try {
     env: { ...process.env, NODE_ENV: "production" },
     maxBuffer: 1024 * 1024 * 20,
   })
+
+  const unsupportedPackage = join(unsupportedRoot, "package")
+  assert.ok(process.env.npm_execpath, "the packed install gate requires npm's CLI path")
+  await assert.rejects(execFileAsync("npm", ["exec", "--yes", "--package=node@20", "--", "node", process.env.npm_execpath, "ci", "--omit=dev", "--engine-strict", "--workspaces=false"], {
+    cwd: unsupportedPackage,
+    env: { ...process.env, NODE_ENV: "production" },
+    maxBuffer: 1024 * 1024 * 20,
+  }), (error) => error?.code !== 0 && /EBADENGINE|Unsupported engine|not compatible with your version of node/i.test(`${error?.stdout ?? ""}\n${error?.stderr ?? ""}`))
 
   console.log(`packed Cloudflare Wrangler bundle passed from ${relative(tmpdir(), installedPackage)}`)
 } finally {

@@ -32,6 +32,8 @@ assert.equal(cloudflarePackage.peerDependencies?.["@automattic/wp-codebox-core"]
 assert.equal(cloudflareLock.packages?.[""]?.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core")
 assert.equal(cloudflarePackage.wpCodeboxCoreCompatibility, compatibleCorePackage.version)
 assert.equal(cloudflarePackage.wpCodeboxCoreSourceCommit, "d3fac4ad4e4bbf6dd457ea2cd46aeb1a081b217b")
+assert.equal(cloudflarePackage.engines?.node, ">=22.0.0", "the production Cloudflare runtime must declare its Node 22 floor")
+assert.deepEqual(cloudflareLock.packages?.[""]?.engines, cloudflarePackage.engines, "the independent production lock must retain the package engine contract")
 
 for (const script of ["build", "check", "test", "test:packed-wrangler", "package:dry-run", "local-gate", "local-gate:d1", "local-gate:provisioning"]) {
   assert.ok(cloudflarePackage.scripts?.[script], `runtime-cloudflare must own ${script}`)
@@ -41,7 +43,7 @@ assert.ok(cloudflarePackage.dependencies?.["patch-package"], "packed installs mu
 assert.deepEqual(cloudflarePackage.bundleDependencies, ["@automattic/wp-codebox-core", "@php-wasm/stream-compression", "@php-wasm/universal", "@php-wasm/web-8-5", "@wp-playground/wordpress", "patch-package"], "packed installs must carry the shared contract, every required runtime dependency, and patch tool")
 assert.doesNotMatch(cloudflarePackage.scripts?.test ?? "", /cd \.\.\/\.\.|packages\/runtime-cloudflare|register-package-local-loader/, "package tests must remain rootless")
 assert.equal(homeboy.deployment_provider?.policy?.wrangler?.binary, "./packages/runtime-cloudflare/node_modules/.bin/wrangler")
-assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --omit=dev --prefix packages/runtime-cloudflare --workspaces=false"])
+assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --omit=dev --engine-strict --prefix packages/runtime-cloudflare --workspaces=false"])
 assert.match(cloudflareWorkflow, /npm ci --prefix packages\/runtime-cloudflare --workspaces=false/, "Cloudflare CI must install the independent package lock")
 assert.match(cloudflareWorkflow, /npm run test:runtime-package-boundaries/, "Cloudflare CI must run repository package boundaries after the independent install")
 assert.ok(cloudflareWorkflow.indexOf("npm ci --prefix packages/runtime-cloudflare --workspaces=false") < cloudflareWorkflow.indexOf("npm run test:runtime-package-boundaries"), "Cloudflare CI must install the package before checking repository boundaries")

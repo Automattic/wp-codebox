@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { constants } from "node:fs"
-import { access, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { access, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -13,8 +13,10 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const cloudflareRoot = resolve(repositoryRoot, "packages/runtime-cloudflare")
 const vendorRoot = resolve(cloudflareRoot, "vendor/wp-codebox-core")
 const stagePrefix = ".runtime-cloudflare-core-stage-"
+const stageLeasePrefix = ".runtime-cloudflare-core-stage-lease-"
 const staleStageAgeMs = 24 * 60 * 60 * 1_000
 export const cloudflareStageParent = dirname(cloudflareRoot)
+let fileReaderHelper
 
 export async function deriveCloudflareCoreContract({ write = false } = {}) {
   const cloudflarePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "package.json"), "utf8"))
@@ -34,6 +36,7 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
 
   const temporaryRoot = await mkdtemp(join(tmpdir(), "wp-codebox-core-contract-"))
   const sourceRoot = resolve(temporaryRoot, "source")
+  let generatedSnapshotRoot
   try {
     await git(["worktree", "add", "--detach", sourceRoot, tagCommit])
     await execFileAsync("npm", ["ci", "--ignore-scripts"], { cwd: sourceRoot, maxBuffer: 1024 * 1024 * 20 })
@@ -45,7 +48,11 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
     })
 
     const generatedRoot = resolve(sourceRoot, "packages/runtime-core/dist")
-    const generatedFiles = await contractFiles(generatedRoot)
+    const generatedGeneration = await snapshotGeneratedTree(generatedRoot)
+    generatedSnapshotRoot = generatedGeneration.root
+    const pinnedGeneratedRoot = generatedGeneration.root
+    const generatedFiles = await contractFilesFromSnapshot(pinnedGeneratedRoot, generatedGeneration.manifest)
+    let promotion
     assert.ok(generatedFiles.includes("runtime-archive-component.js"))
     assert.ok(generatedFiles.includes("runtime-archive-component.d.ts"))
     assert.ok(generatedFiles.includes("runtime-package-profile.js"))
@@ -56,112 +63,225 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
     if (write) {
       await reclaimStaleStages(cloudflareStageParent)
       const stagedRoot = await mkdtemp(resolve(cloudflareStageParent, `${stagePrefix}${process.pid}-`))
+      const stageLease = await createStageLease(stagedRoot)
       try {
         for (const file of generatedFiles) {
           const target = resolve(stagedRoot, file)
           await mkdir(dirname(target), { recursive: true })
-          await copyContainedRegularFile(generatedRoot, file, target)
+          await copyContainedRegularFile(pinnedGeneratedRoot, file, target)
         }
         await writeFile(resolve(stagedRoot, "package.json"), `${JSON.stringify(compatibilityPackage(version), null, 2)}\n`)
-        await promoteValidatedDirectory({
+        promotion = await promoteValidatedDirectory({
           stagedRoot,
           destinationRoot: vendorRoot,
-          validate: () => assertContractTree(stagedRoot, generatedRoot, generatedFiles, version, tag),
+          stageLease,
+          validate: (validatedRoot, candidateManifest) => assertContractTree(validatedRoot, pinnedGeneratedRoot, generatedFiles, version, tag, { candidateManifest, generatedManifest: generatedGeneration.manifest }),
         })
+        if (promotion.outcome === "committed") await removeLease(stageLease.cleanupLease)
+        else promotion = { ...promotion, cleanupLease: stageLease.cleanupLease }
       } finally {
-        await rm(stagedRoot, { recursive: true, force: true })
+        if (!promotion) {
+          await resumePromotedCleanup(stageLease)
+        }
       }
     } else {
-      await assertContractTree(vendorRoot, generatedRoot, generatedFiles, version, tag)
+      await assertContractTree(vendorRoot, pinnedGeneratedRoot, generatedFiles, version, tag, { generatedManifest: generatedGeneration.manifest })
     }
-    return { tag, tagCommit, compilerVersion, generatedRoot }
+    return { tag, tagCommit, compilerVersion, generatedRoot, promotion }
   } finally {
+    if (generatedSnapshotRoot) await rm(generatedSnapshotRoot, { recursive: true, force: true })
     await git(["worktree", "remove", "--force", sourceRoot], true)
     await rm(temporaryRoot, { recursive: true, force: true })
   }
 }
 
-export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, validate, fault = async () => {} }) {
+function cleanupPendingResult(cleanupPath, dev, ino, stageLease, cleanupToken = stageLease?.cleanupToken ?? randomUUID()) {
+  return {
+    outcome: "promoted_cleanup_pending",
+    cleanupPath,
+    cleanupIdentity: { dev, ino },
+    ...(stageLease?.cleanupFallbackIdentity ? { cleanupFallbackIdentity: stageLease.cleanupFallbackIdentity } : {}),
+    ...(stageLease?.cleanupLease ? { cleanupLease: stageLease.cleanupLease } : {}),
+    cleanupToken,
+  }
+}
+
+export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, stageLease, validate, fault = async () => {}, nativeFault = async () => {}, snapshotBarrier }) {
   const helperRoot = await mkdtemp(join(tmpdir(), "wp-codebox-atomic-exchange-"))
   const helper = resolve(helperRoot, "atomic-directory-exchange")
+  let transaction
+  let validationRoot
   try {
-    await execFileAsync("cc", [resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
+    await execFileAsync("cc", ["-Wall", "-Wextra", "-Werror", resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
     await fault("before-lock")
-    await withDestinationLock(helper, destinationRoot, async (canonicalDestinationRoot) => {
-      const stagedIdentity = await directoryIdentity(stagedRoot, "staging")
-      await directoryIdentity(canonicalDestinationRoot, "destination")
-      const beforeValidation = await directoryManifest(stagedRoot)
-      await validate(stagedRoot)
-      const validatedManifest = await directoryManifest(stagedRoot)
-      if (validatedManifest !== beforeValidation) {
-        throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `staging contents changed during validation: ${stagedRoot}`)
-      }
-      await fault("after-validation")
+    const canonicalDestinationRoot = await canonicalDestinationPath(destinationRoot)
+    const canonicalStagedRoot = await canonicalExistingDirectoryPath(stagedRoot, "staging")
+    const lockDirectory = resolve(await realpath(tmpdir()), `wp-codebox-directory-exchange-${process.getuid?.() ?? "user"}-${createHash("sha256").update(canonicalDestinationRoot).digest("hex")}`)
+    transaction = nativeTransaction(helper, lockDirectory, canonicalStagedRoot, canonicalDestinationRoot, snapshotBarrier)
+    const locked = await expectNative(transaction, "LOCKED")
+    const [, stageDev, stageIno, cleanupDev, cleanupIno] = locked.split(" ")
+    if (stageLease) {
+      stageLease.cleanupIdentity = { dev: cleanupDev, ino: cleanupIno }
+      stageLease.cleanupFallbackIdentity = { dev: stageDev, ino: stageIno }
+      await persistStageLease(stageLease)
+    }
 
-      await fault("before-promotion")
-      const readyStagedIdentity = await directoryIdentity(stagedRoot, "staging")
-      if (!sameIdentity(readyStagedIdentity, stagedIdentity)) {
-        throw new DirectoryPromotionError("STAGING_OWNERSHIP_CHANGED", `staging generation changed before exchange: ${stagedRoot}`)
-      }
-      if (await directoryManifest(stagedRoot) !== validatedManifest) {
-        throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `staging contents changed after validation: ${stagedRoot}`)
-      }
-      const previousIdentity = await directoryIdentity(canonicalDestinationRoot, "destination")
-      await atomicExchangeDirectories(helper, stagedRoot, canonicalDestinationRoot, stagedIdentity, previousIdentity)
-      try {
-        await fault("after-promotion")
-      } catch (error) {
-        try {
-          await atomicExchangeDirectories(helper, stagedRoot, canonicalDestinationRoot, previousIdentity, stagedIdentity)
-        } catch (rollbackError) {
-          if (rollbackError instanceof DirectoryPromotionError && rollbackError.code === "RIGHT_OWNERSHIP_CHANGED") throw error
-          await takeFailedReplacementOffline(helper, canonicalDestinationRoot, stagedIdentity)
-          throw new DirectoryPromotionError("ROLLBACK_FAILED", `failed promotion could not restore its previous destination: ${canonicalDestinationRoot}`, {
-            cause: new AggregateError([error, rollbackError], "promotion and rollback both failed"),
-          })
-        }
-        throw error
-      }
+    const beforeValidation = await nativeManifest(transaction, stagedRoot)
+    validationRoot = await mkdtemp(join(tmpdir(), "wp-codebox-validation-generation-"))
+    validationRoot = await realpath(validationRoot)
+    transaction.send(`SNAPSHOT ${validationRoot}`)
+    const snapshotOutcome = await expectNative(transaction, "SNAPSHOT", { stagedRoot, destinationRoot })
+    const snapshotManifest = snapshotOutcome.slice(9)
+    if (!/^[a-f0-9]{64}$/.test(snapshotManifest)) throw nativeOutcomeError(snapshotOutcome, stagedRoot, destinationRoot)
+    if (await treeManifest(validationRoot) !== snapshotManifest) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `validation snapshot changed before validation: ${stagedRoot}`)
+    await validate(validationRoot, snapshotManifest)
+    if (await treeManifest(validationRoot) !== snapshotManifest) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `validation snapshot changed during validation: ${stagedRoot}`)
+    const validatedManifest = await nativeManifest(transaction, stagedRoot)
+    if (validatedManifest !== beforeValidation) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `staging contents changed during validation: ${stagedRoot}`)
+    if (snapshotManifest !== validatedManifest) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `validated snapshot does not match staging contents: ${stagedRoot}`)
+    await fault("after-validation")
+    await fault("before-promotion")
 
-      await rm(stagedRoot, { recursive: true, force: true })
-    })
+    transaction.send(`PROMOTE ${validatedManifest}`)
+    await expectNative(transaction, "CHECKED")
+    await nativeFault("helper-checked")
+    transaction.send("EXCHANGE")
+    await expectNative(transaction, "PROMOTED", { stagedRoot, destinationRoot })
+    await nativeFault("after-promoted")
+    try {
+      await fault("after-promotion")
+    } catch (cause) {
+      transaction.send("ROLLBACK")
+      const outcome = await transaction.next()
+      if (outcome === "ROLLED_BACK") throw cause
+      throw nativeOutcomeError(outcome, stagedRoot, destinationRoot, cause)
+    }
+
+    transaction.send("COMMIT")
+    await expectNative(transaction, "FINAL_MANIFEST", { stagedRoot, destinationRoot })
+    await nativeFault("after-final-manifest")
+    transaction.send("FINALIZE")
+    const commitOutcome = await transaction.next()
+    if (commitOutcome === "ROLLED_BACK") throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `promoted contents changed before commit: ${destinationRoot}`)
+    if (commitOutcome !== "COMMITTED") throw nativeOutcomeError(commitOutcome, stagedRoot, destinationRoot)
+
+    try {
+      await nativeFault("before-cleanup")
+    } catch {
+      transaction.send("LEAVE")
+      await expectNative(transaction, "CLEANUP_PENDING")
+      return cleanupPendingResult(canonicalStagedRoot, cleanupDev, cleanupIno, stageLease)
+    }
+    const cleanupToken = stageLease?.cleanupToken ?? randomUUID()
+    transaction.send(`CLEANUP ${cleanupToken}`)
+    const cleanupOutcome = await transaction.next()
+    if (cleanupOutcome === "CLEANUP_PENDING") return cleanupPendingResult(canonicalStagedRoot, cleanupDev, cleanupIno, stageLease, cleanupToken)
+    if (cleanupOutcome !== "CLEANED") throw nativeOutcomeError(cleanupOutcome, stagedRoot, destinationRoot)
+    return { outcome: "committed" }
+  } finally {
+    await transaction?.close()
+    if (validationRoot) await rm(validationRoot, { recursive: true, force: true })
+    await rm(helperRoot, { recursive: true, force: true })
+  }
+}
+
+export async function resumePromotedCleanup({ cleanupPath, cleanupIdentity, cleanupFallbackIdentity, cleanupLease, cleanupToken, cleanupBarrier, cleanupBarrierPoint }) {
+  const helperRoot = await mkdtemp(join(tmpdir(), "wp-codebox-atomic-cleanup-"))
+  const helper = resolve(helperRoot, "atomic-directory-exchange")
+  try {
+    await execFileAsync("cc", ["-Wall", "-Wextra", "-Werror", resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
+    const canonicalCleanupPath = resolve(await realpath(dirname(cleanupPath)), basename(cleanupPath))
+    try {
+      if (!cleanupToken) throw new DirectoryPromotionError("CLEANUP_PENDING", `cleanup ownership token is required: ${canonicalCleanupPath}`)
+      const { stdout } = await execFileAsync(helper, ["--cleanup", canonicalCleanupPath, String(cleanupIdentity.dev), String(cleanupIdentity.ino), cleanupToken], {
+        env: { ...process.env, ...(cleanupBarrier ? { WP_CODEBOX_CLEANUP_BARRIER: cleanupBarrier } : {}), ...(cleanupBarrierPoint ? { WP_CODEBOX_CLEANUP_BARRIER_POINT: cleanupBarrierPoint } : {}) },
+      })
+      if (stdout.trim() !== "CLEANED") throw nativeOutcomeError(stdout.trim(), canonicalCleanupPath, "")
+      if (cleanupLease) await removeLease(cleanupLease)
+      return { outcome: "cleaned" }
+    } catch (cause) {
+      if (cause.stdout?.trim() === "RIGHT_OWNERSHIP_CHANGED" && cleanupFallbackIdentity) {
+        const resumed = await resumePromotedCleanup({ cleanupPath: canonicalCleanupPath, cleanupIdentity: cleanupFallbackIdentity, cleanupLease, cleanupToken, cleanupBarrier, cleanupBarrierPoint })
+        return resumed.outcome === "promoted_cleanup_pending" ? { ...resumed, cleanupFallbackIdentity } : resumed
+      }
+      if (cause.stdout?.trim() === "RIGHT_OWNERSHIP_CHANGED") throw nativeOutcomeError("RIGHT_OWNERSHIP_CHANGED", canonicalCleanupPath, "", cause)
+      if (cause.stdout?.trim() === "CLEANUP_PENDING") return { outcome: "promoted_cleanup_pending", cleanupPath: canonicalCleanupPath, cleanupIdentity, ...(cleanupFallbackIdentity ? { cleanupFallbackIdentity } : {}), ...(cleanupLease ? { cleanupLease } : {}), cleanupToken }
+      throw cause
+    }
   } finally {
     await rm(helperRoot, { recursive: true, force: true })
   }
 }
 
-async function withDestinationLock(helper, destinationRoot, action) {
-  const canonicalDestination = await canonicalDestinationPath(destinationRoot)
-  const lock = resolve(tmpdir(), `wp-codebox-directory-exchange-${createHash("sha256").update(canonicalDestination).digest("hex")}.lock`)
-  const holder = spawn(helper, ["--lock", lock], { stdio: ["pipe", "pipe", "pipe"] })
+function nativeTransaction(helper, lock, stagedRoot, destinationRoot, snapshotBarrier) {
+  const holder = spawn(helper, ["--transaction", lock, stagedRoot, destinationRoot], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(snapshotBarrier ? { WP_CODEBOX_SNAPSHOT_BARRIER: snapshotBarrier } : {}) } })
   let stderr = ""
   holder.stderr.setEncoding("utf8")
   holder.stderr.on("data", (chunk) => { stderr += chunk })
-  let closed = false
-  let closeCode
+  const lines = []
+  const waiters = []
+  let buffer = ""
+  let closed
+  holder.stdout.setEncoding("utf8")
+  holder.stdout.on("data", (chunk) => {
+    buffer += chunk
+    while (buffer.includes("\n")) {
+      const line = buffer.slice(0, buffer.indexOf("\n"))
+      buffer = buffer.slice(buffer.indexOf("\n") + 1)
+      const waiter = waiters.shift()
+      if (waiter) waiter.resolve(line)
+      else lines.push(line)
+    }
+  })
   const closePromise = new Promise((resolveClose) => holder.once("close", (code) => {
-    closed = true
-    closeCode = code
+    closed = code
+    for (const waiter of waiters.splice(0)) waiter.reject(new Error(`native promotion transaction exited with ${code}: ${stderr}`))
     resolveClose(code)
   }))
-  try {
-    await new Promise((resolveLocked, rejectLocked) => {
-      let stdout = ""
-      holder.stdout.setEncoding("utf8")
-      holder.stdout.on("data", (chunk) => {
-        stdout += chunk
-        if (stdout.includes("locked\n")) resolveLocked()
-      })
-      holder.once("error", rejectLocked)
-      holder.once("exit", (code) => rejectLocked(new Error(`directory lock holder exited with ${code}: ${stderr}`)))
-    })
-    const result = await action(canonicalDestination)
-    if (closed) throw new DirectoryPromotionError("DIRECTORY_LOCK_LOST", `directory lock holder exited with ${closeCode}: ${stderr}`)
-    return result
-  } finally {
-    if (!closed) holder.stdin.end()
-    await closePromise
+  return {
+    send(command) { holder.stdin.write(`${command}\n`) },
+    next() {
+      if (lines.length) return Promise.resolve(lines.shift())
+      if (closed !== undefined) return Promise.reject(new Error(`native promotion transaction exited with ${closed}: ${stderr}`))
+      return new Promise((resolveLine, rejectLine) => waiters.push({ resolve: resolveLine, reject: rejectLine }))
+    },
+    async close() {
+      if (closed === undefined) holder.stdin.end()
+      await closePromise
+    },
   }
+}
+
+async function nativeManifest(transaction, stagedRoot) {
+  transaction.send("MANIFEST")
+  const outcome = await transaction.next()
+  if (outcome.startsWith("MANIFEST ")) return outcome.slice(9)
+  throw nativeOutcomeError(outcome, stagedRoot, "")
+}
+
+async function expectNative(transaction, expected, paths = {}) {
+  const outcome = await transaction.next()
+  if (outcome === expected || outcome.startsWith(`${expected} `)) return outcome
+  throw nativeOutcomeError(outcome, paths.stagedRoot, paths.destinationRoot)
+}
+
+function nativeOutcomeError(outcome, stagedRoot, destinationRoot, cause) {
+  const nativeCode = outcome.split(" ").at(-1)
+  const codes = {
+    LEFT_OWNERSHIP_CHANGED: "STAGING_OWNERSHIP_CHANGED",
+    RIGHT_OWNERSHIP_CHANGED: "RIGHT_OWNERSHIP_CHANGED",
+    STAGING_CONTENT_CHANGED: "STAGING_CONTENT_CHANGED",
+    INVALID_STAGING: "INVALID_DIRECTORY_ENTRY",
+    INVALID_DIRECTORY_ENTRY: "INVALID_DIRECTORY_ENTRY",
+    ROLLBACK_FAILED: "ROLLBACK_FAILED",
+    DIRECTORY_LOCK_LOST: "DIRECTORY_LOCK_LOST",
+    CLEANUP_PENDING: "CLEANUP_PENDING",
+  }
+  const code = codes[nativeCode] ?? "ATOMIC_EXCHANGE_FAILED"
+  if (code === "ROLLBACK_FAILED" && cause) {
+    cause = new AggregateError([cause, new DirectoryPromotionError("LEFT_OWNERSHIP_CHANGED", `displaced destination ownership changed: ${stagedRoot}`)], "promotion and rollback both failed")
+  }
+  return new DirectoryPromotionError(code, `native directory promotion reported ${outcome}${cause?.message ? ` after ${cause.message}` : ""}: ${stagedRoot ?? ""} -> ${destinationRoot ?? ""}`, { cause })
 }
 
 async function canonicalDestinationPath(path) {
@@ -181,6 +301,11 @@ async function canonicalDestinationPath(path) {
     if (!parentEntry.isDirectory()) throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `destination parent must resolve to a directory: ${parent}`, { cause })
     return resolve(canonicalParent, basename(absolute))
   }
+}
+
+async function canonicalExistingDirectoryPath(path, role) {
+  await directoryIdentity(path, role)
+  return realpath(path)
 }
 
 export class DirectoryPromotionError extends Error {
@@ -204,76 +329,12 @@ async function directoryIdentity(path, role) {
   return { dev: stat.dev, ino: stat.ino }
 }
 
-async function atomicExchangeDirectories(helper, left, right, expectedLeft, expectedRight) {
-  try {
-    await execFileAsync(helper, [left, right, String(expectedLeft.dev), String(expectedLeft.ino), String(expectedRight.dev), String(expectedRight.ino)])
-  } catch (cause) {
-    if (cause.code === 3) throw new DirectoryPromotionError("LEFT_OWNERSHIP_CHANGED", `left exchange generation changed: ${left}`, { cause })
-    if (cause.code === 4) throw new DirectoryPromotionError("RIGHT_OWNERSHIP_CHANGED", `right exchange generation changed: ${right}`, { cause })
-    throw new DirectoryPromotionError("ATOMIC_EXCHANGE_FAILED", `atomic directory exchange failed for ${left} and ${right}`, { cause })
-  }
-}
-
-async function takeFailedReplacementOffline(helper, destinationRoot, failedIdentity) {
-  const emptyRoot = await mkdtemp(resolve(dirname(destinationRoot), ".wp-codebox-rollback-empty-"))
-  try {
-    const emptyIdentity = await directoryIdentity(emptyRoot, "rollback replacement")
-    try {
-      await atomicExchangeDirectories(helper, emptyRoot, destinationRoot, emptyIdentity, failedIdentity)
-    } catch (error) {
-      if (error instanceof DirectoryPromotionError && error.code === "RIGHT_OWNERSHIP_CHANGED") return
-      throw error
-    }
-  } finally {
-    await rm(emptyRoot, { recursive: true, force: true })
-  }
-}
-
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino
 }
 
-async function directoryManifest(root) {
-  const hash = createHash("sha256")
-  async function visit(directory, relativeDirectory = "") {
-    const entries = await readdir(directory, { withFileTypes: true })
-    entries.sort((left, right) => left.name.localeCompare(right.name))
-    for (const entry of entries) {
-      const relativePath = join(relativeDirectory, entry.name)
-      const path = resolve(directory, entry.name)
-      const identity = await lstat(path, { bigint: true })
-      if (identity.isSymbolicLink()) throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `staging contents must not contain symlinks: ${path}`)
-      if (identity.isDirectory()) {
-        hash.update(`d\0${relativePath}\0${identity.mode}\0`)
-        await visit(path, relativePath)
-      } else if (identity.isFile()) {
-        const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-        try {
-          const openedIdentity = await handle.stat({ bigint: true })
-          if (!openedIdentity.isFile() || !sameIdentity(identity, openedIdentity)) {
-            throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `staging file changed while it was inspected: ${path}`)
-          }
-          hash.update(`f\0${relativePath}\0${openedIdentity.mode}\0${openedIdentity.size}\0`)
-          hash.update(await handle.readFile())
-        } finally {
-          await handle.close()
-        }
-      } else {
-        throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `staging contents must contain only files and directories: ${path}`)
-      }
-    }
-  }
-  await visit(root)
-  return hash.digest("hex")
-}
-
 async function copyContainedRegularFile(root, file, target) {
-  const source = await openContainedRegularFile(root, file)
-  try {
-    await writeFile(target, await source.readFile())
-  } finally {
-    await source.close()
-  }
+  await writeFile(target, await readContainedRegularFile(root, file))
 }
 
 async function openContainedRegularFile(root, file) {
@@ -302,13 +363,32 @@ async function openContainedRegularFile(root, file) {
   return handle
 }
 
-async function readContainedRegularFile(root, file, encoding) {
-  const handle = await openContainedRegularFile(root, file)
+async function readContainedRegularFile(root, file, encoding, expectedRootIdentity) {
   try {
-    return await handle.readFile(encoding)
-  } finally {
-    await handle.close()
+    const helper = await fileReader()
+    const canonicalRoot = await realpath(root)
+    const options = typeof expectedRootIdentity === "object" && "identity" in expectedRootIdentity ? expectedRootIdentity : { identity: expectedRootIdentity }
+    const rootIdentity = options.identity ?? await directoryIdentity(canonicalRoot, "generated source root")
+    const { stdout } = await execFileAsync(helper, ["--read", canonicalRoot, file, String(rootIdentity.dev), String(rootIdentity.ino)], {
+      encoding: encoding ?? null,
+      maxBuffer: 1024 * 1024 * 20,
+      env: { ...process.env, ...(options.readBarrier ? { WP_CODEBOX_READ_BARRIER: options.readBarrier } : {}) },
+    })
+    return stdout
+  } catch (cause) {
+    if (cause instanceof DirectoryPromotionError) throw cause
+    throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated source could not be read without following links: ${file}`, { cause })
   }
+}
+
+async function fileReader() {
+  fileReaderHelper ??= (async () => {
+    const root = await mkdtemp(join(tmpdir(), "wp-codebox-file-reader-"))
+    const helper = resolve(root, "atomic-directory-exchange")
+    await execFileAsync("cc", ["-Wall", "-Wextra", "-Werror", resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
+    return helper
+  })()
+  return fileReaderHelper
 }
 
 function isContainedPath(root, candidate) {
@@ -318,14 +398,72 @@ function isContainedPath(root, candidate) {
 
 export async function reclaimStaleStages(parent) {
   for (const entry of await readdir(parent, { withFileTypes: true })) {
-    if (!entry.name.startsWith(stagePrefix) || !entry.isDirectory()) continue
-    const path = resolve(parent, entry.name)
-    const match = /^\.runtime-cloudflare-core-stage-(\d+)-/.exec(entry.name)
-    const pid = Number(match?.[1])
-    const age = Date.now() - Number((await lstat(path)).mtimeMs)
+    if (!entry.name.startsWith(stageLeasePrefix) || !entry.isFile()) continue
+    const cleanupLease = resolve(parent, entry.name)
+    const leaseStat = await lstat(cleanupLease)
+    if (!leaseStat.isFile() || leaseStat.isSymbolicLink() || leaseStat.uid !== process.getuid?.() || (leaseStat.mode & 0o777) !== 0o600) continue
+    let lease
+    try { lease = JSON.parse(await readFile(cleanupLease, "utf8")) } catch { continue }
+    if (typeof lease.name !== "string" || basename(lease.name) !== lease.name || !lease.name.startsWith(stagePrefix) || typeof lease.token !== "string" || !/^[A-Za-z0-9-]{1,80}$/.test(lease.token)) continue
+    const pid = Number(lease.pid)
+    const age = Date.now() - Number(lease.createdAt)
     if (age < staleStageAgeMs && (pid === process.pid || processIsAlive(pid))) continue
-    await rm(path, { recursive: true, force: true })
+    try {
+      await resumePromotedCleanup({
+        cleanupPath: resolve(parent, lease.name),
+        cleanupIdentity: { dev: lease.displacedDev ?? lease.dev, ino: lease.displacedIno ?? lease.ino },
+        cleanupFallbackIdentity: lease.displacedDev ? { dev: lease.dev, ino: lease.ino } : undefined,
+        cleanupLease,
+        cleanupToken: lease.token,
+      })
+    } catch (error) {
+      if (!(error instanceof DirectoryPromotionError) || error.code !== "RIGHT_OWNERSHIP_CHANGED") throw error
+    }
   }
+}
+
+export async function createStageLease(stagePath, { createdAt = Date.now(), pid = process.pid } = {}) {
+  const canonicalParent = await realpath(dirname(stagePath))
+  const name = basename(stagePath)
+  if (!name.startsWith(stagePrefix)) throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `stage name is not owned by the derivation: ${stagePath}`)
+  const cleanupIdentity = await directoryIdentity(resolve(canonicalParent, name), "staging")
+  const cleanupLease = resolve(canonicalParent, `${stageLeasePrefix}${randomUUID()}`)
+  const stageLease = { cleanupPath: resolve(canonicalParent, name), cleanupIdentity, cleanupLease, cleanupToken: randomUUID(), pid, createdAt }
+  await persistStageLease(stageLease, true)
+  return stageLease
+}
+
+async function persistStageLease(stageLease, exclusive = false) {
+  const temporary = `${stageLease.cleanupLease}.tmp-${randomUUID()}`
+  const record = {
+    name: basename(stageLease.cleanupPath),
+    dev: String(stageLease.cleanupFallbackIdentity?.dev ?? stageLease.cleanupIdentity.dev),
+    ino: String(stageLease.cleanupFallbackIdentity?.ino ?? stageLease.cleanupIdentity.ino),
+    ...(stageLease.cleanupFallbackIdentity ? { displacedDev: String(stageLease.cleanupIdentity.dev), displacedIno: String(stageLease.cleanupIdentity.ino) } : {}),
+    token: stageLease.cleanupToken,
+    pid: stageLease.pid ?? process.pid,
+    createdAt: stageLease.createdAt ?? Date.now(),
+  }
+  if (exclusive && await exists(stageLease.cleanupLease)) throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `stage lease already exists: ${stageLease.cleanupLease}`)
+  const lease = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)
+  try {
+    await lease.writeFile(`${JSON.stringify(record)}\n`)
+    await lease.sync()
+  } finally {
+    await lease.close()
+  }
+  await rename(temporary, stageLease.cleanupLease)
+  await syncParent(stageLease.cleanupLease)
+}
+
+async function syncParent(path) {
+  const parent = await open(dirname(path), constants.O_RDONLY)
+  try { await parent.sync() } finally { await parent.close() }
+}
+
+async function removeLease(path) {
+  await rm(path)
+  await syncParent(path)
 }
 
 function processIsAlive(pid) {
@@ -338,15 +476,21 @@ function processIsAlive(pid) {
   }
 }
 
-async function assertContractTree(candidateRoot, generatedRoot, generatedFiles, version, tag) {
+async function assertContractTree(candidateRoot, generatedRoot, generatedFiles, version, tag, { candidateManifest, generatedManifest } = {}) {
+  const candidateBefore = await treeManifest(candidateRoot)
+  const generatedBefore = await treeManifest(generatedRoot)
+  if (candidateManifest && candidateBefore !== candidateManifest) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `candidate snapshot changed before validation: ${candidateRoot}`)
+  if (generatedManifest && generatedBefore !== generatedManifest) throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated snapshot changed before validation: ${generatedRoot}`)
   const candidateFiles = (await filesBelow(candidateRoot)).filter((file) => file !== "package.json")
   assert.deepEqual(candidateFiles, generatedFiles, "vendored core files must be the complete generated contract dependency closure")
   for (const file of generatedFiles) {
-    assert.deepEqual(await readFile(resolve(candidateRoot, file)), await readFile(resolve(generatedRoot, file)), `vendored core contract drifted from ${tag}: ${file}`)
+    assert.deepEqual(await readContainedRegularFile(candidateRoot, file), await readContainedRegularFile(generatedRoot, file), `vendored core contract drifted from ${tag}: ${file}`)
   }
-  const candidatePackage = JSON.parse(await readFile(resolve(candidateRoot, "package.json"), "utf8"))
+  const candidatePackage = JSON.parse(await readContainedRegularFile(candidateRoot, "package.json", "utf8"))
   assert.deepEqual(candidatePackage, compatibilityPackage(version), "vendored package metadata must expose only the selected generated release contracts")
   await assertContractBehavior(candidateRoot, generatedRoot)
+  if (await treeManifest(candidateRoot) !== candidateBefore) throw new DirectoryPromotionError("STAGING_CONTENT_CHANGED", `candidate snapshot changed during validation: ${candidateRoot}`)
+  if (await treeManifest(generatedRoot) !== generatedBefore) throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated snapshot changed during validation: ${generatedRoot}`)
 }
 
 function compatibilityPackage(version) {
@@ -378,7 +522,52 @@ async function filesBelow(root) {
   return files.sort()
 }
 
-export async function contractFiles(root) {
+export async function contractFiles(root, options = {}) {
+  const generation = await snapshotGeneratedTree(root, options)
+  try {
+    return await contractFilesFromSnapshot(generation.root, generation.manifest)
+  } finally {
+    await rm(generation.root, { recursive: true, force: true })
+  }
+}
+
+async function snapshotGeneratedTree(root, { fault = async () => {}, readBarrier } = {}) {
+  const canonicalRoot = await realpath(root)
+  const rootIdentity = await directoryIdentity(canonicalRoot, "generated source root")
+  await assertNoGeneratedSymlinks(canonicalRoot, canonicalRoot)
+  await fault("source-root-opened")
+  const snapshotRoot = await mkdtemp(join(tmpdir(), "wp-codebox-generated-generation-"))
+  try {
+    const helper = await fileReader()
+    const canonicalSnapshotRoot = await realpath(snapshotRoot)
+    const { stdout } = await execFileAsync(helper, ["--snapshot", canonicalRoot, canonicalSnapshotRoot, String(rootIdentity.dev), String(rootIdentity.ino)], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 20,
+      env: { ...process.env, ...(readBarrier ? { WP_CODEBOX_SNAPSHOT_BARRIER: readBarrier } : {}) },
+    })
+    const outcome = stdout.trim()
+    if (!/^SNAPSHOT [a-f0-9]{64}$/.test(outcome)) throw nativeOutcomeError(outcome, canonicalRoot, snapshotRoot)
+    await fault("source-snapshotted")
+    return { root: canonicalSnapshotRoot, manifest: outcome.slice(9) }
+  } catch (cause) {
+    await rm(snapshotRoot, { recursive: true, force: true })
+    if (cause instanceof DirectoryPromotionError) throw cause
+    throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated source changed while its operation snapshot was created: ${root}`, { cause })
+  }
+}
+
+async function assertNoGeneratedSymlinks(root, directory) {
+  for (const entry of await readdir(directory)) {
+    const path = resolve(directory, entry)
+    const metadata = await lstat(path)
+    if (metadata.isSymbolicLink()) throw new DirectoryPromotionError("GENERATED_SOURCE_SYMLINK", `generated source must not use symlinks: ${relative(root, path)}`)
+    if (metadata.isDirectory()) await assertNoGeneratedSymlinks(root, path)
+  }
+}
+
+async function contractFilesFromSnapshot(root, expectedManifest) {
+  const before = await treeManifest(root)
+  if (before !== expectedManifest) throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated source snapshot changed before dependency discovery: ${root}`)
   const files = new Set([
     "runtime-archive-component.js",
     "runtime-archive-component.d.ts",
@@ -414,16 +603,28 @@ export async function contractFiles(root) {
       files.add(`${file}.map`)
     }
   }
+  if (await treeManifest(root) !== before) throw new DirectoryPromotionError("GENERATED_SOURCE_CHANGED", `generated source snapshot changed during dependency discovery: ${root}`)
   return [...files].sort()
 }
 
+async function treeManifest(root) {
+  const canonicalRoot = await realpath(root)
+  const identity = await directoryIdentity(canonicalRoot, "manifest root")
+  const helper = await fileReader()
+  const { stdout } = await execFileAsync(helper, ["--manifest", canonicalRoot, String(identity.dev), String(identity.ino)], { encoding: "utf8", maxBuffer: 1024 * 1024 * 20 })
+  const outcome = stdout.trim()
+  if (!/^MANIFEST [a-f0-9]{64}$/.test(outcome)) throw nativeOutcomeError(outcome, canonicalRoot, "")
+  return outcome.slice(9)
+}
+
 async function assertContractBehavior(candidateRoot, generatedRoot) {
-  const generatedArchive = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-archive-component.js")).href}?generated`)
-  const vendorArchive = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-archive-component.js")).href}?candidate`)
-  const generatedProfile = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-package-profile.js")).href}?generated`)
-  const vendorProfile = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-package-profile.js")).href}?candidate`)
-  const generatedResult = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-command-result.js")).href}?generated`)
-  const vendorResult = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-command-result.js")).href}?candidate`)
+  const generation = randomUUID()
+  const generatedArchive = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-archive-component.js")).href}?generated=${generation}`)
+  const vendorArchive = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-archive-component.js")).href}?candidate=${generation}`)
+  const generatedProfile = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-package-profile.js")).href}?generated=${generation}`)
+  const vendorProfile = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-package-profile.js")).href}?candidate=${generation}`)
+  const generatedResult = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-command-result.js")).href}?generated=${generation}`)
+  const vendorResult = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-command-result.js")).href}?candidate=${generation}`)
   const component = { schema: generatedArchive.RUNTIME_ARCHIVE_COMPONENT_SCHEMA, id: "website-importer", package: { profile: "cloudflare", root: "static-site-importer" }, wordpress: { install_path: "plugins/static-site-importer", bootstrap_file: "plugin.php", load: { mode: "mu-plugin-loader", loader_path: "mu-plugins/loader.php" } }, abilities: { import: "sites/import" }, limits: { files: 100, bytes: 1_000_000 } }
   assert.deepEqual(vendorArchive.runtimeArchiveComponent(component), generatedArchive.runtimeArchiveComponent(component))
   for (const invalid of [null, { ...component, id: "../escape" }, { ...component, limits: { files: 0, bytes: 1 } }, { ...component, wordpress: { ...component.wordpress, bootstrap_file: "../plugin.php" } }]) {
