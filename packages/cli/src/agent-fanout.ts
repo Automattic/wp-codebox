@@ -76,6 +76,11 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   const eventsPath = join(fanoutRoot, "events.jsonl")
   const planPath = join(fanoutRoot, "plan.json")
   const resultPath = join(fanoutRoot, "result.json")
+  let eventWrite = Promise.resolve()
+  const emit = (event: Parameters<typeof emitEvent>[1]) => {
+    eventWrite = eventWrite.then(() => emitEvent(eventsPath, event, { clock, sessionId, runId: fanoutId }))
+    return eventWrite
+  }
   await mkdir(workersRoot, { recursive: true })
   await mkdir(aggregateFinalRoot, { recursive: true })
 
@@ -89,21 +94,21 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
     onFanoutStarted: async ({ workers, plan }) => {
       await writeJson(planPath, plan)
-      await emitEvent(eventsPath, { event: "fanout.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 }, { clock, sessionId, runId: fanoutId })
+      await emit({ event: "fanout.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
     },
-    onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", fanout_id: fanoutId, worker_id: worker.id, ...progressCounts.start(request.workers.length) }, { clock, sessionId, runId: fanoutId }),
-    onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, artifacts: result.artifact_refs, ...progressCounts.complete(request.workers.length, result.status) }, { clock, sessionId, runId: fanoutId }),
-    onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, artifacts: result.artifact_refs, diagnostics: result.error ? { error: result.error } : undefined, ...progressCounts.complete(request.workers.length, result.status) }, { clock, sessionId, runId: fanoutId }),
+    onWorkerStarted: (worker) => emit({ event: "worker.started", fanout_id: fanoutId, worker_id: worker.id, ...progressCounts.start(request.workers.length) }),
+    onWorkerCompleted: (worker, result) => emit({ event: "worker.completed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, artifacts: result.artifact_refs, ...progressCounts.complete(request.workers.length, result.status) }),
+    onWorkerFailed: (worker, result) => emit({ event: "worker.failed", fanout_id: fanoutId, worker_id: worker.id, status: result.status, artifacts: result.artifact_refs, diagnostics: result.error ? { error: result.error } : undefined, ...progressCounts.complete(request.workers.length, result.status) }),
     onWorkerSkipped: async (worker, result) => {
       await writeJson(join(workersRoot, worker.id, "result.json"), result)
-      await emitEvent(eventsPath, { event: "worker.skipped", fanout_id: fanoutId, worker_id: worker.id, status: result.status, diagnostics: result.error ? { error: result.error } : undefined, ...progressCounts.skip(request.workers.length) }, { clock, sessionId, runId: fanoutId })
+      await emit({ event: "worker.skipped", fanout_id: fanoutId, worker_id: worker.id, status: result.status, diagnostics: result.error ? { error: result.error } : undefined, ...progressCounts.skip(request.workers.length) })
     },
     createSkippedResult: (worker, dependencies) => agentTaskSkippedFanoutWorkerResult(worker, sessionId, dependencies),
-    onAggregationStarted: ({ workers, workerResultRefs }) => emitEvent(eventsPath, { event: "aggregation.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: workerResultRefs.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResultRefs.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResultRefs.filter((worker) => worker.status === "skipped").length, cancelled: workerResultRefs.filter((worker) => worker.status === "cancelled").length, timed_out: workerResultRefs.filter((worker) => worker.status === "timed_out" || worker.status === "timeout").length }, { clock, sessionId, runId: fanoutId }),
+    onAggregationStarted: ({ workers, workerResultRefs }) => emit({ event: "aggregation.started", fanout_id: fanoutId, total: workers.length, active: 0, completed: workerResultRefs.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResultRefs.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResultRefs.filter((worker) => worker.status === "skipped").length, cancelled: workerResultRefs.filter((worker) => worker.status === "cancelled").length, timed_out: workerResultRefs.filter((worker) => worker.status === "timed_out" || worker.status === "timeout").length }),
     onAggregationCompleted: async (aggregate) => {
       await writeJson(join(aggregateRoot, "result.json"), aggregate)
       await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
-      await emitEvent(eventsPath, { event: "aggregation.completed", fanout_id: fanoutId, status: aggregate.status, artifacts: { aggregate: "fanout/aggregate/result.json", final: "aggregate/final/result.json" }, ...progressCounts.snapshot(request.workers.length, 0) }, { clock, sessionId, runId: fanoutId })
+      await emit({ event: "aggregation.completed", fanout_id: fanoutId, status: aggregate.status, artifacts: { aggregate: "fanout/aggregate/result.json", final: "aggregate/final/result.json" }, ...progressCounts.snapshot(request.workers.length, 0) })
     },
   })
   const workerResults: AgentFanoutWorkerResult[] = fanout.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
@@ -156,7 +161,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     },
   }
   await writeJson(resultPath, result)
-  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", fanout_id: fanoutId, status: result.status, artifacts: { events: "fanout/events.jsonl", result: "fanout/result.json", aggregate: "fanout/aggregate/result.json", final: "aggregate/final/result.json" }, diagnostics: { counts }, total: counts.total, active: 0, completed: counts.completed, failed: counts.failed, skipped: counts.skipped, cancelled: counts.cancelled, timed_out: counts.timed_out }, { clock, sessionId, runId: fanoutId })
+  await emit({ event: success ? "fanout.completed" : "fanout.failed", fanout_id: fanoutId, status: result.status, artifacts: { events: "fanout/events.jsonl", result: "fanout/result.json", aggregate: "fanout/aggregate/result.json", final: "aggregate/final/result.json" }, diagnostics: { counts }, total: counts.total, active: 0, completed: counts.completed, failed: counts.failed, skipped: counts.skipped, cancelled: counts.cancelled, timed_out: counts.timed_out })
   return result
 }
 
