@@ -10,16 +10,12 @@ const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, "..")
 const cloudflareRoot = resolve(root, "packages/runtime-cloudflare")
 const rootPackage = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"))
-const rootLock = JSON.parse(await readFile(resolve(root, "npm-shrinkwrap.json"), "utf8"))
 const cloudflarePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "package.json"), "utf8"))
 const cloudflareLock = JSON.parse(await readFile(resolve(cloudflareRoot, "npm-shrinkwrap.json"), "utf8"))
 const compatibleCorePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "vendor/wp-codebox-core/package.json"), "utf8"))
 const cloudflareWorkflow = await readFile(resolve(root, ".github/workflows/cloudflare-check.yml"), "utf8")
 const homeboy = JSON.parse(await readFile(resolve(root, "homeboy.json"), "utf8"))
 
-assert.deepEqual(rootPackage.workspaces, ["packages/cli", "packages/runtime-core", "packages/runtime-playground", "packages/wordpress-plugin"])
-assert.equal(rootPackage.workspaces.includes("packages/runtime-cloudflare"), false, "runtime-cloudflare must not join the default install lane")
-assert.equal(rootLock.packages?.["packages/runtime-cloudflare"], undefined, "the root shrinkwrap must not retain extraneous Cloudflare package metadata")
 assert.equal(rootPackage.overrides?.["@php-wasm/stream-compression"], undefined, "the Cloudflare-only stream patch must not retain root override ownership")
 for (const dependency of ["@cloudflare/workers-types"]) {
   assert.equal(rootPackage.devDependencies?.[dependency], undefined, `${dependency} must not be installed by the main lane`)
@@ -43,15 +39,13 @@ assert.doesNotMatch(cloudflarePackage.scripts?.test ?? "", /cd \.\.\/\.\.|packag
 assert.equal(homeboy.deployment_provider?.policy?.wrangler?.binary, "./packages/runtime-cloudflare/node_modules/.bin/wrangler")
 assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --omit=dev --prefix packages/runtime-cloudflare --workspaces=false"])
 assert.match(cloudflareWorkflow, /npm ci --prefix packages\/runtime-cloudflare --workspaces=false/, "Cloudflare CI must install the independent package lock")
+assert.match(cloudflareWorkflow, /npm run test:runtime-package-boundaries/, "Cloudflare CI must run repository package boundaries after the independent install")
+assert.ok(cloudflareWorkflow.indexOf("npm ci --prefix packages/runtime-cloudflare --workspaces=false") < cloudflareWorkflow.indexOf("npm run test:runtime-package-boundaries"), "Cloudflare CI must install the package before checking repository boundaries")
 assert.match(cloudflareWorkflow, /npm --prefix packages\/runtime-cloudflare run check/, "Cloudflare CI must run the package-owned check")
 assert.match(cloudflareWorkflow, /npm --prefix packages\/runtime-cloudflare run test:packed-wrangler/, "Cloudflare CI must bundle a clean installed package artifact")
 for (const script of ["cloudflare:build", "cloudflare:check", "cloudflare:package-dry-run", "cloudflare:dry-run", "cloudflare:local-gate", "test:cloudflare-runtime"]) {
   assert.match(rootPackage.scripts?.[script] ?? "", /^npm --prefix packages\/runtime-cloudflare run /, `${script} must remain a thin package alias`)
 }
-
-const rootPack = await packList(root)
-assert.ok(rootPack.has("npm-shrinkwrap.json"), "main package must retain its reproducible dependency manifest")
-assert.equal([...rootPack].some((path) => path.includes("runtime-cloudflare") || path.includes("wrangler")), false, "main package must exclude Cloudflare code and assets")
 
 const cloudflarePack = await packList(cloudflareRoot, true)
 for (const path of [

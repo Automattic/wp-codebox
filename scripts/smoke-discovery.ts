@@ -24,6 +24,7 @@ export const DISCOVERY_EXCLUSIONS: readonly Exclusion[] = [
   { file: "tests/mysqli-poll.integration.test.ts", reason: "requires Docker; runs in the agent-task-contracts workflow" },
   { file: "tests/runtime-sources-playground-integration.test.ts", reason: "exceeds the per-file budget; runs in the agent-task-contracts workflow" },
   { file: "tests/release-package-coverage.test.ts", reason: "needs the 427 MB plugin zip from package:wordpress-plugin; runs in the Homeboy gate" },
+  { file: "tests/runtime-package-boundaries.test.mjs", reason: "requires the independent Cloudflare package install; runs in the Cloudflare Check workflow" },
   {
     file: "tests/prepare-declaration-rebuild.test.ts",
     reason:
