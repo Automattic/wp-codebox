@@ -234,7 +234,7 @@ h2{margin:0;font-size:34px;line-height:1.05;letter-spacing:-.035em}h3{margin:0 0
   if (!publicProvisioning) {
     const path = join(stateDirectory, "static-site-artifact.json")
     await writeFile(path, serialized)
-    await run("npm", ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${key}`, "--file", path, "--local", "--persist-to", stateDirectory])
+    await run("wrangler", ["r2", "object", "put", `wp-codebox-runtime-chubes/${key}`, "--file", path, "--local", "--persist-to", stateDirectory])
   }
   const request = {
     schema: "wp-codebox/cloudflare-static-artifact-import-request/v1",
@@ -477,8 +477,8 @@ async function assertTwoSiteIsolation() {
 async function startWorker(testScheduled = coordinator === "durable-object", config = executionWranglerConfig) {
   output = ""
   const apiTokens = [{ id: "local-gate", principal: "local-gate", digest: createHash("sha256").update(apiToken).digest("hex"), scopes: ["sites:create", "sites:read", "sites:import", "operations:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]
-  const args = ["exec", "--", "wrangler", "dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", config, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
-  child = spawn("npm", args, {
+  const args = ["dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", config, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
+  child = spawn("wrangler", args, {
     cwd: process.cwd(),
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
     env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },

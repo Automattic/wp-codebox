@@ -11,7 +11,7 @@ const databaseName = option("--database-name", "wp-codebox-runtime-state")
 const binding = option("--binding", "WORDPRESS_STATE_DATABASE")
 const templatePath = resolve(option("--template", "packages/runtime-cloudflare/wrangler.d1.jsonc"))
 const outputPath = resolve(option("--output"))
-const wrangler = option("--wrangler", resolve("node_modules/.bin/wrangler"))
+const wrangler = option("--wrangler", resolve("packages/runtime-cloudflare/node_modules/.bin/wrangler"))
 if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(databaseName) || !/^[A-Z][A-Z0-9_]*$/.test(binding) || !option("--output")) throw new Error("A safe database name, binding, and --output path are required.")
 
 let databases = await listDatabases()

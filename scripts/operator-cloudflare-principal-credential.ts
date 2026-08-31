@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const config = flags.get("--config")
   const credentialId = flags.get("--credential-id")
   const version = flags.get("--version")
-  const wrangler = resolve(flags.get("--wrangler") ?? "node_modules/.bin/wrangler")
+  const wrangler = resolve(flags.get("--wrangler") ?? "packages/runtime-cloudflare/node_modules/.bin/wrangler")
   const local = flags.has("--local")
   const persistTo = flags.get("--persist-to")
   const accountId = flags.get("--account-id")

@@ -32,10 +32,10 @@ for (const artifact of [
   { key: sqliteManifest.key, size: sqliteManifest.archive.size, file: "artifacts/cloudflare-sqlite-database-integration.zip" },
   { key: websiteImporterManifest.key, size: websiteImporterManifest.archive.size, file: "artifacts/cloudflare-website-importer.zip" },
 ]) {
-  const command = ["exec", "--", "wrangler", "r2", "object", "put", `wp-codebox-runtime-chubes/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
+  const command = ["r2", "object", "put", `wp-codebox-runtime-chubes/${artifact.key}`, "--file", artifact.file, local ? "--local" : "--remote"]
   if (persistTo) command.push("--persist-to", persistTo)
   await new Promise((resolve, reject) => {
-    const child = spawn("npm", command, { cwd: process.cwd(), stdio: "inherit" })
+    const child = spawn("wrangler", command, { cwd: process.cwd(), stdio: "inherit" })
     child.on("error", reject)
     child.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`Wrangler R2 provisioning failed with status ${code}.`)))
   })

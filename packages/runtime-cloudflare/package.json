@@ -3,11 +3,69 @@
   "version": "0.12.27",
   "private": true,
   "type": "module",
+  "files": [
+    "assets",
+    "components",
+    "patches",
+    "scripts",
+    "src",
+    "tests",
+    "README.md",
+    "tsconfig.json",
+    "wrangler.jsonc",
+    "wrangler.d1.jsonc",
+    "wrangler.control.jsonc",
+    "wrangler.public-reader.jsonc"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/apply-development-patch.mjs",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run build && npm test && npm run dry-run:all && npm run package:dry-run",
+    "test": "node --test tests/package-dependency-boundary.test.mjs && cd ../.. && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs node --test tests/cloudflare-d1-provisioner.test.mjs tests/cloudflare-principal-credential-operator.test.mjs tests/cloudflare-remote-principal-credential-gate.test.mjs && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-site-context.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-coordinator-site-partitioning.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-d1-operation-repository.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-allocation-lifecycle.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-principal-credential-repository.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-provisioning-api.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-queue-batch.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-phase-trace.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-runtime.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-public-reader.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-wordpress-auth.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-wordpress-archive-corpus.test.ts",
+    "test:queue": "cd ../.. && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-queue-batch.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-d1-operation-repository.test.ts && npm --prefix packages/runtime-cloudflare run build",
+    "test:principal-credentials": "cd ../.. && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs node --test tests/cloudflare-principal-credential-operator.test.mjs && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-principal-credential-repository.test.ts && NODE_OPTIONS=--import=./packages/runtime-cloudflare/tests/register-package-local-loader.mjs packages/runtime-cloudflare/node_modules/.bin/tsx tests/cloudflare-provisioning-api.test.ts",
+    "test:remote-principal-credential-gate": "cd ../.. && node --test tests/cloudflare-remote-principal-credential-gate.test.mjs",
+    "test:packed-wrangler": "node tests/packed-wrangler-bundle.test.mjs",
+    "dry-run": "cd ../.. && wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.jsonc",
+    "dry-run:d1": "cd ../.. && wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.d1.jsonc",
+    "dry-run:control": "cd ../.. && wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.control.jsonc",
+    "dry-run:public-reader": "cd ../.. && wrangler deploy --dry-run --config packages/runtime-cloudflare/wrangler.public-reader.jsonc",
+    "dry-run:all": "npm run dry-run && npm run dry-run:d1 && npm run dry-run:control && npm run dry-run:public-reader",
+    "package:dry-run": "npm pack . --dry-run --json --workspaces=false",
+    "local-gate": "cd ../.. && node scripts/cloudflare-local-gate.mjs",
+    "local-gate:d1": "cd ../.. && node scripts/cloudflare-local-gate.mjs --coordinator=d1",
+    "local-gate:provisioning": "cd ../.. && node scripts/cloudflare-local-gate.mjs --coordinator=d1 --public-provisioning",
+    "remote-gate:principal-credentials": "cd ../.. && node scripts/cloudflare-remote-principal-credential-gate.mjs",
+    "generate:wordpress-runtime-corpus": "cd ../.. && tsx scripts/generate-cloudflare-wordpress-runtime-corpus.ts",
+    "provision:wordpress-runtime-corpus": "cd ../.. && node scripts/provision-cloudflare-wordpress-runtime-corpus.mjs",
+    "provision:d1-coordinator": "cd ../.. && node scripts/provision-cloudflare-d1-coordinator.mjs",
+    "operator:principal-credential": "cd ../.. && tsx scripts/operator-cloudflare-principal-credential.ts",
+    "generate:mdi-runtime-bundle": "cd ../.. && node scripts/build-cloudflare-mdi-runtime-bundle.mjs",
+    "generate:canonical-mdi-seed": "npm run generate:mdi-runtime-bundle && cd ../.. && php scripts/build-cloudflare-canonical-mdi-seed.php"
+  },
   "dependencies": {
-    "@automattic/wp-codebox-core": "file:../runtime-core",
     "@php-wasm/stream-compression": "3.1.45",
     "@php-wasm/universal": "3.1.46",
     "@php-wasm/web-8-5": "3.1.46",
-    "@wp-playground/wordpress": "3.1.46"
+    "@wp-playground/wordpress": "3.1.46",
+    "patch-package": "^8.0.1"
+  },
+  "bundleDependencies": [
+    "@php-wasm/stream-compression",
+    "@php-wasm/universal",
+    "@php-wasm/web-8-5",
+    "@wp-playground/wordpress",
+    "patch-package"
+  ],
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260718.1",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.127.1"
+  },
+  "overrides": {
+    "@php-wasm/stream-compression": "3.1.45",
+    "@php-wasm/util": "3.1.46"
   }
 }

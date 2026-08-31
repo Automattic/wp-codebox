@@ -1,5 +1,3 @@
-import { createRuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core/runtime-command-result"
-
 export const CLOUDFLARE_RUNTIME_HEALTH_SCHEMA = "wp-codebox/cloudflare-runtime-health/v1" as const
 export const CLOUDFLARE_RUNTIME_HEALTH_MARKER = "wp-codebox-cloudflare-runtime-health" as const
 
@@ -13,11 +11,12 @@ export interface CloudflareRuntimeHealth {
 }
 
 export function cloudflareRuntimeHealthResponse(health: CloudflareRuntimeHealth): Response {
-  const execution = createRuntimeCommandResultEnvelope({
+  const execution = {
+    schema: "wp-codebox/runtime-command-result/v1" as const,
     status: "ok",
     json: health,
     diagnostics: [{ schema: "wp-codebox/runtime-diagnostic/v1", code: "wordpress_runtime_initialized", severity: "info", message: "WordPress boot and PHP execution completed." }],
-  })
+  }
 
   return Response.json({ ...health, execution })
 }
