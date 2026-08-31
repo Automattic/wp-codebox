@@ -188,6 +188,38 @@ assert.match(requiredObservationGate[0], /"step_count":0/)
 assert.match(requiredObservationGate[1], /observation:rest-db-query-profiler/)
 assert.equal(requiredObservationGate[2], "report")
 
+const configuredPhpFileIterations = await withTempDir("wp-codebox-configured-php-file-", async (directory) => {
+  const workloadFile = join(directory, "workload.php")
+  const phpTestFile = join(directory, "configured-php-file.php")
+  await writeFile(
+    workloadFile,
+    `<?php
+$GLOBALS['wp_codebox_test_load_count'] = ($GLOBALS['wp_codebox_test_load_count'] ?? 0) + 1;
+function wp_codebox_test_configured_workload_result(): array {
+    $GLOBALS['wp_codebox_test_call_count'] = ($GLOBALS['wp_codebox_test_call_count'] ?? 0) + 1;
+    return array('metrics' => array('calls' => $GLOBALS['wp_codebox_test_call_count']));
+}
+return 'wp_codebox_test_configured_workload_result';
+`,
+  )
+  await writeFile(
+    phpTestFile,
+    `<?php
+${configuredWorkloadHelpers}
+$workload = array('run' => array(array('type' => 'php', 'file' => 'workload.php')));
+wp_codebox_bench_run_configured_workload($workload, ${JSON.stringify(directory)});
+$payload = wp_codebox_bench_run_configured_workload($workload, ${JSON.stringify(directory)});
+echo json_encode(array(
+    'loads' => $GLOBALS['wp_codebox_test_load_count'],
+    'calls' => $GLOBALS['wp_codebox_test_call_count'],
+    'metrics' => $payload['metrics'],
+), JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<{ loads: number; calls: number; metrics: { calls: number } }>(phpTestFile)
+})
+assert.deepEqual(configuredPhpFileIterations, { loads: 1, calls: 2, metrics: { calls: 2 } })
+
 const externalHttpGuardrailPayload = await withTempDir("wp-codebox-external-http-guardrail-", async (directory) => {
   const phpTestFile = join(directory, "external-http-guardrail.php")
   await writeFile(
