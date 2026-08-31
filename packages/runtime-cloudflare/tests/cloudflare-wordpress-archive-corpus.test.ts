@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { decodeZip } from "@php-wasm/stream-compression"
-import { isWordPressRuntimeFile, isWordPressStaticAsset, summarizeWordPressRuntimeCorpus, type WordPressArchiveEntry } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
-import { WORDPRESS_RUNTIME_MAX_FILES, WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
-import { WORDPRESS_STATIC_MAX_BYTES, WORDPRESS_STATIC_MAX_FILES } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
+import { isWordPressRuntimeFile, isWordPressStaticAsset, summarizeWordPressRuntimeCorpus, type WordPressArchiveEntry } from "../src/wordpress-runtime-corpus.js"
+import { WORDPRESS_RUNTIME_MAX_FILES, WORDPRESS_RUNTIME_MAX_UNCOMPRESSED_BYTES } from "../src/wordpress-runtime-artifact.js"
+import { WORDPRESS_STATIC_MAX_BYTES, WORDPRESS_STATIC_MAX_FILES } from "../src/wordpress-static-artifact.js"
 
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 

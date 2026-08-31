@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { createHash } from "node:crypto"
-import { PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey } from "../packages/runtime-cloudflare/src/published-reader.js"
-import { servePublicPublication } from "../packages/runtime-cloudflare/src/public-reader.js"
-import { DEFAULT_SITE_CONTEXT, siteStorageKeys } from "../packages/runtime-cloudflare/src/site-context.js"
+import { PUBLISHED_PAGE_SCHEMA, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey } from "../src/published-reader.js"
+import { servePublicPublication } from "../src/public-reader.js"
+import { DEFAULT_SITE_CONTEXT, siteStorageKeys } from "../src/site-context.js"
 
 const canonicalRevision = "11111111-1111-4111-8111-111111111111"
 const publicationRevision = "22222222-2222-4222-8222-222222222222"

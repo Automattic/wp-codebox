@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
-import { D1RevisionCoordinator } from "../packages/runtime-cloudflare/src/d1-revision-coordinator.js"
-import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
+import { D1RevisionCoordinator } from "../src/d1-revision-coordinator.js"
+import { WordPressStateCoordinator } from "../src/state-coordinator.js"
 
 function d1Database(): D1Database {
   const database = new DatabaseSync(":memory:")

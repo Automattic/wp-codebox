@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { dispatchQueueBatch, type QueueDelivery } from "../packages/runtime-cloudflare/src/queue-batch.js"
-import { DEFAULT_RUNTIME_QUEUE_POLICY, parseRuntimeQueuePolicy, runtimeQueueMessage } from "../packages/runtime-cloudflare/src/queue-dispatch.js"
+import { dispatchQueueBatch, type QueueDelivery } from "../src/queue-batch.js"
+import { DEFAULT_RUNTIME_QUEUE_POLICY, parseRuntimeQueuePolicy, runtimeQueueMessage } from "../src/queue-dispatch.js"
 
 function delivery(siteId: string, kind: "operation" | "publication", identity: string): QueueDelivery & { result?: string; delaySeconds?: number } {
   return { body: runtimeQueueMessage({ id: siteId }, 1, kind, identity), attempts: 1, ack() { this.result = "ack" }, retry(options) { this.result = "retry"; this.delaySeconds = options?.delaySeconds } }

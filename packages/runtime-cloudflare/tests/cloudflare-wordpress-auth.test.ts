@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { deriveSiteCredential, deriveWordPressAuthConstants, WORDPRESS_AUTH_CONSTANTS } from "../packages/runtime-cloudflare/src/wordpress-auth.js"
+import { deriveSiteCredential, deriveWordPressAuthConstants, WORDPRESS_AUTH_CONSTANTS } from "../src/wordpress-auth.js"
 
 test("WordPress auth constants are deterministic, site-scoped, and domain-separated", async () => {
   const first = await deriveWordPressAuthConstants("test-root-secret", "default")

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { attachServerTiming, CloudflarePhaseTrace, CLOUDFLARE_PHASE_TRACE_SCHEMA, serverTiming } from "../packages/runtime-cloudflare/src/phase-trace.js"
+import { attachServerTiming, CloudflarePhaseTrace, CLOUDFLARE_PHASE_TRACE_SCHEMA, serverTiming } from "../src/phase-trace.js"
 
 test("Cloudflare phase traces use bounded, non-overlapping leaves and independent dimensions", async () => {
   let clock = 0

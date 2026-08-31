@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import test from "node:test"
-import { runChild, runRemotePrincipalCredentialGate } from "../packages/runtime-cloudflare/scripts/remote-principal-credential-gate.mjs"
+import { runChild, runRemotePrincipalCredentialGate } from "../scripts/remote-principal-credential-gate.mjs"
 
 const accountId = "a".repeat(32)
 const token = "remote-gate-test-token"

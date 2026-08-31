@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
-import { D1OperationRepository, OperationConflict, shouldRecoverPreparedCommit } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
-import { CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
-import { DEFAULT_RUNTIME_QUEUE_POLICY, parseRuntimeQueueMessage, RUNTIME_QUEUE_MESSAGE_SCHEMA, runtimeQueueMessage } from "../packages/runtime-cloudflare/src/queue-dispatch.js"
+import { D1OperationRepository, OperationConflict, shouldRecoverPreparedCommit } from "../src/d1-operation-repository.js"
+import { CloudflareAllocationLifecycle } from "../src/allocation-lifecycle.js"
+import { DEFAULT_RUNTIME_QUEUE_POLICY, parseRuntimeQueueMessage, RUNTIME_QUEUE_MESSAGE_SCHEMA, runtimeQueueMessage } from "../src/queue-dispatch.js"
 
 function database(): D1Database {
   const sqlite = new DatabaseSync(":memory:")

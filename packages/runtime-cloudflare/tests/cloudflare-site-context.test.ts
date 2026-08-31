@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { allocatePreviewSiteContext, DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContext, resolveSiteContextFromRequest, siteStorageKeys } from "../packages/runtime-cloudflare/src/site-context.js"
+import { allocatePreviewSiteContext, DEFAULT_SITE_CONTEXT, parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest, resolveSiteContext, resolveSiteContextFromRequest, siteStorageKeys } from "../src/site-context.js"
 
 test("site contexts preserve default storage paths and isolate configured sites", () => {
   assert.deepEqual(parseSiteContexts(undefined), [DEFAULT_SITE_CONTEXT])

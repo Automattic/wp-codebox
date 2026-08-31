@@ -5,25 +5,25 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import test from "node:test"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
-import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
-import { runtimeArchiveComponentOwnedWpContentPaths, runtimeArchiveComponentSource } from "../packages/runtime-core/src/runtime-archive-component.js"
-import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
-import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
-import { leaseRetryDelayMs } from "../packages/runtime-cloudflare/src/lease-retry.js"
-import { CANONICAL_RESTORE_PACK_SCHEMA, createCanonicalRestorePack, decodeCanonicalRestorePack, readCanonicalRestorePack, type CanonicalRestorePackFile, type CanonicalRestorePackMetadata } from "../packages/runtime-cloudflare/src/canonical-restore-pack.js"
-import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../packages/runtime-cloudflare/src/mutation-memory.js"
-import { selectOperatorCoordinator } from "../packages/runtime-cloudflare/src/operator-coordinator.js"
-import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../packages/runtime-cloudflare/src/published-reader.js"
-import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
-import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
-import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
-import { WordPressStateCoordinator } from "../packages/runtime-cloudflare/src/state-coordinator.js"
-import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "../packages/runtime-cloudflare/src/upload-persistence.js"
-import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
-import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
-import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
-import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_ARCHIVE_MAX_BYTES, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
-import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../packages/runtime-cloudflare/src/wp-content-persistence.js"
+import { RUNTIME_COMMAND_RESULT_SCHEMA } from "@automattic/wp-codebox-core/runtime-command-result"
+import { runtimeArchiveComponentOwnedWpContentPaths, runtimeArchiveComponentSource } from "@automattic/wp-codebox-core/runtime-archive-component"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "@automattic/wp-codebox-core/runtime-package-profile"
+import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../src/health-envelope.js"
+import { leaseRetryDelayMs } from "../src/lease-retry.js"
+import { CANONICAL_RESTORE_PACK_SCHEMA, createCanonicalRestorePack, decodeCanonicalRestorePack, readCanonicalRestorePack, type CanonicalRestorePackFile, type CanonicalRestorePackMetadata } from "../src/canonical-restore-pack.js"
+import { MUTATION_DIAGNOSTIC_SCHEMA, mutationRetentionContract } from "../src/mutation-memory.js"
+import { selectOperatorCoordinator } from "../src/operator-coordinator.js"
+import { canonicalPublicRoute, normalizePublishedRoutes, PUBLISHED_REVISION_SCHEMA, publishedPageObjectKey, publishedRevisionObjectKey, R2_PUBLISHED_CURRENT_KEY, validatePublishedRevision } from "../src/published-reader.js"
+import { routeWorkerRequest } from "../src/request-routing.js"
+import { toFetchResponse, toPHPRequest } from "../src/request-translation.js"
+import { readStaticArtifactImport, STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../src/static-artifact-import.js"
+import { WordPressStateCoordinator } from "../src/state-coordinator.js"
+import { MAX_UPLOAD_FILE_BYTES, R2_UPLOAD_OBJECT_PREFIX, validateUploadManifestFiles, validateUploadMetadata } from "../src/upload-persistence.js"
+import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticContentType } from "../src/wordpress-runtime-corpus.js"
+import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../src/wordpress-runtime-artifact.js"
+import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../src/wordpress-static-artifact.js"
+import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_ARCHIVE_MAX_BYTES, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../src/runtime-archive-artifact.js"
+import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../src/wp-content-persistence.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -46,7 +46,7 @@ test("runtime package profiles select deployment-neutral capabilities determinis
 })
 
 test("runtime archive components strictly validate source, materialization, abilities, and budgets", async () => {
-  const raw = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/components/website-importer.json", import.meta.url), "utf8"))
+  const raw = JSON.parse(await readFile(new URL("../components/website-importer.json", import.meta.url), "utf8"))
   const descriptor = runtimeArchiveComponentSource(raw)
   assert.equal(descriptor.component.id, "website-importer")
   assert.deepEqual(runtimeArchiveComponentOwnedWpContentPaths(descriptor.component), ["plugins/static-site-importer/", "mu-plugins/wp-codebox-runtime-component-website-importer.php"])
@@ -84,7 +84,7 @@ test("Cloudflare static artifact imports require bounded content-addressed R2 in
 })
 
 test("Cloudflare static artifact imports invoke SSI with the canonical apply input", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const worker = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
   assert.doesNotMatch(worker, /static-site-importer\/import-website-artifact/)
   assert.match(worker, /'operation' => 'apply'/)
   assert.match(worker, /'source' => array\(\s*'type' => 'files',\s*'entrypoint' => \(string\) \(\$artifact\['entrypoint'\] \?\? ''\),\s*'files' => isset\(\$artifact\['files'\]\)/)
@@ -330,8 +330,8 @@ test("Cloudflare mutation persistence bounds retained JS bytes to one changed fi
 })
 
 test("Cloudflare runtime declares bounded CPU and scheduled execution", async () => {
-  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { main?: string; limits?: { cpu_ms?: number }; triggers?: { crons?: string[] } }
-  const d1Config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.d1.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
+  const config = JSON.parse((await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as { main?: string; limits?: { cpu_ms?: number }; triggers?: { crons?: string[] } }
+  const d1Config = JSON.parse((await readFile(new URL("../wrangler.d1.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     main?: string
     limits?: { cpu_ms?: number }
     triggers?: { crons?: string[] }
@@ -354,7 +354,7 @@ test("Cloudflare runtime declares bounded CPU and scheduled execution", async ()
 })
 
 test("Cloudflare control plane is PHP-free with only D1, R2, and queue production", async () => {
-  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.control.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
+  const config = JSON.parse((await readFile(new URL("../wrangler.control.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     main?: string
     limits?: { cpu_ms?: number }
     triggers?: unknown
@@ -374,7 +374,7 @@ test("Cloudflare control plane is PHP-free with only D1, R2, and queue productio
   assert.equal(config.durable_objects, undefined)
   assert.equal(config.rules, undefined)
 
-  const pending = [new URL("../packages/runtime-cloudflare/src/worker-control.ts", import.meta.url)]
+  const pending = [new URL("../src/worker-control.ts", import.meta.url)]
   const sources = new Map<string, string>()
   while (pending.length) {
     const url = pending.pop()!
@@ -413,17 +413,17 @@ test("Cloudflare lease contention honors Retry-After without exceeding the acqui
 })
 
 test("Cloudflare runtime packages a provenanced canonical MDI seed", async () => {
-  const config = JSON.parse((await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
+  const config = JSON.parse((await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*\n/, "")) as {
     rules?: Array<{ type?: string; globs?: string[] }>
     r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
     durable_objects?: { bindings?: Array<{ name?: string; class_name?: string }> }
     migrations?: Array<{ new_sqlite_classes?: string[] }>
   }
-  const markdownIndex = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-primary-bootstrap-index.sqlite", import.meta.url))
-  const markdownRuntime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
-  const canonicalSeed = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
-  const sqliteInput = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
-  const canonicalManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { markdownDatabaseIntegrationRevision: string; wordpressInstallSeedSha256: string; archiveSha256: string; files: Array<{ path: string }> }
+  const markdownIndex = await readFile(new URL("../assets/markdown-primary-bootstrap-index.sqlite", import.meta.url))
+  const markdownRuntime = await readFile(new URL("../assets/markdown-database-integration-runtime.zip", import.meta.url))
+  const canonicalSeed = await readFile(new URL("../assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const sqliteInput = await readFile(new URL("../assets/wordpress-install-seed.sqlite", import.meta.url))
+  const canonicalManifest = JSON.parse(await readFile(new URL("../assets/markdown-database-integration-canonical-seed.json", import.meta.url), "utf8")) as { markdownDatabaseIntegrationRevision: string; wordpressInstallSeedSha256: string; archiveSha256: string; files: Array<{ path: string }> }
 
   assert.equal(markdownIndex.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.equal(markdownRuntime.subarray(0, 4).toString("hex"), "504b0304")
@@ -442,9 +442,9 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
   const revision = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
   const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
-  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/build-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
+  const generator = await readFile(new URL("../scripts/build-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
+  const worker = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
+  const runtime = await readFile(new URL("../assets/markdown-database-integration-runtime.zip", import.meta.url))
   const names: string[] = []
   let writeEngine = ""
   for await (const entry of decodeZip(new Blob([runtime]).stream())) {
@@ -474,7 +474,7 @@ test("Cloudflare runtime pins and bundles the public constrained MDI runtime", a
 })
 
 test("Cloudflare canonical runtime patches the unique init call with runtime persistence policies", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const worker = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
   const patcher = worker.slice(worker.indexOf("function patchCanonicalRuntimePoliciesAtInit"), worker.indexOf("\nfunction collectRuntimeFiles"))
 
   assert.ok(patcher.startsWith("function patchCanonicalRuntimePoliciesAtInit"), "The canonical runtime policy patcher is present.")
@@ -505,16 +505,16 @@ test("Cloudflare canonical runtime patches the unique init call with runtime per
   assert.match(worker, /canonicalBootstrapFlushCode/)
 })
 test("Cloudflare runtime injects composable coordinators without moving PHP out of the Worker core", async () => {
-  const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
-  const coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/state-coordinator.ts", import.meta.url), "utf8")
-  const d1Coordinator = await readFile(new URL("../packages/runtime-cloudflare/src/d1-revision-coordinator.ts", import.meta.url), "utf8")
-  const contract = await readFile(new URL("../packages/runtime-cloudflare/src/revision-coordinator.ts", import.meta.url), "utf8")
-  const durableObjectEntry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-do.ts", import.meta.url), "utf8")
-  const d1Entry = await readFile(new URL("../packages/runtime-cloudflare/src/worker-d1.ts", import.meta.url), "utf8")
+  const worker = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
+  const coordinator = await readFile(new URL("../src/state-coordinator.ts", import.meta.url), "utf8")
+  const d1Coordinator = await readFile(new URL("../src/d1-revision-coordinator.ts", import.meta.url), "utf8")
+  const contract = await readFile(new URL("../src/revision-coordinator.ts", import.meta.url), "utf8")
+  const durableObjectEntry = await readFile(new URL("../src/worker-do.ts", import.meta.url), "utf8")
+  const d1Entry = await readFile(new URL("../src/worker-d1.ts", import.meta.url), "utf8")
   const materializer = worker.slice(worker.indexOf("async function materializeWordPressServerFiles"), worker.indexOf("async function serveWordPressStaticAsset"))
   const coordinatedRequest = worker.slice(worker.indexOf("async function runCoordinatedWordPressRequest"), worker.indexOf("async function matchWordPressPageCache"))
   const scheduledCron = worker.slice(worker.indexOf("async function runScheduledWordPressCron"), worker.indexOf("async function runNextCronEvent"))
-  const corpus = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+  const corpus = await readFile(new URL("../src/wordpress-runtime-corpus.ts", import.meta.url), "utf8")
 
   assert.match(worker, /return await runCoordinatedWordPressRequest\(request, env, coordinator, site, route\.kind\)/)
   assert.doesNotMatch(d1Entry, /DurableObject|WORDPRESS_STATE\b|state-coordinator/)
@@ -784,13 +784,13 @@ test("runtime archive dependencies are content-addressed and verified from R2", 
 })
 
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
-  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/generate-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
-  const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
-  const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
-  const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
-  const sqliteManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
-  const websiteImporterManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/website-importer-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
-  const websiteImporterSource = runtimeArchiveComponentSource(JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/components/website-importer.json", import.meta.url), "utf8")))
+  const generator = await readFile(new URL("../scripts/generate-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+  const artifact = await readFile(new URL("../src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
+  const manifest = JSON.parse(await readFile(new URL("../assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
+  const staticManifest = JSON.parse(await readFile(new URL("../assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
+  const sqliteManifest = JSON.parse(await readFile(new URL("../assets/sqlite-database-integration-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  const websiteImporterManifest = JSON.parse(await readFile(new URL("../assets/website-importer-artifact.json", import.meta.url), "utf8")) as RuntimeArchiveArtifactManifest
+  const websiteImporterSource = runtimeArchiveComponentSource(JSON.parse(await readFile(new URL("../components/website-importer.json", import.meta.url), "utf8")))
   assert.match(generator, /const response = await fetch\(sourceUrl\)/)
   assert.match(generator, /decodeZip\(response\.body\)/)
   assert.doesNotMatch(generator, /decodeRemoteZip/)
@@ -917,7 +917,7 @@ test("Cloudflare selects a dormant coordinator only for explicit operator cutove
 })
 
 test("serialized Cloudflare mutations use MDI flush paths and complete canonical state", async () => {
-  const source = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const source = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
   const mutation = source.slice(source.indexOf("const SERIALIZED_MARKDOWN_MUTATION_CODE"), source.indexOf("export interface RuntimeEnv"))
 
   assert.match(mutation, /WP_Markdown_Primary_Storage_Runtime::bootstrap/)
@@ -933,14 +933,14 @@ test("serialized Cloudflare mutations use MDI flush paths and complete canonical
 })
 
 test("canonical reset preflights its pinned administrator root before mutation", async () => {
-  const source = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
+  const source = await readFile(new URL("../src/worker.ts", import.meta.url), "utf8")
   const reset = source.slice(source.indexOf("async function resetCanonicalWordPress"), source.indexOf("async function restoreCanonicalWordPress"))
   assert.ok(reset.indexOf("administratorPasswordForSite") < reset.indexOf("coordinator.reset()"))
 })
 
 test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {
-  const generator = new URL("../packages/runtime-cloudflare/scripts/build-canonical-mdi-seed.php", import.meta.url)
-  const archive = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url)
+  const generator = new URL("../scripts/build-canonical-mdi-seed.php", import.meta.url)
+  const archive = new URL("../assets/markdown-database-integration-canonical-seed.zip", import.meta.url)
   const before = createHash("sha256").update(await readFile(archive)).digest("hex")
   await execFileAsync("php", [generator.pathname], { cwd: new URL("..", import.meta.url).pathname })
   const after = createHash("sha256").update(await readFile(archive)).digest("hex")
@@ -952,8 +952,8 @@ test("canonical MDI seed generator is reproducible and validates its pinned inpu
 })
 
 test("canonical MDI seed owns the Cloudflare front page and its architecture explanation", async () => {
-  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/build-canonical-mdi-seed.php", import.meta.url), "utf8")
-  const archive = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
+  const generator = await readFile(new URL("../scripts/build-canonical-mdi-seed.php", import.meta.url), "utf8")
+  const archive = await readFile(new URL("../assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
   const files = new Map<string, string>()
   for await (const entry of decodeZip(new Blob([archive]).stream())) files.set(entry.name, await entry.text())
   const frontPage = files.get("page/cloudflare-wordpress-runtime.md") ?? ""

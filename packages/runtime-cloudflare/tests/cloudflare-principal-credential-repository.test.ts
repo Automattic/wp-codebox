@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
-import { D1PrincipalCredentialRepository } from "../packages/runtime-cloudflare/src/principal-credential-repository.js"
+import { D1PrincipalCredentialRepository } from "../src/principal-credential-repository.js"
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex")
 function database(): D1Database & { sqlite: DatabaseSync } {

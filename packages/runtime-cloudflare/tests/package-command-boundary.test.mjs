@@ -14,6 +14,10 @@ assert.equal(packageJson.wpCodeboxCoreCompatibility, corePackage.version)
 assert.equal(corePackage.version, "0.26.2")
 
 for (const name of [
+  "test",
+  "test:queue",
+  "test:principal-credentials",
+  "test:remote-principal-credential-gate",
   "local-gate",
   "local-gate:d1",
   "local-gate:provisioning",
@@ -30,6 +34,8 @@ for (const name of [
   assert.doesNotMatch(command, /cd \.\.\/\.\.|packages\/runtime-|\.\.\/\.\.\//, `${name} must not escape the package`)
   if (name.startsWith("local-gate")) assert.match(command, /^playwright install chromium && /, `${name} must provision its pinned package-owned browser`)
 }
+
+assert.doesNotMatch(packageJson.scripts.test, /register-package-local-loader/, "package tests must use normal package-local resolution")
 
 for (const path of [
   "scripts/local-gate.mjs",

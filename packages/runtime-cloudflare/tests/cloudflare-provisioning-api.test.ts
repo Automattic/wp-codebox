@@ -2,11 +2,11 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
-import { D1OperationRepository } from "../packages/runtime-cloudflare/src/d1-operation-repository.js"
-import { allocationIdentity, CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
-import { administratorPasswordForSite, PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../packages/runtime-cloudflare/src/provisioning-api.js"
-import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../packages/runtime-cloudflare/src/static-artifact-import.js"
-import { D1PrincipalCredentialRepository } from "../packages/runtime-cloudflare/src/principal-credential-repository.js"
+import { D1OperationRepository } from "../src/d1-operation-repository.js"
+import { allocationIdentity, CloudflareAllocationLifecycle } from "../src/allocation-lifecycle.js"
+import { administratorPasswordForSite, PROVISIONING_ARTIFACT_RESOURCE_SCHEMA, PROVISIONING_CREATE_REQUEST_SCHEMA, resumeProvisioningAllocation, routeProvisioningApi } from "../src/provisioning-api.js"
+import { STATIC_ARTIFACT_IMPORT_REQUEST_SCHEMA } from "../src/static-artifact-import.js"
+import { D1PrincipalCredentialRepository } from "../src/principal-credential-repository.js"
 
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
 const artifactText = JSON.stringify({ schema: "blocks-engine/php-transformer/site-artifact/v1", root: "website", entrypoint: "website/index.html", files: [{ path: "website/index.html", content: "ok" }] })
@@ -167,7 +167,7 @@ test("active root changes preserve pinned claims and canonical bootstrap resolut
   r.env.WORDPRESS_ADMIN_SECRET_BINDINGS = bindings("v2")
   const replay = await (await create(r)).json() as { site: { administratorClaim: { token: string } } }
   assert.equal(replay.site.administratorClaim.token, first.site.administratorClaim.token)
-  assert.equal(await administratorPasswordForSite(r.env, first.site.id), await (await import("../packages/runtime-cloudflare/src/wordpress-auth.js")).deriveSiteCredential("admin-root-secret", first.site.id, "admin-password"))
+  assert.equal(await administratorPasswordForSite(r.env, first.site.id), await (await import("../src/wordpress-auth.js")).deriveSiteCredential("admin-root-secret", first.site.id, "admin-password"))
   r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(first.site.id)
   const redeemed = await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${first.site.id}/administrator-claim`, { method: "POST", headers: { authorization: `Bearer ${first.site.administratorClaim.token}` } }), r.env, r.operations)
   assert.equal(redeemed.status, 200)
@@ -210,7 +210,7 @@ test("administrator claim failures are generic, not-ready preserves pending, and
   r.db.sqlite.prepare("UPDATE wp_codebox_api_admin_claims SET expires_at = 0").run(); assert.equal((await routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations)).status, 401); assert.equal((r.db.sqlite.prepare("SELECT state FROM wp_codebox_api_admin_claims").get() as { state: string }).state, "expired"); const resource = await (await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${created.site.id}`, { headers: { authorization: "Bearer good" } }), r.env, r.operations)).json() as { site: { administratorClaim: { state: string } } }; assert.equal(resource.site.administratorClaim.state, "expired"); const replay = await create(r); assert.equal(replay.status, 409); assert.doesNotMatch(await replay.text(), /"token"/); await assert.rejects(() => resumeProvisioningAllocation(r.env, { id: created.site.id, hostname: `${created.site.id}.example`, origin: `https://${created.site.id}.example` }, r.operations))
 })
 test("administrator claim consumes once after publication and returns the persistent site credential", async () => {
-  const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; operation: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); const url = `https://control.invalid/v1/sites/${created.site.id}/administrator-claim`; const responses = await Promise.all([1, 2].map(() => routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations))); assert.equal(responses.filter((response) => response.status === 200).length, 1); const success = responses.find((response) => response.status === 200)!; assert.deepEqual(await success.json(), { schema: "wp-codebox/provisioning-api/v1", credential: { username: "admin", password: await (await import("../packages/runtime-cloudflare/src/wordpress-auth.js")).deriveSiteCredential(r.env.WORDPRESS_ADMIN_PASSWORD, created.site.id, "admin-password") } }); assert.equal(responses.find((response) => response.status !== 200)!.status, 401)
+  const r = runtime(); const created = await (await create(r)).json() as { site: { id: string; operation: string; administratorClaim: { token: string } } }; r.db.sqlite.prepare("UPDATE wp_codebox_operations SET state = 'succeeded' WHERE site_id = ?").run(created.site.id); const url = `https://control.invalid/v1/sites/${created.site.id}/administrator-claim`; const responses = await Promise.all([1, 2].map(() => routeProvisioningApi(new Request(url, { method: "POST", headers: { authorization: `Bearer ${created.site.administratorClaim.token}` } }), r.env, r.operations))); assert.equal(responses.filter((response) => response.status === 200).length, 1); const success = responses.find((response) => response.status === 200)!; assert.deepEqual(await success.json(), { schema: "wp-codebox/provisioning-api/v1", credential: { username: "admin", password: await (await import("../src/wordpress-auth.js")).deriveSiteCredential(r.env.WORDPRESS_ADMIN_PASSWORD, created.site.id, "admin-password") } }); assert.equal(responses.find((response) => response.status !== 200)!.status, 401)
   const replay = await (await create(r)).text(); assert.doesNotMatch(replay, new RegExp(created.site.administratorClaim.token)); const read = await (await routeProvisioningApi(new Request(`https://control.invalid/v1/sites/${created.site.id}`, { headers: { authorization: "Bearer good" } }), r.env, r.operations)).text(); assert.doesNotMatch(read, new RegExp(created.site.administratorClaim.token))
 })
 test("completed create replay remains idempotent after its root version is retired", async () => {

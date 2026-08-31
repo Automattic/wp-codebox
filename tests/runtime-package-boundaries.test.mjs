@@ -41,7 +41,7 @@ for (const script of ["build", "check", "test", "test:packed-wrangler", "package
 assert.equal(cloudflarePackage.scripts?.postinstall, "node scripts/apply-development-patch.mjs", "the package install must apply its required stream-compression patch")
 assert.ok(cloudflarePackage.dependencies?.["patch-package"], "packed installs must receive the package-owned patch tool used by postinstall")
 assert.deepEqual(cloudflarePackage.bundleDependencies, ["@automattic/wp-codebox-core", "@php-wasm/stream-compression", "@php-wasm/universal", "@php-wasm/web-8-5", "@wp-playground/wordpress", "patch-package"], "packed installs must carry the shared contract, every required runtime dependency, and patch tool")
-assert.match(cloudflarePackage.scripts?.test ?? "", /register-package-local-loader/, "repository-level Cloudflare tests must use the package-local dependency loader")
+assert.doesNotMatch(cloudflarePackage.scripts?.test ?? "", /cd \.\.\/\.\.|packages\/runtime-cloudflare|register-package-local-loader/, "package tests must remain rootless")
 assert.equal(homeboy.deployment_provider?.policy?.wrangler?.binary, "./packages/runtime-cloudflare/node_modules/.bin/wrangler")
 assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --prefix packages/runtime-cloudflare --workspaces=false"])
 assert.match(cloudflareWorkflow, /npm ci --prefix packages\/runtime-cloudflare --workspaces=false/, "Cloudflare CI must install the independent package lock")

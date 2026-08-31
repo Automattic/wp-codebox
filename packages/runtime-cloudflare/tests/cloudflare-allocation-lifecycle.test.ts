@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
-import { AllocationLifecycleConflict, CloudflareAllocationLifecycle } from "../packages/runtime-cloudflare/src/allocation-lifecycle.js"
+import { AllocationLifecycleConflict, CloudflareAllocationLifecycle } from "../src/allocation-lifecycle.js"
 
 function database(): D1Database {
   const sqlite = new DatabaseSync(":memory:")

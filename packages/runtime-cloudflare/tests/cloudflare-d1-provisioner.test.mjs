@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import test from "node:test"
 
-const script = resolve("packages/runtime-cloudflare/scripts/provision-d1-coordinator.mjs")
+const script = resolve("scripts/provision-d1-coordinator.mjs")
 
 test("D1 provisioner creates once and emits a deployable config deterministically", async () => {
   const directory = await mkdtemp(join(tmpdir(), "wp-codebox-d1-provision-"))
