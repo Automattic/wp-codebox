@@ -261,22 +261,11 @@ process.exit(1);
   const secondAbortFirst = new AbortController()
   const secondAbortSecond = new AbortController()
   const beforeSecondAbort = singleFlightAllocations()
-  let secondAbortProbeEntered!: () => void
-  let secondAbortProbeContinue!: () => void
-  const secondAbortEntered = new Promise<void>((resolve) => { secondAbortProbeEntered = resolve })
-  const secondAbortContinue = new Promise<void>((resolve) => { secondAbortProbeContinue = resolve })
-  const secondAbortDependencies: RuntimeServiceDependencies = { ...dependencies, async verifyNativeFilesystem(root, datadir) {
-    await dependencies.verifyNativeFilesystem?.(root, datadir)
-    secondAbortProbeEntered()
-    await secondAbortContinue
-  } }
-  const secondAbortFirstResult = nativeMariaDbHostReadiness(secondAbortDependencies, secondAbortFirst.signal)
-  const secondAbortSecondResult = nativeMariaDbHostReadiness(secondAbortDependencies, secondAbortSecond.signal)
-  await secondAbortEntered
+  const secondAbortFirstResult = nativeMariaDbHostReadiness(dependencies, secondAbortFirst.signal)
+  const secondAbortSecondResult = nativeMariaDbHostReadiness(dependencies, secondAbortSecond.signal)
   secondAbortSecond.abort()
   assert.deepEqual(await secondAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
-  await settleNativeMariaDbHostReadiness(secondAbortDependencies)
-  secondAbortProbeContinue()
+  assert.equal(await Promise.race([settleNativeMariaDbHostReadiness(dependencies).then(() => "settled"), abortableDelay(50).then(() => "blocked")]), "settled", "an interrupted descriptor does not wait behind another live caller")
   assert.deepEqual(await secondAbortFirstResult, { status: "ready" })
   assert.equal(singleFlightAllocations(), beforeSecondAbort + 1, "aborting the second waiter does not cancel the first caller's allocation")
   assert.equal(getEventListeners(secondAbortFirst.signal, "abort").length + getEventListeners(secondAbortSecond.signal, "abort").length, 0)
