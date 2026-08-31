@@ -1,4 +1,12 @@
-export declare const RUNTIME_COMMAND_RESULT_SCHEMA: "wp-codebox/runtime-command-result/v1"
-export interface RuntimeCommandResultEnvelope { schema: typeof RUNTIME_COMMAND_RESULT_SCHEMA; status: string; stdout?: string; stderr?: string; json?: unknown; diagnostics?: unknown; artifactRefs?: unknown[]; error?: unknown }
-export declare function createRuntimeCommandResultEnvelope(result: Omit<RuntimeCommandResultEnvelope, "schema">): RuntimeCommandResultEnvelope
-export declare function runtimeCommandResultEnvelopeFromOutput(input: { status?: string; stdout?: string; stderr?: string; diagnostics?: unknown; artifactRefs?: unknown[]; error?: unknown }): RuntimeCommandResultEnvelope
+import { type RuntimeCommandResultEnvelope, type RuntimeCommandResultError, type RuntimeCommandResultStatus, type RuntimeEpisodeTraceRef } from "./runtime-contracts.js";
+export declare function createRuntimeCommandResultEnvelope(result: Omit<RuntimeCommandResultEnvelope, "schema">): RuntimeCommandResultEnvelope;
+export interface RuntimeCommandResultEnvelopeFromOutputInput {
+    status?: RuntimeCommandResultStatus;
+    stdout?: string;
+    stderr?: string;
+    diagnostics?: unknown;
+    artifactRefs?: RuntimeEpisodeTraceRef[];
+    error?: RuntimeCommandResultError;
+}
+export declare function runtimeCommandResultEnvelopeFromOutput(input: RuntimeCommandResultEnvelopeFromOutputInput): RuntimeCommandResultEnvelope;
+//# sourceMappingURL=runtime-command-result.d.ts.map

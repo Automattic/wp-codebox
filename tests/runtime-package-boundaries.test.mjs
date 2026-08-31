@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
+
+import { deriveCloudflareCoreContract } from "../scripts/derive-cloudflare-core-contract.mjs"
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, "..")
@@ -15,7 +16,6 @@ const cloudflarePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "pac
 const cloudflareLock = JSON.parse(await readFile(resolve(cloudflareRoot, "npm-shrinkwrap.json"), "utf8"))
 const corePackage = JSON.parse(await readFile(resolve(root, "packages/runtime-core/package.json"), "utf8"))
 const compatibleCorePackage = JSON.parse(await readFile(resolve(cloudflareRoot, "vendor/wp-codebox-core/package.json"), "utf8"))
-const coreCompatibility = JSON.parse(await readFile(resolve(cloudflareRoot, "vendor/wp-codebox-core/compatibility.json"), "utf8"))
 const cloudflareWorkflow = await readFile(resolve(root, ".github/workflows/cloudflare-check.yml"), "utf8")
 const homeboy = JSON.parse(await readFile(resolve(root, "homeboy.json"), "utf8"))
 
@@ -33,9 +33,7 @@ assert.equal(cloudflarePackage.dependencies?.["@automattic/wp-codebox-core"], "f
 assert.equal(cloudflarePackage.peerDependencies?.["@automattic/wp-codebox-core"], undefined, "package-owned runtime assets must not retain an optional core peer")
 assert.equal(cloudflareLock.packages?.[""]?.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core")
 assert.equal(cloudflarePackage.wpCodeboxCoreCompatibility, corePackage.version)
-assert.equal(cloudflarePackage.wpCodeboxCoreCompatibilityManifest, "vendor/wp-codebox-core/compatibility.json")
 assert.equal(compatibleCorePackage.version, corePackage.version)
-assert.equal(coreCompatibility.version, corePackage.version)
 
 for (const script of ["build", "check", "test", "test:packed-wrangler", "package:dry-run", "local-gate", "local-gate:d1", "local-gate:provisioning"]) {
   assert.ok(cloudflarePackage.scripts?.[script], `runtime-cloudflare must own ${script}`)
@@ -99,8 +97,7 @@ async function packList(cwd, explicitPackage = false) {
 }
 
 async function assertCoreContractDrift() {
-  for (const [path, expected] of Object.entries(coreCompatibility.upstreamSources)) assert.equal(await sha256(resolve(root, "packages/runtime-core", path)), expected, `upstream core contract drifted: ${path}`)
-  for (const [path, expected] of Object.entries(coreCompatibility.compatibleFiles)) assert.equal(await sha256(resolve(cloudflareRoot, "vendor/wp-codebox-core", path)), expected, `vendored core compatibility file drifted: ${path}`)
+  await deriveCloudflareCoreContract()
   const coreArchive = await import(pathToFileURL(resolve(root, "packages/runtime-core/dist/runtime-archive-component.js")))
   const compatibleArchive = await import(pathToFileURL(resolve(cloudflareRoot, "vendor/wp-codebox-core/runtime-archive-component.js")))
   const coreProfile = await import(pathToFileURL(resolve(root, "packages/runtime-core/dist/runtime-package-profile.js")))
@@ -113,14 +110,33 @@ async function assertCoreContractDrift() {
   assert.deepEqual(compatibleArchive.runtimeArchiveComponentOwnedWpContentPaths(component), coreArchive.runtimeArchiveComponentOwnedWpContentPaths(component))
   const source = { schema: coreArchive.RUNTIME_ARCHIVE_COMPONENT_SOURCE_SCHEMA, source: { url: "https://example.com/component.zip", version: "1.0.0", identity: "revision", sha256: "a".repeat(64) }, component }
   assert.deepEqual(compatibleArchive.runtimeArchiveComponentSource(source), coreArchive.runtimeArchiveComponentSource(source))
+  for (const invalid of [null, { ...component, id: "../escape" }, { ...component, limits: { files: 0, bytes: 1 } }, { ...component, wordpress: { ...component.wordpress, bootstrap_file: "../plugin.php" } }]) {
+    assertSameRejection(() => compatibleArchive.runtimeArchiveComponent(invalid), () => coreArchive.runtimeArchiveComponent(invalid))
+  }
+  assertSameRejection(() => compatibleArchive.runtimeArchiveComponentSource({ ...source, source: { ...source.source, url: "http://example.com/component.zip" } }), () => coreArchive.runtimeArchiveComponentSource({ ...source, source: { ...source.source, url: "http://example.com/component.zip" } }))
   const manifestSource = JSON.stringify({ schema: "example/runtime-package-manifest/v1", package: "example", package_root: "example", profiles: { cloudflare: { abilities: ["sites/import"], selectors: [{ type: "file", path: "plugin.php" }], required_files: ["plugin.php"] } } })
   const coreManifest = coreProfile.parseRuntimePackageManifest(manifestSource)
   const compatibleManifest = compatibleProfile.parseRuntimePackageManifest(manifestSource)
   assert.deepEqual(compatibleManifest, coreManifest)
   assert.deepEqual(compatibleProfile.selectRuntimePackageProfileFiles(compatibleManifest, "cloudflare", ["example/runtime-package-manifest.json", "example/plugin.php"], "example/runtime-package-manifest.json"), coreProfile.selectRuntimePackageProfileFiles(coreManifest, "cloudflare", ["example/runtime-package-manifest.json", "example/plugin.php"], "example/runtime-package-manifest.json"))
-  const resultInput = { status: "ok", stdout: "{\"passed\":true}\n", stderr: "", diagnostics: [{ code: "ready" }] }
-  assert.deepEqual(compatibleResult.runtimeCommandResultEnvelopeFromOutput(resultInput), coreResult.runtimeCommandResultEnvelopeFromOutput(resultInput))
-  assert.equal(compatibleResult.RUNTIME_COMMAND_RESULT_SCHEMA, coreContracts.RUNTIME_COMMAND_RESULT_SCHEMA)
+  for (const invalid of ["not-json", JSON.stringify({ package: "../escape" }), JSON.stringify({ schema: "example/runtime-package-manifest/v1", package: "example", package_root: "example", profiles: {} })]) {
+    assertSameRejection(() => compatibleProfile.parseRuntimePackageManifest(invalid), () => coreProfile.parseRuntimePackageManifest(invalid))
+  }
+  assertSameRejection(() => compatibleProfile.selectRuntimePackageProfileFiles(compatibleManifest, "cloudflare", ["example/../plugin.php"], "example/runtime-package-manifest.json"), () => coreProfile.selectRuntimePackageProfileFiles(coreManifest, "cloudflare", ["example/../plugin.php"], "example/runtime-package-manifest.json"))
+  for (const resultInput of [
+    { status: "ok", stdout: "{\"passed\":true}\n", stderr: "", diagnostics: [{ code: "ready" }] },
+    { status: "error", stdout: "{invalid", stderr: "failure", artifactRefs: [] },
+    { stdout: "[1,2,3]" },
+  ]) assert.deepEqual(compatibleResult.runtimeCommandResultEnvelopeFromOutput(resultInput), coreResult.runtimeCommandResultEnvelopeFromOutput(resultInput))
+  assert.equal(compatibleResult.createRuntimeCommandResultEnvelope({ status: "ok" }).schema, coreContracts.RUNTIME_COMMAND_RESULT_SCHEMA)
 }
 
-async function sha256(path) { return createHash("sha256").update(await readFile(path)).digest("hex") }
+function assertSameRejection(compatible, core) {
+  assert.throws(compatible, (compatibleError) => {
+    assert.throws(core, (coreError) => {
+      assert.equal(compatibleError.message, coreError.message)
+      return true
+    })
+    return true
+  })
+}

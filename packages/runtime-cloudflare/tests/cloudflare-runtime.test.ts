@@ -5,7 +5,6 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import test from "node:test"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
-import { RUNTIME_COMMAND_RESULT_SCHEMA } from "@automattic/wp-codebox-core/runtime-command-result"
 import { runtimeArchiveComponentOwnedWpContentPaths, runtimeArchiveComponentSource } from "@automattic/wp-codebox-core/runtime-archive-component"
 import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "@automattic/wp-codebox-core/runtime-package-profile"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../src/health-envelope.js"
@@ -24,6 +23,8 @@ import { materializeWordPressRuntimeArtifact, WORDPRESS_RUNTIME_ARTIFACT_SCHEMA,
 import { validateWordPressStaticArtifactManifest, WORDPRESS_STATIC_ARTIFACT_SCHEMA, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../src/wordpress-static-artifact.js"
 import { readRuntimeArchiveArtifact, RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, RUNTIME_ARCHIVE_MAX_BYTES, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../src/runtime-archive-artifact.js"
 import { MAX_WP_CONTENT_FILE_BYTES, R2_WP_CONTENT_OBJECT_PREFIX, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "../src/wp-content-persistence.js"
+
+const RUNTIME_COMMAND_RESULT_SCHEMA = "wp-codebox/runtime-command-result/v1"
 
 const execFileAsync = promisify(execFile)
 

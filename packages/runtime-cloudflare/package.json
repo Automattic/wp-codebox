@@ -76,6 +76,5 @@
     "@php-wasm/stream-compression": "3.1.45",
     "@php-wasm/util": "3.1.46"
   },
-  "wpCodeboxCoreCompatibility": "0.26.2",
-  "wpCodeboxCoreCompatibilityManifest": "vendor/wp-codebox-core/compatibility.json"
+  "wpCodeboxCoreCompatibility": "0.26.2"
 }

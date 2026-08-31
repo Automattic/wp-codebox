@@ -1,0 +1,1 @@
+{"version":3,"file":"artifact-paths.d.ts","sourceRoot":"","sources":["../src/artifact-paths.ts"],"names":[],"mappings":"AAEA,MAAM,WAAW,oBAAoB;IACnC,IAAI,EAAE,MAAM,CAAA;IACZ,YAAY,EAAE,MAAM,CAAA;IACpB,YAAY,EAAE,MAAM,CAAA;CACrB;AAED,wBAAgB,wBAAwB,CAAC,IAAI,EAAE,MAAM,GAAG,MAAM,CAY7D;AAED,wBAAgB,mBAAmB,CAAC,IAAI,EAAE,MAAM,EAAE,IAAI,EAAE,MAAM,GAAG,oBAAoB,CAUpF"}

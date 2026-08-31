@@ -1,0 +1,101 @@
+export declare const PERFORMANCE_OBSERVATION_SCHEMA: "wp-codebox/performance-observation/v1";
+export type PerformanceObservationCaptureStatus = "captured" | "unavailable" | "partial" | "uncaptured";
+export interface PerformanceObservationCaptureRequest {
+    queries?: boolean;
+}
+export interface PerformanceObservationCaptureReport {
+    requested: PerformanceObservationCaptureRequest;
+    queries: {
+        requested: boolean;
+        status: PerformanceObservationCaptureStatus;
+        reason?: string;
+    };
+}
+export interface PerformanceObservationTiming {
+    status?: "captured" | "uncaptured" | "unsupported" | (string & {});
+    reason?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    durationMs?: number;
+}
+export interface PerformanceObservationMemory {
+    status?: "captured" | "uncaptured" | "unsupported" | (string & {});
+    reason?: string;
+    startBytes?: number;
+    endBytes?: number;
+    deltaBytes?: number;
+    peakBytes?: number;
+}
+export interface PerformanceObservationQueryFingerprint {
+    fingerprint: string;
+    count: number;
+    totalTimeMs?: number;
+    sampleMs?: number;
+    caller?: string;
+}
+export interface PerformanceObservationRepeatedQuerySummary {
+    fingerprint: string;
+    count: number;
+    totalTimeMs?: number;
+    caller?: string;
+}
+export interface PerformanceObservationDatabase {
+    status?: "captured" | "uncaptured" | "unavailable" | "partial" | "unsupported" | (string & {});
+    reason?: string;
+    queryCount?: number;
+    totalTimeMs?: number | null;
+    timingStatus?: "captured" | "unavailable" | "unsupported" | (string & {});
+    timingReason?: string;
+    fingerprints?: PerformanceObservationQueryFingerprint[];
+    repeatedQueries?: PerformanceObservationRepeatedQuerySummary[];
+}
+export interface PerformanceObservationHookTiming {
+    hook: string;
+    count?: number;
+    totalTimeMs?: number;
+    maxTimeMs?: number;
+}
+export interface PerformanceObservationHooks {
+    status?: "captured" | "uncaptured" | "unsupported" | (string & {});
+    reason?: string;
+    timings: PerformanceObservationHookTiming[];
+}
+export interface PerformanceObservationNetwork {
+    status?: "captured" | "uncaptured" | "unsupported" | (string & {});
+    reason?: string;
+    requests?: number;
+    responses?: number;
+    failures?: number;
+    transferSizeBytes?: number;
+}
+export interface PerformanceObservationBrowser {
+    status?: "captured" | "uncaptured" | "unsupported" | (string & {});
+    reason?: string;
+    metrics?: Record<string, number>;
+    admin?: Record<string, unknown>;
+}
+export interface PerformanceObservationArtifactRef {
+    kind?: string;
+    id?: string;
+    path?: string;
+    digest?: unknown;
+}
+export interface PerformanceObservation {
+    schema: typeof PERFORMANCE_OBSERVATION_SCHEMA;
+    command?: string;
+    target?: string;
+    source?: "in-process" | "server-http" | "browser" | (string & {});
+    kind?: "simulated-page-load" | "server-page-load" | "browser-page-load" | "rest-request" | (string & {});
+    timing?: PerformanceObservationTiming;
+    memory?: PerformanceObservationMemory;
+    database?: PerformanceObservationDatabase;
+    hooks?: PerformanceObservationHooks;
+    network?: PerformanceObservationNetwork;
+    browser?: PerformanceObservationBrowser;
+    artifactRefs?: PerformanceObservationArtifactRef[];
+    capture?: PerformanceObservationCaptureReport;
+    metadata?: Record<string, unknown>;
+}
+export declare function performanceObservation(input?: Omit<PerformanceObservation, "schema">): PerformanceObservation;
+export declare function performanceObservationCaptureRequest(input: unknown): PerformanceObservationCaptureRequest;
+//# sourceMappingURL=performance-observation.d.ts.map
