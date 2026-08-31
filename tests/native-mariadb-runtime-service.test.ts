@@ -284,14 +284,24 @@ process.exit(1);
   const allAbortFirst = new AbortController()
   const allAbortSecond = new AbortController()
   const beforeAllAbort = singleFlightAllocations()
-  const allAbortFirstResult = nativeMariaDbHostReadiness(dependencies, allAbortFirst.signal)
-  const allAbortSecondResult = nativeMariaDbHostReadiness(dependencies, allAbortSecond.signal)
-  while (singleFlightAllocations() === beforeAllAbort) await abortableDelay(10)
+  let allAbortAllocationEntered!: () => void
+  const allAbortAllocationStarted = new Promise<void>((resolve) => { allAbortAllocationEntered = resolve })
+  const allAbortDependencies: RuntimeServiceDependencies = { ...dependencies, async execute(command, args, options) {
+    const result = await dependencies.execute(command, args, options)
+    if (options.stdin?.includes("CREATE DATABASE")) {
+      allAbortAllocationEntered()
+      await abortableDelay(1_000, options.signal)
+    }
+    return result
+  } }
+  const allAbortFirstResult = nativeMariaDbHostReadiness(allAbortDependencies, allAbortFirst.signal)
+  const allAbortSecondResult = nativeMariaDbHostReadiness(allAbortDependencies, allAbortSecond.signal)
+  await allAbortAllocationStarted
   allAbortFirst.abort()
   allAbortSecond.abort()
   assert.deepEqual(await allAbortFirstResult, { status: "unavailable", reason: "containment-probe-interrupted" })
   assert.deepEqual(await allAbortSecondResult, { status: "unavailable", reason: "containment-probe-interrupted" })
-  await settleNativeMariaDbHostReadiness(dependencies)
+  await settleNativeMariaDbHostReadiness(allAbortDependencies)
   assert.equal(singleFlightAllocations(), beforeAllAbort + 1, "all aborted waiters cancel only one underlying allocation")
   assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("wp-codebox-mariadb-") && !allAbortRoots.has(name)), [], "all-waiter abort cleans the underlying allocation")
   assert.equal(getEventListeners(allAbortFirst.signal, "abort").length + getEventListeners(allAbortSecond.signal, "abort").length, 0)
