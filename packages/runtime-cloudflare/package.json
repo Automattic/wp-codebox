@@ -73,7 +73,6 @@
     "typescript": "^5.8.0"
   },
   "overrides": {
-    "@php-wasm/stream-compression": "3.1.45",
     "@php-wasm/util": "3.1.46"
   },
   "wpCodeboxCoreCompatibility": "0.26.2",

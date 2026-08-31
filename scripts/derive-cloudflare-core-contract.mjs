@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -49,7 +50,7 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
     assert.ok(generatedFiles.includes("runtime-command-result.d.ts"))
 
     if (write) {
-      const stagedRoot = await mkdtemp(resolve(dirname(vendorRoot), ".wp-codebox-core-stage-"))
+      const stagedRoot = await mkdtemp(resolve(dirname(cloudflareRoot), ".runtime-cloudflare-core-stage-"))
       try {
         for (const file of generatedFiles) {
           const target = resolve(stagedRoot, file)
@@ -76,28 +77,66 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
 }
 
 export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, validate, fault = async () => {} }) {
-  assert.equal(dirname(stagedRoot), dirname(destinationRoot), "staged and live trees must share a filesystem parent")
+  const stagedIdentity = await directoryIdentity(stagedRoot, "staging")
+  await directoryIdentity(destinationRoot, "destination")
   await validate(stagedRoot)
   await fault("after-validation")
 
   await fault("before-promotion")
-  await atomicExchangeDirectories(stagedRoot, destinationRoot)
+  const readyStagedIdentity = await directoryIdentity(stagedRoot, "staging")
+  if (readyStagedIdentity.dev !== stagedIdentity.dev || readyStagedIdentity.ino !== stagedIdentity.ino) {
+    throw new DirectoryPromotionError("STAGING_OWNERSHIP_CHANGED", `staging generation changed before exchange: ${stagedRoot}`)
+  }
+  const previousIdentity = await directoryIdentity(destinationRoot, "destination")
+  await atomicExchangeDirectories(stagedRoot, destinationRoot, stagedIdentity, previousIdentity)
   try {
     await fault("after-promotion")
   } catch (error) {
-    await atomicExchangeDirectories(stagedRoot, destinationRoot)
+    try {
+      await atomicExchangeDirectories(stagedRoot, destinationRoot, previousIdentity, stagedIdentity)
+    } catch (rollbackError) {
+      if (!(rollbackError instanceof DirectoryPromotionError) || rollbackError.code !== "DESTINATION_OWNERSHIP_CHANGED") throw rollbackError
+    }
     throw error
   }
 
   await rm(stagedRoot, { recursive: true, force: true })
 }
 
-async function atomicExchangeDirectories(left, right) {
+export class DirectoryPromotionError extends Error {
+  constructor(code, message, options) {
+    super(message, options)
+    this.name = "DirectoryPromotionError"
+    this.code = code
+  }
+}
+
+async function directoryIdentity(path, role) {
+  let stat
+  try {
+    stat = await lstat(path, { bigint: true })
+  } catch (cause) {
+    throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `${role} entry must be an existing directory: ${path}`, { cause })
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `${role} entry must be a directory and not a symlink: ${path}`)
+  }
+  return { dev: stat.dev, ino: stat.ino }
+}
+
+async function atomicExchangeDirectories(left, right, expectedLeft, expectedRight) {
   const helperRoot = await mkdtemp(join(tmpdir(), "wp-codebox-atomic-exchange-"))
   const helper = resolve(helperRoot, "atomic-directory-exchange")
+  const lock = resolve(tmpdir(), `wp-codebox-directory-exchange-${createHash("sha256").update(right).digest("hex")}.lock`)
   try {
     await execFileAsync("cc", [resolve(repositoryRoot, "scripts/atomic-directory-exchange.c"), "-o", helper])
-    await execFileAsync(helper, [left, right])
+    try {
+      await execFileAsync(helper, [left, right, lock, String(expectedLeft.dev), String(expectedLeft.ino), String(expectedRight.dev), String(expectedRight.ino)])
+    } catch (cause) {
+      if (cause.code === 3) throw new DirectoryPromotionError("DESTINATION_OWNERSHIP_CHANGED", `destination generation changed before exchange: ${right}`, { cause })
+      if (cause.code === 4) throw new DirectoryPromotionError("INVALID_DIRECTORY_ENTRY", `exchange operands must be directories and not symlinks: ${left}, ${right}`, { cause })
+      throw new DirectoryPromotionError("ATOMIC_EXCHANGE_FAILED", `atomic directory exchange failed for ${left} and ${right}`, { cause })
+    }
   } finally {
     await rm(helperRoot, { recursive: true, force: true })
   }
@@ -143,7 +182,7 @@ async function filesBelow(root) {
   return files.sort()
 }
 
-async function contractFiles(root) {
+export async function contractFiles(root) {
   const files = new Set([
     "runtime-archive-component.js",
     "runtime-archive-component.d.ts",
@@ -157,7 +196,11 @@ async function contractFiles(root) {
     const file = pending.pop()
     const source = await readFile(resolve(root, file), "utf8")
     for (const match of source.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["'](\.[^"']+)["']/g)) {
-      const imported = relative(root, resolve(root, dirname(file), match[1]))
+      const importedPath = resolve(root, dirname(file), match[1])
+      const imported = relative(root, importedPath)
+      if (imported === ".." || imported.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+        throw new DirectoryPromotionError("GENERATED_IMPORT_ESCAPE", `generated relative import escapes the generated/source roots: ${file} imports ${match[1]}`)
+      }
       for (const candidate of imported.endsWith(".js") ? [imported, imported.replace(/\.js$/, ".d.ts")] : [imported]) {
         if (!files.has(candidate) && await exists(resolve(root, candidate))) {
           files.add(candidate)

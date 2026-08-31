@@ -1240,6 +1240,16 @@
         "npm": ">=10.2.3"
       }
     },
+    "node_modules/@php-wasm/universal/node_modules/@php-wasm/stream-compression": {
+      "version": "3.1.46",
+      "resolved": "https://registry.npmjs.org/@php-wasm/stream-compression/-/stream-compression-3.1.46.tgz",
+      "integrity": "sha512-+oUw4CPX52FgYXEh5C+MgJAg7Cy5OeaVuh7HnQR6oxb69nU63/r8tHTLV/WrWRyjBYh321uJzLV7Gg29qmiUtg==",
+      "inBundle": true,
+      "license": "GPL-2.0-or-later",
+      "dependencies": {
+        "@php-wasm/util": "3.1.46"
+      }
+    },
     "node_modules/@php-wasm/util": {
       "version": "3.1.46",
       "resolved": "https://registry.npmjs.org/@php-wasm/util/-/util-3.1.46.tgz",

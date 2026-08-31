@@ -31,10 +31,13 @@ try {
   const shrinkwrap = JSON.parse(await readFile(join(installedPackage, "npm-shrinkwrap.json"), "utf8"))
   assert.equal(shrinkwrap.packages?.[""]?.dependencies?.wrangler, "4.127.1", "the packed artifact must carry Wrangler as an exact production dependency")
   await execFileAsync("npm", ["ci", "--include=dev", "--workspaces=false"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
+  await execFileAsync("npm", ["ls", "--omit=dev"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   await execFileAsync("npm", ["test"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   await execFileAsync("npm", ["run", "build"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   const streamCompression = await readFile(join(installedPackage, "node_modules/@php-wasm/stream-compression/index.js"), "utf8")
   assert.match(streamCompression, /Expected a partial zip range response/, "packed runtime postinstall must apply its package-owned stream patch")
+  const universalStreamCompression = JSON.parse(await readFile(join(installedPackage, "node_modules/@php-wasm/universal/node_modules/@php-wasm/stream-compression/package.json"), "utf8"))
+  assert.equal(universalStreamCompression.version, "3.1.46", "Universal must retain its independently pinned stream-compression dependency")
   const corePackage = JSON.parse(await readFile(join(installedPackage, "node_modules/@automattic/wp-codebox-core/package.json"), "utf8"))
   assert.equal(corePackage.version, "0.26.2", "the packed runtime must install its explicit compatible core contract")
 
@@ -60,6 +63,11 @@ try {
 
   const productionPackage = join(productionRoot, "package")
   await execFileAsync("npm", ["ci", "--omit=dev", "--workspaces=false"], {
+    cwd: productionPackage,
+    env: { ...process.env, NODE_ENV: "production" },
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  await execFileAsync("npm", ["ls", "--omit=dev"], {
     cwd: productionPackage,
     env: { ...process.env, NODE_ENV: "production" },
     maxBuffer: 1024 * 1024 * 20,

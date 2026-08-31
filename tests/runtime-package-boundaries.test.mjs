@@ -23,6 +23,10 @@ for (const dependency of ["@cloudflare/workers-types"]) {
 }
 assert.equal(cloudflarePackage.dependencies?.wrangler, "4.127.1", "Homeboy must install the exact Wrangler binary in production mode")
 assert.equal(cloudflarePackage.devDependencies?.wrangler, undefined)
+assert.equal(cloudflarePackage.dependencies?.["@php-wasm/stream-compression"], "3.1.45", "the patched direct stream dependency must remain pinned")
+assert.equal(cloudflarePackage.dependencies?.["@php-wasm/universal"], "3.1.46", "Universal must retain its independent pin")
+assert.equal(cloudflarePackage.overrides?.["@php-wasm/stream-compression"], undefined, "the direct patch must not invalidate Universal's transitive dependency graph")
+assert.equal(cloudflareLock.packages?.["node_modules/@php-wasm/universal/node_modules/@php-wasm/stream-compression"]?.version, "3.1.46", "Universal must install its own npm-valid stream dependency")
 assert.equal(cloudflarePackage.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core", "the packed runtime must own an explicit compatible core contract dependency")
 assert.equal(cloudflarePackage.peerDependencies?.["@automattic/wp-codebox-core"], undefined, "package-owned runtime assets must not retain an optional core peer")
 assert.equal(cloudflareLock.packages?.[""]?.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core")
