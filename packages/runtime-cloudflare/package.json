@@ -52,7 +52,8 @@
     "@php-wasm/universal": "3.1.46",
     "@php-wasm/web-8-5": "3.1.46",
     "@wp-playground/wordpress": "3.1.46",
-    "patch-package": "^8.0.1"
+    "patch-package": "^8.0.1",
+    "wrangler": "4.127.1"
   },
   "bundleDependencies": [
     "@automattic/wp-codebox-core",
@@ -69,8 +70,7 @@
     "playwright": "1.61.1",
     "pngjs": "7.0.0",
     "tsx": "^4.20.0",
-    "typescript": "^5.8.0",
-    "wrangler": "4.127.1"
+    "typescript": "^5.8.0"
   },
   "overrides": {
     "@php-wasm/stream-compression": "3.1.45",

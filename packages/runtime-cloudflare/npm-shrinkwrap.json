@@ -22,7 +22,8 @@
         "@php-wasm/universal": "3.1.46",
         "@php-wasm/web-8-5": "3.1.46",
         "@wp-playground/wordpress": "3.1.46",
-        "patch-package": "^8.0.1"
+        "patch-package": "^8.0.1",
+        "wrangler": "4.127.1"
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20260718.1",
@@ -31,8 +32,7 @@
         "playwright": "1.61.1",
         "pngjs": "7.0.0",
         "tsx": "^4.20.0",
-        "typescript": "^5.8.0",
-        "wrangler": "4.127.1"
+        "typescript": "^5.8.0"
       }
     },
     "node_modules/@automattic/wp-codebox-core": {
@@ -43,7 +43,6 @@
       "version": "0.5.0",
       "resolved": "https://registry.npmjs.org/@cloudflare/kv-asset-handler/-/kv-asset-handler-0.5.0.tgz",
       "integrity": "sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==",
-      "dev": true,
       "license": "MIT OR Apache-2.0",
       "engines": {
         "node": ">=22.0.0"
@@ -53,7 +52,6 @@
       "version": "2.16.1",
       "resolved": "https://registry.npmjs.org/@cloudflare/unenv-preset/-/unenv-preset-2.16.1.tgz",
       "integrity": "sha512-ECxObrMfyTl5bhQf/lZCXwo5G6xX9IAUo+nDMKK4SZ8m4Jvvxp52vilxyySSWh2YTZz8+HQ07qGH/2rEom1vDw==",
-      "dev": true,
       "license": "MIT OR Apache-2.0",
       "peerDependencies": {
         "unenv": "2.0.0-rc.24",
@@ -72,7 +70,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -89,7 +86,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -106,7 +102,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -123,7 +118,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -140,7 +134,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -154,14 +147,13 @@
       "version": "5.20260831.1",
       "resolved": "https://registry.npmjs.org/@cloudflare/workers-types/-/workers-types-5.20260831.1.tgz",
       "integrity": "sha512-yXg4pwfYjhsDH9rYc3qZ3K+z62DCSvO/aj7GiZo6AyDeWGZpyFRpPMYcQ6LF/zfaf1x0Ngw2gSqL8JjuUtMGlA==",
-      "dev": true,
+      "devOptional": true,
       "license": "MIT OR Apache-2.0"
     },
     "node_modules/@cspotcode/source-map-support": {
       "version": "0.8.1",
       "resolved": "https://registry.npmjs.org/@cspotcode/source-map-support/-/source-map-support-0.8.1.tgz",
       "integrity": "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@jridgewell/trace-mapping": "0.3.9"
@@ -174,7 +166,6 @@
       "version": "1.11.3",
       "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.3.tgz",
       "integrity": "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==",
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "dependencies": {
@@ -627,7 +618,6 @@
       "version": "1.1.0",
       "resolved": "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz",
       "integrity": "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=18"
@@ -640,7 +630,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -663,7 +652,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -683,7 +671,6 @@
       "version": "0.35.2",
       "resolved": "https://registry.npmjs.org/@img/sharp-freebsd-wasm32/-/sharp-freebsd-wasm32-0.35.2.tgz",
       "integrity": "sha512-YoAxdnd8hPUkvLHd3bWY+YA8nw3xM/RyRopYucNsWHVSan8NLVM3X2volsfoRDcXdUJPg6tXahSd7HXPK7lRnw==",
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "os": [
@@ -706,7 +693,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "LGPL-3.0-or-later",
       "optional": true,
       "os": [
@@ -723,7 +709,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "LGPL-3.0-or-later",
       "optional": true,
       "os": [
@@ -740,7 +725,6 @@
       "cpu": [
         "arm"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -760,7 +744,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -780,7 +763,6 @@
       "cpu": [
         "ppc64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -800,7 +782,6 @@
       "cpu": [
         "riscv64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -820,7 +801,6 @@
       "cpu": [
         "s390x"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -840,7 +820,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -860,7 +839,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "libc": [
         "musl"
       ],
@@ -880,7 +858,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "libc": [
         "musl"
       ],
@@ -900,7 +877,6 @@
       "cpu": [
         "arm"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -926,7 +902,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -952,7 +927,6 @@
       "cpu": [
         "ppc64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -978,7 +952,6 @@
       "cpu": [
         "riscv64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -1004,7 +977,6 @@
       "cpu": [
         "s390x"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -1030,7 +1002,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "libc": [
         "glibc"
       ],
@@ -1056,7 +1027,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "libc": [
         "musl"
       ],
@@ -1082,7 +1052,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "libc": [
         "musl"
       ],
@@ -1105,7 +1074,6 @@
       "version": "0.35.2",
       "resolved": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.2.tgz",
       "integrity": "sha512-Mrv4JQNYVQ94xH+jzZ9r+gowleN8mv2FTgKT+PI6bx5C0G8TdNYndu161pg2i7uoBwxy2ImPMHrJOM2LZef7Bw==",
-      "dev": true,
       "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
       "optional": true,
       "dependencies": {
@@ -1125,7 +1093,6 @@
       "cpu": [
         "wasm32"
       ],
-      "dev": true,
       "license": "Apache-2.0",
       "optional": true,
       "dependencies": {
@@ -1145,7 +1112,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "optional": true,
       "os": [
@@ -1165,7 +1131,6 @@
       "cpu": [
         "ia32"
       ],
-      "dev": true,
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "optional": true,
       "os": [
@@ -1185,7 +1150,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "optional": true,
       "os": [
@@ -1202,7 +1166,6 @@
       "version": "3.1.2",
       "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
       "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=6.0.0"
@@ -1212,14 +1175,12 @@
       "version": "1.6.0",
       "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz",
       "integrity": "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==",
-      "dev": true,
       "license": "MIT"
     },
     "node_modules/@jridgewell/trace-mapping": {
       "version": "0.3.9",
       "resolved": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.9.tgz",
       "integrity": "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@jridgewell/resolve-uri": "^3.0.3",
@@ -1308,7 +1269,6 @@
       "version": "4.1.6",
       "resolved": "https://registry.npmjs.org/@poppinss/colors/-/colors-4.1.6.tgz",
       "integrity": "sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "kleur": "^4.1.5"
@@ -1318,7 +1278,6 @@
       "version": "0.6.5",
       "resolved": "https://registry.npmjs.org/@poppinss/dumper/-/dumper-0.6.5.tgz",
       "integrity": "sha512-NBdYIb90J7LfOI32dOewKI1r7wnkiH6m920puQ3qHUeZkxNkQiFnXVWoE6YtFSv6QOiPPf7ys6i+HWWecDz7sw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@poppinss/colors": "^4.1.5",
@@ -1330,14 +1289,12 @@
       "version": "1.2.3",
       "resolved": "https://registry.npmjs.org/@poppinss/exception/-/exception-1.2.3.tgz",
       "integrity": "sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==",
-      "dev": true,
       "license": "MIT"
     },
     "node_modules/@sindresorhus/is": {
       "version": "7.2.0",
       "resolved": "https://registry.npmjs.org/@sindresorhus/is/-/is-7.2.0.tgz",
       "integrity": "sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=18"
@@ -1350,7 +1307,6 @@
       "version": "1.2.24",
       "resolved": "https://registry.npmjs.org/@speed-highlight/core/-/core-1.2.24.tgz",
       "integrity": "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw==",
-      "dev": true,
       "license": "CC0-1.0"
     },
     "node_modules/@types/node": {
@@ -1423,7 +1379,6 @@
       "version": "2.1.5",
       "resolved": "https://registry.npmjs.org/blake3-wasm/-/blake3-wasm-2.1.5.tgz",
       "integrity": "sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==",
-      "dev": true,
       "license": "MIT"
     },
     "node_modules/braces": {
@@ -1559,7 +1514,6 @@
       "version": "1.1.1",
       "resolved": "https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz",
       "integrity": "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=18"
@@ -1606,7 +1560,6 @@
       "version": "2.1.2",
       "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
       "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
-      "dev": true,
       "license": "Apache-2.0",
       "engines": {
         "node": ">=8"
@@ -1631,7 +1584,6 @@
       "version": "1.0.5",
       "resolved": "https://registry.npmjs.org/error-stack-parser-es/-/error-stack-parser-es-1.0.5.tgz",
       "integrity": "sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA==",
-      "dev": true,
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/antfu"
@@ -1754,7 +1706,6 @@
       "version": "2.3.3",
       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
-      "dev": true,
       "hasInstallScript": true,
       "license": "MIT",
       "optional": true,
@@ -2003,7 +1954,6 @@
       "version": "4.1.5",
       "resolved": "https://registry.npmjs.org/kleur/-/kleur-4.1.5.tgz",
       "integrity": "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=6"
@@ -2037,7 +1987,6 @@
       "version": "5.20260828.0-alpha",
       "resolved": "https://registry.npmjs.org/miniflare/-/miniflare-5.20260828.0-alpha.tgz",
       "integrity": "sha512-6nbxhZEcz/UET3Y1OnYPsrAUjUmuFoib3ynUqteRdn1YnDxsLg8cwgZJZCk9QmtOmGzXwzXzgE/d/C0dJAPtVw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@cspotcode/source-map-support": "0.8.1",
@@ -2132,14 +2081,12 @@
       "version": "6.3.0",
       "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-6.3.0.tgz",
       "integrity": "sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==",
-      "dev": true,
       "license": "MIT"
     },
     "node_modules/pathe": {
       "version": "2.0.3",
       "resolved": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz",
       "integrity": "sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==",
-      "dev": true,
       "license": "MIT"
     },
     "node_modules/picomatch": {
@@ -2260,7 +2207,6 @@
       "version": "0.35.2",
       "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.35.2.tgz",
       "integrity": "sha512-FVtFjtBCMiJS6yb5CX7Sop45WFMpeGw6oRKuJnXYgf/f1ms/D7LE/ZUSNxnW7rZ/dbslQWYkoqFHGPaDBtaK4w==",
-      "dev": true,
       "license": "Apache-2.0",
       "dependencies": {
         "@img/colour": "^1.1.0",
@@ -2338,7 +2284,6 @@
       "version": "10.2.2",
       "resolved": "https://registry.npmjs.org/supports-color/-/supports-color-10.2.2.tgz",
       "integrity": "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=18"
@@ -2374,7 +2319,6 @@
       "version": "2.8.1",
       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
-      "dev": true,
       "license": "0BSD",
       "optional": true
     },
@@ -2415,7 +2359,6 @@
       "version": "7.29.0",
       "resolved": "https://registry.npmjs.org/undici/-/undici-7.29.0.tgz",
       "integrity": "sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=20.18.1"
@@ -2432,7 +2375,6 @@
       "version": "2.0.0-rc.24",
       "resolved": "https://registry.npmjs.org/unenv/-/unenv-2.0.0-rc.24.tgz",
       "integrity": "sha512-i7qRCmY42zmCwnYlh9H2SvLEypEFGye5iRmEMKjcGi7zk9UquigRjFtTLz0TYqr0ZGLZhaMHl/foy1bZR+Cwlw==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "pathe": "^2.0.3"
@@ -2475,7 +2417,6 @@
       "version": "1.20260828.1",
       "resolved": "https://registry.npmjs.org/workerd/-/workerd-1.20260828.1.tgz",
       "integrity": "sha512-pB9yvt0kkwZDAGZHmpY59r0o3hM0DzdW6BJERqwZOhunZ3ssOyDSgQxOQer2cSZW4YCFeOTIQYN1qwhK5wv/Cw==",
-      "dev": true,
       "hasInstallScript": true,
       "license": "Apache-2.0",
       "bin": {
@@ -2496,7 +2437,6 @@
       "version": "4.127.1",
       "resolved": "https://registry.npmjs.org/wrangler/-/wrangler-4.127.1.tgz",
       "integrity": "sha512-OzsiNgaI8i681L/+KnAKc+uEZ5D57xK5JuNvCOpRKICF4/5Q3Cu1oTGuUiT/f3GDUqQb3gzXNT0tfOHGMEtknw==",
-      "dev": true,
       "license": "MIT OR Apache-2.0",
       "dependencies": {
         "@cloudflare/kv-asset-handler": "0.5.0",
@@ -2535,7 +2475,6 @@
       "cpu": [
         "ppc64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2552,7 +2491,6 @@
       "cpu": [
         "arm"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2569,7 +2507,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2586,7 +2523,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2603,7 +2539,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2620,7 +2555,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2637,7 +2571,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2654,7 +2587,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2671,7 +2603,6 @@
       "cpu": [
         "arm"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2688,7 +2619,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2705,7 +2635,6 @@
       "cpu": [
         "ia32"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2722,7 +2651,6 @@
       "cpu": [
         "loong64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2739,7 +2667,6 @@
       "cpu": [
         "mips64el"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2756,7 +2683,6 @@
       "cpu": [
         "ppc64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2773,7 +2699,6 @@
       "cpu": [
         "riscv64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2790,7 +2715,6 @@
       "cpu": [
         "s390x"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2807,7 +2731,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2824,7 +2747,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2841,7 +2763,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2858,7 +2779,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2875,7 +2795,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2892,7 +2811,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2909,7 +2827,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2926,7 +2843,6 @@
       "cpu": [
         "arm64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2943,7 +2859,6 @@
       "cpu": [
         "ia32"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2960,7 +2875,6 @@
       "cpu": [
         "x64"
       ],
-      "dev": true,
       "license": "MIT",
       "optional": true,
       "os": [
@@ -2974,7 +2888,6 @@
       "version": "0.28.1",
       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.1.tgz",
       "integrity": "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==",
-      "dev": true,
       "hasInstallScript": true,
       "license": "MIT",
       "bin": {
@@ -3016,7 +2929,6 @@
       "version": "8.21.0",
       "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz",
       "integrity": "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==",
-      "dev": true,
       "license": "MIT",
       "engines": {
         "node": ">=10.0.0"
@@ -3054,7 +2966,6 @@
       "version": "4.1.0-beta.10",
       "resolved": "https://registry.npmjs.org/youch/-/youch-4.1.0-beta.10.tgz",
       "integrity": "sha512-rLfVLB4FgQneDr0dv1oddCVZmKjcJ6yX6mS4pU82Mq/Dt9a3cLZQ62pDBL4AUO+uVrCvtWz3ZFUL2HFAFJ/BXQ==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@poppinss/colors": "^4.1.5",
@@ -3068,7 +2979,6 @@
       "version": "0.3.3",
       "resolved": "https://registry.npmjs.org/youch-core/-/youch-core-0.3.3.tgz",
       "integrity": "sha512-ho7XuGjLaJ2hWHoK8yFnsUGy2Y5uDpqSTq1FkHLK4/oqKtyUU1AFbOOxY4IpC9f0fTLjwYbslUz0Po5BpD1wrA==",
-      "dev": true,
       "license": "MIT",
       "dependencies": {
         "@poppinss/exception": "^1.2.2",

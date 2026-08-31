@@ -23,10 +23,12 @@ assert.deepEqual(rootPackage.workspaces, ["packages/cli", "packages/runtime-core
 assert.equal(rootPackage.workspaces.includes("packages/runtime-cloudflare"), false, "runtime-cloudflare must not join the default install lane")
 assert.equal(rootLock.packages?.["packages/runtime-cloudflare"], undefined, "the root shrinkwrap must not retain extraneous Cloudflare package metadata")
 assert.equal(rootPackage.overrides?.["@php-wasm/stream-compression"], undefined, "the Cloudflare-only stream patch must not retain root override ownership")
-for (const dependency of ["@cloudflare/workers-types", "wrangler"]) {
+for (const dependency of ["@cloudflare/workers-types"]) {
   assert.equal(rootPackage.devDependencies?.[dependency], undefined, `${dependency} must not be installed by the main lane`)
   assert.ok(cloudflarePackage.devDependencies?.[dependency], `${dependency} must be owned by runtime-cloudflare`)
 }
+assert.equal(cloudflarePackage.dependencies?.wrangler, "4.127.1", "Homeboy must install the exact Wrangler binary in production mode")
+assert.equal(cloudflarePackage.devDependencies?.wrangler, undefined)
 assert.equal(cloudflarePackage.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core", "the packed runtime must own an explicit compatible core contract dependency")
 assert.equal(cloudflarePackage.peerDependencies?.["@automattic/wp-codebox-core"], undefined, "package-owned runtime assets must not retain an optional core peer")
 assert.equal(cloudflareLock.packages?.[""]?.dependencies?.["@automattic/wp-codebox-core"], "file:vendor/wp-codebox-core")
@@ -43,7 +45,7 @@ assert.ok(cloudflarePackage.dependencies?.["patch-package"], "packed installs mu
 assert.deepEqual(cloudflarePackage.bundleDependencies, ["@automattic/wp-codebox-core", "@php-wasm/stream-compression", "@php-wasm/universal", "@php-wasm/web-8-5", "@wp-playground/wordpress", "patch-package"], "packed installs must carry the shared contract, every required runtime dependency, and patch tool")
 assert.doesNotMatch(cloudflarePackage.scripts?.test ?? "", /cd \.\.\/\.\.|packages\/runtime-cloudflare|register-package-local-loader/, "package tests must remain rootless")
 assert.equal(homeboy.deployment_provider?.policy?.wrangler?.binary, "./packages/runtime-cloudflare/node_modules/.bin/wrangler")
-assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --prefix packages/runtime-cloudflare --workspaces=false"])
+assert.deepEqual(homeboy.deployment_provider?.policy?.predeploy_commands, ["npm ci --omit=dev --prefix packages/runtime-cloudflare --workspaces=false"])
 assert.match(cloudflareWorkflow, /npm ci --prefix packages\/runtime-cloudflare --workspaces=false/, "Cloudflare CI must install the independent package lock")
 assert.match(cloudflareWorkflow, /npm --prefix packages\/runtime-cloudflare run check/, "Cloudflare CI must run the package-owned check")
 assert.match(cloudflareWorkflow, /npm --prefix packages\/runtime-cloudflare run test:packed-wrangler/, "Cloudflare CI must bundle a clean installed package artifact")

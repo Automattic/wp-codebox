@@ -11,10 +11,12 @@ const repositoryRoot = resolve(packageRoot, "../..")
 const temporaryRoot = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-pack-"))
 const tarballRoot = join(temporaryRoot, "tarballs")
 const installRoot = join(temporaryRoot, "install")
+const productionRoot = join(temporaryRoot, "production-install")
 
 try {
   await mkdir(tarballRoot)
   await mkdir(installRoot)
+  await mkdir(productionRoot)
   const { stdout } = await execFileAsync("npm", ["pack", ".", "--json", "--workspaces=false", "--pack-destination", tarballRoot], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
@@ -22,11 +24,12 @@ try {
   const [packed] = JSON.parse(stdout)
   const tarball = resolve(tarballRoot, packed.filename)
   await execFileAsync("tar", ["-xzf", tarball, "-C", installRoot])
+  await execFileAsync("tar", ["-xzf", tarball, "-C", productionRoot])
 
   const installedPackage = join(installRoot, "package")
   assert.equal(installedPackage.startsWith(`${repositoryRoot}${sep}`), false, "packed runtime must be extracted outside the repository")
   const shrinkwrap = JSON.parse(await readFile(join(installedPackage, "npm-shrinkwrap.json"), "utf8"))
-  assert.equal(shrinkwrap.packages?.[""]?.devDependencies?.wrangler, "4.127.1", "the packed artifact must carry its exact Wrangler lock")
+  assert.equal(shrinkwrap.packages?.[""]?.dependencies?.wrangler, "4.127.1", "the packed artifact must carry Wrangler as an exact production dependency")
   await execFileAsync("npm", ["ci", "--include=dev", "--workspaces=false"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   await execFileAsync("npm", ["test"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
   await execFileAsync("npm", ["run", "build"], { cwd: installedPackage, maxBuffer: 1024 * 1024 * 20 })
@@ -54,6 +57,22 @@ try {
       maxBuffer: 1024 * 1024 * 20,
     })
   }
+
+  const productionPackage = join(productionRoot, "package")
+  await execFileAsync("npm", ["ci", "--omit=dev", "--workspaces=false"], {
+    cwd: productionPackage,
+    env: { ...process.env, NODE_ENV: "production" },
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  const productionWrangler = join(productionPackage, "node_modules/.bin/wrangler")
+  const productionWranglerPackage = JSON.parse(await readFile(join(productionPackage, "node_modules/wrangler/package.json"), "utf8"))
+  assert.equal(productionWranglerPackage.version, "4.127.1")
+  await assert.rejects(readFile(join(productionPackage, "node_modules/playwright/package.json")), { code: "ENOENT" })
+  await execFileAsync(productionWrangler, ["deploy", "--dry-run", "--config", join(productionPackage, "wrangler.d1.jsonc"), "--outdir", join(temporaryRoot, "production-bundle")], {
+    cwd: productionPackage,
+    env: { ...process.env, NODE_ENV: "production" },
+    maxBuffer: 1024 * 1024 * 20,
+  })
 
   console.log(`packed Cloudflare Wrangler bundle passed from ${relative(tmpdir(), installedPackage)}`)
 } finally {

@@ -25,7 +25,7 @@
         "WORDPRESS_STATE_DATABASE"
       ],
       "predeploy_commands": [
-        "npm ci --prefix packages/runtime-cloudflare --workspaces=false"
+        "npm ci --omit=dev --prefix packages/runtime-cloudflare --workspaces=false"
       ],
       "timeout_ms": 300000
     }
