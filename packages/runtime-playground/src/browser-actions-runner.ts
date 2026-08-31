@@ -427,7 +427,7 @@ export async function runBrowserActionsCommand({
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
         stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
-        pendingError = error instanceof Error ? error : new Error(String(error))
+        pendingError ??= error instanceof Error ? error : new Error(String(error))
         if (isBrowserCommandLivenessError(pendingError)) {
           await page.close().catch(() => undefined)
         }
@@ -515,7 +515,7 @@ export async function runBrowserActionsCommand({
       }
     }
   } catch (error) {
-    pendingError = error instanceof Error ? error : new Error(String(error))
+    pendingError ??= error instanceof Error ? error : new Error(String(error))
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs).catch((error) => errors.push(serializeBrowserError("probe-error", error)))
