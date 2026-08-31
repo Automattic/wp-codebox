@@ -87,6 +87,7 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
     let timedOut = false
     let settled = false
     const memorySamples: HostCommandMemorySample[] = []
+    const memorySampleTasks = new Set<Promise<void>>()
 
     const child = spawn(config.command, args, {
       cwd,
@@ -102,16 +103,20 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
       setTimeout(() => terminateHostCommandProcessTree(child.pid, "SIGKILL"), terminationGraceMs).unref()
     }, timeoutMs)
 
-    const memoryTimer = setInterval(() => {
+    const sampleMemory = () => {
       if (child.pid === undefined) {
         return
       }
-      void sampleHostCommandProcessTreeRssBytes(child.pid).then((rssBytes) => {
+      const task = sampleHostCommandProcessTreeRssBytes(child.pid).then((rssBytes) => {
         if (rssBytes !== undefined) {
           memorySamples.push({ elapsedMs: Date.now() - started, rssBytes })
         }
       }).catch(() => undefined)
-    }, memorySampleIntervalMs)
+      memorySampleTasks.add(task)
+      void task.finally(() => memorySampleTasks.delete(task))
+    }
+    sampleMemory()
+    const memoryTimer = setInterval(sampleMemory, memorySampleIntervalMs)
 
     child.stdout?.on("data", (chunk: Buffer) => {
       artifactWriters?.stdout.write(chunk)
@@ -145,24 +150,25 @@ export async function executeHostCommand(config: HostCommandExecutorConfig, inpu
       settled = true
       clearTimeout(timer)
       clearInterval(memoryTimer)
-      const durationMs = Date.now() - started
-      const result: HostCommandExecutorResult = {
-        command: config.command,
-        args,
-        cwd,
-        exitCode: exitCode ?? -1,
-        signal: signal ?? "",
-        stdout,
-        stderr,
-        durationMs,
-        timedOut,
-        outputTruncated,
-        failureClassification: classifyHostCommandFailure(exitCode, signal, timedOut),
-        commandSummary,
-        memorySamples,
-        peakRssBytes: memorySamples.reduce((peak, sample) => Math.max(peak, sample.rssBytes), 0),
-      }
-      void finalizeHostCommandArtifacts(artifactWriters, result).then((artifacts) => {
+      void Promise.all([...memorySampleTasks]).then(async () => {
+        const durationMs = Date.now() - started
+        const result: HostCommandExecutorResult = {
+          command: config.command,
+          args,
+          cwd,
+          exitCode: exitCode ?? -1,
+          signal: signal ?? "",
+          stdout,
+          stderr,
+          durationMs,
+          timedOut,
+          outputTruncated,
+          failureClassification: classifyHostCommandFailure(exitCode, signal, timedOut),
+          commandSummary,
+          memorySamples,
+          peakRssBytes: memorySamples.reduce((peak, sample) => Math.max(peak, sample.rssBytes), 0),
+        }
+        const artifacts = await finalizeHostCommandArtifacts(artifactWriters, result)
         resolveResult(artifacts ? { ...result, artifacts } : result)
       }).catch(reject)
     })
