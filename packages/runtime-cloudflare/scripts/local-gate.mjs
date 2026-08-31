@@ -3,12 +3,13 @@ import { createHash, createHmac } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { stripVTControlCharacters } from "node:util"
 import { encodeZip } from "@php-wasm/stream-compression"
-import { runVisualCompareCommand } from "../packages/runtime-playground/dist/browser-visual-compare.js"
-import publicationContract from "../packages/runtime-cloudflare/src/publication-contract.json" with { type: "json" }
+import { assertVisualParity } from "./visual-parity.mjs"
+import publicationContract from "../src/publication-contract.json" with { type: "json" }
 
+const packageRoot = resolve(import.meta.dirname, "..")
 const port = 8792
 const origin = `http://127.0.0.1:${port}`
 const password = "cloudflare-runtime-test-password"
@@ -22,8 +23,8 @@ const runtimeDispatchAttempts = new Map()
 const coordinator = process.argv.includes("--coordinator=d1") ? "d1" : "durable-object"
 const publicProvisioning = process.argv.includes("--public-provisioning")
 const artifactPath = process.argv.find((argument) => argument.startsWith("--artifact="))?.slice("--artifact=".length)
-const executionWranglerConfig = coordinator === "d1" ? "packages/runtime-cloudflare/wrangler.d1.jsonc" : "packages/runtime-cloudflare/wrangler.jsonc"
-const controlWranglerConfig = "packages/runtime-cloudflare/wrangler.control.jsonc"
+const executionWranglerConfig = resolve(packageRoot, coordinator === "d1" ? "wrangler.d1.jsonc" : "wrangler.jsonc")
+const controlWranglerConfig = resolve(packageRoot, "wrangler.control.jsonc")
 const stateDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-cloudflare-gate-"))
 const cookies = []
 let siteContexts = [{ id: "default", hostname: "127.0.0.1", origin }]
@@ -36,8 +37,8 @@ function siteCredential(rootCredential, siteId, purpose) {
 }
 
 try {
-  await run("npm", ["run", "generate:cloudflare-wordpress-runtime-corpus"])
-  await run("npm", ["run", "provision:cloudflare-wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
+  await run("npm", ["run", "generate:wordpress-runtime-corpus"])
+  await run("npm", ["run", "provision:wordpress-runtime-corpus", "--", "--local", "--persist-to", stateDirectory])
   const staticArtifactImport = await provisionStaticArtifact()
   await startWorker(!publicProvisioning && coordinator === "durable-object", publicProvisioning ? controlWranglerConfig : executionWranglerConfig)
   if (publicProvisioning) {
@@ -150,7 +151,7 @@ try {
 
 async function run(command, args) {
   await new Promise((resolve, reject) => {
-    const childProcess = spawn(command, args, { cwd: process.cwd(), stdio: "inherit" })
+    const childProcess = spawn(command, args, { cwd: packageRoot, env: childEnvironment(), stdio: "inherit" })
     childProcess.on("error", reject)
     childProcess.on("exit", (code) => code === 0 ? resolve(undefined) : reject(new Error(`${command} ${args.join(" ")} failed with status ${code}.`)))
   })
@@ -369,31 +370,7 @@ async function assertStaticArtifactVisualParity(serialized, importedPages) {
       const route = new URL(page.route, origin).pathname
       if (!routes.has(route)) throw new Error(`Imported route ${route} has no exact source-artifact document.`)
       const artifactRoot = join(stateDirectory, "visual-parity", route === "/" ? "home" : route.replace(/^\/|\/$/g, "").replaceAll("/", "-"))
-      const comparison = await runVisualCompareCommand({
-        artifactRoot,
-        server: {
-          serverUrl: sourceOrigin,
-          playground: { run: async () => ({ text: "" }) },
-          async [Symbol.asyncDispose]() {},
-        },
-        spec: {
-          command: "wordpress.visual-compare",
-          args: [
-            `source-url=${sourceOrigin}${route}`,
-            `candidate-url=${origin}${route}`,
-            "viewport=1280x720",
-            "full-page=true",
-            "threshold=0",
-            "include-aa=true",
-            "block-external-requests=true",
-            "timeout=120s",
-          ],
-        },
-      })
-      const summary = JSON.parse(comparison.output)
-      if (summary.status !== "identical" || summary.comparison?.mismatchPixels !== 0 || summary.comparison?.dimensionMismatch) {
-        throw new Error(`Static artifact visual parity failed for ${route}: ${JSON.stringify({ status: summary.status, comparison: summary.comparison, files: summary.files, artifactRoot })}.`)
-      }
+      await assertVisualParity({ sourceUrl: `${sourceOrigin}${route}`, candidateUrl: `${origin}${route}`, artifactRoot })
       console.log(`Static artifact visual parity passed for ${route}: 0 mismatched pixels at 1280x720.`)
     }
   } finally {
@@ -479,9 +456,9 @@ async function startWorker(testScheduled = coordinator === "durable-object", con
   const apiTokens = [{ id: "local-gate", principal: "local-gate", digest: createHash("sha256").update(apiToken).digest("hex"), scopes: ["sites:create", "sites:read", "sites:import", "operations:read"], expiresAt: "2099-01-01T00:00:00.000Z", maxSites: 1 }]
   const args = ["dev", ...(testScheduled ? ["--test-scheduled"] : []), "--config", config, "--port", String(port), "--persist-to", stateDirectory, "--var", `WORDPRESS_ADMIN_PASSWORD:${password}`, "--var", `WORDPRESS_ADMIN_CLAIM_SECRET:${administratorClaimSecret}`, "--var", `WORDPRESS_AUTH_SECRET:${authSecret}`, "--var", `WORDPRESS_OPERATOR_TOKEN:${operatorToken}`, "--var", `WORDPRESS_API_TOKENS:${JSON.stringify(apiTokens)}`, "--var", `WORDPRESS_SITE_CONTEXTS:${JSON.stringify(siteContexts)}`]
   child = spawn("wrangler", args, {
-    cwd: process.cwd(),
+    cwd: packageRoot,
     // The host PAC resolves these public archive hosts through an unavailable local proxy.
-    env: { ...process.env, NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
+    env: { ...childEnvironment(), NO_PROXY: "wordpress.org,github.com,codeload.github.com", no_proxy: "wordpress.org,github.com,codeload.github.com" },
     stdio: ["ignore", "pipe", "pipe"],
   })
   child.stdout.on("data", (chunk) => {
@@ -494,6 +471,8 @@ async function startWorker(testScheduled = coordinator === "durable-object", con
   })
   await waitForServer()
 }
+
+function childEnvironment() { return Object.fromEntries(Object.entries(process.env).filter(([name, value]) => name !== "NODE_OPTIONS" || !value?.includes("register-package-local-loader"))) }
 
 async function stopWorker() {
   if (!child || child.exitCode !== null) return

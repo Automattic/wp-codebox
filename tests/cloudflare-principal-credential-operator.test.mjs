@@ -6,7 +6,7 @@ import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
 import test from "node:test"
 
-const script = resolve("scripts/operator-cloudflare-principal-credential.ts")
+const script = resolve("packages/runtime-cloudflare/scripts/operator-principal-credential.ts")
 const base = ["--config", "packages/runtime-cloudflare/wrangler.d1.jsonc", "--credential-id", "deployer", "--version", "v1"]
 const policy = ["--principal", "ci:deploy", "--scopes", "sites:create,sites:read", "--expires-at", "2027-01-01T00:00:00.000Z", "--max-sites", "3"]
 

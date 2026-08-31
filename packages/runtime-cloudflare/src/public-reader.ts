@@ -3,7 +3,7 @@ import { parseSiteContexts, previewDomain, resolvePreviewSiteContextFromRequest,
 import { isCanonicalWpContentPath, validateWpContentManifestFiles } from "./wp-content-persistence.js"
 import { validateUploadManifestFiles } from "./upload-persistence.js"
 import { servePublicWordPressStaticAsset } from "./wordpress-static-reader.js"
-import { runtimeArchiveComponentOwnedWpContentPaths } from "./runtime-archive-component.js"
+import { runtimeArchiveComponentOwnedWpContentPaths } from "@automattic/wp-codebox-core/runtime-archive-component"
 import { validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
 import websiteImporterArtifactManifest from "../assets/website-importer-artifact.json" with { type: "json" }
 

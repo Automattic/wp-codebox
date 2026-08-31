@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/runtime-cloudflare/package-lock.json
+          cache-dependency-path: packages/runtime-cloudflare/npm-shrinkwrap.json
       - name: Install Cloudflare package lock
         run: npm ci --prefix packages/runtime-cloudflare --workspaces=false
       - name: Run Cloudflare package checks

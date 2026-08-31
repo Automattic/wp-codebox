@@ -60,7 +60,7 @@ function cloudflare_seed_files( string $root ): array {
 }
 
 $repository = dirname( __DIR__ );
-$assets = $repository . '/packages/runtime-cloudflare/assets';
+$assets = $repository . '/assets';
 $runtime_zip = $assets . '/markdown-database-integration-runtime.zip';
 $sqlite_seed = $assets . '/wordpress-install-seed.sqlite';
 $output_zip = $assets . '/markdown-database-integration-canonical-seed.zip';

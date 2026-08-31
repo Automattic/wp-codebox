@@ -6,7 +6,7 @@ const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
 const archiveUrl = `https://codeload.github.com/Automattic/markdown-database-integration/zip/${revision}`
 const jsonMachineArchiveUrl = `https://codeload.github.com/halaxa/json-machine/zip/${jsonMachineRevision}`
 const sourceDirectory = process.env.MDI_RUNTIME_SOURCE
-const output = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url)
+const output = new URL("../assets/markdown-database-integration-runtime.zip", import.meta.url)
 
 const runtimePaths = new Set([
   "db.php",

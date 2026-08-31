@@ -9,5 +9,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "scripts/**/*.ts"]
 }

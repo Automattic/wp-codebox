@@ -3,12 +3,13 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { PRINCIPAL_CREDENTIAL_SCHEMA, validatePrincipalCredentialVersion, type PrincipalCredentialVersion } from "../packages/runtime-cloudflare/src/principal-credential-repository.js"
+import { PRINCIPAL_CREDENTIAL_SCHEMA, validatePrincipalCredentialVersion, type PrincipalCredentialVersion } from "../src/principal-credential-repository.js"
 
 class OperatorError extends Error { constructor(message: string, readonly code = "operation-failed") { super(message) } }
 class ProviderError extends Error { constructor(readonly output: string) { super("Provider operation failed.") } }
 const PROVIDER_OUTPUT_LIMIT = 16_384
 const PROVIDER_TIMEOUT_MS = 30_000
+const packageRoot = resolve(import.meta.dirname, "..")
 
 main().catch((error) => {
   const code = error instanceof OperatorError ? error.code : "operation-failed"
@@ -25,7 +26,7 @@ async function main(): Promise<void> {
   const config = flags.get("--config")
   const credentialId = flags.get("--credential-id")
   const version = flags.get("--version")
-  const wrangler = resolve(flags.get("--wrangler") ?? "packages/runtime-cloudflare/node_modules/.bin/wrangler")
+  const wrangler = resolve(flags.get("--wrangler") ?? resolve(packageRoot, "node_modules/.bin/wrangler"))
   const local = flags.has("--local")
   const persistTo = flags.get("--persist-to")
   const accountId = flags.get("--account-id")
@@ -159,7 +160,7 @@ async function readStdin(): Promise<Buffer> {
 
 function run(wrangler: string, command: string[]): Promise<{ stdout: string }> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(wrangler, command, { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(wrangler, command, { cwd: packageRoot, env: childEnvironment(), stdio: ["ignore", "pipe", "pipe"] })
     let stdout = Buffer.alloc(0)
     let stderr = Buffer.alloc(0)
     let terminated = false
@@ -173,6 +174,8 @@ function run(wrangler: string, command: string[]): Promise<{ stdout: string }> {
     child.on("close", (code) => { clearTimeout(timeout); clearTimeout(killTimer); const output = stdout.toString("utf8"); if (code === 0 && !terminated) resolveRun({ stdout: output }); else reject(new ProviderError(`${stderr.subarray(0, 2_048).toString("utf8")}\n${stdout.subarray(0, 2_048).toString("utf8")}`)) })
   })
 }
+
+function childEnvironment(): NodeJS.ProcessEnv { const environment = { ...process.env }; if (environment.NODE_OPTIONS?.includes("register-package-local-loader")) delete environment.NODE_OPTIONS; return environment }
 
 function findMarker(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
+const packageRoot = resolve(import.meta.dirname, "..")
 const args = process.argv.slice(2)
 const option = (name, fallback) => {
   const index = args.indexOf(name)
@@ -9,9 +10,9 @@ const option = (name, fallback) => {
 }
 const databaseName = option("--database-name", "wp-codebox-runtime-state")
 const binding = option("--binding", "WORDPRESS_STATE_DATABASE")
-const templatePath = resolve(option("--template", "packages/runtime-cloudflare/wrangler.d1.jsonc"))
+const templatePath = resolve(option("--template", resolve(packageRoot, "wrangler.d1.jsonc")))
 const outputPath = resolve(option("--output"))
-const wrangler = option("--wrangler", resolve("packages/runtime-cloudflare/node_modules/.bin/wrangler"))
+const wrangler = option("--wrangler", resolve(packageRoot, "node_modules/.bin/wrangler"))
 if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(databaseName) || !/^[A-Z][A-Z0-9_]*$/.test(binding) || !option("--output")) throw new Error("A safe database name, binding, and --output path are required.")
 
 let databases = await listDatabases()
@@ -42,7 +43,7 @@ async function listDatabases() {
 
 async function run(command) {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(wrangler, command, { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(wrangler, command, { cwd: packageRoot, env: childEnvironment(), stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
     child.stdout.setEncoding("utf8")
@@ -53,6 +54,8 @@ async function run(command) {
     child.on("exit", (code) => code === 0 ? resolveRun(stdout) : reject(new Error(`Wrangler ${command.slice(0, 2).join(" ")} failed with status ${code}: ${stderr}`)))
   })
 }
+
+function childEnvironment() { return Object.fromEntries(Object.entries(process.env).filter(([name, value]) => name !== "NODE_OPTIONS" || !value?.includes("register-package-local-loader"))) }
 
 function parseJsonc(value) {
   let output = ""

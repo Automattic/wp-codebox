@@ -2,26 +2,27 @@ import { createHash } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
-import { isWordPressRuntimeFile, isWordPressStaticAsset } from "../packages/runtime-cloudflare/src/wordpress-runtime-corpus.js"
-import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-runtime-artifact.js"
-import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../packages/runtime-cloudflare/src/wordpress-static-artifact.js"
-import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../packages/runtime-cloudflare/src/runtime-archive-artifact.js"
-import { runtimeArchiveComponentSource } from "../packages/runtime-core/src/runtime-archive-component.js"
-import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "../packages/runtime-core/src/runtime-package-profile.js"
-import websiteImporterSourceContract from "../packages/runtime-cloudflare/components/website-importer.json" with { type: "json" }
+import { runtimeArchiveComponentSource } from "@automattic/wp-codebox-core/runtime-archive-component"
+import { parseRuntimePackageManifest, selectRuntimePackageProfileFiles } from "@automattic/wp-codebox-core/runtime-package-profile"
+import { isWordPressRuntimeFile, isWordPressStaticAsset } from "../src/wordpress-runtime-corpus.js"
+import { WORDPRESS_RUNTIME_ARTIFACT_SCHEMA, wordpressRuntimeArtifactKey, type WordPressRuntimeArtifactManifest } from "../src/wordpress-runtime-artifact.js"
+import { WORDPRESS_STATIC_ARTIFACT_SCHEMA, validateWordPressStaticArtifactManifest, wordpressStaticArtifactKey, type WordPressStaticArtifactManifest } from "../src/wordpress-static-artifact.js"
+import { RUNTIME_ARCHIVE_ARTIFACT_SCHEMA, runtimeArchiveArtifactKey, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "../src/runtime-archive-artifact.js"
+import websiteImporterSourceContract from "../components/website-importer.json" with { type: "json" }
 
+const packageRoot = resolve(import.meta.dirname, "..")
 const sourceUrl = process.env.WORDPRESS_RUNTIME_ARCHIVE_URL ?? "https://downloads.wordpress.org/release/wordpress-7.0.2.zip"
 const sourceVersion = process.env.WORDPRESS_RUNTIME_VERSION ?? "7.0.2"
-const output = resolve(process.env.WORDPRESS_RUNTIME_ARTIFACT_OUTPUT ?? "artifacts/cloudflare-wordpress-runtime-corpus.zip")
-const manifestOutput = resolve("packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json")
-const staticOutput = resolve(process.env.WORDPRESS_STATIC_ARTIFACT_OUTPUT ?? "artifacts/cloudflare-wordpress-static-corpus.bin")
-const staticManifestOutput = resolve("packages/runtime-cloudflare/assets/wordpress-static-artifact.json")
+const output = resolve(process.env.WORDPRESS_RUNTIME_ARTIFACT_OUTPUT ?? resolve(packageRoot, "artifacts/cloudflare-wordpress-runtime-corpus.zip"))
+const manifestOutput = resolve(packageRoot, "assets/wordpress-runtime-artifact.json")
+const staticOutput = resolve(process.env.WORDPRESS_STATIC_ARTIFACT_OUTPUT ?? resolve(packageRoot, "artifacts/cloudflare-wordpress-static-corpus.bin"))
+const staticManifestOutput = resolve(packageRoot, "assets/wordpress-static-artifact.json")
 const sqliteSourceUrl = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
-const sqliteOutput = resolve("artifacts/cloudflare-sqlite-database-integration.zip")
-const sqliteManifestOutput = resolve("packages/runtime-cloudflare/assets/sqlite-database-integration-artifact.json")
+const sqliteOutput = resolve(packageRoot, "artifacts/cloudflare-sqlite-database-integration.zip")
+const sqliteManifestOutput = resolve(packageRoot, "assets/sqlite-database-integration-artifact.json")
 const websiteImporterSource = runtimeArchiveComponentSource(websiteImporterSourceContract)
-const websiteImporterOutput = resolve(`artifacts/cloudflare-${websiteImporterSource.component.id}.zip`)
-const websiteImporterManifestOutput = resolve(`packages/runtime-cloudflare/assets/${websiteImporterSource.component.id}-artifact.json`)
+const websiteImporterOutput = resolve(packageRoot, `artifacts/cloudflare-${websiteImporterSource.component.id}.zip`)
+const websiteImporterManifestOutput = resolve(packageRoot, `assets/${websiteImporterSource.component.id}-artifact.json`)
 const response = await fetch(sourceUrl)
 if (!response.ok || !response.body) throw new Error(`Unable to download WordPress archive: ${response.status}.`)
 const identity = response.headers.get("etag") ?? response.headers.get("last-modified") ?? undefined
@@ -57,7 +58,7 @@ for (const file of staticSelected) {
   if (bytes.byteLength) staticChunks.push(bytes)
   staticOffset += bytes.byteLength
 }
-const staticBlob = new Uint8Array(await new Blob(staticChunks).arrayBuffer())
+const staticBlob = new Uint8Array(Buffer.concat(staticChunks.map((chunk) => Buffer.from(chunk))))
 const staticSha256 = sha256Hex(staticBlob)
 const staticManifest: WordPressStaticArtifactManifest = {
   schema: WORDPRESS_STATIC_ARTIFACT_SCHEMA,

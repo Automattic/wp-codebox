@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
 const CONFIRMATION = "--confirm-remote-d1-gate"
 const ACCOUNT_ID = /^[a-f0-9]{32}$/
@@ -11,6 +12,7 @@ const EXPIRY = "2099-01-01T00:00:00.000Z"
 const OUTPUT_LIMIT = 16_384
 const CHILD_TIMEOUT_MS = 30_000
 const FETCH_TIMEOUT_MS = 30_000
+const packageRoot = resolve(import.meta.dirname, "..")
 
 class AmbiguousCreateError extends Error {}
 
@@ -30,7 +32,7 @@ export async function runRemotePrincipalCredentialGate(input = {}) {
   const resourceEndpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`
   const directory = await mkdtemp(join(tmpdir(), "wp-codebox-remote-d1-gate-"))
   const config = join(directory, "wrangler.json")
-  const operator = resolve(input.operator ?? "scripts/operator-cloudflare-principal-credential.ts")
+  const operator = resolve(input.operator ?? fileURLToPath(new URL("./operator-principal-credential.ts", import.meta.url)))
   let databaseId
   let primaryError
   let cleanupError
@@ -135,6 +137,7 @@ async function batch(request, endpoint, token, queries, expectSuccess = true) { 
 function results(value) { return value.result.map((entry) => Array.isArray(entry.results) ? entry.results : []) }
 function parseJson(value) { try { return JSON.parse(value) } catch { throw new Error("Remote D1 credential gate received invalid JSON.") } }
 function structuredErrorCode(value) { try { const parsed = JSON.parse(value); return parsed?.schema === "wp-codebox/principal-credential-operator-error/v1" && typeof parsed.code === "string" ? parsed.code : undefined } catch { return undefined } }
-export function runChild(command, args, stdin, timeoutMs = CHILD_TIMEOUT_MS) { return new Promise((resolveRun) => { const child = spawn(command, args, { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] }); let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let outputTruncated = false; let settled = false; let killTimer; const finish = (status) => { if (settled) return; settled = true; clearTimeout(timeout); clearTimeout(killTimer); resolveRun({ status, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8"), outputTruncated }) }; const terminate = () => { child.kill("SIGTERM"); killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000) }; const append = (target, chunk) => { const value = Buffer.from(chunk); const current = target === "stdout" ? stdout : stderr; if (current.byteLength + value.byteLength > OUTPUT_LIMIT) { const remaining = Math.max(0, OUTPUT_LIMIT - current.byteLength); if (target === "stdout") stdout = Buffer.concat([stdout, value.subarray(0, remaining)]); else stderr = Buffer.concat([stderr, value.subarray(0, remaining)]); outputTruncated = true; terminate(); return } if (target === "stdout") stdout = Buffer.concat([stdout, value]); else stderr = Buffer.concat([stderr, value]) }; const timeout = setTimeout(() => { outputTruncated = true; terminate() }, timeoutMs); child.stdout.on("data", (chunk) => append("stdout", chunk)); child.stderr.on("data", (chunk) => append("stderr", chunk)); child.on("error", () => finish(1)); child.on("exit", (status) => finish(status)); child.stdin.end(stdin) }) }
+export function runChild(command, args, stdin, timeoutMs = CHILD_TIMEOUT_MS) { return new Promise((resolveRun) => { const child = spawn(command, args, { cwd: packageRoot, env: childEnvironment(), stdio: ["pipe", "pipe", "pipe"] }); let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let outputTruncated = false; let settled = false; let killTimer; const finish = (status) => { if (settled) return; settled = true; clearTimeout(timeout); clearTimeout(killTimer); resolveRun({ status, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8"), outputTruncated }) }; const terminate = () => { child.kill("SIGTERM"); killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000) }; const append = (target, chunk) => { const value = Buffer.from(chunk); const current = target === "stdout" ? stdout : stderr; if (current.byteLength + value.byteLength > OUTPUT_LIMIT) { const remaining = Math.max(0, OUTPUT_LIMIT - current.byteLength); if (target === "stdout") stdout = Buffer.concat([stdout, value.subarray(0, remaining)]); else stderr = Buffer.concat([stderr, value.subarray(0, remaining)]); outputTruncated = true; terminate(); return } if (target === "stdout") stdout = Buffer.concat([stdout, value]); else stderr = Buffer.concat([stderr, value]) }; const timeout = setTimeout(() => { outputTruncated = true; terminate() }, timeoutMs); child.stdout.on("data", (chunk) => append("stdout", chunk)); child.stderr.on("data", (chunk) => append("stderr", chunk)); child.on("error", () => finish(1)); child.on("exit", (status) => finish(status)); child.stdin.end(stdin) }) }
+function childEnvironment() { return Object.fromEntries(Object.entries(process.env).filter(([name, value]) => name !== "NODE_OPTIONS" || !value?.includes("register-package-local-loader"))) }
 
 if (import.meta.url === `file://${process.argv[1]}`) { const args = process.argv.slice(2); const accountIndex = args.indexOf("--account-id"); runRemotePrincipalCredentialGate({ confirmation: args.includes(CONFIRMATION), accountId: accountIndex === -1 ? undefined : args[accountIndex + 1] }).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`)).catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1 }) }

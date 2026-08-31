@@ -11,12 +11,12 @@ export interface CloudflareRuntimeHealth {
 }
 
 export function cloudflareRuntimeHealthResponse(health: CloudflareRuntimeHealth): Response {
-  const execution = {
-    schema: "wp-codebox/runtime-command-result/v1" as const,
+  const execution = createRuntimeCommandResultEnvelope({
     status: "ok",
     json: health,
     diagnostics: [{ schema: "wp-codebox/runtime-diagnostic/v1", code: "wordpress_runtime_initialized", severity: "info", message: "WordPress boot and PHP execution completed." }],
-  }
+  })
 
   return Response.json({ ...health, execution })
 }
+import { createRuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core/runtime-command-result"

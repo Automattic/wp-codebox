@@ -442,7 +442,7 @@ test("Cloudflare runtime packages a provenanced canonical MDI seed", async () =>
 test("Cloudflare runtime pins and bundles the public constrained MDI runtime", async () => {
   const revision = "bf6d434d1673fdd86d777501f7eaec292d32ad1f"
   const jsonMachineRevision = "8bf0b0ff6ff60ab480778eaa5ad7d505b442c2d4"
-  const generator = await readFile(new URL("../scripts/build-cloudflare-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
+  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/build-mdi-runtime-bundle.mjs", import.meta.url), "utf8")
   const worker = await readFile(new URL("../packages/runtime-cloudflare/src/worker.ts", import.meta.url), "utf8")
   const runtime = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url))
   const names: string[] = []
@@ -784,7 +784,7 @@ test("runtime archive dependencies are content-addressed and verified from R2", 
 })
 
 test("WordPress runtime corpus generator keeps the ZIP outside the Worker bundle", async () => {
-  const generator = await readFile(new URL("../scripts/generate-cloudflare-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
+  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/generate-wordpress-runtime-corpus.ts", import.meta.url), "utf8")
   const artifact = await readFile(new URL("../packages/runtime-cloudflare/src/wordpress-runtime-artifact.ts", import.meta.url), "utf8")
   const manifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-runtime-artifact.json", import.meta.url), "utf8")) as WordPressRuntimeArtifactManifest
   const staticManifest = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-static-artifact.json", import.meta.url), "utf8")) as WordPressStaticArtifactManifest
@@ -939,7 +939,7 @@ test("canonical reset preflights its pinned administrator root before mutation",
 })
 
 test("canonical MDI seed generator is reproducible and validates its pinned inputs", async () => {
-  const generator = new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url)
+  const generator = new URL("../packages/runtime-cloudflare/scripts/build-canonical-mdi-seed.php", import.meta.url)
   const archive = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url)
   const before = createHash("sha256").update(await readFile(archive)).digest("hex")
   await execFileAsync("php", [generator.pathname], { cwd: new URL("..", import.meta.url).pathname })
@@ -952,7 +952,7 @@ test("canonical MDI seed generator is reproducible and validates its pinned inpu
 })
 
 test("canonical MDI seed owns the Cloudflare front page and its architecture explanation", async () => {
-  const generator = await readFile(new URL("../scripts/build-cloudflare-canonical-mdi-seed.php", import.meta.url), "utf8")
+  const generator = await readFile(new URL("../packages/runtime-cloudflare/scripts/build-canonical-mdi-seed.php", import.meta.url), "utf8")
   const archive = await readFile(new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-canonical-seed.zip", import.meta.url))
   const files = new Map<string, string>()
   for await (const entry of decodeZip(new Blob([archive]).stream())) files.set(entry.name, await entry.text())

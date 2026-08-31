@@ -27,7 +27,7 @@ import { isWordPressRuntimeFile, wordpressStaticArchivePath, wordpressStaticCont
 import { materializeWordPressRuntimeArtifact, type WordPressRuntimeArtifactManifest } from "./wordpress-runtime-artifact.js"
 import { validateWordPressStaticArtifactManifest, type WordPressStaticArtifactManifest } from "./wordpress-static-artifact.js"
 import { readRuntimeArchiveArtifact, validateRuntimeArchiveArtifactManifest, type RuntimeArchiveArtifactManifest } from "./runtime-archive-artifact.js"
-import { runtimeArchiveComponentOwnedWpContentPaths, type RuntimeArchiveComponent } from "./runtime-archive-component.js"
+import { runtimeArchiveComponentOwnedWpContentPaths, type RuntimeArchiveComponent } from "@automattic/wp-codebox-core/runtime-archive-component"
 import { isCanonicalWpContentPath, MAX_WP_CONTENT_FILES, MAX_WP_CONTENT_FILE_BYTES, MAX_WP_CONTENT_TOTAL_BYTES, runtimeOwnedWpContentPaths, validateWpContentDeletedPaths, validateWpContentManifestFiles, validateWpContentMetadata } from "./wp-content-persistence.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
 import canonicalMarkdownSeed from "../assets/markdown-database-integration-canonical-seed.zip"

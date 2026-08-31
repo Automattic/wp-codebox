@@ -8,6 +8,7 @@
       "name": "@automattic/wp-codebox-runtime-cloudflare",
       "version": "0.12.27",
       "bundleDependencies": [
+        "@automattic/wp-codebox-core",
         "@php-wasm/stream-compression",
         "@php-wasm/universal",
         "@php-wasm/web-8-5",
@@ -16,6 +17,7 @@
       ],
       "hasInstallScript": true,
       "dependencies": {
+        "@automattic/wp-codebox-core": "file:vendor/wp-codebox-core",
         "@php-wasm/stream-compression": "3.1.45",
         "@php-wasm/universal": "3.1.46",
         "@php-wasm/web-8-5": "3.1.46",
@@ -25,10 +27,17 @@
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20260718.1",
         "@types/node": "^24.0.0",
+        "pixelmatch": "7.2.0",
+        "playwright": "1.61.1",
+        "pngjs": "7.0.0",
         "tsx": "^4.20.0",
         "typescript": "^5.8.0",
-        "wrangler": "^4.127.1"
+        "wrangler": "4.127.1"
       }
+    },
+    "node_modules/@automattic/wp-codebox-core": {
+      "resolved": "vendor/wp-codebox-core",
+      "link": true
     },
     "node_modules/@cloudflare/kv-asset-handler": {
       "version": "0.5.0",
@@ -2146,6 +2155,76 @@
         "url": "https://github.com/sponsors/jonschlinkert"
       }
     },
+    "node_modules/pixelmatch": {
+      "version": "7.2.0",
+      "resolved": "https://registry.npmjs.org/pixelmatch/-/pixelmatch-7.2.0.tgz",
+      "integrity": "sha512-xhcb4yHu9sM/G7foGzoLtXYcC0zHEaOXXjRKhGup0fw78Nf2Tkiapv4EQyMzrbcmQPsllAI7DbFY2UT7PlI9Pg==",
+      "dev": true,
+      "license": "ISC",
+      "dependencies": {
+        "pngjs": "^7.0.0"
+      },
+      "bin": {
+        "pixelmatch": "bin/pixelmatch"
+      }
+    },
+    "node_modules/playwright": {
+      "version": "1.61.1",
+      "resolved": "https://registry.npmjs.org/playwright/-/playwright-1.61.1.tgz",
+      "integrity": "sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==",
+      "dev": true,
+      "license": "Apache-2.0",
+      "dependencies": {
+        "playwright-core": "1.61.1"
+      },
+      "bin": {
+        "playwright": "cli.js"
+      },
+      "engines": {
+        "node": ">=18"
+      },
+      "optionalDependencies": {
+        "fsevents": "2.3.2"
+      }
+    },
+    "node_modules/playwright-core": {
+      "version": "1.61.1",
+      "resolved": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.61.1.tgz",
+      "integrity": "sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==",
+      "dev": true,
+      "license": "Apache-2.0",
+      "bin": {
+        "playwright-core": "cli.js"
+      },
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/playwright/node_modules/fsevents": {
+      "version": "2.3.2",
+      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.2.tgz",
+      "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+      "dev": true,
+      "hasInstallScript": true,
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
+      }
+    },
+    "node_modules/pngjs": {
+      "version": "7.0.0",
+      "resolved": "https://registry.npmjs.org/pngjs/-/pngjs-7.0.0.tgz",
+      "integrity": "sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==",
+      "dev": true,
+      "license": "MIT",
+      "engines": {
+        "node": ">=14.19.0"
+      }
+    },
     "node_modules/semver": {
       "version": "7.8.5",
       "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
@@ -3002,6 +3081,10 @@
       "integrity": "sha512-oyPnDa1X5c13+Y7mA/FDMNJrn4S8UNBe0KCqtDmor40Re7ALrPN6npFwyYVRRh+PqozZQdeg23QtbcamZnG5rA==",
       "inBundle": true,
       "license": "MIT AND BSD-3-Clause"
+    },
+    "vendor/wp-codebox-core": {
+      "name": "@automattic/wp-codebox-core",
+      "version": "0.26.2"
     }
   }
 }
