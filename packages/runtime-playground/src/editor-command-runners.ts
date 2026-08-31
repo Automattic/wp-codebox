@@ -1040,7 +1040,7 @@ async function captureEditorPresentationMatch(input: {
   if (!presentationUrl) return { schema: "wp-codebox/editor-presentation-match/v1", status: "unavailable", diagnostic: "presentation-url was not supplied" }
   const frontendSelector = boundedPresentationSelector(input.args, "presentation-frontend-selector", "body")
   const editorSelector = boundedPresentationSelector(input.args, "presentation-editor-selector", EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR)
-  const threshold = presentationThreshold(input.args)
+  const thresholds = presentationThresholds(input.args)
   const frontendPath = input.artifactSession.absolutePath("presentation-frontend.png")
   const editorPath = input.artifactSession.absolutePath("presentation-editor.png")
   const frontendRef = input.artifactSession.path("presentation-frontend.png")
@@ -1086,18 +1086,43 @@ async function captureEditorPresentationMatch(input: {
       await input.artifactSession.writeGenerated("screenshot", "presentation-editor.png", async (path) => { await editor.screenshot({ path, timeout: input.waitTimeoutMs }); })
       let comparison: Awaited<ReturnType<typeof comparePngFiles>> | undefined
       await input.artifactSession.writeGenerated("screenshot", "presentation-diff.png", async (path) => {
-        comparison = await comparePngFiles(frontendPath, editorPath, path, { threshold, includeAA: false, maxRegions: 8 })
+        comparison = await comparePngFiles(frontendPath, editorPath, path, { threshold: thresholds.pixel, includeAA: false, maxRegions: 8 })
       })
       if (!comparison) throw new Error("Presentation comparison did not produce metrics")
       const equivalentCanvasWidths = comparison.source.width === comparison.candidate.width
-      // The same bounded threshold applies to canvas extent and the shared
-      // visual region; equal widths alone must not certify different renders.
-      const majorGeometryDrift = comparison.dimensionDeltaRatio > threshold || comparison.overlapMismatchRatio > threshold
+      const majorGeometryDrift = comparison.dimensionDeltaRatio > thresholds.dimensionDrift
+      const majorVisualDivergence = comparison.overlapMismatchRatio > thresholds.overlapMismatch
       const unreadableContent = !frontendEvidence.readable || !editorEvidence.readable
       const hiddenContent = !frontendEvidence.visible || !editorEvidence.visible
       const unresolvedAssetCount = frontendEvidence.unresolvedAssets + editorEvidence.unresolvedAssets
-      const passed = equivalentCanvasWidths && !majorGeometryDrift && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
-      return { schema: "wp-codebox/editor-presentation-match/v1", status: passed ? "passed" : "failed", equivalentCanvasWidths, majorGeometryDrift, unreadableContent, hiddenContent, unresolvedAssetCount, frontendScreenshot: frontendRef, editorScreenshot: editorRef, diffScreenshot: diffRef, geometry: { frontend: frontendGeometry, liveEditor: liveEditorGeometry, isolatedEditor: isolatedEditorGeometry } }
+      const passed = equivalentCanvasWidths && !majorGeometryDrift && !majorVisualDivergence && !unreadableContent && !hiddenContent && unresolvedAssetCount === 0
+      return {
+        schema: "wp-codebox/editor-presentation-match/v1",
+        status: passed ? "passed" : "failed",
+        equivalentCanvasWidths,
+        majorGeometryDrift,
+        majorVisualDivergence,
+        comparison: {
+          pixelThreshold: thresholds.pixel,
+          overlapMismatchThreshold: thresholds.overlapMismatch,
+          dimensionDriftThreshold: thresholds.dimensionDrift,
+          mismatchPixels: comparison.mismatchPixels,
+          totalPixels: comparison.totalPixels,
+          mismatchRatio: comparison.mismatchRatio,
+          overlapMismatchPixels: comparison.overlapMismatchPixels,
+          overlapPixels: comparison.overlapPixels,
+          overlapMismatchRatio: comparison.overlapMismatchRatio,
+          dimensionDeltaPixels: comparison.dimensionDeltaPixels,
+          dimensionDeltaRatio: comparison.dimensionDeltaRatio,
+        },
+        unreadableContent,
+        hiddenContent,
+        unresolvedAssetCount,
+        frontendScreenshot: frontendRef,
+        editorScreenshot: editorRef,
+        diffScreenshot: diffRef,
+        geometry: { frontend: frontendGeometry, liveEditor: liveEditorGeometry, isolatedEditor: isolatedEditorGeometry },
+      }
     } finally {
       await frontendContext.close()
     }
@@ -1227,11 +1252,19 @@ function boundedPresentationSelector(args: string[], name: string, fallback: str
   return selector
 }
 
-function presentationThreshold(args: string[]): number {
-  const raw = argValue(args, "presentation-threshold")?.trim()
-  if (!raw) return 0.02
+function presentationThresholds(args: string[]): { pixel: number; overlapMismatch: number; dimensionDrift: number } {
+  return {
+    pixel: boundedPresentationThreshold(args, "presentation-pixel-threshold", 0.02),
+    overlapMismatch: boundedPresentationThreshold(args, "presentation-overlap-mismatch-threshold", 0.1),
+    dimensionDrift: boundedPresentationThreshold(args, "presentation-dimension-drift-threshold", 0.01),
+  }
+}
+
+function boundedPresentationThreshold(args: string[], name: string, fallback: number): number {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) return fallback
   const value = Number(raw)
-  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`wordpress.editor-open presentation-threshold must be between 0 and 1: ${raw}`)
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`wordpress.editor-open ${name} must be between 0 and 1: ${raw}`)
   return value
 }
 

@@ -27,6 +27,12 @@ const GROWING_PRESENTATION_IDENTITIES = ["3".repeat(64), "4".repeat(64)]
 const DELAYED_POST_PRESENTATION_IDENTITY = "5".repeat(64)
 const EDITOR_PRESENTATION_CONTRACT_MARKER = "WP_CODEBOX_EDITOR_PRESENTATION_CONTRACT:"
 const matchedPresentationMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:400px;background:linear-gradient(#123,#abc);color:white;padding:12px}</style><div class="block-editor-block-list__layout">Matched presentation</div>`
+const boundedRasterizationFrontendMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:200px;background:#123;color:white;padding:12px}.raster{width:10px;height:10px;background:#a11}</style><div class="block-editor-block-list__layout">Bounded rasterization<div class="raster"></div></div>`
+const boundedRasterizationEditorMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:201px;background:#123;color:white;padding:12px}.raster{width:10px;height:10px;background:#1a1}</style><div class="block-editor-block-list__layout">Bounded rasterization<div class="raster"></div></div>`
+const majorVisualFrontendMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:200px;background:#123;color:white;padding:12px}</style><div class="block-editor-block-list__layout">Major visual divergence</div>`
+const majorVisualEditorMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:200px;background:#fff;color:#111;padding:12px}</style><div class="block-editor-block-list__layout">Major visual divergence</div>`
+const majorGeometryFrontendMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:200px;background:#123;color:white;padding:12px}</style><div class="block-editor-block-list__layout">Major geometry divergence</div>`
+const majorGeometryEditorMarkup = `<style>html,body{margin:0}.block-editor-block-list__layout{box-sizing:border-box;width:200px;height:205px;background:#123;color:white;padding:12px}</style><div class="block-editor-block-list__layout">Major geometry divergence</div>`
 const editorShell = `<!doctype html><script>
 globalThis.__name = (value) => value
 console.log('normal console text; inspect ${PUBLIC_URL}')
@@ -46,6 +52,9 @@ window.wp = {
 const editorHtml = `${editorShell}<iframe name="unrelated" srcdoc="<style>/* blocks-engine-presentation:${UNRELATED_PRESENTATION_IDENTITY} */<\/style>"></iframe><iframe name="editor-canvas" srcdoc="<script>globalThis.__name = (value) => value;setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${CANVAS_PRESENTATION_IDENTITY} */'; document.head.append(style) }, 400)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
 const onboardingEditorHtml = `${editorShell}<script>setTimeout(() => document.body.insertAdjacentHTML('afterbegin', '<div class=components-guide>Late guide without controls</div>'), 1000); const fixtureSelect = wp.data.select; wp.data.select = (store) => store === 'core/edit-post' ? { isFeatureActive: () => true } : fixtureSelect(store); wp.data.dispatch = (store) => store === 'core/preferences' ? { set: (scope, feature, value) => { if (scope === 'core/edit-post' && feature === 'welcomeGuide' && value === false) document.querySelector('.components-guide')?.remove() } } : store === 'core/edit-post' ? { toggleFeature: () => { document.body.insertAdjacentHTML('afterbegin', '<div class=components-guide>Retoggled guide</div>') } } : ({})<\/script><iframe name="editor-canvas" srcdoc="<div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='fixture'>Block</div></div>"></iframe>`
 const matchedPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:80px" srcdoc="${matchedPresentationMarkup.replaceAll('"', '&quot;')}"></iframe>`
+const boundedRasterizationEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:205px" srcdoc="${boundedRasterizationEditorMarkup.replaceAll('"', '&quot;')}"></iframe>`
+const majorVisualEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:205px" srcdoc="${majorVisualEditorMarkup.replaceAll('"', '&quot;')}"></iframe>`
+const majorGeometryEditorHtml = `${editorShell}<iframe name="editor-canvas" style="border:0;width:200px;height:205px" srcdoc="${majorGeometryEditorMarkup.replaceAll('"', '&quot;')}"></iframe>`
 const parentCanvasEditorHtml = `${editorShell}<style>/* blocks-engine-presentation:${PARENT_CANVAS_PRESENTATION_IDENTITY} */</style><div class="block-editor-block-list__layout" hidden>Hidden duplicate</div><div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="fixture">Block</div></div>`
 const replacingCanvasEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${INITIAL_CANVAS_PRESENTATION_IDENTITY} */<\/style>"></iframe><script>setTimeout(() => { document.querySelector('iframe[name=editor-canvas]').srcdoc = '<style>/* blocks-engine-presentation:${REPLACED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>' }, 150)</script>`
 const delayedCanvasEditorHtml = `${editorShell}<div class="block-editor-block-list__layout"><div class="block-editor-block-list__block" data-block="transition">Transition</div></div><script>setTimeout(() => { const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = '<style>/* blocks-engine-presentation:${DELAYED_CANVAS_PRESENTATION_IDENTITY} */<\\/style>'; document.body.append(iframe) }, 300)</script>`
@@ -76,6 +85,18 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       ? "<main>Broken editor fixture</main>"
       : request.url?.startsWith("/presentation")
         ? "<main>Deliberately different frontend fixture</main>"
+      : request.url?.startsWith("/bounded-rasterization-frontend")
+        ? boundedRasterizationFrontendMarkup
+      : request.url?.startsWith("/bounded-rasterization-editor")
+        ? boundedRasterizationEditorHtml
+      : request.url?.startsWith("/major-visual-frontend")
+        ? majorVisualFrontendMarkup
+      : request.url?.startsWith("/major-visual-editor")
+        ? majorVisualEditorHtml
+      : request.url?.startsWith("/major-geometry-frontend")
+        ? majorGeometryFrontendMarkup
+      : request.url?.startsWith("/major-geometry-editor")
+        ? majorGeometryEditorHtml
       : request.url?.startsWith("/matched-frontend")
         ? matchedPresentationMarkup
       : request.url?.startsWith("/matched-editor")
@@ -158,13 +179,14 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         server,
         spec: { command: "wordpress.editor-open", args: [`url=${PUBLIC_URL}`, "presentation-url=/presentation", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
       })
-      const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string; frontendScreenshot: string; editorScreenshot: string; diffScreenshot: string; equivalentCanvasWidths: boolean; majorGeometryDrift: boolean; unreadableContent: boolean; hiddenContent: boolean; unresolvedAssetCount: number } } } }
-      const { geometry, ...matchedRendering } = output.summary.editorPresentation.matchedRendering as typeof output.summary.editorPresentation.matchedRendering & { geometry: { frontend: { childCount: number }; liveEditor: { childCount: number }; isolatedEditor: { childCount: number } } }
+      const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string; frontendScreenshot: string; editorScreenshot: string; diffScreenshot: string; equivalentCanvasWidths: boolean; majorGeometryDrift: boolean; majorVisualDivergence: boolean; unreadableContent: boolean; hiddenContent: boolean; unresolvedAssetCount: number } } } }
+      const { geometry, comparison, ...matchedRendering } = output.summary.editorPresentation.matchedRendering as typeof output.summary.editorPresentation.matchedRendering & { comparison: Record<string, number>; geometry: { frontend: { childCount: number }; liveEditor: { childCount: number }; isolatedEditor: { childCount: number } } }
       assert.deepEqual(matchedRendering, {
         schema: "wp-codebox/editor-presentation-match/v1",
         status: "failed",
         equivalentCanvasWidths: true,
-        majorGeometryDrift: true,
+        majorGeometryDrift: false,
+        majorVisualDivergence: true,
         unreadableContent: false,
         hiddenContent: false,
         unresolvedAssetCount: 0,
@@ -172,6 +194,10 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         editorScreenshot: "files/browser/presentation-editor.png",
         diffScreenshot: "files/browser/presentation-diff.png",
       })
+      assert.deepEqual(Object.keys(comparison).sort(), ["dimensionDeltaPixels", "dimensionDeltaRatio", "dimensionDriftThreshold", "mismatchPixels", "mismatchRatio", "overlapMismatchPixels", "overlapMismatchRatio", "overlapMismatchThreshold", "overlapPixels", "pixelThreshold", "totalPixels"].sort())
+      assert.equal(comparison.pixelThreshold, 0.02)
+      assert.equal(comparison.overlapMismatchThreshold, 0.1)
+      assert.equal(comparison.dimensionDriftThreshold, 0.01)
       assert.equal(geometry.frontend.childCount, 1)
       assert.equal(geometry.liveEditor.childCount, 1)
       assert.equal(geometry.isolatedEditor.childCount, 1)
@@ -188,6 +214,37 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
       })
       const output = JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string } } } }
       assert.equal(output.summary.editorPresentation.matchedRendering.status, "passed")
+    })
+
+    await withTempDir("wp-codebox-editor-presentation-thresholds-", async (artifactRoot) => {
+      const runPresentation = async (url: string, presentationUrl: string) => {
+        const result = await runEditorOpenCommand({
+          artifactRoot,
+          runPlaygroundCommand,
+          runtimeSpec,
+          server,
+          spec: { command: "wordpress.editor-open", args: [`url=http://routed.test/${url}`, `presentation-url=/${presentationUrl}`, "presentation-frontend-selector=.block-editor-block-list__layout", "route-host=routed.test", "capture=steps", "wait-timeout=5s"] },
+        })
+        return (JSON.parse(result.output) as { summary: { editorPresentation: { matchedRendering: { status: string; majorGeometryDrift: boolean; majorVisualDivergence: boolean; comparison: { overlapMismatchRatio: number; dimensionDeltaRatio: number } } } } }).summary.editorPresentation.matchedRendering
+      }
+
+      const boundedRasterization = await runPresentation("bounded-rasterization-editor", "bounded-rasterization-frontend")
+      assert.equal(boundedRasterization.status, "passed")
+      assert.equal(boundedRasterization.majorGeometryDrift, false)
+      assert.equal(boundedRasterization.majorVisualDivergence, false)
+      assert.ok(boundedRasterization.comparison.dimensionDeltaRatio > 0 && boundedRasterization.comparison.dimensionDeltaRatio < 0.01, JSON.stringify(boundedRasterization.comparison))
+      assert.ok(boundedRasterization.comparison.overlapMismatchRatio > 0 && boundedRasterization.comparison.overlapMismatchRatio < 0.1)
+
+      const majorVisual = await runPresentation("major-visual-editor", "major-visual-frontend")
+      assert.equal(majorVisual.status, "failed")
+      assert.equal(majorVisual.majorGeometryDrift, false)
+      assert.equal(majorVisual.majorVisualDivergence, true)
+
+      const majorGeometry = await runPresentation("major-geometry-editor", "major-geometry-frontend")
+      assert.equal(majorGeometry.status, "failed")
+      assert.equal(majorGeometry.majorGeometryDrift, true)
+      assert.equal(majorGeometry.majorVisualDivergence, false)
+      assert.ok(majorGeometry.comparison.dimensionDeltaRatio > 0.01)
     })
 
     await withTempDir("wp-codebox-editor-onboarding-preference-", async (artifactRoot) => {

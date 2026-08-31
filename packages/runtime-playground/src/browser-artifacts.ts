@@ -316,6 +316,8 @@ export interface BrowserEditorPresentationMatchSummary {
   diagnostic?: string
   equivalentCanvasWidths?: boolean
   majorGeometryDrift?: boolean
+  majorVisualDivergence?: boolean
+  comparison?: BrowserEditorPresentationComparison
   unreadableContent?: boolean
   hiddenContent?: boolean
   unresolvedAssetCount?: number
@@ -327,6 +329,20 @@ export interface BrowserEditorPresentationMatchSummary {
     liveEditor: BrowserEditorPresentationSurfaceGeometry
     isolatedEditor: BrowserEditorPresentationSurfaceGeometry
   }
+}
+
+export interface BrowserEditorPresentationComparison {
+  pixelThreshold: number
+  overlapMismatchThreshold: number
+  dimensionDriftThreshold: number
+  mismatchPixels: number
+  totalPixels: number
+  mismatchRatio: number
+  overlapMismatchPixels: number
+  overlapPixels: number
+  overlapMismatchRatio: number
+  dimensionDeltaPixels: number
+  dimensionDeltaRatio: number
 }
 
 export interface BrowserEditorPresentationSurfaceGeometry {
