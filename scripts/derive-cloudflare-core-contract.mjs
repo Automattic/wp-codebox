@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { access, cp, lstat, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -49,26 +49,65 @@ export async function deriveCloudflareCoreContract({ write = false } = {}) {
     assert.ok(generatedFiles.includes("runtime-command-result.d.ts"))
 
     if (write) {
-      for (const entry of await readdir(vendorRoot)) {
-        if (entry !== "package.json") await rm(resolve(vendorRoot, entry), { recursive: true, force: true })
+      const stagedRoot = await mkdtemp(resolve(dirname(vendorRoot), ".wp-codebox-core-stage-"))
+      try {
+        for (const file of generatedFiles) {
+          const target = resolve(stagedRoot, file)
+          await mkdir(dirname(target), { recursive: true })
+          await cp(resolve(generatedRoot, file), target)
+        }
+        await writeFile(resolve(stagedRoot, "package.json"), `${JSON.stringify(compatibilityPackage(version), null, 2)}\n`)
+        await promoteValidatedDirectory({
+          stagedRoot,
+          destinationRoot: vendorRoot,
+          validate: () => assertContractTree(stagedRoot, generatedRoot, generatedFiles, version, tag),
+        })
+      } finally {
+        await rm(stagedRoot, { recursive: true, force: true })
       }
-      for (const file of generatedFiles) await cp(resolve(generatedRoot, file), resolve(vendorRoot, file))
+    } else {
+      await assertContractTree(vendorRoot, generatedRoot, generatedFiles, version, tag)
     }
-
-    const vendorFiles = (await filesBelow(vendorRoot)).filter((file) => file !== "package.json")
-    assert.deepEqual(vendorFiles, generatedFiles, "vendored core files must be the complete generated contract dependency closure")
-    for (const file of generatedFiles) {
-      assert.deepEqual(await readFile(resolve(vendorRoot, file)), await readFile(resolve(generatedRoot, file)), `vendored core contract drifted from ${tag}: ${file}`)
-    }
-    await assertContractBehavior(generatedRoot)
-
-    const vendorPackage = JSON.parse(await readFile(resolve(vendorRoot, "package.json"), "utf8"))
-    assert.deepEqual(vendorPackage, compatibilityPackage(version), "vendored package metadata must expose only the selected generated release contracts")
     return { tag, tagCommit, compilerVersion, generatedRoot }
   } finally {
     await git(["worktree", "remove", "--force", sourceRoot], true)
     await rm(temporaryRoot, { recursive: true, force: true })
   }
+}
+
+export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, validate, fault = async () => {} }) {
+  assert.equal(dirname(stagedRoot), dirname(destinationRoot), "staged and live trees must share a filesystem parent")
+  await validate(stagedRoot)
+  await fault("after-validation")
+
+  const backupRoot = `${destinationRoot}.backup-${process.pid}-${Date.now()}`
+  let movedLive = false
+  let promoted = false
+  try {
+    await rename(destinationRoot, backupRoot)
+    movedLive = true
+    await fault("after-live-backup")
+    await rename(stagedRoot, destinationRoot)
+    promoted = true
+    await fault("after-promotion")
+  } catch (error) {
+    if (promoted) await rm(destinationRoot, { recursive: true, force: true })
+    if (movedLive) await rename(backupRoot, destinationRoot)
+    throw error
+  }
+
+  await rm(backupRoot, { recursive: true, force: true })
+}
+
+async function assertContractTree(candidateRoot, generatedRoot, generatedFiles, version, tag) {
+  const candidateFiles = (await filesBelow(candidateRoot)).filter((file) => file !== "package.json")
+  assert.deepEqual(candidateFiles, generatedFiles, "vendored core files must be the complete generated contract dependency closure")
+  for (const file of generatedFiles) {
+    assert.deepEqual(await readFile(resolve(candidateRoot, file)), await readFile(resolve(generatedRoot, file)), `vendored core contract drifted from ${tag}: ${file}`)
+  }
+  const candidatePackage = JSON.parse(await readFile(resolve(candidateRoot, "package.json"), "utf8"))
+  assert.deepEqual(candidatePackage, compatibilityPackage(version), "vendored package metadata must expose only the selected generated release contracts")
+  await assertContractBehavior(candidateRoot, generatedRoot)
 }
 
 function compatibilityPackage(version) {
@@ -129,13 +168,13 @@ async function contractFiles(root) {
   return [...files].sort()
 }
 
-async function assertContractBehavior(generatedRoot) {
+async function assertContractBehavior(candidateRoot, generatedRoot) {
   const generatedArchive = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-archive-component.js")).href}?generated`)
-  const vendorArchive = await import(`${pathToFileURL(resolve(vendorRoot, "runtime-archive-component.js")).href}?vendor`)
+  const vendorArchive = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-archive-component.js")).href}?candidate`)
   const generatedProfile = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-package-profile.js")).href}?generated`)
-  const vendorProfile = await import(`${pathToFileURL(resolve(vendorRoot, "runtime-package-profile.js")).href}?vendor`)
+  const vendorProfile = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-package-profile.js")).href}?candidate`)
   const generatedResult = await import(`${pathToFileURL(resolve(generatedRoot, "runtime-command-result.js")).href}?generated`)
-  const vendorResult = await import(`${pathToFileURL(resolve(vendorRoot, "runtime-command-result.js")).href}?vendor`)
+  const vendorResult = await import(`${pathToFileURL(resolve(candidateRoot, "runtime-command-result.js")).href}?candidate`)
   const component = { schema: generatedArchive.RUNTIME_ARCHIVE_COMPONENT_SCHEMA, id: "website-importer", package: { profile: "cloudflare", root: "static-site-importer" }, wordpress: { install_path: "plugins/static-site-importer", bootstrap_file: "plugin.php", load: { mode: "mu-plugin-loader", loader_path: "mu-plugins/loader.php" } }, abilities: { import: "sites/import" }, limits: { files: 100, bytes: 1_000_000 } }
   assert.deepEqual(vendorArchive.runtimeArchiveComponent(component), generatedArchive.runtimeArchiveComponent(component))
   for (const invalid of [null, { ...component, id: "../escape" }, { ...component, limits: { files: 0, bytes: 1 } }, { ...component, wordpress: { ...component.wordpress, bootstrap_file: "../plugin.php" } }]) {

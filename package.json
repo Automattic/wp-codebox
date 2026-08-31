@@ -127,7 +127,7 @@
     "test:cloudflare-queue": "npm --prefix packages/runtime-cloudflare run test:queue",
     "test:cloudflare-principal-credentials": "npm --prefix packages/runtime-cloudflare run test:principal-credentials",
     "test:cloudflare-remote-principal-credential-gate": "npm --prefix packages/runtime-cloudflare run test:remote-principal-credential-gate",
-    "test:runtime-package-boundaries": "node tests/runtime-package-boundaries.test.mjs",
+    "test:runtime-package-boundaries": "node --test tests/derive-cloudflare-core-contract-atomic.test.mjs && node tests/runtime-package-boundaries.test.mjs",
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts && tsx tests/agent-task-canonical-evidence.test.ts && npm run test:agent-task-workflow-interface && npm run test:runtime-sources-materialization && tsx tests/agent-task-reusable-workflow.test.ts",
     "test:agent-task-workflow-interface": "tsx tests/run-agent-task-reusable-workflow-interface.test.ts",
     "test:agent-task-runtime-package-staging": "tsx tests/agent-task-runtime-package-staging.test.ts",
