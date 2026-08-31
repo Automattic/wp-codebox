@@ -532,15 +532,15 @@ async function provisionMysqlNativeService(service: WorkspaceRecipeRuntimeServic
     for (let attempt = 0; attempt < NATIVE_MARIADB_START_ATTEMPTS; attempt += 1) {
       port = await (dependencies.allocateNativePort ?? allocateLoopbackPort)()
       await writeFile(logFile, "", { mode: 0o600 })
-      processState = spawnOwnedNativeMariaDb(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", binaries.server, ...nativeMariaDbDaemonArguments({ datadir, socket, pidFile, logFile, temporaryDirectory, pluginDirectory, secureFileDirectory, port, userArgument })], childEnvironment, false, temporaryDirectory)
+      const candidate = spawnOwnedNativeMariaDb(binaries.limiter, [...nativeMariaDbLimitArguments(), "--", binaries.server, ...nativeMariaDbDaemonArguments({ datadir, socket, pidFile, logFile, temporaryDirectory, pluginDirectory, secureFileDirectory, port, userArgument })], childEnvironment, false, temporaryDirectory)
       try {
-        await waitForNativeMariaDbReady(binaries, socket, processState, root, dependencies, signal)
+        await waitForNativeMariaDbReady(binaries, socket, candidate, root, dependencies, signal)
+        processState = candidate
         break
       } catch (error) {
-        await stopOwnedNativeMariaDb(processState, root, dependencies, binaries, socket)
-        const bindCollision = await nativeMariaDbBindCollision(logFile, processState)
-        if (!processState.exited) throw new Error("Native MariaDB process exit was not proven")
-        processState = undefined
+        await stopOwnedNativeMariaDb(candidate, root, dependencies, binaries, socket)
+        const bindCollision = await nativeMariaDbBindCollision(logFile, candidate)
+        if (!candidate.exited) throw new Error("Native MariaDB process exit was not proven")
         if (!bindCollision || attempt === NATIVE_MARIADB_START_ATTEMPTS - 1) throw error
       }
     }

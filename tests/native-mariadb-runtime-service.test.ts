@@ -71,7 +71,7 @@ const port = Number(value('--port')); const log = value('--log-error'); const so
 fs.writeFileSync(value('--pid-file'), '1');
 fs.writeFileSync(value('--pid-file') + '.actual', String(process.pid));
 const server = net.createServer(); server.on('error', (error) => { fs.appendFileSync(log, error.code === 'EADDRINUSE' ? 'address already in use' : 'daemon crash: ' + error.code); process.exit(1); });
-server.listen(port, '127.0.0.1'); const timer = setInterval(() => { if (fs.existsSync(socket + '.shutdown')) { clearInterval(timer); server.close(() => process.exit(0)); } }, 10);
+server.listen(port, '127.0.0.1', () => fs.writeFileSync(socket + '.ready', '')); const timer = setInterval(() => { if (fs.existsSync(socket + '.shutdown')) { clearInterval(timer); server.close(() => process.exit(0)); } }, 10);
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
 `
 const limiterScript = `#!/bin/sh
@@ -121,7 +121,15 @@ try {
         assert.ok(socket)
         await writeFile(`${socket}.shutdown`, "")
       }
-      if (basename(effectiveCommand) === "mariadb" && options.stdin === "SELECT 1;\n") await new Promise((resolve) => setTimeout(resolve, 200))
+      if (basename(effectiveCommand) === "mariadb" && options.stdin === "SELECT 1;\n" && effectiveArgs.includes("--protocol=SOCKET")) {
+        const socket = effectiveArgs.find((arg) => arg.startsWith("--socket="))?.slice("--socket=".length)
+        assert.ok(socket)
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          try { await readFile(`${socket}.ready`); return { stdout: "1\n" } } catch {}
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        throw new Error("fixture MariaDB daemon did not bind")
+      }
       if (options.stdin === "SHOW ENGINES;\n") return { stdout: "InnoDB\tDEFAULT\tTransactional\nFEDERATED\tNO\tOutbound\nMEMORY\tYES\tMemory\n" }
       return { stdout: options.stdin === "SELECT 1;\n" ? "1\n" : "" }
     },
