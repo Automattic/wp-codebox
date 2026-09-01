@@ -966,11 +966,30 @@ async function captureExpectedEditorPresentationIdentities(
 ): Promise<{ identities: string[]; complete: boolean } | undefined> {
   if (target.kind !== "post" || !target.postId) return undefined
   const response = await runPlaygroundCommand("wordpress.editor-open.capture-presentation-contract", server, {
-    code: bootstrapPhpCode(runtimeSpec, `
-$post = get_post(${target.postId});
+    code: bootstrapPhpCode(runtimeSpec, editorPresentationContractPhpCode(target.postId), []),
+  })
+  assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
+  const value = parseEditorPresentationContract(response.text) as { identities?: unknown; complete?: unknown }
+  if (!Array.isArray(value.identities) || value.complete !== true || !value.identities.every((identity) => typeof identity === "string" && /^[a-f0-9]{64}$/.test(identity))) {
+    throw new Error("wordpress.editor-open presentation contract returned an invalid identity set")
+  }
+  return { identities: [...new Set(value.identities)].sort(), complete: true }
+}
+
+export function editorPresentationContractPhpCode(postId: number): string {
+  return `
+$post = get_post(${postId});
 if ( ! $post instanceof WP_Post ) { throw new RuntimeException( 'Editor target post is unavailable.' ); }
-wp_styles();
+$GLOBALS['post'] = $post;
+if ( ! function_exists( 'set_current_screen' ) ) { require_once ABSPATH . 'wp-admin/includes/screen.php'; }
+set_current_screen( 'post' );
+$wp_styles = wp_styles();
 wp_scripts();
+$queued_before_editor_assets = $wp_styles->queue;
+do_action( 'enqueue_block_assets' );
+$editor_style_handles = array_values( array_diff( $wp_styles->queue, $queued_before_editor_assets ) );
+$wp_styles->all_deps( $editor_style_handles );
+$editor_style_handles = array_values( array_unique( array_merge( $editor_style_handles, $wp_styles->to_do ) ) );
 $settings = get_block_editor_settings( array(), new WP_Block_Editor_Context( array( 'post' => $post ) ) );
 $identities = array();
 foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
@@ -979,17 +998,15 @@ foreach ( (array) ( $settings['styles'] ?? array() ) as $style ) {
     foreach ( $matches[1] as $identity ) { $identities[] = strtolower( $identity ); }
   }
 }
+foreach ( $editor_style_handles as $handle ) {
+  $style = $wp_styles->registered[$handle] ?? null;
+  $version = is_object( $style ) ? ( $style->ver ?? null ) : null;
+  if ( is_string( $version ) && preg_match( '/^[a-f0-9]{64}$/iD', $version ) ) { $identities[] = strtolower( $version ); }
+}
 $identities = array_values( array_unique( $identities ) );
 sort( $identities, SORT_STRING );
 echo PHP_EOL . '${EDITOR_PRESENTATION_CONTRACT_MARKER}' . base64_encode( (string) wp_json_encode( array( 'identities' => $identities, 'complete' => true ) ) ) . PHP_EOL;
-`, []),
-  })
-  assertPlaygroundResponseOk("wordpress.editor-open.capture-presentation-contract", response)
-  const value = parseEditorPresentationContract(response.text) as { identities?: unknown; complete?: unknown }
-  if (!Array.isArray(value.identities) || value.complete !== true || !value.identities.every((identity) => typeof identity === "string" && /^[a-f0-9]{64}$/.test(identity))) {
-    throw new Error("wordpress.editor-open presentation contract returned an invalid identity set")
-  }
-  return { identities: [...new Set(value.identities)].sort(), complete: true }
+`
 }
 
 export function parseEditorPresentationContract(output: string): unknown {
