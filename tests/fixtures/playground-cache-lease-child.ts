@@ -1,6 +1,7 @@
-import { lstat, rename, writeFile } from "node:fs/promises"
+import { lstat } from "node:fs/promises"
 
 import { acquirePlaygroundArchiveReference } from "../../packages/runtime-playground/src/playground-wordpress-archive-cache.js"
+import { publishProcessMarker } from "../../scripts/process-marker.mjs"
 
 const [archivePath, readyPath, stopPath] = process.argv.slice(2)
 if (!archivePath || !readyPath || !stopPath) {
@@ -8,9 +9,7 @@ if (!archivePath || !readyPath || !stopPath) {
 }
 
 const reference = await acquirePlaygroundArchiveReference(archivePath)
-const pendingReadyPath = `${readyPath}.${process.pid}.tmp`
-await writeFile(pendingReadyPath, reference.path)
-await rename(pendingReadyPath, readyPath)
+await publishProcessMarker(readyPath, reference.path)
 
 while (!await exists(stopPath)) {
   await new Promise((resolve) => setTimeout(resolve, 25))
