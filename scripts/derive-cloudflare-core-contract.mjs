@@ -106,7 +106,7 @@ function cleanupPendingResult(cleanupPath, dev, ino, stageLease, cleanupToken = 
   }
 }
 
-export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, stageLease, validate, fault = async () => {}, nativeFault = async () => {}, snapshotBarrier }) {
+export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, stageLease, validate, fault = async () => {}, nativeFault = async () => {}, snapshotBarrier, finalizeBarrier, syncFailure }) {
   const helperRoot = await mkdtemp(join(tmpdir(), "wp-codebox-atomic-exchange-"))
   const helper = resolve(helperRoot, "atomic-directory-exchange")
   let transaction
@@ -117,7 +117,7 @@ export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, s
     const canonicalDestinationRoot = await canonicalDestinationPath(destinationRoot)
     const canonicalStagedRoot = await canonicalExistingDirectoryPath(stagedRoot, "staging")
     const lockDirectory = resolve(await realpath(tmpdir()), `wp-codebox-directory-exchange-${process.getuid?.() ?? "user"}-${createHash("sha256").update(canonicalDestinationRoot).digest("hex")}`)
-    transaction = nativeTransaction(helper, lockDirectory, canonicalStagedRoot, canonicalDestinationRoot, snapshotBarrier)
+    transaction = nativeTransaction(helper, lockDirectory, canonicalStagedRoot, canonicalDestinationRoot, { snapshotBarrier, finalizeBarrier, syncFailure })
     const locked = await expectNative(transaction, "LOCKED")
     const [, stageDev, stageIno, cleanupDev, cleanupIno] = locked.split(" ")
     if (stageLease) {
@@ -142,7 +142,8 @@ export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, s
     await fault("after-validation")
     await fault("before-promotion")
 
-    transaction.send(`PROMOTE ${validatedManifest}`)
+    const cleanupToken = stageLease?.cleanupToken ?? randomUUID()
+    transaction.send(`PROMOTE ${validatedManifest} ${cleanupToken}`)
     await expectNative(transaction, "CHECKED")
     await nativeFault("helper-checked")
     transaction.send("EXCHANGE")
@@ -170,9 +171,8 @@ export async function promoteValidatedDirectory({ stagedRoot, destinationRoot, s
     } catch {
       transaction.send("LEAVE")
       await expectNative(transaction, "CLEANUP_PENDING")
-      return cleanupPendingResult(canonicalStagedRoot, cleanupDev, cleanupIno, stageLease)
+      return cleanupPendingResult(canonicalStagedRoot, cleanupDev, cleanupIno, stageLease, cleanupToken)
     }
-    const cleanupToken = stageLease?.cleanupToken ?? randomUUID()
     transaction.send(`CLEANUP ${cleanupToken}`)
     const cleanupOutcome = await transaction.next()
     if (cleanupOutcome === "CLEANUP_PENDING") return cleanupPendingResult(canonicalStagedRoot, cleanupDev, cleanupIno, stageLease, cleanupToken)
@@ -213,8 +213,16 @@ export async function resumePromotedCleanup({ cleanupPath, cleanupIdentity, clea
   }
 }
 
-function nativeTransaction(helper, lock, stagedRoot, destinationRoot, snapshotBarrier) {
-  const holder = spawn(helper, ["--transaction", lock, stagedRoot, destinationRoot], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(snapshotBarrier ? { WP_CODEBOX_SNAPSHOT_BARRIER: snapshotBarrier } : {}) } })
+function nativeTransaction(helper, lock, stagedRoot, destinationRoot, { snapshotBarrier, finalizeBarrier, syncFailure }) {
+  const holder = spawn(helper, ["--transaction", lock, stagedRoot, destinationRoot], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      ...(snapshotBarrier ? { WP_CODEBOX_SNAPSHOT_BARRIER: snapshotBarrier } : {}),
+      ...(finalizeBarrier ? { WP_CODEBOX_FINALIZE_BARRIER: finalizeBarrier } : {}),
+      ...(syncFailure ? { WP_CODEBOX_SYNC_FAILURE: syncFailure } : {}),
+    },
+  })
   let stderr = ""
   holder.stderr.setEncoding("utf8")
   holder.stderr.on("data", (chunk) => { stderr += chunk })
@@ -274,13 +282,17 @@ function nativeOutcomeError(outcome, stagedRoot, destinationRoot, cause) {
     INVALID_STAGING: "INVALID_DIRECTORY_ENTRY",
     INVALID_DIRECTORY_ENTRY: "INVALID_DIRECTORY_ENTRY",
     ROLLBACK_FAILED: "ROLLBACK_FAILED",
+    ROLLBACK_FAILED_LEFT_OWNERSHIP_CHANGED: "ROLLBACK_FAILED_LEFT_OWNERSHIP_CHANGED",
+    ROLLBACK_OWNERSHIP_CHANGED: "ROLLBACK_OWNERSHIP_CHANGED",
+    ROLLBACK_IO_FAILED: "ROLLBACK_IO_FAILED",
+    ROLLBACK_SYNC_FAILED: "ROLLBACK_SYNC_FAILED",
+    ROLLBACK_EXCHANGE_FAILED: "ROLLBACK_EXCHANGE_FAILED",
+    SYNC_FAILED: "SYNC_FAILED",
+    IO_FAILED: "IO_FAILED",
     DIRECTORY_LOCK_LOST: "DIRECTORY_LOCK_LOST",
     CLEANUP_PENDING: "CLEANUP_PENDING",
   }
   const code = codes[nativeCode] ?? "ATOMIC_EXCHANGE_FAILED"
-  if (code === "ROLLBACK_FAILED" && cause) {
-    cause = new AggregateError([cause, new DirectoryPromotionError("LEFT_OWNERSHIP_CHANGED", `displaced destination ownership changed: ${stagedRoot}`)], "promotion and rollback both failed")
-  }
   return new DirectoryPromotionError(code, `native directory promotion reported ${outcome}${cause?.message ? ` after ${cause.message}` : ""}: ${stagedRoot ?? ""} -> ${destinationRoot ?? ""}`, { cause })
 }
 
@@ -429,6 +441,15 @@ export async function createStageLease(stagePath, { createdAt = Date.now(), pid 
   const cleanupIdentity = await directoryIdentity(resolve(canonicalParent, name), "staging")
   const cleanupLease = resolve(canonicalParent, `${stageLeasePrefix}${randomUUID()}`)
   const stageLease = { cleanupPath: resolve(canonicalParent, name), cleanupIdentity, cleanupLease, cleanupToken: randomUUID(), pid, createdAt }
+  const tokenPath = resolve(stageLease.cleanupPath, ".wp-codebox-cleanup-token")
+  const token = await open(tokenPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600)
+  try {
+    await token.writeFile(`${stageLease.cleanupToken}\n`)
+    await token.sync()
+  } finally {
+    await token.close()
+  }
+  await syncParent(tokenPath)
   await persistStageLease(stageLease, true)
   return stageLease
 }

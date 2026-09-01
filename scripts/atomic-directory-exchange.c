@@ -72,13 +72,20 @@ static int stable_metadata(struct stat a,struct stat b) {
 }
 static int write_status(const char *s) { return dprintf(STDOUT_FILENO,"%s\n",s)<0?-1:0; }
 static int read_command(char *line,size_t size) { if(!fgets(line,(int)size,stdin))return -1;line[strcspn(line,"\r\n")]=0;return 0; }
+static void file_barrier(const char *environment) {
+    const char *barrier=getenv(environment);if(!barrier||!*barrier)return;
+    int marker=open(barrier,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(marker<0)return;
+    close(marker);while(access(barrier,F_OK)==0)usleep(1000);
+}
 
 static int compare_names(const void *a,const void *b){return strcmp(*(const char * const *)a,*(const char * const *)b);}
-static int manifest_dir(int fd,const char *prefix,sha256 *hash) {
+static int sync_directory(int fd);
+static int manifest_dir(int fd,const char *prefix,sha256 *hash,int synchronize) {
     int scan=openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW), result=-1; DIR *dir; struct dirent *entry; char **names=NULL; size_t count=0;struct stat before,after;
     if(scan<0||fstat(fd,&before)!=0||!S_ISDIR(before.st_mode)||!(dir=fdopendir(scan))) { if(scan>=0)close(scan); return -1; }
     while((entry=readdir(dir))) {
         if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
+        if(!strcmp(entry->d_name,".wp-codebox-cleanup-token"))continue;
         char **grown=realloc(names,(count+1)*sizeof(*names)); if(!grown)goto done; names=grown;
         if(!(names[count]=strdup(entry->d_name)))goto done; count++;
     }
@@ -90,11 +97,12 @@ static int manifest_dir(int fd,const char *prefix,sha256 *hash) {
         if(S_ISDIR(st.st_mode)) {
             int n=snprintf(header,sizeof(header),"d%c%s%c%u%c",0,path,0,(unsigned)st.st_mode,0); sha_add(hash,header,(size_t)n);
             child=openat(fd,names[i],O_RDONLY|O_DIRECTORY|O_NOFOLLOW); if(child<0)goto done;
-            struct stat opened,current; if(fstat(child,&opened)!=0||!stable_metadata(st,opened)||manifest_dir(child,path,hash)!=0||fstat(child,&current)!=0||!stable_metadata(opened,current)||fstatat(fd,names[i],&current,AT_SYMLINK_NOFOLLOW)!=0||!stable_metadata(opened,current)){close(child);goto done;} close(child);
+            struct stat opened,current; if(fstat(child,&opened)!=0||!stable_metadata(st,opened)||manifest_dir(child,path,hash,synchronize)!=0||(synchronize&&sync_directory(child)!=0)||fstat(child,&current)!=0||!stable_metadata(opened,current)||fstatat(fd,names[i],&current,AT_SYMLINK_NOFOLLOW)!=0||!stable_metadata(opened,current)){close(child);goto done;} close(child);
         } else if(S_ISREG(st.st_mode)) {
             child=openat(fd,names[i],O_RDONLY|O_NOFOLLOW); if(child<0)goto done;
             struct stat opened; if(fstat(child,&opened)!=0 || !S_ISREG(opened.st_mode) || !stable_metadata(st,opened)){close(child);goto done;}
             int n=snprintf(header,sizeof(header),"f%c%s%c%u%c%llu%c",0,path,0,(unsigned)opened.st_mode,0,(unsigned long long)opened.st_size,0); sha_add(hash,header,(size_t)n);
+            if(synchronize&&fsync(child)!=0){close(child);goto done;}
             unsigned char buffer[65536]; ssize_t got; while((got=read(child,buffer,sizeof(buffer)))>0)sha_add(hash,buffer,(size_t)got); if(got<0||fstat(child,&after)!=0||!stable_metadata(opened,after)){close(child);goto done;}close(child);
             if(fstatat(fd,names[i],&after,AT_SYMLINK_NOFOLLOW)!=0||!stable_metadata(opened,after))goto done;
         } else goto done;
@@ -103,15 +111,22 @@ static int manifest_dir(int fd,const char *prefix,sha256 *hash) {
 done:
     for(size_t i=0;i<count;i++)free(names[i]);free(names);closedir(dir);return result;
 }
-static int manifest(int root,char out[65]) { sha256 hash;sha_init(&hash);if(manifest_dir(root,"",&hash)!=0)return -1;sha_final(&hash,out);return 0; }
+static int tree_manifest(int root,char out[65],int synchronize) { sha256 hash;sha_init(&hash);if(manifest_dir(root,"",&hash,synchronize)!=0||(synchronize&&sync_directory(root)!=0))return -1;sha_final(&hash,out);return 0; }
+static int manifest(int root,char out[65]) { return tree_manifest(root,out,0); }
+static int sync_manifest(int root,char out[65]) { return tree_manifest(root,out,1); }
 
 static int sync_directory(int fd) { return fsync(fd); }
+static int sync_failure(const char *point) {
+    static int injected;const char *wanted=getenv("WP_CODEBOX_SYNC_FAILURE");
+    if(!injected&&wanted&&*wanted&&!strcmp(wanted,point)){injected=1;errno=EIO;return -1;}return 0;
+}
 static int copy_snapshot_dir(int source,int destination) {
     int scan=openat(source,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW),result=-1;DIR *dir;struct dirent *entry;struct stat source_before,source_after;
     if(scan<0||fstat(source,&source_before)!=0||!S_ISDIR(source_before.st_mode)||!(dir=fdopendir(scan))){if(scan>=0)close(scan);return -1;}
     while((entry=readdir(dir))) {
         int input=-1,output=-1;struct stat path_stat,opened;unsigned char buffer[65536];ssize_t got;
         if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
+        if(!strcmp(entry->d_name,".wp-codebox-cleanup-token"))continue;
         if(fstatat(source,entry->d_name,&path_stat,AT_SYMLINK_NOFOLLOW)!=0||S_ISLNK(path_stat.st_mode))goto done;
         if(S_ISDIR(path_stat.st_mode)) {
             if(mkdirat(destination,entry->d_name,0700)!=0||sync_directory(destination)!=0)goto done;
@@ -260,6 +275,23 @@ static void cleanup_barrier(const char *point) {
     if(barrier&&*barrier&&(((!wanted||!*wanted)&&!strcmp(point,"quarantined"))||(wanted&&*wanted&&!strcmp(wanted,point)))){int marker=open(barrier,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(marker>=0){dprintf(marker,"%ld\n",(long)getpid());close(marker);while(1)pause();}}
 }
 static int valid_token(const char *token) { if(!token||!*token||strlen(token)>80)return 0;for(const char *p=token;*p;p++)if(!((*p>='a'&&*p<='z')||(*p>='A'&&*p<='Z')||(*p>='0'&&*p<='9')||*p=='-'))return 0;return 1; }
+static const char cleanup_token_file[]=".wp-codebox-cleanup-token";
+static int write_target_token(int target,const char *token) {
+    int fd=openat(target,cleanup_token_file,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(fd<0)return -1;
+    int ok=dprintf(fd,"%s\n",token)>0&&fsync(fd)==0;close(fd);
+    if(ok&&sync_directory(target)==0)return 0;
+    unlinkat(target,cleanup_token_file,0);sync_directory(target);return -1;
+}
+static int target_token(int target,const char *token) {
+    char data[82],saved[81],extra;struct stat st,path;ssize_t n;int fd=openat(target,cleanup_token_file,O_RDONLY|O_NOFOLLOW);if(fd<0)return 0;
+    if(fstat(fd,&st)!=0||!S_ISREG(st.st_mode)||(st.st_mode&0777)!=0600||fstatat(target,cleanup_token_file,&path,AT_SYMLINK_NOFOLLOW)!=0||!same(identity_of(st),identity_of(path))||(n=read(fd,data,sizeof(data)-1))<=0){close(fd);return 0;}
+    close(fd);data[n]=0;return sscanf(data,"%80s %c",saved,&extra)==1&&!strcmp(saved,token);
+}
+static int remove_target_token(int target,const char *token) {
+    struct stat st;if(!target_token(target,token)){if(fstatat(target,cleanup_token_file,&st,AT_SYMLINK_NOFOLLOW)!=0&&errno==ENOENT)return 0;errno=EPERM;return -1;}
+    return unlinkat(target,cleanup_token_file,0)==0&&sync_directory(target)==0?0:-1;
+}
+static int ensure_target_token(int target,const char *token) { return target_token(target,token)?0:write_target_token(target,token); }
 static int write_cleanup_state(int qfd,const char *token,identity expected,identity placeholder) {
     int fd=openat(qfd,"owner",O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(fd<0)return -1;
     int ok=dprintf(fd,"%s %llu %llu %llu %llu\n",token,(unsigned long long)expected.dev,(unsigned long long)expected.ino,(unsigned long long)placeholder.dev,(unsigned long long)placeholder.ino)>0&&fsync(fd)==0;
@@ -281,10 +313,12 @@ static enum cleanup_result cleanup_entry(int parent,const char *name,identity ex
     if(mkdirat(parent,quarantine,0700)==0){created=1;if(sync_directory(parent)!=0)goto done;}else if(errno!=EEXIST)return CLEAN_PENDING;
     qfd=openat(parent,quarantine,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);if(qfd<0)return CLEAN_PENDING;
     if(created) {
+        int target=openat(parent,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+        if(target<0||!target_token(target,token)){if(target>=0)close(target);result=CLEAN_IDENTITY;goto done;}close(target);
         if(mkdirat(qfd,"root",0700)!=0||sync_directory(qfd)!=0||fstatat(qfd,"root",&st,AT_SYMLINK_NOFOLLOW)!=0)goto done;
         placeholder=identity_of(st);if(write_cleanup_state(qfd,token,expected,placeholder)!=0)goto done;
     } else if(!read_cleanup_state(qfd,token,expected,&placeholder)) {
-        if(directory_empty(qfd)){close(qfd);qfd=-1;if(unlinkat(parent,quarantine,AT_REMOVEDIR)!=0||sync_directory(parent)!=0)return CLEAN_PENDING;return entry_identity(parent,name,expected)?cleanup_entry(parent,name,expected,token):CLEAN_OK;}
+        if(directory_empty(qfd))goto done;
         if(entry_identity(parent,name,expected)&&fstatat(qfd,"root",&st,AT_SYMLINK_NOFOLLOW)==0&&S_ISDIR(st.st_mode)){int orphan=openat(qfd,"root",O_RDONLY|O_DIRECTORY|O_NOFOLLOW);if(orphan>=0&&directory_empty(orphan)){close(orphan);if(unlinkat(qfd,"root",AT_REMOVEDIR)==0&&sync_directory(qfd)==0){close(qfd);qfd=-1;if(unlinkat(parent,quarantine,AT_REMOVEDIR)==0&&sync_directory(parent)==0)return cleanup_entry(parent,name,expected,token);}}else if(orphan>=0)close(orphan);}
         goto done;
     }
@@ -301,6 +335,7 @@ static enum cleanup_result cleanup_entry(int parent,const char *name,identity ex
         goto done;
     }
     cleanup_barrier("after-exchange");
+    root=openat(qfd,"root",O_RDONLY|O_DIRECTORY|O_NOFOLLOW);if(root<0||!target_token(root,token))goto done;close(root);root=-1;
     if(entry_identity(parent,name,placeholder)&&(unlinkat(parent,name,AT_REMOVEDIR)!=0||sync_directory(parent)!=0))goto done;
     cleanup_barrier("quarantined");
     root=openat(qfd,"root",O_RDONLY|O_DIRECTORY|O_NOFOLLOW);if(root<0||fstat(root,&st)!=0||!same(identity_of(st),expected))goto done;
@@ -313,42 +348,45 @@ done:
     if(root>=0)close(root);if(qfd>=0)close(qfd);return result;
 }
 
-static int rollback_with_status(int lp,const char *ln,int rp,const char *rn,identity old_left,identity old_right,const char *status) {
-    if(!entry_identity(rp,rn,old_left)){write_status("ROLLED_BACK RIGHT_OWNERSHIP_CHANGED");return 4;}
+static int rollback_failure(const char *status) { write_status(status);return 5; }
+static int rollback_with_status(int lp,const char *ln,int rp,const char *rn,int staged_fd,int displaced_fd,identity old_left,identity old_right,const char *token,const char *status) {
+    file_barrier("WP_CODEBOX_ROLLBACK_BARRIER");
+    if(!entry_identity(rp,rn,old_left)){write_status("RIGHT_OWNERSHIP_CHANGED");return 4;}
     if(!entry_identity(lp,ln,old_right)){
         char quarantine[192];struct stat st;identity empty,removed;
         snprintf(quarantine,sizeof(quarantine),".wp-codebox-failed-promotion-%llu-%llu",(unsigned long long)old_left.dev,(unsigned long long)old_left.ino);
-        if(mkdirat(rp,quarantine,0700)!=0||sync_directory(rp)!=0||fstatat(rp,quarantine,&st,AT_SYMLINK_NOFOLLOW)!=0){write_status("ROLLBACK_FAILED");return 5;}
+        if(remove_target_token(displaced_fd,token)!=0)return rollback_failure("ROLLBACK_IO_FAILED");
+        if(mkdirat(rp,quarantine,0700)!=0||fstatat(rp,quarantine,&st,AT_SYMLINK_NOFOLLOW)!=0)return rollback_failure("ROLLBACK_IO_FAILED");
+        if(sync_directory(rp)!=0)return rollback_failure("ROLLBACK_SYNC_FAILED");
         empty=identity_of(st);
-        if(!entry_identity(rp,rn,old_left)){write_status("ROLLBACK_FAILED");return 5;}
-        {const char *barrier=getenv("WP_CODEBOX_ROLLBACK_BARRIER");if(barrier&&*barrier){int marker=open(barrier,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(marker>=0){close(marker);while(access(barrier,F_OK)==0)usleep(1000);}}}
-        if(exchange_at(rp,quarantine,rp,rn)!=0||sync_directory(rp)!=0){write_status("ROLLBACK_FAILED");return 5;}
-        if(fstatat(rp,quarantine,&st,AT_SYMLINK_NOFOLLOW)!=0){write_status("ROLLBACK_FAILED");return 5;}
+        if(!entry_identity(rp,rn,old_left)){write_status("RIGHT_OWNERSHIP_CHANGED");return 4;}
+        if(exchange_at(rp,quarantine,rp,rn)!=0)return rollback_failure("ROLLBACK_EXCHANGE_FAILED");
+        if(sync_directory(rp)!=0)return rollback_failure("ROLLBACK_SYNC_FAILED");
+        if(fstatat(rp,quarantine,&st,AT_SYMLINK_NOFOLLOW)!=0)return rollback_failure("ROLLBACK_IO_FAILED");
         removed=identity_of(st);
         if(!same(removed,old_left)||!entry_identity(rp,rn,empty)) {
             if(entry_identity(rp,rn,empty)&&entry_identity(rp,quarantine,removed)) {
-                if(exchange_at(rp,rn,rp,quarantine)!=0||sync_directory(rp)!=0||!entry_identity(rp,rn,removed)||!entry_identity(rp,quarantine,empty)){write_status("ROLLBACK_FAILED");return 5;}
+                if(exchange_at(rp,rn,rp,quarantine)!=0)return rollback_failure("ROLLBACK_EXCHANGE_FAILED");
+                if(sync_directory(rp)!=0)return rollback_failure("ROLLBACK_SYNC_FAILED");
+                if(!entry_identity(rp,rn,removed)||!entry_identity(rp,quarantine,empty))return rollback_failure("ROLLBACK_OWNERSHIP_CHANGED");
             }
-            write_status("ROLLBACK_FAILED");return 5;
+            return rollback_failure("ROLLBACK_OWNERSHIP_CHANGED");
         }
-        write_status("ROLLBACK_FAILED");return 5;
+        return rollback_failure("ROLLBACK_FAILED_LEFT_OWNERSHIP_CHANGED");
     }
-    if(exchange_at(lp,ln,rp,rn)!=0||sync_directory(lp)!=0||(rp!=lp&&sync_directory(rp)!=0)){write_status("ROLLBACK_FAILED");return 5;}
-    if(!entry_identity(rp,rn,old_right)||!entry_identity(lp,ln,old_left)){write_status("ROLLBACK_FAILED");return 5;}
+    if(remove_target_token(displaced_fd,token)!=0)return rollback_failure("ROLLBACK_IO_FAILED");
+    if(!entry_identity(rp,rn,old_left)){write_status("RIGHT_OWNERSHIP_CHANGED");return 4;}
+    if(!entry_identity(lp,ln,old_right))return rollback_failure("ROLLBACK_FAILED_LEFT_OWNERSHIP_CHANGED");
+    if(exchange_at(lp,ln,rp,rn)!=0)return rollback_failure("ROLLBACK_EXCHANGE_FAILED");
+    if(sync_directory(lp)!=0||(rp!=lp&&sync_directory(rp)!=0))return rollback_failure("ROLLBACK_SYNC_FAILED");
+    if(!entry_identity(rp,rn,old_right)||!entry_identity(lp,ln,old_left))return rollback_failure("ROLLBACK_OWNERSHIP_CHANGED");
+    if(ensure_target_token(staged_fd,token)!=0)return rollback_failure("ROLLBACK_IO_FAILED");
     write_status(status);return 0;
 }
-static int rollback(int lp,const char *ln,int rp,const char *rn,identity old_left,identity old_right) { return rollback_with_status(lp,ln,rp,rn,old_left,old_right,"ROLLED_BACK"); }
-static int rollback_exchange_race(int lp,const char *ln,int rp,const char *rn,identity old_left,identity old_right) {
-    struct stat left,right;identity left_identity,right_identity;
-    if(fstatat(lp,ln,&left,AT_SYMLINK_NOFOLLOW)!=0||!S_ISDIR(left.st_mode)||S_ISLNK(left.st_mode)||fstatat(rp,rn,&right,AT_SYMLINK_NOFOLLOW)!=0||!S_ISDIR(right.st_mode)||S_ISLNK(right.st_mode)){write_status("ROLLBACK_FAILED");return 5;}
-    left_identity=identity_of(left);right_identity=identity_of(right);
-    if(exchange_at(lp,ln,rp,rn)!=0||sync_directory(lp)!=0||(rp!=lp&&sync_directory(rp)!=0)||!entry_identity(lp,ln,right_identity)||!entry_identity(rp,rn,left_identity)){write_status("ROLLBACK_FAILED");return 5;}
-    if(!same(left_identity,old_right)){write_status("ROLLED_BACK RIGHT_OWNERSHIP_CHANGED");return 4;}
-    if(!same(right_identity,old_left)){write_status("ROLLED_BACK STAGING_CONTENT_CHANGED");return 3;}
-    write_status("ROLLED_BACK STAGING_CONTENT_CHANGED");return 3;
-}
+static int rollback(int lp,const char *ln,int rp,const char *rn,int staged_fd,int displaced_fd,identity old_left,identity old_right,const char *token) { return rollback_with_status(lp,ln,rp,rn,staged_fd,displaced_fd,old_left,old_right,token,"ROLLED_BACK"); }
 
 int main(int argc,char **argv) {
+    signal(SIGPIPE,SIG_IGN);
     if(argc==5&&!strcmp(argv[1],"--manifest")) {
         int root=open_absolute_directory(argv[2]);char digest[65];struct stat st;identity expected={(dev_t)strtoull(argv[3],NULL,10),(ino_t)strtoull(argv[4],NULL,10)};
         if(root<0||fstat(root,&st)||!same(identity_of(st),expected)||manifest(root,digest)!=0){if(root>=0)close(root);write_status("INVALID_STAGING");return 6;}
@@ -384,32 +422,42 @@ int main(int argc,char **argv) {
     int lp=open_absolute_directory(lparent_path),rp=open_absolute_directory(rparent_path);
     int left_fd=lp<0?-1:openat(lp,ln,O_RDONLY|O_DIRECTORY|O_NOFOLLOW),right_fd=rp<0?-1:openat(rp,rn,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
     struct stat ls,rs;if(lp<0||rp<0||left_fd<0||right_fd<0||fstat(left_fd,&ls)||fstat(right_fd,&rs)){write_status("INVALID_DIRECTORY_ENTRY");return 6;}
-    identity old_left=identity_of(ls),old_right=identity_of(rs);char line[256],digest[65],current[65];
+    identity old_left=identity_of(ls),old_right=identity_of(rs);char line[256],digest[65],current[65],token[81];
     dprintf(STDOUT_FILENO,"LOCKED %llu %llu %llu %llu\n",(unsigned long long)old_left.dev,(unsigned long long)old_left.ino,(unsigned long long)old_right.dev,(unsigned long long)old_right.ino);
     while(read_command(line,sizeof(line))==0) {
         if(!strcmp(line,"MANIFEST")){if(manifest(left_fd,current))write_status("INVALID_STAGING");else dprintf(STDOUT_FILENO,"MANIFEST %s\n",current);continue;}
         if(!strncmp(line,"SNAPSHOT ",9)) {int snapshot=open_absolute_directory(line+9);if(snapshot<0||copy_snapshot_dir(left_fd,snapshot)!=0||manifest(snapshot,current)!=0)write_status("STAGING_CONTENT_CHANGED");else dprintf(STDOUT_FILENO,"SNAPSHOT %s\n",current);if(snapshot>=0)close(snapshot);continue;}
         if(!strncmp(line,"PROMOTE ",8)) {
-            if(strlen(line+8)!=64){write_status("INVALID_STAGING");continue;}strcpy(digest,line+8);
+            char extra;if(sscanf(line+8,"%64s %80s %c",digest,token,&extra)!=2||strlen(digest)!=64||!valid_token(token)){write_status("INVALID_STAGING");continue;}
             if(!lock_continuous(lock)){write_status("DIRECTORY_LOCK_LOST");continue;}
             if(!entry_identity(lp,ln,old_left)){write_status("LEFT_OWNERSHIP_CHANGED");continue;}
             if(!entry_identity(rp,rn,old_right)){write_status("RIGHT_OWNERSHIP_CHANGED");continue;}
             if(manifest(left_fd,current)||strcmp(current,digest)){write_status("STAGING_CONTENT_CHANGED");continue;}
+            if(ensure_target_token(left_fd,token)!=0){write_status("IO_FAILED");continue;}
             write_status("CHECKED");if(read_command(line,sizeof(line))||strcmp(line,"EXCHANGE"))return 2;
             if(!lock_continuous(lock)){write_status("DIRECTORY_LOCK_LOST");continue;}
-            if(exchange_at(lp,ln,rp,rn)!=0||sync_directory(lp)!=0||(rp!=lp&&sync_directory(rp)!=0)){write_status("EXCHANGE_FAILED");continue;}
-            if(!entry_identity(rp,rn,old_left)||!entry_identity(lp,ln,old_right)||manifest(left_fd,current)||strcmp(current,digest))return rollback_exchange_race(lp,ln,rp,rn,old_left,old_right);
-            write_status("PROMOTED");
-            if(read_command(line,sizeof(line)))return rollback(lp,ln,rp,rn,old_left,old_right);
-            if(!strcmp(line,"ROLLBACK"))return rollback(lp,ln,rp,rn,old_left,old_right);
+            if(!entry_identity(lp,ln,old_left)){write_status("LEFT_OWNERSHIP_CHANGED");continue;}
+            if(!entry_identity(rp,rn,old_right)){write_status("RIGHT_OWNERSHIP_CHANGED");continue;}
+            if(sync_failure("staged-tree")||sync_manifest(left_fd,current)!=0){write_status("SYNC_FAILED");continue;}
+            if(strcmp(current,digest)||!lock_continuous(lock)||!entry_identity(lp,ln,old_left)||!entry_identity(rp,rn,old_right)){write_status("STAGING_CONTENT_CHANGED");continue;}
+            if(exchange_at(lp,ln,rp,rn)!=0){write_status("EXCHANGE_FAILED");continue;}
+            if(sync_failure("exchange-parent")||sync_directory(lp)!=0||(rp!=lp&&sync_directory(rp)!=0))return rollback_with_status(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token,"ROLLED_BACK SYNC_FAILED");
+            if(!entry_identity(rp,rn,old_left)||!entry_identity(lp,ln,old_right)||manifest(left_fd,current)||strcmp(current,digest))return rollback_with_status(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token,"ROLLED_BACK STAGING_CONTENT_CHANGED");
+            if(remove_target_token(left_fd,token)!=0||write_target_token(right_fd,token)!=0)return rollback_with_status(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token,"ROLLED_BACK IO_FAILED");
+            if(write_status("PROMOTED")!=0)return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            if(read_command(line,sizeof(line)))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            if(!strcmp(line,"ROLLBACK"))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
             if(strcmp(line,"COMMIT"))return 2;
-            if(!lock_continuous(lock))return rollback_with_status(lp,ln,rp,rn,old_left,old_right,"ROLLED_BACK DIRECTORY_LOCK_LOST");
+            if(!lock_continuous(lock))return rollback_with_status(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token,"ROLLED_BACK DIRECTORY_LOCK_LOST");
             if(!entry_identity(rp,rn,old_left)){write_status("RIGHT_OWNERSHIP_CHANGED");return 4;}
-            if(manifest(left_fd,current)||strcmp(current,digest))return rollback(lp,ln,rp,rn,old_left,old_right);
-            write_status("FINAL_MANIFEST");if(read_command(line,sizeof(line))||strcmp(line,"FINALIZE"))return rollback(lp,ln,rp,rn,old_left,old_right);
-            if(!lock_continuous(lock))return rollback_with_status(lp,ln,rp,rn,old_left,old_right,"ROLLED_BACK DIRECTORY_LOCK_LOST");
+            if(!entry_identity(lp,ln,old_right)||manifest(left_fd,current)||strcmp(current,digest))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            write_status("FINAL_MANIFEST");if(read_command(line,sizeof(line))||strcmp(line,"FINALIZE"))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            if(manifest(left_fd,current)||strcmp(current,digest))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            file_barrier("WP_CODEBOX_FINALIZE_BARRIER");
+            if(manifest(left_fd,current)||strcmp(current,digest))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
+            if(!lock_continuous(lock))return rollback_with_status(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token,"ROLLED_BACK DIRECTORY_LOCK_LOST");
             if(!entry_identity(rp,rn,old_left)){write_status("RIGHT_OWNERSHIP_CHANGED");return 4;}
-            if(manifest(left_fd,current)||strcmp(current,digest))return rollback(lp,ln,rp,rn,old_left,old_right);
+            if(!entry_identity(lp,ln,old_right))return rollback(lp,ln,rp,rn,left_fd,right_fd,old_left,old_right,token);
             write_status("COMMITTED");
             if(read_command(line,sizeof(line))||strncmp(line,"CLEANUP ",8)){write_status("CLEANUP_PENDING");return 7;}
             enum cleanup_result cleaned=cleanup_entry(lp,ln,old_right,line+8);

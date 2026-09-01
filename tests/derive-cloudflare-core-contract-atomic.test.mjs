@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { access, chmod, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises"
+import { access, chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import test from "node:test"
@@ -106,7 +106,7 @@ test("physical, relative, and symlink-parent destination aliases serialize two w
   }
 })
 
-test("rollback reports exact left ownership loss and removes the failed replacement from live", async () => {
+test("native rollback reports exact left ownership loss and removes the failed replacement from live", async () => {
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-left-rollback-"))
   const destinationRoot = join(root, "live")
   const stagedRoot = join(root, "staged")
@@ -126,7 +126,7 @@ test("rollback reports exact left ownership loss and removes the failed replacem
           throw new Error("injected promotion failure")
         },
       }),
-      (error) => error instanceof DirectoryPromotionError && error.code === "ROLLBACK_FAILED" && error.cause?.errors?.[1]?.code === "LEFT_OWNERSHIP_CHANGED",
+      (error) => error instanceof DirectoryPromotionError && error.code === "ROLLBACK_FAILED_LEFT_OWNERSHIP_CHANGED" && error.cause?.message === "injected promotion failure" && !(error.cause instanceof AggregateError),
     )
     await assert.rejects(readFile(join(destinationRoot, "contract.js")), { code: "ENOENT" })
     assert.equal(await readFile(join(savedPrevious, "contract.js"), "utf8"), "previous")
@@ -163,19 +163,16 @@ test("rollback suppresses exact right ownership loss without overwriting its new
   }
 })
 
-test("failed-left fallback restores a foreign destination exchanged after its native check", async () => {
+test("rollback classification leaves an exact post-exchange destination replacement untouched", async () => {
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-rollback-fallback-race-"))
   const destinationRoot = join(root, "live")
   const stagedRoot = join(root, "staged")
-  const savedPrevious = join(root, "saved-previous")
   const displacedPromotion = join(root, "displaced-promotion")
   const barrier = join(root, "rollback-barrier")
   try {
     await writeTree(destinationRoot, "previous")
     await writeTree(stagedRoot, "failed-replacement")
     const source = `
-      import { mkdir, rename, writeFile } from "node:fs/promises"
-      import { join } from "node:path"
       import { promoteValidatedDirectory } from ${JSON.stringify(resolve(import.meta.dirname, "../scripts/derive-cloudflare-core-contract.mjs"))}
       await promoteValidatedDirectory({
         stagedRoot: process.argv[1],
@@ -183,23 +180,25 @@ test("failed-left fallback restores a foreign destination exchanged after its na
         validate: async () => {},
         fault: async (point) => {
           if (point !== "after-promotion") return
-          await rename(process.argv[1], process.argv[3])
-          await mkdir(process.argv[1])
-          await writeFile(join(process.argv[1], "contract.js"), "foreign-left")
-          throw new Error("force fallback")
+          throw new Error("force rollback")
         },
       })
     `
-    const promotion = execFileAsync(process.execPath, ["--input-type=module", "--eval", source, stagedRoot, destinationRoot, savedPrevious], {
+    const promotion = execFileAsync(process.execPath, ["--input-type=module", "--eval", source, stagedRoot, destinationRoot], {
       env: { ...process.env, WP_CODEBOX_ROLLBACK_BARRIER: barrier },
     })
     await waitFor(barrier)
     await rename(destinationRoot, displacedPromotion)
     await writeTree(destinationRoot, "foreign-right")
+    const foreignIdentity = await lstat(destinationRoot, { bigint: true })
     await rm(barrier)
-    await assert.rejects(promotion, /ROLLBACK_FAILED/)
+    await assert.rejects(promotion, /RIGHT_OWNERSHIP_CHANGED/)
+    const afterIdentity = await lstat(destinationRoot, { bigint: true })
+    assert.equal(afterIdentity.dev, foreignIdentity.dev)
+    assert.equal(afterIdentity.ino, foreignIdentity.ino)
     assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "foreign-right")
     assert.equal(await readFile(join(displacedPromotion, "contract.js"), "utf8"), "failed-replacement")
+    assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "previous")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -290,44 +289,46 @@ test("validation cannot mutate its snapshot away from the promoted manifest", as
   }
 })
 
-test("destination replacement before promotion is typed and never overwritten", async () => {
-  const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-right-before-promotion-"))
-  const destinationRoot = join(root, "live")
-  const stagedRoot = join(root, "staged")
-  const savedPrevious = join(root, "saved-previous")
-  try {
-    await writeTree(destinationRoot, "previous")
-    await writeTree(stagedRoot, "replacement")
-    await assert.rejects(promoteValidatedDirectory({
-      stagedRoot,
-      destinationRoot,
-      validate: async () => {},
-      fault: async (point) => {
-        if (point !== "before-promotion") return
-        await rename(destinationRoot, savedPrevious)
-        await writeTree(destinationRoot, "foreign")
-      },
-    }), (error) => error instanceof DirectoryPromotionError && error.code === "RIGHT_OWNERSHIP_CHANGED")
-    assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "foreign")
-    assert.equal(await readFile(join(savedPrevious, "contract.js"), "utf8"), "previous")
-  } finally {
-    await rm(root, { recursive: true, force: true })
+test("staged-tree and exchange-parent sync failures retain the prior live tree", async () => {
+  for (const syncFailure of ["staged-tree", "exchange-parent"]) {
+    const root = await mkdtemp(join(tmpdir(), `wp-codebox-core-${syncFailure}-failure-`))
+    const destinationRoot = join(root, "live")
+    const stagedRoot = join(root, "staged")
+    try {
+      await writeTree(destinationRoot, "previous")
+      await writeTree(stagedRoot, "replacement")
+      await assert.rejects(promoteValidatedDirectory({
+        stagedRoot,
+        destinationRoot,
+        validate: async () => {},
+        syncFailure,
+      }), (error) => error instanceof DirectoryPromotionError && error.code === "SYNC_FAILED")
+      assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "previous")
+      assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "replacement")
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   }
 })
 
-test("a descendant mutation after the final native manifest rolls back", async () => {
+test("the final native linearization point rejects content mutation after manifest traversal", async () => {
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-final-manifest-"))
   const destinationRoot = join(root, "live")
   const stagedRoot = join(root, "staged")
+  const barrier = join(root, "finalize-barrier")
   try {
     await writeTree(destinationRoot, "previous")
     await writeTree(stagedRoot, "validated")
-    await assert.rejects(promoteValidatedDirectory({
+    const promotion = promoteValidatedDirectory({
       stagedRoot,
       destinationRoot,
       validate: async () => {},
-      nativeFault: async (point) => { if (point === "after-final-manifest") await writeFile(join(destinationRoot, "contract.js"), "mutated") },
-    }), (error) => error instanceof DirectoryPromotionError && error.code === "STAGING_CONTENT_CHANGED")
+      finalizeBarrier: barrier,
+    })
+    await waitFor(barrier)
+    await writeFile(join(destinationRoot, "contract.js"), "mutated")
+    await rm(barrier)
+    await assert.rejects(promotion, (error) => error instanceof DirectoryPromotionError && error.code === "STAGING_CONTENT_CHANGED")
     assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "previous")
     assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "mutated")
   } finally {
@@ -376,7 +377,7 @@ test("staging replacement in the helper check/exchange barrier restores live and
         await rename(stagedRoot, savedStage)
         await writeTree(stagedRoot, "foreign-stage")
       },
-    }), (error) => error instanceof DirectoryPromotionError && error.code === "STAGING_CONTENT_CHANGED")
+    }), (error) => error instanceof DirectoryPromotionError && error.code === "STAGING_OWNERSHIP_CHANGED")
     assert.equal(await readFile(join(destinationRoot, "contract.js"), "utf8"), "previous")
     assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "foreign-stage")
     assert.equal(await readFile(join(savedStage, "contract.js"), "utf8"), "replacement")
@@ -591,7 +592,7 @@ test("cleanup quarantine survives native helper termination and resumes by lease
     const interrupted = resumePromotedCleanup({ ...result, cleanupLease: stageLease.cleanupLease, cleanupBarrier: barrier })
     await waitFor(barrier)
     process.kill(Number((await readFile(barrier, "utf8")).trim()), "SIGKILL")
-    await assert.rejects(interrupted)
+    await assert.rejects(interrupted, (error) => error?.signal === "SIGKILL")
     await writeTree(stagedRoot, "foreign")
     await reclaimStaleStages(root)
     assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "foreign")
@@ -620,7 +621,7 @@ for (const cleanupBarrierPoint of ["before-exchange", "after-exchange"]) {
       const interrupted = resumePromotedCleanup({ ...result, cleanupBarrier: barrier, cleanupBarrierPoint })
       await waitFor(barrier)
       process.kill(Number((await readFile(barrier, "utf8")).trim()), "SIGKILL")
-      await assert.rejects(interrupted)
+      await assert.rejects(interrupted, (error) => error?.signal === "SIGKILL")
       assert.deepEqual(await resumePromotedCleanup(result), { outcome: "cleaned" })
       await assert.rejects(access(stagedRoot), { code: "ENOENT" })
       assert.equal((await readdir(root)).some((name) => name.startsWith(".wp-codebox-cleanup-")), false)
@@ -630,7 +631,7 @@ for (const cleanupBarrierPoint of ["before-exchange", "after-exchange"]) {
   })
 }
 
-test("cleanup preserves a foreign pre-existing predictable quarantine", async () => {
+test("cleanup preserves an exact foreign native quarantine-token collision", async () => {
   const root = await mkdtemp(join(tmpdir(), "wp-codebox-core-foreign-quarantine-"))
   const destinationRoot = join(root, "live")
   const stagedRoot = join(root, "staged")
@@ -643,11 +644,18 @@ test("cleanup preserves a foreign pre-existing predictable quarantine", async ()
       validate: async () => {},
       nativeFault: async (point) => { if (point === "before-cleanup") throw new Error("defer cleanup") },
     })
-    const foreign = join(root, `.wp-codebox-cleanup-${result.cleanupIdentity.dev}-${result.cleanupIdentity.ino}`)
+    const foreign = join(root, `.wp-codebox-cleanup-${result.cleanupIdentity.dev}-${result.cleanupIdentity.ino}-${result.cleanupToken}`)
     await mkdir(foreign)
-    await writeFile(join(foreign, "foreign.txt"), "preserve")
-    assert.deepEqual(await resumePromotedCleanup(result), { outcome: "cleaned" })
-    assert.equal(await readFile(join(foreign, "foreign.txt"), "utf8"), "preserve")
+    const foreignIdentity = await lstat(foreign, { bigint: true })
+    const resumed = await resumePromotedCleanup(result)
+    assert.equal(resumed.outcome, "promoted_cleanup_pending")
+    assert.deepEqual(resumed.cleanupIdentity, result.cleanupIdentity)
+    assert.equal(resumed.cleanupToken, result.cleanupToken)
+    const afterIdentity = await lstat(foreign, { bigint: true })
+    assert.equal(afterIdentity.dev, foreignIdentity.dev)
+    assert.equal(afterIdentity.ino, foreignIdentity.ino)
+    assert.deepEqual(await readdir(foreign), [])
+    assert.equal(await readFile(join(stagedRoot, "contract.js"), "utf8"), "previous")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -872,7 +880,7 @@ for (const faultPoint of ["before-lock", "after-validation", "before-promotion",
           nativeFault: async (point) => { if (point === process.argv[3]) process.kill(process.pid, "SIGKILL") },
         })
       `
-      await assert.rejects(execFileAsync(process.execPath, ["--input-type=module", "--eval", source, stagedRoot, destinationRoot, faultPoint]))
+      await assert.rejects(execFileAsync(process.execPath, ["--input-type=module", "--eval", source, stagedRoot, destinationRoot, faultPoint]), (error) => error?.signal === "SIGKILL")
       if (["after-promotion", "after-final-manifest"].includes(faultPoint)) await waitForContents(join(destinationRoot, "contract.js"), "previous")
       const live = await readFile(join(destinationRoot, "contract.js"), "utf8")
       assert.equal(live, "previous")
