@@ -1,0 +1,37 @@
+name: Cloudflare Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloudflare-check:
+    name: package check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/runtime-cloudflare/npm-shrinkwrap.json
+      - name: Install Cloudflare package lock
+        run: npm ci --prefix packages/runtime-cloudflare --workspaces=false
+      - name: Check repository package boundaries
+        run: npm run test:runtime-package-boundaries
+      - name: Run Cloudflare package checks
+        run: npm --prefix packages/runtime-cloudflare run check
+      - name: Bundle installed Cloudflare package artifact
+        run: npm --prefix packages/runtime-cloudflare run test:packed-wrangler

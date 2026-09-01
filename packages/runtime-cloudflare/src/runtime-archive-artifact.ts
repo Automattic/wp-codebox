@@ -41,4 +41,4 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
-import { runtimeArchiveComponent, type RuntimeArchiveComponent } from "../../runtime-core/src/runtime-archive-component.js"
+import { runtimeArchiveComponent, type RuntimeArchiveComponent } from "@automattic/wp-codebox-core/runtime-archive-component"

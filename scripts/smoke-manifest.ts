@@ -38,8 +38,6 @@ export const smokeGroups = {
       // CHAIN_OWNED_FILES in smoke-discovery.ts.
       npmScript("test:generic-primitives"),
       npmScript("test:runtime-services"),
-      // Also carries `tsc -p packages/runtime-cloudflare --noEmit`.
-      npmScript("test:cloudflare-runtime"),
     ],
   },
 } satisfies Record<string, SmokeGroupDefinition>

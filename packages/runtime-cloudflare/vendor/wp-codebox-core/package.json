@@ -1,0 +1,23 @@
+{
+  "name": "@automattic/wp-codebox-core",
+  "version": "0.26.2",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./runtime-archive-component": {
+      "types": "./runtime-archive-component.d.ts",
+      "import": "./runtime-archive-component.js",
+      "default": "./runtime-archive-component.js"
+    },
+    "./runtime-package-profile": {
+      "types": "./runtime-package-profile.d.ts",
+      "import": "./runtime-package-profile.js",
+      "default": "./runtime-package-profile.js"
+    },
+    "./runtime-command-result": {
+      "types": "./runtime-command-result.d.ts",
+      "import": "./runtime-command-result.js",
+      "default": "./runtime-command-result.js"
+    }
+  }
+}

@@ -15,7 +15,7 @@
     "provider": "cloudflare-workers.deploy",
     "policy": {
       "wrangler": {
-        "binary": "./node_modules/.bin/wrangler",
+        "binary": "./packages/runtime-cloudflare/node_modules/.bin/wrangler",
         "config": "packages/runtime-cloudflare/wrangler.d1.jsonc",
         "config_ref": "packages/runtime-cloudflare/wrangler.d1.jsonc"
       },
@@ -24,7 +24,9 @@
         "WORDPRESS_STATE_BUCKET",
         "WORDPRESS_STATE_DATABASE"
       ],
-      "predeploy_commands": [],
+      "predeploy_commands": [
+        "npm ci --omit=dev --engine-strict --prefix packages/runtime-cloudflare --workspaces=false"
+      ],
       "timeout_ms": 300000
     }
   },

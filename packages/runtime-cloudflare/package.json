@@ -3,11 +3,81 @@
   "version": "0.12.27",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "assets",
+    "components",
+    "patches",
+    "scripts",
+    "src",
+    "tests",
+    "vendor",
+    "README.md",
+    "npm-shrinkwrap.json",
+    "tsconfig.json",
+    "wrangler.jsonc",
+    "wrangler.d1.jsonc",
+    "wrangler.control.jsonc",
+    "wrangler.public-reader.jsonc"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/apply-development-patch.mjs",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run build && npm run test:package-boundaries && npm test && npm run dry-run:all && npm run package:dry-run",
+    "test:package-boundaries": "node --test tests/package-dependency-boundary.test.mjs tests/package-command-boundary.test.mjs",
+    "test": "npm run test:package-boundaries && tsx --test tests/cloudflare-*.test.*",
+    "test:queue": "tsx --test tests/cloudflare-queue-batch.test.ts tests/cloudflare-d1-operation-repository.test.ts && npm run build",
+    "test:principal-credentials": "tsx --test tests/cloudflare-principal-credential-operator.test.mjs tests/cloudflare-principal-credential-repository.test.ts tests/cloudflare-provisioning-api.test.ts",
+    "test:remote-principal-credential-gate": "node --test tests/cloudflare-remote-principal-credential-gate.test.mjs",
+    "test:packed-wrangler": "node tests/packed-wrangler-bundle.test.mjs",
+    "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc",
+    "dry-run:d1": "wrangler deploy --dry-run --config wrangler.d1.jsonc",
+    "dry-run:control": "wrangler deploy --dry-run --config wrangler.control.jsonc",
+    "dry-run:public-reader": "wrangler deploy --dry-run --config wrangler.public-reader.jsonc",
+    "dry-run:all": "npm run dry-run && npm run dry-run:d1 && npm run dry-run:control && npm run dry-run:public-reader",
+    "package:dry-run": "npm pack . --dry-run --json --workspaces=false",
+    "local-gate": "playwright install chromium && node scripts/local-gate.mjs",
+    "local-gate:d1": "playwright install chromium && node scripts/local-gate.mjs --coordinator=d1",
+    "local-gate:provisioning": "playwright install chromium && node scripts/local-gate.mjs --coordinator=d1 --public-provisioning",
+    "remote-gate:principal-credentials": "node scripts/remote-principal-credential-gate.mjs",
+    "generate:wordpress-runtime-corpus": "tsx scripts/generate-wordpress-runtime-corpus.ts",
+    "provision:wordpress-runtime-corpus": "node scripts/provision-wordpress-runtime-corpus.mjs",
+    "provision:d1-coordinator": "node scripts/provision-d1-coordinator.mjs",
+    "operator:principal-credential": "tsx scripts/operator-principal-credential.ts",
+    "generate:mdi-runtime-bundle": "node scripts/build-mdi-runtime-bundle.mjs",
+    "generate:canonical-mdi-seed": "npm run generate:mdi-runtime-bundle && php scripts/build-canonical-mdi-seed.php"
+  },
   "dependencies": {
-    "@automattic/wp-codebox-core": "file:../runtime-core",
+    "@automattic/wp-codebox-core": "file:vendor/wp-codebox-core",
     "@php-wasm/stream-compression": "3.1.45",
     "@php-wasm/universal": "3.1.46",
     "@php-wasm/web-8-5": "3.1.46",
-    "@wp-playground/wordpress": "3.1.46"
-  }
+    "@wp-playground/wordpress": "3.1.46",
+    "patch-package": "^8.0.1",
+    "wrangler": "4.127.1"
+  },
+  "bundleDependencies": [
+    "@automattic/wp-codebox-core",
+    "@php-wasm/stream-compression",
+    "@php-wasm/universal",
+    "@php-wasm/web-8-5",
+    "@wp-playground/wordpress",
+    "patch-package"
+  ],
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260718.1",
+    "@types/node": "^24.0.0",
+    "pixelmatch": "7.2.0",
+    "playwright": "1.61.1",
+    "pngjs": "7.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "overrides": {
+    "@php-wasm/util": "3.1.46"
+  },
+  "wpCodeboxCoreCompatibility": "0.26.2",
+  "wpCodeboxCoreSourceCommit": "d3fac4ad4e4bbf6dd457ea2cd46aeb1a081b217b"
 }
