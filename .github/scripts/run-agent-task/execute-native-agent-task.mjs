@@ -1,5 +1,5 @@
 import { constants, rmSync } from "node:fs"
-import { appendFile, lstat, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { appendFile, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -523,7 +523,9 @@ async function testPauseAfterSeedSnapshot(seedSnapshot) {
   if (process.env.NODE_ENV !== "test") return
   const markerPath = string(process.env.WP_CODEBOX_TEST_SEED_SNAPSHOT_PAUSE_FILE)
   if (!markerPath) return
-  await writeFile(markerPath, `${JSON.stringify({ schema: "wp-codebox/test-seed-snapshot-pause/v1", seed_snapshot_source: seedSnapshot?.source ?? "" })}\n`)
+  const pendingMarkerPath = `${markerPath}.${process.pid}.tmp`
+  await writeFile(pendingMarkerPath, `${JSON.stringify({ schema: "wp-codebox/test-seed-snapshot-pause/v1", seed_snapshot_source: seedSnapshot?.source ?? "" })}\n`)
+  await rename(pendingMarkerPath, markerPath)
   await new Promise((resolvePause) => setTimeout(resolvePause, 120_000))
 }
 

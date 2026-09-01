@@ -1,4 +1,4 @@
-import { lstat, writeFile } from "node:fs/promises"
+import { lstat, rename, writeFile } from "node:fs/promises"
 
 import { acquirePlaygroundArchiveReference } from "../../packages/runtime-playground/src/playground-wordpress-archive-cache.js"
 
@@ -8,7 +8,9 @@ if (!archivePath || !readyPath || !stopPath) {
 }
 
 const reference = await acquirePlaygroundArchiveReference(archivePath)
-await writeFile(readyPath, reference.path)
+const pendingReadyPath = `${readyPath}.${process.pid}.tmp`
+await writeFile(pendingReadyPath, reference.path)
+await rename(pendingReadyPath, readyPath)
 
 while (!await exists(stopPath)) {
   await new Promise((resolve) => setTimeout(resolve, 25))
