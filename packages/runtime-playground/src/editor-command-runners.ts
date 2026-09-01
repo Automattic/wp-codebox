@@ -981,7 +981,10 @@ export function editorPresentationContractPhpCode(postId: number): string {
 $post = get_post(${postId});
 if ( ! $post instanceof WP_Post ) { throw new RuntimeException( 'Editor target post is unavailable.' ); }
 $GLOBALS['post'] = $post;
-if ( ! function_exists( 'set_current_screen' ) ) { require_once ABSPATH . 'wp-admin/includes/screen.php'; }
+if ( ! function_exists( 'set_current_screen' ) ) {
+  require_once ABSPATH . 'wp-admin/includes/class-wp-screen.php';
+  require_once ABSPATH . 'wp-admin/includes/screen.php';
+}
 set_current_screen( 'post' );
 $wp_styles = wp_styles();
 wp_scripts();

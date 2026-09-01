@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { editorPresentationContractPhpCode, parseEditorPresentationContract } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { runCommandText } from "../scripts/test-kit.js"
 
@@ -7,8 +10,13 @@ const externalIdentity = "b".repeat(64)
 const unrelatedIdentity = "c".repeat(64)
 
 async function captureContract(inlineCss: string[], editorVersions: unknown[], prequeuedVersions: unknown[] = []): Promise<{ identities: string[]; complete: boolean }> {
+  const root = await mkdtemp(join(tmpdir(), "wp-codebox-editor-presentation-"))
+  const includes = join(root, "wp-admin", "includes")
+  await mkdir(includes, { recursive: true })
+  await writeFile(join(includes, "class-wp-screen.php"), "<?php class WP_Screen { public static function get( $screen ) { return new self(); } public function set_current_screen() {} }\n")
+  await writeFile(join(includes, "screen.php"), "<?php function set_current_screen( $screen ) { WP_Screen::get( $screen )->set_current_screen(); }\n")
   const php = `
-define( 'ABSPATH', '/tmp/' );
+define( 'ABSPATH', ${JSON.stringify(`${root}/`)} );
 class WP_Post {}
 class WP_Block_Editor_Context { public function __construct( public array $context ) {} }
 $fixture_inline_css = ${JSON.stringify(inlineCss)};
@@ -26,7 +34,6 @@ foreach ( $fixture_prequeued_versions as $index => $version ) {
   $fixture_styles->registered[$handle] = (object) array( 'ver' => $version );
 }
 function get_post( $post_id ) { return new WP_Post(); }
-function set_current_screen( $screen ) {}
 function wp_styles() { return $GLOBALS['fixture_styles']; }
 function wp_scripts() {}
 function do_action( $hook ) {
@@ -43,8 +50,12 @@ function get_block_editor_settings( $settings, $context ) {
 function wp_json_encode( $value ) { return json_encode( $value ); }
 ${editorPresentationContractPhpCode(17)}
 `
-  const output = await runCommandText("php", ["-r", php])
-  return parseEditorPresentationContract(output) as { identities: string[]; complete: boolean }
+  try {
+    const output = await runCommandText("php", ["-r", php])
+    return parseEditorPresentationContract(output) as { identities: string[]; complete: boolean }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 assert.deepEqual(await captureContract([`:root{--blocks-engine-presentation:${inlineIdentity};}`], []), {
