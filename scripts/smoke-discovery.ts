@@ -100,11 +100,11 @@ export function discoverSmokeFiles(root = process.cwd()): string[] {
   return files.filter((file) => !excluded.has(file)).sort()
 }
 
-function toCommand(file: string): SmokeCommand {
+function toCommand(file: string, disableTsxCache = false): SmokeCommand {
   return {
     name: file,
     command: file.endsWith(".php") ? "php" : file.endsWith(".mjs") ? "node" : "tsx",
-    args: [file],
+    args: disableTsxCache && file.endsWith(".ts") ? ["--no-cache", file] : [file],
   }
 }
 
@@ -114,7 +114,7 @@ export function discoveredCommands(root = process.cwd()): SmokeCommand[] {
 
 /** Files safe to run concurrently. */
 export function discoveredParallelCommands(root = process.cwd()): SmokeCommand[] {
-  return discoverSmokeFiles(root).filter((file) => !serial.has(file)).map(toCommand)
+  return discoverSmokeFiles(root).filter((file) => !serial.has(file)).map((file) => toCommand(file, true))
 }
 
 /** Files that must run one at a time, after the parallel phase. */
