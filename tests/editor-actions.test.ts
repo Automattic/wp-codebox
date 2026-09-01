@@ -96,6 +96,58 @@ assert.deepEqual(summarizeEditorPresentation({ canvasDocumentType: "parent", ifr
   generatedPresentationIdentities: [],
 })
 
+// Bounded external delivery: a generated stylesheet enqueued as a real asset
+// carries its content hash in the version parameter instead of inline marker
+// text. Automattic/blocks-engine#1478 delivers presentation styles this way.
+const externalIdentityA = "1".repeat(64)
+const externalIdentityB = "2".repeat(64)
+const unrequestedIdentity = "3".repeat(64)
+const externalOnlyPresentation = summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
+  iframeCount: 1,
+  stylesheetUrls: [`https://example.test/wp-content/themes/fixture/assets/a.css?ver=${externalIdentityA.toUpperCase()}`],
+  inlineStyleContents: [],
+}, [externalIdentityA])
+assert.deepEqual(externalOnlyPresentation.generatedPresentationIdentities, [externalIdentityA], "expected external stylesheet version certifies its identity")
+assert.equal(externalOnlyPresentation.generatedPresentationIdentityCount, 1)
+
+// Mixed inline and external delivery contributes both identities exactly once.
+const inlineIdentity = "4".repeat(64)
+assert.deepEqual(summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
+  iframeCount: 1,
+  stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`, `https://example.test/b.css?ver=${externalIdentityB}`],
+  inlineStyleContents: [`:root{--blocks-engine-presentation:${inlineIdentity};}`],
+}, [externalIdentityA, externalIdentityB]).generatedPresentationIdentities, [externalIdentityA, externalIdentityB, inlineIdentity].sort(), "inline and external identities combine")
+
+// Fail closed: an unrequested hash, a non-hash version, and a missing expected
+// set never manufacture an observed identity from a URL alone.
+assert.deepEqual(summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
+  iframeCount: 1,
+  stylesheetUrls: [
+    `https://example.test/a.css?ver=${unrequestedIdentity}`,
+    "https://example.test/b.css?ver=6.7.1",
+    "https://example.test/c.css",
+  ],
+  inlineStyleContents: [],
+}, [externalIdentityA]).generatedPresentationIdentities, [], "unrequested and non-hash versions are not identities")
+assert.deepEqual(summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
+  iframeCount: 1,
+  stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`],
+  inlineStyleContents: [],
+}).generatedPresentationIdentities, [], "no expected set certifies no external identity")
+
+// A delayed stylesheet that has not yet appeared leaves the expected identity
+// unobserved rather than reporting it as satisfied.
+assert.deepEqual(summarizeEditorPresentation({
+  canvasDocumentType: "iframe",
+  iframeCount: 1,
+  stylesheetUrls: [`https://example.test/a.css?ver=${externalIdentityA}`],
+  inlineStyleContents: [],
+}, [externalIdentityA, externalIdentityB]).generatedPresentationIdentities, [externalIdentityA], "a not-yet-loaded stylesheet stays unobserved")
+
 const idleCanvas = await captureEditorIdleCanvas({
   evaluate: async (callback: () => unknown) => {
     const globals = globalThis as typeof globalThis & { document?: unknown; getComputedStyle?: unknown }
