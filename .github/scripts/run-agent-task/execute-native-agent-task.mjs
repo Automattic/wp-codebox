@@ -1,5 +1,5 @@
 import { constants, rmSync } from "node:fs"
-import { appendFile, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { appendFile, lstat, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -12,6 +12,7 @@ import { publishRunnerWorkspace } from "./runner-workspace-publisher.mjs"
 import { createRunnerWorkspaceSeedSnapshot, RUNNER_WORKSPACE_SEED_EXCLUDES } from "./runner-workspace-seed-snapshot.mjs"
 import { createTrustedArtifactApplyChannel, trustedArtifactApplyRefs } from "./trusted-artifact-snapshot.mjs"
 import { artifactSourcePathCategory, assertNoSeedSnapshotPaths, containsRuntimeSourceContent, sanitizeSeedSnapshotJson } from "./artifact-upload-policy.mjs"
+import { publishProcessMarker } from "../../../scripts/process-marker.mjs"
 
 const requestPath = process.env.AGENT_TASK_REQUEST_PATH || ".codebox/agent-task-request.json"
 const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
@@ -523,9 +524,7 @@ async function testPauseAfterSeedSnapshot(seedSnapshot) {
   if (process.env.NODE_ENV !== "test") return
   const markerPath = string(process.env.WP_CODEBOX_TEST_SEED_SNAPSHOT_PAUSE_FILE)
   if (!markerPath) return
-  const pendingMarkerPath = `${markerPath}.${process.pid}.tmp`
-  await writeFile(pendingMarkerPath, `${JSON.stringify({ schema: "wp-codebox/test-seed-snapshot-pause/v1", seed_snapshot_source: seedSnapshot?.source ?? "" })}\n`)
-  await rename(pendingMarkerPath, markerPath)
+  await publishProcessMarker(markerPath, `${JSON.stringify({ schema: "wp-codebox/test-seed-snapshot-pause/v1", seed_snapshot_source: seedSnapshot?.source ?? "" })}\n`)
   await new Promise((resolvePause) => setTimeout(resolvePause, 120_000))
 }
 
