@@ -30,6 +30,7 @@ const EDITOR_PRESENTATION_MIN_OBSERVATION_MS = 4_000
 const EDITOR_PRESENTATION_POLL_MS = 50
 const EDITOR_PRESENTATION_IFRAME_DISCOVERY_MS = 1_000
 const EDITOR_PRESENTATION_MAX_CAPTURE_MS = 10_000
+const EDITOR_PRESENTATION_VERSION_PARAM = "ver"
 const EDITOR_PRESENTATION_CONTRACT_MARKER = "WP_CODEBOX_EDITOR_PRESENTATION_CONTRACT:"
 const EDITOR_VALIDITY_WARNING_SELECTORS = [
   ".block-editor-warning",
@@ -846,11 +847,32 @@ interface EditorPresentationCapture {
   inlineStyleContents: string[]
 }
 
-export function summarizeEditorPresentation(capture: EditorPresentationCapture): BrowserEditorPresentationSummary {
+// A generated stylesheet delivered as an external asset carries its content
+// hash in the canonical cache-busting version parameter rather than in inline
+// marker text. Read that version so bounded external delivery stays observable.
+function externalStylesheetPresentationIdentity(url: string): string | undefined {
+  let version: string | null = null
+  try {
+    version = new URL(url, "https://wp-codebox.invalid").searchParams.get(EDITOR_PRESENTATION_VERSION_PARAM)
+  } catch {
+    return undefined
+  }
+  const identity = version?.trim().toLowerCase()
+  return identity && /^[a-f0-9]{64}$/.test(identity) ? identity : undefined
+}
+
+export function summarizeEditorPresentation(capture: EditorPresentationCapture, expectedIdentities: readonly string[] = []): BrowserEditorPresentationSummary {
   const iframeStylesheetUrls = [...new Set(capture.stylesheetUrls.map((url) => url.trim()).filter(Boolean))].sort()
-  const generatedPresentationIdentities = [...new Set(
-    capture.inlineStyleContents.flatMap((content) => [...content.matchAll(/blocks-engine-presentation:([a-f0-9]{64})/gi)].map((match) => match[1]!.toLowerCase())),
-  )].sort()
+  const inlineIdentities = capture.inlineStyleContents.flatMap((content) => [...content.matchAll(/blocks-engine-presentation:([a-f0-9]{64})/gi)].map((match) => match[1]!.toLowerCase()))
+  // Only an expected identity can be certified from a URL version. An
+  // unrequested or arbitrary version stays out of the observed set so the
+  // expected-set comparison remains fail-closed.
+  const expected = new Set(expectedIdentities.map((identity) => identity.trim().toLowerCase()).filter(Boolean))
+  const externalIdentities = iframeStylesheetUrls.flatMap((url) => {
+    const identity = externalStylesheetPresentationIdentity(url)
+    return identity && expected.has(identity) ? [identity] : []
+  })
+  const generatedPresentationIdentities = [...new Set([...inlineIdentities, ...externalIdentities])].sort()
   return {
     schema: "wp-codebox/editor-presentation/v1",
     canvasDocumentType: capture.canvasDocumentType,
@@ -901,7 +923,7 @@ export async function captureEditorPresentation(page: import("playwright").Page,
       }
     }, { canvasDocumentType, iframeCount: canvasDocumentType === "iframe" ? 1 : 0 }).catch(() => null) as (EditorPresentationCapture & { documentIdentity: string; documentAgeMs: number }) | null
     if (capture) {
-      const summary = summarizeEditorPresentation(capture)
+      const summary = summarizeEditorPresentation(capture, expectedIdentities)
       const fingerprint = `${capture.documentIdentity}\n${JSON.stringify(summary)}`
       const observedAtMs = Date.now()
       const expectedIdentitiesObserved = expectedIdentities.length > 0
