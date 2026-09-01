@@ -9,13 +9,19 @@ const root = await mkdtemp(join(tmpdir(), "wp-codebox-bounded-recipe-plan-"))
 const executed: ExecutionSpec[] = []
 let active = 0
 let maximumActive = 0
+let releaseExecutions: () => void = () => undefined
+const executionsReady = new Promise<void>((resolve, reject) => {
+  releaseExecutions = resolve
+  setTimeout(() => reject(new Error("Timed out waiting for concurrent runtime executions.")), 5_000).unref()
+})
 const runtime = {
   async execute(spec: ExecutionSpec) {
     executed.push(spec)
     active++
     maximumActive = Math.max(maximumActive, active)
     try {
-      await new Promise((resolve) => setTimeout(resolve, spec.args?.some((arg) => arg.includes("suite-one")) ? 15 : 1))
+      if (active === 2) releaseExecutions()
+      await executionsReady
       const failed = spec.args?.some((arg) => arg.includes("suite-failed"))
       return {
         id: failed ? "failed" : "one",
