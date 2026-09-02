@@ -62,6 +62,7 @@ const slowPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" s
 const pendingStylesEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<link rel='stylesheet' href='http://127.0.0.1:9/unavailable.css'><style>/* blocks-engine-presentation:${PENDING_STYLES_PRESENTATION_IDENTITY} */<\/style><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='pending'>Pending</div></div>"></iframe>`
 const delayedPostEditorHtml = `${editorShell}<script>const fixtureSelect = wp.data.select; let currentPostId = null; wp.data.select = (store) => store === 'core/editor' ? { getCurrentPostId: () => currentPostId, getCurrentPostType: () => currentPostId ? 'page' : null } : fixtureSelect(store); setTimeout(() => { currentPostId = 4; const iframe = document.createElement('iframe'); iframe.name = 'editor-canvas'; iframe.srcdoc = "<style>/* blocks-engine-presentation:${DELAYED_POST_PRESENTATION_IDENTITY} */<\\/style><div class='block-editor-block-list__layout'>Hydrated post</div>"; document.body.append(iframe) }, 1500)<\/script>`
 const growingPresentationEditorHtml = `${editorShell}<iframe name="editor-canvas" srcdoc="<style>/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[0]} */<\/style><script>let identity = 0; setInterval(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:' + (identity++).toString(16).padStart(64, '9') + ' */'; document.head.append(style) }, 100); setTimeout(() => { const style = document.createElement('style'); style.textContent = '/* blocks-engine-presentation:${GROWING_PRESENTATION_IDENTITIES[1]} */'; document.head.append(style) }, 4100)<\/script><div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='growing'>Growing</div></div>"></iframe>`
+const missingPresentationEditorHtml = `${editorShell}<script>const fixtureSelect = wp.data.select; wp.data.select = (store) => store === 'core/editor' ? { getCurrentPostId: () => 2, getCurrentPostType: () => 'post' } : fixtureSelect(store)<\/script><iframe name="editor-canvas" srcdoc="<div class='block-editor-block-list__layout'><div class='block-editor-block-list__block' data-block='missing'>Missing presentation</div></div>"></iframe>`
 
 function editorPresentationContractOutput(value: unknown): string {
   return `${EDITOR_PRESENTATION_CONTRACT_MARKER}${Buffer.from(JSON.stringify(value)).toString("base64")}\n`
@@ -79,6 +80,8 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
     response.setHeader("content-type", "text/html")
     response.end(request.url?.includes("post=4")
       ? delayedPostEditorHtml
+      : request.url?.includes("post=2")
+        ? missingPresentationEditorHtml
       : request.url?.startsWith("/wp-admin/post.php")
         ? growingPresentationEditorHtml
       : request.url?.startsWith("/broken")
@@ -113,7 +116,9 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
               ? slowPresentationEditorHtml
               : request.url?.startsWith("/pending-styles")
                 ? pendingStylesEditorHtml
-              : editorHtml)
+                : request.url?.startsWith("/ready-without-presentation")
+                  ? editorShell
+                  : editorHtml)
   })
   const serverUrl = await listenLocalHttpServer(httpServer)
   const server = { serverUrl, playground: {} } as PlaygroundCliServer
@@ -334,9 +339,47 @@ test("real browser commands sanitize console, artifacts, stdout, and failure std
         server,
         spec: { command: "wordpress.editor-open", args: ["post-id=4", "post-type=page", "capture=steps", "wait-timeout=5s"] },
       })
-      const output = JSON.parse(result.output) as { summary: { editorReadiness: { postId: number }; editorPresentation: { generatedPresentationIdentities: string[] } } }
+      const output = JSON.parse(result.output) as { summary: { editorReadiness: { postId: number }; editorPresentation: { generatedPresentationIdentities: string[]; expectedGeneratedPresentationIdentities: string[]; expectedGeneratedPresentationIdentitiesComplete: boolean } } }
       assert.equal(output.summary.editorReadiness.postId, 4)
       assert.deepEqual(output.summary.editorPresentation.generatedPresentationIdentities, [DELAYED_POST_PRESENTATION_IDENTITY])
+      assert.deepEqual(output.summary.editorPresentation.expectedGeneratedPresentationIdentities, [DELAYED_POST_PRESENTATION_IDENTITY])
+      assert.equal(output.summary.editorPresentation.expectedGeneratedPresentationIdentitiesComplete, true)
+    })
+
+    await withTempDir("wp-codebox-editor-presentation-required-missing-", async (artifactRoot) => {
+      await assert.rejects(
+        () => runEditorOpenCommand({
+          artifactRoot,
+          runPlaygroundCommand: async (command) => ({
+            text: command.includes("capture-presentation-contract")
+              ? editorPresentationContractOutput({ identities: [DELAYED_POST_PRESENTATION_IDENTITY], complete: true })
+              : "[]",
+            exitCode: 0,
+          }),
+          runtimeSpec,
+          server,
+          spec: { command: "wordpress.editor-open", args: ["post-id=2", "capture=steps,errors", "wait-timeout=250ms"] },
+        }),
+        (error: unknown) => {
+          assert.equal(isBrowserCommandArtifactError(error), true)
+          assert.match(String(error), /reached semantic editor readiness but could not capture required editor presentation evidence within 250ms/)
+          assert.match(String(error), /Ensure the editor canvas is attached and its presentation styles have loaded before retrying/)
+          return true
+        },
+      )
+    })
+
+    await withTempDir("wp-codebox-editor-ready-without-presentation-", async (artifactRoot) => {
+      const result = await runEditorOpenCommand({
+        artifactRoot,
+        runPlaygroundCommand,
+        runtimeSpec,
+        server,
+        spec: { command: "wordpress.editor-open", args: ["url=http://routed.test/ready-without-presentation", "route-host=routed.test", "capture=steps", "wait-timeout=250ms"] },
+      })
+      const output = JSON.parse(result.output) as { summary: { editorReadiness: unknown; editorPresentation?: unknown } }
+      assert.ok(output.summary.editorReadiness)
+      assert.equal(output.summary.editorPresentation, undefined)
     })
 
     await withTempDir("wp-codebox-real-editor-growing-presentation-security-", async (artifactRoot) => {

@@ -652,6 +652,15 @@ export async function runEditorOpenCommand({
       await dismissWordPressOnboardingDialogs(page)
       const expected = await captureExpectedEditorPresentationIdentities(target, runPlaygroundCommand, runtimeSpec, server)
       editorPresentation = await captureEditorPresentation(page, waitTimeoutMs, expected?.complete ? expected.identities : [])
+      const presentationEvidenceRequired = Boolean(argValue(args, "presentation-url"))
+        || Boolean(expected?.complete && expected.identities.length > 0)
+      if (!editorPresentation && presentationEvidenceRequired) {
+        const deadlineMs = Math.min(waitTimeoutMs, EDITOR_PRESENTATION_MAX_CAPTURE_MS)
+        const requirement = expected?.complete && expected.identities.length > 0
+          ? `expected generated presentation identities: ${expected.identities.join(", ")}`
+          : "a presentation-url comparison was requested"
+        throw new Error(`wordpress.editor-open reached semantic editor readiness but could not capture required editor presentation evidence within ${deadlineMs}ms (${requirement}). Ensure the editor canvas is attached and its presentation styles have loaded before retrying.`)
+      }
       if (editorPresentation) {
         await dismissWordPressOnboardingDialogs(page)
         const idleCanvas = await captureEditorIdleCanvas(page)
