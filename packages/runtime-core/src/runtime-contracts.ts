@@ -877,6 +877,7 @@ export interface RuntimeEpisodeTraceRef {
   path?: string
   sourcePath?: string
   contentType?: string
+  metadata?: Record<string, unknown>
   payload?: unknown
 }
 

@@ -3,7 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { artifactReferenceMetadata, fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { createWordPressEpisode, createWordPressFuzzSuiteRuntimeActionExecutor, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -399,6 +399,7 @@ function recipeArtifactRefs(output: Record<string, unknown> | undefined): Execut
       sourcePath: bundleDirectory ? join(bundleDirectory, artifactPath) : undefined,
       contentType: stringValue(artifact.contentType),
       digest: sha256 ? { algorithm: "sha256" as const, value: sha256 } : undefined,
+      metadata: artifactReferenceMetadata(declaration?.metadata),
     }]
   })
   return [...refs.flatMap((ref) => objectOption(ref) ? [ref as NonNullable<ExecutionResult["artifactRefs"]>[number]] : []), ...materialized]

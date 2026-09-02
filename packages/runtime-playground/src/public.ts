@@ -7,6 +7,7 @@ import { browserArtifactFileManifest, type BrowserArtifactFiles } from "./browse
 
 import {
   ArtifactBundleWriter,
+  artifactReferenceMetadata,
   artifactFileDigest,
   artifactStoragePath,
   resolveArtifactPath,
@@ -2024,14 +2025,14 @@ function normalizeObservationBrowser(input: Record<string, unknown> | undefined)
 function executionArtifactRefs(execution: ExecutionResult): FuzzSuiteArtifactRef[] {
   return (execution.artifactRefs ?? []).flatMap((ref) => {
     const path = ref.path ?? ref.artifactId ?? ref.id
-    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
+    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { ...(artifactReferenceMetadata(ref.metadata) ?? {}), id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
   })
 }
 
 function runtimeActionArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] {
   return (observation.artifactRefs ?? []).flatMap((ref) => {
     const path = ref.path ?? ref.artifactId ?? ref.id
-    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
+    return path ? [{ path, kind: ref.kind, sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined, metadata: { ...(artifactReferenceMetadata(ref.metadata) ?? {}), id: ref.id, artifactId: ref.artifactId, digest: ref.digest } }] : []
   })
 }
 

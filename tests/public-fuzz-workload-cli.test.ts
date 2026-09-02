@@ -172,7 +172,7 @@ return static function ( array $input, array $args ): array {
         id: "collected-workload",
         steps: [{ command: "wordpress.run-workload", args: ["type=php", `path=${join(samplePluginSource, "bench", "rest-product-batch-import.php")}`] }],
         after: [{ command: "wordpress.collect-workload-result", args: ["artifact=sample-report", "schema=example/sample-report/v1"] }, { command: "wordpress.collect-workload-result", args: ["artifact=sample.report", "schema=example/second-sample-report/v1"] }],
-        artifacts: [{ name: "sample-report", path: "files/workload-results/sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/sample-report/v1" } }, { name: "sample.report", path: "files/workload-results/second-sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/second-sample-report/v1" } }],
+        artifacts: [{ name: "sample-report", path: "files/workload-results/sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/sample-report/v1", semantic_key: "fuzz.report", private_note: "must-not-propagate" } }, { name: "sample.report", path: "files/workload-results/second-sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/second-sample-report/v1" } }],
       },
     }],
   }), "utf8")
@@ -186,6 +186,9 @@ return static function ( array $input, array $args ): array {
   const sampleReport = JSON.parse(await readFile(sampleReportRef.metadata.sourcePath, "utf8"))
   assert.equal(sampleReport.schema, "example/sample-report/v1")
   assert.equal(sampleReport.marker.length, 1000)
+  assert.equal(sampleReportRef.metadata.schema, "example/sample-report/v1")
+  assert.equal(sampleReportRef.metadata.semantic_key, "fuzz.report")
+  assert.equal(sampleReportRef.metadata.private_note, undefined)
   const secondReportRef = recipeRuntimeResult.artifactRefs.find((ref: { metadata?: { artifactId?: string } }) => ref.metadata?.artifactId === "sample.report")
   assert.ok(secondReportRef)
   const secondReport = JSON.parse(await readFile(secondReportRef.metadata.sourcePath, "utf8"))
