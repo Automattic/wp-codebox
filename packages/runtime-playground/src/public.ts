@@ -10,6 +10,7 @@ import {
   artifactFileDigest,
   artifactStoragePath,
   resolveArtifactPath,
+  safeArtifactRelativePath,
   WORDPRESS_HOTSPOTS_SCHEMA,
   QUERY_OBSERVATION_SCHEMA,
   createRuntime,
@@ -956,7 +957,7 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       const executions: ExecutionResult[] = []
       for (const [stepIndex, step] of steps.entries()) {
         const execution = step.command === "wordpress.collect-workload-result"
-          ? collectWorkloadResultExecution(step, executions, startedAt)
+          ? collectWorkloadResultExecution(step, executions, startedAt, workload)
           : (await episode.step({ kind: "command", command: step.command, args: step.args, timeoutMs: step.timeoutMs, metadata: stripUndefined({ ...step.metadata, phase: step.phase, phaseIndex: step.phaseIndex, workloadStepIndex: stepIndex }) }, { type: "command-result" })).execution
         executions.push(execution)
         if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
@@ -1009,7 +1010,7 @@ function workloadExecutionArtifacts(executions: ExecutionResult[]): Record<strin
   return artifacts
 }
 
-function collectWorkloadResultExecution(step: { command: string; args?: string[] }, priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
+function collectWorkloadResultExecution(step: { command: string; args?: string[] }, priorExecutions: ExecutionResult[], startedAt: string, workload: Record<string, unknown>): ExecutionResult {
   const args = stepArgMap(step.args)
   const artifact = args.artifact ?? args.name ?? ""
   const expectedSchema = args.schema
@@ -1031,6 +1032,11 @@ function collectWorkloadResultExecution(step: { command: string; args?: string[]
       : undefined
   const payload = payloads[0]?.payload ?? {}
   const stdout = `${JSON.stringify(payload)}\n`
+  const declaration = arrayValue(workload.artifacts).map(recordValue).find((candidate) => {
+    const name = stringValue(candidate?.name)
+    return name !== undefined && artifactNameMatches(name, artifact || payloads[0]?.name || "")
+  })
+  const artifactPath = workloadResultArtifactPath(stringValue(declaration?.path), artifact || payloads[0]?.name || "workload-result")
   return {
     id: `wordpress-collect-workload-result-${artifact || "workload-result"}`,
     command: "wordpress.collect-workload-result",
@@ -1041,7 +1047,7 @@ function collectWorkloadResultExecution(step: { command: string; args?: string[]
     result: { schema: "wp-codebox/runtime-command-result/v1", status: diagnostic ? "error" : "ok", json: payload, diagnostics: diagnostic ? [diagnostic] : undefined },
     startedAt,
     finishedAt: new Date().toISOString(),
-    artifactRefs: payloads[0] ? [{ kind: payloads[0].name, id: artifact || payloads[0].name, artifactId: artifact || payloads[0].name, path: `files/workload-results/${safeArtifactSegment(artifact || payloads[0].name)}.json`, payload } as NonNullable<ExecutionResult["artifactRefs"]>[number]] : [],
+    artifactRefs: payloads[0] ? [{ kind: payloads[0].name, id: artifact || payloads[0].name, artifactId: artifact || payloads[0].name, path: artifactPath, payload }] : [],
   }
 }
 
@@ -1343,6 +1349,13 @@ async function writeFuzzArtifactBundle(input: {
   const replayCaseRefs: FuzzReplayCaseRef[] = []
   const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
   const restDbQueryProfileArtifacts: Array<ReturnType<typeof restDbQueryProfileArtifactMetadata>> = []
+  const artifactPathCounts = input.result.cases
+    .flatMap((fuzzCase) => fuzzCase.artifactRefs ?? [])
+    .reduce((counts, ref) => counts.set(ref.path, (counts.get(ref.path) ?? 0) + 1), new Map<string, number>())
+  for (const [index, profile] of input.restDbQueryProfiles.entries()) {
+    const path = `files/workload-results/${safeArtifactSegment(profile.caseId ?? "case")}-rest-db-query-profile-${index + 1}.json`
+    artifactPathCounts.set(path, (artifactPathCounts.get(path) ?? 0) + 1)
+  }
 
   artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref)
 
@@ -1368,7 +1381,7 @@ async function writeFuzzArtifactBundle(input: {
 
   for (const fuzzCase of input.result.cases) {
     const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
-    const caseArtifactRefs = await Promise.all((fuzzCase.artifactRefs ?? []).map((ref) => importFuzzCaseArtifactRef(writer, storage, bundlePath, ref)))
+    const caseArtifactRefs = await Promise.all((fuzzCase.artifactRefs ?? []).map((ref, index) => importFuzzCaseArtifactRef(writer, storage, bundlePath, ref, (artifactPathCounts.get(ref.path) ?? 0) > 1 ? `${fuzzCase.id}-${index + 1}` : undefined)))
     fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
     artifactRefs.push(...caseArtifactRefs)
     if (dbWriteSet) {
@@ -1465,20 +1478,43 @@ async function writeFuzzArtifactBundle(input: {
   }
 }
 
-async function importFuzzCaseArtifactRef(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, ref: FuzzSuiteArtifactRef): Promise<FuzzSuiteArtifactRef> {
+async function importFuzzCaseArtifactRef(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, ref: FuzzSuiteArtifactRef, collisionNamespace?: string): Promise<FuzzSuiteArtifactRef> {
+  const path = collisionNamespace ? namespacedArtifactPath(ref.path, collisionNamespace) : ref.path
   const sourcePath = stringValue(ref.metadata?.sourcePath)
-  if (!sourcePath) return ref
-  await writer.importFile(ref.path, sourcePath, {
-    kind: ref.kind,
-    contentType: ref.contentType ?? "application/octet-stream",
-    provenance: { source: "runtime-action", operation: "import-fuzz-case-artifact" },
-  })
-  const content = await readFile(writer.path(ref.path))
-  const digest = artifactFileDigest(content)
-  return {
-    ...fuzzArtifactRef(storage, bundlePath, ref.path, ref.kind, ref.contentType ?? "application/octet-stream", digest.value, content.byteLength),
-    metadata: stripUndefined({ ...(ref.metadata ?? {}), sourcePath: undefined, importedFrom: ref.path, storage: "runtime-artifact-layout" }),
+  if (sourcePath) {
+    await writer.importFile(path, sourcePath, {
+      kind: ref.kind,
+      contentType: ref.contentType ?? "application/octet-stream",
+      provenance: { source: "runtime-action", operation: "import-fuzz-case-artifact" },
+    })
+    const content = await readFile(writer.path(path))
+    const digest = artifactFileDigest(content)
+    return {
+      ...fuzzArtifactRef(storage, bundlePath, path, ref.kind, ref.contentType ?? "application/octet-stream", digest.value, content.byteLength),
+      metadata: stripUndefined({ ...(ref.metadata ?? {}), sourcePath: undefined, importedFrom: ref.path, declaredPath: collisionNamespace ? ref.path : undefined, storage: "runtime-artifact-layout" }),
+    }
   }
+
+  if (ref.payload === undefined) return ref
+  const content = `${JSON.stringify(ref.payload, null, 2)}\n`
+  const schema = stringValue(recordValue(ref.payload)?.schema) ?? "wp-codebox/typed-workload-artifact/v1"
+  const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, ref.kind, schema, content, ref.payload, ref.contentType ?? "application/json")
+  return { ...written.ref, name: ref.name ?? written.ref.name, metadata: stripUndefined({ ...(ref.metadata ?? {}), ...(written.ref.metadata ?? {}), schema, declaredPath: collisionNamespace ? ref.path : undefined }) }
+}
+
+function namespacedArtifactPath(path: string, namespace: string): string {
+  const separator = path.lastIndexOf("/")
+  const basename = separator === -1 ? path : path.slice(separator + 1)
+  return `files/case-artifacts/${safeArtifactSegment(namespace)}/${basename}`
+}
+
+function workloadResultArtifactPath(declaredPath: string | undefined, artifact: string): string {
+  const normalized = declaredPath?.replace(/\\/g, "/")
+  if (normalized?.startsWith("files/workload-results/") && !normalized.split("/").includes("..") && !normalized.endsWith("/")) {
+    return safeArtifactRelativePath(normalized)
+  }
+  const declaredName = normalized?.slice(normalized.lastIndexOf("/") + 1)
+  return `files/workload-results/${safeArtifactSegment(declaredName || artifact)}${declaredName?.includes(".") ? "" : ".json"}`
 }
 
 function resultWithRequiredRestDbQueryProfilePayloads(result: FuzzSuiteResultEnvelope, profiles: RestDbQueryProfileArtifact[]): FuzzSuiteResultEnvelope {
