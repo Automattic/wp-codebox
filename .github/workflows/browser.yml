@@ -1,7 +1,5 @@
-name: Check
+name: Browser
 
-# Deliberately unfiltered. This fast lane owns build, type, and contract coverage;
-# integration and browser workflows own tests that provision external runtimes.
 on:
   pull_request:
   push:
@@ -12,14 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}
+  group: browser-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: fast contracts
+  browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,5 +30,11 @@ jobs:
           php-version: '8.2'
           tools: composer:v2
       - run: npm ci
-      - name: npm run check
-        run: npm run check
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('npm-shrinkwrap.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

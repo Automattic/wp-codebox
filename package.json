@@ -158,7 +158,7 @@
     "test:native-agent-task-playground-e2e": "tsx tests/execute-native-agent-task-playground-e2e.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
     "test:external-http-load-integration": "npm run build && tsx tests/external-http-load.integration.test.ts",
-    "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:browser-canonical-preview-origin && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
+    "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
     "test:temp-runtime-cleanup": "tsx tests/temp-runtime-cleanup.test.ts",
     "smoke:cli-version": "tsx scripts/cli-version-smoke.ts",
     "test:php-runner-workspace-tools": "php scripts/php-runner-workspace-tools-smoke.php",
@@ -170,11 +170,13 @@
     "test:mysqli-poll-integration": "tsx tests/mysqli-poll.integration.test.ts",
     "test:disposable-mysql-mysqli-e2e": "tsx tests/disposable-mysql-mysqli.integration.test.ts",
     "test:wordpress-runtime-discovery-coverage-plan": "tsx tests/wordpress-runtime-discovery-coverage-plan.test.ts",
-    "test:docs-boundary-language": "tsx tests/docs-boundary-language.test.ts",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
     "test:browser-viewport-replay": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core --force && node ./node_modules/typescript/bin/tsc -b packages/runtime-playground packages/cli --force && node scripts/ensure-cli-bin-executable.mjs && tsx tests/browser-viewport-replay.test.ts",
+    "test:integration": "npm run build && npm run smoke -- --group=integration --concurrency=2",
+    "test:browser": "npm run build && npm run smoke -- --group=browser",
+    "test:all": "npm run smoke -- --all",
     "check": "npm run smoke -- --group=check",
-    "check:all": "npm run check && npm run cloudflare:check"
+    "check:all": "npm run test:all && npm run cloudflare:check"
   },
   "workspaces": [
     "packages/cli",

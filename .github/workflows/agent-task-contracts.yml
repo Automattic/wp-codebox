@@ -2,109 +2,21 @@ name: Agent Task Contracts
 
 on:
   pull_request:
-    paths:
-      - ".github/scripts/run-agent-task/**"
-      - ".github/workflows/agent-task-contracts.yml"
-      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
-      - ".github/workflows/run-agent-task.yml"
-      - "contracts/agent-task-workflow-request.fixture.json"
-      - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
-      - "docs/agent-task-reusable-workflow.md"
-      - "fixtures/agent-task-reusable-workflow-consumer*.yml"
-      - "fixtures/agent-task-runtime-sources-run-29299109269.json"
-      - "fixtures/agent-task-runtime-paths-run-29305012941.json"
-      - "npm-shrinkwrap.json"
-      - "package.json"
-      - "scripts/process-marker.mjs"
-      - "packages/runtime-playground/src/**"
-      - "tests/browser-*.test.ts"
-      - "tests/editor-*.test.ts"
-      - "tests/agent-task-*.test.ts"
-      - "tests/runtime-sources-materialization.test.ts"
-      - "tests/runtime-sources-playground-integration.test.ts"
-      - "tests/execute-native-agent-task-playground-e2e.test.ts"
-      - "tests/execute-native-agent-task-interruption.test.mjs"
-      - "tests/trusted-apply-artifact-channel.integration.test.ts"
-      - "tests/redaction.test.ts"
-      - "tests/production-boundary-enforcement.test.ts"
-      - "tests/runtime-tool-policy.test.ts"
-      - "tests/browser-canonical-preview-origin.test.ts"
-      - "tests/browser-adaptive-exploration.test.ts"
-      - "packages/runtime-core/src/browser-adaptive-exploration.ts"
-      - "packages/runtime-playground/src/browser-actions-runner.ts"
-      - "packages/runtime-playground/src/browser-adaptive-explorer.ts"
-      - "packages/runtime-playground/src/browser-artifacts.ts"
-      - "packages/runtime-playground/src/browser-multi-actor-scenario-runner.ts"
-      - "packages/runtime-playground/src/browser-preview-routing.ts"
-      - "packages/runtime-playground/src/browser-probe-runner.ts"
-      - "packages/runtime-playground/src/editor-command-runners.ts"
-      - "packages/runtime-playground/src/preview-server.ts"
-      - "packages/runtime-playground/src/phpunit-command-handlers.ts"
-      - "packages/runtime-playground/src/playground-cli-runner.ts"
-      - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
-      - "tests/playground-custom-archive-cache*.test.ts"
-      - "tests/fixtures/playground-cache-lease-child.ts"
-      - "tests/playground-phpunit-readonly-cache.integration.test.ts"
-      - "tests/fixtures/phpunit-playground-harness/**"
-      - "packages/cli/src/bounded-recipe-plan.ts"
-      - "packages/runtime-core/src/bounded-runtime-plan.ts"
-      - "tests/bounded-*.test.ts"
-      - "tests/disposable-mysql-mysqli.integration.test.ts"
-      - "tests/mysqli-poll.integration.test.ts"
   push:
-    paths:
-      - ".github/scripts/run-agent-task/**"
-      - ".github/workflows/agent-task-contracts.yml"
-      - ".github/workflows/build-php-wasm-mysqli-poll-overlay.yml"
-      - ".github/workflows/run-agent-task.yml"
-      - "contracts/agent-task-workflow-request.fixture.json"
-      - "contracts/run-agent-task-reusable-workflow-interface.v1.json"
-      - "docs/agent-task-reusable-workflow.md"
-      - "fixtures/agent-task-reusable-workflow-consumer*.yml"
-      - "fixtures/agent-task-runtime-sources-run-29299109269.json"
-      - "fixtures/agent-task-runtime-paths-run-29305012941.json"
-      - "npm-shrinkwrap.json"
-      - "package.json"
-      - "scripts/process-marker.mjs"
-      - "packages/runtime-playground/src/**"
-      - "tests/browser-*.test.ts"
-      - "tests/editor-*.test.ts"
-      - "tests/agent-task-*.test.ts"
-      - "tests/runtime-sources-materialization.test.ts"
-      - "tests/runtime-sources-playground-integration.test.ts"
-      - "tests/execute-native-agent-task-playground-e2e.test.ts"
-      - "tests/execute-native-agent-task-interruption.test.mjs"
-      - "tests/trusted-apply-artifact-channel.integration.test.ts"
-      - "tests/redaction.test.ts"
-      - "tests/production-boundary-enforcement.test.ts"
-      - "tests/runtime-tool-policy.test.ts"
-      - "tests/browser-canonical-preview-origin.test.ts"
-      - "tests/browser-adaptive-exploration.test.ts"
-      - "packages/runtime-core/src/browser-adaptive-exploration.ts"
-      - "packages/runtime-playground/src/browser-actions-runner.ts"
-      - "packages/runtime-playground/src/browser-adaptive-explorer.ts"
-      - "packages/runtime-playground/src/browser-artifacts.ts"
-      - "packages/runtime-playground/src/browser-multi-actor-scenario-runner.ts"
-      - "packages/runtime-playground/src/browser-preview-routing.ts"
-      - "packages/runtime-playground/src/browser-probe-runner.ts"
-      - "packages/runtime-playground/src/editor-command-runners.ts"
-      - "packages/runtime-playground/src/preview-server.ts"
-      - "packages/runtime-playground/src/phpunit-command-handlers.ts"
-      - "packages/runtime-playground/src/playground-cli-runner.ts"
-      - "packages/runtime-playground/src/playground-wordpress-archive-cache.ts"
-      - "tests/playground-custom-archive-cache*.test.ts"
-      - "tests/fixtures/playground-cache-lease-child.ts"
-      - "tests/playground-phpunit-readonly-cache.integration.test.ts"
-      - "tests/fixtures/phpunit-playground-harness/**"
-      - "packages/cli/src/bounded-recipe-plan.ts"
-      - "packages/runtime-core/src/bounded-runtime-plan.ts"
-      - "tests/bounded-*.test.ts"
-      - "tests/disposable-mysql-mysqli.integration.test.ts"
-      - "tests/mysqli-poll.integration.test.ts"
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  contracts:
+  integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -118,42 +30,7 @@ jobs:
           php-version: '8.2'
           tools: composer:v2
       - run: npm ci
-      - name: Cache Playwright Chromium
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('npm-shrinkwrap.json') }}
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-      - run: npm run build
-      - run: npm run test:browser-accessibility-oracles
-      - run: npm run test:browser-visual-compare-url-capture
-      - run: npm run test:browser-visual-compare-animated-media
-      - run: npm run test:browser-visual-compare-capture-reliability
-      - run: npm run test:browser-visual-compare-layout-drift
-      - run: npm run test:agent-task-contracts
-      - run: npm run test:browser-canonical-preview-origin
-      - run: npm run test:bounded-runtime-plan
-      - run: npm run test:bounded-recipe-plan
-      - run: npm run test:bounded-recipe-plan-integration
-      - run: npm run test:recipe-step-continuation
-      - run: npm run test:phpunit-runtime-rejection
-      - run: npm run test:php-wasm-runtime-rejection-any-command
-      - run: npm run test:disposable-mysql-mysqli-e2e
-      - run: npm run test:mysqli-poll-integration
-      - run: npm run test:runtime-sources-playground-integration
-      - run: npm run test:playground-phpunit-readonly-cache-integration
-      - run: npm run test:playground-custom-archive-cache
-      - run: npm run test:native-agent-task-playground-e2e
-      - run: npm run test:native-agent-task-interruption
-      - run: npm run test:trusted-apply-artifact-channel
-      - run: npm run test:runtime-command-artifact-bounds
-      - run: npm run test:recipe-declared-artifacts
-      - run: npm run test:redaction
-      - run: npm run test:browser-preview-routing
-      - run: npm run test:browser-routed-command-security
-      - run: npm run test:production-boundary-enforcement
-      - run: npm run test:runtime-tool-policy
+      - run: npm run test:integration
 
   workflow-lint:
     runs-on: ubuntu-latest
@@ -161,4 +38,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker://rhysd/actionlint:1.7.7
         with:
-          args: .github/workflows/agent-task-contracts.yml .github/workflows/build-php-wasm-mysqli-poll-overlay.yml .github/workflows/run-agent-task.yml
+          args: .github/workflows/agent-task-contracts.yml .github/workflows/browser.yml .github/workflows/build-php-wasm-mysqli-poll-overlay.yml .github/workflows/run-agent-task.yml

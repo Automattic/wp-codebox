@@ -20,7 +20,7 @@ function npmScript(name: string): SmokeCommand {
 /*
  * Test files are not registered here. `scripts/smoke-discovery.ts` finds
  * tests/*.test.{ts,mjs} and scripts/*-smoke.{ts,php} by convention, and
- * `npm run check` runs them after the commands below.
+ * each smoke lane runs its matching discovered files after any declared work.
  *
  * This group is only for work that is not a single test file: compilation and
  * typechecking. Everything else belongs in a discovered file.

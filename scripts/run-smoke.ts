@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { smokeGroups, smokeManifest, type SmokeCommand } from "./smoke-manifest.ts"
-import { discoveredParallelCommands, discoveredSerialCommands } from "./smoke-discovery.ts"
+import { discoveredParallelCommands, discoveredSerialCommands, type SmokeLane } from "./smoke-discovery.ts"
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url))
 const DEFAULT_CONCURRENCY = 8
@@ -15,13 +15,14 @@ function usage(): string {
   return [
     "Usage: npm run smoke -- [--group=<name> | --command=<name> | --all | --list]",
     "",
-    "Groups:",
+    "Declared groups:",
     ...Object.entries(smokeGroups).map(([name, group]) => `  ${name.padEnd(10)} ${group.description}`),
     "",
-    "Aggregate groups:",
-    ...Object.entries(smokeManifest.aggregateGroups).map(
-      ([name, groups]) => `  ${name.padEnd(10)} ${groups.join(", ")}`,
-    ),
+    "Aggregate lanes:",
+    "  check      build, type, and fast contracts",
+    "  integration Playground, Docker, and runtime integration contracts",
+    "  browser    serial Chromium contracts",
+    "  all        every root-package lane",
   ].join("\n")
 }
 
@@ -176,6 +177,33 @@ async function runInParallel(commands: SmokeCommand[], concurrency: number): Pro
   return failures
 }
 
+async function runLane(name: string, lane: SmokeLane, declared: SmokeCommand[], concurrency: number): Promise<void> {
+  const parallel = discoveredParallelCommands(repositoryRoot, lane)
+  const serial = discoveredSerialCommands(repositoryRoot, lane)
+
+  console.log(`[smoke] ${name}: ${declared.length} declared, ${parallel.length} parallel (concurrency ${concurrency}), ${serial.length} serial`)
+  for (const command of declared) await runCommand(command)
+
+  console.log(`\n[smoke] discovered phase: ${parallel.length} files at concurrency ${concurrency}`)
+  const failures = await runInParallel(parallel, concurrency)
+
+  console.log(`\n[smoke] serial phase: ${serial.length} files`)
+  for (const command of serial) {
+    const outcome = await runCapturedCommand(command)
+    if (outcome.error) {
+      failures.push(outcome.error)
+      console.log(`\n[smoke] FAIL ${command.name}`)
+      console.log(outcome.output.trimEnd())
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} smoke command(s) failed:\n` + failures.map((failure) => `  - ${failure.message}`).join("\n"))
+  }
+
+  console.log(`\n[smoke] ${name} passed: ${declared.length + parallel.length + serial.length} command(s)`)
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
 
@@ -195,45 +223,26 @@ async function main(): Promise<void> {
     return
   }
 
-  const name = options.all ? "check" : options.group ?? "check"
+  const name = options.all ? "all" : options.group ?? "check"
+  const aggregateLanes = new Set(["check", "integration", "browser", "all"])
 
-  if (name !== "check") {
+  if (!aggregateLanes.has(name)) {
     const group = resolveGroup(name)
     console.log(`[smoke] Running ${group.commands.length} command(s) from ${group.name}`)
     for (const command of group.commands) await runCommand(command)
     return
   }
 
-  // The aggregate: declared commands first (they build artifacts the discovered
-  // files rely on), then discovered files in parallel, then the serial tail.
-  const declared = resolveGroup("check")
-  const parallel = discoveredParallelCommands(repositoryRoot)
-  const serial = discoveredSerialCommands(repositoryRoot)
-
-  console.log(
-    `[smoke] check: ${declared.commands.length} declared, ${parallel.length} discovered (concurrency ${options.concurrency}), ${serial.length} serial`,
-  )
-
-  for (const command of declared.commands) await runCommand(command)
-
-  console.log(`\n[smoke] discovered phase: ${parallel.length} files at concurrency ${options.concurrency}`)
-  const failures = await runInParallel(parallel, options.concurrency)
-
-  console.log(`\n[smoke] serial phase: ${serial.length} files`)
-  for (const command of serial) {
-    const outcome = await runCapturedCommand(command)
-    if (outcome.error) {
-      failures.push(outcome.error)
-      console.log(`\n[smoke] FAIL ${command.name}`)
-      console.log(outcome.output.trimEnd())
-    }
+  if (name === "all") {
+    await runLane("check", "fast", resolveGroup("check").commands, options.concurrency)
+    await runLane("integration", "integration", [], Math.min(options.concurrency, 2))
+    await runLane("browser", "browser", [], 1)
+    console.log("\n[smoke] all root-package lanes passed")
+    return
   }
 
-  if (failures.length > 0) {
-    throw new Error(`${failures.length} smoke command(s) failed:\n` + failures.map((f) => `  - ${f.message}`).join("\n"))
-  }
-
-  console.log(`\n[smoke] check passed: ${declared.commands.length + parallel.length + serial.length} command(s)`)
+  const lane: SmokeLane = name === "check" ? "fast" : name as SmokeLane
+  await runLane(name, lane, name === "check" ? resolveGroup("check").commands : [], options.concurrency)
 }
 
 main().catch((error: unknown) => {

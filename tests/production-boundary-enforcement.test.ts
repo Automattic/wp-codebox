@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readdir, readFile } from "node:fs/promises"
 import { join, relative } from "node:path"
+import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 
 const root = new URL("..", import.meta.url)
 const packagesDir = new URL("../packages/", import.meta.url)
@@ -9,6 +10,7 @@ const runtimeCoreSrcDir = new URL("../packages/runtime-core/src/", import.meta.u
 const publicDocPaths = [
   "README.md",
   "docs/README.md",
+  "docs/public-api-contract.md",
   "docs/portable-wp-codebox.md",
   "docs/runner-workspace-backend-contract.md",
   "packages/cli/README.md",
@@ -39,6 +41,11 @@ const forbiddenPublicExportTargets = [
 const forbiddenPublicImportSpecifiers = [
   /@wp-playground\//,
 ]
+const forbiddenRawPublicPaths = [
+  /agents\/[a-z0-9._/-]+/i,
+  /wp-codebox\.agent-sandbox-run/,
+  /from ["']@automattic\/wp-codebox-playground/,
+]
 const runtimeBackendPackages = new Set([
   "@automattic/wp-codebox-playground",
   "@automattic/wp-codebox-runtime-cloudflare",
@@ -64,9 +71,11 @@ const forbiddenPublicContractVocabulary = [
 ]
 
 const violations: string[] = []
+const publicDocs = new Map<string, string>()
 
 for (const rel of publicDocPaths) {
   const source = await readFile(new URL(`../${rel}`, import.meta.url), "utf8")
+  publicDocs.set(rel, source)
   for (const term of forbiddenPublicSurfaceTerms) {
     if (term.test(source)) {
       violations.push(`${rel} exposes ${term} in public documentation`)
@@ -76,6 +85,42 @@ for (const rel of publicDocPaths) {
     if (guidance.test(source)) {
       violations.push(`${rel} tells public consumers to call internal substrate ${guidance}`)
     }
+  }
+  for (const rawPath of forbiddenRawPublicPaths) {
+    if (rawPath.test(source)) {
+      violations.push(`${rel} teaches backend path ${rawPath}`)
+    }
+  }
+}
+
+const publicDocsText = [...publicDocs.values()].join("\n")
+for (const abilityId of flattenStringValues(runtimeContractManifest().abilities)) {
+  if (!publicDocsText.includes(abilityId)) {
+    violations.push(`public documentation omits Codebox ability ${abilityId}`)
+  }
+}
+
+const publicApiContract = publicDocs.get("docs/public-api-contract.md") ?? ""
+for (const expectedContract of [
+  /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/,
+  /Product consumers should use the Codebox-owned public surfaces/,
+  /manifest intentionally excludes backend handler bindings/,
+  /Internal\/default substrate adapters are implementation\s+details/,
+  /They are not consumer\s+API names/,
+  /advanced adapter surface/,
+  /`wp-codebox\/run-plan-progress\/v1`/,
+  /Hosts may stream or persist those snapshots in\s+their own job system/,
+  /host UIs own the button, policy, and durable cancellation request transport/,
+]) {
+  if (!expectedContract.test(publicApiContract)) {
+    violations.push(`docs/public-api-contract.md omits ${expectedContract}`)
+  }
+}
+
+const cookbookReadme = publicDocs.get("examples/recipes/cookbook/README.md") ?? ""
+for (const obsoleteRecipe of [/legacy-compatibility-recipes/, /codex-agent-smoke\.json|claude-code-agent-smoke\.json|headless-browser-agent-task\.json/]) {
+  if (obsoleteRecipe.test(cookbookReadme)) {
+    violations.push(`examples/recipes/cookbook/README.md references obsolete recipe ${obsoleteRecipe}`)
   }
 }
 
@@ -204,4 +249,10 @@ function exportedContractNames(source: string): string[] {
     }
     return value ? [value] : []
   })
+}
+
+function flattenStringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  return Object.values(value).flatMap(flattenStringValues)
 }

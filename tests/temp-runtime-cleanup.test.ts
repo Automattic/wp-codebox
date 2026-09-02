@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { access, lutimes, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
+import { access, lutimes, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { inventoryTempRuntimeDirectories, type ProcessEvidence } from "../packages/cli/src/commands/temp-runtime-cleanup.js"
 import { cleanupRecipePreparedSources, prepareRecipeWorkspaces } from "../packages/cli/src/recipe-sources.js"
 import type { WorkspaceRecipe } from "../packages/runtime-core/src/index.js"
 
-const customTmp = await mkdtemp(join(tmpdir(), "wp-codebox-cleanup-test-root-"))
+const customTmp = await realpath(await mkdtemp(join(tmpdir(), "wp-codebox-cleanup-test-root-")))
 const originalTmp = process.env.TMPDIR
 process.env.TMPDIR = customTmp
 const complete = (rows: ProcessEvidence["rows"] = []): ProcessEvidence => ({ available: true, complete: true, rows, blockers: [] })

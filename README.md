@@ -275,7 +275,10 @@ npm run build
 npm run check
 ```
 
-`npm run check` runs the full smoke manifest aggregate. Use `npm run smoke -- --list` to see focused smoke groups and commands.
+`npm run check` runs the fast build and contract lane. `npm run test:integration`
+owns Playground and Docker coverage, `npm run test:browser` owns serial Chromium
+coverage, and `npm run test:all` composes every root-package lane for release gates.
+Use `npm run smoke -- --list` to see focused smoke groups and commands.
 
 ## Distribution Artifacts
 
