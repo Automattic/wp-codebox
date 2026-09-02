@@ -1,6 +1,6 @@
 import { commandArg, commandJsonArg } from "./command-codecs.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
-import type { RuntimePreviewSpec, WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeStep } from "./runtime-contracts.js"
+import type { RuntimePreviewSpec, WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeStep, WorkspaceRecipeTypedArtifact } from "./runtime-contracts.js"
 import { isPlainObject, stripUndefined } from "./object-utils.js"
 import { performanceObservationCaptureRequest, type PerformanceObservationCaptureRequest } from "./performance-observation.js"
 
@@ -33,6 +33,7 @@ export interface WordPressWorkloadRunRecipeOptions {
   before?: WorkspaceRecipeStep[]
   steps: WorkspaceRecipeStep[]
   after?: WorkspaceRecipeStep[]
+  artifacts?: WorkspaceRecipeTypedArtifact[]
   metadata?: Record<string, unknown>
   capture?: PerformanceObservationCaptureRequest
   enableQueryCapture?: boolean
@@ -99,6 +100,7 @@ export function wordpressWorkloadRunRecipe(options: WordPressWorkloadRunRecipeOp
       steps: normalizeRecipeSteps(options.steps),
       after: normalizeRecipeSteps(options.after),
     }),
+    artifacts: Array.isArray(options.artifacts) && options.artifacts.length > 0 ? { typed: options.artifacts } : undefined,
     metadata: stripUndefined({
       ...options.metadata,
       public_contract: WORDPRESS_WORKLOAD_RUN_SCHEMA,
