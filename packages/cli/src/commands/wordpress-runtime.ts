@@ -3,7 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { artifactReferenceMetadata, fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { createWordPressEpisode, createWordPressFuzzSuiteRuntimeActionExecutor, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -151,6 +151,7 @@ async function runRuntimeBackedFuzzSuiteCommand(options: PublicRuntimeCommandOpt
   })
   try {
     const result = await executeWordPressFuzzSuite(episode, suite, {
+      artifactStorage: options.artifactsDirectory ? { root: options.artifactsDirectory } : undefined,
       metadata: {
         public_cli_command: "run-fuzz-suite",
       },
@@ -381,7 +382,27 @@ function parseRecipeRunOutput(stdout: string): Record<string, unknown> | undefin
 function recipeArtifactRefs(output: Record<string, unknown> | undefined): ExecutionResult["artifactRefs"] {
   const artifacts = objectOption(output?.artifacts)
   const refs = arrayOption(artifacts?.refs ?? artifacts?.files ?? output?.artifactRefs ?? output?.artifact_refs)
-  return refs.flatMap((ref) => objectOption(ref) ? [ref as NonNullable<ExecutionResult["artifactRefs"]>[number]] : [])
+  const bundleDirectory = stringValue(artifacts?.directory)
+  const materialized = arrayOption(output?.declaredArtifacts).flatMap((entry) => {
+    const declaration = objectOption(entry)
+    const typedArtifact = objectOption(declaration?.materialized)
+    const artifact = objectOption(typedArtifact?.artifact)
+    const artifactPath = stringValue(artifact?.path)
+    const name = stringValue(declaration?.name ?? typedArtifact?.name)
+    if (!artifact || !artifactPath || !name) return []
+    const sha256 = stringValue(artifact.sha256)
+    return [{
+      id: name,
+      artifactId: name,
+      kind: stringValue(artifact.kind) ?? "typed-artifact",
+      path: artifactPath,
+      sourcePath: bundleDirectory ? join(bundleDirectory, artifactPath) : undefined,
+      contentType: stringValue(artifact.contentType),
+      digest: sha256 ? { algorithm: "sha256" as const, value: sha256 } : undefined,
+      metadata: artifactReferenceMetadata(declaration?.metadata),
+    }]
+  })
+  return [...refs.flatMap((ref) => objectOption(ref) ? [ref as NonNullable<ExecutionResult["artifactRefs"]>[number]] : []), ...materialized]
 }
 
 async function parsePublicRuntimeCommandOptions(args: string[]): Promise<PublicRuntimeCommandOptions> {
@@ -485,9 +506,42 @@ function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequiremen
     before: arrayOption(input.before) as WordPressWorkloadRunRecipeOptions["before"],
     steps: steps as WordPressWorkloadRunRecipeOptions["steps"],
     after: arrayOption(input.after) as WordPressWorkloadRunRecipeOptions["after"],
+    artifacts: workloadTypedArtifacts(input.artifacts),
     capture: objectOption(input.capture) as WordPressWorkloadRunRecipeOptions["capture"],
     enableQueryCapture: typeof input.enableQueryCapture === "boolean" ? input.enableQueryCapture : typeof input.enable_query_capture === "boolean" ? input.enable_query_capture : undefined,
   }
+}
+
+function workloadTypedArtifacts(value: unknown): WordPressWorkloadRunRecipeOptions["artifacts"] {
+  const artifacts = arrayOption(value).flatMap((entry) => {
+    const artifact = objectOption(entry)
+    const name = stringValue(artifact?.name)
+    const path = stringValue(artifact?.path)
+    if (!artifact || !name || !path) return []
+    const metadata = objectOption(artifact.metadata)
+    const rawPayloadSchema = artifact.payloadSchema ?? artifact.payload_schema ?? metadata?.schema
+    const payloadSchema = typeof rawPayloadSchema === "string" || objectOption(rawPayloadSchema) ? rawPayloadSchema as string | Record<string, unknown> : undefined
+    return [{
+      name,
+      path: workloadArtifactRuntimePath(name, path),
+      type: stringValue(artifact.type ?? artifact.kind) ?? "json",
+      contentType: stringValue(artifact.contentType ?? artifact.content_type) ?? "application/json",
+      parseJson: true,
+      payloadSchema,
+      required: artifact.required !== false,
+      metadata: { ...(metadata ?? {}), declaredPath: path },
+    }]
+  })
+  return artifacts.length > 0 ? artifacts : undefined
+}
+
+function safeWorkloadArtifactName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "workload-result"
+}
+
+function workloadArtifactRuntimePath(name: string, declaredPath: string): string {
+  const suffix = createHash("sha256").update(`${name}\0${declaredPath}`).digest("hex").slice(0, 12)
+  return `/tmp/wp-codebox-workload-results/${safeWorkloadArtifactName(name)}-${suffix}.json`
 }
 
 function normalizeWordPressWorkloadRequest(input: Record<string, unknown>, suiteInput?: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): Record<string, unknown> {

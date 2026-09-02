@@ -7,6 +7,7 @@ import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSp
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
 import { WORDPRESS_DB_WRITE_SET_ARTIFACT_KIND, WORDPRESS_DB_WRITE_SET_SCHEMA } from "./wordpress-db-write-set-contracts.js"
+import { artifactReferenceMetadata } from "./artifact-references.js"
 
 export interface FuzzSuiteCommandExecutor {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
@@ -1520,7 +1521,7 @@ function fuzzSuiteArtifactRefFromTrace(ref: RuntimeEpisodeTraceRef): FuzzSuiteAr
     kind: ref.kind,
     contentType: ref.contentType,
     sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
-    metadata: stripUndefined({ id: ref.id, artifactId: ref.artifactId, digest: ref.digest, sourcePath: ref.sourcePath }),
+    metadata: stripUndefined({ ...(artifactReferenceMetadata(ref.metadata) ?? {}), id: ref.id, artifactId: ref.artifactId, digest: ref.digest, sourcePath: ref.sourcePath }),
     payload: ref.payload,
   })
 }

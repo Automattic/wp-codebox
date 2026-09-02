@@ -51,6 +51,7 @@ export interface ArtifactReferenceFileInput {
 export interface ArtifactReferenceTraceInput extends ArtifactReferenceFileInput {
   id?: string
   artifactId?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface NormalizeRuntimeEpisodeTraceRefDefaults {
@@ -332,7 +333,17 @@ export function normalizeRuntimeEpisodeTraceRef(input: ArtifactReferenceTraceInp
     artifactId: input.artifactId ?? defaults.artifactId,
     path: input.path ?? defaults.path,
     digest,
+    metadata: artifactReferenceMetadata(input.metadata),
   })
+}
+
+export function artifactReferenceMetadata(input: unknown): Record<string, unknown> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined
+  const source = input as Record<string, unknown>
+  const metadata = Object.fromEntries(["schema", "semantic_key", "semanticKey", "role"]
+    .filter((key) => typeof source[key] === "string" && String(source[key]).trim() !== "")
+    .map((key) => [key, source[key]]))
+  return Object.keys(metadata).length > 0 ? metadata : undefined
 }
 
 export function normalizeRuntimeEpisodeTraceRefs(inputs: ArtifactReferenceTraceInput[], defaults: NormalizeRuntimeEpisodeTraceRefDefaults = {}): RuntimeEpisodeTraceRef[] {

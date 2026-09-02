@@ -877,6 +877,7 @@ export interface RuntimeEpisodeTraceRef {
   path?: string
   sourcePath?: string
   contentType?: string
+  metadata?: Record<string, unknown>
   payload?: unknown
 }
 
@@ -1359,6 +1360,7 @@ export interface ArtifactBundle {
 export interface Runtime {
   info(): Promise<RuntimeInfo>
   mount(spec: MountSpec): Promise<void>
+  readTextFile?(path: string): Promise<string>
   materializeStagedInputs?(mounts: MountSpec[]): Promise<unknown>
   materializeMounts?(mounts: MountSpec[]): Promise<unknown>
   execute(spec: ExecutionSpec): Promise<ExecutionResult>

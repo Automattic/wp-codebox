@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { Buffer } from "node:buffer"
 import { isDeepStrictEqual } from "node:util"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
@@ -517,6 +518,9 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
     const execution = step.command === "wordpress.collect-workload-result"
       ? executeRecipeCollectWorkloadResult(step, executions, startedAt, workloadAlias)
       : await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap, undefined, signal)
+    if (step.command === "wordpress.collect-workload-result" && execution.exitCode === 0) {
+      await materializeCollectedWorkloadResult(runtime, workload.artifacts, step, execution)
+    }
     executions.push(execution)
     if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
       break
@@ -541,6 +545,29 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
     startedAt,
     finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
     artifactRefs: executions.flatMap((execution) => [...(execution.artifactRefs ?? []), ...recipeWorkloadResultArtifactRefs(execution)]),
+  }
+}
+
+export async function materializeCollectedWorkloadResult(runtime: Runtime, declarations: unknown, step: WorkspaceRecipe["workflow"]["steps"][number], execution: ExecutionResult): Promise<void> {
+  const artifactName = commandArgs(step.args ?? []).artifact ?? commandArgs(step.args ?? []).name
+  const declaration = Array.isArray(declarations)
+    ? declarations.map((entry) => isRecord(entry) ? entry : undefined).find((entry) => typeof entry?.name === "string" && declaredArtifactNameMatches(entry.name, artifactName ?? ""))
+    : undefined
+  const declaredPath = typeof declaration?.path === "string" ? declaration.path.trim().replace(/\\/g, "/") : ""
+  const artifactPath = declaredPath.startsWith("/")
+    ? declaredPath
+    : `/tmp/wp-codebox-workload-results/${safeArtifactSegment(artifactName ?? "workload-result")}-${createHash("sha256").update(`${artifactName ?? "workload-result"}\0${declaredPath}`).digest("hex").slice(0, 12)}.json`
+  if (!declaration || artifactPath.split("/").some((segment) => segment === "." || segment === "..")) return
+  const payload = isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)
+  if (!payload) return
+  const encodedPath = Buffer.from(artifactPath, "utf8").toString("base64")
+  const encodedPayload = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, "utf8").toString("base64")
+  const write = await runtime.execute({
+    command: "wordpress.run-php",
+    args: [`code=$path = base64_decode('${encodedPath}'); wp_mkdir_p(dirname($path)); if (false === file_put_contents($path, base64_decode('${encodedPayload}'))) { throw new RuntimeException('Unable to materialize collected workload result.'); }`],
+  })
+  if (write.exitCode !== 0) {
+    throw new Error(`Unable to materialize collected workload result ${artifactName ?? artifactPath}: ${write.stderr}`)
   }
 }
 
@@ -770,6 +797,10 @@ function artifactNameMatches(candidate: string, artifact: string): boolean {
   const normalizedCandidate = candidate.toLowerCase().replace(/[_-]/g, "")
   const normalizedArtifact = artifact.toLowerCase().replace(/[_-]/g, "")
   return candidate === artifact || candidate.replace(/_/g, "-") === artifact.replace(/_/g, "-") || normalizedCandidate.includes(normalizedArtifact)
+}
+
+function declaredArtifactNameMatches(candidate: string, artifact: string): boolean {
+  return candidate === artifact || candidate.replace(/_/g, "-") === artifact.replace(/_/g, "-")
 }
 
 function safeArtifactSegment(value: string): string {

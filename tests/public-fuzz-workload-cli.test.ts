@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -34,6 +34,16 @@ return static function ( array $input, array $args ): array {
         'observation' => array(
             'input_schema' => $input['schema'] ?? '',
             'arg_type' => $args['type'] ?? '',
+        ),
+        'artifacts' => array(
+            'sample-report' => array(
+                'schema' => 'example/sample-report/v1',
+                'marker' => str_repeat('x', 1000),
+            ),
+            'sample.report' => array(
+                'schema' => 'example/second-sample-report/v1',
+                'marker' => str_repeat('y', 100),
+            ),
         ),
         'artifactRefs' => array(
             array( 'name' => 'php-report', 'path' => 'workloads/php-report.json' ),
@@ -145,6 +155,49 @@ return static function ( array $input, array $args ): array {
   assert.ok(typedWorkloadsJson)
   const typedWorkloads = JSON.parse(typedWorkloadsJson.replace(/^workloads-json=/, ""))
   assert.deepEqual(typedWorkloads[0].run, [{ type: "php", code: "return array('ok' => true);" }])
+  const recipeRuntimeInput = join(directory, "recipe-runtime-fuzz.json")
+  await writeFile(recipeRuntimeInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "recipe-runtime-suite",
+    metadata: {
+      runtime_requirements: {
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", activate: true }],
+      },
+    },
+    cases: [{
+      id: "collected-workload-report",
+      target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+      input: {
+        schema: "wp-codebox/wordpress-workload-run/v1",
+        id: "collected-workload",
+        steps: [{ command: "wordpress.run-workload", args: ["type=php", `path=${join(samplePluginSource, "bench", "rest-product-batch-import.php")}`] }],
+        after: [{ command: "wordpress.collect-workload-result", args: ["artifact=sample-report", "schema=example/sample-report/v1"] }, { command: "wordpress.collect-workload-result", args: ["artifact=sample.report", "schema=example/second-sample-report/v1"] }],
+        artifacts: [{ name: "sample-report", path: "files/workload-results/sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/sample-report/v1", semantic_key: "fuzz.report", private_note: "must-not-propagate" } }, { name: "sample.report", path: "files/workload-results/second-sample-report.json", kind: "json", contentType: "application/json", required: true, metadata: { schema: "example/second-sample-report/v1" } }],
+      },
+    }],
+  }), "utf8")
+  const recipeRuntimeArtifacts = join(directory, "recipe-runtime-artifacts")
+  const recipeRuntimeOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", recipeRuntimeInput, "--format=json", "--runner-mode=runtime-backed", "--artifacts", recipeRuntimeArtifacts]), 0)
+  })
+  const recipeRuntimeResult = JSON.parse(recipeRuntimeOutput)
+  const sampleReportRef = recipeRuntimeResult.artifactRefs.find((ref: { metadata?: { artifactId?: string } }) => ref.metadata?.artifactId === "sample-report")
+  assert.ok(sampleReportRef, JSON.stringify({ status: recipeRuntimeResult.status, refs: recipeRuntimeResult.artifactRefs, diagnostics: recipeRuntimeResult.cases?.[0]?.diagnostics }))
+  const sampleReport = JSON.parse(await readFile(sampleReportRef.metadata.sourcePath, "utf8"))
+  assert.equal(sampleReport.schema, "example/sample-report/v1")
+  assert.equal(sampleReport.marker.length, 1000)
+  assert.equal(sampleReportRef.metadata.schema, "example/sample-report/v1")
+  assert.equal(sampleReportRef.metadata.semantic_key, "fuzz.report")
+  assert.equal(sampleReportRef.metadata.private_note, undefined)
+  const secondReportRef = recipeRuntimeResult.artifactRefs.find((ref: { metadata?: { artifactId?: string } }) => ref.metadata?.artifactId === "sample.report")
+  assert.ok(secondReportRef)
+  const secondReport = JSON.parse(await readFile(secondReportRef.metadata.sourcePath, "utf8"))
+  assert.equal(secondReport.schema, "example/second-sample-report/v1")
+  assert.equal(secondReport.marker.length, 100)
+  assert.notEqual(secondReportRef.metadata.sourcePath, sampleReportRef.metadata.sourcePath)
+  const declaredArtifacts = recipeRuntimeResult.cases[0].metadata.execution.result.json.declaredArtifacts
+  assert.deepEqual(declaredArtifacts.map((artifact: { status?: string }) => artifact.status), ["collected", "collected"])
+  assert.equal(declaredArtifacts.every((artifact: { materialized?: { artifact?: { path?: string } } }) => artifact.materialized?.artifact?.path), true)
 
   const nestedRuntimeFuzzInput = fileURLToPath(new URL("./fixtures/fuzz-relative-plugin/tests/fuzz/pipeline-builder-runtime.json", import.meta.url))
   const nestedPluginSource = fileURLToPath(new URL("./fixtures/fuzz-relative-plugin", import.meta.url))
@@ -158,8 +211,9 @@ return static function ( array $input, array $args ): array {
   assert.equal(nestedRuntimePlan.metadata.runtime_requirements.component_contracts[0].originalSource, "../..")
   assert.equal(nestedRuntimePlan.metadata.runtime_requirements.extra_plugins[0].source, nestedPluginSource)
   assert.equal(nestedRuntimePlan.metadata.runtime_requirements.component_contracts[0].path, nestedPluginSource)
+  const nestedRuntimeArtifacts = join(directory, "nested-runtime-artifacts")
   const nestedRuntimeExecutionOutput = await captureStdout(async () => {
-    assert.equal(await runCli(["run-fuzz-suite", "--input-file", nestedRuntimeFuzzInput, "--format=json", "--runner-mode=runtime-backed"]), 0)
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", nestedRuntimeFuzzInput, "--format=json", "--runner-mode=runtime-backed", "--artifacts", nestedRuntimeArtifacts]), 0)
   })
   const nestedRuntimeExecution = JSON.parse(nestedRuntimeExecutionOutput)
   assert.equal(nestedRuntimeExecution.status, "passed")

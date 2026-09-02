@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, materializeStructuredArtifactFiles, redactJsonText, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, materializeStructuredArtifactFiles, redactJsonText, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { appendRecipeRuntimeEvidenceFiles } from "../recipe-evidence.js"
 import { rewriteInputMountPath, type InputMountPathMapping } from "../input-mount-paths.js"
@@ -7,6 +7,7 @@ import { serializeRecipeRunError, RecipeDeclaredArtifactFailureError, RecipeProb
 import type { RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunProbe } from "./recipe-run-types.js"
 
 const DECLARED_ARTIFACT_CAPTURE_MAX_BYTES = DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
+const TYPED_ARTIFACT_CAPTURE_MAX_BYTES = 16 * 1024 * 1024
 const declaredArtifactContents = new WeakMap<RecipeRunDeclaredArtifact, Buffer>()
 
 export async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: Runtime, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeRunDeclaredArtifact[]> {
@@ -61,12 +62,25 @@ async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: Workspa
 
 export async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number, effectivePath = artifact.path, options: { redact?: boolean } = {}): Promise<RecipeRunDeclaredArtifact> {
   try {
+    const directTextRead = artifact.parseJson === true && runtime.readTextFile !== undefined
+    let directContents: Buffer | undefined
     const execution = await runtime.execute({
       command: "wordpress.run-php",
-      args: [`code=${declaredArtifactReadCode(effectivePath, artifact.parseJson === true, true)}`],
+      args: [`code=${declaredArtifactReadCode(effectivePath, directTextRead ? false : artifact.parseJson === true, !directTextRead, directTextRead ? TYPED_ARTIFACT_CAPTURE_MAX_BYTES : DECLARED_ARTIFACT_CAPTURE_MAX_BYTES)}`],
     })
     const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
     const exists = collected.exists === true
+    if (directTextRead && declaredArtifactCollectionStatus(collected, exists) === "collected") {
+      const contents = Buffer.from(await runtime.readTextFile!(effectivePath), "utf8")
+      if (contents.byteLength > TYPED_ARTIFACT_CAPTURE_MAX_BYTES) {
+        throw new Error(`Declared typed artifact exceeds ${TYPED_ARTIFACT_CAPTURE_MAX_BYTES} bytes: ${artifact.path}`)
+      }
+      if (collected.sha256 !== artifactFileDigest(contents).value || collected.size !== contents.byteLength) {
+        throw new Error(`Declared typed artifact changed while being collected: ${artifact.path}`)
+      }
+      collected.parsedJson = JSON.parse(contents.toString("utf8"))
+      directContents = contents
+    }
     const result = stripUndefined({
       schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
       index,
@@ -88,8 +102,12 @@ export async function collectRecipeTypedArtifact(runtime: Runtime, artifact: Wor
       metadata: artifact.metadata,
       diagnostics: declaredArtifactDiagnostics(collected),
     }) as RecipeRunDeclaredArtifact
-    if (result.status === "collected" && typeof collected.contentBase64 === "string" && collected.contentBase64.length > 0) {
-      declaredArtifactContents.set(result, Buffer.from(collected.contentBase64, "base64"))
+    if (result.status === "collected") {
+      if (directContents) {
+        declaredArtifactContents.set(result, directContents)
+      } else if (typeof collected.contentBase64 === "string" && collected.contentBase64.length > 0) {
+        declaredArtifactContents.set(result, Buffer.from(collected.contentBase64, "base64"))
+      }
     }
     return result
   } catch (error) {
@@ -143,10 +161,12 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
     indexSchema: TYPED_ARTIFACT_INDEX_SCHEMA,
     contentType: (_artifact, index) => inputs[index].contentType,
     contents: (_artifact, index) => inputs[index].contents,
+    includePayloadInRefs: false,
   })
   for (const [index, ref] of materialized.refs.entries()) {
     inputs[index].artifact.materialized = ref
     delete (inputs[index].artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
+    delete inputs[index].artifact.parsedJson
   }
 
   const files = materialized.files.map((file) => ({
@@ -154,7 +174,7 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
     kind: file.kind,
     contentType: file.contentType,
     contents: file.contents,
-    maxBytes: DECLARED_ARTIFACT_CAPTURE_MAX_BYTES,
+    maxBytes: TYPED_ARTIFACT_CAPTURE_MAX_BYTES,
   }))
   await appendRecipeRuntimeEvidenceFiles(artifacts, files)
 }
@@ -236,9 +256,8 @@ export function recipeProbeFailure(probes: RecipeRunProbe[]): RecipeProbeFailure
   return probes.some((probe) => probe.status === "failed" && !probe.allowFailure) ? new RecipeProbeFailureError(probes) : undefined
 }
 
-function declaredArtifactReadCode(path: string, parseJson: boolean, includeContents: boolean): string {
+function declaredArtifactReadCode(path: string, parseJson: boolean, includeContents: boolean, maxBytes = DECLARED_ARTIFACT_CAPTURE_MAX_BYTES): string {
   const encodedPath = JSON.stringify(path)
-  const maxBytes = DECLARED_ARTIFACT_CAPTURE_MAX_BYTES
   return `
 $path = ${encodedPath};
 $parse_json = ${parseJson ? "true" : "false"};
