@@ -25,7 +25,7 @@ assert.deepEqual(homeboy.release?.package_coverage, [{
 assert.deepEqual(homeboy.extensions?.nodejs, { settings: { release_package_script: "release:package" } }, "the Node release provider must receive the project artifact manifest setting")
 assert.deepEqual(homeboy.scripts?.build, ["npm run package:wordpress-plugin"], "component builds retain singular WordPress deploy-artifact ownership")
 assert.deepEqual(homeboy.scripts?.test, [
-  "npm run check",
+  "npm run test:all",
   "npm run test:release-target",
   "npm run test:sharp-release-runtime",
   "npm run test:prepare-declaration-rebuild",

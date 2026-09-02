@@ -84,7 +84,7 @@
       "npm run build"
     ],
     "test": [
-      "npm run check",
+      "npm run test:all",
       "npm run test:release-target",
       "npm run test:sharp-release-runtime",
       "npm run test:prepare-declaration-rebuild",

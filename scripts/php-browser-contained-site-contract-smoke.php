@@ -6,6 +6,8 @@ defined( 'WEEK_IN_SECONDS' ) || define( 'WEEK_IN_SECONDS', 7 * 24 * 60 * 60 );
 
 $GLOBALS['wp_codebox_test_transient'] = false;
 $GLOBALS['wp_codebox_test_transients'] = array();
+$GLOBALS['wp_codebox_test_logged_in'] = false;
+$GLOBALS['wp_codebox_test_manage_options'] = false;
 
 final class WP_Error {
 	/** @param array<string,mixed> $data */
@@ -30,12 +32,11 @@ function sanitize_key( string $key ): string {
 }
 
 function is_user_logged_in(): bool {
-	return false;
+	return $GLOBALS['wp_codebox_test_logged_in'];
 }
 
 function current_user_can( string $capability ): bool {
-	unset( $capability );
-	return false;
+	return 'manage_options' === $capability && $GLOBALS['wp_codebox_test_manage_options'];
 }
 
 final class WP_Codebox_Test_Request {
@@ -112,6 +113,12 @@ $materialization_digest = str_repeat( 'c', 64 );
 expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:' . $source_digest ) ) ), 'Expected public prepared blueprint refs to be hydratable.' );
 expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'cache_key' => 'studio-native-preview', 'input_hash' => $source_digest ) ) ), 'Expected public prepared blueprint cache key and input hash to be hydratable.' );
 expect( ! WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:not-a-hash' ) ) ), 'Expected malformed public prepared blueprint refs to remain forbidden.' );
+$GLOBALS['wp_codebox_test_logged_in'] = true;
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref(), 'Expected authenticated users to hydrate private blueprint refs.' );
+$GLOBALS['wp_codebox_test_logged_in'] = false;
+$GLOBALS['wp_codebox_test_manage_options'] = true;
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref(), 'Expected administrators to hydrate private blueprint refs.' );
+$GLOBALS['wp_codebox_test_manage_options'] = false;
 
 $miss = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(

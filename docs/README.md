@@ -91,9 +91,11 @@ unless this index says otherwise.
   `packages/runtime-core/src/runtime-boundary-contracts.ts` and
   `packages/runtime-core/src/runtime-profile-compiler.ts`.
 - JSON Schema factory: `packages/runtime-core/src/recipe-schema.ts`.
-- Default check coverage: `npm run check` includes
-  `npm run test:generic-primitives` through the smoke manifest `core` group.
-- Disposable MySQL integration coverage runs through
-  `npm run test:disposable-mysql-mysqli-e2e`. The test detects Docker with
+- Default check coverage: `npm run check` includes build, type, and generic
+  primitive contracts through the smoke manifest `declared` group.
+- Playground and disposable MySQL integration coverage runs through
+  `npm run test:integration`. The MySQL test detects Docker with
   `docker info`; Docker-capable CI/Lab runs the public recipe path and PHP-WASM
   `mysqli` assertion, while hosts without a Docker daemon report an explicit skip.
+- Serial Chromium coverage runs through `npm run test:browser`. Release gates
+  compose all root-package lanes with `npm run test:all`.

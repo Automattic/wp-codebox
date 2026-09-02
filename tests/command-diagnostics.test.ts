@@ -31,13 +31,23 @@ const stepProperties = ((schema.$defs as Record<string, unknown>).step as { prop
 assert.ok(stepProperties.diagnostics, "recipe step schema exposes diagnostics capture")
 
 const noCapture = await recipeExecutionSpec({ command: "wordpress.run-php", args: ["code=echo 'ok';"] }, process.cwd())
-assert.deepEqual(noCapture, { command: "wordpress.run-php", args: ["code=echo 'ok';"], diagnostics: undefined })
+assert.deepEqual(noCapture, {
+  command: "wordpress.run-php",
+  args: ["code=echo 'ok';"],
+  diagnostics: undefined,
+  originalCommand: "wordpress.run-php",
+  originalArgs: ["code=echo 'ok';"],
+  resolvedArgs: ["code=echo 'ok';"],
+})
 
 const withCapture = await recipeExecutionSpec({ command: "wordpress.run-php", args: ["code=echo 'ok';"], diagnostics: { capture: ["wpdb-queries"], maxItems: 1, maxBytes: 128 } }, process.cwd())
 assert.deepEqual(withCapture, {
   command: "wordpress.run-php",
   args: ["code=echo 'ok';", "capture-diagnostics=wpdb-queries", "diagnostics-max-items=1", "diagnostics-max-bytes=128"],
   diagnostics: { capture: ["wpdb-queries"], maxItems: 1, maxBytes: 128 },
+  originalCommand: "wordpress.run-php",
+  originalArgs: ["code=echo 'ok';"],
+  resolvedArgs: ["code=echo 'ok';", "capture-diagnostics=wpdb-queries", "diagnostics-max-items=1", "diagnostics-max-bytes=128"],
 })
 
 const workloadJson = JSON.stringify({
@@ -53,13 +63,20 @@ assert.deepEqual(workloadSpec, {
     "expected-result-schema=\"wp-codebox/wordpress-workload-run-result/v1\"",
   ],
   diagnostics: undefined,
+  originalCommand: "wordpress.run-workload",
+  originalArgs: [`workload-json=${workloadJson}`],
+  resolvedArgs: [
+    "name=wp-codebox/run-wordpress-workload",
+    `input=${workloadJson}`,
+    "expected-result-schema=\"wp-codebox/wordpress-workload-run-result/v1\"",
+  ],
 })
 
 const workloadDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-workload-json-"))
 try {
   await writeFile(join(workloadDirectory, "workload.json"), workloadJson)
   const workloadFileSpec = await recipeExecutionSpec({ command: "wordpress.run-workload", args: ["workload-json=workload.json"] }, workloadDirectory)
-  assert.deepEqual(workloadFileSpec, workloadSpec)
+  assert.deepEqual(workloadFileSpec, { ...workloadSpec, originalArgs: ["workload-json=workload.json"] })
 } finally {
   await rm(workloadDirectory, { recursive: true, force: true })
 }

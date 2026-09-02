@@ -6,8 +6,9 @@ import type { SmokeCommand } from "./smoke-manifest.js"
 /*
  * Test files are discovered by convention rather than registered by hand.
  * Adding tests/<name>.test.ts or scripts/<name>-smoke.ts is enough to make it
- * run. Anything that must not run has to be listed below with a reason, so the
- * exclusions stay short, visible, and reviewable.
+ * run. Files are classified into fast, integration, and browser lanes below.
+ * Anything that must not run has to be listed with a reason, so exclusions stay
+ * short, visible, and reviewable.
  */
 
 export const DISCOVERY_PATTERNS = {
@@ -16,13 +17,12 @@ export const DISCOVERY_PATTERNS = {
 } as const
 
 type Exclusion = { file: string; reason: string }
+export type SmokeLane = "fast" | "integration" | "browser" | "all"
 
 export const DISCOVERY_EXCLUSIONS: readonly Exclusion[] = [
   { file: "scripts/run-smoke.ts", reason: "the runner itself; discovering it would recurse" },
 
   // Require an environment the aggregate does not provision.
-  { file: "tests/mysqli-poll.integration.test.ts", reason: "requires Docker; runs in the agent-task-contracts workflow" },
-  { file: "tests/runtime-sources-playground-integration.test.ts", reason: "exceeds the per-file budget; runs in the agent-task-contracts workflow" },
   { file: "tests/release-package-coverage.test.ts", reason: "needs the 427 MB plugin zip from package:wordpress-plugin; runs in the Homeboy gate" },
   { file: "tests/derive-cloudflare-core-contract-atomic.test.mjs", reason: "covers the Cloudflare-owned derivation writer; runs with package boundaries in the Cloudflare Check workflow" },
   { file: "tests/runtime-package-boundaries.test.mjs", reason: "requires the independent Cloudflare package install; runs in the Cloudflare Check workflow" },
@@ -31,38 +31,35 @@ export const DISCOVERY_EXCLUSIONS: readonly Exclusion[] = [
     reason:
       "destructive to shared state: deletes packages/runtime-core/dist and runs npm install at the repository root, which breaks every concurrent import of @automattic/wp-codebox-core; runs in the Homeboy gate",
   },
-
-  // Known-failing and unmaintained. Tracked for triage; see the discovery audit
-  // in issue #2402. These were added in June 2026, never wired to a gate, and
-  // have not been touched since.
-  { file: "tests/artifact-reference-dtos.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "tests/browser-blueprint-ref-permission.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "tests/command-diagnostics.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "tests/docs-boundary-language.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "tests/temp-runtime-cleanup.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "tests/wordpress-runtime-discovery-coverage-plan.test.ts", reason: "failing and unmaintained; pending triage" },
-  { file: "scripts/agent-runtime-task-ability-smoke.ts", reason: "failing and unmaintained; pending triage" },
 ]
 
-/*
- * These contend on the shared Playground WordPress archive cache, or boot a
- * full browser and WordPress runtime and time out when starved of CPU. They are
- * correct in isolation, so they run in a serial phase after the parallel one
- * rather than being excluded.
- */
-export const DISCOVERY_SERIAL: readonly string[] = [
+const INTEGRATION_FILES: readonly string[] = [
   "scripts/doctor-command-smoke.ts",
+  "tests/execute-native-agent-task-playground-e2e.test.ts",
+  "tests/playground-custom-archive-cache-process.test.ts",
+  "tests/playground-readonly-mounts.test.ts",
+  "tests/runtime-sources-playground-integration.test.ts",
+]
+
+const BROWSER_FILES: readonly string[] = [
+  "tests/browser-accessibility-oracles.test.ts",
+  "tests/browser-action-corpus.test.ts",
+  "tests/browser-adaptive-exploration.test.ts",
+  "tests/browser-recipe-file-payloads.integration.test.ts",
+  "tests/browser-visual-compare-animated-media.test.ts",
+  "tests/browser-visual-compare-capture-reliability.test.ts",
+  "tests/browser-visual-compare-url-capture.test.ts",
+  "tests/editor-actions-save.integration.test.ts",
+]
+
+/* Files that share process handlers or Playground caches remain serial within their lane. */
+const DISCOVERY_SERIAL: readonly string[] = [
   "tests/bounded-recipe-plan.integration.test.ts",
   "tests/phpunit-runtime-rejection.test.ts",
+  "tests/playground-readonly-mounts-integration.test.ts",
   "tests/playground-readonly-mounts.test.ts",
   "tests/playground-phpunit-bootstrap-failure.integration.test.ts",
-  "tests/browser-actions-navigation-capture.browser.test.ts",
-  "tests/editor-actions-save.integration.test.ts",
-  // Boots a runtime and asserts step counts, so contention flips it rather
-  // than slowing it. Passed 3 of 3 standalone after failing once under load.
   "tests/recipe-step-continuation.integration.test.ts",
-  // Asserts cancellation timing, so it fails when starved rather than slowed.
-  "tests/browser-adaptive-exploration.test.ts",
 ]
 
 /*
@@ -84,6 +81,8 @@ export const CHAIN_OWNED_FILES: readonly string[] = [
 
 const excluded = new Set([...DISCOVERY_EXCLUSIONS.map((entry) => entry.file), ...CHAIN_OWNED_FILES])
 const serial = new Set(DISCOVERY_SERIAL)
+const integrations = new Set(INTEGRATION_FILES)
+const browsers = new Set(BROWSER_FILES)
 
 function listFiles(root: string, directory: string, pattern: RegExp): string[] {
   return readdirSync(join(root, directory))
@@ -100,6 +99,17 @@ export function discoverSmokeFiles(root = process.cwd()): string[] {
   return files.filter((file) => !excluded.has(file)).sort()
 }
 
+function laneFor(file: string): Exclude<SmokeLane, "all"> {
+  if (file.endsWith(".browser.test.ts") || browsers.has(file)) return "browser"
+  if (/[.-]integration\.test\./.test(file) || integrations.has(file)) return "integration"
+  return "fast"
+}
+
+function filesForLane(root: string, lane: SmokeLane): string[] {
+  const files = discoverSmokeFiles(root)
+  return lane === "all" ? files : files.filter((file) => laneFor(file) === lane)
+}
+
 function toCommand(file: string, disableTsxCache = false): SmokeCommand {
   return {
     name: file,
@@ -108,17 +118,24 @@ function toCommand(file: string, disableTsxCache = false): SmokeCommand {
   }
 }
 
-export function discoveredCommands(root = process.cwd()): SmokeCommand[] {
-  return discoverSmokeFiles(root).map(toCommand)
+export function discoveredCommands(root = process.cwd(), lane: SmokeLane = "all"): SmokeCommand[] {
+  return filesForLane(root, lane).map((file) => toCommand(file))
 }
 
 /** Files safe to run concurrently. */
-export function discoveredParallelCommands(root = process.cwd()): SmokeCommand[] {
-  return discoverSmokeFiles(root).filter((file) => !serial.has(file)).map((file) => toCommand(file, true))
+export function discoveredParallelCommands(root = process.cwd(), lane: SmokeLane = "all"): SmokeCommand[] {
+  return filesForLane(root, lane)
+    .filter((file) => laneFor(file) !== "browser" && !serial.has(file))
+    .map((file) => toCommand(file, true))
 }
 
 /** Files that must run one at a time, after the parallel phase. */
-export function discoveredSerialCommands(root = process.cwd()): SmokeCommand[] {
-  const found = new Set(discoverSmokeFiles(root))
-  return DISCOVERY_SERIAL.filter((file) => found.has(file)).map(toCommand)
+export function discoveredSerialCommands(root = process.cwd(), lane: SmokeLane = "all"): SmokeCommand[] {
+  const found = new Set(filesForLane(root, lane))
+  const ordered = lane === "browser"
+    ? [...found]
+    : lane === "all"
+      ? [...found].filter((file) => laneFor(file) === "browser" || serial.has(file))
+      : DISCOVERY_SERIAL.filter((file) => found.has(file))
+  return ordered.map((file) => toCommand(file))
 }

@@ -170,11 +170,13 @@
     "test:mysqli-poll-integration": "tsx tests/mysqli-poll.integration.test.ts",
     "test:disposable-mysql-mysqli-e2e": "tsx tests/disposable-mysql-mysqli.integration.test.ts",
     "test:wordpress-runtime-discovery-coverage-plan": "tsx tests/wordpress-runtime-discovery-coverage-plan.test.ts",
-    "test:docs-boundary-language": "tsx tests/docs-boundary-language.test.ts",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
     "test:browser-viewport-replay": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core --force && node ./node_modules/typescript/bin/tsc -b packages/runtime-playground packages/cli --force && node scripts/ensure-cli-bin-executable.mjs && tsx tests/browser-viewport-replay.test.ts",
+    "test:integration": "npm run build && npm run smoke -- --group=integration --concurrency=2",
+    "test:browser": "npm run build && npm run smoke -- --group=browser",
+    "test:all": "npm run smoke -- --all",
     "check": "npm run smoke -- --group=check",
-    "check:all": "npm run check && npm run cloudflare:check"
+    "check:all": "npm run test:all && npm run cloudflare:check"
   },
   "workspaces": [
     "packages/cli",

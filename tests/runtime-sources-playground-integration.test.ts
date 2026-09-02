@@ -159,12 +159,20 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
     }
   }
 
-   const runtimePackageOutput = await runRuntimePackage()
-  const runtimeExecution = runtimePackageOutput.executions?.find((execution: { stdout?: string }) => execution.stdout?.includes("agent_runtime"))
-   const runtime = JSON.parse(JSON.parse(runtimeExecution?.stdout ?? "{}").output ?? "{}")
-   assert.equal(runtime.agent_runtime?.success, true, JSON.stringify(runtimePackageOutput.executions?.map((execution: { command?: string, stdout?: string }) => ({ command: execution.command, stdout: execution.stdout }))))
-   assert.equal(runtime.agent_runtime.result.package.slug, "flat-runtime-agent", "the generated runtime must execute the imported agent identity")
-   const requests = JSON.parse(runtimePackageOutput.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? "[]")
+  const runtimePackageOutput = await runRuntimePackage()
+  const runtime = agentRuntimeOutput(runtimePackageOutput)
+  assert.equal(runtime.agent_runtime?.success, true, JSON.stringify(runtimePackageOutput.executions?.map((execution: { command?: string, stdout?: string }) => ({ command: execution.command, stdout: execution.stdout }))))
+  assert.equal(runtime.agent_runtime.result.package.slug, "flat-runtime-agent", "the generated runtime must execute the imported agent identity")
+  const missingAbilityOutput = await runRuntimePackage((task) => { task.ability = "example/missing-runtime-task" })
+  const missingAbilityRuntime = agentRuntimeOutput(missingAbilityOutput)
+  assert.equal(missingAbilityRuntime.agent_runtime?.success, false)
+  assert.equal(missingAbilityRuntime.agent_runtime?.error?.code, "runtime_task_ability_missing_preflight")
+  assert.equal(missingAbilityRuntime.agent_runtime?.error?.data?.preflight?.schema, "wp-codebox/runtime-task-ability-preflight/v1")
+  assert.equal(missingAbilityRuntime.agent_runtime?.error?.data?.preflight?.ability, "example/missing-runtime-task")
+  assert.equal(missingAbilityRuntime.agent_runtime?.error?.data?.preflight?.available, false)
+  assert.ok(missingAbilityRuntime.agent_runtime?.error?.data?.preflight?.registered_ability_ids.includes("wp-codebox/run-runtime-package"))
+
+  const requests = JSON.parse(runtimePackageOutput.executions?.filter((execution: { command?: string }) => execution.command === "wordpress.run-php").at(-1)?.stdout ?? "[]")
    const providerTurns = requests.filter((request: { url: string }) => request.url.endsWith("/responses"))
    assert.equal(providerTurns.length, 3, "the intercepted provider must receive read, edit, and terminal turns")
    const providerTurn = providerTurns[0]
@@ -218,4 +226,9 @@ echo wp_json_encode( array( 'imported_slug' => $imports[0]['agent_slug'] ?? '', 
   }
 } finally {
   await rm(root, { recursive: true, force: true })
+}
+
+function agentRuntimeOutput(output: { executions?: Array<{ stdout?: string }> }): any {
+  const execution = output.executions?.find((candidate) => candidate.stdout?.includes("agent_runtime"))
+  return JSON.parse(JSON.parse(execution?.stdout ?? "{}").output ?? "{}")
 }
