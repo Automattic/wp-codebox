@@ -64,6 +64,23 @@ const episode = {
         schema: "wp-codebox/recipe-run/v1",
         success: true,
         executions: [{ result: { json: { schema: "wp-codebox/bench-results/v1", scenarios: [{ id: "recipe-profile", artifacts: { "rest-db-query-profile": { schema: "wp-codebox/wordpress-rest-db-query-profile/v1", cases: [{ case_id: "recipe-products", method: "GET", path: "/wc/store/v1/products", summary: { query_count: 11, total_time_ms: 14.5 } }] } } }] } } }],
+      } : runPhpCode.includes("large-workload-report-second") ? {
+        schema: "wp-codebox/json-workload-result/v1",
+        artifacts: { "large-workload-report": { schema: "example/large-workload-report/v1", marker: "second" } },
+      } : runPhpCode.includes("large-workload-report") ? {
+        schema: "wp-codebox/json-workload-result/v1",
+        artifacts: {
+          "large-workload-report": {
+            schema: "example/large-workload-report/v1",
+            marker: "x".repeat(1_100_000),
+          },
+        },
+      } : runPhpCode.includes("colliding-workload-reports") ? {
+        schema: "wp-codebox/json-workload-result/v1",
+        artifacts: {
+          "collision-a": { schema: "example/collision-a/v1", marker: "a" },
+          "collision-b": { schema: "example/collision-b/v1", marker: "b" },
+        },
       } : runPhpCode.includes("rest-db-query-profiler") ? {
         schema: "wp-codebox/json-workload-result/v1",
         steps: [{
@@ -224,7 +241,10 @@ try {
     cases: [
       { id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } },
       { id: "durable-delete", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" }, mutation: { intent: "delete", destructive: true } },
-      { id: "durable-profile-collection", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest_db_query_profile"] }] } },
+      { id: "durable-profile-collection", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest_db_query_profile"] }], artifacts: [{ name: "rest_db_query_profile", path: "files/workload-results/durable-profile-collection-rest-db-query-profile-1.json" }] } },
+      { id: "durable-large-report", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-php", args: ["code=large-workload-report"] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=large-workload-report", "schema=example/large-workload-report/v1"] }], artifacts: [{ name: "large-workload-report", path: "files/workload-results//declared-large-report.json" }] } },
+      { id: "durable-second-report", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-php", args: ["code=large-workload-report-second"] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=large-workload-report", "schema=example/large-workload-report/v1"] }], artifacts: [{ name: "large-workload-report", path: "files/workload-results/declared-large-report.json" }] } },
+      { id: "durable-same-case-collision", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-php", args: ["code=colliding-workload-reports"] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=collision-a"] }, { command: "wordpress.collect-workload-result", args: ["artifact=collision-b"] }], artifacts: [{ name: "collision-a", path: "result/fuzz-suite-result.json" }, { name: "collision-b", path: "result/fuzz-suite-result.json" }] } },
     ],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
@@ -257,6 +277,15 @@ try {
   const durableWriteSet = JSON.parse(await readFile(join(artifactRoot, durableWriteSetPath), "utf8"))
   const queryObservationArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.queryObservations?.observations?.[0]?.ref?.path ?? ""), "utf8"))
   const restDbQueryProfileArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.restDbQueryProfiles?.profiles?.[0]?.ref?.path ?? ""), "utf8"))
+  const largeReportRef = durableResult.cases[3]?.artifactRefs?.find((ref) => ref.path.endsWith("/files/case-artifacts/durable-large-report-2/declared-large-report.json"))
+  assert.ok(largeReportRef)
+  const largeReportArtifact = JSON.parse(await readFile(join(artifactRoot, largeReportRef.path), "utf8"))
+  const secondReportRef = durableResult.cases[4]?.artifactRefs?.find((ref) => ref.path.endsWith("/files/case-artifacts/durable-second-report-2/declared-large-report.json"))
+  assert.ok(secondReportRef)
+  const secondReportArtifact = JSON.parse(await readFile(join(artifactRoot, secondReportRef.path), "utf8"))
+  const collidingReportRefs = durableResult.cases[5]?.artifactRefs?.filter((ref) => ref.kind === "collision-a" || ref.kind === "collision-b") ?? []
+  assert.equal(collidingReportRefs.length, 2)
+  const collidingReportArtifacts = await Promise.all(collidingReportRefs.map(async (ref) => JSON.parse(await readFile(join(artifactRoot, ref.path), "utf8"))))
   assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
   assert.equal(replayArtifact.case.id, "durable-rest")
@@ -271,6 +300,21 @@ try {
   assert.equal(queryObservationArtifact.tables.some((table: { name?: string }) => table.name === "wp_posts"), true)
   assert.equal(restDbQueryProfileArtifact.schema, "wp-codebox/wordpress-rest-db-query-profile/v1")
   assert.equal(restDbQueryProfileArtifact.cases[0].case_id, "products")
+  assert.equal(largeReportArtifact.schema, "example/large-workload-report/v1")
+  assert.equal(largeReportArtifact.marker.length, 1_100_000)
+  assert.equal(largeReportRef.bytes, Buffer.byteLength(`${JSON.stringify(largeReportArtifact, null, 2)}\n`))
+  assert.equal(typeof largeReportRef.sha256, "string")
+  assert.equal("payload" in largeReportRef, false)
+  assert.equal(largeReportRef.metadata?.declaredPath, "files/workload-results/declared-large-report.json")
+  assert.equal(secondReportArtifact.marker, "second")
+  assert.notEqual(secondReportRef.sha256, largeReportRef.sha256)
+  assert.equal(secondReportRef.metadata?.declaredPath, "files/workload-results/declared-large-report.json")
+  assert.deepEqual(collidingReportArtifacts.map((artifact) => artifact.marker).sort(), ["a", "b"])
+  assert.equal(collidingReportRefs.every((ref) => ref.path.includes("/files/case-artifacts/durable-same-case-collision-")), true)
+  assert.equal(collidingReportRefs.every((ref) => ref.metadata?.declaredPath === "files/workload-results/fuzz-suite-result.json"), true)
+  const collidingProfileRef = durableResult.cases[2]?.artifactRefs?.find((ref) => ref.metadata?.declaredPath === "files/workload-results/durable-profile-collection-rest-db-query-profile-1.json")
+  assert.ok(collidingProfileRef)
+  assert.equal(collidingProfileRef.path.includes("/files/case-artifacts/durable-profile-collection-"), true)
   assert.equal(durableResult.cases[2]?.artifactRefs?.some((ref) => ref.kind === "rest-db-query-profile"), true)
   assert.equal(resultArtifact.artifactRefs.some((ref: { kind?: string }) => ref.kind === "rest-db-query-profile"), true)
 } finally {

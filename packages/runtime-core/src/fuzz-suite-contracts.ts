@@ -476,6 +476,7 @@ export interface FuzzSuiteArtifactRef {
   bytes?: number
   name?: string
   metadata?: Record<string, unknown>
+  payload?: unknown
 }
 
 export interface FuzzReplayCaseRef {

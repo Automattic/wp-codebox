@@ -1521,6 +1521,7 @@ function fuzzSuiteArtifactRefFromTrace(ref: RuntimeEpisodeTraceRef): FuzzSuiteAr
     contentType: ref.contentType,
     sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
     metadata: stripUndefined({ id: ref.id, artifactId: ref.artifactId, digest: ref.digest, sourcePath: ref.sourcePath }),
+    payload: ref.payload,
   })
 }
 
