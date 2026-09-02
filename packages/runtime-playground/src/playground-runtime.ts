@@ -688,6 +688,14 @@ class PlaygroundRuntime implements Runtime {
     }, spec)
   }
 
+  async readTextFile(path: string): Promise<string> {
+    const server = await this.bootPlayground()
+    if (!server.playground.readFileAsText) {
+      throw new Error("Runtime file reads require a Playground backend with readFileAsText support")
+    }
+    return server.playground.readFileAsText(path)
+  }
+
   async destroy(): Promise<void> {
     if (this.status === "destroyed") {
       return

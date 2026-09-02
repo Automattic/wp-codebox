@@ -1360,6 +1360,7 @@ export interface ArtifactBundle {
 export interface Runtime {
   info(): Promise<RuntimeInfo>
   mount(spec: MountSpec): Promise<void>
+  readTextFile?(path: string): Promise<string>
   materializeStagedInputs?(mounts: MountSpec[]): Promise<unknown>
   materializeMounts?(mounts: MountSpec[]): Promise<unknown>
   execute(spec: ExecutionSpec): Promise<ExecutionResult>

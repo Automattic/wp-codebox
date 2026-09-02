@@ -92,6 +92,7 @@ export interface StructuredArtifactMaterializationInput<TArtifact extends Struct
   contentType?: string | ((artifact: TArtifact, index: number) => string)
   contents?: (artifact: TArtifact, index: number) => string | Buffer
   extension?: (contentType: string, artifact: TArtifact, index: number) => string
+  includePayloadInRefs?: boolean
 }
 
 export interface StructuredArtifactMaterializedFile<TArtifact extends StructuredArtifactPayload = StructuredArtifactPayload> {
@@ -123,6 +124,7 @@ export function materializeStructuredArtifactFiles<TArtifact extends StructuredA
     const schema = input.artifactKind === "typed-artifact" ? TYPED_ARTIFACT_SCHEMA : artifact.schema
     const ref: MaterializedStructuredArtifactRef = stripUndefined({
       ...artifact,
+      ...(input.includePayloadInRefs === false ? { payload: undefined } : {}),
       schema,
       artifact: {
         path,

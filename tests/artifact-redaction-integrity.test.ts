@@ -20,13 +20,14 @@ interface TypedArtifactIndexFixture {
   artifacts: Array<{
     name: string
     type: string
-    payload: { oracleIds: string[] }
+    payload?: { oracleIds: string[] }
     artifact: { path: string; sha256: string }
   }>
 }
 const typedPayload = {
   schema: "fixture/state-transition-ledger/v1",
   oracleIds: ["state-loss", "authorization-bypass"],
+  rows: Array.from({ length: 20_000 }, (_, id) => ({ id, value: "bounded-large-artifact-fixture" })),
   authorization: "Bearer fixture-authorization-secret",
   api_token: secretToken,
 }
@@ -72,17 +73,19 @@ try {
     },
   } as unknown as WorkspaceRecipe
   const payloadContents = Buffer.from(JSON.stringify(typedPayload))
+  assert.equal(payloadContents.byteLength > 1024 * 1024, true)
   const runtime = {
     execute: async () => ({
       id: "collect-typed-artifact",
       command: "wordpress.run-php",
       args: [],
       exitCode: 0,
-      stdout: `${JSON.stringify({ exists: true, type: "file", size: payloadContents.byteLength, sha256: artifactFileDigest(payloadContents).value, parsedJson: typedPayload, contentBase64: payloadContents.toString("base64") })}\n`,
+      stdout: `${JSON.stringify({ exists: true, type: "file", size: payloadContents.byteLength, sha256: artifactFileDigest(payloadContents).value, maxBytes: 16 * 1024 * 1024 })}\n`,
       stderr: "",
       startedAt: "2026-01-01T00:00:00.000Z",
       finishedAt: "2026-01-01T00:00:00.000Z",
     }),
+    readTextFile: async () => payloadContents.toString("utf8"),
   } as unknown as Runtime
   const declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
   await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
@@ -94,7 +97,7 @@ try {
   const index = JSON.parse(await readFile(join(artifactRoot, "files/runtime-evidence/typed-artifacts/index.json"), "utf8")) as TypedArtifactIndexFixture
   assert.equal(index.artifacts[0].name, "state-transition-ledger")
   assert.equal(index.artifacts[0].type, "fixture/state-transition-ledger/v1")
-  assert.deepEqual(index.artifacts[0].payload.oracleIds, ["state-loss", "authorization-bypass"])
+  assert.equal(index.artifacts[0].payload, undefined)
   const materializedPath = index.artifacts[0].artifact.path as string
   const materializedContents = await readFile(join(artifactRoot, materializedPath), "utf8")
   const materializedPayload = JSON.parse(materializedContents)
