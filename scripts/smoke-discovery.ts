@@ -45,11 +45,15 @@ const BROWSER_FILES: readonly string[] = [
   "tests/browser-accessibility-oracles.test.ts",
   "tests/browser-action-corpus.test.ts",
   "tests/browser-adaptive-exploration.test.ts",
+  "tests/browser-canonical-preview-origin.test.ts",
   "tests/browser-recipe-file-payloads.integration.test.ts",
   "tests/browser-visual-compare-animated-media.test.ts",
   "tests/browser-visual-compare-capture-reliability.test.ts",
   "tests/browser-visual-compare-url-capture.test.ts",
   "tests/editor-actions-save.integration.test.ts",
+  "tests/playground-mapped-domain-multisite.integration.test.ts",
+  "tests/playground-staged-upload-preview.integration.test.ts",
+  "tests/runtime-backed-multisite-workload.integration.test.ts",
 ]
 
 /* Files that share process handlers or Playground caches remain serial within their lane. */
@@ -71,7 +75,6 @@ export const CHAIN_OWNED_FILES: readonly string[] = [
   "tests/artifact-path-primitives.test.ts",
   "tests/bench-command-step-behavior.test.ts",
   "tests/browser-callback-materialization-contracts.test.ts",
-  "tests/browser-canonical-preview-origin.test.ts",
   "tests/external-mysql-runtime-service.test.ts",
   "tests/generic-ability-runtime-run.test.ts",
   "tests/native-mariadb-runtime-service.test.ts",
