@@ -35,7 +35,7 @@ import { executeSmtpSinkRecipeOperation, isSmtpSinkRecipeOperation } from "../sm
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, materializeCollectedWorkloadResult, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import { recipeAdversarialCampaignFailure, runRecipeAdversarialCampaigns, writeRecipeAdversarialEvidence, type RecipeAdversarialCampaignOutput } from "../adversarial-recipe.js"
 import { classifyRuntimeMemoryFailure, replayWithHostNodeHeap } from "../host-node-heap.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeContinuationProgress, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeContinuationProgress, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOptionsInput, RecipeRunOutput, RecipeRunPreparedExtraPlugin, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -49,14 +49,12 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
   }
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
   interruption?.install()
-  const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
   const outputHeartbeat = options.outputPath && options.json ? setInterval(() => process.stderr.write("WP Codebox recipe-run active\n"), 30_000) : undefined
   outputHeartbeat?.unref()
 
   try {
     if (options.summary) {
-      const { result } = await captureStdout(execute)
-      const output = interruptedRecipeOutput(result, interruption)
+      const { result: output } = await captureStdout(() => executeRecipeRun(options, interruption))
       const summary = normalizeRecipeRunSummary(output)
       if (options.json) await writeRecipeJsonOutput(summary, options.outputPath)
       else await writeRecipeSummaryHumanOutput(summary)
@@ -68,7 +66,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     }
 
     if (!options.json) {
-      const output = interruptedRecipeOutput(await execute(), interruption)
+      const output = await executeRecipeRun(options, interruption)
       printRecipeHumanOutput(output)
       interruption?.propagateIfInterrupted()
       exitAfterRecipeRunTimeout(output)
@@ -77,9 +75,8 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
       return output.success ? 0 : 1
     }
 
-    const { result, logs } = await captureStdout(execute)
-    const interruptedResult = interruptedRecipeOutput(result, interruption)
-    const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
+    const { result, logs } = await captureStdout(() => executeRecipeRun(options, interruption))
+    const output = logs.length > 0 ? { ...result, logs } : result
     await writeRecipeJsonOutput(output, options.outputPath)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
@@ -91,6 +88,27 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     if (outputHeartbeat) clearInterval(outputHeartbeat)
     interruption?.dispose()
   }
+}
+
+export function createRecipeRunOptions(options: RecipeRunOptionsInput): RecipeRunOptions {
+  return {
+    previewHoldBlocking: false,
+    previewLeaseRequested: false,
+    previewLeaseChild: false,
+    timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
+    externalServiceWritesApproved: false,
+    json: false,
+    summary: false,
+    dryRun: false,
+    ...stripUndefined(options),
+  } as RecipeRunOptions
+}
+
+export async function executeRecipeRun(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunCommandOutput> {
+  const output = await (options.dryRun
+    ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
+    : runRecipe(options, interruption))
+  return interruptedRecipeOutput(output, interruption)
 }
 
 export async function runRecipeValidateCommand(args: string[]): Promise<number> {
@@ -246,7 +264,7 @@ export async function runRecipe(options: RecipeRunOptions, interruption?: Recipe
         ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
         ...(serviceEvidence.length > 0 ? { managedRuntimeServices: serviceEvidence } : {}),
-        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, backendPackage, effectivePreview),
+        ...recipeRunMetadata(recipe, recipePath, recipeDirectory, workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, backendPackage, effectivePreview),
       },
       preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl, effectivePreview.lease),
     }
@@ -661,8 +679,8 @@ export async function runManagedServiceCleanup(
 
 async function recipeArtifactsMountConflictFailure(options: RecipeRunOptions): Promise<RecipeRunOutput | undefined> {
   const recipePath = resolve(options.recipePath)
-  const recipeDirectory = dirname(recipePath)
-  const recipe = await loadWorkspaceRecipe(recipePath)
+  const recipeDirectory = resolve(options.recipeDirectory ?? dirname(recipePath))
+  const recipe = options.recipe ?? await loadWorkspaceRecipe(recipePath)
   const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
   const conflict = recipeArtifactsMountConflict(recipe, recipeDirectory, configuredArtifactsDirectory)
   if (!conflict) {
@@ -888,10 +906,10 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     throw new Error("Missing required option: --recipe")
   }
 
-  return options as RecipeRunOptions
+  return createRecipeRunOptions({ ...options, recipePath: options.recipePath })
 }
 
-function parseRecipeRunTimeoutMs(value: unknown): number {
+export function parseRecipeRunTimeoutMs(value: unknown): number {
   const raw = String(value).trim()
   const match = raw.match(/^(\d+)(ms|s|m)?$/)
   if (!match) {
@@ -1516,7 +1534,7 @@ function effectiveRecipePreview(recipePreview: RuntimePreviewSpec | undefined, o
   })
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], dependencyOverlays: PreparedDependencyOverlay[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, preview: RuntimePreviewSpec): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, recipeDirectory: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], dependencyOverlays: PreparedDependencyOverlay[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, preview: RuntimePreviewSpec): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -1529,7 +1547,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
   }))
   const componentContracts = componentContractResults(recipe, extraPlugins, [], [])
   const componentManifest = recipeComponentManifest(extraPlugins, recipe.inputs?.component_manifest)
-  const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
+  const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const stagedFileProvenance = stagedFiles.map(recipeRunStagedFile)
   const workflow = recipeWorkflowMetadata(recipe)
 

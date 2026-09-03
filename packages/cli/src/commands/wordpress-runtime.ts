@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto"
 import { existsSync, realpathSync, statSync } from "node:fs"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { readFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { artifactReferenceMetadata, fuzzRunnerReadinessContract, minimizeFuzzCase, parseCommandJson, parseCommandOptions, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, runFuzzSuite, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, wordpressFuzzRuntimeContract, wordpressWorkloadRunRecipe, type ExecutionResult, type ExecutionSpec, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type RuntimePolicy, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { createWordPressEpisode, createWordPressFuzzSuiteRuntimeActionExecutor, executeWordPressFuzzSuite } from "@automattic/wp-codebox-playground/public"
-import { captureStdout } from "../output.js"
-import { runRecipeRunCommand } from "./recipe-run.js"
+import { boundedRecipeJsonOutput } from "./recipe-run-output.js"
+import { createRecipeRunOptions, executeRecipeRun, parseRecipeRunTimeoutMs } from "./recipe-run.js"
+import type { RecipeRunCommandOutput } from "./recipe-run-types.js"
 
 const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1"
 const WORDPRESS_WORKLOAD_RUN_RESULT_SCHEMA = "wp-codebox/wordpress-workload-run-result/v1"
@@ -208,33 +208,22 @@ async function runWordPressFuzzCommand(spec: ExecutionSpec, options: PublicRunti
   const step = { command: spec.command, args: spec.args ?? [], ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}) }
   const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions({ steps: [step] }, requirements)) as WorkspaceRecipe
   applyFuzzSuiteRuntimeRequirements(recipe, requirements)
-  const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-command-"))
-  try {
-    const recipePath = join(tempDir, "recipe.json")
-    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8")
-    const recipeArgs = ["--recipe", recipePath, "--json"]
-    if (options.dryRun) recipeArgs.push("--dry-run")
-    if (options.artifactsDirectory) recipeArgs.push("--artifacts", options.artifactsDirectory)
-    if (options.runRegistryDirectory) recipeArgs.push("--run-registry", options.runRegistryDirectory)
-    if (options.timeout) recipeArgs.push("--timeout", options.timeout)
-    const { result: exitCode, logs } = await captureStdout(() => runRecipeRunCommand(recipeArgs))
-    const stdout = logs.join("")
-    const recipeResult = parseRecipeRunOutput(stdout)
-    const stderr = recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : ""
-    return {
-      id: `wordpress-fuzz-command-${createHash("sha256").update(`${spec.command}\0${JSON.stringify(spec.args ?? [])}`).digest("hex").slice(0, 12)}`,
-      command: spec.command,
-      args: spec.args ?? [],
-      exitCode,
-      stdout,
-      stderr,
-      result: { schema: "wp-codebox/runtime-command-result/v1", status: exitCode === 0 ? "ok" : "error", stdout, stderr, json: recipeResult },
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      artifactRefs: recipeArtifactRefs(recipeResult),
-    }
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
+  const output = await executeGeneratedRecipe(recipe, options, "fuzz-command")
+  const exitCode = output.success ? 0 : 1
+  const recipeResult = output as unknown as Record<string, unknown>
+  const stdout = `${JSON.stringify(boundedRecipeJsonOutput(output), null, 2)}\n`
+  const stderr = recipeResult.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : ""
+  return {
+    id: `wordpress-fuzz-command-${createHash("sha256").update(`${spec.command}\0${JSON.stringify(spec.args ?? [])}`).digest("hex").slice(0, 12)}`,
+    command: spec.command,
+    args: spec.args ?? [],
+    exitCode,
+    stdout,
+    stderr,
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: exitCode === 0 ? "ok" : "error", stdout, stderr, json: recipeResult },
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    artifactRefs: recipeArtifactRefs(recipeResult),
   }
 }
 
@@ -245,24 +234,10 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
   }
 
   const options = await parsePublicRuntimeCommandOptions(args)
-  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(options.input)) as unknown as Record<string, unknown>
-  const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-workload-cli-"))
-  try {
-    const recipePath = join(tempDir, "recipe.json")
-    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8")
-    const recipeArgs = ["--recipe", recipePath, "--json"]
-    if (options.dryRun) recipeArgs.push("--dry-run")
-    if (options.artifactsDirectory) recipeArgs.push("--artifacts", options.artifactsDirectory)
-    if (options.runRegistryDirectory) recipeArgs.push("--run-registry", options.runRegistryDirectory)
-    if (options.timeout) recipeArgs.push("--timeout", options.timeout)
-    const { result: exitCode, logs } = await captureStdout(() => runRecipeRunCommand(recipeArgs))
-    for (const log of logs) {
-      process.stdout.write(`${log}\n`)
-    }
-    return logs.length > 0 ? 0 : exitCode
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
-  }
+  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(options.input)) as WorkspaceRecipe
+  const output = await executeGeneratedRecipe(recipe, options, "wordpress-workload")
+  writeJson(boundedRecipeJsonOutput(output))
+  return 0
 }
 
 async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecutionInput, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
@@ -271,33 +246,36 @@ async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecu
   const workload = normalizeWordPressWorkloadRequest(input.workload, options.input, requirements)
   const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(workload, requirements)) as WorkspaceRecipe
   applyFuzzSuiteRuntimeRequirements(recipe, requirements)
-  const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-workload-"))
-  try {
-    const recipePath = join(tempDir, "recipe.json")
-    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8")
-    const recipeArgs = ["--recipe", recipePath, "--json"]
-    if (options.dryRun) recipeArgs.push("--dry-run")
-    if (options.artifactsDirectory) recipeArgs.push("--artifacts", options.artifactsDirectory)
-    if (options.runRegistryDirectory) recipeArgs.push("--run-registry", options.runRegistryDirectory)
-    if (options.timeout) recipeArgs.push("--timeout", options.timeout)
-    const { result: exitCode, logs } = await captureStdout(() => runRecipeRunCommand(recipeArgs))
-    const stdout = logs.join("")
-    const recipeResult = parseRecipeRunOutput(stdout)
-    return {
-      id: `wordpress-run-workload-${input.case.id}`,
-      command: "wordpress.run-workload",
-      args: [`steps=${Array.isArray(input.workload.steps) ? input.workload.steps.length : 0}`],
-      exitCode,
-      stdout,
-      stderr: recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : "",
-      result: { schema: "wp-codebox/runtime-command-result/v1", status: exitCode === 0 ? "ok" : "error", stdout, stderr: recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : "", json: recipeResult },
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      artifactRefs: recipeArtifactRefs(recipeResult),
-    }
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
+  const output = await executeGeneratedRecipe(recipe, options, "fuzz-workload")
+  const exitCode = output.success ? 0 : 1
+  const recipeResult = output as unknown as Record<string, unknown>
+  const stdout = `${JSON.stringify(boundedRecipeJsonOutput(output), null, 2)}\n`
+  const stderr = recipeResult.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : ""
+  return {
+    id: `wordpress-run-workload-${input.case.id}`,
+    command: "wordpress.run-workload",
+    args: [`steps=${Array.isArray(input.workload.steps) ? input.workload.steps.length : 0}`],
+    exitCode,
+    stdout,
+    stderr,
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: exitCode === 0 ? "ok" : "error", stdout, stderr, json: recipeResult },
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    artifactRefs: recipeArtifactRefs(recipeResult),
   }
+}
+
+async function executeGeneratedRecipe(recipe: WorkspaceRecipe, options: PublicRuntimeCommandOptions, name: string): Promise<RecipeRunCommandOutput> {
+  const digest = createHash("sha256").update(JSON.stringify(recipe)).digest("hex").slice(0, 12)
+  return executeRecipeRun(createRecipeRunOptions({
+    recipePath: resolve(".wp-codebox", "generated-recipes", `${name}-${digest}.json`),
+    recipe,
+    recipeDirectory: process.cwd(),
+    artifactsDirectory: options.artifactsDirectory,
+    runRegistryDirectory: options.runRegistryDirectory,
+    timeoutMs: options.timeout ? parseRecipeRunTimeoutMs(options.timeout) : undefined,
+    dryRun: options.dryRun,
+  }))
 }
 
 function applyFuzzSuiteRuntimeRequirements(recipe: WorkspaceRecipe, requirements: Record<string, unknown> | undefined): void {
@@ -369,14 +347,6 @@ function runtimeRequirementEnv(base: Record<string, string> | undefined, ...extr
     }
   }
   return Object.keys(merged).length > 0 ? merged : undefined
-}
-
-function parseRecipeRunOutput(stdout: string): Record<string, unknown> | undefined {
-  try {
-    return objectOption(JSON.parse(stdout.trim() || "{}"))
-  } catch (_error) {
-    return undefined
-  }
 }
 
 function recipeArtifactRefs(output: Record<string, unknown> | undefined): ExecutionResult["artifactRefs"] {
