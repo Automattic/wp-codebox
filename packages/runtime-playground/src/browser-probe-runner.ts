@@ -1,3 +1,5 @@
+import { copyFile, readdir } from "node:fs/promises"
+import { join as nodePathJoin } from "node:path"
 import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, browserEnvironment, browserGeolocation, redactError, type BrowserGeolocationPermissionState, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
@@ -259,6 +261,10 @@ export async function runSingleBrowserProbeCommand({
   const networkTasks: Array<Promise<void>> = []
   const checkpoints: BrowserProbeCheckpointRecord[] = []
   const screenshotPath = artifactSession.absolutePath("screenshot.png")
+  // Playwright writes the recording itself and only finalizes it once the context
+  // closes, so the recording is staged in its own directory and adopted as a named
+  // artifact afterwards.
+  const videoSourceDirectory = artifactSession.absolutePath("video-source")
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
@@ -287,6 +293,8 @@ export async function runSingleBrowserProbeCommand({
   let authSummary: BrowserProbeAuthSummary | undefined
   let capabilityDiagnostics: BrowserProbeCapabilityDiagnostics | undefined
   let environmentRuntime: PlaywrightBrowserEnvironmentRuntime | undefined
+  let videoHandle: import("playwright").Video | null = null
+  let videoCaptured = false
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
@@ -320,13 +328,14 @@ export async function runSingleBrowserProbeCommand({
       const resolved = await resolvePlaywrightBrowserEnvironment(browserEnvironmentCell(environment), browser)
       const unsupported = resolved.capabilities.filter(({ fidelity }) => fidelity === "unsupported").map(({ id }) => id)
       if (unsupported.length > 0) throw new Error(`${command} browser environment is unsupported: ${unsupported.join(", ")}`)
-      environmentRuntime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, { contextOptions: { ...topology.contextOptions(), ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}) } })
+      environmentRuntime = await createPlaywrightBrowserEnvironmentContext(browser, resolved, { contextOptions: { ...topology.contextOptions(), ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}), ...(capture.has("video") ? { recordVideo: { dir: videoSourceDirectory } } : {}) } })
     }
     context = environmentRuntime.context
     if (context && browserPreviewNeedsContextRouting(networkPolicy) && !session) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, topology.origins.localProxyOrigin, routeTracker)
     }
     page = environmentRuntime.page
+    if (capture.has("video")) videoHandle = page.video()
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
         const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
@@ -522,6 +531,19 @@ export async function runSingleBrowserProbeCommand({
       }
       errors.push(serializeBrowserError("probe-error", routeError))
     }
+    if (videoHandle) {
+      // The recording is adopted from its staging directory rather than through
+      // video.saveAs(), which requires a browser connection that cleanup has closed.
+      try {
+        const staged = (await readdir(videoSourceDirectory)).filter((entry) => entry.endsWith(".webm")).sort()
+        if (staged.length === 0) throw new Error("wordpress.browser-probe capture=video produced no recording")
+        const source = nodePathJoin(videoSourceDirectory, staged[0])
+        await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(source, path))
+        videoCaptured = true
+      } catch (error) {
+        errors.push(serializeBrowserError("probe-error", error))
+      }
+    }
     if (captureSelection.console) {
       await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
     }
@@ -601,6 +623,7 @@ export async function runSingleBrowserProbeCommand({
       hashes: {
         ...(capture.has("html") ? { htmlSha256 } : {}),
         ...(capture.has("screenshot") ? { screenshotSha256 } : {}),
+        ...(capture.has("video") ? { videoCaptured } : {}),
       },
       lifecycleArtifact,
       lifecycleSelectors,

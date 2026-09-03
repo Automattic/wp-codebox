@@ -84,6 +84,7 @@ export interface BrowserArtifactFiles {
   review?: string
   screenshot?: string
   screenshots?: string[]
+  video?: string
   traces?: string[]
   domSnapshots?: string[]
   verifierResults?: string[]
@@ -242,6 +243,7 @@ export interface BrowserArtifactSummary {
   }
   replayability: BrowserProbeReplayability
   screenshot: boolean
+  video?: boolean
   visualCompare?: {
     status: string
     mismatchRatio?: number
@@ -1252,6 +1254,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
   screenshots: { kind: "browser-screenshot", contentType: "image/png", redact: false },
+  video: { kind: "browser-video", contentType: "video/webm", redact: false },
   traces: { kind: "browser-trace", contentType: "application/zip", redact: true },
   domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
   verifierResults: { kind: "browser-verifier-result", contentType: "application/json", redact: true },
