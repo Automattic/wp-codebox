@@ -10,6 +10,7 @@ const provenance: NativeRuntimeProvenance = {
   opcache: { enabled: true, persistent: true, evidence: { status: { opcache_enabled: true } } },
   httpConcurrency: { workers: 2, model: "php-fpm" },
   database: { integration: "managed-runtime-service", disposable: true },
+  wordPressRoot: { source: "image-default" },
   browser: { authentication: "fixture-only", credentials: "runtime-generated" },
   benchmarks: { coldStartup: true, warmNoopPhp: true, dynamicWordPressRequest: true },
   representative: { scope: "local", productionRum: false },
@@ -144,5 +145,55 @@ const missingBindingDocker = createDockerNativeRuntimeDriver({
 })
 await assert.rejects(() => missingBindingDocker.create(spec), /state=running exitCode=0 portBindings=\{"80\/tcp":null\}.*docker inspect: running 0 \{"80\/tcp":null\}; docker logs: waiting for database/)
 await missingBindingDocker.destroy()
+
+// A consumer-supplied WordPress root must be copied into the contained runtime BEFORE
+// install and readiness checks, and its source path must be recorded in provenance so
+// evidence cannot be confused with the pinned image default.
+const customRootArgs: string[][] = []
+const customRootDocker = createDockerNativeRuntimeDriver({
+  temporaryDirectory: () => "/tmp",
+  async fetch() { return { status: 200, body: "fixture" } },
+  async run(_command, args) {
+    customRootArgs.push(args)
+    if (args[0] === "inspect") return { stdout: "running\n0\n{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"49153\"}]}\n", stderr: "" }
+    if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
+    if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
+    if (args.some((arg) => arg.includes("check_connection"))) return { stdout: "ready", stderr: "" }
+    if (args.some((arg) => arg.includes("wp_install("))) return { stdout: "ready", stderr: "" }
+    return { stdout: "ok", stderr: "" }
+  },
+})
+const customRootProvenance = await customRootDocker.create({ ...spec, environment: { ...spec.environment, assets: { wordpressDirectory: "/srv/custom-wordpress" } } })
+assert.deepEqual(customRootProvenance.wordPressRoot, { source: "directory", path: "/srv/custom-wordpress" })
+const copyCallIndex = customRootArgs.findIndex((args) => args[0] === "cp" && args[1] === "/srv/custom-wordpress/." && args[2]?.endsWith(":/var/www/html"))
+assert.ok(copyCallIndex >= 0, "expected a docker cp of the custom WordPress root into /var/www/html")
+const inspectCallIndex = customRootArgs.findIndex((args) => args[0] === "inspect")
+const dbProbeCallIndex = customRootArgs.findIndex((args) => args.some((arg) => arg.includes("check_connection")))
+// The copy must precede readiness inspection and the install/database probe.
+assert.ok(copyCallIndex < inspectCallIndex && copyCallIndex < dbProbeCallIndex, "custom WordPress root must be copied before readiness checks and install")
+await customRootDocker.destroy()
+
+// Browser-action arguments must fail closed with actionable errors before any
+// browser is launched, never silently degrading to defaults.
+const argProbeDocker = createDockerNativeRuntimeDriver({
+  temporaryDirectory: () => "/tmp",
+  async fetch() { return { status: 200, body: "fixture" } },
+  async run(_command, args) {
+    if (args[0] === "inspect") return { stdout: "running\n0\n{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"49154\"}]}\n", stderr: "" }
+    if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
+    if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
+    if (args.some((arg) => arg.includes("check_connection"))) return { stdout: "ready", stderr: "" }
+    if (args.some((arg) => arg.includes("wp_install("))) return { stdout: "ready", stderr: "" }
+    return { stdout: "ok", stderr: "" }
+  },
+})
+await argProbeDocker.create(spec)
+const baseBrowserArgs = ["auth=wordpress-admin", `steps-json=${JSON.stringify([{ kind: "navigate", url: "/" }])}`]
+await assert.rejects(() => argProbeDocker.execute({ command: "wordpress.browser-actions", args: [...baseBrowserArgs, "capture=websocket"] }), /does not support capture=websocket on the native backend; supported: steps, console, errors, network, screenshot, html/)
+await assert.rejects(() => argProbeDocker.execute({ command: "wordpress.browser-actions", args: [...baseBrowserArgs, "auth-user-id=7"] }), /can only authenticate as the runtime-generated fixture user id 1/)
+await assert.rejects(() => argProbeDocker.execute({ command: "wordpress.browser-actions", args: [...baseBrowserArgs, "auth-user-id=abc"] }), /auth-user-id must be a positive integer/)
+await assert.rejects(() => argProbeDocker.execute({ command: "wordpress.browser-actions", args: [...baseBrowserArgs, "timeout=5x"] }), /timeout must be a duration like 500ms or 2s/)
+await assert.rejects(() => argProbeDocker.execute({ command: "wordpress.browser-actions", args: [...baseBrowserArgs, "step-timeout=0s"] }), /step-timeout must be a positive duration/)
+await argProbeDocker.destroy()
 
 console.log("native runtime adapter ok")

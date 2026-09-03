@@ -10,6 +10,7 @@ export interface NativeRuntimeProvenance {
   opcache: { enabled: true; persistent: true; evidence: Record<string, unknown> }
   httpConcurrency: { workers: number; model: string }
   database: { integration: "managed-runtime-service"; disposable: true }
+  wordPressRoot: { source: "directory" | "image-default"; path?: string }
   browser: { authentication: "fixture-only"; credentials: "runtime-generated" }
   benchmarks: { coldStartup: true; warmNoopPhp: true; dynamicWordPressRequest: true }
   representative: { scope: "local"; productionRum: false }
@@ -119,6 +120,8 @@ function assertNativeProvenance(provenance: NativeRuntimeProvenance): void {
   if (!provenance.php.version || !provenance.php.sapi || !provenance.container.image || !/^sha256:[a-f0-9]{64}$/i.test(provenance.container.digest) || !provenance.opcache.enabled || !provenance.opcache.persistent || Object.keys(provenance.opcache.evidence).length === 0) throw new Error("wordpress-native driver did not provide pinned native PHP and persistent OPcache evidence")
   if (!Number.isInteger(provenance.httpConcurrency.workers) || provenance.httpConcurrency.workers < 2 || !provenance.httpConcurrency.model) throw new Error("wordpress-native driver did not provide a concurrent HTTP worker model")
   if (provenance.database.integration !== "managed-runtime-service" || !provenance.database.disposable) throw new Error("wordpress-native driver did not prove disposable managed database integration")
+  if (provenance.wordPressRoot.source !== "directory" && provenance.wordPressRoot.source !== "image-default") throw new Error("wordpress-native driver did not identify the WordPress root source")
+  if (provenance.wordPressRoot.source === "directory" && (typeof provenance.wordPressRoot.path !== "string" || provenance.wordPressRoot.path.length === 0)) throw new Error("wordpress-native driver supplied a directory WordPress root without its source path")
   if (provenance.browser.authentication !== "fixture-only" || provenance.browser.credentials !== "runtime-generated") throw new Error("wordpress-native driver did not prove fixture-only browser authentication")
   if (!provenance.benchmarks.coldStartup || !provenance.benchmarks.warmNoopPhp || !provenance.benchmarks.dynamicWordPressRequest) throw new Error("wordpress-native driver did not provide cold startup, warm PHP, and dynamic WordPress benchmark coverage")
   if (provenance.representative.scope !== "local" || provenance.representative.productionRum !== false) throw new Error("wordpress-native driver must identify results as local representative evidence")

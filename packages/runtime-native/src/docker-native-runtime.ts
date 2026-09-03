@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chromium } from "playwright"
-import { ArtifactBundleWriter, type ArtifactBundle, type ArtifactSpec, type BrowserInteractionStep, type ExecutionResult, type ExecutionSpec, type MountSpec, type ObservationResult, type ObservationSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot, resolveRuntimeSecretEnvTargets, validateBrowserInteractionScript } from "@automattic/wp-codebox-core"
+import { commandArgValue, parseCommandStringList, ArtifactBundleWriter, type ArtifactBundle, type ArtifactSpec, type BrowserInteractionStep, type ExecutionResult, type ExecutionSpec, type MountSpec, type ObservationResult, type ObservationSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot, resolveRuntimeSecretEnvTargets, validateBrowserInteractionScript } from "@automattic/wp-codebox-core"
 import type { NativeRuntimeDriver, NativeRuntimeProvenance, NativeRuntimeProvenanceEvidence } from "./native-runtime.js"
 
 // These immutable references make an accidentally retagged image unable to change a run.
@@ -13,6 +13,10 @@ import type { NativeRuntimeDriver, NativeRuntimeProvenance, NativeRuntimeProvena
 const DOCKER_PLATFORM = "linux/amd64"
 const WORDPRESS_IMAGE = "wordpress:php8.4-apache@sha256:b5ad1a1b6fe6f1232d27a6effb0abc45cf71dcac6d6aba0db7d6fcaec047ffb3"
 const MARIADB_IMAGE = "mariadb:11.4@sha256:8fade42367c1d0505a2c06cfacd411e1bd81c28995183d00935e09b702fd0042"
+
+const NATIVE_BROWSER_CAPTURE_STREAMS = ["steps", "console", "errors", "network", "screenshot", "html"] as const
+const DEFAULT_BROWSER_STEP_TIMEOUT_MS = 15_000
+const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 120_000
 
 export interface DockerNativeRuntimeDependencies {
   run(command: string, args: string[], options?: { input?: string; timeoutMs?: number }): Promise<{ stdout: string; stderr: string }>
@@ -24,6 +28,13 @@ export class NativeContainmentUnavailableError extends Error {
   constructor(message = "wordpress-native requires trusted Docker containment tools; no host PHP fallback is used.") {
     super(message)
     this.name = "NativeContainmentUnavailableError"
+  }
+}
+
+export class NativeBrowserActionTimeoutError extends Error {
+  constructor(scope: "step" | "action", message: string) {
+    super(message)
+    this.name = "NativeBrowserActionTimeoutError"
   }
 }
 
@@ -60,6 +71,7 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     this.spec = spec
     await this.runDocker(["version", "--format", "{{.Server.Version}}"])
     await mkdir(this.root, { recursive: true, mode: 0o700 })
+    const wordPressDirectory = spec.environment.assets?.wordpressDirectory
     const environment = { ...(spec.runtimeEnv ?? {}), ...resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets) }
     // Docker refuses to publish host ports for containers attached only to an
     // `--internal` network. The database therefore stays on the internal
@@ -77,6 +89,10 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     // Join the isolated database network after creation; only this container
     // may reach MariaDB, and MariaDB itself never gains outbound access.
     await this.runDocker(["network", "connect", this.network, this.app])
+    // A consumer-supplied WordPress root must replace the pinned image default
+    // BEFORE any readiness or install check can run and produce evidence, so a
+    // consumer never silently tests stock WordPress against its own source.
+    if (wordPressDirectory) await this.copyWordPressRoot(wordPressDirectory)
     const startup = await this.runDocker(["inspect", "--format", "{{.State.Status}}\n{{.State.ExitCode}}\n{{json .NetworkSettings.Ports}}", this.app])
     const [status = "unknown", exitCode = "unknown", portBindings = ""] = startup.stdout.trim().split("\n")
     const port = this.localhostPort(portBindings)
@@ -94,11 +110,20 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
       opcache: { enabled: true, persistent: true, evidence: { configuration: opcache, validate_timestamps: false } },
       httpConcurrency: { workers: 2, model: "Apache prefork: StartServers=2, MinSpareServers=2" },
       database: { integration: "managed-runtime-service", disposable: true },
+      ...(wordPressDirectory ? { wordPressRoot: { source: "directory" as const, path: wordPressDirectory } } : { wordPressRoot: { source: "image-default" as const } }),
       browser: { authentication: "fixture-only", credentials: "runtime-generated" },
       benchmarks: { coldStartup: true, warmNoopPhp: true, dynamicWordPressRequest: true },
       representative: { scope: "local", productionRum: false },
     }
     return this.provenance
+  }
+
+  private async copyWordPressRoot(wordPressDirectory: string): Promise<void> {
+    try {
+      await this.runDocker(["cp", `${wordPressDirectory}/.`, `${this.app}:/var/www/html`])
+    } catch (error) {
+      throw new NativeContainmentUnavailableError(`Could not copy the supplied WordPress root into the contained WordPress runtime; docker cp: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   async recordProvenance(provenance: NativeRuntimeProvenance): Promise<NativeRuntimeProvenanceEvidence> {
@@ -241,33 +266,67 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     return this.startupMs
   }
   private async runBrowserActions(spec: ExecutionSpec): Promise<Record<string, unknown>> {
-    const raw = spec.args?.find((arg) => arg.startsWith("steps-json="))?.slice("steps-json=".length)
+    const args = spec.args ?? []
+    const raw = args.find((arg) => arg.startsWith("steps-json="))?.slice("steps-json=".length)
     if (!raw) throw new Error("wordpress.browser-actions requires steps-json=<array>")
     let parsed: unknown
     try { parsed = JSON.parse(raw) } catch { throw new Error("wordpress.browser-actions steps-json must be valid JSON") }
     const validation = validateBrowserInteractionScript(parsed)
     if (!validation.valid) throw new Error(`wordpress.browser-actions steps-json is invalid: ${validation.issues.map((issue) => `[${issue.index}] ${issue.message}`).join("; ")}`)
+    const capture = this.nativeBrowserCapture(args)
+    const totalTimeoutMs = nativeDurationArg(args, "timeout", DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
+    const stepTimeoutMs = nativeDurationArg(args, "step-timeout", DEFAULT_BROWSER_STEP_TIMEOUT_MS)
+    const fixtureUserId = nativeStrictAuthUserId(args, 1)
+    if (fixtureUserId !== 1) throw new Error(`wordpress.browser-actions can only authenticate as the runtime-generated fixture user id 1; auth-user-id=${fixtureUserId} is not a runtime-generated fixture user`)
+    const routedHosts = [...new Set(parseCommandStringList(commandArgValue(args, "route-host")))].filter((host) => host.length > 0)
+    const startedAt = Date.now()
     const browser = await chromium.launch({ headless: true })
-    const page = await browser.newPage()
-    page.on("console", (message) => this.browserConsole.push({ type: message.type(), text: message.text(), capturedAt: new Date().toISOString() }))
-    page.on("pageerror", (error) => this.browserErrors.push({ message: error.message, capturedAt: new Date().toISOString() }))
-    page.on("response", (response) => this.browserNetwork.push({ schema: "wp-codebox/native-browser-network/v1", url: response.url(), status: response.status(), method: response.request().method(), capturedAt: new Date().toISOString() }))
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    if (capture.has("console")) page.on("console", (message) => this.browserConsole.push({ type: message.type(), text: message.text(), capturedAt: new Date().toISOString() }))
+    if (capture.has("errors")) page.on("pageerror", (error) => this.browserErrors.push({ message: error.message, capturedAt: new Date().toISOString() }))
+    if (capture.has("network")) page.on("response", (response) => this.browserNetwork.push({ schema: "wp-codebox/native-browser-network/v1", url: response.url(), status: response.status(), method: response.request().method(), capturedAt: new Date().toISOString() }))
+    const routedNames = new Set(routedHosts.map((host) => host.split(":")[0] ?? host).filter((host) => host.length > 0))
+    if (routedNames.size > 0) await this.routeRoutedHosts(context, routedNames, capture.has("network"))
     try {
-      await page.goto(`${this.previewUrl}/wp-login.php`, { waitUntil: "load" })
+      this.assertWithinActionBudget(() => Date.now(), startedAt, totalTimeoutMs)
+      await page.goto(`${this.previewUrl}/wp-login.php`, { waitUntil: "load", timeout: stepTimeoutMs })
       await page.locator("#user_login").fill("fixture-admin")
       await page.locator("#user_pass").fill(this.fixturePassword)
       await page.locator("#wp-submit").click()
-      await page.waitForURL(/wp-admin/, { timeout: 15_000 })
-      for (const [index, step] of validation.steps.entries()) await this.runBrowserStep(page, step, index)
-      return { schema: "wp-codebox/native-browser-actions/v1", authenticated: true, fixture: "runtime-generated", steps: validation.steps.length, network: this.browserNetwork.slice(-100) }
-    } finally { await browser.close() }
+      await page.waitForURL(/wp-admin/, { timeout: Math.min(stepTimeoutMs, Math.max(1, boundRemaining(startedAt, totalTimeoutMs))) })
+      for (const [index, step] of validation.steps.entries()) {
+        this.assertWithinActionBudget(() => Date.now(), startedAt, totalTimeoutMs)
+        await this.runBrowserStep(page, step, index, { stepTimeoutMs, totalTimeoutMs, startedAt, capture })
+      }
+      return { schema: "wp-codebox/native-browser-actions/v1", authenticated: true, fixture: "runtime-generated", fixtureUserId, steps: validation.steps.length, network: this.browserNetwork.slice(-100) }
+    } finally { await context.close(); await browser.close() }
   }
-  private async runBrowserStep(page: import("playwright").Page, step: BrowserInteractionStep, index: number): Promise<void> {
+  private async routeRoutedHosts(context: import("playwright").BrowserContext, routedNames: Set<string>, recordNetwork: boolean): Promise<void> {
+    const preview = new URL(this.previewUrl!)
+    await context.route("**", async (route) => {
+      const request = route.request()
+      let requestUrl: URL
+      try { requestUrl = new URL(request.url()) } catch { await route.continue(); return }
+      if (!routedNames.has(requestUrl.hostname)) {
+        await route.continue()
+        return
+      }
+      const original = request.url()
+      const rewritten = `${preview.origin}${requestUrl.pathname}${requestUrl.search}`
+      const headers: Record<string, string> = { ...(await request.allHeaders()), host: preview.host, "x-forwarded-host": requestUrl.host, "x-forwarded-proto": requestUrl.protocol.replace(":", "") }
+      if (preview.port) headers["x-forwarded-port"] = preview.port
+      await route.continue({ url: rewritten, headers })
+      if (recordNetwork) this.browserNetwork.push({ schema: "wp-codebox/native-browser-network/v1", url: original, status: 0, method: request.method(), routed: true, capturedAt: new Date().toISOString() })
+    })
+  }
+  private async runBrowserStep(page: import("playwright").Page, step: BrowserInteractionStep, index: number, options: { stepTimeoutMs: number; totalTimeoutMs: number; startedAt: number; capture: Set<string> }): Promise<void> {
     const started = Date.now()
     const selector = step.selector ?? (step.text ? `text=${step.text}` : undefined)
     try {
-      if (step.kind === "navigate") await page.goto(new URL(step.url ?? "/", this.previewUrl).toString(), { waitUntil: step.waitFor === "load" || step.waitFor === "networkidle" ? step.waitFor : "domcontentloaded" })
-      else if (step.kind === "click") await page.locator(selector!).click()
+      this.assertWithinActionBudget(() => Date.now(), options.startedAt, options.totalTimeoutMs)
+      if (step.kind === "navigate") await page.goto(nativeResolveStepUrl(step, this.previewUrl!), { waitUntil: step.waitFor === "load" || step.waitFor === "networkidle" ? step.waitFor : "domcontentloaded", timeout: options.stepTimeoutMs })
+      else if (step.kind === "click") await page.locator(selector!).click({ timeout: options.stepTimeoutMs })
       else if (step.kind === "fill") await page.locator(selector!).fill(step.value ?? "")
       else if (step.kind === "type") await page.locator(selector!).pressSequentially(step.value ?? "")
       else if (step.kind === "press") await page.locator(selector!).press(step.key!)
@@ -275,30 +334,49 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
         if (!step.from || !step.to || !("selector" in step.to)) throw new Error("native browser drag requires selector source and target")
         await page.locator(step.from).dragTo(page.locator(step.to.selector))
       }
-      else if (step.kind === "hover") await page.locator(selector!).hover()
+      else if (step.kind === "hover") await page.locator(selector!).hover({ timeout: options.stepTimeoutMs })
       else if (step.kind === "select") await page.locator(selector!).selectOption(step.values ?? step.value ?? "")
       else if (step.kind === "waitFor") {
         if (step.duration) await page.waitForTimeout(Number.parseFloat(step.duration) * (step.duration.endsWith("s") && !step.duration.endsWith("ms") ? 1000 : 1))
-        else if (step.waitFor === "load" || step.waitFor === "networkidle" || step.waitFor === "domcontentloaded") await page.waitForLoadState(step.waitFor)
-        else await page.locator((step.waitFor ?? "").replace(/^selector:/, "")).waitFor()
+        else if (step.waitFor === "load" || step.waitFor === "networkidle" || step.waitFor === "domcontentloaded") await page.waitForLoadState(step.waitFor, { timeout: options.stepTimeoutMs })
+        else await page.locator((step.waitFor ?? "").replace(/^selector:/, "")).waitFor({ timeout: options.stepTimeoutMs })
       }
       else if (step.kind === "evaluate") { const value = await page.evaluate(step.expression!); if (step.assert !== undefined && JSON.stringify(value) !== JSON.stringify(step.assert)) throw new Error("evaluate assertion failed") }
-      else if (step.kind === "expect") await this.assertBrowserState(page, selector!, step.state ?? "visible")
-      else if (step.kind === "screenshot") { const path = `files/browser/${step.name ?? `step-${index}`}.png`; await mkdir(join(this.artifactsDirectory(), "files", "browser"), { recursive: true }); await page.screenshot({ path: join(this.artifactsDirectory(), path) }); this.browserFiles.push({ path, kind: "browser-screenshot", contentType: "image/png" }) }
-      else if (step.kind === "capture") { const path = `files/browser/capture-${index}.html`; await mkdir(join(this.artifactsDirectory(), "files", "browser"), { recursive: true }); await writeFile(join(this.artifactsDirectory(), path), await page.content(), { mode: 0o600 }); this.browserFiles.push({ path, kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8" }) }
+      else if (step.kind === "expect") await this.assertBrowserState(page, selector!, step.state ?? "visible", options.stepTimeoutMs)
+      else if (step.kind === "screenshot") { if (!options.capture.has("screenshot")) throw new Error("native browser screenshot step requires capture=screenshot"); const path = `files/browser/${step.name ?? `step-${index}`}.png`; await mkdir(join(this.artifactsDirectory(), "files", "browser"), { recursive: true }); await page.screenshot({ path: join(this.artifactsDirectory(), path) }); this.browserFiles.push({ path, kind: "browser-screenshot", contentType: "image/png" }) }
+      else if (step.kind === "capture") { if (!options.capture.has("html")) throw new Error("native browser capture step requires capture=html"); const path = `files/browser/capture-${index}.html`; await mkdir(join(this.artifactsDirectory(), "files", "browser"), { recursive: true }); await writeFile(join(this.artifactsDirectory(), path), await page.content(), { mode: 0o600 }); this.browserFiles.push({ path, kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8" }) }
       else if (step.kind === "assertObservation") {
         if (step.assertion === "no-console-errors" && this.browserConsole.some(({ type }) => type === "error")) throw new Error("console errors were captured")
         if (step.assertion === "no-page-errors" && this.browserErrors.length > 0) throw new Error("page errors were captured")
         if (step.assertion !== "no-console-errors" && step.assertion !== "no-page-errors") throw new Error(`native browser assertion is unsupported: ${step.assertion}`)
       }
       else throw new Error(`wordpress.browser-actions native executor does not support ${step.kind}`)
-      this.browserSteps.push({ index, kind: step.kind, status: "passed", durationMs: Date.now() - started })
-    } catch (error) { this.browserSteps.push({ index, kind: step.kind, status: "failed", durationMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) }); throw error }
+      if (options.capture.has("steps")) this.browserSteps.push({ index, kind: step.kind, status: "passed", durationMs: Date.now() - started })
+    } catch (error) {
+      if (options.capture.has("steps")) this.browserSteps.push({ index, kind: step.kind, status: "failed", durationMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) })
+      if (isPlaywrightTimeout(error)) throw new NativeBrowserActionTimeoutError("step", `wordpress.browser-actions step ${index} exceeded its step timeout of ${options.stepTimeoutMs}ms`)
+      throw error
+    }
   }
-  private async assertBrowserState(page: import("playwright").Page, selector: string, state: NonNullable<BrowserInteractionStep["state"]>): Promise<void> {
+  private nativeBrowserCapture(args: readonly string[]): Set<string> {
+    const declared = new Set(parseCommandStringList(commandArgValue(args, "capture")).map((value) => value.trim().toLowerCase()).filter((value) => value.length > 0))
+    const effective = declared.size > 0 ? declared : new Set(["steps", "console", "errors", "network"])
+    for (const value of effective) {
+      if (!(NATIVE_BROWSER_CAPTURE_STREAMS as readonly string[]).includes(value)) {
+        throw new Error(`wordpress.browser-actions does not support capture=${value} on the native backend; supported: ${NATIVE_BROWSER_CAPTURE_STREAMS.join(", ")}`)
+      }
+    }
+    return effective
+  }
+  private assertWithinActionBudget(now: () => number, startedAt: number, totalTimeoutMs: number): void {
+    if (now() - startedAt >= totalTimeoutMs) {
+      throw new NativeBrowserActionTimeoutError("action", `wordpress.browser-actions exceeded its total timeout of ${totalTimeoutMs}ms`)
+    }
+  }
+  private async assertBrowserState(page: import("playwright").Page, selector: string, state: NonNullable<BrowserInteractionStep["state"]>, timeoutMs: number): Promise<void> {
     const locator = page.locator(selector)
-    if (state === "visible" || state === "hidden" || state === "attached" || state === "detached") { await locator.waitFor({ state }); return }
-    const actual = state === "enabled" ? await locator.isEnabled() : state === "disabled" ? !(await locator.isEnabled()) : state === "checked" ? await locator.isChecked() : state === "unchecked" ? !(await locator.isChecked()) : await locator.isEditable()
+    if (state === "visible" || state === "hidden" || state === "attached" || state === "detached") { await locator.waitFor({ state, timeout: timeoutMs }); return }
+    const actual = state === "enabled" ? await locator.isEnabled({ timeout: timeoutMs }) : state === "disabled" ? !(await locator.isEnabled({ timeout: timeoutMs })) : state === "checked" ? await locator.isChecked({ timeout: timeoutMs }) : state === "unchecked" ? !(await locator.isChecked({ timeout: timeoutMs })) : await locator.isEditable({ timeout: timeoutMs })
     if (!actual) throw new Error(`expected ${selector} to be ${state}`)
   }
   private async runDocker(args: string[], spec?: Pick<ExecutionSpec, "timeoutMs">): Promise<{ stdout: string; stderr: string }> {
@@ -318,4 +396,45 @@ function nodeDependencies(): DockerNativeRuntimeDependencies {
       if (options.input) child.stdin.end(options.input); else child.stdin.end()
     }) },
   }
+}
+
+function nativeDurationArg(args: readonly string[], name: string, fallbackMs: number): number {
+  const raw = commandArgValue(args, name)?.trim()
+  if (!raw) {
+    return fallbackMs
+  }
+  const match = raw.match(/^(\d+(?:\.\d+)?)(ms|s)$/)
+  if (!match) {
+    throw new Error(`${name} must be a duration like 500ms or 2s`)
+  }
+  const value = Number.parseFloat(match[1] ?? "0")
+  const ms = match[2] === "s" ? value * 1000 : value
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new Error(`${name} must be a positive duration like 500ms or 2s`)
+  }
+  return Math.round(ms)
+}
+
+function nativeStrictAuthUserId(args: readonly string[], defaultId: number): number {
+  const raw = commandArgValue(args, "auth-user-id")?.trim()
+  if (!raw) {
+    return defaultId
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!/^\d+$/.test(raw) || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("auth-user-id must be a positive integer identifying the runtime-generated fixture user")
+  }
+  return parsed
+}
+
+function nativeResolveStepUrl(step: BrowserInteractionStep, previewUrl: string): string {
+  return new URL(step.url ?? "/", previewUrl).toString()
+}
+
+function boundRemaining(startedAt: number, totalTimeoutMs: number): number {
+  return Math.max(1, totalTimeoutMs - (Date.now() - startedAt))
+}
+
+function isPlaywrightTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "TimeoutErrorWhileWaiting")
 }
