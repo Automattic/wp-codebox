@@ -1,3 +1,4 @@
+import { isArtifactBundleRef, isChangedFilesArtifactRef, isEvidenceBundleArtifactRef, isLogArtifactRef, isPatchArtifactRef, isRuntimeArtifactRef, isTranscriptArtifactRef } from "./artifact-ref-classification.js"
 import { isPlainObject, numberValue, objectValue, stringValue, stripUndefined } from "./object-utils.js"
 import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
 import { RUNTIME_ACCESS_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
@@ -114,13 +115,13 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
     summary: stringValue(result.summary) || stringValue(result.message) || stringValue(agentResult.summary) || defaultSummary(status),
     artifacts,
     refs: {
-      artifact_bundles: artifacts.filter((artifact) => artifact.kind === "artifact-bundle" || artifact.kind === "codebox-artifact-bundle"),
-      changed_files: artifacts.filter((artifact) => artifact.kind === "codebox-changed-files"),
-      patches: artifacts.filter((artifact) => artifact.kind === "codebox-patch"),
-      transcripts: artifacts.filter((artifact) => artifact.kind === "codebox-transcript"),
-      logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log"),
-      runtimes: artifacts.filter((artifact) => artifact.kind === "codebox-runtime"),
-      evidence_bundles: artifacts.filter((artifact) => artifact.kind === "evidence-bundle" || artifact.kind === "codebox-evidence-bundle"),
+      artifact_bundles: artifacts.filter((artifact) => isArtifactBundleRef(artifact)),
+      changed_files: artifacts.filter((artifact) => isChangedFilesArtifactRef(artifact)),
+      patches: artifacts.filter((artifact) => isPatchArtifactRef(artifact)),
+      transcripts: artifacts.filter((artifact) => isTranscriptArtifactRef(artifact)),
+      logs: artifacts.filter((artifact) => isLogArtifactRef(artifact)),
+      runtimes: artifacts.filter((artifact) => isRuntimeArtifactRef(artifact)),
+      evidence_bundles: artifacts.filter((artifact) => isEvidenceBundleArtifactRef(artifact)),
     },
     diagnostics: [...arrayObjects(result.diagnostics), ...(terminalResult?.diagnostics ?? [])],
     metadata: stripUndefined({
