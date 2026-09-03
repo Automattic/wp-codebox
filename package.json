@@ -56,6 +56,10 @@
       "types": "./packages/runtime-playground/dist/public.d.ts",
       "import": "./packages/runtime-playground/dist/public.js"
     },
+    "./native": {
+      "types": "./packages/runtime-native/dist/index.d.ts",
+      "import": "./packages/runtime-native/dist/index.js"
+    },
     "./cli": {
       "types": "./packages/cli/dist/index.d.ts",
       "import": "./packages/cli/dist/index.js"
@@ -75,6 +79,8 @@
   "files": [
     "packages/runtime-core/dist",
     "packages/runtime-core/package.json",
+    "packages/runtime-native/dist",
+    "packages/runtime-native/package.json",
     "packages/runtime-playground/dist",
     "packages/runtime-playground/package.json",
     "packages/cli/dist",
@@ -88,8 +94,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
-    "build:release": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
+    "build": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/runtime-native packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
+    "build:release": "node ./node_modules/typescript/bin/tsc -b --force packages/runtime-core packages/runtime-playground packages/runtime-native packages/cli && node scripts/ensure-cli-bin-executable.mjs && tsx scripts/write-cli-build-provenance.ts",
     "cloudflare:build": "npm --prefix packages/runtime-cloudflare run build",
     "cloudflare:check": "npm --prefix packages/runtime-cloudflare run check",
     "cloudflare:package-dry-run": "npm --prefix packages/runtime-cloudflare run package:dry-run",
@@ -156,6 +162,7 @@
     "test:runtime-command-artifact-bounds": "tsx tests/runtime-command-artifact-bounds.test.ts",
     "test:native-agent-task-interruption": "node tests/execute-native-agent-task-interruption.test.mjs",
     "test:native-agent-task-playground-e2e": "tsx tests/execute-native-agent-task-playground-e2e.test.ts",
+    "test:native-runtime": "tsx tests/native-runtime.test.ts && tsx scripts/backend-package-adapter-registry-smoke.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
     "test:external-http-load-integration": "npm run build && tsx tests/external-http-load.integration.test.ts",
     "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
@@ -181,6 +188,7 @@
   "workspaces": [
     "packages/cli",
     "packages/runtime-core",
+    "packages/runtime-native",
     "packages/runtime-playground",
     "packages/wordpress-plugin"
   ],
@@ -198,6 +206,7 @@
   "dependencies": {
     "@automattic/wp-codebox-cli": "file:packages/cli",
     "@automattic/wp-codebox-core": "file:packages/runtime-core",
+    "@automattic/wp-codebox-native": "file:packages/runtime-native",
     "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
     "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3",
     "@php-wasm/node-8-4": "3.1.46",

@@ -12,12 +12,14 @@
       "workspaces": [
         "packages/cli",
         "packages/runtime-core",
+        "packages/runtime-native",
         "packages/runtime-playground",
         "packages/wordpress-plugin"
       ],
       "dependencies": {
         "@automattic/wp-codebox-cli": "file:packages/cli",
         "@automattic/wp-codebox-core": "file:packages/runtime-core",
+        "@automattic/wp-codebox-native": "file:packages/runtime-native",
         "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
         "@php-wasm/node-8-3": "file:runtime-overlays/php-wasm-node-8-3",
         "@php-wasm/node-8-4": "3.1.46",
@@ -221,6 +223,10 @@
     },
     "node_modules/@automattic/wp-codebox-core": {
       "resolved": "packages/runtime-core",
+      "link": true
+    },
+    "node_modules/@automattic/wp-codebox-native": {
+      "resolved": "packages/runtime-native",
       "link": true
     },
     "node_modules/@automattic/wp-codebox-playground": {
@@ -4797,6 +4803,7 @@
       "version": "0.26.8",
       "dependencies": {
         "@automattic/wp-codebox-core": "file:../runtime-core",
+        "@automattic/wp-codebox-native": "file:../runtime-native",
         "@automattic/wp-codebox-playground": "file:../runtime-playground"
       },
       "bin": {
@@ -4808,6 +4815,13 @@
       "version": "0.26.8",
       "dependencies": {
         "ajv": "^8.20.0"
+      }
+    },
+    "packages/runtime-native": {
+      "name": "@automattic/wp-codebox-native",
+      "version": "0.26.8",
+      "dependencies": {
+        "@automattic/wp-codebox-core": "file:../runtime-core"
       }
     },
     "packages/runtime-playground": {
