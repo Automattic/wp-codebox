@@ -227,8 +227,10 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
   /// so installation cannot silently depend on markup or locale.
   private async installFixtureWordPress(): Promise<void> {
     await this.waitForDatabase()
-    const install = "define('WP_INSTALLING', true); require '/var/www/html/wp-load.php'; require_once ABSPATH . 'wp-admin/includes/upgrade.php'; if (!is_blog_installed()) { $result = wp_install('WP Codebox Fixture', 'fixture-admin', 'fixture-admin@example.test', false, '', getenv('WP_CODEBOX_FIXTURE_PASSWORD')); if (is_wp_error($result)) { echo 'install-error: ', $result->get_error_message(); exit(1); } } echo get_user_by('login', 'fixture-admin') && is_blog_installed() ? 'ready' : 'missing';"
-    const installed = await this.diagnosticDocker(["exec", "-e", `WP_CODEBOX_FIXTURE_PASSWORD=${this.fixturePassword}`, this.app, "php", "-r", install])
+    // A CLI install guesses `http://localhost`, which no browser can reach.
+    // Pin both URLs to the published preview origin so redirects resolve.
+    const install = "define('WP_INSTALLING', true); require '/var/www/html/wp-load.php'; require_once ABSPATH . 'wp-admin/includes/upgrade.php'; if (!is_blog_installed()) { $result = wp_install('WP Codebox Fixture', 'fixture-admin', 'fixture-admin@example.test', false, '', getenv('WP_CODEBOX_FIXTURE_PASSWORD')); if (is_wp_error($result)) { echo 'install-error: ', $result->get_error_message(); exit(1); } } update_option('siteurl', getenv('WP_CODEBOX_SITE_URL')); update_option('home', getenv('WP_CODEBOX_SITE_URL')); echo get_user_by('login', 'fixture-admin') && is_blog_installed() && get_option('home') === getenv('WP_CODEBOX_SITE_URL') ? 'ready' : 'missing';"
+    const installed = await this.diagnosticDocker(["exec", "-e", `WP_CODEBOX_FIXTURE_PASSWORD=${this.fixturePassword}`, "-e", `WP_CODEBOX_SITE_URL=${this.previewUrl}`, this.app, "php", "-r", install])
     if (!installed.includes("ready")) throw new NativeContainmentUnavailableError(`Contained WordPress installation did not complete: ${this.redactFixtureSecret(installed)}`)
   }
   private redactFixtureSecret(value: string): string {
