@@ -62,14 +62,16 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
     const environment = { ...(spec.runtimeEnv ?? {}), ...resolveRuntimeSecretEnvTargets(spec.secretEnv ?? {}, spec.secretEnvTargets) }
     await this.runDocker(["network", "create", "--internal", this.network])
     await this.runDocker(["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.database, "--network", this.network, "--tmpfs", "/var/lib/mysql:rw,noexec,nosuid,size=256m", "-e", `MARIADB_ROOT_PASSWORD=${this.fixturePassword}`, "-e", "MARIADB_DATABASE=wordpress", "-e", "MARIADB_USER=wordpress", "-e", `MARIADB_PASSWORD=${this.fixturePassword}`, MARIADB_IMAGE])
-    const appArgs = ["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.app, "--network", this.network, "-p", "127.0.0.1::80", "-e", "WORDPRESS_DB_HOST=" + this.database, "-e", "WORDPRESS_DB_NAME=wordpress", "-e", "WORDPRESS_DB_USER=wordpress", "-e", `WORDPRESS_DB_PASSWORD=${this.fixturePassword}`, "-e", "WORDPRESS_CONFIG_EXTRA=define('WP_CODEBOX_FIXTURE_AUTH', true);", "-e", "PHP_INI_SCAN_DIR=/usr/local/etc/php/conf.d", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m"]
+    const appArgs = ["run", "-d", "--platform", DOCKER_PLATFORM, "--name", this.app, "--network", this.network, "--publish", "127.0.0.1:0:80/tcp", "-e", "WORDPRESS_DB_HOST=" + this.database, "-e", "WORDPRESS_DB_NAME=wordpress", "-e", "WORDPRESS_DB_USER=wordpress", "-e", `WORDPRESS_DB_PASSWORD=${this.fixturePassword}`, "-e", "WORDPRESS_CONFIG_EXTRA=define('WP_CODEBOX_FIXTURE_AUTH', true);", "-e", "PHP_INI_SCAN_DIR=/usr/local/etc/php/conf.d", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--entrypoint", "bash"]
     for (const [name, value] of Object.entries(environment)) appArgs.push("-e", `${name}=${value}`)
     // Apache's prefork MPM has two permanent child workers; OPcache stays in each worker.
-    appArgs.push(WORDPRESS_IMAGE, "bash", "-lc", "printf '%s\\n' 'opcache.enable=1' 'opcache.enable_cli=1' 'opcache.validate_timestamps=0' 'StartServers 2' 'MinSpareServers 2' 'MaxSpareServers 2' > /usr/local/etc/php/conf.d/zz-codebox-opcache.ini && sed -i 's/StartServers .*/StartServers 2/; s/MinSpareServers .*/MinSpareServers 2/; s/MaxSpareServers .*/MaxSpareServers 2/' /etc/apache2/mods-enabled/mpm_prefork.conf && docker-entrypoint.sh apache2-foreground")
+    appArgs.push(WORDPRESS_IMAGE, "-lc", "printf '%s\\n' 'opcache.enable=1' 'opcache.enable_cli=1' 'opcache.validate_timestamps=0' 'StartServers 2' 'MinSpareServers 2' 'MaxSpareServers 2' > /usr/local/etc/php/conf.d/zz-codebox-opcache.ini && sed -i 's/StartServers .*/StartServers 2/; s/MinSpareServers .*/MinSpareServers 2/; s/MaxSpareServers .*/MaxSpareServers 2/' /etc/apache2/mods-enabled/mpm_prefork.conf && exec /usr/local/bin/docker-entrypoint.sh apache2-foreground")
     const startupStarted = Date.now()
     await this.runDocker(appArgs)
-    const port = (await this.runDocker(["port", this.app, "80/tcp"])).stdout.trim().match(/:(\d+)$/)?.[1]
-    if (!port) throw new NativeContainmentUnavailableError("Docker did not publish the contained WordPress HTTP port.")
+    const startup = await this.runDocker(["inspect", "--format", "{{.State.Status}}\n{{.State.ExitCode}}\n{{json .NetworkSettings.Ports}}", this.app])
+    const [status = "unknown", exitCode = "unknown", portBindings = ""] = startup.stdout.trim().split("\n")
+    const port = this.localhostPort(portBindings)
+    if (status !== "running" || !port) throw await this.startupFailure(`state=${status} exitCode=${exitCode} portBindings=${portBindings || "unavailable"}`)
     this.previewUrl = `http://127.0.0.1:${port}`
     await this.waitForHttp()
     await this.installFixtureWordPress()
@@ -177,6 +179,29 @@ class DockerNativeRuntimeDriver implements NativeRuntimeDriver {
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
     throw new NativeContainmentUnavailableError("Contained WordPress did not become reachable.")
+  }
+  private localhostPort(portBindings: string): string | undefined {
+    try {
+      const bindings = JSON.parse(portBindings) as Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>
+      return bindings["80/tcp"]?.find((binding) => binding.HostIp === "127.0.0.1" && /^\d+$/.test(binding.HostPort ?? ""))?.HostPort
+    } catch { return undefined }
+  }
+  private async startupFailure(reason: string): Promise<NativeContainmentUnavailableError> {
+    const [inspect, logs] = await Promise.all([
+      this.diagnosticDocker(["inspect", "--format", "status={{.State.Status}} exitCode={{.State.ExitCode}} ports={{json .NetworkSettings.Ports}}", this.app]),
+      this.diagnosticDocker(["logs", "--tail", "100", this.app]),
+    ])
+    return new NativeContainmentUnavailableError(`Contained WordPress startup failed: ${reason}; docker inspect: ${inspect}; docker logs: ${logs}`)
+  }
+  private async diagnosticDocker(args: string[]): Promise<string> {
+    try {
+      const { stdout, stderr } = await this.dependencies.run("docker", args)
+      return this.boundedDiagnostic([stdout, stderr].filter(Boolean).join("\n"))
+    } catch (error) { return this.boundedDiagnostic(error instanceof Error ? error.message : String(error)) }
+  }
+  private boundedDiagnostic(value: string): string {
+    const normalized = value.trim().replace(/\s+/g, " ")
+    return normalized ? normalized.slice(0, 4_000) : "none"
   }
   private async installFixtureWordPress(): Promise<void> {
     const body = new URLSearchParams({ weblog_title: "WP Codebox Fixture", user_name: "fixture-admin", admin_password: this.fixturePassword, admin_password2: this.fixturePassword, admin_email: "fixture-admin@example.test", Submit: "Install WordPress", language: "en_US" }).toString()

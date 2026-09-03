@@ -70,12 +70,14 @@ await assert.rejects(() => createRuntime(spec, createNativeRuntimeBackend({ driv
 assert.deepEqual(incompleteBenchmarkCalls, ["destroy"])
 
 const dockerCalls: string[] = []
+const dockerArgs: string[][] = []
 const docker = createDockerNativeRuntimeDriver({
   temporaryDirectory: () => "/tmp",
   async fetch(url) { return { status: 200, body: url.includes("install.php") ? "Success! Log In" : "fixture" } },
   async run(command, args) {
+    dockerArgs.push(args)
     dockerCalls.push(`${command} ${args.join(" ")}`)
-    if (args[0] === "port") return { stdout: "127.0.0.1:49152\n", stderr: "" }
+    if (args[0] === "inspect") return { stdout: "running\n0\n{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"49152\"}]}\n", stderr: "" }
     if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
     if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
     if (args.some((arg) => arg.includes("get_user_by"))) return { stdout: "ready", stderr: "" }
@@ -88,6 +90,11 @@ assert.equal(dockerProvenance.httpConcurrency.workers, 2)
 assert.equal(dockerProvenance.php.sapi, "apache2handler")
 assert.ok(dockerCalls.some((call) => call.includes("--platform linux/amd64") && call.includes("mariadb:11.4@sha256:8fade42367c1d0505a2c06cfacd411e1bd81c28995183d00935e09b702fd0042")))
 assert.ok(dockerCalls.some((call) => call.includes("--platform linux/amd64") && call.includes("wordpress:php8.4-apache@sha256:b5ad1a1b6fe6f1232d27a6effb0abc45cf71dcac6d6aba0db7d6fcaec047ffb3")))
+const appRunArgs = dockerArgs.find((args) => args[0] === "run" && args.some((arg) => arg.startsWith("wordpress:php8.4-apache@")))
+assert.equal(appRunArgs?.[appRunArgs.indexOf("--publish") + 1], "127.0.0.1:0:80/tcp")
+assert.equal(appRunArgs?.[appRunArgs.indexOf("--entrypoint") + 1], "bash")
+assert.match(appRunArgs?.at(-1) ?? "", /exec \/usr\/local\/bin\/docker-entrypoint\.sh apache2-foreground/)
+assert.equal(dockerArgs.some((args) => args[0] === "port"), false)
 await docker.recordProvenance(dockerProvenance)
 await docker.mount({ type: "directory", source: "/fixture", target: "/wordpress/wp-content/plugins/fixture", mode: "readonly" })
 assert.ok(dockerCalls.some((call) => call.includes("cp /fixture/. ") && call.includes(":/var/www/html/wp-content/plugins/fixture")))
@@ -98,5 +105,35 @@ const nativeArtifacts = await docker.collectArtifacts()
 assert.match(nativeArtifacts.commandsPath, /files\/native\/commands\.json$/)
 await Promise.all([docker.destroy(), docker.destroy()])
 assert.equal(dockerCalls.filter((call) => call.startsWith("docker network rm ")).length, 1)
+
+const failedDockerArgs: string[][] = []
+const failedDocker = createDockerNativeRuntimeDriver({
+  temporaryDirectory: () => "/tmp",
+  async fetch() { return { status: 200, body: "fixture" } },
+  async run(_command, args) {
+    failedDockerArgs.push(args)
+    if (args[0] === "inspect") return { stdout: "exited\n1\n{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"49152\"}]}\n", stderr: "" }
+    if (args[0] === "logs") return { stdout: "apache2: configuration error", stderr: "" }
+    return { stdout: "ok", stderr: "" }
+  },
+})
+await assert.rejects(() => failedDocker.create(spec), /state=exited exitCode=1 portBindings=\{"80\/tcp":\[\{"HostIp":"127\.0\.0\.1","HostPort":"49152"\}\]\}; docker inspect: exited 1 \{"80\/tcp":\[\{"HostIp":"127\.0\.0\.1","HostPort":"49152"\}\]\}; docker logs: apache2: configuration error/)
+assert.deepEqual(failedDockerArgs.filter((args) => args[0] === "inspect").map((args) => args.slice(0, 3)), [["inspect", "--format", "{{.State.Status}}\n{{.State.ExitCode}}\n{{json .NetworkSettings.Ports}}"], ["inspect", "--format", "status={{.State.Status}} exitCode={{.State.ExitCode}} ports={{json .NetworkSettings.Ports}}"]])
+assert.deepEqual(failedDockerArgs.find((args) => args[0] === "logs")?.slice(0, 3), ["logs", "--tail", "100"])
+await failedDocker.destroy()
+assert.equal(failedDockerArgs.filter((args) => args[0] === "rm" && args[1] === "-f").length, 2)
+assert.equal(failedDockerArgs.filter((args) => args[0] === "network" && args[1] === "rm").length, 1)
+
+const missingBindingDocker = createDockerNativeRuntimeDriver({
+  temporaryDirectory: () => "/tmp",
+  async fetch() { return { status: 200, body: "fixture" } },
+  async run(_command, args) {
+    if (args[0] === "inspect") return { stdout: "running\n0\n{\"80/tcp\":null}\n", stderr: "" }
+    if (args[0] === "logs") return { stdout: "waiting for database", stderr: "" }
+    return { stdout: "ok", stderr: "" }
+  },
+})
+await assert.rejects(() => missingBindingDocker.create(spec), /state=running exitCode=0 portBindings=\{"80\/tcp":null\}.*docker inspect: running 0 \{"80\/tcp":null\}; docker logs: waiting for database/)
+await missingBindingDocker.destroy()
 
 console.log("native runtime adapter ok")
