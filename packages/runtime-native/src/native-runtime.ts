@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { assertRuntimeCommandAllowed, assertRuntimeSecretEnvTargetsAvailable, type ArtifactBundle, type ArtifactSpec, type ExecutionResult, type ExecutionSpec, type MountSpec, type ObservationResult, type ObservationSpec, type Runtime, type RuntimeBackend, type RuntimeBackendFactoryContext, type RuntimeBackendProvider, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@automattic/wp-codebox-core"
+import { createDockerNativeRuntimeDriver } from "./docker-native-runtime.js"
 
 export interface NativeRuntimeProvenance {
   schema: "wp-codebox/native-runtime-provenance/v1"
@@ -50,14 +51,14 @@ export class NativeRuntimeBackend implements RuntimeBackend {
   readonly kind = "wordpress-native" as const
   constructor(private readonly options: NativeRuntimeBackendOptions = {}) {}
   async create(spec: RuntimeCreateSpec): Promise<Runtime> {
-    if (!this.options.driver) throw new NativeRuntimeUnavailableError()
+    const driver = this.options.driver ?? createDockerNativeRuntimeDriver()
     try {
-      const provenance = await this.options.driver.create(spec)
+      const provenance = await driver.create(spec)
       assertNativeProvenance(provenance)
-      assertNativeProvenanceEvidence(await this.options.driver.recordProvenance(provenance))
-      return new NativeRuntime(spec, this.options.driver)
+      assertNativeProvenanceEvidence(await driver.recordProvenance(provenance))
+      return new NativeRuntime(spec, driver)
     } catch (error) {
-      await this.options.driver.destroy().catch(() => undefined)
+      await driver.destroy().catch(() => undefined)
       throw error
     }
   }

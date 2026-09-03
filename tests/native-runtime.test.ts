@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createRuntime, type ArtifactBundle, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
-import { createNativeRuntimeBackend, type NativeRuntimeDriver, type NativeRuntimeProvenance } from "@automattic/wp-codebox-native"
+import { createDockerNativeRuntimeDriver, createNativeRuntimeBackend, type NativeRuntimeDriver, type NativeRuntimeProvenance } from "@automattic/wp-codebox-native"
 
 const provenance: NativeRuntimeProvenance = {
   schema: "wp-codebox/native-runtime-provenance/v1",
@@ -68,5 +68,31 @@ const incompleteBenchmarkDriver = driver(incompleteBenchmarkCalls)
 incompleteBenchmarkDriver.create = async () => ({ ...provenance, benchmarks: { ...provenance.benchmarks, warmNoopPhp: false } })
 await assert.rejects(() => createRuntime(spec, createNativeRuntimeBackend({ driver: incompleteBenchmarkDriver })), /benchmark coverage/)
 assert.deepEqual(incompleteBenchmarkCalls, ["destroy"])
+
+const dockerCalls: string[] = []
+const docker = createDockerNativeRuntimeDriver({
+  temporaryDirectory: () => "/tmp",
+  async fetch() { return { status: 200, body: "fixture" } },
+  async run(command, args) {
+    dockerCalls.push(`${command} ${args.slice(0, 3).join(" ")}`)
+    if (args[0] === "port") return { stdout: "127.0.0.1:49152\n", stderr: "" }
+    if (args.some((arg) => arg.includes("PHP_VERSION"))) return { stdout: "8.4.1\napache2handler", stderr: "" }
+    if (args.some((arg) => arg.includes("opcache_get_configuration()"))) return { stdout: "{\"directives\":{\"opcache.enable\":true}}", stderr: "" }
+    return { stdout: "ok", stderr: "" }
+  },
+})
+const dockerProvenance = await docker.create(spec)
+assert.equal(dockerProvenance.container.containment, "required")
+assert.equal(dockerProvenance.httpConcurrency.workers, 2)
+assert.equal(dockerProvenance.php.sapi, "apache2handler")
+await docker.recordProvenance(dockerProvenance)
+assert.match((await docker.execute({ command: "wordpress.run-php", args: ["code=echo 'ok';"] })).stdout, /ok/)
+assert.match((await docker.execute({ command: "wordpress.browser-actions", args: ["auth=wordpress-admin"] })).stdout, /fixture/)
+const benchmark = await docker.execute({ command: "wordpress.bench" })
+assert.match(benchmark.stdout, /warmNoopPhpMs/)
+const nativeArtifacts = await docker.collectArtifacts()
+assert.match(nativeArtifacts.commandsPath, /files\/native\/commands\.json$/)
+await Promise.all([docker.destroy(), docker.destroy()])
+assert.equal(dockerCalls.filter((call) => call.startsWith("docker network rm ")).length, 1)
 
 console.log("native runtime adapter ok")
