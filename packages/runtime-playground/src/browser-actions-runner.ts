@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises"
+import { copyFile, readdir, readFile, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { BROWSER_ACTION_CORPUS_SCHEMA, BROWSER_ADAPTIVE_EXPLORATION_SCHEMA, BROWSER_MULTI_ACTOR_SCENARIO_SCHEMA, BROWSER_PROBE_PROFILES, BROWSER_TOOL_VERIFIER_RESULT_SCHEMA, HostToolRegistry, assertRuntimeCommandAllowed, browserActionCorpusArtifact, browserActionCorpusContract, browserAdaptiveExplorationContract, browserEnvironment, browserEnvironmentDigest, browserGeolocation, browserInteractionScriptUsesEvaluate, browserToolVerifierInputSummary, createHostToolRegistry, executeHostTool, resolveCommandPath, transportFaultModel, validateBrowserInteractionScript, type BrowserActionCorpusArtifact, type BrowserActionCorpusContract, type BrowserAdaptiveExplorationArtifact, type BrowserAdaptiveExplorationContract, type BrowserEnvironment, type BrowserGeolocationPermissionState, type BrowserInteractionStep, type BrowserMultiActorScenario, type BrowserToolVerifierResult, type ExecutionSpec, type HostToolDefinition, type JsonValue, type RuntimeCreateSpec, type TransportFaultModel } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -107,8 +108,8 @@ export async function runBrowserActionsCommand({
   const capture = runPlan.capture
 
   for (const item of capture) {
-    if (!["steps", "console", "errors", "html", "network", "websocket", "screenshot", "dom-snapshot"].includes(item)) {
-      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, websocket, screenshot, dom-snapshot: ${item}`)
+    if (!["steps", "console", "errors", "html", "network", "websocket", "screenshot", "dom-snapshot", "video"].includes(item)) {
+      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, websocket, screenshot, dom-snapshot, video: ${item}`)
     }
   }
 
@@ -143,6 +144,9 @@ export async function runBrowserActionsCommand({
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
+  const videoStagingDirectory = artifactSession.absolutePath("video-source")
+  let videoRecording: import("playwright").Video | null = null
+  let videoSaved = false
   const screenshots: string[] = []
   const domSnapshots: Array<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> = []
   const verifierResults: NonNullable<BrowserArtifact["summary"]["verifierResults"]> = []
@@ -194,12 +198,15 @@ export async function runBrowserActionsCommand({
     if (unsupportedEnvironment.length > 0) {
       throw new Error(`wordpress.browser-actions browser environment is unsupported: ${unsupportedEnvironment.join(", ")}`)
     }
-    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults
+    // A recording is a context-level capability, so asking for video requires the
+    // environment context path rather than a bare page.
+    const needsEnvironmentContext = Object.keys(requestedEnvironment).length > 0 || browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || !!runPlan.transportFaults || capture.has("video")
     environmentRuntime = session?.runtime ?? (needsEnvironmentContext ? await createPlaywrightBrowserEnvironmentContext(browser, resolvedEnvironment, {
       contextOptions: {
         ...topology.contextOptions(),
         ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(runPlan.transportFaults ? { serviceWorkers: "block" as const } : {}),
+        ...(capture.has("video") ? { recordVideo: { dir: videoStagingDirectory } } : {}),
       },
     }) : undefined)
     const context = environmentRuntime?.context ?? null
@@ -208,6 +215,7 @@ export async function runBrowserActionsCommand({
     }
     if (context && runPlan.transportFaults) installedTransportFaults = await installBrowserTransportFaults(context, runPlan.transportFaults, { policy: browserPreviewTransportFaultPolicy(networkPolicy, topology.origins.localProxyOrigin), serviceWorkersBlocked: true })
     const page = activePage = environmentRuntime?.page ?? await browser.newPage()
+    if (capture.has("video")) videoRecording = page.video()
     navigationTracker = trackBrowserNavigation(page)
     if (onProgress) {
       await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
@@ -532,6 +540,20 @@ export async function runBrowserActionsCommand({
       errors.push(serializeBrowserError("probe-error", routeError))
       if (browserPreviewCleanupErrorIsFatal(routeError)) pendingError ??= routeError
     }
+    if (videoRecording) {
+      // Playwright finalizes a recording on context close and names it itself. The
+      // recording is adopted from its staging directory rather than through
+      // video.saveAs(), which requires a browser connection that cleanup has closed.
+      try {
+        const staged = (await readdir(videoStagingDirectory)).filter((entry) => entry.endsWith(".webm")).sort()
+        if (staged.length === 0) throw new Error("wordpress.browser-actions capture=video produced no recording")
+        const source = join(videoStagingDirectory, staged[0])
+        await artifactSession.writeGenerated("video", "video.webm", (path) => copyFile(source, path))
+        videoSaved = true
+      } catch (error) {
+        errors.push(serializeBrowserError("probe-error", error))
+      }
+    }
     if (capture.has("steps")) {
       await artifactSession.writeJsonLines("steps", "steps.jsonl", stepRecords)
     }
@@ -625,6 +647,7 @@ export async function runBrowserActionsCommand({
         ...(transportFaultReport ? { transportFaults: browserTransportFaultSummary(transportFaultReport) } : {}),
         replayability: browserProbeReplayability(capture),
         screenshot: Boolean(screenshotSha256),
+        ...(capture.has("video") ? { video: videoSaved } : {}),
         auth: authSummary,
         environment: environmentEvidence,
         viewport,
