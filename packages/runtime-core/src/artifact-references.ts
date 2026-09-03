@@ -4,6 +4,10 @@ import type { RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifes
 import { redactJsonValue } from "./redaction.js"
 import { BROWSER_SESSION_PRODUCT_DTO_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
 
+import { ARTIFACT_MANIFEST_PATH, CHANGED_FILES_ARTIFACT_PATH, PATCH_ARTIFACT_PATH, isArtifactBundleRef, isBrowserArtifactRef, isChangedFilesArtifactRef, isLogArtifactRef, isPatchArtifactRef, isTranscriptArtifactRef, kindForArtifactPath } from "./artifact-ref-classification.js"
+
+export { ARTIFACT_MANIFEST_PATH, CHANGED_FILES_ARTIFACT_PATH, PATCH_ARTIFACT_PATH }
+
 export const METADATA_ARTIFACT_PATH = "metadata.json" as const
 export const REVIEW_ARTIFACT_PATH = "files/review.json" as const
 export const RUNTIME_EPISODE_TRACE_ARTIFACT_PATH = "files/runtime-episode-trace.json" as const
@@ -11,9 +15,6 @@ export const RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH = "files/runtime-episode.jsonl
 export const RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH = "files/runtime-reference-manifest.json" as const
 export const RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH = "files/runtime-replay-index.json" as const
 export const RUNTIME_SNAPSHOT_ARTIFACT_PATH = "files/runtime-snapshot.json" as const
-export const CHANGED_FILES_ARTIFACT_PATH = "files/changed-files.json" as const
-export const PATCH_ARTIFACT_PATH = "files/patch.diff" as const
-export const ARTIFACT_MANIFEST_PATH = "manifest.json" as const
 export const PUBLIC_ARTIFACT_REF_DTO_SCHEMA = "wp-codebox/artifact-ref/v1" as const
 
 const RUNTIME_REFERENCE_MANIFEST_EXCLUDED_PATHS = new Set<string>([
@@ -195,11 +196,11 @@ export function publicArtifactRefGroups(input: unknown): PublicArtifactRefGroups
   return {
     all,
     artifact_bundles: all.filter(isArtifactBundleRef),
-    changed_files: all.filter(isChangedFilesArtifactRef),
-    patches: all.filter(isPatchArtifactRef),
-    browser: all.filter((ref) => ref.kind.startsWith("browser-") || pathIncludes(ref.path, "/browser/")),
-    logs: all.filter((ref) => ref.kind.includes("log") || pathEndsWith(ref.path, ".log") || pathEndsWith(ref.path, ".jsonl")),
-    transcripts: all.filter((ref) => ref.kind.includes("transcript")),
+    changed_files: all.filter((ref) => isChangedFilesArtifactRef(ref, "discovery")),
+    patches: all.filter((ref) => isPatchArtifactRef(ref, "discovery")),
+    browser: all.filter(isBrowserArtifactRef),
+    logs: all.filter((ref) => isLogArtifactRef(ref, "discovery")),
+    transcripts: all.filter((ref) => isTranscriptArtifactRef(ref, "discovery")),
   }
 }
 
@@ -494,25 +495,6 @@ function richerPublicArtifactRef(existing: PublicArtifactRefDTO, incoming: Publi
     sha256: incoming.sha256 ?? existing.sha256,
     metadata: existing.metadata && incoming.metadata ? { ...existing.metadata, ...incoming.metadata } : incoming.metadata ?? existing.metadata,
   })
-}
-
-function isArtifactBundleRef(ref: PublicArtifactRefDTO): boolean {
-  return ref.kind === "artifact-bundle" || ref.kind === "codebox-artifact-bundle"
-}
-
-function isChangedFilesArtifactRef(ref: PublicArtifactRefDTO): boolean {
-  return ref.kind === "codebox-changed-files" || ref.kind === "changed-files" || pathEndsWith(ref.path, CHANGED_FILES_ARTIFACT_PATH)
-}
-
-function isPatchArtifactRef(ref: PublicArtifactRefDTO): boolean {
-  return ref.kind === "codebox-patch" || ref.kind === "patch" || pathEndsWith(ref.path, PATCH_ARTIFACT_PATH)
-}
-
-function kindForArtifactPath(path: string | undefined): string | undefined {
-  if (pathEndsWith(path, CHANGED_FILES_ARTIFACT_PATH)) return "codebox-changed-files"
-  if (pathEndsWith(path, PATCH_ARTIFACT_PATH)) return "codebox-patch"
-  if (pathEndsWith(path, ARTIFACT_MANIFEST_PATH)) return "artifact-manifest"
-  return undefined
 }
 
 function pathEndsWith(path: string | undefined, suffix: string): boolean {
