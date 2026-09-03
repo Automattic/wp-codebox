@@ -1,0 +1,17 @@
+{
+  "name": "@automattic/wp-codebox-native",
+  "version": "0.26.8",
+  "description": "Contained native PHP runtime adapter for WP Codebox.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "@automattic/wp-codebox-core": "file:../runtime-core" }
+}
